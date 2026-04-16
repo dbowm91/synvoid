@@ -193,7 +193,10 @@ impl RecordStoreManager {
             let ttl = record.ttl_seconds;
 
             tokio::spawn(async move {
-                if let Some(request_id) = record_store.start_quorum_request(key.clone(), value, ttl).await {
+                if let Some(request_id) = record_store
+                    .start_quorum_request(key.clone(), value, ttl)
+                    .await
+                {
                     tracing::debug!("Started quorum request {} for key: {}", request_id, key);
                     let mut attempts = 0;
                     let max_attempts = 50;
@@ -201,12 +204,20 @@ impl RecordStoreManager {
                     while attempts < max_attempts {
                         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-                        if let Some(result) = record_store.check_quorum_completion(&request_id).await {
+                        if let Some(result) =
+                            record_store.check_quorum_completion(&request_id).await
+                        {
                             match result {
                                 crate::mesh::dht::quorum::QuorumResult::Approved(_) => {
-                                    tracing::info!("Quorum approved for key: {}, storing record", key);
+                                    tracing::info!(
+                                        "Quorum approved for key: {}, storing record",
+                                        key
+                                    );
                                     if record_store.store_record_after_quorum(&record).await {
-                                        tracing::info!("Record stored after quorum for key: {}", key);
+                                        tracing::info!(
+                                            "Record stored after quorum for key: {}",
+                                            key
+                                        );
                                     }
                                     break;
                                 }
@@ -269,7 +280,10 @@ impl RecordStoreManager {
             tracing::debug!(
                 "Rejected older record for key {} (existing timestamp: {}, new timestamp: {})",
                 record.key,
-                rs.records.get(&record.key).map(|e| e.record.timestamp).unwrap_or(0),
+                rs.records
+                    .get(&record.key)
+                    .map(|e| e.record.timestamp)
+                    .unwrap_or(0),
                 record.timestamp
             );
             crate::metrics::record_dht_store_operation(false);

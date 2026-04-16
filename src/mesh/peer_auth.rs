@@ -117,10 +117,6 @@ fn validate_edge_node(
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
 ) -> Result<(), String> {
-    if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
-        return validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk));
-    }
-
     if let Some(revocation_list) = revoked_nodes {
         if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
             return Err(format!(
@@ -128,6 +124,10 @@ fn validate_edge_node(
                 peer_node_id, revocation_info.reason, revocation_info.revoked_at
             ));
         }
+    }
+
+    if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
+        return validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk));
     }
 
     let pubkey = peer_public_key.ok_or_else(|| {

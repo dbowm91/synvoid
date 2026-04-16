@@ -93,6 +93,12 @@ impl SigningKey {
             .map_err(|e| SignatureError::Base64DecodeError(e.to_string()))?;
         Self::from_bytes(&bytes)
     }
+
+    pub fn verifying_key(&self) -> VerifyingKey {
+        VerifyingKey {
+            bytes: self.bytes[SigningKey::SIZE - VerifyingKey::SIZE..].to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Zeroize, ZeroizeOnDrop, Serialize, Deserialize)]

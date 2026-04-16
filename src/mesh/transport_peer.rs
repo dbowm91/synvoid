@@ -1037,11 +1037,10 @@ impl MeshTransport {
                         signer_public_key: None,
                     };
 
-                    if record_store.handle_quorum_store_request(
-                        &request_id.to_string(),
-                        peer_id,
-                        record,
-                    ).await {
+                    if record_store
+                        .handle_quorum_store_request(&request_id.to_string(), peer_id, record)
+                        .await
+                    {
                         tracing::debug!("Quorum store request accepted for key: {}", key);
                     } else {
                         tracing::debug!("Quorum store request rejected for key: {}", key);
@@ -1054,11 +1053,13 @@ impl MeshTransport {
                 signature,
             } => {
                 if let Some(ref record_store) = self.record_store {
-                    let _ = record_store.handle_quorum_signature_response(
-                        &request_id.to_string(),
-                        peer_id,
-                        signature,
-                    ).await;
+                    let _ = record_store
+                        .handle_quorum_signature_response(
+                            &request_id.to_string(),
+                            peer_id,
+                            signature,
+                        )
+                        .await;
                 }
             }
             MeshMessage::QuorumRejectionResponse {
@@ -1068,12 +1069,14 @@ impl MeshTransport {
                 evidence,
             } => {
                 if let Some(ref record_store) = self.record_store {
-                    record_store.handle_quorum_rejection_response(
-                        &request_id.to_string(),
-                        peer_id,
-                        reason,
-                        evidence,
-                    ).await;
+                    record_store
+                        .handle_quorum_rejection_response(
+                            &request_id.to_string(),
+                            peer_id,
+                            reason,
+                            evidence,
+                        )
+                        .await;
                 }
             }
             MeshMessage::UpstreamAnnounce {
@@ -2480,6 +2483,7 @@ impl MeshTransport {
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("Backend write failed: {}", e)))?;
 
+        let mut full_response = Vec::new();
         let mut resp_buf = vec![0u8; 65536];
         loop {
             let n = backend_conn.read(&mut resp_buf).await.map_err(|e| {
@@ -2488,10 +2492,27 @@ impl MeshTransport {
             if n == 0 {
                 break;
             }
-            send_stream
-                .write_all(&resp_buf[..n])
-                .await
-                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+            full_response.extend_from_slice(&resp_buf[..n]);
+        }
+
+        let (transformed_response, did_transform) = match self
+            .apply_response_transforms(&full_response, &upstream_id)
+            .await
+        {
+            Ok((resp, transformed)) => (resp, transformed),
+            Err(e) => {
+                tracing::warn!("Transform error for {}: {}", upstream_id, e);
+                (full_response, false)
+            }
+        };
+
+        send_stream
+            .write_all(&transformed_response)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+
+        if did_transform {
+            tracing::debug!("Sent transformed response for {}", upstream_id);
         }
 
         let _ = send_stream.finish();
@@ -2515,6 +2536,139 @@ impl MeshTransport {
                     .trim()
                     .to_string();
                 return Some(host_part);
+            }
+        }
+        None
+    }
+
+    async fn apply_response_transforms(
+        &self,
+        response: &[u8],
+        upstream_id: &str,
+    ) -> Result<(Vec<u8>, bool), MeshTransportError> {
+        let Some(record_store) = &self.record_store else {
+            return Ok((response.to_vec(), false));
+        };
+
+        let response_str = match String::from_utf8(response.to_vec()) {
+            Ok(s) => s,
+            Err(_) => return Ok((response.to_vec(), false)),
+        };
+
+        let header_end_pos = response_str.find("\r\n\r\n").map(|p| p + 4);
+        let Some(header_end) = header_end_pos else {
+            return Ok((response.to_vec(), false));
+        };
+
+        let headers_section = &response_str[..header_end];
+        let body_start = header_end;
+
+        let content_type = self
+            .extract_content_type_from_headers(headers_section)
+            .unwrap_or_default();
+
+        let transformable = content_type.contains("text/html")
+            || content_type.contains("text/css")
+            || content_type.contains("javascript")
+            || content_type.contains("image/svg");
+
+        if !transformable {
+            return Ok((response.to_vec(), false));
+        }
+
+        let minification_key = format!("upstream_minification:{}", upstream_id);
+        let min_config: Option<serde_json::Value> = record_store
+            .get_record(&minification_key)
+            .and_then(|r| serde_json::from_slice(&r.value).ok());
+
+        let min_enabled = min_config
+            .as_ref()
+            .and_then(|c| c.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !min_enabled {
+            return Ok((response.to_vec(), false));
+        }
+
+        let enable_html = min_config
+            .as_ref()
+            .and_then(|c| c.get("enable_html"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let enable_css = min_config
+            .as_ref()
+            .and_then(|c| c.get("enable_css"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let enable_js = min_config
+            .as_ref()
+            .and_then(|c| c.get("enable_js"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let body = &response[body_start..];
+        let body_str = match std::str::from_utf8(body) {
+            Ok(s) => s,
+            Err(_) => return Ok((response.to_vec(), false)),
+        };
+
+        let generator = crate::static_files::minifier::MinifierGenerator::new();
+        let mut minified_body = body_str.to_string();
+
+        if content_type.contains("text/html") && enable_html {
+            if let Ok(minified) = generator.minify_html(body_str) {
+                minified_body = minified;
+            }
+        } else if content_type.contains("text/css") && enable_css {
+            if let Ok(minified) = generator.minify_css(body_str) {
+                minified_body = minified;
+            }
+        } else if (content_type.contains("javascript") || content_type.contains("js")) && enable_js
+        {
+            if let Ok(minified) = generator.minify_js(body_str) {
+                minified_body = minified;
+            }
+        }
+
+        let new_body_len = minified_body.len();
+
+        let mut new_headers = String::new();
+        for line in headers_section.lines() {
+            let line_lower = line.to_lowercase();
+            if line_lower.starts_with("content-length:") {
+                new_headers.push_str(&format!("Content-Length: {}\r\n", new_body_len));
+            } else if !line_lower.starts_with("transfer-encoding:") {
+                new_headers.push_str(line);
+                new_headers.push_str("\r\n");
+            }
+        }
+        new_headers.push_str("\r\n");
+
+        let mut new_response = new_headers.into_bytes();
+        new_response.extend_from_slice(minified_body.as_bytes());
+
+        tracing::debug!(
+            "Applied minification to {}: {} -> {} bytes",
+            upstream_id,
+            body.len(),
+            new_body_len
+        );
+
+        Ok((new_response, true))
+    }
+
+    fn extract_content_type_from_headers(&self, headers: &str) -> Option<String> {
+        for line in headers.lines() {
+            let line_lower = line.to_lowercase();
+            if line_lower.starts_with("content-type:") {
+                return Some(
+                    line.split(':')
+                        .skip(1)
+                        .collect::<String>()
+                        .trim()
+                        .to_string(),
+                );
             }
         }
         None

@@ -49,20 +49,13 @@ impl GlobalNodeConfig {
         // Load ML-KEM-768 key - if private key is provided, derive public key
         if let Some(ref b64) = self.ml_kem_private_key_base64 {
             use pqc::MlKem768;
-            let _sk = MlKem768::secret_key_from_base64(b64)
+            let sk = MlKem768::secret_key_from_base64(b64)
                 .map_err(|e| format!("Invalid base64 ML-KEM key: {}", e))?;
 
-            // Generate a temporary keypair to get the public key
-            // In practice, the secret key format includes both sk+pk in aws-lc-rs
-            // For now, we'll generate a new keypair if loading fails
-            match MlKem768::generate_keypair() {
-                Ok((pk, _)) => {
-                    self.ml_kem_public_key_base64 = Some(pk.to_base64());
-                }
-                Err(e) => {
-                    return Err(format!("Failed to derive ML-KEM public key: {}", e));
-                }
-            }
+            let pk = sk
+                .public_key()
+                .map_err(|e| format!("Failed to derive public key: {}", e))?;
+            self.ml_kem_public_key_base64 = Some(pk.to_base64());
         }
 
         // Auto-generate ML-KEM-768 key if not configured (for post-quantum security)
@@ -83,20 +76,11 @@ impl GlobalNodeConfig {
 
         // Load ML-DSA-44 key - if private key is provided, derive public key
         if let Some(ref b64) = self.ml_dsa_private_key_base64 {
-            use pqc::MlDsa44;
-            let _sk = pqc::SigningKey::from_base64(b64)
+            let sk = pqc::SigningKey::from_base64(b64)
                 .map_err(|e| format!("Invalid base64 ML-DSA key: {}", e))?;
 
-            // Generate a new keypair to get the public key
-            // In practice, we'd store both, but for now generate fresh
-            match MlDsa44::generate_keypair() {
-                Ok((vk, _)) => {
-                    self.ml_dsa_public_key_base64 = Some(vk.to_base64());
-                }
-                Err(e) => {
-                    return Err(format!("Failed to derive ML-DSA public key: {}", e));
-                }
-            }
+            let vk = sk.verifying_key();
+            self.ml_dsa_public_key_base64 = Some(vk.to_base64());
         }
 
         Ok(())

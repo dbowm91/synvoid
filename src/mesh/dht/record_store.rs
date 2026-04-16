@@ -327,7 +327,9 @@ impl RecordStoreManager {
         *qm = Some(manager);
     }
 
-    pub fn quorum_manager(&self) -> Arc<RwLock<Option<Arc<crate::mesh::dht::quorum::QuorumManager>>>> {
+    pub fn quorum_manager(
+        &self,
+    ) -> Arc<RwLock<Option<Arc<crate::mesh::dht::quorum::QuorumManager>>>> {
         Arc::clone(&self.quorum_manager)
     }
 

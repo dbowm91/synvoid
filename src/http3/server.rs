@@ -441,7 +441,12 @@ impl Http3Server {
                             conn_limiter.release(token);
                         }
                         match conn_limiter
-                            .try_acquire_with_limits(&site_id, client_ip, site_max_connections, site_max_per_ip)
+                            .try_acquire_with_limits(
+                                &site_id,
+                                client_ip,
+                                site_max_connections,
+                                site_max_per_ip,
+                            )
                             .await
                         {
                             Ok(new_token) => {

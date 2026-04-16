@@ -1654,7 +1654,7 @@ mod tests {
             let delay = std::cmp::min(base * backoff_multiplier, 300);
 
             // Verify backoff doubles each time up to cap
-            if count <= 6 {
+            if count < 6 {
                 assert_eq!(delay, base * 2_u64.pow(count));
             } else {
                 // Capped at 300

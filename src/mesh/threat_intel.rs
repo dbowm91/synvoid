@@ -647,6 +647,11 @@ impl ThreatIntelligenceManager {
             return;
         }
 
+        if self.signer.is_none() {
+            tracing::warn!("Cannot publish threat indicator: no signer configured");
+            return;
+        }
+
         let transport_opt = self.transport.read().clone();
         let Some(transport) = transport_opt else {
             tracing::debug!("Transport not available for DHT publish");
@@ -1228,6 +1233,12 @@ impl ThreatIntelligenceManager {
                             );
                             continue;
                         }
+                    } else {
+                        tracing::warn!(
+                            "Threat intel DHT sync: missing signature or signer pk for {}",
+                            key
+                        );
+                        continue;
                     }
 
                     local_indicators.insert(

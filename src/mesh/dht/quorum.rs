@@ -1,9 +1,9 @@
+use crate::mesh::safe_unix_timestamp;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::mesh::safe_unix_timestamp;
 
 #[derive(Debug, Clone)]
 pub enum RejectionReason {
@@ -124,7 +124,12 @@ impl QuorumRequest {
         }
     }
 
-    pub fn add_rejection(&mut self, node_id: String, reason: RejectionReason, evidence: Option<Vec<u8>>) {
+    pub fn add_rejection(
+        &mut self,
+        node_id: String,
+        reason: RejectionReason,
+        evidence: Option<Vec<u8>>,
+    ) {
         if !self.rejections.iter().any(|r| r.node_id == node_id) {
             self.rejections.push(QuorumRejection {
                 node_id,
@@ -159,7 +164,10 @@ impl QuorumRequest {
         if self.has_rejections() {
             let rejection = self.rejections.first().unwrap().clone();
             let verified = true;
-            return QuorumResult::Rejected { rejection, verified };
+            return QuorumResult::Rejected {
+                rejection,
+                verified,
+            };
         }
 
         if self.threshold_met(total_nodes) {
@@ -212,7 +220,12 @@ impl QuorumManager {
         pending.get(request_id).cloned()
     }
 
-    pub async fn add_signature(&self, request_id: &str, node_id: String, signature: Vec<u8>) -> bool {
+    pub async fn add_signature(
+        &self,
+        request_id: &str,
+        node_id: String,
+        signature: Vec<u8>,
+    ) -> bool {
         let mut pending = self.pending_requests.write().await;
         if let Some(request) = pending.get_mut(request_id) {
             request.add_signature(node_id, signature);
@@ -222,7 +235,13 @@ impl QuorumManager {
         }
     }
 
-    pub async fn add_rejection(&self, request_id: &str, node_id: String, reason: RejectionReason, evidence: Option<Vec<u8>>) {
+    pub async fn add_rejection(
+        &self,
+        request_id: &str,
+        node_id: String,
+        reason: RejectionReason,
+        evidence: Option<Vec<u8>>,
+    ) {
         let mut pending = self.pending_requests.write().await;
         if let Some(request) = pending.get_mut(request_id) {
             request.add_rejection(node_id.clone(), reason.clone(), evidence);
@@ -247,7 +266,11 @@ impl QuorumManager {
         pending.remove(request_id)
     }
 
-    pub async fn verify_rejection(&self, rejection: &QuorumRejection, dht_get: impl Fn(&str) -> Option<Vec<u8>>) -> bool {
+    pub async fn verify_rejection(
+        &self,
+        rejection: &QuorumRejection,
+        dht_get: impl Fn(&str) -> Option<Vec<u8>>,
+    ) -> bool {
         match &rejection.reason {
             RejectionReason::DomainTaken => {
                 let key = &rejection.node_id;
@@ -321,7 +344,11 @@ mod tests {
             300,
             "origin1".to_string(),
             vec![],
-            &["global1".to_string(), "global2".to_string(), "global3".to_string()],
+            &[
+                "global1".to_string(),
+                "global2".to_string(),
+                "global3".to_string(),
+            ],
         );
 
         request.add_signature("global1".to_string(), vec![1, 2, 3]);
@@ -340,14 +367,14 @@ mod tests {
             300,
             "origin1".to_string(),
             vec![],
-            &["global1".to_string(), "global2".to_string(), "global3".to_string()],
+            &[
+                "global1".to_string(),
+                "global2".to_string(),
+                "global3".to_string(),
+            ],
         );
 
-        request.add_rejection(
-            "global1".to_string(),
-            RejectionReason::DomainTaken,
-            None,
-        );
+        request.add_rejection("global1".to_string(), RejectionReason::DomainTaken, None);
         assert_eq!(request.rejections.len(), 1);
         assert!(request.has_rejections());
     }
@@ -361,7 +388,11 @@ mod tests {
             300,
             "origin1".to_string(),
             vec![],
-            &["global1".to_string(), "global2".to_string(), "global3".to_string()],
+            &[
+                "global1".to_string(),
+                "global2".to_string(),
+                "global3".to_string(),
+            ],
         );
 
         assert!(!request.threshold_met(3));

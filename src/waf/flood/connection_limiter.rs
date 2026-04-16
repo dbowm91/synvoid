@@ -11,8 +11,8 @@ pub struct ConnectionLimiter {
     per_ip_rate: u32,
     global_rate: u32,
 
-    per_ip_second: Box<[AtomicU32; CONNECTION_TRACKER_SLOTS]>,
-    per_ip_minute: Box<[AtomicU32; CONNECTION_TRACKER_SLOTS]>,
+    per_ip_second: Box<[AtomicU32]>,
+    per_ip_minute: Box<[AtomicU32]>,
     global_second: AtomicU64,
     global_minute: AtomicU64,
 
@@ -27,11 +27,19 @@ pub struct ConnectionLimiter {
 
 impl ConnectionLimiter {
     pub fn new(per_ip_rate: u32, global_rate: u32) -> Self {
+        let per_ip_second: Box<[AtomicU32]> = (0..CONNECTION_TRACKER_SLOTS)
+            .map(|_| AtomicU32::new(0))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let per_ip_minute: Box<[AtomicU32]> = (0..CONNECTION_TRACKER_SLOTS)
+            .map(|_| AtomicU32::new(0))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Self {
             per_ip_rate,
             global_rate,
-            per_ip_second: Box::new([const { AtomicU32::new(0) }; CONNECTION_TRACKER_SLOTS]),
-            per_ip_minute: Box::new([const { AtomicU32::new(0) }; CONNECTION_TRACKER_SLOTS]),
+            per_ip_second,
+            per_ip_minute,
             global_second: AtomicU64::new(0),
             global_minute: AtomicU64::new(0),
             current_second: AtomicU64::new(0),

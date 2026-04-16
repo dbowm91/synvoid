@@ -524,7 +524,8 @@ impl RecordStoreManager {
                     "key": key,
                     "value": value,
                     "timestamp": crate::mesh::safe_unix_timestamp(),
-                })).unwrap_or_default();
+                }))
+                .unwrap_or_default();
 
                 let signature = signer.sign(&signed_content);
                 let pk = signer.get_public_key();
@@ -543,7 +544,10 @@ impl RecordStoreManager {
             ttl_seconds,
             self.node_id.clone(),
             origin_signature.clone(),
-            &global_nodes.iter().map(|p| p.node_id.clone()).collect::<Vec<_>>(),
+            &global_nodes
+                .iter()
+                .map(|p| p.node_id.clone())
+                .collect::<Vec<_>>(),
         );
 
         quorum_manager.start_request(quorum_request).await;
@@ -563,12 +567,11 @@ impl RecordStoreManager {
                 continue;
             }
 
-            if let Err(e) = transport.send_datagram_to_peer(&peer.node_id, &quorum_msg).await {
-                tracing::warn!(
-                    "Failed to send quorum request to {}: {}",
-                    peer.node_id,
-                    e
-                );
+            if let Err(e) = transport
+                .send_datagram_to_peer(&peer.node_id, &quorum_msg)
+                .await
+            {
+                tracing::warn!("Failed to send quorum request to {}: {}", peer.node_id, e);
             }
         }
 
@@ -651,7 +654,9 @@ impl RecordStoreManager {
                 reason: "unauthorized".into(),
                 evidence: None,
             };
-            let _ = transport.send_datagram_to_peer(from_node_id, &rejection).await;
+            let _ = transport
+                .send_datagram_to_peer(from_node_id, &rejection)
+                .await;
             return false;
         }
 
@@ -662,7 +667,8 @@ impl RecordStoreManager {
                     "key": record.key,
                     "value": record.value,
                     "timestamp": crate::mesh::safe_unix_timestamp(),
-                })).unwrap_or_default();
+                }))
+                .unwrap_or_default();
 
                 let sig = signer.sign(&signed_content);
                 let pk = signer.get_public_key();
@@ -681,14 +687,18 @@ impl RecordStoreManager {
             return true;
         }
 
-        quorum_manager.add_signature(request_id, self.node_id.clone(), signature.clone()).await;
+        quorum_manager
+            .add_signature(request_id, self.node_id.clone(), signature.clone())
+            .await;
 
         let response = MeshMessage::QuorumSignatureResponse {
             request_id: request_id.into(),
             key: record.key.clone().into(),
             signature,
         };
-        let _ = transport.send_datagram_to_peer(from_node_id, &response).await;
+        let _ = transport
+            .send_datagram_to_peer(from_node_id, &response)
+            .await;
 
         tracing::debug!(
             "Sent quorum signature for request {} to {}",
@@ -699,7 +709,10 @@ impl RecordStoreManager {
         true
     }
 
-    pub async fn store_record_after_quorum(&self, record: &crate::mesh::protocol::DhtRecord) -> bool {
+    pub async fn store_record_after_quorum(
+        &self,
+        record: &crate::mesh::protocol::DhtRecord,
+    ) -> bool {
         let mut rs = self.record_state.write();
         let version = rs.local_version;
         rs.records.insert(
@@ -726,7 +739,9 @@ impl RecordStoreManager {
             (*qm).clone()
         };
         if let Some(manager) = manager_opt {
-            manager.add_signature(request_id, node_id.to_string(), signature).await
+            manager
+                .add_signature(request_id, node_id.to_string(), signature)
+                .await
         } else {
             false
         }
@@ -740,18 +755,26 @@ impl RecordStoreManager {
         evidence: Option<Vec<u8>>,
     ) {
         let reason_str = reason.to_string();
-        let rejection_reason: crate::mesh::dht::quorum::RejectionReason = reason_str.parse().unwrap_or_else(|_| crate::mesh::dht::quorum::RejectionReason::Unknown(reason_str.to_string()));
+        let rejection_reason: crate::mesh::dht::quorum::RejectionReason =
+            reason_str.parse().unwrap_or_else(|_| {
+                crate::mesh::dht::quorum::RejectionReason::Unknown(reason_str.to_string())
+            });
 
         let manager_opt = {
             let qm = self.quorum_manager.read();
             (*qm).clone()
         };
         if let Some(manager) = manager_opt {
-            manager.add_rejection(request_id, node_id.to_string(), rejection_reason, evidence).await;
+            manager
+                .add_rejection(request_id, node_id.to_string(), rejection_reason, evidence)
+                .await;
         }
     }
 
-    pub async fn check_quorum_completion(&self, request_id: &str) -> Option<crate::mesh::dht::quorum::QuorumResult> {
+    pub async fn check_quorum_completion(
+        &self,
+        request_id: &str,
+    ) -> Option<crate::mesh::dht::quorum::QuorumResult> {
         let manager_opt = {
             let qm = self.quorum_manager.read();
             (*qm).clone()
@@ -775,13 +798,17 @@ impl RecordStoreManager {
                             });
                         }
 
-                        return Some(crate::mesh::dht::quorum::QuorumResult::Approved(request.signatures.clone()));
+                        return Some(crate::mesh::dht::quorum::QuorumResult::Approved(
+                            request.signatures.clone(),
+                        ));
                     }
 
                     if request.deadline_passed() {
                         return Some(crate::mesh::dht::quorum::QuorumResult::Timeout {
                             signatures_collected: request.signatures.clone(),
-                            threshold: crate::mesh::dht::quorum::QuorumRequest::required_signatures(total),
+                            threshold: crate::mesh::dht::quorum::QuorumRequest::required_signatures(
+                                total,
+                            ),
                         });
                     }
                 }
@@ -819,7 +846,10 @@ impl RecordStoreManager {
         };
 
         if records_to_rebalance.is_empty() {
-            tracing::debug!("No local records to rebalance after departure of {}", departed_node_id);
+            tracing::debug!(
+                "No local records to rebalance after departure of {}",
+                departed_node_id
+            );
             return;
         }
 

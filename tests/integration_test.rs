@@ -3086,11 +3086,11 @@ mod early_http_parser_tests {
 
 #[cfg(test)]
 mod response_builder_tests {
+    use maluwaf::config::MainConfig;
     use maluwaf::http::response_builder::{
         build_json_response, build_response_with_alt_svc, build_response_with_cookie,
         error_response_bytes, error_response_full, reason_phrase,
     };
-    use maluwaf::config::MainConfig;
 
     fn make_test_config() -> MainConfig {
         MainConfig::default()
@@ -3149,13 +3149,8 @@ mod response_builder_tests {
     fn test_build_response_with_alt_svc() {
         let config = make_test_config();
         let alt_svc = Some("h2=\"localhost:8443\"".to_string());
-        let resp = build_response_with_alt_svc(
-            200,
-            "OK".to_string(),
-            "text/plain",
-            &alt_svc,
-            &config,
-        );
+        let resp =
+            build_response_with_alt_svc(200, "OK".to_string(), "text/plain", &alt_svc, &config);
 
         assert_eq!(resp.status(), 200);
         assert!(resp.headers().get("alt-svc").is_some());
@@ -3167,11 +3162,11 @@ mod http_security_header_tests {
     use bytes::Bytes;
     use http::{Response, StatusCode};
     use http_body_util::Full;
-    use maluwaf::http::headers::{
-        inject_cors_headers, inject_security_headers, is_websocket_upgrade,
-        compute_websocket_accept_key,
-    };
     use maluwaf::config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
+    use maluwaf::http::headers::{
+        compute_websocket_accept_key, inject_cors_headers, inject_security_headers,
+        is_websocket_upgrade,
+    };
 
     fn make_security_config() -> SiteSecurityHeadersConfig {
         SiteSecurityHeadersConfig {
@@ -3230,13 +3225,12 @@ mod http_security_header_tests {
         );
         assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
         assert_eq!(
-            resp.headers().get("x-permitted-cross-domain-policies").unwrap(),
+            resp.headers()
+                .get("x-permitted-cross-domain-policies")
+                .unwrap(),
             "none"
         );
-        assert_eq!(
-            resp.headers().get("x-download-options").unwrap(),
-            "noopen"
-        );
+        assert_eq!(resp.headers().get("x-download-options").unwrap(), "noopen");
     }
 
     #[test]

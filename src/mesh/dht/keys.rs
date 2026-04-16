@@ -493,6 +493,7 @@ impl DhtKey {
                 | DhtKey::GlobalNodeList
                 | DhtKey::OrgNameReservation(_)
                 | DhtKey::DnsZone(_)
+                | DhtKey::DnsRecord(_, _)
                 | DhtKey::DnsDomainRegistration(_)
                 | DhtKey::AnycastNode(_)
         )

@@ -75,6 +75,21 @@ impl SecretKey {
     pub fn to_vec(&self) -> Vec<u8> {
         self.0.clone()
     }
+
+    pub fn public_key(&self) -> Result<PublicKey, String> {
+        use aws_lc_rs::kem::{DecapsulationKey as AwsDecapsulationKey, ML_KEM_768};
+        let dk = AwsDecapsulationKey::new(&ML_KEM_768, &self.0)
+            .map_err(|e| format!("Failed to create decapsulation key: {}", e))?;
+        let ek = dk
+            .encapsulation_key()
+            .map_err(|e| format!("Failed to get encapsulation key: {}", e))?;
+        let pk_bytes = ek
+            .key_bytes()
+            .map_err(|e| format!("Failed to get public key bytes: {}", e))?
+            .as_ref()
+            .to_vec();
+        Ok(PublicKey(pk_bytes))
+    }
 }
 
 impl AsRef<[u8]> for SecretKey {
