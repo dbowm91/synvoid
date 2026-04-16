@@ -27,7 +27,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | Dependency | D1 | D1 (wasmtime 42.0.2) |
 | Mesh/DHT | M-D5 | M-D5 (quorum tasks) |
 | Code Quality | O1, O2, O3 | O2 (proxy.rs size) |
-| Testing | G1-G8, T1, T4, T5 | G1 (process tree) |
+| Testing | G1-G8, T4, T5 | G1 (process tree) |
 | OpenAPI | Phase 2-5 (in progress) | Handler annotations |
 | Admin Panel | Items 1-15 | Admin 2 (Mesh Config) |
 | Web App Stack | Phase 3-5 (deferred) | Phase 3 |
@@ -131,7 +131,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **W6** | MEDIUM | WASM | Instance pool limits not enforced | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **H1** | MEDIUM | Honeypot | TLS honeypot uses wrong blocking function | `src/tls/server.rs` | ✅ COMPLETED |
 | **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
-| **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | 📋 TODO |
+| **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | ✅ COMPLETED |
 | **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | ⏸️ DEFERRED |
 | **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | ✅ COMPLETED |
 | **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | ✅ COMPLETED |

