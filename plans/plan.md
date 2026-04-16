@@ -1,12 +1,16 @@
 # MaluWAF Implementation Plan
 
-Last updated: 2026-04-16 (Pruned: Removed 112 completed items, kept 7 deferred items)
+Last updated: 2026-04-16 (Post Wave 4/5 cleanup)
 
 ## Overview
 
-This document contains the remaining deferred and partially-complete items from the MaluWAF implementation plan.
+This document contains remaining items from the MaluWAF implementation plan after Wave 4 completion.
 
-**Wave 4** contains remaining deferred items. **Wave 5** contains future work items.
+**Legend**:
+- ✅ COMPLETED - Item fully implemented
+- ⏸️ DEFERRED - Item requires further investigation or is blocked
+- ❌ NOT RECOMMENDED - Investigation shows risk outweighs benefit
+- ❌ NOT REAL ISSUE - Investigation shows no actual problem exists
 
 ---
 
@@ -14,349 +18,158 @@ This document contains the remaining deferred and partially-complete items from 
 
 ### Remaining Items
 
-| Item | Priority | Status | Category |
-|------|----------|--------|----------|
-| M1.2 | MEDIUM | ❌ NOT REAL ISSUE | Mesh |
-| S2.1 | MEDIUM | ✅ COMPLETED | Config |
-| Q4.2 | LOW | ❌ DEFERRED | Code Quality |
-| R3.3 | MEDIUM | ⏸️ DEFERRED | Code Quality |
-| R3.4 | LOW | ❌ DEFERRED | Code Quality |
-| Q2.1 | MEDIUM | ⏸️ DEFERRED | Architecture |
-| Q3.1 | MEDIUM | ✅ COMPLETED | Testing |
-| M5 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
-| M6 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
-| M16.9 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
-| M16.10 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
+| Item | Priority | Status | Category | Summary |
+|------|----------|--------|----------|---------|
+| Q2.1 | MEDIUM | ⏸️ DEFERRED | Architecture | handle_request() size exception |
+| R3.3 | MEDIUM | ❌ NOT RECOMMENDED | Code Quality | ~12 lines duplication (generics too complex) |
 
-**Total**: 11 items (6 COMPLETED, 2 DEFERRED, 2 ❌ DEFERRED, 1 NOT REAL ISSUE)
+**Total**: 2 items (0 actionable, 2 closed/not recommended)
 
----
+### Completed Items (Summary)
 
-## Wave 4: Remaining Deferred Items
+| Item | Status | Key Changes |
+|------|--------|-------------|
+| S2.1 | ✅ COMPLETED | Two-phase per-site connection limiting |
+| Q3.1 | ✅ COMPLETED | 47 new tests added |
+| M5 | ✅ COMPLETED | Timestamp-based DHT conflict resolution |
+| M6 | ✅ COMPLETED | Quorum verification wired |
+| M16.9 | ✅ COMPLETED | DHT rebalancing on global departure |
+| M16.10 | ✅ COMPLETED | Geo derived programmatically from IP |
 
-### 4.4: Performance - Mesh Networking
+### Closed Items (Not Recommended / Not Real Issues)
 
-#### M1.2: No HTTP/2 Multiplexing in QUIC - MEDIUM ❌ NOT A REAL ISSUE
-
-**Location**: `src/mesh/transport.rs:1068-1085`
-
-**Issue**: Each message opens new QUIC bidirectional stream; no stream reuse.
-
-**Assessment**: This is **not a real issue**. The comparison to HTTP/2 multiplexing is architecturally invalid:
-
-1. **QUIC provides native stream multiplexing** - QUIC streams are transport-layer constructs, not HTTP-layer virtual streams like HTTP/2
-2. **Opening a stream is local-only** - `connection.open_bi()` in quinn allocates stream ID and state locally, **no network round-trip required**
-3. **Current design is architecturally sound**:
-   - Independent streams provide error isolation (one stream's errors don't affect others)
-   - Per-stream ordering is guaranteed by QUIC
-   - QUIC handles multiplexing over the single UDP connection
-4. **Stream reuse would add complexity without benefit**:
-   - Pool management overhead (bounds, lifecycle, errors)
-   - Mutex synchronization to serialize sends
-   - Loss of per-stream error isolation
-   - Stream creation is ~zero cost (local allocation only)
-
-**Conclusion**: Keep as ❌ DEFERRED. This was a misunderstanding of QUIC's stream model vs HTTP/2's multiplexing layer over TCP.
+| Item | Status | Decision Rationale |
+|------|--------|-------------------|
+| M1.2 | ❌ NOT REAL ISSUE | QUIC already provides native multiplexing; comparison to HTTP/2 invalid |
+| Q4.2 | ❌ NOT RECOMMENDED | Code readable, error paths inherently complex; refactor risk > benefit |
+| R3.3 | ❌ NOT RECOMMENDED | Generics won't help (~12 lines); duplication is harmless |
+| R3.4 | ❌ NOT REAL ISSUE | Intentional protocol distinctions, not a bug |
 
 ---
 
-### 4.6: Performance - Configuration
+## Remaining Items
 
-#### S2.1: Per-Site Connection Limiting - MEDIUM ✅ COMPLETED
-
-**Location**: `src/waf/traffic_shaper/limiter.rs`, `src/http/server.rs`, `src/http3/server.rs`
-
-**Issue**: `SiteConnectionLimiter` never instantiated; `site_id` parameter in `try_acquire` ignored.
-
-**Fix Applied**:
-
-1. **Two-phase limiting architecture**:
-   - **Phase 1 (SECTION 5)**: Global + per-IP limiting with `"_http_"`/`"_http3_"` site_id for immediate DoS protection
-   - **Phase 2 (SECTION 12)**: After routing, re-acquire with actual `site_id` and per-site limits from `SiteTrafficConnectionConfig`
-
-2. **Added `try_acquire_with_limits()` method** to `ConnectionLimiter`:
-   - Accepts optional `max_per_site` and `max_per_ip` parameters
-   - Falls back to defaults (10000 per site, global max per IP) if not specified
-
-3. **Wired per-site limits from `SiteTrafficConnectionConfig`**:
-   - After routing in SECTION 12, reads `site_traffic_config.max_connections` and `site_traffic_config.max_connections_per_ip`
-   - If per-site limits configured, releases the placeholder token and re-acquires with actual limits
-
-4. **HTTP/3 server updated** with same two-phase limiting approach
-
----
-
-### 4.7: Code Quality - Testing & Coverage
-
-#### Q4.2: proxy.rs Deep Nesting - LOW ❌ DEFERRED
-
-**Location**: `src/proxy.rs:708-823,1128-1249`
-
-**Issue**: 4-6 levels of nesting in `handle_request_with_cache` and `forward_with_pool`.
-
-**Assessment**: Code is readable with proper section comments and early returns. The main success path is flat; deep nesting only in error/retry paths. Refactoring would require extracting retry logic into helpers that share complex state, increasing overall complexity.
-
-**Fix**: Not recommended - refactoring risk outweighs benefits.
-
----
-
-### 4.10: Code Quality - Duplication
-
-#### R3.3: HttpConnection/HttpsConnection Duplication - MEDIUM ⏸️ DEFERRED
-
-**Location**: `src/http/server.rs:150-174`, `src/tls/server.rs:51-85`
-
-**Issue**: ~15 lines of duplication in `HttpConnection` and `HttpsConnection` structs.
-
-**Assessment**: The structs are nearly identical but use different underlying stream types. Using generics would require:
-- A generic `Connection<S>` wrapper
-- Changes to all places that construct or use these connections
-- Complexity overhead for what is essentially copy-paste boilerplate
-
-**Fix**: Not recommended - generics complexity not worth ~15 lines of duplication.
-
----
-
-#### R3.4: Honeypot Handling Duplication - LOW ❌ DEFERRED
-
-**Location**: `src/http/server.rs:900-931`, `src/tls/server.rs:628-641`
-
-**Issue**: Honeypot handling code is duplicated between HTTP and HTTPS servers.
-
-**Assessment**: The duplication is intentional - HTTP uses `block_ip_for_honeypot` while HTTPS uses `block_ip_with_threat_intel`. These represent different security behaviors appropriate for each protocol.
-
-**Fix**: Not a bug - intentional protocol distinctions.
-
----
-
-## Wave 5: Future Work (Deferred)
-
-### 5.1: Architecture & Maintainability
-
-#### Q2.1: handle_request() Maintainability - MEDIUM ⏸️ DEFERRED
+### Q2.1: handle_request() Maintainability - MEDIUM ⏸️ DEFERRED
 
 **Location**: `src/http/server.rs:437-1800`
 
-**Note**: Per AGENTS.md, this is exception to size guidelines. Section comments delineate 15 phases. Splitting not recommended.
+**Note**: Per AGENTS.md, this file is an exception to size guidelines. Section comments delineate 15 phases within `handle_request()`. Splitting is not recommended.
+
+**Rationale**: The function is large but well-structured with clear section comments. Breaking it apart would introduce complexity without clear benefit.
 
 ---
 
-#### Q3.1: Missing Test Coverage for Critical Paths - MEDIUM 🔧 IN PROGRESS
+## Closed Items
 
-**Progress Made**:
+### M1.2: QUIC Multiplexing - ❌ NOT REAL ISSUE
 
-1. **Fixed DHT Integration Tests**: `tests/dht_integration_test.rs` had 5 calls to `register_node()` with outdated 3-argument signature (now requires 4 args including `caller_verified_id: Option<&str>`). Fixed all calls to pass `None` as the fourth argument.
+**Location**: `src/mesh/transport.rs:1068-1085`
 
-2. **Fixed Proxy Pipeline Tests**: `tests/integration_test.rs` had 7 async forward_request tests that were hanging due to:
-   - ALPN conflict with hyper-rustls 0.27
-   - HTTPS-only connector for HTTP URLs
-   - Mock servers not closing connections
-   - Case-sensitive header assertions
-   - Content-Length mismatches
-   All 24 proxy_pipeline_tests now pass.
+**Decision**: This was a misunderstanding of QUIC's stream model vs HTTP/2's multiplexing layer over TCP.
 
-3. **HTTP Server Handler Tests**: Added `http_server_handler_tests` module with 8 tests covering:
-   - SharedRequestHandler health/ready requests
-   - JSON response building
-   - Error response building
-   - Cookie and Alt-Svc header injection
-
-4. **Early HTTP Parser Tests**: Added `early_http_parser_tests` module with 13 tests covering:
-   - GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS methods
-   - Query parameter parsing
-   - Cookie parsing
-   - Content-Length parsing
-   - Malformed and partial request handling
-
-5. **Response Builder Tests**: Added `response_builder_tests` module with 6 tests covering:
-   - Reason phrase coverage
-   - Error response body content
-   - JSON response content-type
-   - Cookie header injection
-   - Alt-Svc header injection
-
-6. **HTTP Security Header Tests**: Added `http_security_header_tests` module with 5 tests covering:
-   - Security headers injection (HSTS, CSP, X-Frame-Options, etc.)
-   - WebSocket upgrade detection edge cases
-   - WebSocket accept key RFC 6455 compliance
-   - CORS wildcard and specific origin handling
-
-7. **DHT Integration Tests**: Added 15 new tests covering:
-   - Record store basic operations
-   - Record store prefix search
-   - Record store clear
-   - Signed record TTL
-   - TTL manager for different record types
-   - Message timestamp validation edge cases
-   - KBucket eviction when full
-   - GeoInfo distance calculation
-   - Persisted bucket roundtrip
-   - Stake manager initial state
-   - DHT rate limiter peer independence
-   - DHT key privileged vs public classification
-
-**Total new tests added**: 47 (8 + 13 + 6 + 5 + 15)
+**Rationale**:
+- QUIC provides native stream multiplexing at transport layer
+- Opening a stream (`open_bi()`) is local-only, no RTT required
+- Current design is architecturally sound with independent streams providing error isolation
+- Stream reuse would add complexity without meaningful benefit
 
 ---
 
-### 5.2: DHT & Mesh Scalability
+### Q4.2: proxy.rs Deep Nesting - ❌ NOT RECOMMENDED
 
-#### M5: DHT Data Versioning/Conflict Resolution - MEDIUM ✅ COMPLETED
+**Location**: `src/proxy.rs:708-823,1128-1249`
 
-**Location**: `src/mesh/dht/record_store_crud.rs`
+**Decision**: Code is readable, main success path is flat, error/retry paths are inherently complex.
 
-**Issue**: No conflict resolution for concurrent updates - last-write-wins based on storage order.
-
-**Fix Applied**: Added timestamp-based conflict resolution to `store_record_global()`:
-
-1. **Conflict detection before insert** (`record_store_crud.rs:249-270`):
-   - Before inserting, checks if an existing record is newer
-   - Uses same ordering as `apply_sync()`: `(timestamp, sequence_number, source_node_id)` lexicographic comparison
-   - Newer records always win, older records are rejected
-
-2. **Consistent with DHT sync**:
-   - `apply_sync()` already used timestamp-based ordering during DHT sync
-   - Now `store_record_global()` uses the same ordering for local storage
-   - Ensures the newest record wins regardless of how it was received
-
-3. **Metrics for rejected updates**:
-   - Calls `record_dht_store_operation(false)` when rejecting older records
-
-**Note**: Per-record-type merge strategies (e.g., ThreatIndicator severity merging, VerifiedUpstream winner selection) remain complex and deferred. The current fix provides timestamp ordering which is a safe default.
-
-**Remaining Future Work** (Deferred):
-- Semantic merge strategies for different record types
-- Vector clocks or causal ordering for more complex conflict detection
-- Per-record-type conflict handlers (threat_intel, verified_upstream, etc.)
+**Rationale**:
+- Main success path has flat nesting with early returns
+- 4-6 levels of nesting only in error/retry paths
+- Refactoring would require extracting retry logic into helpers that share complex state
+- Risk outweighs benefit
 
 ---
 
-#### M6: No Global Node Quorum Verification - MEDIUM 🔧 IN PROGRESS
+### R3.3: HttpConnection Duplication - ❌ NOT RECOMMENDED
 
-**Location**: `src/mesh/dht/quorum.rs` (new), `src/mesh/dht/record_store_crud.rs`, `src/mesh/protocol.rs`
+**Location**: `src/http/server.rs:150-174`, `src/tls/server.rs:51-85`
 
-**Issue**: High-value operations (e.g., `verified_upstream` records) accept a single global node signature without verifying quorum.
+**Decision**: Generics won't help - types are fundamentally different.
 
-**Progress Made**:
-
-1. **Quorum infrastructure** (`src/mesh/dht/quorum.rs`):
-   - `QuorumRequest`: tracks ongoing requests with signatures/rejections
-   - `QuorumManager`: manages pending requests, tracks veto history
-   - `RejectionReason` enum: DomainTaken, InvalidFormat, Unauthorized, PolicyViolation
-   - 2/3 threshold for storing records
-   - Veto abuse detection: tracks suspicious rejections
-
-2. **Protocol changes**:
-   - Added `QuorumStoreRequest`, `QuorumSignatureResponse`, `QuorumRejectionResponse` messages
-   - Protobuf definitions added
-   - Encoding/decoding implemented
-
-**Remaining Work** (Implementation Steps):
-
-1. **Wire QuorumManager into RecordStoreManager**:
-   - Add `quorum_manager: Option<Arc<QuorumManager>>` to `RecordStoreManager`
-   - Add `set_quorum_manager()` method to initialize it
-   - Pass quorum_manager reference when creating record store
-
-2. **Modify `store_record_global` for quorum-tracked keys**:
-   - Identify privileged keys (verified_upstream, etc.) that need quorum
-   - For these keys, do NOT store immediately
-   - Instead, call `start_quorum_request()` and broadcast to global nodes
-
-3. **Implement quorum broadcast**:
-   - When quorum request starts, broadcast `QuorumStoreRequest` to all global nodes
-   - Use existing mesh message infrastructure
-   - Track responses with deadline (10 seconds per `QuorumRequest`)
-
-4. **Handle quorum responses**:
-   - When `QuorumSignatureResponse` received: call `add_signature()`
-   - When `QuorumRejectionResponse` received: call `add_rejection()`
-   - Check `threshold_met()` after each response
-
-5. **Implement veto verification**:
-   - For `DomainTaken` rejections, check DHT for existing key
-   - `verify_rejection()` in QuorumManager already exists, wire it up
-   - Mark verified fruitless claims in veto_history
-
-6. **Complete quorum and store**:
-   - On `threshold_met()` AND no valid rejections:
-     - Store the record locally with full quorum signatures
-     - Call `complete_request()` to clean up
-   - On valid rejection: abort, do not store
-   - On timeout: use signatures_collected if >= threshold, else abort
-
-7. **Log suspicious veto patterns**:
-   - After each quorum, call `get_veto_abuse_score()` for rejecting nodes
-   - Log warnings for scores exceeding threshold
-
-**Design**:
-- Threshold: 2/3 of active global nodes
-- Veto is hard block: ANY valid rejection blocks
-- Non-response is acceptable
-- Rejection verification for verifiable claims (DomainTaken checked against DHT)
+**Rationale**:
+- Only ~12 lines of duplication (three simple methods)
+- HTTP uses `ProtocolValidatingStream<TcpStream>`; HTTPS uses `TlsStream<TcpStream>`
+- These types can't be unified with generics - different crate hierarchies
+- Methods are dead simple and stable - bug risk from duplication is negligible
+- `ConnectionMeta` trait already provides unified interface for handlers
 
 ---
 
-### 5.3: Security Hardening
+### R3.4: Honeypot Duplication - ❌ NOT REAL ISSUE
 
-#### M16.9: DHT Re-balancing on Global Departure - MEDIUM ✅ COMPLETED
+**Location**: `src/http/server.rs:900-931`, `src/tls/server.rs:628-641`
 
-**Location**: `src/mesh/dht/record_store_message.rs`, `src/mesh/transport_peer.rs`
+**Decision**: Intentional protocol distinctions, not a bug.
 
-**Fix Applied**:
-- Added `rebalance_after_departure()` to `RecordStoreManager` that:
-  - Collects all local_origin records
-  - Re-announces each to k-closest peers via `send_datagram_to_peer`
-  - Tracks success count and warns if write quorum not met
-  - Records metrics for announce sent/failed
-- Modified `handle_peer_gone()` to check if departing node was global before removal, then trigger rebalance if so
+**Rationale**:
+- HTTP uses `block_ip_for_honeypot`
+- HTTPS uses `block_ip_with_threat_intel`
+- These represent different security behaviors appropriate for each protocol
 
 ---
 
-#### M16.10: Regional Diversity Not Enforced - MEDIUM ✅ COMPLETED
+## Completed Items
 
-**Location**: `src/dns/mesh_sync/registration.rs`, `src/dns/mesh_sync/registry.rs`, `src/dns/mesh_sync/mod.rs`
+### S2.1: Per-Site Connection Limiting - ✅ COMPLETED
 
-**Issue**: Origin nodes can register anycast without evidence of geographic diversity.
+**Files**: `src/waf/traffic_shaper/limiter.rs`, `src/http/server.rs`, `src/http3/server.rs`
 
-**Fix Applied**: Simplified approach - derive geo programmatically from IP using existing GeoIP implementation instead of relying on user-entered geo data:
+**Summary**: Two-phase limiting architecture - Phase 1 (SECTION 5) for DoS protection, Phase 2 (SECTION 12) for per-site limits.
 
-1. **Added `geoip` field to `MeshDnsRegistry`** (`src/dns/mesh_sync/mod.rs:163`):
-   - Added `geoip: Option<Arc<crate::geoip::GeoIpManager>>` field
-   - Added `with_geoip()` builder method
+---
 
-2. **Added `derive_geo_from_ips()` method** (`src/dns/mesh_sync/registry.rs:68`):
-   - Derives country code from IP addresses using GeoIP
-   - Returns `"Unknown"` if GeoIP lookup fails or GeoIP not configured
-   - Logs warning if claimed geo differs from derived geo
+### Q3.1: Test Coverage - ✅ COMPLETED
 
-3. **Modified registration methods** (`src/dns/mesh_sync/registration.rs`):
-   - `register_origin_node()`: Now derives geo from `ip_addresses` instead of using `registration.geo`
-   - `register_anycast_node()`: Now derives geo from `anycast_ips` instead of using `registration.geo`
-   - `handle_registration_request()`: Both Origin and Edge branches now derive geo from IPs
+**Files**: `tests/integration_test.rs`, `tests/dht_integration_test.rs`
 
-4. **Breaking change**: Self-reported `geo` field is now ignored - geo is always derived from IP
+**Summary**: Added 47 tests across HTTP server, DHT operations, proxy pipeline, and security headers.
 
-**Note**: Anycast registration was already restricted to global nodes only (enforced at transport layer and registry layer).
+---
+
+### M5: DHT Conflict Resolution - ✅ COMPLETED
+
+**Files**: `src/mesh/dht/record_store_crud.rs`
+
+**Summary**: Added timestamp-based conflict resolution to `store_record_global()` using `(timestamp, sequence_number, source_node_id)` ordering.
+
+**Future Work (Deferred)**: Per-record-type semantic merge strategies (e.g., ThreatIndicator severity merging, VerifiedUpstream winner selection).
+
+---
+
+### M6: Quorum Verification - ✅ COMPLETED
+
+**Files**: `src/mesh/backend.rs`, `src/mesh/transport_peer.rs`, `src/mesh/dht/quorum.rs`, `src/mesh/dht/record_store_message.rs`, `src/mesh/dht/record_store_crud.rs`
+
+**Summary**: QuorumManager wired for global nodes, quorum broadcast implemented, response handlers added.
+
+---
+
+### M16.9: DHT Re-balancing - ✅ COMPLETED
+
+**Files**: `src/mesh/dht/record_store_message.rs`, `src/mesh/transport_peer.rs`
+
+**Summary**: Added `rebalance_after_departure()` triggered when global node departs.
+
+---
+
+### M16.10: Regional Diversity - ✅ COMPLETED
+
+**Files**: `src/dns/mesh_sync/registration.rs`, `src/dns/mesh_sync/registry.rs`, `src/dns/mesh_sync/mod.rs`
+
+**Summary**: Geo now derived programmatically from IP using existing GeoIP implementation instead of self-reported values.
 
 ---
 
 ## Implementation Notes
-
-### Dependencies
-
-All deferred items are independent and can be worked on in parallel:
-- M1.2: Requires mesh transport understanding
-- S2.1: Requires WAF config system understanding
-- Q4.2: Requires proxy.rs understanding
-- R3.3: Requires HTTP/TLS server understanding
-- R3.4: Requires HTTP/TLS server understanding (but is intentional)
-- Q2.1: Exception in AGENTS.md - do not touch
-- Q3.1: Testing work, no dependencies
-- M5: Requires DHT internals understanding
-- M6: Requires DHT and mesh security understanding
-- M16.9: Requires DHT replication understanding
-- M16.10: Requires DNS registration understanding
 
 ### Verification Commands
 
@@ -376,11 +189,11 @@ cargo test
 
 ---
 
-## Appendix: File Statistics
+## Appendix: Historical Statistics
 
 - Total items in original plan: ~180
-- Completed items: ~165
-- Remaining deferred items: 10
-- Remaining partial items: 1
+- Completed items: ~170
+- Remaining deferred items: 1 (Q2.1 - untouchable per AGENTS.md)
+- Closed items: 4 (2 not real issues, 2 not recommended)
 
-Last cleanup: 2026-04-15
+Last cleanup: 2026-04-16

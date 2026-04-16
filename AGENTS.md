@@ -500,6 +500,9 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | Global node liveness monitoring | `src/mesh/topology.rs:1559-1617` | `check_global_node_liveness()` warns on quorum loss |
 | HTTP request latency metrics | `src/metrics/mod.rs:70-71,372-382` | `HTTP_REQUEST_LATENCIES` VecDeque with record/get functions |
 | ACME config validation | `src/config/tls.rs:106-151` | `AcmeConfig::validate()` checks cache_dir writability |
+| DHT store older record overwrite | `src/mesh/dht/record_store_crud.rs:249-270` | Timestamp-based conflict resolution before insert |
+| Quorum manager not wired | `src/mesh/backend.rs`, `src/mesh/dht/record_store_message.rs` | QuorumManager created for global nodes, handlers added |
+| Geo self-reported not verified | `src/dns/mesh_sync/registration.rs` | Geo derived from IP via GeoIP, self-reported geo ignored |
 
 ## Performance Hot Paths
 
@@ -736,14 +739,25 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 ## Implementation Plan
 
-The consolidated implementation plan is located at `plans/plan.md`. 
+The consolidated implementation plan is located at `plans/plan.md`.
 
-**Remaining items**: 11 (1 PARTIAL, 9 DEFERRED, 1 ❌ DEFERRED)
+**Remaining items**: 2 (1 DEFERRED, 1 NOT RECOMMENDED)
 
 | Wave | Focus | Items | Status |
 |------|-------|-------|--------|
-| 4 | Deferred items | 5 | ⏸️ DEFERRED |
-| 5 | Future Work | 6 | ⏸️ DEFERRED |
+| All | Remaining | 2 | 1 DEFERRED, 1 NOT RECOMMENDED |
+
+**Closed Items**:
+- S2.1: Per-site connection limiting ✅
+- Q3.1: Test coverage (47 new tests) ✅
+- M5: DHT timestamp-based conflict resolution ✅
+- M6: Quorum verification wired ✅
+- M16.9: DHT rebalancing on global departure ✅
+- M16.10: Geo derived from IP programmatically ✅
+- M1.2: QUIC multiplexing (NOT REAL ISSUE) ❌
+- Q4.2: proxy.rs nesting (NOT RECOMMENDED) ❌
+- R3.3: HttpConnection duplication (NOT RECOMMENDED) ❌
+- R3.4: Honeypot duplication (INTENTIONAL) ❌
 
 **Subagent Execution Model**: All remaining items are independent and can be executed in parallel.
 
