@@ -62,6 +62,15 @@ impl RecordStoreManager {
             }
         }
 
+        if !record.verify_content_hash() {
+            tracing::warn!(
+                "Record store: content hash mismatch for key {} from node {}",
+                record.key,
+                record.source_node_id
+            );
+            return false;
+        }
+
         if let Some(ref stake_mgr) = self.routing_state.read().stake_manager {
             if !stake_mgr.can_write_dht(&record.source_node_id) {
                 tracing::warn!(

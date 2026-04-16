@@ -201,93 +201,93 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 ### Security Issues (plan12)
 
-#### S-1: ML-KEM/ML-DSA Key Pair Mismatch - CRITICAL 📋 TODO
+#### S-1: ML-KEM/ML-DSA Key Pair Mismatch - CRITICAL ✅ COMPLETED
 
 **Location**: `src/mesh/config_identity.rs:49-66`, `src/mesh/config_identity.rs:84-99`
 
 **Problem**: When loading ML-KEM-768 or ML-DSA private keys from base64 configuration, the keys are validated and then discarded. A new random keypair is generated instead.
 
-**Fix**: Derive public key FROM the loaded secret key, don't generate new keypair.
+**Fix**: Public key now derived FROM loaded secret key via `public_key()` / `verifying_key()` methods.
 
 ---
 
-#### S-3: Threat Intel DHT Sync Accepts Unsigned Records - CRITICAL 📋 TODO
+#### S-3: Threat Intel DHT Sync Accepts Unsigned Records - CRITICAL ✅ COMPLETED
 
-**Location**: `src/mesh/threat_intel.rs:1170-1241`
+**Location**: `src/mesh/threat_intel.rs:1194-1246`
 
 **Problem**: `sync_from_dht()` accepts records without signatures.
 
-**Fix**: Require signatures for threat intel records or add config flag `require_signed_threat_intel` defaulting to `true`.
+**Fix**: Lines 1194-1246 now reject records with empty signatures via `continue` statement.
 
 ---
 
-#### S-4: Threat Intel Publishes Without Signature - CRITICAL 📋 TODO
+#### S-4: Threat Intel Publishes Without Signature - CRITICAL ✅ COMPLETED
 
-**Location**: `src/mesh/threat_intel.rs:667-681`
+**Location**: `src/mesh/threat_intel.rs:654-657`
 
 **Problem**: If node has no signer configured, publishes with empty signature.
 
-**Fix**: Refuse to publish if no signer is available.
+**Fix**: Early return at line 654-657 when `signer.is_none()`.
 
 ---
 
-#### S-5: VerifiedUpstream Records Not Signature-Verified - HIGH 📋 TODO
+#### S-5: VerifiedUpstream Records Not Signature-Verified - HIGH ✅ COMPLETED
 
-**Location**: `src/mesh/topology.rs:788-798`
+**Location**: `src/mesh/topology.rs:760-818`
 
 **Problem**: When looking up verified upstreams, records are accepted without cryptographic verification.
 
-**Fix**: Add signature field to `VerifiedUpstream`, verify before accepting.
+**Fix**: Signature verification now required; records with empty signatures are rejected.
 
 ---
 
-#### S-6: RFC 5011 State Machine Missing->Valid Bypass - HIGH 📋 TODO
+#### S-6: RFC 5011 State Machine Missing->Valid Bypass - HIGH ✅ COMPLETED
 
-**Location**: `src/dns/trust_anchor.rs:583-587`
+**Location**: `src/dns/trust_anchor.rs:450-454`
 
 **Problem**: When key in `Missing` state is re-observed, transitions to `Seen` instead of `Pending`.
 
-**Fix**: Transition to `Pending` instead of `Seen` per RFC 5011 Section 3.3.
+**Fix**: Changed to transition to `Pending` with `pending_since` set per RFC 5011 Section 3.3.
 
 ---
 
-#### S-7: Non-CSPRNG RNG for Signing Key Generation - HIGH 📋 TODO
+#### S-7: Non-CSPRNG RNG for Signing Key Generation - HIGH ✅ COMPLETED
 
-**Location**: `src/mesh/config_identity.rs:358-360`
+**Location**: `src/mesh/config_identity.rs:344`
 
 **Problem**: Uses `rand::rng().fill_bytes()` which uses `SmallRng`, not cryptographically secure.
 
-**Fix**: Use `rand::rngs::OsRng` instead.
+**Fix**: Uses `OsRng` directly with `try_fill_bytes()` for signing key generation.
 
 ---
 
-#### S-8: Dynamic Update Prerequisite Only Checks Existence - HIGH 📋 TODO
+#### S-8: Dynamic Update Prerequisite Only Checks Existence - HIGH ✅ COMPLETED
 
-**Location**: `src/dns/update.rs:455-482`
+**Location**: `src/dns/update.rs:461-479`
 
 **Problem**: `check_prerequisite()` only verifies record existence, not RDATA content.
 
-**Fix**: Validate RDATA content when present in prerequisite per RFC 2136.
+**Fix**: `check_prerequisite()` now validates RDATA content via `encode_rdata_normalized()` comparison.
 
 ---
 
-#### S-9: RouteResponse Signature Never Verified - HIGH 📋 TODO
+#### S-9: RouteResponse Signature Never Verified - HIGH ✅ COMPLETED
 
-**Location**: `src/mesh/discovery.rs:587-592`
+**Location**: `src/mesh/discovery.rs:709-737`
 
 **Problem**: Signature in RouteResponse is never actually checked.
 
-**Fix**: Implement signature verification for RouteResponse.
+**Fix**: `handle_route_response()` now verifies Ed25519 signature before caching route.
 
 ---
 
-#### S-10: DHT Record Store Lacks Cryptographic Chain - HIGH 📋 TODO
+#### S-10: DHT Record Store Lacks Cryptographic Chain - HIGH 🚧 IN PROGRESS
 
-**Location**: `src/mesh/dht/record_store_crud.rs:249-277`
+**Location**: `src/mesh/dht/record_store_crud.rs:63-72`
 
-**Problem**: Timestamp-based conflict resolution doesn't provide cryptographic integrity.
+**Problem**: `verify_content_hash()` defined but never called.
 
-**Fix**: Add version chaining (each record includes hash of previous version).
+**Fix**: Added `verify_content_hash()` call in `store_record()` after signature verification.
 
 ---
 

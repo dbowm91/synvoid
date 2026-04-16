@@ -815,7 +815,6 @@ impl MeshTopology {
                                     }
                                     continue;
                                 }
-                                new_results.push(verified);
                             }
                         }
                     }

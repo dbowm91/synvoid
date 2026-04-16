@@ -448,10 +448,14 @@ impl TrustAnchorManager {
                 anchor.removed_at = Some(now);
                 return Rfc5011Event::KeyRemoved { key_tag };
             } else if anchor.state == TrustAnchorState::Missing {
-                anchor.state = TrustAnchorState::Seen;
+                anchor.state = TrustAnchorState::Pending;
+                anchor.pending_since = Some(now);
                 anchor.first_seen_at = Some(now);
-                tracing::info!("RFC 5011: Key {} reappeared, entering Seen state", key_tag);
-                return Rfc5011Event::KeySeen { key_tag };
+                tracing::info!(
+                    "RFC 5011: Key {} reappeared, entering Pending state",
+                    key_tag
+                );
+                return Rfc5011Event::KeyPending { key_tag };
             }
             return Rfc5011Event::KeySeen { key_tag };
         }
