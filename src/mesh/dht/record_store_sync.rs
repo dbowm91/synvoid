@@ -708,22 +708,33 @@ impl RecordStoreManager {
         }
 
         let request_id = format!("announce-{}-{}", record.key, uuid::Uuid::new_v4());
+        let timestamp = MeshMessage::generate_timestamp();
+        let records_count = 1;
 
-        let signer_public_key = {
+        let (signature, signer_public_key) = {
             let rs = self.record_state.read();
-            rs.mesh_signer
-                .as_ref()
-                .map(|s| s.get_public_key())
-                .unwrap_or_default()
+            match rs.mesh_signer.as_ref() {
+                Some(signer) => {
+                    let content = format!(
+                        "{},{},{},{}",
+                        self.node_id,
+                        records_count,
+                        self.node_role.bits(),
+                        timestamp
+                    );
+                    (signer.sign(&content), signer.get_public_key())
+                }
+                None => (Vec::new(), String::new()),
+            }
         };
 
         let announce = MeshMessage::DhtRecordAnnounce {
             request_id: request_id.into(),
             records: vec![record.clone()],
             write_quorum: self.config.write_quorum,
-            timestamp: MeshMessage::generate_timestamp(),
+            timestamp,
             source_node_id: self.node_id.clone().into(),
-            signature: Vec::new(),
+            signature,
             signer_public_key,
         };
 
