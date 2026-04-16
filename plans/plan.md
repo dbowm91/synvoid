@@ -16,7 +16,7 @@ This document contains the remaining deferred and partially-complete items from 
 
 | Item | Priority | Status | Category |
 |------|----------|--------|----------|
-| M1.2 | MEDIUM | ⏸️ DEFERRED | Mesh |
+| M1.2 | MEDIUM | ❌ NOT REAL ISSUE | Mesh |
 | S2.1 | MEDIUM | ✅ COMPLETED | Config |
 | Q4.2 | LOW | ❌ DEFERRED | Code Quality |
 | R3.3 | MEDIUM | ⏸️ DEFERRED | Code Quality |
@@ -28,7 +28,7 @@ This document contains the remaining deferred and partially-complete items from 
 | M16.9 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
 | M16.10 | MEDIUM | ✅ COMPLETED | Mesh/DHT |
 
-**Total**: 11 items (6 COMPLETED, 4 DEFERRED, 1 ❌ DEFERRED)
+**Total**: 11 items (6 COMPLETED, 2 DEFERRED, 2 ❌ DEFERRED, 1 NOT REAL ISSUE)
 
 ---
 
@@ -36,24 +36,27 @@ This document contains the remaining deferred and partially-complete items from 
 
 ### 4.4: Performance - Mesh Networking
 
-#### M1.2: No HTTP/2 Multiplexing in QUIC - MEDIUM ⏸️ DEFERRED
+#### M1.2: No HTTP/2 Multiplexing in QUIC - MEDIUM ❌ NOT A REAL ISSUE
 
 **Location**: `src/mesh/transport.rs:1068-1085`
 
 **Issue**: Each message opens new QUIC bidirectional stream; no stream reuse.
 
-**Assessment**: This is a major architectural change that should remain deferred:
+**Assessment**: This is **not a real issue**. The comparison to HTTP/2 multiplexing is architecturally invalid:
 
-1. **QUIC already provides native stream multiplexing** - each `open_bi()` creates an independent bidirectional stream multiplexed over the existing connection
-2. **Opening a stream is a local-only operation** - no round trip required, just allocates stream state
-3. **The current design is architecturally sound** - independent streams provide isolation (one stream's errors don't affect others) and per-stream ordering
-4. **Stream reuse would add significant complexity**:
-   - Need a pool of idle `SendStream` instances per peer
-   - Need mutex coordination to serialize message sends per stream
-   - Need to handle stream errors and remove bad streams from pool
-   - Need bounds on pool size to avoid unbounded resource growth
+1. **QUIC provides native stream multiplexing** - QUIC streams are transport-layer constructs, not HTTP-layer virtual streams like HTTP/2
+2. **Opening a stream is local-only** - `connection.open_bi()` in quinn allocates stream ID and state locally, **no network round-trip required**
+3. **Current design is architecturally sound**:
+   - Independent streams provide error isolation (one stream's errors don't affect others)
+   - Per-stream ordering is guaranteed by QUIC
+   - QUIC handles multiplexing over the single UDP connection
+4. **Stream reuse would add complexity without benefit**:
+   - Pool management overhead (bounds, lifecycle, errors)
+   - Mutex synchronization to serialize sends
+   - Loss of per-stream error isolation
+   - Stream creation is ~zero cost (local allocation only)
 
-**Fix**: Would require implementing a bounded stream pool with proper lifecycle management. Not recommended given architectural complexity vs marginal benefit at realistic message rates.
+**Conclusion**: Keep as ❌ DEFERRED. This was a misunderstanding of QUIC's stream model vs HTTP/2's multiplexing layer over TCP.
 
 ---
 
