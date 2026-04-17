@@ -28,7 +28,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | Mesh/DHT | M-D5 | M-D5 (quorum tasks) |
 | Code Quality | O1, O2, O3 | O2 (proxy.rs size) |
 | Testing | G1-G8, T4, T5 | G1 (process tree) |
-| OpenAPI | Phase 2-5 (in progress) | Handler annotations |
+| OpenAPI | Phase 1-5 (complete) | All ~146 handlers annotated |
 | Admin Panel | Items 1, 3-15 | Admin 4 (Settings search) |
 | Web App Stack | Phase 3-5 (deferred) | Phase 3 |
 
@@ -178,7 +178,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Item | Priority | Category | Description | Files | Status |
 |------|----------|----------|-------------|-------|--------|
-| **OpenAPI** | - | Feature | Add OpenAPI documentation with utoipa | `src/admin/openapi.rs`, handlers | 🚧 IN PROGRESS |
+| **OpenAPI** | - | Feature | Add OpenAPI documentation with utoipa | `src/admin/openapi.rs`, handlers | ✅ COMPLETED |
 | **T1** | HIGH | YARA/ThreatIntel | ThreatIntel re-announcement only local-origin | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **T2** | MEDIUM | YARA/ThreatIntel | File upload malware scanner doesn't use mesh YARA | `src/static_files/file_manager.rs` | ✅ COMPLETED |
 | **E7** | INFO | Edge Transform | Verify direct HTTP mode works | (already working) | ✅ COMPLETED |
@@ -629,14 +629,21 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 ### OpenAPI Implementation (plan9)
 
-#### OpenAPI Phase 1-5
+#### OpenAPI Phase 1-5 - ✅ COMPLETED
 
 1. Add `utoipa` and `utoipa-swagger-ui` dependencies
 2. Create `src/admin/openapi.rs` with `#[derive(OpenApi)]`
 3. Wire OpenAPI JSON endpoint
 4. Add Swagger UI endpoint via `SwaggerUi::new()`
-5. Annotate ~100 handler functions with `#[utoipa::path]`
+5. Annotate ~146 handler functions with `#[utoipa::path]`
 6. Add `--export-api-openapi` CLI flag
+
+**Completed**: All admin handler files annotated:
+- `alerting.rs` (3), `config.rs` (42), `honeypot.rs` (2), `icmp.rs` (6)
+- `logs.rs` (5), `mesh_admin.rs` (10), `plugins.rs` (5), `probes.rs` (11)
+- `rule_feed.rs` (4), `serverless.rs` (3), `sites.rs` (9), `stats.rs` (7)
+- `system.rs` (7), `tcp_udp.rs` (4), `theme.rs` (4), `threat_level.rs` (11)
+- `upstreams.rs` (3), `yara_rules.rs` (10)
 
 ---
 
