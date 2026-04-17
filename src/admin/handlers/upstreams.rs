@@ -102,17 +102,32 @@ pub async fn get_site_upstreams(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TriggerHealthCheckRequest {
     pub _force: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HealthCheckResponse {
     pub status: String,
     pub message: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/upstreams/{site_id}/health-check",
+    params(
+        ("site_id" = String, Path, description = "Site ID to check")
+    ),
+    request_body = TriggerHealthCheckRequest,
+    responses(
+        (status = 200, description = "Health check result", body = HealthCheckResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "upstreams"
+)]
 pub async fn trigger_health_check(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -86,12 +86,24 @@ pub async fn get_site(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateSiteRequest {
     pub domains: Vec<String>,
     pub default_upstream: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/sites",
+    request_body = CreateSiteRequest,
+    responses(
+        (status = 200, description = "Site created", body = SiteDetail),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn create_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -196,6 +208,19 @@ pub async fn create_site(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/sites/{site_id}",
+    params(
+        ("site_id" = String, Path, description = "Site ID to delete")
+    ),
+    responses(
+        (status = 204, description = "Site deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn delete_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -219,11 +244,27 @@ pub async fn delete_site(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateSiteRequest {
     pub config: serde_json::Value,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/sites/{site_id}",
+    params(
+        ("site_id" = String, Path, description = "Site ID to update")
+    ),
+    request_body = UpdateSiteRequest,
+    responses(
+        (status = 200, description = "Site updated", body = SiteDetail),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn update_site(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -317,7 +358,7 @@ pub async fn update_site(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SiteThemeResponse {
     pub site_id: String,
     pub preset: Option<String>,
@@ -325,7 +366,7 @@ pub struct SiteThemeResponse {
     pub allow_only: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateSiteThemeRequest {
     #[serde(default)]
     pub preset: Option<String>,
@@ -335,6 +376,20 @@ pub struct UpdateSiteThemeRequest {
     pub allow_only: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/sites/{site_id}/theme",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    responses(
+        (status = 200, description = "Site theme", body = SiteThemeResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn get_site_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -354,6 +409,22 @@ pub async fn get_site_theme(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/sites/{site_id}/theme",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    request_body = UpdateSiteThemeRequest,
+    responses(
+        (status = 200, description = "Site theme updated", body = SiteThemeResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
 pub async fn update_site_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -170,11 +170,24 @@ pub async fn get_sites_stats(
     Ok(Json(site_stats))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct MetricsHistoryParams {
     pub seconds: Option<u64>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/history",
+    params(
+        ("seconds" = Option<u64>, Query, description = "Time window in seconds (default: 300)")
+    ),
+    responses(
+        (status = 200, description = "Metrics history"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_metrics_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -186,12 +199,22 @@ pub async fn get_metrics_history(
     Ok(Json(history))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AttackStats {
     pub total_blocked: u64,
     pub by_type: std::collections::HashMap<String, u64>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/attacks",
+    responses(
+        (status = 200, description = "Attack statistics", body = AttackStats),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_attack_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -206,7 +229,7 @@ pub async fn get_attack_stats(
     Ok(Json(stats))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CacheStats {
     pub proxy_cache_hits: u64,
     pub proxy_cache_misses: u64,
@@ -216,6 +239,16 @@ pub struct CacheStats {
     pub static_cache_hit_rate: f64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/cache",
+    responses(
+        (status = 200, description = "Cache statistics", body = CacheStats),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_cache_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -256,6 +289,16 @@ pub async fn get_cache_stats(
 
 use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthPayload};
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/bandwidth",
+    responses(
+        (status = 200, description = "Bandwidth statistics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_bandwidth(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -269,7 +312,7 @@ pub async fn get_bandwidth(
     Ok(Json(payload))
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct RequestLogResponse {
     pub id: String,
     pub timestamp: String,
@@ -284,14 +327,14 @@ pub struct RequestLogResponse {
     pub bytes_received: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RequestLogsResponse {
     pub entries: Vec<RequestLogResponse>,
     pub total: usize,
     pub has_more: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RequestLogsQuery {
     pub site_id: Option<String>,
     pub method: Option<String>,
@@ -301,6 +344,24 @@ pub struct RequestLogsQuery {
     pub offset: Option<usize>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/request-logs",
+    params(
+        ("site_id" = Option<String>, Query, description = "Filter by site ID"),
+        ("method" = Option<String>, Query, description = "Filter by HTTP method"),
+        ("status" = Option<String>, Query, description = "Filter by status code prefix"),
+        ("search" = Option<String>, Query, description = "Search in path and IP"),
+        ("limit" = Option<usize>, Query, description = "Number of logs to return (max 1000)"),
+        ("offset" = Option<usize>, Query, description = "Offset for pagination")
+    ),
+    responses(
+        (status = 200, description = "Request logs", body = RequestLogsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "stats"
+)]
 pub async fn get_request_logs(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

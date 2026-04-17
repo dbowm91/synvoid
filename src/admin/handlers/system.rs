@@ -111,7 +111,7 @@ pub async fn get_system_info(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct WorkerStatusResponse {
     pub id: String,
     pub worker_type: String,
@@ -125,6 +125,17 @@ pub struct WorkerStatusResponse {
     pub cpu_percent: f64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/system/workers",
+    responses(
+        (status = 200, description = "List of workers", body = Vec<WorkerStatusResponse>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Process manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn get_workers(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -163,6 +174,20 @@ pub async fn get_workers(
     Ok(Json(workers))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/system/workers/{worker_id}/restart",
+    params(
+        ("worker_id" = String, Path, description = "Worker ID to restart")
+    ),
+    responses(
+        (status = 200, description = "Worker restart signal sent", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Worker not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn restart_worker(
     State(state): State<Arc<AdminState>>,
     Path(worker_id): Path<String>,
@@ -185,12 +210,12 @@ pub async fn restart_worker(
     ))))
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, ToSchema)]
 pub struct ScaleWorkersRequest {
     pub target_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ScaleWorkersResponse {
     pub success: bool,
     pub message: String,
@@ -198,13 +223,24 @@ pub struct ScaleWorkersResponse {
     pub target_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct WorkerCountResponse {
     pub current: usize,
     pub min: usize,
     pub max: usize,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/system/workers/count",
+    responses(
+        (status = 200, description = "Worker count information", body = WorkerCountResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Process manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn get_worker_count(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -223,6 +259,19 @@ pub async fn get_worker_count(
     Ok(Json(WorkerCountResponse { current, min, max }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/system/workers/scale",
+    request_body = ScaleWorkersRequest,
+    responses(
+        (status = 200, description = "Worker scaling result", body = ScaleWorkersResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Process manager not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn scale_workers(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -276,7 +325,7 @@ pub async fn scale_workers(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct OverseerStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
@@ -287,6 +336,17 @@ pub struct OverseerStatusResponse {
     pub drain_status: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/system/overseer",
+    responses(
+        (status = 200, description = "Overseer status", body = OverseerStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Process manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
 pub async fn get_overseer(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
