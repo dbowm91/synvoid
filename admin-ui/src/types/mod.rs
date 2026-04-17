@@ -295,6 +295,24 @@ pub struct SiteThemeResponse {
     pub allow_only: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteErrorPagesResponse {
+    pub site_id: String,
+    pub inherit: Option<bool>,
+    pub mode: Option<String>,
+    pub custom_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateSiteErrorPagesRequest {
+    #[serde(default)]
+    pub inherit: Option<bool>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub custom_directory: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProtocolBandwidth {
     pub bytes_received: u64,

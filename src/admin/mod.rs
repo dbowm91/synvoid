@@ -167,6 +167,11 @@ fn build_router_from_state(
             "/sites/{site_id}/theme",
             get(handlers::sites::get_site_theme).put(handlers::sites::update_site_theme),
         )
+        .route(
+            "/sites/{site_id}/error-pages",
+            get(handlers::sites::get_site_error_pages)
+                .put(handlers::sites::update_site_error_pages),
+        )
         .route("/upstreams", get(handlers::upstreams::list_upstreams))
         .route(
             "/upstreams/{site_id}",

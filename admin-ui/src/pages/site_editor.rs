@@ -3,6 +3,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::app::Route;
+use crate::components::forms::Input;
 use crate::components::tooltip::{HelpIcon, Tooltip, TooltipPosition};
 use crate::components::{toast_error, toast_success};
 use crate::services::ApiService;
@@ -609,29 +610,47 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
     let preview_html = use_state(|| String::new());
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
+    let inherit = use_state(|| true);
+    let mode = use_state(|| "static".to_string());
+    let custom_directory = use_state(|| String::new());
 
     {
         let selected_preset = selected_preset.clone();
         let preview_html = preview_html.clone();
         let preview_light = preview_light.clone();
+        let inherit = inherit.clone();
+        let mode = mode.clone();
+        let custom_directory = custom_directory.clone();
         let site_id = props.site_id.clone();
         use_effect_with((), move |_| {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
-                match api.get_site_theme(&site_id).await {
-                    Ok(data) => {
-                        if let Some(theme) = data {
-                            let preset = theme.preset.unwrap_or_else(|| "default".to_string());
-                            selected_preset.set(preset.clone());
-                            let colors = get_preset_colors(&preset);
-                            let use_light = *preview_light;
-                            let html = generate_error_page_preview("", &colors, use_light);
-                            preview_html.set(html);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to fetch site theme: {}", e);
-                    }
+
+                let theme_future = api.get_site_theme(&site_id);
+                let error_pages_future = api.get_site_error_pages(&site_id);
+
+                let (theme_result, error_pages_result) = (
+                    theme_future.await,
+                    error_pages_future.await,
+                );
+
+                if let Ok(Some(theme)) = theme_result {
+                    let preset = theme.preset.unwrap_or_else(|| "default".to_string());
+                    selected_preset.set(preset.clone());
+                    let colors = get_preset_colors(&preset);
+                    let use_light = *preview_light;
+                    let html = generate_error_page_preview("", &colors, use_light);
+                    preview_html.set(html);
+                } else {
+                    tracing::error!("Failed to fetch site theme: {:?}", theme_result.err());
+                }
+
+                if let Ok(error_pages) = error_pages_result {
+                    inherit.set(error_pages.inherit.unwrap_or(true));
+                    mode.set(error_pages.mode.unwrap_or_else(|| "static".to_string()));
+                    custom_directory.set(error_pages.custom_directory.unwrap_or_default());
+                } else {
+                    tracing::error!("Failed to fetch site error pages: {:?}", error_pages_result.err());
                 }
             });
             || {}
@@ -670,12 +689,42 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         })
     };
 
+    let on_mode_change = {
+        let mode = mode.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target
+                .dyn_ref::<web_sys::HtmlSelectElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            mode.set(value);
+        })
+    };
+
+    let on_custom_directory_change = {
+        let custom_directory = custom_directory.clone();
+        Callback::from(move |e: Event| {
+            let target = e.target().unwrap();
+            let value = target
+                .dyn_ref::<web_sys::HtmlInputElement>()
+                .map(|el| el.value())
+                .unwrap_or_default();
+            custom_directory.set(value);
+        })
+    };
+
     let on_save = {
         let saving = saving.clone();
         let selected_preset = selected_preset.clone();
+        let inherit = inherit.clone();
+        let mode = mode.clone();
+        let custom_directory = custom_directory.clone();
         let site_id = props.site_id.clone();
         Callback::from(move |_| {
             let preset = (*selected_preset).clone();
+            let inherit_val = *inherit;
+            let mode_val = (*mode).clone();
+            let custom_dir_val = (*custom_directory).clone();
             let site_id = site_id.clone();
             let saving = saving.clone();
 
@@ -683,20 +732,36 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::ApiService::new();
-                let request = crate::types::UpdateThemeRequest {
+
+                let theme_request = crate::types::UpdateThemeRequest {
                     preset: Some(preset),
                     mode: None,
                     allow_only: None,
                 };
 
-                match api.update_site_theme(&site_id, &request).await {
-                    Ok(_) => {
-                        toast_success("Site theme updated successfully");
-                        tracing::info!("Site theme updated successfully");
+                let error_pages_request = crate::types::UpdateSiteErrorPagesRequest {
+                    inherit: Some(inherit_val),
+                    mode: Some(mode_val),
+                    custom_directory: if custom_dir_val.is_empty() { None } else { Some(custom_dir_val.clone()) },
+                };
+
+                let (theme_result, error_pages_result) = (
+                    api.update_site_theme(&site_id, &theme_request).await,
+                    api.update_site_error_pages(&site_id, &error_pages_request).await,
+                );
+
+                match (theme_result, error_pages_result) {
+                    (Ok(_), Ok(_)) => {
+                        toast_success("Error pages settings updated successfully");
+                        tracing::info!("Error pages settings updated successfully");
                     }
-                    Err(e) => {
+                    (Err(e), _) => {
                         toast_error(&format!("Failed to update site theme: {}", e));
                         tracing::error!("Failed to update site theme: {}", e);
+                    }
+                    (_, Err(e)) => {
+                        toast_error(&format!("Failed to update error pages: {}", e));
+                        tracing::error!("Failed to update error pages: {}", e);
                     }
                 }
                 saving.set(false);
@@ -713,42 +778,99 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         ("sunset", "Sunset"),
     ];
 
+    let modes = vec![
+        ("static", "Static (Return HTML)"),
+        ("dynamic", "Dynamic (Execute template)"),
+        ("redirect", "Redirect to URL"),
+    ];
+
     html! {
         <div class="space-y-6">
-            <div>
-                <label class="block text-sm font-medium text-primary mb-2">{ "Error Page Theme" }</label>
-                <select
-                    class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
-                    value={(*selected_preset).clone()}
-                    onchange={on_preset_change}
-                >
-                    { for presets.iter().map(|(value, label)| {
-                        html! {
-                            <option value={value.clone()}>{label.clone()}</option>
-                        }
-                    }) }
-                </select>
-                <p class="mt-1 text-sm text-secondary">{ "Theme for error pages shown when requests are blocked" }</p>
+            <div class="bg-tertiary border border-default rounded-lg p-4">
+                <h3 class="text-lg font-medium text-primary mb-4">{ "Error Page Configuration" }</h3>
+
+                <div class="space-y-4">
+                    <div class="flex items-center gap-3">
+                        <input
+                            type="checkbox"
+                            id="inherit"
+                            checked={*inherit}
+                            onchange={Callback::from(move |_| inherit.set(!*inherit))}
+                            class="w-4 h-4 rounded border-default text-blue-600 focus:ring-blue-500"
+                        />
+                        <label for="inherit" class="text-sm text-primary">
+                            { "Inherit from global settings" }
+                        </label>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-2">{ "Mode" }</label>
+                        <select
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+                            value={(*mode).clone()}
+                            onchange={on_mode_change}
+                        >
+                            { for modes.iter().map(|(value, label)| {
+                                html! {
+                                    <option value={value.clone()}>{label.clone()}</option>
+                                }
+                            }) }
+                        </select>
+                        <p class="mt-1 text-sm text-secondary">{ "How error pages are served" }</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-2">{ "Custom Directory" }</label>
+                        <input
+                            type="text"
+                            value={(*custom_directory).clone()}
+                            onchange={on_custom_directory_change}
+                            placeholder="/var/www/error-pages"
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary placeholder-secondary/50"
+                        />
+                        <p class="mt-1 text-sm text-secondary">{ "Directory containing custom error page files" }</p>
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <div class="flex items-center justify-between mb-2">
-                    <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
-                    <button
-                        onclick={on_toggle_preview}
-                        class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
+            <div class="bg-tertiary border border-default rounded-lg p-4">
+                <h3 class="text-lg font-medium text-primary mb-4">{ "Error Page Theme" }</h3>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-2">{ "Theme Preset" }</label>
+                    <select
+                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary"
+                        value={(*selected_preset).clone()}
+                        onchange={on_preset_change}
                     >
-                        { if *preview_light { "🌙 Dark" } else { "☀️ Light" } }
-                    </button>
+                        { for presets.iter().map(|(value, label)| {
+                            html! {
+                                <option value={value.clone()}>{label.clone()}</option>
+                            }
+                        }) }
+                    </select>
+                    <p class="mt-1 text-sm text-secondary">{ "Visual style for error pages" }</p>
                 </div>
-                <div class="border border-default rounded-lg overflow-hidden">
-                    <iframe
-                        srcdoc={(*preview_html).clone()}
-                        class="w-full h-64"
-                        sandbox="allow-same-origin"
-                    />
+
+                <div class="mt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="block text-sm font-medium text-primary">{ "Preview" }</label>
+                        <button
+                            onclick={on_toggle_preview}
+                            class="px-3 py-1 text-sm bg-tertiary border border-default rounded-lg text-primary hover:opacity-80"
+                        >
+                            { if *preview_light { "🌙 Dark" } else { "☀️ Light" } }
+                        </button>
+                    </div>
+                    <div class="border border-default rounded-lg overflow-hidden">
+                        <iframe
+                            srcdoc={(*preview_html).clone()}
+                            class="w-full h-64"
+                            sandbox="allow-same-origin"
+                        />
+                    </div>
+                    <p class="mt-1 text-sm text-secondary">{ "Preview of the error page with selected theme" }</p>
                 </div>
-                <p class="mt-1 text-sm text-secondary">{ "Preview of the error page with selected theme" }</p>
             </div>
 
             <div class="flex justify-end gap-4">
@@ -757,7 +879,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     disabled={*saving}
                     class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
-                    { if *saving { "Saving..." } else { "Save Theme" } }
+                    { if *saving { "Saving..." } else { "Save Error Pages" } }
                 </button>
             </div>
         </div>
@@ -1053,19 +1175,219 @@ struct BlockingTabProps {
 
 #[function_component]
 fn BlockingTab(props: &BlockingTabProps) -> Html {
+    let whitelist_ips = use_state(|| String::new());
+    let whitelist_networks = use_state(|| String::new());
+    let whitelist_user_agents = use_state(|| String::new());
+    let geoip_enabled = use_state(|| false);
+    let blocked_countries = use_state(|| String::new());
+    let allowed_countries = use_state(|| String::new());
+    let saving = use_state(|| false);
+
+    use_effect_with((), {
+        let whitelist_ips = whitelist_ips.clone();
+        let whitelist_networks = whitelist_networks.clone();
+        let whitelist_user_agents = whitelist_user_agents.clone();
+        let geoip_enabled = geoip_enabled.clone();
+        let blocked_countries = blocked_countries.clone();
+        let allowed_countries = allowed_countries.clone();
+        let config = props.config.clone();
+        move |_| {
+            if let Some(cfg) = config {
+                if let Some(wl) = cfg.get("whitelist").and_then(|w| w.as_object()) {
+                    if let Some(ips) = wl.get("ips").and_then(|v| v.as_array()) {
+                        let ips_str: Vec<String> = ips.iter().filter_map(|i| i.as_str().map(String::from)).collect();
+                        whitelist_ips.set(ips_str.join("\n"));
+                    }
+                    if let Some(networks) = wl.get("networks").and_then(|v| v.as_array()) {
+                        let networks_str: Vec<String> = networks.iter().filter_map(|n| n.as_str().map(String::from)).collect();
+                        whitelist_networks.set(networks_str.join("\n"));
+                    }
+                    if let Some(uas) = wl.get("user_agents").and_then(|v| v.as_array()) {
+                        let uas_str: Vec<String> = uas.iter().filter_map(|u| u.as_str().map(String::from)).collect();
+                        whitelist_user_agents.set(uas_str.join("\n"));
+                    }
+                }
+                if let Some(geoip) = cfg.get("geoip").and_then(|g| g.as_object()) {
+                    if let Some(enabled) = geoip.get("enabled").and_then(|v| v.as_bool()) {
+                        geoip_enabled.set(enabled);
+                    }
+                    if let Some(blocked) = geoip.get("blocked_countries").and_then(|v| v.as_array()) {
+                        let blocked_str: Vec<String> = blocked.iter().filter_map(|c| c.as_str().map(String::from)).collect();
+                        blocked_countries.set(blocked_str.join(", "));
+                    }
+                    if let Some(allowed) = geoip.get("allowed_countries").and_then(|v| v.as_array()) {
+                        let allowed_str: Vec<String> = allowed.iter().filter_map(|c| c.as_str().map(String::from)).collect();
+                        allowed_countries.set(allowed_str.join(", "));
+                    }
+                }
+            }
+            || {}
+        }
+    });
+
+    let on_save = {
+        let saving = saving.clone();
+        let whitelist_ips = whitelist_ips.clone();
+        let whitelist_networks = whitelist_networks.clone();
+        let whitelist_user_agents = whitelist_user_agents.clone();
+        let geoip_enabled = geoip_enabled.clone();
+        let blocked_countries = blocked_countries.clone();
+        let allowed_countries = allowed_countries.clone();
+        let site_id = props.site_id.clone();
+        Callback::from(move |_| {
+            let ips_vec: Vec<String> = whitelist_ips.split('\n')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let networks_vec: Vec<String> = whitelist_networks.split('\n')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let uas_vec: Vec<String> = whitelist_user_agents.split('\n')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let blocked_vec: Vec<String> = blocked_countries.split(',')
+                .map(|s| s.trim().to_uppercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let allowed_vec: Vec<String> = allowed_countries.split(',')
+                .map(|s| s.trim().to_uppercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            let new_config = serde_json::json!({
+                "whitelist": {
+                    "ips": ips_vec,
+                    "networks": networks_vec,
+                    "user_agents": uas_vec
+                },
+                "geoip": {
+                    "enabled": *geoip_enabled,
+                    "blocked_countries": blocked_vec,
+                    "allowed_countries": allowed_vec
+                }
+            });
+
+            let saving = saving.clone();
+            let site_id = site_id.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = crate::services::ApiService::new();
+                let _ = api.update_site(&site_id, &new_config).await;
+                saving.set(false);
+                crate::components::toast::toast_success("Blocking settings saved");
+            });
+        })
+    };
+
     html! {
         <div class="space-y-6">
             <div>
-                <h3 class="text-lg font-semibold mb-4">{ "IP Blocking" }</h3>
-                <div class="bg-tertiary rounded-lg p-4">
-                    <p class="text-secondary">{ "Configure IP blocklists and allowlists for this site." }</p>
+                <h3 class="text-lg font-semibold mb-4">{ "IP Whitelist" }</h3>
+                <p class="text-sm text-secondary mb-4">
+                    { "Whitelist specific IPs, networks, or user agents to bypass other security checks." }
+                </p>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">{ "IP Addresses (one per line)" }</label>
+                        <textarea
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary font-mono text-sm"
+                            rows="4"
+                            placeholder="192.168.1.1&#10;10.0.0.0/8"
+                            value={(*whitelist_ips).clone()}
+                            oninput={Callback::from(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>();
+                                whitelist_ips.set(input.value());
+                            })}
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">{ "Network CIDRs (one per line)" }</label>
+                        <textarea
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary font-mono text-sm"
+                            rows="3"
+                            placeholder="10.0.0.0/8&#10;172.16.0.0/12"
+                            value={(*whitelist_networks).clone()}
+                            oninput={Callback::from(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>();
+                                whitelist_networks.set(input.value());
+                            })}
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">{ "User Agents (one per line)" }</label>
+                        <textarea
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary font-mono text-sm"
+                            rows="3"
+                            placeholder="curl/7.68.0&#10;python-requests/2.25.1"
+                            value={(*whitelist_user_agents).clone()}
+                            oninput={Callback::from(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>();
+                                whitelist_user_agents.set(input.value());
+                            })}
+                        />
+                    </div>
                 </div>
             </div>
-            <div>
+
+            <div class="border-t border-default pt-6">
                 <h3 class="text-lg font-semibold mb-4">{ "Country Blocking" }</h3>
-                <div class="bg-tertiary rounded-lg p-4">
-                    <p class="text-secondary">{ "Block or allow traffic by country code." }</p>
+                <div class="mb-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={*geoip_enabled}
+                            onchange={{
+                                let geoip_enabled = geoip_enabled.clone();
+                                Callback::from(move |e: Event| {
+                                    let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                    geoip_enabled.set(input.checked());
+                                })
+                            }}
+                            class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
+                        />
+                        <span class="text-primary">{ "Enable GeoIP Blocking" }</span>
+                    </label>
                 </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">{ "Blocked Countries (comma-separated ISO codes)" }</label>
+                        <input
+                            type="text"
+                            placeholder="RU, CN, IR"
+                            value={(*blocked_countries).clone()}
+                            oninput={Callback::from(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                blocked_countries.set(input.value());
+                            })}
+                            disabled={!*geoip_enabled}
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        />
+                        <p class="mt-1 text-xs text-secondary">{ "Traffic from these countries will be blocked" }</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">{ "Allowed Countries (comma-separated ISO codes)" }</label>
+                        <input
+                            type="text"
+                            placeholder="US, GB, CA"
+                            value={(*allowed_countries).clone()}
+                            oninput={Callback::from(move |e: InputEvent| {
+                                let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                allowed_countries.set(input.value());
+                            })}
+                            disabled={!*geoip_enabled}
+                            class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        />
+                        <p class="mt-1 text-xs text-secondary">{ "Only traffic from these countries will be allowed (overrides blocked list)" }</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button onclick={on_save} disabled={*saving} class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    { if *saving { "Saving..." } else { "Save Changes" } }
+                </button>
             </div>
         </div>
     }

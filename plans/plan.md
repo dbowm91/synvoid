@@ -29,7 +29,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | Code Quality | O1, O2, O3 | O2 (proxy.rs size) |
 | Testing | G1-G8, T4, T5 | G1 (process tree) |
 | OpenAPI | Phase 2-5 (in progress) | Handler annotations |
-| Admin Panel | Items 1-15 | Admin 2 (Mesh Config) |
+| Admin Panel | Items 1, 3-15 | Admin 4 (Settings search) |
 | Web App Stack | Phase 3-5 (deferred) | Phase 3 |
 
 ### All Completed Categories
@@ -187,13 +187,13 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **Web Phase 3** | - | Web App | Create standalone directory listing module | `src/theme/dir_listing.rs` | ⏸️ DEFERRED |
 | **Web Phase 4** | - | Web App | Enhanced directory listing features | `src/theme/` | ⏸️ DEFERRED |
 | **Web Phase 5** | - | Web App | Theme system alignment | `src/theme/renderer.rs` | ⏸️ DEFERRED |
-| **Admin 1** | LOW | Admin | Fix placeholder Blocking tab | `admin-ui/` | 📋 TODO |
-| **Admin 2** | HIGH | Admin | Add Mesh Configuration page | `admin-ui/` | 📋 TODO |
-| **Admin 3** | MEDIUM | Admin | Add DNS Configuration page | `admin-ui/` | 📋 TODO |
-| **Admin 4** | MEDIUM | Admin | Add Settings search | `admin-ui/` | 📋 TODO |
-| **Admin 5** | LOW | Admin | Wire up contextual help documentation | `admin-ui/` | 📋 TODO |
-| **Admin 6** | MEDIUM | Admin | Add Error Page editor | `admin-ui/` | 📋 TODO |
-| **Admin 7** | LOW | Admin | Add Restart indicators systematically | `admin-ui/` | 📋 TODO |
+| **Admin 1** | LOW | Admin | Fix placeholder Blocking tab | `admin-ui/` | ✅ COMPLETED |
+| **Admin 2** | HIGH | Admin | Add Mesh Configuration page | `admin-ui/` | ✅ COMPLETED |
+| **Admin 3** | MEDIUM | Admin | Add DNS Configuration page | `admin-ui/` | ✅ COMPLETED |
+| **Admin 4** | MEDIUM | Admin | Add Settings search | `admin-ui/` | ✅ COMPLETED |
+| **Admin 5** | LOW | Admin | Wire up contextual help documentation | `admin-ui/` | ✅ COMPLETED |
+| **Admin 6** | MEDIUM | Admin | Add Error Page editor | `admin-ui/` | ✅ COMPLETED |
+| **Admin 7** | LOW | Admin | Add Restart indicators systematically | `admin-ui/` | ✅ COMPLETED |
 | **Admin 8-15** | MEDIUM/LOW | Admin | Various admin panel improvements | `admin-ui/` | 📋 TODO |
 
 ---

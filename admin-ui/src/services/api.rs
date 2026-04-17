@@ -306,6 +306,22 @@ impl ApiService {
             .await
     }
 
+    pub async fn get_site_error_pages(
+        &self,
+        site_id: &str,
+    ) -> Result<crate::types::SiteErrorPagesResponse, String> {
+        self.get(&format!("/sites/{}/error-pages", site_id)).await
+    }
+
+    pub async fn update_site_error_pages(
+        &self,
+        site_id: &str,
+        request: &crate::types::UpdateSiteErrorPagesRequest,
+    ) -> Result<crate::types::SiteErrorPagesResponse, String> {
+        self.put(&format!("/sites/{}/error-pages", site_id), request)
+            .await
+    }
+
     pub async fn get_threat_level_status(&self) -> Result<crate::types::ThreatLevelStatus, String> {
         self.get("/threat-level/status").await
     }

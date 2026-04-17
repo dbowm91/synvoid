@@ -43,19 +43,18 @@ pub fn SystemStatus() -> Html {
     }
 
     let on_provide_genesis_key = {
-        let genesis_key_input = genesis_key_input.clone();
+        let genesis_key_input_for_send = genesis_key_input.clone();
         let deriving_key = deriving_key.clone();
         let derive_error = derive_error.clone();
         let derive_success = derive_success.clone();
-        let show_genesis_modal = show_genesis_modal.clone();
+        let show_genesis_modal_for_close = show_genesis_modal.clone();
         let mesh_status = mesh_status.clone();
-        Callback::from(move |e: MouseEvent| {
-            e.prevent_default();
-            let genesis_key_input = genesis_key_input.clone();
+        Callback::from(move |_e: MouseEvent| {
+            let genesis_key_input = genesis_key_input_for_send.clone();
             let deriving_key = deriving_key.clone();
             let derive_error = derive_error.clone();
             let derive_success = derive_success.clone();
-            let show_genesis_modal = show_genesis_modal.clone();
+            let show_genesis_modal = show_genesis_modal_for_close.clone();
             let mesh_status = mesh_status.clone();
             deriving_key.set(true);
             derive_error.set(None);
@@ -85,6 +84,9 @@ pub fn SystemStatus() -> Html {
         })
     };
 
+    let genesis_key_input_for_render = genesis_key_input.clone();
+    let show_genesis_modal_for_render = show_genesis_modal.clone();
+
     let format_uptime = |secs: Option<u64>| -> String {
         match secs {
             Some(s) => {
@@ -101,6 +103,42 @@ pub fn SystemStatus() -> Html {
             }
             None => "N/A".to_string(),
         }
+    };
+
+    let show_genesis_modal_button = if !(*mesh_status).as_ref().map(|s| s.is_global_node && s.signing_key_derived).unwrap_or(true) {
+        let show_modal = show_genesis_modal.clone();
+        Some(Callback::from(move |_| show_modal.set(true)))
+    } else {
+        None
+    };
+
+    let genesis_key_input_for_disable = if *show_genesis_modal_for_render {
+        Some(genesis_key_input_for_render.clone())
+    } else {
+        None
+    };
+
+    let modal_input_callback = if *show_genesis_modal_for_render {
+        let genesis_key_input = genesis_key_input_for_render.clone();
+        Some(Callback::from(move |e: InputEvent| {
+            let input = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>();
+            genesis_key_input.set(input.value());
+        }))
+    } else {
+        None
+    };
+
+    let modal_cancel_callback = if *show_genesis_modal_for_render {
+        let genesis_key_input = genesis_key_input_for_render.clone();
+        let show_modal = show_genesis_modal_for_render.clone();
+        let derive_error_for_cancel = derive_error.clone();
+        Some(Callback::from(move |_| {
+            show_modal.set(false);
+            genesis_key_input.set(String::new());
+            derive_error_for_cancel.set(None);
+        }))
+    } else {
+        None
     };
 
     html! {
@@ -328,7 +366,7 @@ pub fn SystemStatus() -> Html {
                         if !status.is_global_node && !status.signing_key_derived {
                             <div class="mt-4 pt-3 border-t border-default">
                                 <button
-                                    onclick={Callback::from(move |_| show_genesis_modal.set(true))}
+                                    onclick={show_genesis_modal_button.clone().unwrap_or_default()}
                                     class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
                                 >
                                     { "Provide Genesis Key" }
@@ -347,7 +385,7 @@ pub fn SystemStatus() -> Html {
                 }
             </div>
 
-            if *show_genesis_modal {
+            if *show_genesis_modal_for_render {
                 <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                     <div class="bg-secondary rounded-lg border border-default p-6 max-w-md w-full mx-4">
                         <h3 class="text-lg font-semibold mb-4">{ "Provide Genesis Key" }</h3>
@@ -358,11 +396,8 @@ pub fn SystemStatus() -> Html {
                             class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg text-primary font-mono text-sm resize-none"
                             rows="3"
                             placeholder="Enter genesis key (base64)"
-                            value={(*genesis_key_input).clone()}
-                            oninput={Callback::from(move |e: InputEvent| {
-                                let input = e.target_unchecked_into::<web_sys::HtmlTextAreaElement>();
-                                genesis_key_input.set(input.value());
-                            })}
+                            value={(*genesis_key_input_for_render).clone()}
+                            oninput={modal_input_callback.clone().unwrap_or_default()}
                         />
                         if let Some(err) = &*derive_error {
                             <div class="mt-2 text-red-500 text-sm">{ err }</div>
@@ -372,18 +407,14 @@ pub fn SystemStatus() -> Html {
                         }
                         <div class="flex justify-end gap-3 mt-4">
                             <button
-                                onclick={Callback::from(move |_| {
-                                    show_genesis_modal.set(false);
-                                    genesis_key_input.set(String::new());
-                                    derive_error.set(None);
-                                })}
+                                onclick={modal_cancel_callback.clone().unwrap_or_default()}
                                 class="px-4 py-2 bg-tertiary hover:bg-tertiary/80 text-primary rounded-lg transition-colors"
                             >
                                 { "Cancel" }
                             </button>
                             <button
                                 onclick={on_provide_genesis_key}
-                                disabled={*deriving_key || genesis_key_input.is_empty()}
+                                disabled={*deriving_key || genesis_key_input_for_disable.as_ref().map(|h| h.is_empty()).unwrap_or(false)}
                                 class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
                             >
                                 { if *deriving_key { "Deriving..." } else { "Derive Signing Key" } }

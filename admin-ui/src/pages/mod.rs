@@ -1,8 +1,10 @@
 mod alerts;
 mod dashboard;
+mod dns;
 mod honeypot;
 mod icmp;
 mod logs;
+mod mesh;
 mod probes;
 mod process_management;
 mod request_logs;
@@ -19,9 +21,11 @@ mod workers;
 
 pub use alerts::Alerts;
 pub use dashboard::Dashboard;
+pub use dns::Dns;
 pub use honeypot::Honeypot;
 pub use icmp::Icmp;
 pub use logs::Logs;
+pub use mesh::Mesh;
 pub use probes::Probes;
 pub use process_management::ProcessManagement;
 pub use request_logs::RequestLogs;

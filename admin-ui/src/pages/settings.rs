@@ -1,6 +1,7 @@
 use crate::components::forms::{Input, Select};
 use crate::components::skeleton::LoadingSpinner;
 use crate::components::{toast_error, toast_success};
+use crate::config_docs::{get_section_doc, ConfigSectionDoc};
 use crate::services::ApiService;
 use crate::types::{ThemeResponse, UpdateThemeRequest};
 use wasm_bindgen::JsCast;
@@ -55,11 +56,110 @@ pub fn Settings() -> Html {
     let active_section = use_state(|| "server".to_string());
     let exporting = use_state(|| false);
     let importing = use_state(|| false);
+    let search_query = use_state(|| String::new());
+    let show_search_results = use_state(|| false);
+
+    let settings_search_index: std::collections::HashMap<String, Vec<(&'static str, &'static str)>> = {
+        let mut m = std::collections::HashMap::new();
+        m.insert("server".to_string(), vec![
+            ("bind", "server"), ("listen", "server"), ("worker", "server"),
+            ("pid", "server"), ("user", "server"), ("group", "server"),
+            ("upgrade", "server"), ("error log", "server"), ("max connections", "server"),
+        ]);
+        m.insert("http".to_string(), vec![
+            ("keep-alive", "http"), ("timeout", "http"), ("max request size", "http"),
+            ("chunked", "http"), ("gzip", "http"), ("brotli", "http"),
+            ("http/2", "http"), ("http/3", "http"), ("pipeline", "http"),
+        ]);
+        m.insert("logging".to_string(), vec![
+            ("syslog", "logging"), ("log level", "logging"), ("access log", "logging"),
+            ("error log", "logging"), ("format", "logging"), ("buffer", "logging"),
+        ]);
+        m.insert("metrics".to_string(), vec![
+            ("prometheus", "metrics"), ("influxdb", "metrics"), ("graphite", "metrics"),
+            ("statsd", "metrics"), ("interval", "metrics"),
+        ]);
+        m.insert("ratelimits".to_string(), vec![
+            ("requests per second", "ratelimits"), ("rps", "ratelimits"), ("burst", "ratelimits"),
+            ("limit", "ratelimits"), ("throttle", "ratelimits"),
+        ]);
+        m.insert("bandwidth".to_string(), vec![
+            ("bandwidth", "bandwidth"), ("rate limit", "bandwidth"), ("quota", "bandwidth"),
+            ("transfer", "bandwidth"), ("upload", "bandwidth"), ("download", "bandwidth"),
+        ]);
+        m.insert("bot".to_string(), vec![
+            ("bot", "bot"), ("captcha", "bot"), ("challenge", "bot"),
+            ("headless", "bot"), ("browser", "bot"), ("fingerprint", "bot"),
+        ]);
+        m.insert("upload".to_string(), vec![
+            ("upload", "upload"), ("max size", "upload"), ("body size", "upload"),
+            ("file", "upload"), ("mime", "upload"), ("extension", "upload"),
+        ]);
+        m.insert("theme".to_string(), vec![
+            ("theme", "theme"), ("dark", "theme"), ("light", "theme"),
+            ("color", "theme"), ("css", "theme"), ("logo", "theme"),
+        ]);
+        m
+    };
+
+    let search_results = if !(*search_query).is_empty() && *show_search_results {
+        let query = search_query.to_lowercase();
+        let mut results: Vec<(String, String)> = Vec::new();
+        for (section, keywords) in &settings_search_index {
+            for (keyword, _) in keywords {
+                if keyword.to_lowercase().contains(&query) || query.contains(keyword) {
+                    if !results.iter().any(|(s, _)| *s == *section) {
+                        let label: String = match section.as_str() {
+                            "server" => "Server".to_string(),
+                            "http" => "HTTP".to_string(),
+                            "logging" => "Logging".to_string(),
+                            "metrics" => "Metrics".to_string(),
+                            "ratelimits" => "Rate Limits".to_string(),
+                            "bandwidth" => "Bandwidth".to_string(),
+                            "bot" => "Bot Defaults".to_string(),
+                            "upload" => "Upload".to_string(),
+                            "theme" => "Theme".to_string(),
+                            _ => section.clone(),
+                        };
+                        results.push((section.clone(), label));
+                    }
+                }
+            }
+        }
+        results
+    } else {
+        Vec::new()
+    };
+
+    let on_search = {
+        let search_query = search_query.clone();
+        let show_search_results = show_search_results.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+            search_query.set(input.value());
+            show_search_results.set(true);
+        })
+    };
+
+    let on_search_blur = {
+        let show_search_results = show_search_results.clone();
+        Callback::from(move |_| {
+            let show_search_results = show_search_results.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                show_search_results.set(false);
+            });
+        })
+    };
 
     let on_section_click = {
         let active_section = active_section.clone();
+        let show_search_results = show_search_results.clone();
+        let search_query = search_query.clone();
         Callback::from(move |section: String| {
             active_section.set(section);
+            show_search_results.set(false);
+            search_query.set(String::new());
         })
     };
 
@@ -170,6 +270,55 @@ pub fn Settings() -> Html {
                 </div>
             </div>
 
+            <div class="mb-4 relative">
+                <div class="relative">
+                    <input
+                        type="text"
+                        placeholder="Search settings..."
+                        value={(*search_query).clone()}
+                        oninput={on_search}
+                        onblur={on_search_blur}
+                        onfocus={{
+                            let show_search_results = show_search_results.clone();
+                            Callback::from(move |_| {
+                                show_search_results.set(true);
+                            })
+                        }}
+                        class="w-full px-4 py-2 pl-10 bg-tertiary border border-default rounded-lg text-primary focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <svg class="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                if *show_search_results && !search_results.is_empty() {
+                    <div class="absolute z-10 w-full mt-1 bg-secondary border border-default rounded-lg shadow-lg max-h-64 overflow-auto">
+                        { for search_results.iter().map(|(section, label)| {
+                            let section_clone = section.clone();
+                            let label_clone = label.clone();
+                            html! {
+                                <button
+                                    onclick={{
+                                        let section = section_clone.clone();
+                                        let on_section_click = on_section_click.clone();
+                                        Callback::from(move |_| {
+                                            on_section_click.emit(section.clone());
+                                        })
+                                    }}
+                                    class="block w-full text-left px-4 py-2 text-primary hover:bg-tertiary"
+                                >
+                                    { label_clone }
+                                    <span class="text-secondary text-sm ml-2">{ format!("({})", section_clone) }</span>
+                                </button>
+                            }
+                        }) }
+                    </div>
+                } else if *show_search_results && !(*search_query).is_empty() && search_results.is_empty() {
+                    <div class="absolute z-10 w-full mt-1 bg-secondary border border-default rounded-lg shadow-lg">
+                        <div class="px-4 py-2 text-secondary">{ "No results found" }</div>
+                    </div>
+                }
+            </div>
+
             <div class="flex gap-6">
                 <nav class="w-48 flex-shrink-0">
                     <div class="bg-secondary rounded-lg border border-default">
@@ -186,7 +335,7 @@ pub fn Settings() -> Html {
                 </nav>
 
                 <div class="flex-1 bg-secondary rounded-lg border border-default">
-                    <div class="p-6 border-b border-default">
+                    <div class="p-6 border-b border-default flex items-center justify-between">
                         <h2 class="text-lg font-semibold">
                         { match active_section.as_str() {
                             "server" => "Server Configuration",
@@ -201,6 +350,17 @@ pub fn Settings() -> Html {
                             _ => "Server Configuration",
                         }}
                         </h2>
+                        { if let Some(doc) = get_section_doc(active_section.as_str()) {
+                            html! {
+                                <span class="text-secondary text-sm" title={doc.description}>
+                                    <svg class="w-4 h-4 inline-block ml-2 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </span>
+                            }
+                        } else {
+                            html! {}
+                        }}
                     </div>
 
                     <div class="p-6">

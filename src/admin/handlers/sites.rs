@@ -407,3 +407,112 @@ pub async fn update_site_theme(
 
     Ok(Json(response))
 }
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SiteErrorPagesResponse {
+    pub site_id: String,
+    pub inherit: Option<bool>,
+    pub mode: Option<String>,
+    pub custom_directory: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateSiteErrorPagesRequest {
+    #[serde(default)]
+    pub inherit: Option<bool>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub custom_directory: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/sites/{site_id}/error-pages",
+    responses(
+        (status = 200, description = "Site error pages config", body = SiteErrorPagesResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
+pub async fn get_site_error_pages(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(site_id): Path<String>,
+) -> Result<Json<SiteErrorPagesResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+
+    let site = config.sites.get(&site_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    let error_pages = &site.error_pages;
+
+    Ok(Json(SiteErrorPagesResponse {
+        site_id: site_id.clone(),
+        inherit: error_pages.inherit,
+        mode: error_pages.mode.clone(),
+        custom_directory: error_pages.custom_directory.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/sites/{site_id}/error-pages",
+    request_body = UpdateSiteErrorPagesRequest,
+    responses(
+        (status = 200, description = "Site error pages updated", body = SiteErrorPagesResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
+pub async fn update_site_error_pages(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(site_id): Path<String>,
+    Json(req): Json<UpdateSiteErrorPagesRequest>,
+) -> Result<Json<SiteErrorPagesResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    let mut config = state.process.config.write().await;
+
+    let site = config
+        .sites
+        .get_mut(&site_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if req.inherit.is_some() || req.mode.is_some() || req.custom_directory.is_some() {
+        site.error_pages.inherit = req.inherit;
+        site.error_pages.mode = req.mode;
+        site.error_pages.custom_directory = req.custom_directory;
+    }
+
+    let response = SiteErrorPagesResponse {
+        site_id: site_id.clone(),
+        inherit: site.error_pages.inherit,
+        mode: site.error_pages.mode.clone(),
+        custom_directory: site.error_pages.custom_directory.clone(),
+    };
+
+    let site_config = site.clone();
+    drop(config);
+
+    let config_path = {
+        let cfg = state.process.config.read().await;
+        config_path(&cfg.sites_dir, &site_id)
+    };
+    let toml_content = toml::to_string_pretty(&site_config).map_err(|e| {
+        tracing::error!("Failed to serialize site config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    tokio::fs::write(&config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write site config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(response))
+}

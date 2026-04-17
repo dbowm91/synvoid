@@ -5,8 +5,9 @@ use crate::components::layout::Sidebar;
 use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
-    Alerts, Dashboard, Honeypot, Icmp, Logs, Probes, ProcessManagement, RequestLogs, Settings,
-    SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys, Upstreams, Workers,
+    Alerts, Dashboard, Dns, Honeypot, Icmp, Logs, Mesh, Probes, ProcessManagement, RequestLogs,
+    Settings, SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys,
+    Upstreams, Workers,
 };
 use crate::types::UpdateThemeRequest;
 
@@ -32,8 +33,12 @@ pub enum Route {
     TcpUdp,
     #[at("/probes")]
     Probes,
+    #[at("/dns")]
+    Dns,
     #[at("/settings")]
     Settings,
+    #[at("/mesh")]
+    Mesh,
     #[at("/process")]
     ProcessManagement,
     #[at("/tier-keys")]
@@ -107,7 +112,9 @@ fn switch(route: Route) -> Html {
         Route::SiteDetail { id } => html! { <SiteDetail id={id} /> },
         Route::TcpUdp => html! { <TcpUdp /> },
         Route::Probes => html! { <Probes /> },
+        Route::Dns => html! { <Dns /> },
         Route::Settings => html! { <Settings /> },
+        Route::Mesh => html! { <Mesh /> },
         Route::ProcessManagement => html! { <ProcessManagement /> },
         Route::TierKeys => html! { <TierKeys /> },
         Route::Workers => html! { <Workers /> },
