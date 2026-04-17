@@ -8,10 +8,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::mesh::yara_rules::{YaraRuleSubmission, YaraRuleSubmissionStatus};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraStatusResponse {
     pub enabled: bool,
     pub node_id: String,
@@ -26,7 +27,7 @@ pub struct YaraStatusResponse {
 
 const RULES_PREVIEW_LENGTH: usize = 500;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraSubmissionResponse {
     pub submission_id: String,
     pub rules: String,
@@ -84,80 +85,91 @@ impl From<YaraRuleSubmission> for YaraSubmissionResponse {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraSubmissionsListResponse {
     pub submissions: Vec<YaraSubmissionResponse>,
     pub total: usize,
     pub pending_count: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraApprovalRequest {
     pub review_notes: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraRejectionRequest {
     pub review_notes: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraApproveResponse {
     pub success: bool,
     pub version: String,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraRejectResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraBroadcastResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraSyncResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraSubmitRequest {
     pub rules: String,
     pub description: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraSubmitResponse {
     pub success: bool,
     pub submission_id: String,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraApplyRequest {
     pub rules: String,
     pub version: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraApplyResponse {
     pub success: bool,
     pub version: String,
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraDeleteResponse {
     pub success: bool,
     pub message: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/yara/status",
+    responses(
+        (status = 200, description = "YARA rules status", body = YaraStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "YARA manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -185,6 +197,17 @@ pub async fn get_status(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/yara/submissions",
+    responses(
+        (status = 200, description = "List of YARA rule submissions", body = YaraSubmissionsListResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "YARA manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn list_submissions(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -210,6 +233,20 @@ pub async fn list_submissions(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/yara/submissions/{submission_id}",
+    params(
+        ("submission_id" = String, Path, description = "Submission ID")
+    ),
+    responses(
+        (status = 200, description = "YARA rule submission details", body = YaraSubmissionResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Submission not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn get_submission(
     State(state): State<Arc<AdminState>>,
     Path(submission_id): Path<String>,
@@ -228,6 +265,22 @@ pub async fn get_submission(
     Ok(Json(submission.into()))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/yara/submissions/{submission_id}/approve",
+    params(
+        ("submission_id" = String, Path, description = "Submission ID to approve")
+    ),
+    request_body = YaraApprovalRequest,
+    responses(
+        (status = 200, description = "Submission approved", body = YaraApproveResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Submission not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn approve_submission(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -253,6 +306,22 @@ pub async fn approve_submission(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/yara/submissions/{submission_id}/reject",
+    params(
+        ("submission_id" = String, Path, description = "Submission ID to reject")
+    ),
+    request_body = YaraRejectionRequest,
+    responses(
+        (status = 200, description = "Submission rejected", body = YaraRejectResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Submission not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn reject_submission(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -277,6 +346,17 @@ pub async fn reject_submission(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/yara/broadcast",
+    responses(
+        (status = 200, description = "Rules broadcast to mesh", body = YaraBroadcastResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "YARA manager not found or no current version"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn broadcast_rules(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -302,6 +382,17 @@ pub async fn broadcast_rules(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/yara/sync",
+    responses(
+        (status = 200, description = "Sync request sent", body = YaraSyncResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "YARA manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn sync_from_global(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -320,6 +411,19 @@ pub async fn sync_from_global(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/yara/submit",
+    request_body = YaraSubmitRequest,
+    responses(
+        (status = 200, description = "Rules submitted for approval", body = YaraSubmitResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "YARA manager not found"),
+        (status = 400, description = "Invalid rules"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn submit_rules(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -366,6 +470,20 @@ pub async fn submit_rules(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/yara/apply",
+    request_body = YaraApplyRequest,
+    responses(
+        (status = 200, description = "Rules applied directly", body = YaraApplyResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden - not a global node"),
+        (status = 404, description = "YARA manager not found"),
+        (status = 400, description = "Invalid rules"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn apply_rules_direct(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -399,6 +517,21 @@ pub async fn apply_rules_direct(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/yara/submissions/{submission_id}",
+    params(
+        ("submission_id" = String, Path, description = "Submission ID to delete")
+    ),
+    responses(
+        (status = 200, description = "Submission deleted", body = YaraDeleteResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Submission not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "yara"
+)]
 pub async fn delete_submission(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -3,8 +3,9 @@ use super::common::OptionalAuth;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HoneypotStatusResponse {
     pub enabled: bool,
     pub paused: bool,
@@ -13,20 +14,30 @@ pub struct HoneypotStatusResponse {
     pub total_connections: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct HoneypotControlRequest {
     pub command: String,
     pub reason: Option<String>,
     pub duration_secs: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HoneypotControlResponse {
     pub success: bool,
     pub message: String,
     pub status: Option<HoneypotStatusResponse>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/honeypot/status",
+    responses(
+        (status = 200, description = "Honeypot status", body = HoneypotStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "honeypot"
+)]
 pub async fn get_honeypot_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -60,6 +71,19 @@ pub async fn get_honeypot_status(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/honeypot/control",
+    request_body = HoneypotControlRequest,
+    responses(
+        (status = 200, description = "Honeypot control result", body = HoneypotControlResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Honeypot controller not found"),
+        (status = 400, description = "Invalid command"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "honeypot"
+)]
 pub async fn control_honeypot(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

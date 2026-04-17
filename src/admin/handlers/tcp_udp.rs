@@ -7,8 +7,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TcpUdpListener {
     pub id: String,
     pub port: u16,
@@ -18,11 +19,21 @@ pub struct TcpUdpListener {
     pub active_connections: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ListListenersResponse {
     pub listeners: Vec<TcpUdpListener>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tcp-udp/listeners",
+    responses(
+        (status = 200, description = "List of TCP/UDP listeners", body = ListListenersResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "tcp_udp"
+)]
 pub async fn list_listeners(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -48,7 +59,7 @@ pub async fn list_listeners(
     Ok(Json(ListListenersResponse { listeners }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateListenerRequest {
     pub site_id: String,
     pub port: u16,
@@ -56,11 +67,24 @@ pub struct CreateListenerRequest {
     pub upstream: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateListenerResponse {
     pub listener: TcpUdpListener,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/tcp-udp/listeners",
+    request_body = CreateListenerRequest,
+    responses(
+        (status = 200, description = "Listener created", body = CreateListenerResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "tcp_udp"
+)]
 pub async fn create_listener(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -98,6 +122,21 @@ pub async fn create_listener(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/tcp-udp/listeners/{listener_id}",
+    params(
+        ("listener_id" = String, Path, description = "Listener ID to delete")
+    ),
+    responses(
+        (status = 204, description = "Listener deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Listener not found"),
+        (status = 400, description = "Invalid listener ID format"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "tcp_udp"
+)]
 pub async fn delete_listener(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -122,13 +161,23 @@ pub async fn delete_listener(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProtocolInfo {
     pub name: String,
     pub description: String,
     pub supported: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tcp-udp/protocols",
+    responses(
+        (status = 200, description = "List of supported protocols", body = Vec<ProtocolInfo>),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "tcp_udp"
+)]
 pub async fn list_protocols(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

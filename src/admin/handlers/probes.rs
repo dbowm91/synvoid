@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::common::{
     parse_ip, OptionalAuth, PaginatedResponse, PaginationQuery, PAGINATION_LIMITS_DEFAULT,
@@ -60,13 +61,13 @@ fn empty_upstream_error_stats_response() -> Result<Json<UpstreamErrorStatsRespon
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BlockProbesRequest {
     pub ips: Vec<String>,
     pub duration: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProbeResponse {
     pub ip: String,
     pub event_count: u32,
@@ -77,7 +78,7 @@ pub struct ProbeResponse {
     pub recent_endpoints: Vec<ProbeEventResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProbeEventResponse {
     pub endpoint: String,
     pub method: String,
@@ -85,7 +86,7 @@ pub struct ProbeEventResponse {
     pub user_agent: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProbeStatsResponse {
     pub total_records: usize,
     pub active_records: usize,
@@ -93,12 +94,22 @@ pub struct ProbeStatsResponse {
     pub top_endpoints: Vec<ProbeEndpointStatsResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProbeEndpointStatsResponse {
     pub endpoint: String,
     pub count: u32,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes",
+    responses(
+        (status = 200, description = "List of probing IPs", body = PaginatedResponseOfProbeResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn list_probes(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -147,6 +158,20 @@ pub async fn list_probes(
     Ok(Json(PaginatedResponse::new(probes, total, limit, offset)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes/{ip}",
+    params(
+        ("ip" = String, Path, description = "IP address to get probe info for")
+    ),
+    responses(
+        (status = 200, description = "Probe information", body = ProbeResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Probe not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn get_probe(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -185,6 +210,16 @@ pub async fn get_probe(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes/stats",
+    responses(
+        (status = 200, description = "Probe statistics", body = ProbeStatsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn get_probe_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -211,6 +246,20 @@ pub async fn get_probe_stats(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/probes/{ip}",
+    params(
+        ("ip" = String, Path, description = "IP address to delete probe record for")
+    ),
+    responses(
+        (status = 204, description = "Probe record deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Probe not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn delete_probe(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -251,6 +300,18 @@ fn parse_duration(duration: &str) -> u64 {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/probes/block",
+    request_body = BlockProbesRequest,
+    responses(
+        (status = 200, description = "IPs blocked"),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn block_probes(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -293,7 +354,7 @@ pub async fn block_probes(
     })))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SuspiciousWordRecordResponse {
     pub ip: String,
     pub matched_word: String,
@@ -302,25 +363,35 @@ pub struct SuspiciousWordRecordResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SuspiciousWordListResponse {
     pub records: Vec<SuspiciousWordRecordResponse>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SuspiciousWordStatsResponse {
     pub total_ips: usize,
     pub total_matches: u64,
     pub top_words: Vec<SuspiciousWordCountResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SuspiciousWordCountResponse {
     pub word: String,
     pub count: u32,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes/suspicious-words",
+    responses(
+        (status = 200, description = "List of suspicious word records", body = SuspiciousWordListResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn list_suspicious_words(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -357,6 +428,16 @@ pub async fn list_suspicious_words(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes/suspicious-words/stats",
+    responses(
+        (status = 200, description = "Suspicious word statistics", body = SuspiciousWordStatsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn get_suspicious_word_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -382,6 +463,20 @@ pub async fn get_suspicious_word_stats(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/probes/suspicious-words/{ip}",
+    params(
+        ("ip" = String, Path, description = "IP address to delete suspicious word record for")
+    ),
+    responses(
+        (status = 204, description = "Suspicious word record deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Record not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn delete_suspicious_word(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -400,7 +495,7 @@ pub async fn delete_suspicious_word(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpstreamErrorRecordResponse {
     pub ip: String,
     pub endpoint: String,
@@ -408,25 +503,35 @@ pub struct UpstreamErrorRecordResponse {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpstreamErrorListResponse {
     pub records: Vec<UpstreamErrorRecordResponse>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpstreamErrorStatsResponse {
     pub total_ips: usize,
     pub total_errors: u64,
     pub top_endpoints: Vec<UpstreamErrorEndpointCountResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpstreamErrorEndpointCountResponse {
     pub endpoint: String,
     pub count: u32,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes/upstream-errors",
+    responses(
+        (status = 200, description = "List of upstream error records", body = UpstreamErrorListResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn list_upstream_errors(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -462,6 +567,16 @@ pub async fn list_upstream_errors(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/probes/upstream-errors/stats",
+    responses(
+        (status = 200, description = "Upstream error statistics", body = UpstreamErrorStatsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn get_upstream_error_stats(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -487,6 +602,20 @@ pub async fn get_upstream_error_stats(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/probes/upstream-errors/{ip}",
+    params(
+        ("ip" = String, Path, description = "IP address to delete upstream error record for")
+    ),
+    responses(
+        (status = 204, description = "Upstream error record deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Record not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "probes"
+)]
 pub async fn delete_upstream_error(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

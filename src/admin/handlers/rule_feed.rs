@@ -3,8 +3,9 @@ use super::common::{OptionalAuth, StatusResponse};
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RuleFeedStatusResponse {
     pub enabled: bool,
     pub current_version: Option<String>,
@@ -15,20 +16,31 @@ pub struct RuleFeedStatusResponse {
     pub url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RuleFeedCheckResponse {
     pub updated: bool,
     pub new_version: Option<String>,
     pub changelog: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RuleFeedApplyResponse {
     pub success: bool,
     pub version: String,
     pub message: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rule-feed/status",
+    responses(
+        (status = 200, description = "Rule feed status", body = RuleFeedStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Rule feed manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "rule_feed"
+)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -52,6 +64,17 @@ pub async fn get_status(
     Ok(Json(status))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/rule-feed/check",
+    responses(
+        (status = 200, description = "Rule feed check result", body = RuleFeedCheckResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Rule feed manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "rule_feed"
+)]
 pub async fn check_for_updates(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -89,6 +112,17 @@ pub async fn check_for_updates(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/rule-feed/apply",
+    responses(
+        (status = 200, description = "Apply pending rules", body = RuleFeedApplyResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Rule feed manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "rule_feed"
+)]
 pub async fn apply_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -123,6 +157,17 @@ pub async fn apply_pending(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/rule-feed/discard",
+    responses(
+        (status = 200, description = "Discard pending rules", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Rule feed manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "rule_feed"
+)]
 pub async fn discard_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

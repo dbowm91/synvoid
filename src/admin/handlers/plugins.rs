@@ -8,21 +8,22 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PluginStatus {
     pub plugins: Vec<PluginStatusInfo>,
     pub reload_events: Vec<ReloadEvent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PluginStatusInfo {
     pub name: String,
     pub path: Option<String>,
     pub plugin_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WasmModuleInfo {
     pub name: String,
     pub version: Option<String>,
@@ -30,12 +31,22 @@ pub struct WasmModuleInfo {
     pub distributed_to: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WasmModulesResponse {
     pub modules: Vec<WasmModuleInfo>,
     pub total: usize,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/plugins/metrics",
+    responses(
+        (status = 200, description = "All plugins metrics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "plugins"
+)]
 pub async fn get_all_plugins_metrics(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -62,6 +73,20 @@ pub async fn get_all_plugins_metrics(
     Ok(Json(serde_json::json!({ "plugins": result })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/plugins/{plugin_name}/metrics",
+    params(
+        ("plugin_name" = String, Path, description = "Plugin name")
+    ),
+    responses(
+        (status = 200, description = "Plugin metrics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Plugin not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "plugins"
+)]
 pub async fn get_plugin_metrics(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -91,6 +116,16 @@ pub async fn get_plugin_metrics(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/plugins/status",
+    responses(
+        (status = 200, description = "Plugins status", body = PluginStatus),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "plugins"
+)]
 pub async fn get_plugins_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -124,6 +159,21 @@ pub async fn get_plugins_status(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/plugins/{plugin_name}/reload",
+    params(
+        ("plugin_name" = String, Path, description = "Plugin name to reload")
+    ),
+    responses(
+        (status = 200, description = "Plugin reloaded"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Plugin not found"),
+        (status = 503, description = "Plugin manager unavailable"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "plugins"
+)]
 pub async fn reload_plugin(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -163,6 +213,16 @@ pub async fn reload_plugin(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/plugins/mesh/modules",
+    responses(
+        (status = 200, description = "Mesh WASM modules", body = WasmModulesResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "plugins"
+)]
 pub async fn get_mesh_wasm_modules(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

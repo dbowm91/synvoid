@@ -2,10 +2,11 @@ use super::super::state::AdminState;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::common::OptionalAuth;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IcmpStatusResponse {
     pub enabled: bool,
     pub status: String,
@@ -13,7 +14,7 @@ pub struct IcmpStatusResponse {
     pub stats: Option<IcmpStats>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IcmpStats {
     pub packets_blocked_v4: u64,
     pub packets_blocked_v6: u64,
@@ -23,34 +24,44 @@ pub struct IcmpStats {
     pub rate_limited_v6: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IcmpConfigResponse {
     pub config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateIcmpConfigRequest {
     pub _config: serde_json::Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IcmpEnableResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IcmpBackend {
     pub name: String,
     pub available: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IcmpBackendsResponse {
     pub backends: Vec<IcmpBackend>,
     pub current_backend: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/icmp/status",
+    responses(
+        (status = 200, description = "ICMP filter status", body = IcmpStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "icmp"
+)]
 pub async fn get_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -119,6 +130,16 @@ pub async fn get_status(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/icmp/config",
+    responses(
+        (status = 200, description = "ICMP filter configuration", body = IcmpConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "icmp"
+)]
 pub async fn get_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -141,6 +162,18 @@ pub async fn get_config(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/icmp/config",
+    request_body = UpdateIcmpConfigRequest,
+    responses(
+        (status = 200, description = "ICMP filter config updated", body = IcmpEnableResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "icmp"
+)]
 pub async fn update_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -207,6 +240,16 @@ pub async fn update_config(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/icmp/enable",
+    responses(
+        (status = 200, description = "ICMP filter enabled", body = IcmpEnableResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "icmp"
+)]
 pub async fn enable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -253,6 +296,16 @@ pub async fn enable(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/icmp/disable",
+    responses(
+        (status = 200, description = "ICMP filter disabled", body = IcmpEnableResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "icmp"
+)]
 pub async fn disable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -298,6 +351,16 @@ pub async fn disable(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/icmp/backends",
+    responses(
+        (status = 200, description = "List of ICMP filter backends", body = IcmpBackendsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "icmp"
+)]
 pub async fn list_backends(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,

@@ -4,12 +4,24 @@ use crate::admin::state::AdminState;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AlertConfigResponse {
     pub config: serde_json::Value,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/alerting/config",
+    responses(
+        (status = 200, description = "Alert configuration", body = AlertConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Alert manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerting"
+)]
 pub async fn get_alert_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -25,11 +37,24 @@ pub async fn get_alert_config(
     Ok(Json(AlertConfigResponse { config: json }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateAlertConfigRequest {
     pub config: serde_json::Value,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/alerting/config",
+    request_body = UpdateAlertConfigRequest,
+    responses(
+        (status = 200, description = "Alert configuration updated", body = AlertConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Alert manager not found"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerting"
+)]
 pub async fn update_alert_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -48,12 +73,24 @@ pub async fn update_alert_config(
     Ok(Json(AlertConfigResponse { config: req.config }))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct TestAlertResponse {
     pub success: bool,
     pub message: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/alerting/test-webhook",
+    responses(
+        (status = 200, description = "Test webhook result", body = TestAlertResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Alert manager not found"),
+        (status = 400, description = "Webhook not configured"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerting"
+)]
 pub async fn test_webhook(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
