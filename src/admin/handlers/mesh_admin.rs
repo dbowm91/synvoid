@@ -11,8 +11,9 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::net::IpAddr;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AuditReportRequest {
     pub mesh_id: String,
     pub edge_node_id: String,
@@ -25,7 +26,7 @@ pub struct AuditReportRequest {
     pub audit_results: AuditResultsDto,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AuditResultsDto {
     pub success: bool,
     pub passed: bool,
@@ -33,7 +34,7 @@ pub struct AuditResultsDto {
     pub summary: AuditSummaryDto,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct NodeProbeResultDto {
     #[serde(rename = "nodeUrl")]
     pub node_url: String,
@@ -47,7 +48,7 @@ pub struct NodeProbeResultDto {
     pub latency_ms: Option<f64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AuditSummaryDto {
     pub total: usize,
     pub passed: usize,
@@ -55,7 +56,7 @@ pub struct AuditSummaryDto {
     pub timestamp: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuditReportResponseDto {
     pub accepted: bool,
     pub message: String,
@@ -78,7 +79,7 @@ impl From<AuditReportResponse> for AuditReportResponseDto {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, ToSchema)]
 pub struct MeshNodeInfo {
     pub node_id: String,
     pub role: String,
@@ -96,7 +97,7 @@ pub struct MeshNodeInfo {
     pub threats_submitted: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MeshNodeListResponse {
     pub nodes: Vec<MeshNodeInfo>,
     pub total: usize,
@@ -105,7 +106,7 @@ pub struct MeshNodeListResponse {
     pub connected_count: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BanIpRequest {
     pub ip: String,
     pub reason: String,
@@ -113,20 +114,20 @@ pub struct BanIpRequest {
     pub site_scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BanMeshIdRequest {
     pub mesh_id: String,
     pub reason: String,
     pub duration_seconds: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UnbanRequest {
     pub identifier: String,
     pub ban_type: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct BanRecord {
     pub id: String,
     pub ban_type: String,
@@ -138,13 +139,13 @@ pub struct BanRecord {
     pub site_scope: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct BanListResponse {
     pub bans: Vec<BanRecord>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MeshAdminStatusResponse {
     pub is_global_node: bool,
     pub node_id: Option<String>,
@@ -159,12 +160,12 @@ pub struct MeshAdminStatusResponse {
     pub quic_0rtt_warning: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct DeriveSigningKeyRequest {
     pub genesis_key_base64: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeriveSigningKeyResponse {
     pub success: bool,
     pub signing_public_key: Option<String>,
@@ -209,6 +210,16 @@ fn role_to_string(role: crate::mesh::config::MeshNodeRole) -> String {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/mesh/nodes",
+    responses(
+        (status = 200, description = "List of mesh nodes", body = MeshNodeListResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn list_mesh_nodes(
     State(state): State<Arc<AdminState>>,
     Query(query): Query<PaginationQuery>,
@@ -283,6 +294,20 @@ pub async fn list_mesh_nodes(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/mesh/nodes/{node_id}",
+    params(
+        ("node_id" = String, Path, description = "Node ID")
+    ),
+    responses(
+        (status = 200, description = "Mesh node details", body = MeshNodeInfo),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Node not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn get_mesh_node(
     State(state): State<Arc<AdminState>>,
     Path(node_id): Path<String>,
@@ -324,6 +349,18 @@ pub async fn get_mesh_node(
     Err(StatusCode::NOT_FOUND)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/mesh/ban/ip",
+    request_body = BanIpRequest,
+    responses(
+        (status = 200, description = "IP banned successfully"),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid IP address"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn ban_ip(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -372,6 +409,17 @@ pub async fn ban_ip(
     Err(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/mesh/ban/mesh-id",
+    request_body = BanMeshIdRequest,
+    responses(
+        (status = 200, description = "Mesh ID banned successfully"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn ban_mesh_id(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -423,6 +471,20 @@ pub async fn ban_mesh_id(
     Err(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/mesh/ban",
+    params(
+        ("identifier" = String, Query, description = "IP address or mesh ID to unban"),
+        ("ban_type" = String, Query, description = "Type of ban: 'ip' or 'mesh_id'")
+    ),
+    responses(
+        (status = 200, description = "Unbanned successfully"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn unban(
     State(state): State<Arc<AdminState>>,
     Query(params): Query<UnbanRequest>,
@@ -464,6 +526,16 @@ pub async fn unban(
     Err(StatusCode::NOT_FOUND)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/mesh/bans",
+    responses(
+        (status = 200, description = "List of bans", body = BanListResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn list_bans(
     State(state): State<Arc<AdminState>>,
     Query(query): Query<PaginationQuery>,
@@ -513,6 +585,16 @@ pub async fn list_bans(
     Ok(Json(BanListResponse { bans, total }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/mesh/status",
+    responses(
+        (status = 200, description = "Mesh status", body = MeshAdminStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn get_mesh_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -588,6 +670,17 @@ pub async fn get_mesh_status(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/mesh/derive-signing-key",
+    request_body = DeriveSigningKeyRequest,
+    responses(
+        (status = 200, description = "Signing key derived", body = DeriveSigningKeyResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn derive_signing_key(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -647,6 +740,17 @@ pub async fn derive_signing_key(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/mesh/audit/report",
+    request_body = AuditReportRequest,
+    responses(
+        (status = 200, description = "Audit report submitted", body = AuditReportResponseDto),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn submit_audit_report(
     State(state): State<Arc<AdminState>>,
     Json(req): Json<AuditReportRequest>,
@@ -701,7 +805,7 @@ pub async fn submit_audit_report(
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SignatureFailureReport {
     pub timestamp: i64,
     pub session_id: Option<String>,
@@ -713,13 +817,24 @@ pub struct SignatureFailureReport {
     pub mesh_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SignatureFailureResponse {
     pub accepted: bool,
     pub message: String,
     pub action_taken: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/mesh/report/signature-failure",
+    request_body = SignatureFailureReport,
+    responses(
+        (status = 200, description = "Signature failure reported", body = SignatureFailureResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
 pub async fn report_signature_failure(
     State(state): State<Arc<AdminState>>,
     Json(report): Json<SignatureFailureReport>,

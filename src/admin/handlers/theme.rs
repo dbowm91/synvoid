@@ -1,12 +1,13 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::super::state::AdminState;
 use super::common::OptionalAuth;
 use crate::theme::{ThemeConfig, ThemeDefaults, ThemePreset, ThemeRenderer};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ThemeResponse {
     pub preset: String,
     pub mode: String,
@@ -15,13 +16,13 @@ pub struct ThemeResponse {
     pub presets_available: Vec<ThemePresetInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ThemeColorsResponse {
     pub dark: DarkColors,
     pub light: LightColors,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DarkColors {
     pub background: String,
     pub surface: String,
@@ -33,7 +34,7 @@ pub struct DarkColors {
     pub accent_secondary: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct LightColors {
     pub background: String,
     pub surface: String,
@@ -45,13 +46,13 @@ pub struct LightColors {
     pub accent_secondary: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ThemePresetInfo {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateThemeRequest {
     #[serde(default)]
     pub preset: Option<String>,
@@ -118,6 +119,16 @@ fn build_theme_response(theme: &ThemeDefaults) -> ThemeResponse {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/theme",
+    responses(
+        (status = 200, description = "Theme configuration", body = ThemeResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "theme"
+)]
 pub async fn get_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -127,6 +138,17 @@ pub async fn get_theme(
     Ok(Json(build_theme_response(theme)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/theme",
+    request_body = UpdateThemeRequest,
+    responses(
+        (status = 200, description = "Theme updated", body = ThemeResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "theme"
+)]
 pub async fn update_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -173,6 +195,16 @@ pub async fn update_theme(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/theme/css",
+    responses(
+        (status = 200, description = "Theme CSS", body = String),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "theme"
+)]
 pub async fn get_theme_css(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -183,6 +215,16 @@ pub async fn get_theme_css(
     Ok(renderer.generate_css())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/theme/presets",
+    responses(
+        (status = 200, description = "Available theme presets", body = Vec<ThemePresetInfo>),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "theme"
+)]
 pub async fn get_theme_presets(
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<ThemePresetInfo>>, StatusCode> {

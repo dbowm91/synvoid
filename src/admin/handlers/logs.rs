@@ -6,10 +6,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::common::{ErrorPage, OptionalAuth};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 // SAFETY_REASON: Future use - query parameters for logs endpoint
 #[allow(dead_code)]
 pub struct LogsQuery {
@@ -20,7 +21,7 @@ pub struct LogsQuery {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,
@@ -31,13 +32,23 @@ pub struct LogEntry {
     pub status: Option<u16>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct LogsResponse {
     pub entries: Vec<LogEntry>,
     pub total: usize,
     pub has_more: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/logs",
+    responses(
+        (status = 200, description = "Log entries", body = LogsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "logs"
+)]
 pub async fn get_logs(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -50,7 +61,7 @@ pub async fn get_logs(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorPageResponse {
     pub code: u16,
     pub name: String,
@@ -58,6 +69,16 @@ pub struct ErrorPageResponse {
     pub html_preview: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/error-pages",
+    responses(
+        (status = 200, description = "List of error page templates", body = Vec<ErrorPageResponse>),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "logs"
+)]
 pub async fn list_error_pages(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -75,6 +96,20 @@ pub async fn list_error_pages(
     Ok(Json(error_pages))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/error-pages/{code}",
+    params(
+        ("code" = u16, Path, description = "HTTP status code (e.g., 404, 500)")
+    ),
+    responses(
+        (status = 200, description = "Error page template", body = ErrorPageResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Error page not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "logs"
+)]
 pub async fn get_error_page(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -90,7 +125,7 @@ pub async fn get_error_page(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateErrorPageRequest {
     pub title: Option<String>,
     // SAFETY_REASON: Future use - message field for error page updates
@@ -99,6 +134,21 @@ pub struct UpdateErrorPageRequest {
     pub content: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/error-pages/{code}",
+    params(
+        ("code" = u16, Path, description = "HTTP status code (e.g., 404, 500)")
+    ),
+    request_body = UpdateErrorPageRequest,
+    responses(
+        (status = 200, description = "Error page updated", body = ErrorPageResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Error page not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "logs"
+)]
 pub async fn update_error_page(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -153,7 +203,7 @@ pub async fn update_error_page(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AuditLogsQuery {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
@@ -161,13 +211,23 @@ pub struct AuditLogsQuery {
     pub resource: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuditLogsResponse {
     pub logs: Vec<super::super::audit::AuditLog>,
     pub total: usize,
     pub has_more: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audit-logs",
+    responses(
+        (status = 200, description = "Audit log entries", body = AuditLogsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "logs"
+)]
 pub async fn get_audit_logs(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
