@@ -5,14 +5,25 @@ use axum::{extract::State, http::StatusCode, Json};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MainConfigResponse {
-    pub config: crate::config::main::MainConfig,
+    pub config: serde_json::Value,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/main",
+    responses(
+        (status = 200, description = "Main configuration", body = MainConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_main_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -20,33 +31,44 @@ pub async fn get_main_config(
     let config = state.process.config.read().await;
 
     Ok(Json(MainConfigResponse {
-        config: config.main.clone(),
+        config: serde_json::to_value(&config.main).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMainConfigRequest {
-    pub config: crate::config::main::MainConfig,
+    pub config: serde_json::Value,
 }
 
-pub async fn get_config_schema(_auth: OptionalAuth) -> Result<Json<serde_json::Value>, StatusCode> {
-    let schema = schema_for!(crate::config::main::MainConfig);
-    Ok(Json(
-        serde_json::to_value(schema).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-    ))
-}
-
+#[utoipa::path(
+    put,
+    path = "/api/config/main",
+    request_body = UpdateMainConfigRequest,
+    responses(
+        (status = 200, description = "Configuration updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_main_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateMainConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    req.config.validate().map_err(|e| {
+    let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config.clone())
+        .map_err(|e| {
+            tracing::error!("Failed to parse config: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    main_config.validate().map_err(|e| {
         tracing::error!("Config validation failed: {}", e);
         StatusCode::BAD_REQUEST
     })?;
 
-    let toml_content = toml::to_string_pretty(&req.config).map_err(|e| {
+    let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -68,7 +90,6 @@ pub async fn update_main_config(
             })?;
     }
 
-    // Update in-memory config and broadcast to workers
     {
         let mut cfg = state.process.config.write().await;
         if cfg.load_main(&main_config_path).is_ok() {
@@ -76,7 +97,6 @@ pub async fn update_main_config(
         }
     }
 
-    // Broadcast to workers if process manager is available
     if let Some(ref pm) = state.process.process_manager {
         pm.broadcast_config_reload(config_dir).await;
     }
@@ -92,11 +112,36 @@ pub async fn update_main_config(
         true,
     ));
 
-    Ok(Json(StatusResponse::success(
-        "Configuration updated and reloaded to workers.",
-    )))
+    Ok(Json(StatusResponse::success("Configuration updated and reloaded to workers.")))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/schema",
+    responses(
+        (status = 200, description = "JSON Schema of configuration"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_config_schema(_auth: OptionalAuth) -> Result<Json<serde_json::Value>, StatusCode> {
+    let schema = schema_for!(crate::config::main::MainConfig);
+    Ok(Json(
+        serde_json::to_value(schema).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/config/reload",
+    responses(
+        (status = 200, description = "Configuration reloaded", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -182,11 +227,23 @@ pub async fn reload_config(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetLogLevelRequest {
     pub level: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/log-level",
+    request_body = SetLogLevelRequest,
+    responses(
+        (status = 200, description = "Log level set", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid log level"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn set_log_level(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -204,6 +261,16 @@ pub async fn set_log_level(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/log-level",
+    responses(
+        (status = 200, description = "Current log level", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_log_level(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -215,6 +282,16 @@ pub async fn get_log_level(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/export",
+    responses(
+        (status = 200, description = "Exported configuration as TOML"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn export_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -228,7 +305,7 @@ pub async fn export_config(
     Ok(toml_content)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ImportConfigRequest {
     pub config: String,
 }
@@ -304,6 +381,18 @@ fn validate_config_paths(content: &str) -> Result<(), String> {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/config/import",
+    request_body = ImportConfigRequest,
+    responses(
+        (status = 200, description = "Configuration imported", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn import_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -362,18 +451,29 @@ pub async fn import_config(
 
 use crate::utils::check_regex_complexity;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RegexCheckResult {
     pub pattern: String,
     pub safe: bool,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CheckRegexRequest {
     pub pattern: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/config/check-regex",
+    request_body = CheckRegexRequest,
+    responses(
+        (status = 200, description = "Regex check result", body = RegexCheckResult),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn check_regex(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -398,6 +498,16 @@ pub struct UpdateOverseerConfigRequest {
     pub config: crate::config::OverseerConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/overseer",
+    responses(
+        (status = 200, description = "Overseer configuration", body = OverseerConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_overseer_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -408,6 +518,18 @@ pub async fn get_overseer_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/overseer",
+    request_body = UpdateOverseerConfigRequest,
+    responses(
+        (status = 200, description = "Overseer config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_overseer_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -469,6 +591,16 @@ pub struct UpdateProcessManagerConfigRequest {
     pub config: crate::config::ProcessManagerConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/process-manager",
+    responses(
+        (status = 200, description = "Process manager configuration", body = ProcessManagerConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_process_manager_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -485,6 +617,18 @@ pub async fn get_process_manager_config(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/process-manager",
+    request_body = UpdateProcessManagerConfigRequest,
+    responses(
+        (status = 200, description = "Process manager config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_process_manager_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -550,6 +694,16 @@ pub struct UpdateSupervisorConfigRequest {
     pub config: crate::config::SupervisorConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/supervisor",
+    responses(
+        (status = 200, description = "Supervisor configuration", body = SupervisorConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_supervisor_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -560,6 +714,18 @@ pub async fn get_supervisor_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/supervisor",
+    request_body = UpdateSupervisorConfigRequest,
+    responses(
+        (status = 200, description = "Supervisor config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_supervisor_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -645,6 +811,16 @@ pub struct UpdateTlsConfigRequest {
     pub config: crate::config::tls::TlsConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/tls",
+    responses(
+        (status = 200, description = "TLS configuration", body = TlsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_tls_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -655,6 +831,18 @@ pub async fn get_tls_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/tls",
+    request_body = UpdateTlsConfigRequest,
+    responses(
+        (status = 200, description = "TLS config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_tls_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -681,6 +869,16 @@ pub struct UpdateHttpConfigRequest {
     pub config: crate::config::http::HttpConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/http",
+    responses(
+        (status = 200, description = "HTTP configuration", body = HttpConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_http_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -691,6 +889,18 @@ pub async fn get_http_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/http",
+    request_body = UpdateHttpConfigRequest,
+    responses(
+        (status = 200, description = "HTTP config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_http_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -717,6 +927,16 @@ pub struct UpdateSecurityConfigRequest {
     pub config: crate::config::security::MainSecurityConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/security",
+    responses(
+        (status = 200, description = "Security configuration", body = SecurityConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_security_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -727,6 +947,18 @@ pub async fn get_security_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/security",
+    request_body = UpdateSecurityConfigRequest,
+    responses(
+        (status = 200, description = "Security config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_security_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -753,6 +985,16 @@ pub struct UpdateTunnelConfigRequest {
     pub config: crate::config::tunnel::TunnelConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/tunnel",
+    responses(
+        (status = 200, description = "Tunnel configuration", body = TunnelConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_tunnel_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -763,6 +1005,18 @@ pub async fn get_tunnel_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/tunnel",
+    request_body = UpdateTunnelConfigRequest,
+    responses(
+        (status = 200, description = "Tunnel config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_tunnel_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -789,6 +1043,16 @@ pub struct UpdatePluginsConfigRequest {
     pub config: crate::config::plugins::PluginConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/plugins",
+    responses(
+        (status = 200, description = "Plugins configuration", body = PluginsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_plugins_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -799,6 +1063,18 @@ pub async fn get_plugins_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/plugins",
+    request_body = UpdatePluginsConfigRequest,
+    responses(
+        (status = 200, description = "Plugins config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_plugins_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -825,6 +1101,16 @@ pub struct UpdateLoggingConfigRequest {
     pub config: crate::config::logging::LoggingConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/logging",
+    responses(
+        (status = 200, description = "Logging configuration", body = LoggingConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_logging_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -835,6 +1121,18 @@ pub async fn get_logging_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/logging",
+    request_body = UpdateLoggingConfigRequest,
+    responses(
+        (status = 200, description = "Logging config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_logging_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -861,6 +1159,16 @@ pub struct UpdateTrafficShapingConfigRequest {
     pub config: crate::config::traffic::TrafficShapingConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/traffic-shaping",
+    responses(
+        (status = 200, description = "Traffic shaping configuration", body = TrafficShapingConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_traffic_shaping_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -871,6 +1179,18 @@ pub async fn get_traffic_shaping_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/traffic-shaping",
+    request_body = UpdateTrafficShapingConfigRequest,
+    responses(
+        (status = 200, description = "Traffic shaping config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_traffic_shaping_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -899,6 +1219,16 @@ pub struct UpdateThreatLevelConfigRequest {
     pub config: crate::config::protection::ThreatLevelConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/threat-level",
+    responses(
+        (status = 200, description = "Threat level configuration", body = ThreatLevelConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_threat_level_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -909,6 +1239,18 @@ pub async fn get_threat_level_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/threat-level",
+    request_body = UpdateThreatLevelConfigRequest,
+    responses(
+        (status = 200, description = "Threat level config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_threat_level_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -937,6 +1279,16 @@ pub struct UpdateIpFeedsConfigRequest {
     pub config: crate::config::protection::IpFeedConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/ip-feeds",
+    responses(
+        (status = 200, description = "IP feeds configuration", body = IpFeedsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_ip_feeds_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -947,6 +1299,18 @@ pub async fn get_ip_feeds_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/ip-feeds",
+    request_body = UpdateIpFeedsConfigRequest,
+    responses(
+        (status = 200, description = "IP feeds config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_ip_feeds_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -976,6 +1340,16 @@ pub struct UpdateDnsConfigRequest {
 }
 
 #[cfg(feature = "dns")]
+#[utoipa::path(
+    get,
+    path = "/api/config/dns",
+    responses(
+        (status = 200, description = "DNS configuration", body = DnsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_dns_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -987,6 +1361,18 @@ pub async fn get_dns_config(
 }
 
 #[cfg(feature = "dns")]
+#[utoipa::path(
+    put,
+    path = "/api/config/dns",
+    request_body = UpdateDnsConfigRequest,
+    responses(
+        (status = 200, description = "DNS config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_dns_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1019,6 +1405,16 @@ pub struct UpdateRateLimitsConfigRequest {
     pub defaults: Option<crate::config::defaults::RateLimitDefaults>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/rate-limits",
+    responses(
+        (status = 200, description = "Rate limits configuration", body = RateLimitsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_rate_limits_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1032,6 +1428,18 @@ pub async fn get_rate_limits_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/rate-limits",
+    request_body = UpdateRateLimitsConfigRequest,
+    responses(
+        (status = 200, description = "Rate limits config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_rate_limits_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1071,6 +1479,16 @@ pub struct UpdateBotDetectionConfigRequest {
     pub config: crate::config::defaults::BotDefaults,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/bot-detection",
+    responses(
+        (status = 200, description = "Bot detection configuration", body = BotDetectionConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_bot_detection_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1081,6 +1499,18 @@ pub async fn get_bot_detection_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/bot-detection",
+    request_body = UpdateBotDetectionConfigRequest,
+    responses(
+        (status = 200, description = "Bot detection config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_bot_detection_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1111,6 +1541,16 @@ pub struct UpdateMeshConfigRequest {
     pub config: Option<crate::config::mesh::MeshConfig>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/mesh",
+    responses(
+        (status = 200, description = "Mesh configuration", body = MeshConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn get_mesh_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1121,6 +1561,18 @@ pub async fn get_mesh_config(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config/mesh",
+    request_body = UpdateMeshConfigRequest,
+    responses(
+        (status = 200, description = "Mesh config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn update_mesh_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1150,6 +1602,17 @@ pub struct ValidateConfigResponse {
     pub errors: Vec<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/config/validate",
+    request_body = ValidateConfigRequest,
+    responses(
+        (status = 200, description = "Configuration validation result", body = ValidateConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
 pub async fn validate_config(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
