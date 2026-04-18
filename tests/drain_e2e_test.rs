@@ -1,7 +1,6 @@
 #[cfg(unix)]
 mod drain_e2e_tests {
-    use maluwaf::process::ipc::{IpcEndpoint, IpcListener};
-    use maluwaf::process::{Message, WorkerId};
+    use maluwaf::process::{IpcEndpoint, IpcListener, Message, WorkerId};
     use tempfile::TempDir;
 
     fn temp_endpoint(temp_dir: &TempDir, name: &str) -> IpcEndpoint {
@@ -184,12 +183,8 @@ mod drain_e2e_tests {
             match drain {
                 Message::WorkerDrain {
                     id,
-                    timeout_secs: 120,
+                    timeout_secs,
                 } => {
-                    assert_eq!(id, WorkerId(3));
-                    assert_eq!(timeout_secs, 120);
-                }
-                Message::WorkerDrain { id, timeout_secs } => {
                     assert_eq!(id, WorkerId(3));
                     assert_eq!(timeout_secs, 120);
                 }
