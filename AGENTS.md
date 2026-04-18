@@ -150,8 +150,9 @@ Key features that affect testing:
 - `dns` - DNS server functionality (optional, conditionally compiled)
 - `socket-handoff` - Socket transfer between processes
 - `post-quantum` - Post-quantum cryptography
-- `wireguard` - WireGuard VPN support
 - Serverless functions use WASM (wasmtime), not Deno
+
+**Note**: WireGuard transport has been removed from the codebase.
 
 ## Common Patterns
 
@@ -770,7 +771,47 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 **Location**: `plans/plan.md`
 
-The plan file tracks remaining deferred items only. All critical security fixes, performance improvements, WASM enhancements, honeypot fixes, edge transform fixes, and test coverage have been completed as of 2026-04-18.
+This consolidated plan contains all remaining deferred items organized into waves for parallel implementation. All critical security fixes, performance improvements, and feature work has been completed as of 2026-04-18.
+
+### Consolidated Plan Structure
+
+The plan is organized into three main waves that can be executed in parallel:
+
+| Wave | Content | Parallelizable |
+|------|---------|----------------|
+| Wave 1 | Security P0-P2 (Critical/High vulnerabilities) | Yes - 4 sub-agents |
+| Wave 2 | Performance, Mesh & WASM improvements | Yes - 4 sub-agents |
+| Wave 3 | Infrastructure & Polish (Admin UI, Docs, Testing, Dependencies) | Yes - 6 sub-agents |
+
+### Sub-agent Assignment Best Practices
+
+When assigning work from the plan to sub-agents:
+
+1. **Wave 1 Security** can split across 4 parallel agents:
+   - Agent 1: P0-1 through P0-5 (Auth/Admin security)
+   - Agent 2: P0-6 through P0-10 (Mesh/DNS security)
+   - Agent 3: P0-11 through P0-14, P1-1 through P1-5 (IPC/RL security)
+   - Agent 4: P1-6 through P1-18 (Remaining high priority)
+
+2. **Wave 2 Performance** can split across 4 parallel agents:
+   - Agent 5: P-C0 through P-C3 (Critical performance)
+   - Agent 6: R1, R2, R3 (Reverse proxy scalability)
+   - Agent 7: P-H1 through P-H6 (High priority performance)
+   - Agent 8: WASM improvements (W1-W7, DS1-DS5)
+
+3. **Wave 3 Infrastructure** can split across 6 parallel agents:
+   - Agent 9: Edge caching (C1-C4), YARA/ThreatIntel (Y1-Y5, H1-H4)
+   - Agent 10: Admin UI improvements (A1-A5, O1-O2)
+   - Agent 11: Testing fixes (T1-T5)
+   - Agent 12: Documentation (D1-D8)
+   - Agent 13: Web stack (S1-S5, P1-P2, F1, G1-G2, Web4-*, Web5-*)
+   - Agent 14: Dependency security (DS-1 through DS-4)
+   - Agent 15: Code quality (CQ1-CQ4)
+
+**Wave organization for sub-agent parallelization**:
+- **Wave 1**: Security P0-P2 (Critical/High priority)
+- **Wave 2**: Performance, Mesh & WASM improvements
+- **Wave 3**: Infrastructure & Polish
 
 **Remaining deferred items** (as of 2026-04-18):
 - G1: Full process tree testing (infrastructure complexity)
