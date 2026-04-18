@@ -157,7 +157,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **W10** | MEDIUM | WASM | PluginManager and ServerlessManager use separate WASM runtimes | `src/plugin/mod.rs` | ✅ COMPLETED |
 | **H2** | MEDIUM | Honeypot | Port honeypot re-announce only runs for global nodes | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **H3** | LOW | Honeypot | Standalone mode calls unnecessary mesh publishing | `src/worker/unified_server.rs` | ✅ COMPLETED |
-| **T2** | HIGH | Testing | ThreatIntel publication/sync tests | `tests/dht_integration_test.rs` | ⏸️ DEFERRED |
+| **T2** | HIGH | Testing | ThreatIntel publication/sync tests | `tests/dht_integration_test.rs` | ✅ COMPLETED |
 | **T4** | MEDIUM | Testing | WAF detection integration tests | `tests/integration_test.rs` | ⏸️ DEFERRED |
 | **P3.1** | MEDIUM | Testing | ProxyCache clone rebuilds host index | `src/proxy_cache/store.rs` | ✅ COMPLETED |
 | **G1** | HIGH | Testing | Full process tree not tested | `tests/process_spawn_test.rs` | ⏸️ DEFERRED |
@@ -166,7 +166,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **G4** | MEDIUM | Testing | Master IPC loop not tested | `src/master/ipc.rs`, `tests/ipc_test.rs` | ✅ COMPLETED |
 | **G5** | MEDIUM | Testing | Static worker not tested | `src/worker/mod.rs` | ✅ COMPLETED |
 | **G6** | MEDIUM | Testing | Drain protocol not E2E tested | `tests/drain_e2e_test.rs` | ✅ COMPLETED |
-| **G7** | LOW | Testing | IpcRateLimiter not tested | `src/process/ipc_rate_limit.rs` | ⏸️ DEFERRED |
+| **G7** | LOW | Testing | IpcRateLimiter not tested | `src/process/ipc_rate_limit.rs` | ✅ COMPLETED |
 | **G8** | LOW | Testing | Windows named pipe path not tested | `src/master/windows.rs` | ⏸️ DEFERRED |
 | **O2** | MEDIUM | Code Quality | proxy.rs (1720 lines) too large | `src/proxy.rs` → `src/proxy/` | ✅ COMPLETED |
 | **O3** | MEDIUM | Code Quality | router.rs::new() is 185 lines | `src/router.rs` | ✅ COMPLETED |
@@ -184,7 +184,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **E7** | INFO | Edge Transform | Verify direct HTTP mode works | (already working) | ✅ COMPLETED |
 | **Web Phase 1** | - | Web App | PHP location-level security bug | `src/php/mod.rs` | ✅ COMPLETED |
 | **Web Phase 2** | - | Web App | Remove third-party CDN dependencies | `src/bin/server.rs` | ✅ COMPLETED |
-| **Web Phase 3** | - | Web App | Create standalone directory listing module | `src/theme/dir_listing.rs` | ⏸️ DEFERRED |
+| **Web Phase 3** | - | Web App | Create standalone directory listing module | `src/theme/dir_listing.rs` | ✅ COMPLETED |
 | **Web Phase 4** | - | Web App | Enhanced directory listing features | `src/theme/` | ⏸️ DEFERRED |
 | **Web Phase 5** | - | Web App | Theme system alignment | `src/theme/renderer.rs` | ⏸️ DEFERRED |
 | **Admin 1** | LOW | Admin | Fix placeholder Blocking tab | `admin-ui/` | ✅ COMPLETED |
