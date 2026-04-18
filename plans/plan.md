@@ -41,11 +41,12 @@ This document contains all remaining implementation items across the MaluWAF pro
 - G3: Upgrade/rollback protocol not tested (complex testing scenario)
 - G8: Windows named pipe path not tested (requires Windows CI)
 - Admin 8-15: Various UI improvements (existing implementations adequate)
-- Web Phase 4: Enhanced directory listing features (DEFERRED)
-- Web Phase 5: Theme system alignment (DEFERRED)
+- O1: lib.rs public API - NOT RECOMMENDED (68% of modules unused externally, effort vs. benefit not justified)
 
 ### Completed This Session
 - T4: WAF detection integration tests fixed - 37 tests now pass (was 17 failing)
+- Web Phase 4: Enhanced directory listing - sorting, pagination, filtering, breadcrumbs
+- Web Phase 5: Theme system alignment - CSS consolidated into ThemeRenderer
 
 ### Already Fixed (from plan files)
 
@@ -192,8 +193,8 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **Web Phase 1** | - | Web App | PHP location-level security bug | `src/php/mod.rs` | ✅ COMPLETED |
 | **Web Phase 2** | - | Web App | Remove third-party CDN dependencies | `src/bin/server.rs` | ✅ COMPLETED |
 | **Web Phase 3** | - | Web App | Create standalone directory listing module | `src/theme/dir_listing.rs` | ✅ COMPLETED |
-| **Web Phase 4** | - | Web App | Enhanced directory listing features | `src/theme/` | ⏸️ DEFERRED |
-| **Web Phase 5** | - | Web App | Theme system alignment | `src/theme/renderer.rs` | ⏸️ DEFERRED |
+| **Web Phase 4** | - | Web App | Enhanced directory listing features | `src/theme/` | ✅ COMPLETED |
+| **Web Phase 5** | - | Web App | Theme system alignment | `src/theme/renderer.rs` | ✅ COMPLETED |
 | **Admin 1** | LOW | Admin | Fix placeholder Blocking tab | `admin-ui/` | ✅ COMPLETED |
 | **Admin 2** | HIGH | Admin | Add Mesh Configuration page | `admin-ui/` | ✅ COMPLETED |
 | **Admin 3** | MEDIUM | Admin | Add DNS Configuration page | `admin-ui/` | ✅ COMPLETED |

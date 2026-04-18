@@ -3,6 +3,30 @@ use std::path::Path;
 
 use crate::theme::{DirectoryEntry, DirectoryListingTemplate, ThemeConfig};
 
+fn percent_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                } else {
+                    result.push('%');
+                    result.push_str(&hex);
+                }
+            } else {
+                result.push('%');
+                result.push_str(&hex);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 pub fn load_directory_template(template_path: &str) -> Result<String, super::StaticError> {
     fs::read_to_string(template_path).map_err(|e| {
         super::StaticError::Internal(format!(
@@ -125,10 +149,77 @@ pub fn collect_directory_entries(
             } else {
                 format_size(entry.size)
             },
+            modified_timestamp: entry.modified,
+            size_bytes: entry.size,
         });
     }
 
     Ok(result)
+}
+
+#[derive(Debug)]
+pub struct DirectoryListingParams {
+    pub sort_by: String,
+    pub sort_order: String,
+    pub page: usize,
+    pub limit: usize,
+    pub filter: Option<String>,
+}
+
+impl Default for DirectoryListingParams {
+    fn default() -> Self {
+        Self {
+            sort_by: "name".to_string(),
+            sort_order: "asc".to_string(),
+            page: 1,
+            limit: 100,
+            filter: None,
+        }
+    }
+}
+
+pub fn parse_directory_params(query_string: Option<&str>) -> DirectoryListingParams {
+    let Some(qs) = query_string else {
+        return DirectoryListingParams::default();
+    };
+
+    let mut params = DirectoryListingParams::default();
+
+    for pair in qs.split('&') {
+        let parts: Vec<&str> = pair.splitn(2, '=').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let key = parts[0];
+        let value = percent_decode(parts[1]);
+
+        match key {
+            "sort" if ["name", "date", "size"].contains(&value.as_str()) => {
+                params.sort_by = value;
+            }
+            "order" if ["asc", "desc"].contains(&value.as_str()) => {
+                params.sort_order = value;
+            }
+            "page" => {
+                if let Ok(p) = value.parse::<usize>() {
+                    params.page = p.max(1);
+                }
+            }
+            "limit" => {
+                if let Ok(l) = value.parse::<usize>() {
+                    params.limit = l.clamp(10, 1000);
+                }
+            }
+            "filter" => {
+                if !value.is_empty() {
+                    params.filter = Some(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    params
 }
 
 pub fn render_directory_listing(
@@ -136,6 +227,7 @@ pub fn render_directory_listing(
     url_path: &str,
     format: &str,
     theme_config: &ThemeConfig,
+    params: &DirectoryListingParams,
 ) -> Result<String, super::StaticError> {
     let entries =
         fs::read_dir(dir_path).map_err(|e| super::StaticError::Internal(e.to_string()))?;
@@ -176,7 +268,7 @@ pub fn render_directory_listing(
 
     match format {
         "json" => render_json(url_path, &items),
-        _ => render_html(url_path, &items, theme_config),
+        _ => render_html(url_path, &items, theme_config, params),
     }
 }
 
@@ -192,28 +284,9 @@ fn render_html(
     url_path: &str,
     entries: &[DirEntry],
     theme_config: &ThemeConfig,
+    params: &DirectoryListingParams,
 ) -> Result<String, super::StaticError> {
     let base_path = url_path.trim_end_matches('/');
-    let _parent_link = if url_path != "/" {
-        let parent = Path::new(url_path)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/".to_string());
-        let parent_href = if parent.is_empty() || parent == "/" {
-            "/".to_string()
-        } else {
-            parent
-        };
-        Some(DirectoryEntry {
-            name: "..".to_string(),
-            href: parent_href,
-            is_dir: true,
-            modified: "-".to_string(),
-            size: "-".to_string(),
-        })
-    } else {
-        None
-    };
 
     let template_entries: Vec<DirectoryEntry> = entries
         .iter()
@@ -234,13 +307,20 @@ fn render_html(
                 } else {
                     format_size(entry.size)
                 },
+                modified_timestamp: entry.modified,
+                size_bytes: entry.size,
             }
         })
         .collect();
 
     let template = DirectoryListingTemplate::new(theme_config.clone())
         .url_path(url_path)
-        .entries(template_entries);
+        .entries(template_entries)
+        .sort_by(&params.sort_by)
+        .sort_order(&params.sort_order)
+        .page(params.page)
+        .limit(params.limit)
+        .filter(params.filter.as_deref());
 
     Ok(template.render())
 }
@@ -279,9 +359,6 @@ fn format_modified(timestamp: u64) -> String {
         return "Just now".to_string();
     }
     if diff < 3600 {
-        return format!("{} min ago", diff / 60);
-    }
-    if diff < 86400 {
         return format!("{} hours ago", diff / 3600);
     }
 

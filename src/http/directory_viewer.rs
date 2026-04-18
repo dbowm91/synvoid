@@ -11,7 +11,7 @@ use tokio::sync::RwLock as TokioRwLock;
 
 use crate::admin::verify_admin_token;
 use crate::config::ConfigManager;
-use crate::static_files::directory::render_directory_listing;
+use crate::static_files::directory::{render_directory_listing, DirectoryListingParams};
 use crate::theme::ThemeConfig;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -73,6 +73,11 @@ fn require_auth(state: &DirectoryViewerState, headers: &HeaderMap) -> Result<(),
 pub struct DirectoryQuery {
     pub path: Option<String>,
     pub format: Option<String>,
+    pub sort: Option<String>,
+    pub order: Option<String>,
+    pub page: Option<usize>,
+    pub limit: Option<usize>,
+    pub filter: Option<String>,
 }
 
 async fn list_handler(
@@ -113,7 +118,15 @@ async fn list_handler(
 
     let theme_config = build_theme_config(&state.viewer_config);
 
-    let body = render_directory_listing(&dir_path, &path, format, &theme_config)
+    let listing_params = DirectoryListingParams {
+        sort_by: params.sort.unwrap_or_else(|| "name".to_string()),
+        sort_order: params.order.unwrap_or_else(|| "asc".to_string()),
+        page: params.page.unwrap_or(1).max(1),
+        limit: params.limit.unwrap_or(100).clamp(10, 1000),
+        filter: params.filter,
+    };
+
+    let body = render_directory_listing(&dir_path, &path, format, &theme_config, &listing_params)
         .map_err(|_e| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let content_type = match format {

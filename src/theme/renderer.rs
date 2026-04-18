@@ -584,6 +584,199 @@ body {{
             ThemeRestriction::DarkOnly | ThemeRestriction::LightOnly => "".to_string(),
         }
     }
+
+    pub fn generate_directory_listing_css(&self) -> String {
+        let s = &self.config.spacing;
+
+        format!(
+            r#"/* Directory Listing Styles */
+.waf-dir-container {{
+    max-width: 900px;
+    margin: 0 auto;
+    padding: {padding};
+}}
+
+.waf-dir-title {{
+    color: var(--waf-primary);
+    border-bottom: 1px solid var(--waf-border);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1rem;
+    font-weight: 400;
+    font-size: 1.5rem;
+    margin-top: 0;
+}}
+
+.waf-dir-breadcrumbs {{
+    color: var(--waf-text);
+    opacity: 0.7;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+}}
+
+.waf-dir-breadcrumbs a {{
+    color: var(--waf-primary);
+    text-decoration: none;
+}}
+
+.waf-dir-breadcrumbs a:hover {{
+    text-decoration: underline;
+}}
+
+.waf-dir-breadcrumbs span {{
+    margin: 0 0.5rem;
+    color: var(--waf-text);
+    opacity: 0.5;
+}}
+
+.waf-dir-table {{
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--waf-surface);
+    border-radius: var(--waf-border-radius);
+    overflow: hidden;
+    border: 1px solid var(--waf-border);
+}}
+
+.waf-dir-table th {{
+    text-align: left;
+    padding: 0.75rem 1rem;
+    background: var(--waf-accent);
+    color: var(--waf-primary);
+    font-weight: 500;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}}
+
+.waf-dir-table th a {{
+    color: var(--waf-primary);
+    text-decoration: none;
+}}
+
+.waf-dir-table th a:hover {{
+    text-decoration: underline;
+}}
+
+.waf-dir-table td {{
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--waf-border);
+    font-size: 0.9375rem;
+}}
+
+.waf-dir-table tr:last-child td {{
+    border-bottom: none;
+}}
+
+.waf-dir-table tr:hover td {{
+    background: var(--waf-accent);
+}}
+
+.waf-dir-table a {{
+    color: var(--waf-primary);
+    text-decoration: none;
+    transition: color 0.2s;
+}}
+
+.waf-dir-table a:hover {{
+    text-decoration: underline;
+}}
+
+.waf-dir-size {{
+    text-align: right;
+    color: var(--waf-text);
+    opacity: 0.7;
+    font-family: var(--waf-font-family);
+    font-size: 0.875rem;
+}}
+
+/* Pagination */
+.waf-dir-pagination {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: var(--waf-surface);
+    border: 1px solid var(--waf-border);
+    border-radius: var(--waf-border-radius);
+}}
+
+.waf-dir-pagination-info {{
+    color: var(--waf-text);
+    font-size: 0.875rem;
+}}
+
+.waf-dir-pagination-controls {{
+    display: flex;
+    gap: 0.5rem;
+}}
+
+.waf-dir-pagination-controls a {{
+    padding: 0.5rem 0.75rem;
+    background: var(--waf-accent);
+    color: var(--waf-primary);
+    border-radius: calc(var(--waf-border-radius) / 2);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: var(--waf-transition);
+}}
+
+.waf-dir-pagination-controls a:hover {{
+    filter: brightness(1.2);
+}}
+
+.waf-dir-pagination-controls a.disabled {{
+    opacity: 0.5;
+    pointer-events: none;
+}}
+
+/* Sorting Controls */
+.waf-dir-sort {{
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+}}
+
+.waf-dir-sort a {{
+    color: var(--waf-text);
+    text-decoration: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: calc(var(--waf-border-radius) / 4);
+}}
+
+.waf-dir-sort a:hover {{
+    background: var(--waf-accent);
+}}
+
+.waf-dir-sort a.active {{
+    color: var(--waf-primary);
+    font-weight: 500;
+}}
+
+/* Filter Controls */
+.waf-dir-filter {{
+    margin-bottom: 1rem;
+}}
+
+.waf-dir-filter input {{
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--waf-border);
+    border-radius: calc(var(--waf-border-radius) / 2);
+    background: var(--waf-surface);
+    color: var(--waf-text);
+    font-family: var(--waf-font-family);
+    font-size: 0.875rem;
+    width: 200px;
+}}
+
+.waf-dir-filter input:focus {{
+    outline: none;
+    border-color: var(--waf-primary);
+}}"#,
+            padding = s.padding,
+        )
+    }
 }
 
 impl Default for ThemeRenderer {

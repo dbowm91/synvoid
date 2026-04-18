@@ -781,6 +781,7 @@ impl StaticFileHandler {
                         url_path,
                         format,
                         &effective_theme_config,
+                        &directory::DirectoryListingParams::default(),
                     )?
                 }
             } else {
@@ -789,6 +790,7 @@ impl StaticFileHandler {
                     url_path,
                     format,
                     &effective_theme_config,
+                    &directory::DirectoryListingParams::default(),
                 )?
             };
             return Ok(StaticResponse {
