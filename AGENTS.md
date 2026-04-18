@@ -766,23 +766,18 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 **Fixed**: Origin local backend selection is now implemented. Origin nodes accept incoming QUIC streams and route HTTP requests to local backends based on Host header. See `src/mesh/transport.rs:mesh_accept_loop` and `src/mesh/transport_peer.rs:handle_http_proxy_stream`.
 
-## Implementation Plan
+## Implementation Plan Reference
 
 **Location**: `plans/plan.md`
 
-The consolidated implementation plan contains all remaining items organized into 5 parallelization waves:
+The plan file tracks remaining deferred items only. All critical security fixes, performance improvements, WASM enhancements, honeypot fixes, edge transform fixes, and test coverage have been completed as of 2026-04-18.
 
-| Wave | Focus | Priority Items |
-|------|-------|----------------|
-| 1 | Critical Security & Test Fixes | ✅ COMPLETED - S-1, S-3, S-4, D1, E2, T1, T2, M-D1, M-D2 |
-| 2 | High Priority Security & Performance | ✅ COMPLETED - S-5 through S-10, P1.1-P1.3, W1-W2 |
-| 3 | Medium Priority Improvements | ✅ COMPLETED - M-D3, M-D4, M-D6, H1; In Progress - W4-W5, M-D5, P2.1-P2.2, P3, O1 |
-| 4 | Lower Priority & Feature Work | M-D7-M-D10, W7-W10, G1-G8, O2-O3, D5-D6 |
-| 5 | Feature Implementation | OpenAPI, T1-T2 (YARA), Admin Panel, Web App Stack |
-
-**Subagent Execution Model**: Items within the same wave can be executed in parallel. Items across waves may have dependencies.
-
-**Verification**: When reviewing the plan against the codebase, always verify claims directly. Plans may reference items already fixed, use outdated line numbers, or describe bugs incorrectly. Run `grep`/search for the specific patterns described to confirm they still exist before implementing fixes.
+**Remaining deferred items** (as of 2026-04-18):
+- G1: Full process tree testing (infrastructure complexity)
+- G3: Upgrade/rollback protocol testing (complex scenario)
+- G8: Windows named pipe path testing (requires Windows CI)
+- Admin 8-15: UI improvements (existing implementations adequate)
+- O1: lib.rs public API refactoring (NOT RECOMMENDED - effort vs. benefit not justified)
 
 ## Admin Panel Architecture Notes
 
