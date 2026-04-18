@@ -473,6 +473,28 @@ impl RecordStoreManager {
                 }
             }
         });
+
+        let quorum_self = Arc::downgrade(&Arc::new(self.clone()));
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+
+            loop {
+                interval.tick().await;
+
+                if let Some(record_store) = quorum_self.upgrade() {
+                    let qm = {
+                        if let Some(qm) = record_store.quorum_manager().try_read() {
+                            qm.clone()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(qm) = qm {
+                        qm.cleanup_old_entries(300).await;
+                    }
+                }
+            }
+        });
     }
 
     pub async fn start_quorum_request(
