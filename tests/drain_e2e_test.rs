@@ -181,10 +181,7 @@ mod drain_e2e_tests {
 
             let drain: Message = stream.recv().await.unwrap().unwrap();
             match drain {
-                Message::WorkerDrain {
-                    id,
-                    timeout_secs,
-                } => {
+                Message::WorkerDrain { id, timeout_secs } => {
                     assert_eq!(id, WorkerId(3));
                     assert_eq!(timeout_secs, 120);
                 }

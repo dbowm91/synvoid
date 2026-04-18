@@ -1368,8 +1368,8 @@ mod threat_intel_tests {
     use maluwaf::mesh::config::MeshNodeRole;
     use maluwaf::mesh::protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
     use maluwaf::mesh::threat_intel::{
-        ThreatIntelligenceConfig, ThreatIntelligenceConfigInternal,
-        ThreatIntelligenceManager, ThreatIndicatorEntry,
+        ThreatIndicatorEntry, ThreatIntelligenceConfig, ThreatIntelligenceConfigInternal,
+        ThreatIntelligenceManager,
     };
     use std::net::IpAddr;
     use std::sync::Arc;
@@ -1396,15 +1396,12 @@ mod threat_intel_tests {
         let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
             true,
             None,
-            DenyListLimitsConfig { max_entries: 1000, persist_interval_secs: 0 },
+            DenyListLimitsConfig {
+                max_entries: 1000,
+                persist_interval_secs: 0,
+            },
         ));
-        ThreatIntelligenceManager::new(
-            config,
-            block_store,
-            "test-node".to_string(),
-            role,
-            None,
-        )
+        ThreatIntelligenceManager::new(config, block_store, "test-node".to_string(), role, None)
     }
 
     fn make_indicator(ip: &str, threat_type: ThreatType) -> ThreatIndicator {
@@ -1518,12 +1515,7 @@ mod threat_intel_tests {
         let manager = create_test_manager(MeshNodeRole::EDGE);
         let ip: IpAddr = "10.0.0.50".parse().unwrap();
 
-        manager.announce_local_rate_limit(
-            ip,
-            1000,
-            60,
-            "rate-limited-site".to_string(),
-        );
+        manager.announce_local_rate_limit(ip, 1000, 60, "rate-limited-site".to_string());
 
         assert_eq!(manager.get_indicator_count(), 1);
         let indicator = manager.lookup_local_indicator("10.0.0.50", ThreatType::RateLimitViolation);
@@ -1544,7 +1536,8 @@ mod threat_intel_tests {
         );
 
         assert_eq!(manager.get_indicator_count(), 1);
-        let indicator = manager.lookup_local_indicator("172.16.0.10", ThreatType::SuspiciousActivity);
+        let indicator =
+            manager.lookup_local_indicator("172.16.0.10", ThreatType::SuspiciousActivity);
         assert!(indicator.is_some());
     }
 
@@ -1560,12 +1553,7 @@ mod threat_intel_tests {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let ip: IpAddr = "8.8.8.8".parse().unwrap();
 
-        manager.announce_local_block(
-            ip,
-            "block test".to_string(),
-            300,
-            "test".to_string(),
-        );
+        manager.announce_local_block(ip, "block test".to_string(), 300, "test".to_string());
 
         let indicator = manager.lookup_local_indicator_by_ip("8.8.8.8");
         assert!(indicator.is_some());
@@ -1575,22 +1563,20 @@ mod threat_intel_tests {
     #[test]
     fn test_handle_incoming_threat_rejects_expired() {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
-        manager.update_global_nodes(vec![
-            maluwaf::mesh::protocol::MeshPeerInfo {
-                node_id: "global-1".to_string(),
-                address: "192.168.1.1".to_string(),
-                role: MeshNodeRole::GLOBAL,
-                capabilities: Default::default(),
-                is_global: true,
-                latency_ms: None,
-                upstreams: Vec::new(),
-                is_trusted: false,
-                quic_port: Some(443),
-                wireguard_port: None,
-                advertised_port: None,
-                dns_serving_healthy: false,
-            },
-        ]);
+        manager.update_global_nodes(vec![maluwaf::mesh::protocol::MeshPeerInfo {
+            node_id: "global-1".to_string(),
+            address: "192.168.1.1".to_string(),
+            role: MeshNodeRole::GLOBAL,
+            capabilities: Default::default(),
+            is_global: true,
+            latency_ms: None,
+            upstreams: Vec::new(),
+            is_trusted: false,
+            quic_port: Some(443),
+            wireguard_port: None,
+            advertised_port: None,
+            dns_serving_healthy: false,
+        }]);
 
         let now = maluwaf::mesh::safe_unix_timestamp();
         let expired_indicator = ThreatIndicator {
@@ -1630,30 +1616,32 @@ mod threat_intel_tests {
         manager.announce_local_block(ip2, "block 2".to_string(), 300, "test".to_string());
 
         assert_eq!(manager.get_indicator_count(), 2);
-        assert!(manager.lookup_local_indicator("192.168.1.100", ThreatType::IpBlock).is_some());
-        assert!(manager.lookup_local_indicator("192.168.1.101", ThreatType::IpBlock).is_some());
+        assert!(manager
+            .lookup_local_indicator("192.168.1.100", ThreatType::IpBlock)
+            .is_some());
+        assert!(manager
+            .lookup_local_indicator("192.168.1.101", ThreatType::IpBlock)
+            .is_some());
     }
 
     #[test]
     fn test_handle_incoming_threat_rejects_global_node_ip() {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
         manager.register_peer("peer-node".to_string(), MeshNodeRole::EDGE);
-        manager.update_global_nodes(vec![
-            maluwaf::mesh::protocol::MeshPeerInfo {
-                node_id: "global-1".to_string(),
-                address: "192.168.1.1".to_string(),
-                role: MeshNodeRole::GLOBAL,
-                capabilities: Default::default(),
-                is_global: true,
-                latency_ms: None,
-                upstreams: Vec::new(),
-                is_trusted: false,
-                quic_port: Some(443),
-                wireguard_port: None,
-                advertised_port: None,
-                dns_serving_healthy: false,
-            },
-        ]);
+        manager.update_global_nodes(vec![maluwaf::mesh::protocol::MeshPeerInfo {
+            node_id: "global-1".to_string(),
+            address: "192.168.1.1".to_string(),
+            role: MeshNodeRole::GLOBAL,
+            capabilities: Default::default(),
+            is_global: true,
+            latency_ms: None,
+            upstreams: Vec::new(),
+            is_trusted: false,
+            quic_port: Some(443),
+            wireguard_port: None,
+            advertised_port: None,
+            dns_serving_healthy: false,
+        }]);
 
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
         let indicator = ThreatIndicator {
@@ -1672,12 +1660,8 @@ mod threat_intel_tests {
             signer_public_key: None,
         };
 
-        let result = manager.handle_incoming_threat(
-            indicator,
-            "peer-node",
-            MeshNodeRole::EDGE,
-            None,
-        );
+        let result =
+            manager.handle_incoming_threat(indicator, "peer-node", MeshNodeRole::EDGE, None);
 
         assert!(!result);
     }
@@ -1703,12 +1687,8 @@ mod threat_intel_tests {
             signer_public_key: None,
         };
 
-        let result = manager.handle_incoming_threat(
-            indicator,
-            "peer-node",
-            MeshNodeRole::GLOBAL,
-            None,
-        );
+        let result =
+            manager.handle_incoming_threat(indicator, "peer-node", MeshNodeRole::GLOBAL, None);
 
         assert!(!result);
     }
@@ -1727,12 +1707,8 @@ mod threat_intel_tests {
         );
         assert!(first);
 
-        let second = manager.handle_incoming_threat(
-            indicator,
-            "peer-node",
-            MeshNodeRole::GLOBAL,
-            None,
-        );
+        let second =
+            manager.handle_incoming_threat(indicator, "peer-node", MeshNodeRole::GLOBAL, None);
 
         assert!(second);
     }
@@ -1742,12 +1718,7 @@ mod threat_intel_tests {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let ip: IpAddr = "2.3.4.5".parse().unwrap();
 
-        manager.announce_local_block(
-            ip,
-            "sync test".to_string(),
-            300,
-            "test".to_string(),
-        );
+        manager.announce_local_block(ip, "sync test".to_string(), 300, "test".to_string());
 
         let indicators = manager.get_indicators_for_sync(0);
         assert_eq!(indicators.len(), 1);
@@ -1849,7 +1820,10 @@ mod threat_intel_tests {
         let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
             true,
             None,
-            DenyListLimitsConfig { max_entries: 1000, persist_interval_secs: 0 },
+            DenyListLimitsConfig {
+                max_entries: 1000,
+                persist_interval_secs: 0,
+            },
         ));
 
         let edge_manager = ThreatIntelligenceManager::new(

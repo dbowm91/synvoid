@@ -64,8 +64,7 @@ pub(super) fn build_cached_response(entry: &ProxyCacheEntry) -> http::Response<b
     if let Some(swr) = entry.stale_while_revalidate {
         let swr_age = swr.saturating_duration_since(std::time::Instant::now());
         if swr_age.as_secs() > 0 {
-            cache_directive
-                .push_str(&format!(", stale-while-revalidate={}", swr_age.as_secs()));
+            cache_directive.push_str(&format!(", stale-while-revalidate={}", swr_age.as_secs()));
         }
     }
 

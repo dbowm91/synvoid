@@ -97,14 +97,20 @@ impl Router {
 
         let location_matchers = Self::build_location_matchers(&sites_clone);
 
-        let (domain_map, suffix_domain_map, cleaned_site_domains, static_handlers, listen_map, default_servers) =
-            Self::build_all_maps(
-                main_config,
-                sites,
-                &minifier_client,
-                &async_minifier_client,
-                &default_theme_config,
-            );
+        let (
+            domain_map,
+            suffix_domain_map,
+            cleaned_site_domains,
+            static_handlers,
+            listen_map,
+            default_servers,
+        ) = Self::build_all_maps(
+            main_config,
+            sites,
+            &minifier_client,
+            &async_minifier_client,
+            &default_theme_config,
+        );
 
         let router = Router {
             domain_map,
@@ -340,7 +346,10 @@ impl Router {
         location_matchers
     }
 
-    fn log_configuration(listen_map: &HashMap<SocketAddr, Vec<String>>, default_servers: &HashMap<SocketAddr, String>) {
+    fn log_configuration(
+        listen_map: &HashMap<SocketAddr, Vec<String>>,
+        default_servers: &HashMap<SocketAddr, String>,
+    ) {
         if !listen_map.is_empty() {
             tracing::info!("IP-based virtual hosts configured:");
             for (addr, site_ids) in listen_map {

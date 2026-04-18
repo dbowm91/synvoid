@@ -12,9 +12,9 @@ pub mod retry;
 
 pub use headers::{
     apply_response_header_transforms, build_forward_headers, build_headers_to_filter,
-    filter_response_headers, filter_response_headers_buf, sanitize_request_path,
-    validate_and_truncate_xff, HEADERS_TO_STRIP, HOP_BY_HOP_HEADERS, MAX_XFF_CHAIN_LENGTH,
-    is_hop_by_hop_header, is_hop_by_hop_header_name,
+    filter_response_headers, filter_response_headers_buf, is_hop_by_hop_header,
+    is_hop_by_hop_header_name, sanitize_request_path, validate_and_truncate_xff, HEADERS_TO_STRIP,
+    HOP_BY_HOP_HEADERS, MAX_XFF_CHAIN_LENGTH,
 };
 
 use ::metrics::{counter, histogram};
@@ -30,11 +30,18 @@ use crate::http_client::{
     UpstreamTlsConfig,
 };
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
+use crate::proxy::cache::{
+    build_cached_response as build_cached_response_impl,
+    filter_sensitive_headers as filter_sensitive_headers_impl,
+    get_cache_max_age_static as get_cache_max_age_static_impl,
+};
+use crate::proxy::retry::{
+    calculate_backoff as calculate_backoff_impl, is_connection_error as is_connection_error_impl,
+    is_retryable_status as is_retryable_status_impl, is_timeout_error as is_timeout_error_impl,
+};
 use crate::proxy_cache::{
     CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry, ProxyCacheSettings,
 };
-use crate::proxy::cache::{build_cached_response as build_cached_response_impl, filter_sensitive_headers as filter_sensitive_headers_impl, get_cache_max_age_static as get_cache_max_age_static_impl};
-use crate::proxy::retry::{calculate_backoff as calculate_backoff_impl, is_connection_error as is_connection_error_impl, is_retryable_status as is_retryable_status_impl, is_timeout_error as is_timeout_error_impl};
 use crate::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
 pub use crate::waf::WafDecision;
 use crate::waf::{UpstreamErrorTracker, WafCore};
@@ -836,7 +843,9 @@ impl ProxyServer {
                 max_retries + 1
             );
 
-            let result = self.send_single_request(method.clone(), &url, None, body.clone()).await;
+            let result = self
+                .send_single_request(method.clone(), &url, None, body.clone())
+                .await;
 
             backend.decrement_connections();
 
@@ -868,9 +877,8 @@ impl ProxyServer {
                     last_error = Some(error_str.clone());
 
                     if let Some(config) = retry_config {
-                        let should_retry =
-                            (config.retry_on_error && is_connection_error_impl(&*e))
-                                || (config.retry_on_timeout && is_timeout_error_impl(&*e));
+                        let should_retry = (config.retry_on_error && is_connection_error_impl(&*e))
+                            || (config.retry_on_timeout && is_timeout_error_impl(&*e));
 
                         if should_retry && attempt <= max_retries {
                             if let Some(ref be) = current_backend {

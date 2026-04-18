@@ -9,9 +9,7 @@ pub(super) fn is_retryable_status(status: u16, config: &RetryConfig) -> bool {
     matches!(status, 502..=504)
 }
 
-pub(super) fn is_connection_error(
-    error: &(dyn std::error::Error + Send + Sync + 'static),
-) -> bool {
+pub(super) fn is_connection_error(error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
     if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
         matches!(
             io_err.kind(),
@@ -33,9 +31,7 @@ pub(super) fn is_connection_error(
     }
 }
 
-pub(super) fn is_timeout_error(
-    error: &(dyn std::error::Error + Send + Sync + 'static),
-) -> bool {
+pub(super) fn is_timeout_error(error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
     if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
         matches!(
             io_err.kind(),
