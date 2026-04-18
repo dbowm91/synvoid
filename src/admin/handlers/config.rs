@@ -915,6 +915,122 @@ pub async fn update_http_config(
     Ok(Json(StatusResponse::success("HTTP config updated.")))
 }
 
+// --- ACME config ---
+
+#[derive(Debug, Serialize)]
+pub struct AcmeConfigResponse {
+    pub config: crate::config::tls::AcmeConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateAcmeConfigRequest {
+    pub config: crate::config::tls::AcmeConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/acme",
+    responses(
+        (status = 200, description = "ACME configuration", body = AcmeConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_acme_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<AcmeConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(AcmeConfigResponse {
+        config: config.main.tls.acme.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/acme",
+    request_body = UpdateAcmeConfigRequest,
+    responses(
+        (status = 200, description = "ACME config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_acme_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateAcmeConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.tls.acme = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("ACME config updated.")))
+}
+
+// --- HTTP/3 config ---
+
+#[derive(Debug, Serialize)]
+pub struct Http3ConfigResponse {
+    pub config: crate::config::http::Http3Config,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateHttp3ConfigRequest {
+    pub config: crate::config::http::Http3Config,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/http3",
+    responses(
+        (status = 200, description = "HTTP/3 configuration", body = Http3ConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_http3_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<Http3ConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(Http3ConfigResponse {
+        config: config.main.http3.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/http3",
+    request_body = UpdateHttp3ConfigRequest,
+    responses(
+        (status = 200, description = "HTTP/3 config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_http3_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateHttp3ConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.http3 = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("HTTP/3 config updated.")))
+}
+
 // --- Security config ---
 
 #[derive(Debug, Serialize)]

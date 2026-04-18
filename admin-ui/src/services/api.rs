@@ -562,6 +562,28 @@ impl ApiService {
         self.put("/config/tls", config).await
     }
 
+    pub async fn get_acme_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/acme").await
+    }
+
+    pub async fn update_acme_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/acme", config).await
+    }
+
+    pub async fn get_http3_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/http3").await
+    }
+
+    pub async fn update_http3_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/http3", config).await
+    }
+
     pub async fn get_tunnel_config(&self) -> Result<serde_json::Value, String> {
         self.get("/config/tunnel").await
     }

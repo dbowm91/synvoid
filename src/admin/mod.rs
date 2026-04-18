@@ -215,6 +215,14 @@ fn build_router_from_state(
             get(handlers::config::get_http_config).put(handlers::config::update_http_config),
         )
         .route(
+            "/config/acme",
+            get(handlers::config::get_acme_config).put(handlers::config::update_acme_config),
+        )
+        .route(
+            "/config/http3",
+            get(handlers::config::get_http3_config).put(handlers::config::update_http3_config),
+        )
+        .route(
             "/config/security",
             get(handlers::config::get_security_config)
                 .put(handlers::config::update_security_config),

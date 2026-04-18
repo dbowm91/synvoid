@@ -95,6 +95,10 @@ pub fn Settings() -> Html {
             ("upload", "upload"), ("max size", "upload"), ("body size", "upload"),
             ("file", "upload"), ("mime", "upload"), ("extension", "upload"),
         ]);
+        m.insert("ip_feeds".to_string(), vec![
+            ("ip feed", "ip_feeds"), ("blocklist", "ip_feeds"), ("block list", "ip_feeds"),
+            ("threat intel", "ip_feeds"), ("geoip", "ip_feeds"),
+        ]);
         m.insert("theme".to_string(), vec![
             ("theme", "theme"), ("dark", "theme"), ("light", "theme"),
             ("color", "theme"), ("css", "theme"), ("logo", "theme"),
@@ -117,6 +121,10 @@ pub fn Settings() -> Html {
                             "ratelimits" => "Rate Limits".to_string(),
                             "bandwidth" => "Bandwidth".to_string(),
                             "bot" => "Bot Defaults".to_string(),
+                            "ip_feeds" => "IP Feeds".to_string(),
+                            "tls" => "TLS".to_string(),
+                            "acme" => "ACME".to_string(),
+                            "http3" => "HTTP/3".to_string(),
                             "upload" => "Upload".to_string(),
                             "theme" => "Theme".to_string(),
                             _ => section.clone(),
@@ -329,6 +337,10 @@ pub fn Settings() -> Html {
                         <SectionButton label="Rate Limits" section="ratelimits" active={*active_section == "ratelimits"} on_click={on_section_click.clone()} />
                         <SectionButton label="Bandwidth" section="bandwidth" active={*active_section == "bandwidth"} on_click={on_section_click.clone()} />
                         <SectionButton label="Bot Defaults" section="bot" active={*active_section == "bot"} on_click={on_section_click.clone()} />
+                        <SectionButton label="IP Feeds" section="ip_feeds" active={*active_section == "ip_feeds"} on_click={on_section_click.clone()} />
+                        <SectionButton label="TLS" section="tls" active={*active_section == "tls"} on_click={on_section_click.clone()} />
+                        <SectionButton label="ACME" section="acme" active={*active_section == "acme"} on_click={on_section_click.clone()} />
+                        <SectionButton label="HTTP/3" section="http3" active={*active_section == "http3"} on_click={on_section_click.clone()} />
                         <SectionButton label="Upload" section="upload" active={*active_section == "upload"} on_click={on_section_click.clone()} />
                         <SectionButton label="Theme" section="theme" active={*active_section == "theme"} on_click={on_section_click.clone()} />
                     </div>
@@ -345,7 +357,11 @@ pub fn Settings() -> Html {
                             "ratelimits" => "Rate Limit Defaults",
                             "bandwidth" => "Bandwidth Limits",
                             "bot" => "Bot Protection Defaults",
-                            "upload" => "Upload Defaults",
+                            "ip_feeds" => "IP Feeds Configuration",
+                            "tls" => "TLS Configuration",
+                            "acme" => "ACME Configuration",
+                            "http3" => "HTTP/3 Configuration",
+                            "upload" => "Upload Configuration",
                             "theme" => "Theme Configuration",
                             _ => "Server Configuration",
                         }}
@@ -372,7 +388,10 @@ pub fn Settings() -> Html {
                             "ratelimits" => html! { <RateLimitsSection /> },
                             "bandwidth" => html! { <BandwidthSection /> },
                             "bot" => html! { <BotSection /> },
-                            "upload" => html! { <UploadSection /> },
+                            "ip_feeds" => html! { <IpFeedsSection /> },
+                            "tls" => html! { <TlsSection /> },
+                            "acme" => html! { <AcmeSection /> },
+                            "http3" => html! { <Http3Section /> },
                             "theme" => html! { <ThemeSection /> },
                             _ => html! { <ServerSection /> },
                         }}
@@ -1166,6 +1185,710 @@ fn MetricsSection() -> Html {
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn IpFeedsSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let enabled = use_state(|| true);
+    let url = use_state(|| "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string());
+    let update_interval = use_state(|| "2".to_string());
+    let max_blocks = use_state(|| "1000000".to_string());
+
+    let original_enabled = use_state(|| true);
+    let original_url = use_state(|| "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string());
+    let original_update_interval = use_state(|| "2".to_string());
+    let original_max_blocks = use_state(|| "1000000".to_string());
+
+    let is_dirty = *enabled != *original_enabled
+        || *url != *original_url
+        || *update_interval != *original_update_interval
+        || *max_blocks != *original_max_blocks;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let enabled = enabled.clone();
+        let url = url.clone();
+        let update_interval = update_interval.clone();
+        let max_blocks = max_blocks.clone();
+        let original_enabled = original_enabled.clone();
+        let original_url = original_url.clone();
+        let original_update_interval = original_update_interval.clone();
+        let original_max_blocks = original_max_blocks.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_ip_feeds_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("enabled").and_then(|v| v.as_bool()) {
+                            enabled.set(v);
+                            original_enabled.set(v);
+                        }
+                        if let Some(v) = config.get("url").and_then(|v| v.as_str()) {
+                            url.set(v.to_string());
+                            original_url.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("update_interval_hours").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            update_interval.set(s.clone());
+                            original_update_interval.set(s);
+                        }
+                        if let Some(v) = config.get("max_permanent_blocks").and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            max_blocks.set(s.clone());
+                            original_max_blocks.set(s);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_toggle_enabled = {
+        let enabled = enabled.clone();
+        Callback::from(move |_: MouseEvent| {
+            enabled.set(!*enabled);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let enabled = enabled.clone();
+        let url = url.clone();
+        let update_interval = update_interval.clone();
+        let max_blocks = max_blocks.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "enabled": *enabled,
+                    "url": (*url).clone(),
+                    "update_interval_hours": update_interval.parse::<u32>().unwrap_or(2),
+                    "max_permanent_blocks": max_blocks.parse::<usize>().unwrap_or(1000000),
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            let enabled = enabled.clone();
+            let url = url.clone();
+            let update_interval = update_interval.clone();
+            let max_blocks = max_blocks.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_ip_feeds_config(&config).await;
+                saving.set(false);
+                toast_success("IP feeds configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Enable IP Feeds" }</p>
+                    <p class="text-sm text-secondary">{ "Download and use external IP blocklists" }</p>
+                </div>
+                <button
+                    onclick={on_toggle_enabled}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">
+                        { "Feed URL" }
+                    </label>
+                    <Input
+                        label={"Feed URL".to_string()}
+                        name={"feed_url".to_string()}
+                        value={(*url).clone()}
+                        on_change={Callback::from(move |v: String| url.set(v))}
+                        placeholder={"https://example.com/blocklist.txt".to_string()}
+                    />
+                    <p class="text-xs text-secondary mt-1">{ "Plain text file with one IP/CIDR per line" }</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">
+                            { "Update Interval (hours)" }
+                        </label>
+                        <Input
+                            label={"Update Interval".to_string()}
+                            name={"update_interval".to_string()}
+                            value={(*update_interval).clone()}
+                            on_change={Callback::from(move |v: String| update_interval.set(v))}
+                            input_type="number"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-primary mb-1">
+                            { "Max Permanent Blocks" }
+                        </label>
+                        <Input
+                            label={"Max Blocks".to_string()}
+                            name={"max_blocks".to_string()}
+                            value={(*max_blocks).clone()}
+                            on_change={Callback::from(move |v: String| max_blocks.set(v))}
+                            input_type="number"
+                        />
+                        <p class="text-xs text-secondary mt-1">{ "Maximum IPs to permanently block" }</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn TlsSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let enabled = use_state(|| true);
+    let port = use_state(|| "443".to_string());
+    let cert_path = use_state(|| "".to_string());
+    let key_path = use_state(|| "".to_string());
+    let prefer_post_quantum = use_state(|| false);
+    let watch_dir = use_state(|| "".to_string());
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let enabled = enabled.clone();
+        let port = port.clone();
+        let cert_path = cert_path.clone();
+        let key_path = key_path.clone();
+        let prefer_post_quantum = prefer_post_quantum.clone();
+        let watch_dir = watch_dir.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_tls_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("enabled").and_then(|v| v.as_bool()) {
+                            enabled.set(v);
+                        }
+                        if let Some(v) = config.get("port").and_then(|v| v.as_u64()) {
+                            port.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("cert_path").and_then(|v| v.as_str()) {
+                            cert_path.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("key_path").and_then(|v| v.as_str()) {
+                            key_path.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("prefer_post_quantum").and_then(|v| v.as_bool()) {
+                            prefer_post_quantum.set(v);
+                        }
+                        if let Some(v) = config.get("watch_dir").and_then(|v| v.as_str()) {
+                            watch_dir.set(v.to_string());
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let is_dirty = !cert_path.is_empty() || !key_path.is_empty() || *port != "443";
+
+    let on_toggle_enabled = {
+        let enabled = enabled.clone();
+        Callback::from(move |_: MouseEvent| {
+            enabled.set(!*enabled);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let enabled = enabled.clone();
+        let port = port.clone();
+        let cert_path = cert_path.clone();
+        let key_path = key_path.clone();
+        let prefer_post_quantum = prefer_post_quantum.clone();
+        let watch_dir = watch_dir.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "enabled": *enabled,
+                    "port": port.parse::<u16>().unwrap_or(443),
+                    "cert_path": (*cert_path).clone(),
+                    "key_path": (*key_path).clone(),
+                    "prefer_post_quantum": *prefer_post_quantum,
+                    "watch_dir": if (*watch_dir).is_empty() { serde_json::Value::Null } else { serde_json::Value::String((*watch_dir).clone()) },
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_tls_config(&config).await;
+                saving.set(false);
+                toast_success("TLS configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Enable TLS" }</p>
+                    <p class="text-sm text-secondary">{ "HTTPS encryption with custom certificates" }</p>
+                </div>
+                <button
+                    onclick={on_toggle_enabled}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Port" }</label>
+                    <Input
+                        label={"Port".to_string()}
+                        name={"port".to_string()}
+                        value={(*port).clone()}
+                        on_change={Callback::from(move |v: String| port.set(v))}
+                        input_type="number"
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Certificate Path" }</label>
+                    <Input
+                        label={"Cert Path".to_string()}
+                        name={"cert_path".to_string()}
+                        value={(*cert_path).clone()}
+                        on_change={Callback::from(move |v: String| cert_path.set(v))}
+                        placeholder="/etc/ssl/certs/server.crt"
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Private Key Path" }</label>
+                    <Input
+                        label={"Key Path".to_string()}
+                        name={"key_path".to_string()}
+                        value={(*key_path).clone()}
+                        on_change={Callback::from(move |v: String| key_path.set(v))}
+                        placeholder="/etc/ssl/private/server.key"
+                    />
+                </div>
+
+                <div class="flex items-center justify-between py-2">
+                    <div>
+                        <p class="text-primary font-medium">{ "Prefer Post-Quantum" }</p>
+                        <p class="text-sm text-secondary">{ "Use post-quantum key exchange algorithms" }</p>
+                    </div>
+                    <button
+                        onclick={{
+                            let prefer_post_quantum = prefer_post_quantum.clone();
+                            Callback::from(move |_: MouseEvent| {
+                                prefer_post_quantum.set(!*prefer_post_quantum);
+                            })
+                        }}
+                        class={format!("relative w-10 h-6 rounded-full {}", if *prefer_post_quantum { "bg-blue-600" } else { "bg-gray-600" })}
+                    >
+                        <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *prefer_post_quantum { "translate-x-5" } else { "translate-x-0" })} />
+                    </button>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Certificate Watch Directory" }</label>
+                    <Input
+                        label={"Watch Dir".to_string()}
+                        name={"watch_dir".to_string()}
+                        value={(*watch_dir).clone()}
+                        on_change={Callback::from(move |v: String| watch_dir.set(v))}
+                        placeholder="/etc/ssl/certs/watch (optional)"
+                    />
+                    <p class="text-xs text-secondary mt-1">{ "Auto-reload certificates when files change" }</p>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                    { if *saving { "Saving..." } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn AcmeSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let enabled = use_state(|| false);
+    let email = use_state(|| "".to_string());
+    let domains = use_state(|| "".to_string());
+    let staging = use_state(|| false);
+    let cache_dir = use_state(|| "".to_string());
+    let terms_of_service_agreed = use_state(|| false);
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let enabled = enabled.clone();
+        let email = email.clone();
+        let staging = staging.clone();
+        let cache_dir = cache_dir.clone();
+        let terms_of_service_agreed = terms_of_service_agreed.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_acme_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("enabled").and_then(|v| v.as_bool()) {
+                            enabled.set(v);
+                        }
+                        if let Some(v) = config.get("email").and_then(|v| v.as_str()) {
+                            email.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("staging").and_then(|v| v.as_bool()) {
+                            staging.set(v);
+                        }
+                        if let Some(v) = config.get("cache_dir").and_then(|v| v.as_str()) {
+                            cache_dir.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("terms_of_service_agreed").and_then(|v| v.as_bool()) {
+                            terms_of_service_agreed.set(v);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_save = {
+        let saving = saving.clone();
+        let enabled = enabled.clone();
+        let email = email.clone();
+        let domains = domains.clone();
+        let staging = staging.clone();
+        let cache_dir = cache_dir.clone();
+        let terms_of_service_agreed = terms_of_service_agreed.clone();
+        Callback::from(move |_| {
+            let domain_list: Vec<String> = domains.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let config = serde_json::json!({
+                "config": {
+                    "enabled": *enabled,
+                    "email": (*email).clone(),
+                    "domains": domain_list,
+                    "staging": *staging,
+                    "cache_dir": if (*cache_dir).is_empty() { serde_json::Value::Null } else { serde_json::Value::String((*cache_dir).clone()) },
+                    "terms_of_service_agreed": *terms_of_service_agreed,
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_acme_config(&config).await;
+                saving.set(false);
+                toast_success("ACME configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Enable ACME" }</p>
+                    <p class="text-sm text-secondary">{ "Automatic certificate management via Let's Encrypt" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let enabled = enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            enabled.set(!*enabled);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Email" }</label>
+                    <Input
+                        label={"Email".to_string()}
+                        name={"email".to_string()}
+                        value={(*email).clone()}
+                        on_change={Callback::from(move |v: String| email.set(v))}
+                        placeholder="admin@example.com"
+                    />
+                    <p class="text-xs text-secondary mt-1">{ "Let's Encrypt will send certificates here" }</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Domains" }</label>
+                    <Input
+                        label={"Domains".to_string()}
+                        name={"domains".to_string()}
+                        value={(*domains).clone()}
+                        on_change={Callback::from(move |v: String| domains.set(v))}
+                        placeholder="example.com, www.example.com (comma-separated)"
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Cache Directory" }</label>
+                    <Input
+                        label={"Cache Dir".to_string()}
+                        name={"cache_dir".to_string()}
+                        value={(*cache_dir).clone()}
+                        on_change={Callback::from(move |v: String| cache_dir.set(v))}
+                        placeholder="/var/lib/maluwaf/acme (optional)"
+                    />
+                </div>
+
+                <div class="flex items-center justify-between py-2">
+                    <div>
+                        <p class="text-primary font-medium">{ "Staging Mode" }</p>
+                        <p class="text-sm text-secondary">{ "Use Let's Encrypt staging (for testing)" }</p>
+                    </div>
+                    <button
+                        onclick={{
+                            let staging = staging.clone();
+                            Callback::from(move |_: MouseEvent| {
+                                staging.set(!*staging);
+                            })
+                        }}
+                        class={format!("relative w-10 h-6 rounded-full {}", if *staging { "bg-blue-600" } else { "bg-gray-600" })}
+                    >
+                        <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *staging { "translate-x-5" } else { "translate-x-0" })} />
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between py-2">
+                    <div>
+                        <p class="text-primary font-medium">{ "Agree to Terms of Service" }</p>
+                        <p class="text-sm text-secondary">{ "Required to obtain certificates" }</p>
+                    </div>
+                    <button
+                        onclick={{
+                            let terms_of_service_agreed = terms_of_service_agreed.clone();
+                            Callback::from(move |_: MouseEvent| {
+                                terms_of_service_agreed.set(!*terms_of_service_agreed);
+                            })
+                        }}
+                        class={format!("relative w-10 h-6 rounded-full {}", if *terms_of_service_agreed { "bg-blue-600" } else { "bg-gray-600" })}
+                    >
+                        <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *terms_of_service_agreed { "translate-x-5" } else { "translate-x-0" })} />
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                    { if *saving { "Saving..." } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn Http3Section() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let enabled = use_state(|| false);
+    let port = use_state(|| "443".to_string());
+    let alt_svc_max_age = use_state(|| "86400".to_string());
+    let max_request_size = use_state(|| "10485760".to_string());
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let enabled = enabled.clone();
+        let port = port.clone();
+        let alt_svc_max_age = alt_svc_max_age.clone();
+        let max_request_size = max_request_size.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_http3_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("enabled").and_then(|v| v.as_bool()) {
+                            enabled.set(v);
+                        }
+                        if let Some(v) = config.get("port").and_then(|v| v.as_u64()) {
+                            port.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("alt_svc_max_age").and_then(|v| v.as_u64()) {
+                            alt_svc_max_age.set(v.to_string());
+                        }
+                        if let Some(v) = config.get("max_request_size").and_then(|v| v.as_u64()) {
+                            max_request_size.set(v.to_string());
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_save = {
+        let saving = saving.clone();
+        let enabled = enabled.clone();
+        let port = port.clone();
+        let alt_svc_max_age = alt_svc_max_age.clone();
+        let max_request_size = max_request_size.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "enabled": *enabled,
+                    "port": port.parse::<u16>().unwrap_or(443),
+                    "alt_svc_max_age": alt_svc_max_age.parse::<u64>().unwrap_or(86400),
+                    "max_request_size": max_request_size.parse::<usize>().unwrap_or(10485760),
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_http3_config(&config).await;
+                saving.set(false);
+                toast_success("HTTP/3 configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Enable HTTP/3 (QUIC)" }</p>
+                    <p class="text-sm text-secondary">{ "Next-generation protocol over UDP" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let enabled = enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            enabled.set(!*enabled);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Port" }</label>
+                    <Input
+                        label={"Port".to_string()}
+                        name={"port".to_string()}
+                        value={(*port).clone()}
+                        on_change={Callback::from(move |v: String| port.set(v))}
+                        input_type="number"
+                    />
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Alt-Svc Max Age (seconds)" }</label>
+                    <Input
+                        label={"Alt-Svc Max Age".to_string()}
+                        name={"alt_svc_max_age".to_string()}
+                        value={(*alt_svc_max_age).clone()}
+                        on_change={Callback::from(move |v: String| alt_svc_max_age.set(v))}
+                        input_type="number"
+                    />
+                    <p class="text-xs text-secondary mt-1">{ "How long clients remember HTTP/3 is available (default: 86400 = 24h)" }</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-primary mb-1">{ "Max Request Size (bytes)" }</label>
+                    <Input
+                        label={"Max Request Size".to_string()}
+                        name={"max_request_size".to_string()}
+                        value={(*max_request_size).clone()}
+                        on_change={Callback::from(move |v: String| max_request_size.set(v))}
+                        input_type="number"
+                    />
+                    <p class="text-xs text-secondary mt-1">{ "Maximum HTTP/3 request body size (default: 10MB)" }</p>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                    { if *saving { "Saving..." } else { "Save" } }
                 </button>
             </div>
         </div>
