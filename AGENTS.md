@@ -530,6 +530,8 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | edge_can_respond_privileged warning | `src/mesh/dht/routing/manager.rs:119-127` | Warning log when edge responds to privileged queries |
 | TLS honeypot wrong blocking | `src/tls/server.rs:676` | Uses block_ip_for_honeypot instead of block_ip_with_threat_intel |
 | WAF detection integration tests | `tests/integration_test.rs` | Fixed 17 failing tests - payloads now trigger correct detectors; fixed open_redirect.rs URL-encoded pattern detection |
+| Directory listing enhanced features | `src/theme/dir_listing.rs`, `src/theme/renderer.rs` | Sorting (sort, order params), pagination (page, limit), filtering (filter param), breadcrumbs navigation |
+| Directory listing theme alignment | `src/theme/renderer.rs` | CSS consolidated into generate_directory_listing_css() using theme variables |
 
 ## Performance Hot Paths
 
