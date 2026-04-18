@@ -276,7 +276,12 @@ impl BlockStore {
             let entries: Vec<(String, BlockEntry)> = self
                 .shards
                 .iter()
-                .flat_map(|s| s.read().iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>())
+                .flat_map(|s| {
+                    s.read()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>()
+                })
                 .collect();
             match tx.try_send(PersistRequest { entries }) {
                 Ok(()) => {}
@@ -291,7 +296,12 @@ impl BlockStore {
             let entries: Vec<(String, BlockEntry)> = self
                 .shards
                 .iter()
-                .flat_map(|s| s.read().iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>())
+                .flat_map(|s| {
+                    s.read()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>()
+                })
                 .collect();
             let path = path.clone();
             let max_entries = self.config.max_entries;
@@ -322,10 +332,7 @@ impl BlockStore {
 
         for (idx, shard) in self.shards.iter().enumerate() {
             let store = shard.read();
-            if let Some((key, entry)) = store
-                .iter()
-                .min_by_key(|(_, entry)| entry.last_access)
-            {
+            if let Some((key, entry)) = store.iter().min_by_key(|(_, entry)| entry.last_access) {
                 if entry.last_access < min_last_access {
                     min_last_access = entry.last_access;
                     min_key = Some(key.clone());
@@ -838,7 +845,10 @@ mod tests {
         let ip3_blocked = store.is_blocked(&ip3, "global").is_some();
 
         assert!(ip3_blocked, "ip3 should always remain");
-        assert!(ip1_blocked || ip2_blocked, "at least one of ip1/ip2 should remain");
+        assert!(
+            ip1_blocked || ip2_blocked,
+            "at least one of ip1/ip2 should remain"
+        );
 
         // The one that wasn't accessed via is_blocked should be evicted
         // (since is_blocked updates last_access and makes the other more recently used)

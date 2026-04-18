@@ -4,8 +4,8 @@ pub mod registry;
 pub mod routing;
 
 pub use instance_pool::{
-    InstancePool, InstancePoolConfig, InstancePoolError, InstanceState, PoolHealth,
-    PoolMetrics, ServerlessInstance,
+    InstancePool, InstancePoolConfig, InstancePoolError, InstanceState, PoolHealth, PoolMetrics,
+    ServerlessInstance,
 };
 pub use manager::{
     handle_serverless_function, ServerlessError, ServerlessFunction, ServerlessManager,

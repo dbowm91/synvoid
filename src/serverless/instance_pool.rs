@@ -409,7 +409,8 @@ impl InstancePool {
             }
         }
 
-        let instances_to_evict: Vec<Arc<ServerlessInstance>> = self.instances.read().iter().cloned().collect();
+        let instances_to_evict: Vec<Arc<ServerlessInstance>> =
+            self.instances.read().iter().cloned().collect();
         for instance in instances_to_evict {
             *instance.state.write() = InstanceState::Evicted;
         }

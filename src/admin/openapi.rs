@@ -1,7 +1,7 @@
 use axum::{routing::get, Json, Router};
+use std::sync::Arc;
 use utoipa::openapi;
 use utoipa::OpenApi;
-use std::sync::Arc;
 
 use crate::admin::state::AdminState;
 

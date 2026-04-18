@@ -59,50 +59,135 @@ pub fn Settings() -> Html {
     let search_query = use_state(|| String::new());
     let show_search_results = use_state(|| false);
 
-    let settings_search_index: std::collections::HashMap<String, Vec<(&'static str, &'static str)>> = {
+    let settings_search_index: std::collections::HashMap<
+        String,
+        Vec<(&'static str, &'static str)>,
+    > = {
         let mut m = std::collections::HashMap::new();
-        m.insert("server".to_string(), vec![
-            ("bind", "server"), ("listen", "server"), ("worker", "server"),
-            ("pid", "server"), ("user", "server"), ("group", "server"),
-            ("upgrade", "server"), ("error log", "server"), ("max connections", "server"),
-        ]);
-        m.insert("http".to_string(), vec![
-            ("keep-alive", "http"), ("timeout", "http"), ("max request size", "http"),
-            ("chunked", "http"), ("gzip", "http"), ("brotli", "http"),
-            ("http/2", "http"), ("http/3", "http"), ("pipeline", "http"),
-        ]);
-        m.insert("logging".to_string(), vec![
-            ("syslog", "logging"), ("log level", "logging"), ("access log", "logging"),
-            ("error log", "logging"), ("format", "logging"), ("buffer", "logging"),
-        ]);
-        m.insert("metrics".to_string(), vec![
-            ("prometheus", "metrics"), ("influxdb", "metrics"), ("graphite", "metrics"),
-            ("statsd", "metrics"), ("interval", "metrics"),
-        ]);
-        m.insert("ratelimits".to_string(), vec![
-            ("requests per second", "ratelimits"), ("rps", "ratelimits"), ("burst", "ratelimits"),
-            ("limit", "ratelimits"), ("throttle", "ratelimits"),
-        ]);
-        m.insert("bandwidth".to_string(), vec![
-            ("bandwidth", "bandwidth"), ("rate limit", "bandwidth"), ("quota", "bandwidth"),
-            ("transfer", "bandwidth"), ("upload", "bandwidth"), ("download", "bandwidth"),
-        ]);
-        m.insert("bot".to_string(), vec![
-            ("bot", "bot"), ("captcha", "bot"), ("challenge", "bot"),
-            ("headless", "bot"), ("browser", "bot"), ("fingerprint", "bot"),
-        ]);
-        m.insert("upload".to_string(), vec![
-            ("upload", "upload"), ("max size", "upload"), ("body size", "upload"),
-            ("file", "upload"), ("mime", "upload"), ("extension", "upload"),
-        ]);
-        m.insert("ip_feeds".to_string(), vec![
-            ("ip feed", "ip_feeds"), ("blocklist", "ip_feeds"), ("block list", "ip_feeds"),
-            ("threat intel", "ip_feeds"), ("geoip", "ip_feeds"),
-        ]);
-        m.insert("theme".to_string(), vec![
-            ("theme", "theme"), ("dark", "theme"), ("light", "theme"),
-            ("color", "theme"), ("css", "theme"), ("logo", "theme"),
-        ]);
+        m.insert(
+            "server".to_string(),
+            vec![
+                ("bind", "server"),
+                ("listen", "server"),
+                ("worker", "server"),
+                ("pid", "server"),
+                ("user", "server"),
+                ("group", "server"),
+                ("upgrade", "server"),
+                ("error log", "server"),
+                ("max connections", "server"),
+            ],
+        );
+        m.insert(
+            "http".to_string(),
+            vec![
+                ("keep-alive", "http"),
+                ("timeout", "http"),
+                ("max request size", "http"),
+                ("chunked", "http"),
+                ("gzip", "http"),
+                ("brotli", "http"),
+                ("http/2", "http"),
+                ("http/3", "http"),
+                ("pipeline", "http"),
+            ],
+        );
+        m.insert(
+            "logging".to_string(),
+            vec![
+                ("syslog", "logging"),
+                ("log level", "logging"),
+                ("access log", "logging"),
+                ("error log", "logging"),
+                ("format", "logging"),
+                ("buffer", "logging"),
+            ],
+        );
+        m.insert(
+            "metrics".to_string(),
+            vec![
+                ("prometheus", "metrics"),
+                ("influxdb", "metrics"),
+                ("graphite", "metrics"),
+                ("statsd", "metrics"),
+                ("interval", "metrics"),
+            ],
+        );
+        m.insert(
+            "ratelimits".to_string(),
+            vec![
+                ("requests per second", "ratelimits"),
+                ("rps", "ratelimits"),
+                ("burst", "ratelimits"),
+                ("limit", "ratelimits"),
+                ("throttle", "ratelimits"),
+            ],
+        );
+        m.insert(
+            "bandwidth".to_string(),
+            vec![
+                ("bandwidth", "bandwidth"),
+                ("rate limit", "bandwidth"),
+                ("quota", "bandwidth"),
+                ("transfer", "bandwidth"),
+                ("upload", "bandwidth"),
+                ("download", "bandwidth"),
+            ],
+        );
+        m.insert(
+            "bot".to_string(),
+            vec![
+                ("bot", "bot"),
+                ("captcha", "bot"),
+                ("challenge", "bot"),
+                ("headless", "bot"),
+                ("browser", "bot"),
+                ("fingerprint", "bot"),
+            ],
+        );
+        m.insert(
+            "tarpit".to_string(),
+            vec![
+                ("tarpit", "tarpit"),
+                ("scraper", "tarpit"),
+                ("trap", "tarpit"),
+                ("honeypot", "tarpit"),
+                ("depth", "tarpit"),
+                ("delay", "tarpit"),
+            ],
+        );
+        m.insert(
+            "upload".to_string(),
+            vec![
+                ("upload", "upload"),
+                ("max size", "upload"),
+                ("body size", "upload"),
+                ("file", "upload"),
+                ("mime", "upload"),
+                ("extension", "upload"),
+            ],
+        );
+        m.insert(
+            "ip_feeds".to_string(),
+            vec![
+                ("ip feed", "ip_feeds"),
+                ("blocklist", "ip_feeds"),
+                ("block list", "ip_feeds"),
+                ("threat intel", "ip_feeds"),
+                ("geoip", "ip_feeds"),
+            ],
+        );
+        m.insert(
+            "theme".to_string(),
+            vec![
+                ("theme", "theme"),
+                ("dark", "theme"),
+                ("light", "theme"),
+                ("color", "theme"),
+                ("css", "theme"),
+                ("logo", "theme"),
+            ],
+        );
         m
     };
 
@@ -121,6 +206,7 @@ pub fn Settings() -> Html {
                             "ratelimits" => "Rate Limits".to_string(),
                             "bandwidth" => "Bandwidth".to_string(),
                             "bot" => "Bot Defaults".to_string(),
+                            "tarpit" => "Tarpit".to_string(),
                             "ip_feeds" => "IP Feeds".to_string(),
                             "tls" => "TLS".to_string(),
                             "acme" => "ACME".to_string(),
@@ -337,6 +423,7 @@ pub fn Settings() -> Html {
                         <SectionButton label="Rate Limits" section="ratelimits" active={*active_section == "ratelimits"} on_click={on_section_click.clone()} />
                         <SectionButton label="Bandwidth" section="bandwidth" active={*active_section == "bandwidth"} on_click={on_section_click.clone()} />
                         <SectionButton label="Bot Defaults" section="bot" active={*active_section == "bot"} on_click={on_section_click.clone()} />
+                        <SectionButton label="Tarpit" section="tarpit" active={*active_section == "tarpit"} on_click={on_section_click.clone()} />
                         <SectionButton label="IP Feeds" section="ip_feeds" active={*active_section == "ip_feeds"} on_click={on_section_click.clone()} />
                         <SectionButton label="TLS" section="tls" active={*active_section == "tls"} on_click={on_section_click.clone()} />
                         <SectionButton label="ACME" section="acme" active={*active_section == "acme"} on_click={on_section_click.clone()} />
@@ -357,6 +444,7 @@ pub fn Settings() -> Html {
                             "ratelimits" => "Rate Limit Defaults",
                             "bandwidth" => "Bandwidth Limits",
                             "bot" => "Bot Protection Defaults",
+                            "tarpit" => "Tarpit Configuration",
                             "ip_feeds" => "IP Feeds Configuration",
                             "tls" => "TLS Configuration",
                             "acme" => "ACME Configuration",
@@ -388,6 +476,7 @@ pub fn Settings() -> Html {
                             "ratelimits" => html! { <RateLimitsSection /> },
                             "bandwidth" => html! { <BandwidthSection /> },
                             "bot" => html! { <BotSection /> },
+                            "tarpit" => html! { <TarpitSection /> },
                             "ip_feeds" => html! { <IpFeedsSection /> },
                             "tls" => html! { <TlsSection /> },
                             "acme" => html! { <AcmeSection /> },
@@ -1197,12 +1286,16 @@ fn IpFeedsSection() -> Html {
     let saving = use_state(|| false);
 
     let enabled = use_state(|| true);
-    let url = use_state(|| "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string());
+    let url = use_state(|| {
+        "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string()
+    });
     let update_interval = use_state(|| "2".to_string());
     let max_blocks = use_state(|| "1000000".to_string());
 
     let original_enabled = use_state(|| true);
-    let original_url = use_state(|| "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string());
+    let original_url = use_state(|| {
+        "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string()
+    });
     let original_update_interval = use_state(|| "2".to_string());
     let original_max_blocks = use_state(|| "1000000".to_string());
 
@@ -1237,12 +1330,15 @@ fn IpFeedsSection() -> Html {
                             url.set(v.to_string());
                             original_url.set(v.to_string());
                         }
-                        if let Some(v) = config.get("update_interval_hours").and_then(|v| v.as_u64()) {
+                        if let Some(v) =
+                            config.get("update_interval_hours").and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             update_interval.set(s.clone());
                             original_update_interval.set(s);
                         }
-                        if let Some(v) = config.get("max_permanent_blocks").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config.get("max_permanent_blocks").and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             max_blocks.set(s.clone());
                             original_max_blocks.set(s);
@@ -1411,7 +1507,8 @@ fn TlsSection() -> Html {
                         if let Some(v) = config.get("key_path").and_then(|v| v.as_str()) {
                             key_path.set(v.to_string());
                         }
-                        if let Some(v) = config.get("prefer_post_quantum").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config.get("prefer_post_quantum").and_then(|v| v.as_bool())
+                        {
                             prefer_post_quantum.set(v);
                         }
                         if let Some(v) = config.get("watch_dir").and_then(|v| v.as_str()) {
@@ -1599,7 +1696,10 @@ fn AcmeSection() -> Html {
                         if let Some(v) = config.get("cache_dir").and_then(|v| v.as_str()) {
                             cache_dir.set(v.to_string());
                         }
-                        if let Some(v) = config.get("terms_of_service_agreed").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config
+                            .get("terms_of_service_agreed")
+                            .and_then(|v| v.as_bool())
+                        {
                             terms_of_service_agreed.set(v);
                         }
                     }
@@ -1622,7 +1722,8 @@ fn AcmeSection() -> Html {
         let cache_dir = cache_dir.clone();
         let terms_of_service_agreed = terms_of_service_agreed.clone();
         Callback::from(move |_| {
-            let domain_list: Vec<String> = domains.split(',')
+            let domain_list: Vec<String> = domains
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -2579,6 +2680,269 @@ fn BotSection() -> Html {
                 on_change={on_difficulty_change}
                 help="Higher values = harder challenges (1-10)"
             />
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn TarpitSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let enabled = use_state(|| true);
+    let max_depth = use_state(|| "10".to_string());
+    let links_per_page = use_state(|| "50".to_string());
+    let response_delay_ms = use_state(|| "100".to_string());
+    let scraper_user_agents = use_state(|| String::new());
+    let content_templates = use_state(|| String::new());
+
+    let original_enabled = use_state(|| true);
+    let original_max_depth = use_state(|| "10".to_string());
+    let original_links_per_page = use_state(|| "50".to_string());
+    let original_response_delay_ms = use_state(|| "100".to_string());
+    let original_scraper_user_agents = use_state(|| String::new());
+    let original_content_templates = use_state(|| String::new());
+
+    let is_dirty = *enabled != *original_enabled
+        || *max_depth != *original_max_depth
+        || *links_per_page != *original_links_per_page
+        || *response_delay_ms != *original_response_delay_ms
+        || *scraper_user_agents != *original_scraper_user_agents
+        || *content_templates != *original_content_templates;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let enabled = enabled.clone();
+        let max_depth = max_depth.clone();
+        let links_per_page = links_per_page.clone();
+        let response_delay_ms = response_delay_ms.clone();
+        let scraper_user_agents = scraper_user_agents.clone();
+        let content_templates = content_templates.clone();
+        let original_enabled = original_enabled.clone();
+        let original_max_depth = original_max_depth.clone();
+        let original_links_per_page = original_links_per_page.clone();
+        let original_response_delay_ms = original_response_delay_ms.clone();
+        let original_scraper_user_agents = original_scraper_user_agents.clone();
+        let original_content_templates = original_content_templates.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_main_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(tarpit) = config.get("tarpit") {
+                            if let Some(v) = tarpit.get("enabled").and_then(|v| v.as_bool()) {
+                                enabled.set(v);
+                                original_enabled.set(v);
+                            }
+                            if let Some(v) = tarpit.get("max_depth").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                max_depth.set(s.clone());
+                                original_max_depth.set(s);
+                            }
+                            if let Some(v) = tarpit.get("links_per_page").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                links_per_page.set(s.clone());
+                                original_links_per_page.set(s);
+                            }
+                            if let Some(v) =
+                                tarpit.get("response_delay_ms").and_then(|v| v.as_u64())
+                            {
+                                let s = v.to_string();
+                                response_delay_ms.set(s.clone());
+                                original_response_delay_ms.set(s);
+                            }
+                            if let Some(v) =
+                                tarpit.get("scraper_user_agents").and_then(|v| v.as_array())
+                            {
+                                let agents: Vec<String> = v
+                                    .iter()
+                                    .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                let s = agents.join(", ");
+                                scraper_user_agents.set(s.clone());
+                                original_scraper_user_agents.set(s);
+                            }
+                            if let Some(v) =
+                                tarpit.get("content_templates").and_then(|v| v.as_array())
+                            {
+                                let templates: Vec<String> = v
+                                    .iter()
+                                    .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                let s = templates.join(", ");
+                                content_templates.set(s.clone());
+                                original_content_templates.set(s);
+                            }
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let enabled = enabled.clone();
+        let max_depth = max_depth.clone();
+        let links_per_page = links_per_page.clone();
+        let response_delay_ms = response_delay_ms.clone();
+        let scraper_user_agents = scraper_user_agents.clone();
+        let content_templates = content_templates.clone();
+        let original_enabled = original_enabled.clone();
+        let original_max_depth = original_max_depth.clone();
+        let original_links_per_page = original_links_per_page.clone();
+        let original_response_delay_ms = original_response_delay_ms.clone();
+        let original_scraper_user_agents = original_scraper_user_agents.clone();
+        let original_content_templates = original_content_templates.clone();
+        Callback::from(move |_| {
+            let agents: Vec<String> = scraper_user_agents
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let templates: Vec<String> = content_templates
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let config = serde_json::json!({
+                "config": {
+                    "tarpit": {
+                        "enabled": *enabled,
+                        "max_depth": max_depth.parse::<u32>().unwrap_or(10),
+                        "links_per_page": links_per_page.parse::<u32>().unwrap_or(50),
+                        "response_delay_ms": response_delay_ms.parse::<u64>().unwrap_or(100),
+                        "scraper_user_agents": agents,
+                        "content_templates": templates,
+                    }
+                }
+            });
+            let saving = saving.clone();
+            let enabled = enabled.clone();
+            let max_depth = max_depth.clone();
+            let links_per_page = links_per_page.clone();
+            let response_delay_ms = response_delay_ms.clone();
+            let scraper_user_agents = scraper_user_agents.clone();
+            let content_templates = content_templates.clone();
+            let original_enabled = original_enabled.clone();
+            let original_max_depth = original_max_depth.clone();
+            let original_links_per_page = original_links_per_page.clone();
+            let original_response_delay_ms = original_response_delay_ms.clone();
+            let original_scraper_user_agents = original_scraper_user_agents.clone();
+            let original_content_templates = original_content_templates.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_main_config(&config).await;
+                saving.set(false);
+                original_enabled.set(*enabled);
+                original_max_depth.set((*max_depth).clone());
+                original_links_per_page.set((*links_per_page).clone());
+                original_response_delay_ms.set((*response_delay_ms).clone());
+                original_scraper_user_agents.set((*scraper_user_agents).clone());
+                original_content_templates.set((*content_templates).clone());
+                toast_success("Tarpit configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Enable Tarpit" }</p>
+                    <p class="text-sm text-secondary">{ "Trap scrapers in an infinite maze of fake pages" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let enabled = enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            enabled.set(!*enabled);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <Input
+                    label="Max Depth"
+                    name="max_depth"
+                    input_type="number"
+                    value={(*max_depth).clone()}
+                    on_change={on_change(max_depth.clone())}
+                    help="Maximum depth of tarpit pages to generate"
+                />
+                <Input
+                    label="Links Per Page"
+                    name="links_per_page"
+                    input_type="number"
+                    value={(*links_per_page).clone()}
+                    on_change={on_change(links_per_page.clone())}
+                    help="Number of fake links to generate per tarpit page"
+                />
+            </div>
+
+            <Input
+                label="Response Delay (ms)"
+                name="response_delay_ms"
+                input_type="number"
+                value={(*response_delay_ms).clone()}
+                on_change={on_change(response_delay_ms.clone())}
+                help="Milliseconds to delay tarpit responses"
+            />
+
+            <div>
+                <Input
+                    label="Scraper User Agents"
+                    name="scraper_user_agents"
+                    value={(*scraper_user_agents).clone()}
+                    on_change={on_change(scraper_user_agents.clone())}
+                    help="Comma-separated list of user agent strings to trap"
+                />
+                <p class="text-xs text-secondary mt-1">{ "Default: scrapy, curl, wget, python-requests, etc." }</p>
+            </div>
+
+            <div>
+                <Input
+                    label="Content Templates"
+                    name="content_templates"
+                    value={(*content_templates).clone()}
+                    on_change={on_change(content_templates.clone())}
+                    help="Comma-separated list of content template names"
+                />
+                <p class="text-xs text-secondary mt-1">{ "Templates used to generate fake page content" }</p>
+            </div>
 
             <div class="flex justify-end">
                 <button

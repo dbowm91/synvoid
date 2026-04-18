@@ -42,6 +42,15 @@ pub struct Router {
     location_matchers: HashMap<String, LocationMatcher>,
 }
 
+type SiteMaps = (
+    HashMap<Arc<str>, Arc<SiteConfig>>,
+    Vec<(Arc<str>, Arc<SiteConfig>)>,
+    HashMap<String, Vec<Arc<str>>>,
+    HashMap<String, Arc<StaticFileHandler>>,
+    HashMap<SocketAddr, Vec<String>>,
+    HashMap<SocketAddr, String>,
+);
+
 #[derive(Clone)]
 pub enum BackendType {
     Upstream,
@@ -81,157 +90,21 @@ pub enum RouteResult {
 impl Router {
     pub fn new(main_config: &MainConfig, sites: HashMap<String, SiteConfig>) -> Self {
         let sites_clone = sites.clone();
-        let mut domain_map = HashMap::new();
-        let mut suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)> = Vec::new();
-        let mut static_handlers = HashMap::new();
-        let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
-        let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
-        let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
-
-        let static_worker_socket = main_config
-            .static_config
-            .as_ref()
-            .and_then(|c| c.minified_base_dir.clone())
-            .map(|base| {
-                let mut path = PathBuf::from(base);
-                path.pop();
-                path.join("maluwaf-static-worker.sock")
-            })
-            .unwrap_or_else(|| PlatformPaths::new().static_worker_socket_path());
-
+        let static_worker_socket = Self::resolve_static_worker_socket(main_config);
         let minifier_client = MinifierClient::new(static_worker_socket.clone());
         let async_minifier_client = AsyncMinifierClient::new(static_worker_socket);
-
         let default_theme_config = ThemeConfig::from(main_config.defaults.theme.clone());
 
-        for (_site_id, config) in sites {
-            let config_arc = Arc::new(config);
-            let site_id = config_arc.site_id();
+        let location_matchers = Self::build_location_matchers(&sites_clone);
 
-            let cleaned: Vec<Arc<str>> = config_arc
-                .site
-                .domains
-                .iter()
-                .map(|d| Arc::from(Self::clean_domain(d).as_str()))
-                .collect();
-
-            for clean_domain in &cleaned {
-                if clean_domain.starts_with('.') || clean_domain.contains('*') {
-                    suffix_domain_map.push((clean_domain.clone(), config_arc.clone()));
-                } else {
-                    domain_map.insert(clean_domain.clone(), config_arc.clone());
-                }
-            }
-
-            cleaned_site_domains.insert(site_id.clone(), cleaned);
-
-            if config_arc.r#static.enabled.unwrap_or(false) {
-                let site_id = config_arc.site_id();
-                let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {
-                    let min_config =
-                        MinifierCache::config_from_site(&site_id, &config_arc.r#static);
-                    Some(Arc::new(MinifierCache::new(min_config)))
-                } else {
-                    None
-                };
-
-                let client = if config_arc.r#static.enable_minification.unwrap_or(true) {
-                    Some(minifier_client.clone())
-                } else {
-                    None
-                };
-
-                let async_client = if config_arc.r#static.enable_minification.unwrap_or(true) {
-                    Some(async_minifier_client.clone())
-                } else {
-                    None
-                };
-
-                let theme_config = config_arc
-                    .r#static
-                    .theme
-                    .as_ref()
-                    .map(|t| t.to_theme_config(&default_theme_config))
-                    .unwrap_or_else(|| default_theme_config.clone());
-
-                match StaticFileHandler::new_with_minifier(
-                    config_arc.r#static.clone(),
-                    site_id.clone(),
-                    minifier_cache,
-                    client,
-                    async_client,
-                    None,
-                    None,
-                    None,
-                    theme_config,
-                ) {
-                    Ok(handler) => {
-                        if handler.is_enabled() {
-                            static_handlers.insert(site_id.clone(), Arc::new(handler));
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to create static handler for site {}: {}",
-                            site_id,
-                            e
-                        );
-                    }
-                }
-            }
-
-            if !config_arc.site.listen.is_empty() {
-                for listen_config in &config_arc.site.listen {
-                    if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
-                        let http_port = if listen_config.is_ssl() {
-                            main_config.tls.port
-                        } else {
-                            main_config.server.port
-                        };
-                        let _actual_port = listen_config.port.unwrap_or(http_port);
-
-                        let bind_addr = if let Some(p) = listen_config.port {
-                            SocketAddr::new(addr.ip(), p)
-                        } else {
-                            addr
-                        };
-
-                        listen_map
-                            .entry(bind_addr)
-                            .or_default()
-                            .push(config_arc.site_id());
-
-                        if listen_config.is_default_server() {
-                            if let Some(existing) = default_servers.get(&bind_addr) {
-                                tracing::error!(
-                                    "Multiple default servers configured for {}: {} and {}",
-                                    bind_addr,
-                                    existing,
-                                    config_arc.site_id()
-                                );
-                            } else {
-                                default_servers.insert(bind_addr, config_arc.site_id());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        suffix_domain_map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-
-        let mut location_matchers: HashMap<String, LocationMatcher> = HashMap::new();
-        for (site_id, config) in &sites_clone {
-            if !config.proxy.locations.is_empty() {
-                let patterns: Vec<String> = config
-                    .proxy
-                    .locations
-                    .iter()
-                    .map(|loc| loc.path.clone())
-                    .collect();
-                location_matchers.insert(site_id.clone(), LocationMatcher::new(patterns));
-            }
-        }
+        let (domain_map, suffix_domain_map, cleaned_site_domains, static_handlers, listen_map, default_servers) =
+            Self::build_all_maps(
+                main_config,
+                sites,
+                &minifier_client,
+                &async_minifier_client,
+                &default_theme_config,
+            );
 
         let router = Router {
             domain_map,
@@ -248,21 +121,239 @@ impl Router {
             location_matchers,
         };
 
+        Self::log_configuration(&listen_map, &router.default_servers);
+        router
+    }
+
+    #[inline]
+    fn resolve_static_worker_socket(main_config: &MainConfig) -> PathBuf {
+        main_config
+            .static_config
+            .as_ref()
+            .and_then(|c| c.minified_base_dir.clone())
+            .map(|base| {
+                let mut path = PathBuf::from(base);
+                path.pop();
+                path.join("maluwaf-static-worker.sock")
+            })
+            .unwrap_or_else(|| PlatformPaths::new().static_worker_socket_path())
+    }
+
+    fn build_all_maps(
+        main_config: &MainConfig,
+        sites: HashMap<String, SiteConfig>,
+        minifier_client: &MinifierClient,
+        async_minifier_client: &AsyncMinifierClient,
+        default_theme_config: &ThemeConfig,
+    ) -> SiteMaps {
+        let mut domain_map = HashMap::new();
+        let mut suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)> = Vec::new();
+        let mut static_handlers = HashMap::new();
+        let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
+        let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
+        let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
+
+        for (_site_id, config) in sites {
+            let config_arc = Arc::new(config);
+
+            Self::build_domain_map_entry(
+                &config_arc,
+                &mut domain_map,
+                &mut suffix_domain_map,
+                &mut cleaned_site_domains,
+            );
+
+            if config_arc.r#static.enabled.unwrap_or(false) {
+                Self::initialize_static_handler(
+                    &config_arc,
+                    minifier_client,
+                    async_minifier_client,
+                    default_theme_config,
+                    &mut static_handlers,
+                );
+            }
+
+            if !config_arc.site.listen.is_empty() {
+                Self::build_listen_map_entry(
+                    &config_arc,
+                    main_config,
+                    &mut listen_map,
+                    &mut default_servers,
+                );
+            }
+        }
+
+        suffix_domain_map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        (
+            domain_map,
+            suffix_domain_map,
+            cleaned_site_domains,
+            static_handlers,
+            listen_map,
+            default_servers,
+        )
+    }
+
+    fn build_domain_map_entry(
+        config_arc: &Arc<SiteConfig>,
+        domain_map: &mut HashMap<Arc<str>, Arc<SiteConfig>>,
+        suffix_domain_map: &mut Vec<(Arc<str>, Arc<SiteConfig>)>,
+        cleaned_site_domains: &mut HashMap<String, Vec<Arc<str>>>,
+    ) {
+        let site_id = config_arc.site_id();
+        let cleaned: Vec<Arc<str>> = config_arc
+            .site
+            .domains
+            .iter()
+            .map(|d| Arc::from(Self::clean_domain(d).as_str()))
+            .collect();
+
+        for clean_domain in &cleaned {
+            if clean_domain.starts_with('.') || clean_domain.contains('*') {
+                suffix_domain_map.push((clean_domain.clone(), config_arc.clone()));
+            } else {
+                domain_map.insert(clean_domain.clone(), config_arc.clone());
+            }
+        }
+
+        cleaned_site_domains.insert(site_id, cleaned);
+    }
+
+    fn initialize_static_handler(
+        config_arc: &Arc<SiteConfig>,
+        minifier_client: &MinifierClient,
+        async_minifier_client: &AsyncMinifierClient,
+        default_theme_config: &ThemeConfig,
+        static_handlers: &mut HashMap<String, Arc<StaticFileHandler>>,
+    ) {
+        let site_id = config_arc.site_id();
+        let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {
+            let min_config = MinifierCache::config_from_site(&site_id, &config_arc.r#static);
+            Some(Arc::new(MinifierCache::new(min_config)))
+        } else {
+            None
+        };
+
+        let client = if config_arc.r#static.enable_minification.unwrap_or(true) {
+            Some(minifier_client.clone())
+        } else {
+            None
+        };
+
+        let async_client = if config_arc.r#static.enable_minification.unwrap_or(true) {
+            Some(async_minifier_client.clone())
+        } else {
+            None
+        };
+
+        let theme_config = config_arc
+            .r#static
+            .theme
+            .as_ref()
+            .map(|t| t.to_theme_config(default_theme_config))
+            .unwrap_or_else(|| default_theme_config.clone());
+
+        match StaticFileHandler::new_with_minifier(
+            config_arc.r#static.clone(),
+            site_id.clone(),
+            minifier_cache,
+            client,
+            async_client,
+            None,
+            None,
+            None,
+            theme_config,
+        ) {
+            Ok(handler) => {
+                if handler.is_enabled() {
+                    static_handlers.insert(site_id, Arc::new(handler));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create static handler for site {}: {}",
+                    site_id,
+                    e
+                );
+            }
+        }
+    }
+
+    fn build_listen_map_entry(
+        config_arc: &Arc<SiteConfig>,
+        main_config: &MainConfig,
+        listen_map: &mut HashMap<SocketAddr, Vec<String>>,
+        default_servers: &mut HashMap<SocketAddr, String>,
+    ) {
+        for listen_config in &config_arc.site.listen {
+            if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
+                let http_port = if listen_config.is_ssl() {
+                    main_config.tls.port
+                } else {
+                    main_config.server.port
+                };
+                let _actual_port = listen_config.port.unwrap_or(http_port);
+
+                let bind_addr = if let Some(p) = listen_config.port {
+                    SocketAddr::new(addr.ip(), p)
+                } else {
+                    addr
+                };
+
+                listen_map
+                    .entry(bind_addr)
+                    .or_default()
+                    .push(config_arc.site_id());
+
+                if listen_config.is_default_server() {
+                    if let Some(existing) = default_servers.get(&bind_addr) {
+                        tracing::error!(
+                            "Multiple default servers configured for {}: {} and {}",
+                            bind_addr,
+                            existing,
+                            config_arc.site_id()
+                        );
+                    } else {
+                        default_servers.insert(bind_addr, config_arc.site_id());
+                    }
+                }
+            }
+        }
+    }
+
+    fn build_location_matchers(
+        sites: &HashMap<String, SiteConfig>,
+    ) -> HashMap<String, LocationMatcher> {
+        let mut location_matchers = HashMap::new();
+        for (site_id, config) in sites {
+            if !config.proxy.locations.is_empty() {
+                let patterns: Vec<String> = config
+                    .proxy
+                    .locations
+                    .iter()
+                    .map(|loc| loc.path.clone())
+                    .collect();
+                location_matchers.insert(site_id.clone(), LocationMatcher::new(patterns));
+            }
+        }
+        location_matchers
+    }
+
+    fn log_configuration(listen_map: &HashMap<SocketAddr, Vec<String>>, default_servers: &HashMap<SocketAddr, String>) {
         if !listen_map.is_empty() {
             tracing::info!("IP-based virtual hosts configured:");
-            for (addr, site_ids) in &listen_map {
+            for (addr, site_ids) in listen_map {
                 tracing::info!("  {} -> {:?}", addr, site_ids);
             }
         }
 
-        if !router.default_servers.is_empty() {
+        if !default_servers.is_empty() {
             tracing::info!("Default servers configured:");
-            for (addr, site_id) in &router.default_servers {
+            for (addr, site_id) in default_servers {
                 tracing::info!("  {} -> {}", addr, site_id);
             }
         }
-
-        router
     }
 
     #[inline]

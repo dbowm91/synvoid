@@ -14,7 +14,7 @@
 //! These operations are inherently low-level and require direct FFI to the kernel.
 
 use std::fs::File;
-use std::io::{Read, Result};
+use std::io::{Read, Result, Seek, Write};
 use std::os::fd::AsRawFd;
 
 pub struct ZeroCopyReader {

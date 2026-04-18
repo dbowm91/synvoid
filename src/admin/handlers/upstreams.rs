@@ -6,8 +6,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 const DEFAULT_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_WEIGHT: u32 = 1;

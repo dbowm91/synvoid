@@ -31,7 +31,8 @@ pub async fn get_main_config(
     let config = state.process.config.read().await;
 
     Ok(Json(MainConfigResponse {
-        config: serde_json::to_value(&config.main).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        config: serde_json::to_value(&config.main)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     }))
 }
 
@@ -59,9 +60,9 @@ pub async fn update_main_config(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config.clone())
         .map_err(|e| {
-            tracing::error!("Failed to parse config: {}", e);
-            StatusCode::BAD_REQUEST
-        })?;
+        tracing::error!("Failed to parse config: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
 
     main_config.validate().map_err(|e| {
         tracing::error!("Config validation failed: {}", e);
@@ -112,7 +113,9 @@ pub async fn update_main_config(
         true,
     ));
 
-    Ok(Json(StatusResponse::success("Configuration updated and reloaded to workers.")))
+    Ok(Json(StatusResponse::success(
+        "Configuration updated and reloaded to workers.",
+    )))
 }
 
 #[utoipa::path(

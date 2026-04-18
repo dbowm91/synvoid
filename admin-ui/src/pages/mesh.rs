@@ -1,8 +1,8 @@
 use crate::components::skeleton::LoadingSpinner;
 use crate::services::ApiService;
 use crate::types::{MeshAdminStatus, MeshConfig};
-use yew::prelude::*;
 use serde_json::Value;
+use yew::prelude::*;
 
 #[function_component]
 pub fn Mesh() -> Html {
@@ -14,9 +14,9 @@ pub fn Mesh() -> Html {
     let save_success = use_state(|| None as Option<String>);
     let save_error = use_state(|| None as Option<String>);
 
-let edited_config = use_state(|| MeshConfig::default());
+    let edited_config = use_state(|| MeshConfig::default());
 
-let edited_config_for_save = edited_config.clone();
+    let edited_config_for_save = edited_config.clone();
     let edited_config_for_render = edited_config.clone();
 
     let on_save = {
@@ -47,9 +47,12 @@ let edited_config_for_save = edited_config.clone();
                 updated_json.insert("dht".to_string(), serde_json::json!(v));
             }
             if let Some(v) = &cfg.wireguard_enabled {
-                updated_json.insert("wireguard".to_string(), serde_json::json!({
-                    "enabled": v
-                }));
+                updated_json.insert(
+                    "wireguard".to_string(),
+                    serde_json::json!({
+                        "enabled": v
+                    }),
+                );
             }
 
             let saving = saving.clone();
@@ -60,9 +63,13 @@ let edited_config_for_save = edited_config.clone();
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                match api.update_mesh_config(&serde_json::Value::Object(updated_json)).await {
+                match api
+                    .update_mesh_config(&serde_json::Value::Object(updated_json))
+                    .await
+                {
                     Ok(_) => {
-                        save_success.set(Some("Mesh configuration saved successfully.".to_string()));
+                        save_success
+                            .set(Some("Mesh configuration saved successfully.".to_string()));
                         if let Some(config_json) = &*mesh_config {
                             if let Some(obj) = config_json.as_object() {
                                 let mut config = MeshConfig::default();
@@ -79,7 +86,9 @@ let edited_config_for_save = edited_config.clone();
                                     config.dht_enabled = Some(v);
                                 }
                                 if let Some(v) = obj.get("wireguard").and_then(|v| v.as_object()) {
-                                    if let Some(enabled) = v.get("enabled").and_then(|v| v.as_bool()) {
+                                    if let Some(enabled) =
+                                        v.get("enabled").and_then(|v| v.as_bool())
+                                    {
                                         config.wireguard_enabled = Some(enabled);
                                     }
                                 }
@@ -96,7 +105,10 @@ let edited_config_for_save = edited_config.clone();
         })
     };
 
-    let port_string = edited_config_for_render.listen_port.unwrap_or(0).to_string();
+    let port_string = edited_config_for_render
+        .listen_port
+        .unwrap_or(0)
+        .to_string();
 
     html! {
         <div class="space-y-6">

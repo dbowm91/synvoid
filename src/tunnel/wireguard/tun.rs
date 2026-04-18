@@ -2,7 +2,6 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
 
 use bytes::BytesMut;
 use tokio::sync::broadcast;

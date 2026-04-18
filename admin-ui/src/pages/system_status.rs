@@ -105,7 +105,11 @@ pub fn SystemStatus() -> Html {
         }
     };
 
-    let show_genesis_modal_button = if !(*mesh_status).as_ref().map(|s| s.is_global_node && s.signing_key_derived).unwrap_or(true) {
+    let show_genesis_modal_button = if !(*mesh_status)
+        .as_ref()
+        .map(|s| s.is_global_node && s.signing_key_derived)
+        .unwrap_or(true)
+    {
         let show_modal = show_genesis_modal.clone();
         Some(Callback::from(move |_| show_modal.set(true)))
     } else {

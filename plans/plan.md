@@ -123,7 +123,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **P3** | MEDIUM | Performance | filter_response_headers() allocation overhead | `src/proxy.rs` | ✅ COMPLETED |
 | **M-D3** | P2 | Mesh/DHT | CapabilityAttestation write not restricted | `src/mesh/dht/mod.rs` | ✅ COMPLETED |
 | **M-D4** | P2 | Mesh/DHT | DHT announce wrapper signature missing | `src/mesh/dht/record_store_sync.rs` | ✅ COMPLETED |
-| **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` | ⏸️ DEFERRED |
+| **M-D5** | P2 | Mesh/DHT | Quorum async tasks accumulate on timeout | `src/mesh/dht/record_store_crud.rs` | ✅ COMPLETED |
 | **M-D6** | P2 | Mesh/DHT | edge_can_respond_privileged config erosion risk | `src/mesh/dht/routing/manager.rs` | ✅ COMPLETED |
 | **W3** | MEDIUM | WASM | Instance pool doesn't reuse WasmRuntime | `src/serverless/instance_pool.rs` | ✅ COMPLETED |
 | **W4** | MEDIUM | WASM | No admin API for serverless | `src/admin/handlers/` | ✅ COMPLETED |
@@ -132,7 +132,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **H1** | MEDIUM | Honeypot | TLS honeypot uses wrong blocking function | `src/tls/server.rs` | ✅ COMPLETED |
 | **H4** | MEDIUM | Honeypot | Signature format mismatch in Threat Intel | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **T1** | MEDIUM | Testing | WAF detection integration tests missing | `tests/integration_test.rs` | ✅ COMPLETED |
-| **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | ⏸️ DEFERRED |
+| **T5** | MEDIUM | Testing | Benchmarks missing | `benches/` | ✅ COMPLETED |
 | **T2** | MEDIUM | Testing | Restart delay exponential backoff test | `src/overseer/process.rs` | ✅ COMPLETED |
 | **E1** | MEDIUM | Edge Transform | DHT key mismatch in MeshProxy (dormant) | `src/mesh/proxy.rs` | ✅ COMPLETED |
 | **E3** | MEDIUM | Edge Transform | All transforms silently skipped in MeshProxy | `src/mesh/proxy.rs` | ✅ COMPLETED |
@@ -161,15 +161,15 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **T4** | MEDIUM | Testing | WAF detection integration tests | `tests/integration_test.rs` | ⏸️ DEFERRED |
 | **P3.1** | MEDIUM | Testing | ProxyCache clone rebuilds host index | `src/proxy_cache/store.rs` | ✅ COMPLETED |
 | **G1** | HIGH | Testing | Full process tree not tested | `tests/process_spawn_test.rs` | ⏸️ DEFERRED |
-| **G2** | HIGH | Testing | Socket handoff not tested | `tests/e2e_process_test.rs` | ⏸️ DEFERRED |
+| **G2** | HIGH | Testing | Socket handoff not tested | `tests/e2e_process_test.rs` | ✅ COMPLETED |
 | **G3** | HIGH | Testing | Upgrade/rollback protocol not tested | `tests/upgrade_protocol_test.rs` | ⏸️ DEFERRED |
-| **G4** | MEDIUM | Testing | Master IPC loop not tested | `src/master/ipc.rs` | ⏸️ DEFERRED |
-| **G5** | MEDIUM | Testing | Static worker not tested | `src/worker/mod.rs` | ⏸️ DEFERRED |
-| **G6** | MEDIUM | Testing | Drain protocol not E2E tested | `tests/` | ⏸️ DEFERRED |
+| **G4** | MEDIUM | Testing | Master IPC loop not tested | `src/master/ipc.rs`, `tests/ipc_test.rs` | ✅ COMPLETED |
+| **G5** | MEDIUM | Testing | Static worker not tested | `src/worker/mod.rs` | ✅ COMPLETED |
+| **G6** | MEDIUM | Testing | Drain protocol not E2E tested | `tests/drain_e2e_test.rs` | ✅ COMPLETED |
 | **G7** | LOW | Testing | IpcRateLimiter not tested | `src/process/ipc_rate_limit.rs` | ⏸️ DEFERRED |
 | **G8** | LOW | Testing | Windows named pipe path not tested | `src/master/windows.rs` | ⏸️ DEFERRED |
-| **O2** | MEDIUM | Code Quality | proxy.rs (1720 lines) too large | `src/proxy.rs` | ⏸️ DEFERRED |
-| **O3** | MEDIUM | Code Quality | router.rs::new() is 185 lines | `src/router.rs` | ⏸️ DEFERRED |
+| **O2** | MEDIUM | Code Quality | proxy.rs (1720 lines) too large | `src/proxy.rs` → `src/proxy/` | ✅ COMPLETED |
+| **O3** | MEDIUM | Code Quality | router.rs::new() is 185 lines | `src/router.rs` | ✅ COMPLETED |
 | **D5** | RECOMMENDED | Documentation | Update SECURITY.md with RUSTSEC-2026-0095 | `SECURITY.md` | ✅ COMPLETED |
 | **D6** | RECOMMENDED | Documentation | Remove superseded RUSTSEC-2025-0118 | `SECURITY.md` | ✅ COMPLETED |
 

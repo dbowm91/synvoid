@@ -426,11 +426,7 @@ impl ThreatIntelligenceManager {
         if let Some(ref signer) = self.signer {
             let content = format!(
                 "{}:{}:{}:{}:{}",
-                ip,
-                threat_type as u8,
-                severity as u8,
-                now,
-                self.node_id
+                ip, threat_type as u8, severity as u8, now, self.node_id
             );
             signature = signer.sign(&content);
             signer_public_key = Some(signer.get_public_key());

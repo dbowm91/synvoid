@@ -6,8 +6,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SiteInfo {

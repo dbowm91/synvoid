@@ -1,10 +1,6 @@
 use super::common::OptionalAuth;
 use crate::serverless::registry::get_global_serverless_registry;
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::Path, http::StatusCode, Json};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -49,9 +45,10 @@ pub async fn get_serverless_health(
     let total_invocations: u64 = functions.iter().map(|f| f.invocation_count).sum();
     let total_errors: u64 = functions.iter().map(|f| f.error_count).sum();
 
-    let healthy = functions.iter().filter(|f| {
-        f.invocation_count > 0 || f.error_count == 0
-    }).count();
+    let healthy = functions
+        .iter()
+        .filter(|f| f.invocation_count > 0 || f.error_count == 0)
+        .count();
     let unhealthy = functions.len() - healthy;
 
     Ok(Json(ServerlessHealth {
@@ -74,9 +71,7 @@ pub async fn get_serverless_health(
     ),
     tag = "serverless"
 )]
-pub async fn list_functions(
-    _auth: OptionalAuth,
-) -> Result<Json<ServerlessStatus>, StatusCode> {
+pub async fn list_functions(_auth: OptionalAuth) -> Result<Json<ServerlessStatus>, StatusCode> {
     let registry = get_global_serverless_registry();
     let functions = registry.list();
 
@@ -136,5 +131,8 @@ pub async fn get_function_stats(
         })
     });
 
-    Ok(Json(FunctionStatsResponse { name, stats: stats_json }))
+    Ok(Json(FunctionStatsResponse {
+        name,
+        stats: stats_json,
+    }))
 }

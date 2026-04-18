@@ -1836,9 +1836,10 @@ impl HttpServer {
                         let body_bytes_for_fcgi: Bytes = full_body_arc.as_ref().clone();
 
                         if matches!(target.backend_type, crate::router::BackendType::Php) {
-                            if let Some(php_client) =
-                                crate::php::create_php_client(&target.site_config, target.php_location_config.as_ref())
-                            {
+                            if let Some(php_client) = crate::php::create_php_client(
+                                &target.site_config,
+                                target.php_location_config.as_ref(),
+                            ) {
                                 match php_client
                                     .execute(
                                         &method,

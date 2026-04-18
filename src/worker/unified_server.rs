@@ -19,8 +19,8 @@ use crate::mesh::topology::MeshTopology;
 use crate::mesh::transports::MeshTransportManager;
 use crate::mesh::yara_rules::YaraRulesManager;
 use crate::platform::fs::PlatformPaths;
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::plugin::get_global_plugin_manager;
+use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{check_ports_available, current_timestamp, Message, WorkerId};
 use crate::server::UnifiedServer;
 use crate::upload::UploadValidator;
@@ -377,14 +377,10 @@ pub async fn run_unified_server_worker(
         .with_drain_state(drain_state.clone())
         .with_metrics(metrics.clone())
         .with_ipc(ipc_for_server, worker_id_for_server)
-        .with_serverless_manager(
-            serverless_manager.unwrap_or_else(|| {
-                let runtime = get_global_plugin_manager().get_wasm_manager();
-                Arc::new(
-                    crate::serverless::manager::ServerlessManager::new().with_runtime(runtime),
-                )
-            }),
-        );
+        .with_serverless_manager(serverless_manager.unwrap_or_else(|| {
+            let runtime = get_global_plugin_manager().get_wasm_manager();
+            Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
+        }));
 
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
@@ -1086,10 +1082,7 @@ pub async fn run_unified_server_worker(
     if let Some(ref runner) = port_honeypot_runner {
         if let Some(ref threat_intel) = _threat_intel_manager {
             if _mesh_transport_manager.is_some() {
-                runner.start_mesh_threat_publishing(
-                    threat_intel.clone(),
-                    30,
-                );
+                runner.start_mesh_threat_publishing(threat_intel.clone(), 30);
                 tracing::info!("Port honeypot threat publishing wired to mesh network");
             }
         }

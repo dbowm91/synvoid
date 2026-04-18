@@ -8,10 +8,10 @@
 pub mod alerting;
 mod audit;
 mod auth;
-pub mod openapi;
 mod handlers;
 mod metrics;
 mod middleware;
+pub mod openapi;
 mod rate_limit;
 mod state;
 mod ws;

@@ -427,6 +427,7 @@ impl IpcStream {
     }
 
     #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub fn peer_pid(&self) -> Option<u32> {
         use socket2::SockRef;
         use std::mem::size_of;
@@ -435,8 +436,6 @@ impl IpcStream {
         let sock_ref = SockRef::from(&self.inner);
         let raw_fd = sock_ref.as_raw_fd();
 
-        // Use libc's getsockopt with SO_PEERCRED to get peer PID
-        // On Linux, struct ucred has pid, uid, gid
         #[repr(C)]
         struct UCred {
             pid: libc::pid_t,
@@ -444,13 +443,9 @@ impl IpcStream {
             gid: libc::gid_t,
         }
 
-        // SAFETY: UCred is a plain C struct with no interior mutability or drop glue.
-        // Zeroing is safe for this type.
         let mut cred: UCred = unsafe { std::mem::zeroed() };
         let mut cred_len = size_of::<UCred>() as libc::socklen_t;
 
-        // SAFETY: raw_fd must be a valid Unix domain socket with SO_PEERCRED option enabled.
-        // The cred pointer is valid for writing size_of::<UCred>() bytes.
         let result = unsafe {
             libc::getsockopt(
                 raw_fd,
@@ -468,7 +463,7 @@ impl IpcStream {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(target_os = "linux"))]
     pub fn peer_pid(&self) -> Option<u32> {
         None
     }

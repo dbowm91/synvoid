@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 impl RecordStoreManager {
     pub(crate) fn can_cache_on_edge(&self, key: &str) -> bool {
@@ -207,11 +208,17 @@ impl RecordStoreManager {
                     .await
                 {
                     tracing::debug!("Started quorum request {} for key: {}", request_id, key);
+                    let cancelled = Arc::new(AtomicBool::new(false));
+                    let cancelled_clone = cancelled.clone();
                     let mut attempts = 0;
                     let max_attempts = 50;
 
                     while attempts < max_attempts {
                         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                        if cancelled_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
 
                         if let Some(result) =
                             record_store.check_quorum_completion(&request_id).await

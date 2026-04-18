@@ -15,9 +15,6 @@ use wireguard_control::{
     AllowedIp, Backend, DeviceUpdate, Error as WgError, InterfaceName, PeerConfigBuilder,
 };
 
-#[cfg(not(all(target_os = "linux", feature = "wireguard")))]
-use tokio::time::Duration;
-
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
 use super::stats::{WgInterfaceStats, WgStatsCollector};

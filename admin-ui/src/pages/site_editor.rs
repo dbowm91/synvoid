@@ -629,10 +629,8 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                 let theme_future = api.get_site_theme(&site_id);
                 let error_pages_future = api.get_site_error_pages(&site_id);
 
-                let (theme_result, error_pages_result) = (
-                    theme_future.await,
-                    error_pages_future.await,
-                );
+                let (theme_result, error_pages_result) =
+                    (theme_future.await, error_pages_future.await);
 
                 if let Ok(Some(theme)) = theme_result {
                     let preset = theme.preset.unwrap_or_else(|| "default".to_string());
@@ -650,7 +648,10 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     mode.set(error_pages.mode.unwrap_or_else(|| "static".to_string()));
                     custom_directory.set(error_pages.custom_directory.unwrap_or_default());
                 } else {
-                    tracing::error!("Failed to fetch site error pages: {:?}", error_pages_result.err());
+                    tracing::error!(
+                        "Failed to fetch site error pages: {:?}",
+                        error_pages_result.err()
+                    );
                 }
             });
             || {}
@@ -742,12 +743,17 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                 let error_pages_request = crate::types::UpdateSiteErrorPagesRequest {
                     inherit: Some(inherit_val),
                     mode: Some(mode_val),
-                    custom_directory: if custom_dir_val.is_empty() { None } else { Some(custom_dir_val.clone()) },
+                    custom_directory: if custom_dir_val.is_empty() {
+                        None
+                    } else {
+                        Some(custom_dir_val.clone())
+                    },
                 };
 
                 let (theme_result, error_pages_result) = (
                     api.update_site_theme(&site_id, &theme_request).await,
-                    api.update_site_error_pages(&site_id, &error_pages_request).await,
+                    api.update_site_error_pages(&site_id, &error_pages_request)
+                        .await,
                 );
 
                 match (theme_result, error_pages_result) {
@@ -1195,15 +1201,24 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
             if let Some(cfg) = config {
                 if let Some(wl) = cfg.get("whitelist").and_then(|w| w.as_object()) {
                     if let Some(ips) = wl.get("ips").and_then(|v| v.as_array()) {
-                        let ips_str: Vec<String> = ips.iter().filter_map(|i| i.as_str().map(String::from)).collect();
+                        let ips_str: Vec<String> = ips
+                            .iter()
+                            .filter_map(|i| i.as_str().map(String::from))
+                            .collect();
                         whitelist_ips.set(ips_str.join("\n"));
                     }
                     if let Some(networks) = wl.get("networks").and_then(|v| v.as_array()) {
-                        let networks_str: Vec<String> = networks.iter().filter_map(|n| n.as_str().map(String::from)).collect();
+                        let networks_str: Vec<String> = networks
+                            .iter()
+                            .filter_map(|n| n.as_str().map(String::from))
+                            .collect();
                         whitelist_networks.set(networks_str.join("\n"));
                     }
                     if let Some(uas) = wl.get("user_agents").and_then(|v| v.as_array()) {
-                        let uas_str: Vec<String> = uas.iter().filter_map(|u| u.as_str().map(String::from)).collect();
+                        let uas_str: Vec<String> = uas
+                            .iter()
+                            .filter_map(|u| u.as_str().map(String::from))
+                            .collect();
                         whitelist_user_agents.set(uas_str.join("\n"));
                     }
                 }
@@ -1211,12 +1226,20 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
                     if let Some(enabled) = geoip.get("enabled").and_then(|v| v.as_bool()) {
                         geoip_enabled.set(enabled);
                     }
-                    if let Some(blocked) = geoip.get("blocked_countries").and_then(|v| v.as_array()) {
-                        let blocked_str: Vec<String> = blocked.iter().filter_map(|c| c.as_str().map(String::from)).collect();
+                    if let Some(blocked) = geoip.get("blocked_countries").and_then(|v| v.as_array())
+                    {
+                        let blocked_str: Vec<String> = blocked
+                            .iter()
+                            .filter_map(|c| c.as_str().map(String::from))
+                            .collect();
                         blocked_countries.set(blocked_str.join(", "));
                     }
-                    if let Some(allowed) = geoip.get("allowed_countries").and_then(|v| v.as_array()) {
-                        let allowed_str: Vec<String> = allowed.iter().filter_map(|c| c.as_str().map(String::from)).collect();
+                    if let Some(allowed) = geoip.get("allowed_countries").and_then(|v| v.as_array())
+                    {
+                        let allowed_str: Vec<String> = allowed
+                            .iter()
+                            .filter_map(|c| c.as_str().map(String::from))
+                            .collect();
                         allowed_countries.set(allowed_str.join(", "));
                     }
                 }
@@ -1235,23 +1258,28 @@ fn BlockingTab(props: &BlockingTabProps) -> Html {
         let allowed_countries = allowed_countries.clone();
         let site_id = props.site_id.clone();
         Callback::from(move |_| {
-            let ips_vec: Vec<String> = whitelist_ips.split('\n')
+            let ips_vec: Vec<String> = whitelist_ips
+                .split('\n')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            let networks_vec: Vec<String> = whitelist_networks.split('\n')
+            let networks_vec: Vec<String> = whitelist_networks
+                .split('\n')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            let uas_vec: Vec<String> = whitelist_user_agents.split('\n')
+            let uas_vec: Vec<String> = whitelist_user_agents
+                .split('\n')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            let blocked_vec: Vec<String> = blocked_countries.split(',')
+            let blocked_vec: Vec<String> = blocked_countries
+                .split(',')
                 .map(|s| s.trim().to_uppercase())
                 .filter(|s| !s.is_empty())
                 .collect();
-            let allowed_vec: Vec<String> = allowed_countries.split(',')
+            let allowed_vec: Vec<String> = allowed_countries
+                .split(',')
                 .map(|s| s.trim().to_uppercase())
                 .filter(|s| !s.is_empty())
                 .collect();
