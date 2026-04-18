@@ -609,7 +609,7 @@ ThreatIntel indicators are signed using Ed25519. The signature content format is
 **Re-announcement**:
 - Global nodes periodically re-announce local indicators via `re_announce_local_indicators()`
 - Interval controlled by `re_announce_interval_secs` (default: 300s)
-- Only non-expired local-origin indicators are re-announced
+- ALL non-expired indicators are re-announced (not just `local_origin=true` indicators)
 - Respects `hub_only_mode` (non-global nodes do not re-announce)
 
 **Sync Mechanism**:
