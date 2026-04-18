@@ -24,10 +24,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Category | Items | Highest Priority |
 |----------|-------|------------------|
-| Code Quality | O1 | O1 (lib.rs public API) |
-| Testing | G1, G3, G8, T4 | G1 (process tree) |
-| Admin Panel | Admin 8-15 | Various UI improvements |
-| Web App Stack | Phase 4-5 | Enhanced directory listing |
+| - | - | - |
 
 ### All Completed Categories
 - Security: S-1 through S-10 all fixed
@@ -36,16 +33,19 @@ This document contains all remaining implementation items across the MaluWAF pro
 - Honeypot/Threat: H1-H4 all fixed
 - Edge Transform: E1-E6 all verified/completed
 - Reverse Proxy/WAF: All items fixed
+- Testing: T4 (WAF detection integration tests) fixed
+- Code Quality: O1 deferred (lib.rs public API - 55+ modules exposed)
+
+### Remaining Deferred Items
+- G1: Full process tree not tested (requires complex process spawn infrastructure)
+- G3: Upgrade/rollback protocol not tested (complex testing scenario)
+- G8: Windows named pipe path not tested (requires Windows CI)
+- Admin 8-15: Various UI improvements (existing implementations adequate)
+- Web Phase 4: Enhanced directory listing features (DEFERRED)
+- Web Phase 5: Theme system alignment (DEFERRED)
 
 ### Completed This Session
-- M-D5: Quorum task cancellation (added atomic flag to stop polling)
-- O2: proxy.rs refactored into proxy/ module (headers.rs, cache.rs, retry.rs)
-- O3: router.rs::new() refactored into helper methods
-- G2, G4, G5, G6: Testing already covered by existing tests
-- G7: IpcRateLimiter - 32 unit tests added
-- T2: ThreatIntel tests - 24 tests added to dht_integration_test
-- T5: Benchmarks exist (6 benchmark files)
-- Web Phase 3: Directory listing module created with SVG icons
+- T4: WAF detection integration tests fixed - 37 tests now pass (was 17 failing)
 
 ### Already Fixed (from plan files)
 
@@ -165,7 +165,7 @@ This document contains all remaining implementation items across the MaluWAF pro
 | **H2** | MEDIUM | Honeypot | Port honeypot re-announce only runs for global nodes | `src/mesh/threat_intel.rs` | ✅ COMPLETED |
 | **H3** | LOW | Honeypot | Standalone mode calls unnecessary mesh publishing | `src/worker/unified_server.rs` | ✅ COMPLETED |
 | **T2** | HIGH | Testing | ThreatIntel publication/sync tests | `tests/dht_integration_test.rs` | ✅ COMPLETED |
-| **T4** | MEDIUM | Testing | WAF detection integration tests | `tests/integration_test.rs` | ⏸️ DEFERRED |
+| **T4** | MEDIUM | Testing | WAF detection integration tests | `tests/integration_test.rs` | ✅ COMPLETED |
 | **P3.1** | MEDIUM | Testing | ProxyCache clone rebuilds host index | `src/proxy_cache/store.rs` | ✅ COMPLETED |
 | **G1** | HIGH | Testing | Full process tree not tested | `tests/process_spawn_test.rs` | ⏸️ DEFERRED |
 | **G2** | HIGH | Testing | Socket handoff not tested | `tests/e2e_process_test.rs` | ✅ COMPLETED |

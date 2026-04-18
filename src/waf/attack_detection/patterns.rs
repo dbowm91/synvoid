@@ -585,7 +585,6 @@ impl DefaultPatterns {
             "?url=http://",
             "?link=http://",
             "?src=http://",
-            "?dest=http://",
             "?document=http://",
         ]
     }

@@ -170,6 +170,28 @@ impl OpenRedirectDetector {
 
         if !self.is_external_redirect(decoded_lower.as_ref()) {
             if decoded != input {
+                let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
+                    Cow::Owned(input.to_lowercase())
+                } else {
+                    Cow::Borrowed(input)
+                };
+                if self.is_external_redirect(input_lower.as_ref()) {
+                    if let Some(mat) = self.inner.patterns_ref().find(input_lower.as_ref()) {
+                        let matched = input_lower[mat.start()..mat.end()].to_string();
+                        tracing::warn!(
+                            attack_type = "open_redirect",
+                            matched_pattern = %matched,
+                            location = %location,
+                            "Open redirect detected (encoded)"
+                        );
+                        return Some(AttackDetectionResult {
+                            attack_type: AttackType::OpenRedirect,
+                            fingerprint: None,
+                            matched_pattern: Some(matched),
+                            input_location: location,
+                        });
+                    }
+                }
                 return self.detect_internal(&decoded, location);
             }
             return None;
@@ -189,6 +211,20 @@ impl OpenRedirectDetector {
                 attack_type: AttackType::OpenRedirect,
                 fingerprint: None,
                 matched_pattern: Some(matched),
+                input_location: location,
+            });
+        }
+
+        if decoded_lower.starts_with("//") || decoded_lower.starts_with("\\\\") {
+            tracing::warn!(
+                attack_type = "open_redirect",
+                location = %location,
+                "Open redirect detected (protocol-relative URL)"
+            );
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::OpenRedirect,
+                fingerprint: None,
+                matched_pattern: Some("//".to_string()),
                 input_location: location,
             });
         }
