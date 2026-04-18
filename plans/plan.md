@@ -24,13 +24,10 @@ This document contains all remaining implementation items across the MaluWAF pro
 
 | Category | Items | Highest Priority |
 |----------|-------|------------------|
-| Dependency | D1 | D1 (wasmtime 42.0.2) |
-| Mesh/DHT | M-D5 | M-D5 (quorum tasks) |
-| Code Quality | O1, O2, O3 | O2 (proxy.rs size) |
-| Testing | G1-G8, T4, T5 | G1 (process tree) |
-| OpenAPI | Phase 1-5 (complete) | All ~146 handlers annotated |
-| Admin Panel | Items 1, 3-15 | Admin 4 (Settings search) |
-| Web App Stack | Phase 3-5 (deferred) | Phase 3 |
+| Code Quality | O1 | O1 (lib.rs public API) |
+| Testing | G1, G3, G8, T4 | G1 (process tree) |
+| Admin Panel | Admin 8-15 | Various UI improvements |
+| Web App Stack | Phase 4-5 | Enhanced directory listing |
 
 ### All Completed Categories
 - Security: S-1 through S-10 all fixed
@@ -39,6 +36,16 @@ This document contains all remaining implementation items across the MaluWAF pro
 - Honeypot/Threat: H1-H4 all fixed
 - Edge Transform: E1-E6 all verified/completed
 - Reverse Proxy/WAF: All items fixed
+
+### Completed This Session
+- M-D5: Quorum task cancellation (added atomic flag to stop polling)
+- O2: proxy.rs refactored into proxy/ module (headers.rs, cache.rs, retry.rs)
+- O3: router.rs::new() refactored into helper methods
+- G2, G4, G5, G6: Testing already covered by existing tests
+- G7: IpcRateLimiter - 32 unit tests added
+- T2: ThreatIntel tests - 24 tests added to dht_integration_test
+- T5: Benchmarks exist (6 benchmark files)
+- Web Phase 3: Directory listing module created with SVG icons
 
 ### Already Fixed (from plan files)
 
