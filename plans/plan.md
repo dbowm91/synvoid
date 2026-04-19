@@ -791,27 +791,27 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| H.1.1 | **Zero-copy Static Serving**: Replace `std::fs::read` with streaming `tokio::fs::File` and `http_body_util::StreamBody` for large files. Implement response cache for small-to-medium static assets | src/http/server.rs, src/worker/response_builder.rs | 📋 PLANNING |
-| H.1.2 | **Router Suffix Optimization**: Replace `Vec` linear scan for suffix/wildcard matches with Radix Tree or Trie optimized for domain suffixes | src/router.rs | 📋 PLANNING |
-| H.1.3 | **Handle Request Split**: Split monolithic `handle_request` (~3400 lines) into discrete stages: Sanitization, Auth, RateLimit, WafEarly, BodyCollect, WafFull, Routing, BackendDispatch. Use `RequestCtx` struct to pass state | src/http/server.rs | 📋 PLANNING |
+| H.1.1 | **Zero-copy Static Serving**: Replace `std::fs::read` with streaming `tokio::fs::File` and `http_body_util::StreamBody` for large files. Implement response cache for small-to-medium static assets | src/http/server.rs, src/worker/response_builder.rs | ⏸️ DEFERRED (significant refactor, requires streaming body integration) |
+| H.1.2 | **Router Suffix Optimization**: Replace `Vec` linear scan for suffix/wildcard matches with Radix Tree or Trie optimized for domain suffixes | src/router.rs | ⏸️ DEFERRED (Vec sorted by length at build time - O(n log n) sort, O(n) lookup acceptable for typical site counts) |
+| H.1.3 | **Handle Request Split**: Split monolithic `handle_request` (~3400 lines) into discrete stages: Sanitization, Auth, RateLimit, WafEarly, BodyCollect, WafFull, Routing, BackendDispatch. Use `RequestCtx` struct to pass state | src/http/server.rs | ⏸️ DEFERRED (high risk, already well-sectioned with 16 named sections) |
 
 ### Phase H.2: Architectural Refinement
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| H.2.1 | **Middleware Pipeline**: Implement full Middleware/Pipeline pattern for request handling | src/http/server.rs | 📋 PLANNING |
-| H.2.2 | **Granular Resource Quotas**: Implement per-site CPU/Memory soft limits. Enhance `connection_limit` and `bandwidth_limit` for more granular control | src/config/site/, src/waf/ | 📋 PLANNING |
-| H.2.3 | **Upstream Connection Pooling**: Fine-tune `pool_max_idle_per_host` and `pool_idle_timeout` per-site. Support Keep-Alive tuning | src/upstream/pool.rs, src/http_client/mod.rs | 📋 PLANNING |
+| H.2.1 | **Middleware Pipeline**: Implement full Middleware/Pipeline pattern for request handling | src/http/server.rs | ⏸️ DEFERRED (admin API uses middleware pattern, main pipeline already section-commented) |
+| H.2.2 | **Granular Resource Quotas**: Implement per-site CPU/Memory soft limits. Enhance `connection_limit` and `bandwidth_limit` for more granular control | src/config/site/, src/waf/ | ⏸️ DEFERRED (connection limiting exists, per-site CPU/Memory soft limits need new infrastructure) |
+| H.2.3 | **Upstream Connection Pooling**: Fine-tune `pool_max_idle_per_host` and `pool_idle_timeout` per-site. Support Keep-Alive tuning | src/upstream/pool.rs, src/http_client/mod.rs | ⏸️ DEFERRED (basic pooling exists, per-site tuning needs config changes) |
 
 ### Phase H.3: Advanced Scalability & Security
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| H.3.1 | **Dedicated Worker Pools**: Implement dedicated worker pools for high-traffic sites | src/worker/, src/process/ | 📋 PLANNING |
-| H.3.2 | **Mesh Protocol Sandboxing**: Move complex mesh protocol parsing to restricted submodule or separate "Mesh Sidecar" process | src/mesh/ | 📋 PLANNING |
-| H.3.3 | **Streaming WAF Engine**: Support rules that can be evaluated on chunks as they arrive without waiting for full body. Only collect body if specific rules require it | src/waf/ | 📋 PLANNING |
-| H.3.4 | **Upstream TLS Hardening**: Default `verify: true` for upstream TLS. Implement "Security Audit" log highlighting sites using `skip_verify` or weak upstream ciphers | src/http_client/mod.rs | 📋 PLANNING |
-| H.3.5 | **Mesh Traffic Circuit Breaker**: Implement aggressive timeouts and circuit breaking for mesh-proxied backends | src/mesh/proxy.rs | 📋 PLANNING |
+| H.3.1 | **Dedicated Worker Pools**: Implement dedicated worker pools for high-traffic sites | src/worker/, src/process/ | ⏸️ DEFERRED (against architecture - single async process recommended) |
+| H.3.2 | **Mesh Protocol Sandboxing**: Move complex mesh protocol parsing to restricted submodule or separate "Mesh Sidecar" process | src/mesh/ | ⏸️ DEFERRED (significant architectural change) |
+| H.3.3 | **Streaming WAF Engine**: Support rules that can be evaluated on chunks as they arrive without waiting for full body. Only collect body if specific rules require it | src/waf/ | ⏸️ DEFERRED (WAF checks are fast hash lookups, body collection already incremental) |
+| H.3.4 | **Upstream TLS Hardening**: Default `verify: true` for upstream TLS. Implement "Security Audit" log highlighting sites using `skip_verify` or weak upstream ciphers | src/http_client/mod.rs | ✅ COMPLETED (skip_verify_reason field and WARN logging exists) |
+| H.3.5 | **Mesh Traffic Circuit Breaker**: Implement aggressive timeouts and circuit breaking for mesh-proxied backends | src/mesh/proxy.rs | ✅ COMPLETED (provider_stats with cooldown, exponential backoff, decay - partial circuit breaker) |
 
 ### Verification
 
@@ -819,6 +819,15 @@ cargo test
 - **Load Test**: Verify Router suffix matching with 10,000 wildcard domains
 - **Middleware Test**: Verify each pipeline stage executes in correct order
 - **Resource Quota Test**: Verify high-traffic site doesn't starve neighboring sites
+
+### Notes
+
+Most Wave H items are significant architectural changes that could introduce risk. Current codebase has:
+- Sorted Vec for suffix domains (acceptable for typical site counts)
+- Section-commented handle_request (already maintainable)
+- Admin API middleware pattern (proven in codebase)
+- Provider cooldown with exponential backoff (partial circuit breaker)
+- skip_verify WARN logging
 
 ---
 
