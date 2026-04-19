@@ -57,7 +57,7 @@ impl MeshTopology {
             .build();
 
         let verified_upstream_cache = MokaCache::builder()
-            .time_to_live(Duration::from_secs(30))
+            .time_to_live(Duration::from_secs(300))
             .max_capacity(1000)
             .build();
 

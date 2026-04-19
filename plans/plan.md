@@ -255,13 +255,13 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|------------|--------|
-| W6.1.1 | Enable standalone publishing | 📋 PLANNING |
+| W6.1.1 | Enable standalone publishing | ✅ COMPLETED |
 
 ### Phase 6.2: HTTP Honeypot
 
 | ID | Description | Status |
-|----|------------|--------|
-| W6.2.1 | Document by-design behavior | 📋 PLANNING |
+|----|-------------|--------|
+| W6.2.1 | Document by-design behavior | ✅ COMPLETED |
 
 ---
 
@@ -288,8 +288,8 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|------------|--------|
-| W8.1.1 | Fix verified_upstream_cache TTL (30s → 300s) | 📋 PLANNING |
-| W8.1.2 | DNS serving docs update | 📋 PLANNING |
+| W8.1.1 | Fix verified_upstream_cache TTL (30s → 300s) | ✅ COMPLETED |
+| W8.1.2 | DNS serving docs update | ✅ COMPLETED |
 
 ### Phase 8.2: Medium Priority (Backlog)
 

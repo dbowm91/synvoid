@@ -113,6 +113,18 @@ ACME HTTP-01 challenges work across edge/origin mesh topologies:
 
 For DNS-01 challenges, the AcmeDnsChallenge is wired to the DNS server to serve `_acme-challenge.*` TXT records.
 
+## DNS Serving Health
+
+Global nodes advertise their DNS serving health status via the `dns_serving_healthy` field in mesh protocol messages. This allows the mesh to:
+
+1. **Monitor DNS availability** — Edges can query the health of global nodes' DNS servers
+2. **Route DNS requests** — Only healthy global nodes are used for DNS serving
+3. **Failover** — If a global node's DNS becomes unhealthy, traffic routes to another healthy node
+
+The `dns_serving_healthy` field is:
+- `true` when the global node's DNS server is operational
+- `false` when DNS serving is unavailable (e.g., DNS feature not compiled, server error)
+
 ## Relevant Source
 
 - `src/mesh/` — Transport, protocol, DHT, cert distribution
