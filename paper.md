@@ -357,7 +357,7 @@ The CA function also includes revocation capabilities for handling compromised o
 
 ### 5.1 Dual-Transport Strategy
 
-MaluNet employs two transport protocols, each optimized for different use cases. The choice between QUIC and WireGuard depends on the specific requirements of the connection.
+MaluNet employs QUIC as its primary transport protocol, optimized for modern network requirements. QUIC provides built-in encryption, 0-RTT connection resumption, and stream multiplexing, making it suitable for all mesh communication use cases.
 
 #### QUIC (HTTP/3)
 
@@ -413,42 +413,17 @@ Client → Edge WAF → Origin         Client → Edge WAF → Origin
 
 With traditional TCP proxying, each edge node must bind to unique ports. With QUIC, multiple services tunnel through independent streams on a single UDP port.
 
-#### WireGuard
+#### Historical: WireGuard (Removed)
 
-WireGuard is a simpler, faster VPN protocol designed for modern security requirements:
+**Note**: The WireGuard transport was removed from MaluWAF in 2025. All mesh communication now uses QUIC exclusively. This section is retained for historical context.
 
-**Design Philosophy**:
+WireGuard was a simpler, faster VPN protocol designed for modern security requirements. It featured:
 - **Minimal Codebase**: ~4,000 lines vs tens of thousands for OpenVPN/IPsec
-- **Cryptographic Tunnels**: Every packet is encrypted with ChaCha20-Poly1305
+- **Cryptographic Tunnels**: Every packet encrypted with ChaCha20-Poly1305
 - **Kernel Integration**: Linux kernel implementation for native performance
 - **Modern Cryptography**: Curve25519 for key exchange, Blake2s for hashing
 
-**Performance Comparison**:
-
-| Metric | WireGuard | OpenVPN | IPSec |
-|--------|-----------|---------|-------|
-| Lines of Code | ~4,000 | ~70,000 | ~60,000 |
-| Throughput | 10+ Gbps | 1-2 Gbps | 2-3 Gbps |
-| Latency | Sub-ms | 2-5 ms | 1-3 ms |
-| Handshake | 1 RTT | 2-3 RTT | 2-3 RTT |
-
-**When to Use WireGuard**:
-
-- **Site-to-Site VPNs**: Connect data centers, branch offices
-- **High-Bandwidth Backhaul**: When throughput is more important than latency
-- **Long-Lived Connections**: Tunnel establishment cost amortized over time
-- **Mesh Backhaul**: WAF-to-WAF communication in stable networks
-- **Linux Deployments**: Kernel offload provides best performance
-
-**Kernel Offload**:
-On Linux, WireGuard can utilize the kernel module:
-```toml
-[tunnel.wireguard]
-# On Linux, kernel module handles crypto
-use_kernel_module = true
-```
-
-This moves cryptographic operations to the kernel, freeing CPU for request processing.
+All WireGuard use cases are now served by QUIC, which provides equivalent or better performance for mesh backhaul communication while offering additional benefits like stream multiplexing and connection migration.
 
 #### Protocol Selection Guidelines
 
@@ -460,15 +435,10 @@ Use this decision matrix to choose the appropriate transport:
 | Short-lived connections | QUIC |
 | Mobile clients | QUIC |
 | Mesh TCP proxying | QUIC |
-| Site-to-site VPN | WireGuard |
-| High throughput | WireGuard |
-| Linux production | WireGuard |
-| Windows/macOS | QUIC |
+| All mesh backhaul | QUIC |
+| Linux/macOS/Windows | QUIC |
 
-**Hybrid Approaches**:
-Many deployments use both:
-- **Edge**: QUIC for client-facing traffic (HTTP/3, mobile)
-- **Backhaul**: WireGuard for WAF-to-WAF mesh communication
+QUIC serves all transport needs, providing consistent behavior across platforms without platform-specific implementations.
 
 ### 5.2 Post-Quantum Cryptography
 
@@ -603,7 +573,7 @@ Traditional CDN:                      MaluNet P2P:
 │ (trusted)│                              │   WAF    │
 └────┬─────┘                              └────┬─────┘
      │                                           │
-     │ HTTPS (TLS)                               │ QUIC/WireGuard
+     │ HTTPS (TLS)                               │ QUIC
      │    │                                      │    │
      ▼    ▼                                      ▼    ▼
 ┌──────────┐                              ┌──────────┐
@@ -2266,7 +2236,7 @@ MaluWAF achieves best performance on Linux:
 | Feature | Linux | macOS | Windows |
 |---------|-------|-------|---------|
 | **Async I/O** | epoll (highly optimized) | kqueue | IOCP |
-| **WireGuard** | Kernel offload | Userspace | Userspace |
+| **QUIC** | Full support | Full support | Full support |
 | **Unix Sockets** | Full support | Full support | N/A (Named Pipes) |
 | **Sockets FD Passing** | Full support | Full support | Limited |
 
@@ -2277,10 +2247,10 @@ MaluWAF achieves best performance on Linux:
 - Edge-triggered mode support
 - Scales to millions of connections
 
-**Kernel WireGuard**: Linux kernel WireGuard implementation:
-- Cryptographic operations in kernel
-- Much lower CPU overhead than userspace
-- Native performance
+**QUIC**: All platforms support QUIC via the Quinn library:
+- Native HTTP/3 support
+- Stream multiplexing
+- 0-RTT connection resumption
 
 **Transparent Huge Pages**: For shared memory regions:
 - Reduces TLB misses
@@ -2292,9 +2262,9 @@ MaluWAF achieves best performance on Linux:
 - Good performance for moderate loads
 - Some edge cases differ from Linux
 
-**WireGuard**: Runs in userspace:
-- Higher CPU overhead
-- Acceptable for moderate throughput
+**QUIC**: Runs consistently across platforms:
+- Same performance characteristics on all platforms
+- No platform-specific optimization differences
 
 #### Windows Considerations
 
@@ -2460,7 +2430,7 @@ While still experimental, MaluNet offers a compelling vision: a world where orga
 | **Bot Mitigation** | AI Crawler Blocking (isbot integration), CSS Challenges, JavaScript Challenges (Navigator APIs, Canvas Fingerprinting), Proof-of-Work Challenges (Hashcash), Honeypot Endpoints |
 | **Upload Security** | MIME Type Validation (whitelist/blacklist), Magic Byte Detection, File Size Limits, YARA Malware Scanning, Quarantine Workflow, Threat Intelligence Integration |
 | **Architecture** | Overseer > Master > Worker Model, Raft Consensus (Leader Election), Zero-Downtime Upgrades (Socket FD Passing), Unix Sockets IPC, Shared Memory |
-| **Transport** | HTTP/1.1, HTTP/2, HTTP/3 (QUIC), WireGuard |
+| **Transport** | HTTP/1.1, HTTP/2, HTTP/3 (QUIC) |
 | **Protocols** | FastCGI, PHP-FPM, Granian (WSGI/ASGI/RSGI), WebSocket |
 | **Security** | TLS 1.3, Post-Quantum Ready (Kyber/ML-KEM), YARA Scanning, Content Signing, Pass-Over Keypass |
 | **Mesh Features** | P2P Communication, Threat Intelligence Sharing, Route Aggregation, Gossip Protocol (DHT Overlay), Hierarchical Trust Model |

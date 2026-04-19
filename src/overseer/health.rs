@@ -875,3 +875,133 @@ impl HealthCheckBuilder {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_health_status_enum_variants() {
+        let healthy = HealthStatus::Healthy;
+        assert_eq!(healthy, HealthStatus::Healthy);
+
+        let draining = HealthStatus::Draining { active_connections: 5 };
+        assert_eq!(
+            draining,
+            HealthStatus::Draining { active_connections: 5 }
+        );
+
+        let unhealthy = HealthStatus::Unhealthy {
+            status: 503,
+            message: "Service unavailable".to_string(),
+        };
+        assert_eq!(
+            unhealthy,
+            HealthStatus::Unhealthy {
+                status: 503,
+                message: "Service unavailable".to_string(),
+            }
+        );
+
+        let error = HealthStatus::Error("connection refused".to_string());
+        assert_eq!(
+            error,
+            HealthStatus::Error("connection refused".to_string())
+        );
+
+        assert_eq!(healthy.clone(), HealthStatus::Healthy);
+        assert_eq!(draining.clone(), HealthStatus::Draining { active_connections: 5 });
+        assert_eq!(
+            unhealthy.clone(),
+            HealthStatus::Unhealthy {
+                status: 503,
+                message: "Service unavailable".to_string(),
+            }
+        );
+        assert_eq!(
+            error.clone(),
+            HealthStatus::Error("connection refused".to_string())
+        );
+    }
+
+    #[test]
+    fn test_worker_readiness_status_default() {
+        let status = WorkerReadinessStatus {
+            port: 8080,
+            ready: true,
+            is_draining: false,
+            active_connections: 0,
+        };
+        assert_eq!(status.port, 8080);
+        assert!(status.ready);
+        assert!(!status.is_draining);
+        assert_eq!(status.active_connections, 0);
+    }
+
+    #[test]
+    fn test_enhanced_health_config_defaults() {
+        let config = EnhancedHealthConfig::default();
+        assert_eq!(config.sample_requests, 5);
+        assert_eq!(config.latency_threshold_ms, 1000);
+        assert_eq!(config.error_rate_threshold, 0.1);
+        assert!(config.compare_with_baseline);
+        assert_eq!(config.shadow_traffic_path, Some("/__internal__/health".to_string()));
+    }
+
+    #[test]
+    fn test_baseline_comparison_calculation() {
+        let comparison = BaselineComparison {
+            baseline_avg_latency_ms: 100,
+            latency_degradation_percent: 25.5,
+            is_degraded: true,
+        };
+        assert_eq!(comparison.baseline_avg_latency_ms, 100);
+        assert_eq!(comparison.latency_degradation_percent, 25.5);
+        assert!(comparison.is_degraded);
+
+        let comparison2 = BaselineComparison {
+            baseline_avg_latency_ms: 200,
+            latency_degradation_percent: -10.0,
+            is_degraded: false,
+        };
+        assert_eq!(comparison2.baseline_avg_latency_ms, 200);
+        assert_eq!(comparison2.latency_degradation_percent, -10.0);
+        assert!(!comparison2.is_degraded);
+    }
+
+    #[test]
+    fn test_shadow_traffic_result_fields() {
+        let result = ShadowTrafficResult {
+            port: 9000,
+            requests_sent: 10,
+            old_version_successes: 9,
+            new_version_successes: 10,
+            old_version_avg_latency_ms: 150,
+            new_version_avg_latency_ms: 140,
+            latency_diff_percent: -6.67,
+            healthy: true,
+        };
+        assert_eq!(result.port, 9000);
+        assert_eq!(result.requests_sent, 10);
+        assert_eq!(result.old_version_successes, 9);
+        assert_eq!(result.new_version_successes, 10);
+        assert_eq!(result.old_version_avg_latency_ms, 150);
+        assert_eq!(result.new_version_avg_latency_ms, 140);
+        assert_eq!(result.latency_diff_percent, -6.67);
+        assert!(result.healthy);
+    }
+
+    #[test]
+    fn test_worker_readiness_status_creation() {
+        let status = WorkerReadinessStatus {
+            port: 3000,
+            ready: false,
+            is_draining: true,
+            active_connections: 42,
+        };
+        assert_eq!(status.port, 3000);
+        assert!(!status.ready);
+        assert!(status.is_draining);
+        assert_eq!(status.active_connections, 42);
+    }
+}

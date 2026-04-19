@@ -46,6 +46,8 @@ Valid      → [absent retention_days]    → Missing
 
 Key state transitions are driven by `process_rfc5011_updates()` which runs periodically. Configuration is via `TrustAnchorConfig` — see `src/dns/trust_anchor.rs` for field definitions.
 
+For detailed RFC 5011 documentation including state machine diagrams, configuration options, and implementation notes, see [`/docs/RFC5011_TRUST_ANCHOR.md`](./RFC5011_TRUST_ANCHOR.md).
+
 ## AD Bit Propagation
 
 The AD bit is set on responses only when:

@@ -238,3 +238,118 @@ pub enum RollbackError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rollback_manager_defaults() {
+        let manager = RollbackManager::new(None);
+        assert!(manager.persistence.state_file.to_str().unwrap().contains(".maluwaf"));
+    }
+
+    #[test]
+    fn test_rollback_error_display() {
+        let err = RollbackError::CannotRollback("IDLE".to_string());
+        assert_eq!(err.to_string(), "Cannot rollback from state: IDLE");
+
+        let err = RollbackError::NoVersion;
+        assert_eq!(err.to_string(), "No version to rollback to");
+
+        let err = RollbackError::BinaryNotFound(PathBuf::from("/nonexistent/bin"));
+        assert_eq!(err.to_string(), "Binary not found: /nonexistent/bin");
+
+        let err = RollbackError::ChecksumMismatch;
+        assert_eq!(err.to_string(), "Checksum mismatch during rollback");
+
+        let err = RollbackError::NoWorkerPorts;
+        assert_eq!(err.to_string(), "No worker ports available");
+
+        let failures = vec![(8080, super::super::health::HealthStatus::Unhealthy { status: 500, message: "test".to_string() })];
+        let err = RollbackError::ValidationFailed(failures.clone());
+        assert!(err.to_string().contains("Validation failed"));
+
+        let io_err = RollbackError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        assert!(io_err.to_string().contains("file not found"));
+    }
+
+    #[test]
+    fn test_rollback_target_construction() {
+        let target = RollbackTarget {
+            version: "v1.2.3".to_string(),
+            reason: "Test failure".to_string(),
+            timestamp: Some(1704067200),
+        };
+        assert_eq!(target.version, "v1.2.3");
+        assert_eq!(target.reason, "Test failure");
+        assert_eq!(target.timestamp, Some(1704067200));
+
+        let target = RollbackTarget {
+            version: "v2.0.0".to_string(),
+            reason: String::new(),
+            timestamp: None,
+        };
+        assert_eq!(target.version, "v2.0.0");
+        assert!(target.reason.is_empty());
+        assert_eq!(target.timestamp, None);
+    }
+
+    #[test]
+    fn test_can_rollback_logic() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::default();
+        assert!(!state.can_rollback());
+
+        let mut state = OverseerState::default();
+        state.state = super::super::state::UpgradeState::Validating;
+        assert!(state.can_rollback());
+
+        state.state = super::super::state::UpgradeState::Failed;
+        assert!(state.can_rollback());
+
+        state.state = super::super::state::UpgradeState::RecoveryNeeded;
+        assert!(state.can_rollback());
+
+        state.state = super::super::state::UpgradeState::Idle;
+        assert!(!state.can_rollback());
+
+        state.state = super::super::state::UpgradeState::Committed;
+        assert!(!state.can_rollback());
+
+        state.state = super::super::state::UpgradeState::Staging;
+        assert!(!state.can_rollback());
+    }
+
+    #[test]
+    fn test_rollback_target_parsing() {
+        fn is_version_string(s: &str) -> bool {
+            s.starts_with('v') || s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+        }
+
+        fn is_date_string(s: &str) -> bool {
+            s.contains('-') && s.len() == 10 && s.chars().filter(|c| *c == '-').count() == 2
+        }
+
+        assert!(is_version_string("v1.2.3"));
+        assert!(is_version_string("2024-01-15"));
+        assert!(!is_version_string("invalid"));
+        assert!(!is_version_string(""));
+
+        assert!(is_date_string("2024-01-15"));
+        assert!(!is_date_string("v1.2.3"));
+        assert!(!is_date_string("01-15-2024"));
+        assert!(!is_date_string("2024-1-15"));
+        assert!(!is_date_string("2024-01-1"));
+
+        let target = RollbackTarget {
+            version: "v1.2.3".to_string(),
+            reason: String::new(),
+            timestamp: None,
+        };
+        assert_eq!(target.version, "v1.2.3");
+        assert!(target.reason.is_empty());
+        assert!(target.timestamp.is_none());
+    }
+}

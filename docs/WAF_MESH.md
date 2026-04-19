@@ -203,6 +203,26 @@ verify_certificates = true
 enable_post_quantum = true
 ```
 
+### TLS Passthrough and WAF Enforcement
+
+By default, enabling `tls_passthrough = true` on a site bypasses all L7 WAF inspection (SQLi, XSS, RCE, etc.) since the WAF cannot decrypt the traffic. This is a security trade-off: encrypted traffic is forwarded directly to the origin without inspection.
+
+To force WAF L7 inspection even with TLS passthrough enabled, use `tls_passthrough_enforce_waf`:
+
+```toml
+[[site.proxy]]
+host = "example.com"
+port = 443
+tls_passthrough = true
+
+# Force WAF L7 inspection despite TLS passthrough
+tls_passthrough_enforce_waf = true
+```
+
+When enabled, the WAF will still apply layer 7 attack detection rules to passthrough traffic. Note that this requires additional configuration to terminate TLS at the WAF for inspection, then re-encrypt to the origin.
+
+**Warning**: TLS passthrough without `tls_passthrough_enforce_waf` means attacks embedded in encrypted traffic will not be detected by the WAF. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
+
 ### Authentication
 
 Control which nodes can join using genesis keys:

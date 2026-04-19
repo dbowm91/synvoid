@@ -632,4 +632,95 @@ mod tests {
         let path = get_handoff_socket_path();
         assert!(path.to_string_lossy().contains(HANDOFF_SOCKET_NAME));
     }
+
+    #[test]
+    fn test_socket_handoff_error_types() {
+        use std::io;
+
+        let socket_create = SocketHandoffError::SocketCreate(io::Error::new(io::ErrorKind::NotFound, "test"));
+        let socket_connect = SocketHandoffError::SocketConnect(io::Error::new(io::ErrorKind::NotFound, "test"));
+        let timeout = SocketHandoffError::Timeout;
+        let cancelled = SocketHandoffError::Cancelled("test cancelled".to_string());
+        let invalid_state = SocketHandoffError::InvalidState("test state".to_string());
+        let not_supported = SocketHandoffError::NotSupported("test".to_string());
+
+        assert_eq!(socket_create.to_string(), "Failed to create handoff socket: test");
+        assert_eq!(socket_connect.to_string(), "Failed to connect to handoff socket: test");
+        assert_eq!(timeout.to_string(), "Timeout waiting for handoff");
+        assert_eq!(cancelled.to_string(), "Handoff cancelled: test cancelled");
+        assert_eq!(invalid_state.to_string(), "Invalid state: test state");
+        assert_eq!(not_supported.to_string(), "Feature not supported on this platform: test");
+
+        assert_eq!(format!("{:?}", socket_create).contains("SocketCreate"), true);
+        assert_eq!(format!("{:?}", timeout), "Timeout");
+    }
+
+    #[test]
+    fn test_handoff_server_construction() {
+        let ports = vec![9999, 10000];
+
+        #[cfg(windows)]
+        {
+            let server = SocketHandoffServer::new(ports.clone());
+            assert!(server.is_ok());
+            let server = server.unwrap();
+            assert_eq!(server.ports, ports);
+            assert_eq!(server.get_fds().len(), 2);
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = ports;
+        }
+    }
+
+    #[test]
+    fn test_handoff_client_connection_timeout() {
+        let client = SocketHandoffClient::new();
+        assert_eq!(client.socket_path.to_string_lossy().contains(HANDOFF_SOCKET_NAME), true);
+    }
+
+    #[test]
+    fn test_dual_master_handoff_construction() {
+        let ports = vec![8080, 8443];
+        let handoff = DualMasterHandoff::new(ports.clone());
+
+        assert!(handoff.server.is_none());
+        assert!(handoff.client.is_none());
+        assert_eq!(handoff.ports, ports);
+    }
+
+    #[tokio::test]
+    async fn test_dual_master_handoff_invalid_state_errors() {
+        let mut handoff = DualMasterHandoff::new(vec![80, 443]);
+
+        #[cfg(unix)]
+        {
+            let result = handoff.wait_for_new_master().await;
+            assert!(result.is_err());
+            match &result {
+                Err(SocketHandoffError::InvalidState(_)) => {}
+                _ => panic!("Expected InvalidState error"),
+            }
+
+            let result = handoff.receive_sockets_from_old_master().await;
+            assert!(result.is_err());
+            match &result {
+                Err(SocketHandoffError::InvalidState(_)) => {}
+                _ => panic!("Expected InvalidState error"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_handoff_constants() {
+        assert_eq!(HANDOFF_SOCKET_NAME, "socket-handoff.sock");
+        assert_eq!(HANDOFF_TIMEOUT_SECS, 30);
+    }
+
+    #[test]
+    fn test_socket_holder_empty() {
+        let holder = crate::process::SocketHolder::new();
+        assert_eq!(holder.len(), 0);
+    }
 }

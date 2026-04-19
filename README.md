@@ -10,15 +10,15 @@ It uses an overseer --> master --> worker model. The overseer is a process thats
 
 ## Better results on linux
 
-Best support and performance will be seen on linux. It's more suited to networking that I know of at many levels. The underlying async architecture for things like EPOL are more heavily optimized in linux, windows equivalent for unix sockets is less performative, and I know we can run wireguard relying on kernel instead of userspace in linux. I can be completely wrong on some things, i'm not really an expert on any of this and even less on windows.
+Best support and performance will be seen on linux. It's more suited to networking that I know of at many levels. The underlying async architecture for things like EPOL are more heavily optimized in linux, windows equivalent for unix sockets is less performative. I can be completely wrong on some things, i'm not really an expert on any of this and even less on windows.
 
 Inter Process Comunications (IPCs) are different and that's a major thing. Since the master and worker processes must communicate with eachother, in POSIX systems we're using unix sockets to communicate in IPCs. This avoids some overhead of running through local loopback for SYN/ACK. Passing sockets and windows equivalent is used as a fallback and the whole IPC itself is abstracted over, but I think there's a performance penalty for this on the windows side. I don't know.
 
-For the mesh WAF-WAF communication protocol, we can offload wireguard to the kernel. WAF-WAF messaging is intended to be a backhaul method connecting the WAF node operating at the edge to an origin server, as well as for doing inter-WAF messaging for things like threat intelligence sharing, origin lookups, and health checks.
+For the mesh WAF-WAF communication protocol, we use QUIC for efficient and secure communication. WAF-WAF messaging is intended to be a backhaul method connecting the WAF node operating at the edge to an origin server, as well as for doing inter-WAF messaging for things like threat intelligence sharing, origin lookups, and health checks.
 
-## Transport protocols: Wireguard and QUIC
+## Transport protocols: QUIC
 
-The primary intention was twofold with the transports. First, I wanted to expose a website hosted at home or remote server through a VPS. That way you could push an origin server with decent specs through a comparatively minimal VPS, or just make it easier to deploy a remote origin server in various places. Secondly, since a lot of the logic and dependencies were already in place, why not allow the WAF to act as a VPN? 
+The primary intention was to expose a website hosted at home or remote server through a VPS. That way you could push an origin server with decent specs through a comparatively minimal VPS, or just make it easier to deploy a remote origin server in various places. 
 
 ## Mesh Network
 
@@ -26,7 +26,7 @@ Once the transport protocols were in place for the intended server-WAF and user 
 
 The biggest single weakness of a one-off WAF instance is that it's susceptible to DDOS attacks. Even with the layers of protections that are build into the WAF at the end of the day the way major CDNs are able to withstand these attacks really is about having a lot of PoPs (points of presence) and distributing the load of a DDOS over many of them. The other side of the coin concerns DNS, which is more or less out of scope for this project (major CDNs use anycast and sophisticated routing techniques to balance load), but what i figured could be done was try to lay the groundwork for a sort of P2P approach to this. Like a collaborative DDOS defense system.
 
-For now, assume we have a properly setup DNS that allows Geodns, so the DNS conects us to the closest WAF edge node. The edge node does a lookup for origin server if it doesn't know it, and passes the origin server through the mesh network through a wireguard tunnel. There are still some issues with this, but it's a starting point. Each edge node is monitoring paths and each WAF that has an upstream is monitoring health of the origin server. This gives us flexibility in how we can chose routes. The mesh network assumes there can be multiple WAFS carrying the same origin server, which allows the edge WAF processing the client request to connect to the best performing WAF that has the origin server.
+For now, assume we have a properly setup DNS that allows Geodns, so the DNS conects us to the closest WAF edge node. The edge node does a lookup for origin server if it doesn't know it, and passes the origin server through the mesh network. There are still some issues with this, but it's a starting point. Each edge node is monitoring paths and each WAF that has an upstream is monitoring health of the origin server. This gives us flexibility in how we can chose routes. The mesh network assumes there can be multiple WAFS carrying the same origin server, which allows the edge WAF processing the client request to connect to the best performing WAF that has the origin server.
 
 With this design, we can shield the identity of the origin server from the edge. WAFS can work as both an edge and an upstream provider. One origin server can broadcast to several remote WAFs in different locals. So there are a lot of options for how this can be setup as a load balancer and providing PoPs in various geographic areas.
 

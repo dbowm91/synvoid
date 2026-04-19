@@ -1,80 +1,11 @@
 # Tunnel Support
 
+> **Note:** WireGuard VPN has been removed from the codebase. QUIC Tunnels are now the primary transport for site-to-site connectivity.
+
 MaluWAF supports multiple tunnel types for site-to-site connectivity and WAF clustering:
 
-1. **WireGuard VPN** - Lightweight VPN for site-to-site connections
-2. **WAF Peers** - Peer-to-peer communication between WAF instances
-3. **QUIC Tunnels** - High-performance tunnels between WAF nodes
-
-## WireGuard VPN
-
-WireGuard provides fast, modern VPN functionality for connecting remote sites.
-
-> **Note:** WireGuard support requires the `wireguard` feature flag at compile time:
-> ```bash
-> cargo build --release --features wireguard
-> ```
-> Without this feature, WireGuard functionality is stubbed and non-operational.
-
-### Configuration
-
-```toml
-[tunnel]
-enabled = true
-
-[tunnel.vpn]
-enabled = true
-bind_address = "0.0.0.0"
-port = 51820
-interface = "wg0"
-private_key = "your-private-key-here"
-
-# Tunnel IP addresses
-addresses = ["10.0.0.1/24", "fd00::1/64"]
-
-# Peer configuration
-[tunnel.vpn.peers]
-public_key = "peer-public-key"
-allowed_ips = ["10.0.0.0/24", "192.168.0.0/16"]
-endpoint = "peer.example.com:51820"
-persistent_keepalive = 25
-enabled = true
-```
-
-### Generating Keys
-
-```bash
-# Generate WireGuard key pair
-wg genkey | tee private.key | wg pubkey > public.key
-```
-
-### Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable WireGuard VPN |
-| `bind_address` | `"0.0.0.0"` | Bind address |
-| `port` | `51820` | WireGuard listen port |
-| `interface` | `"wg0"` | Interface name |
-| `private_key` | - | Base64-encoded private key |
-| `addresses` | - | Tunnel IP addresses (CIDR) |
-| `persistent_keepalive` | `25` | Keep-alive interval (seconds) |
-
-### Multiple Peers
-
-```toml
-[tunnel.vpn.peers.office1]
-public_key = "office1-public-key"
-allowed_ips = ["10.0.1.0/24"]
-endpoint = "office1.example.com:51820"
-persistent_keepalive = 25
-
-[tunnel.vpn.peers.office2]
-public_key = "office2-public-key"
-allowed_ips = ["10.0.2.0/24"]
-endpoint = "office2.example.com:51820"
-persistent_keepalive = 25
-```
+1. **WAF Peers** - Peer-to-peer communication between WAF instances
+2. **QUIC Tunnels** - High-performance tunnels between WAF nodes
 
 ## WAF Clustering (Peers)
 
@@ -194,12 +125,6 @@ upstream = "10.0.1.10:80"
 
 ## Prometheus Metrics
 
-### WireGuard Metrics
-```bash
-maluwaf_tunnel_wireguard_peers  # Active peers
-maluwaf_tunnel_wireguard_bytes  # Bytes transferred
-```
-
 ### QUIC Tunnel Metrics
 ```bash
 maluwaf_tunnel_quic_server_enabled    # Server status
@@ -241,14 +166,6 @@ Internet ---> [WAF Front] ----QUIC Tunnel----> [WAF Backend]
                                             [Internal App]
 ```
 
-### Use Case 3: Site-to-Site VPN
-
-Protect internal services with WireGuard:
-
-```
-Office A (10.0.0.0/24) <=== WireGuard ===> Office B (10.0.1.0/24)
-```
-
 ## Troubleshooting
 
 ### Peer Connection Issues
@@ -263,16 +180,6 @@ curl -H "Authorization: Bearer <token>" http://localhost:8081/api/probes
 1. Verify UDP port 51821 is open
 2. Check TLS certificates are valid
 3. Verify auth tokens match
-
-### WireGuard Interface Issues
-
-```bash
-# Check WireGuard interface
-wg show wg0
-
-# Check routing
-ip route show
-```
 
 ## Security Considerations
 

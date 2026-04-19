@@ -41,7 +41,7 @@ Monitors request patterns for:
 Challenges suspicious clients with:
 - JavaScript challenges
 - CSS honeypot traps
-- Proof-of-work challenges
+- Proof-of-work challenges (12 second timeout)
 
 ## Configuration
 
@@ -122,6 +122,23 @@ paths = [
 ]
 ```
 
+### Proof-of-Work Challenge
+
+Challenge suspicious clients with computational PoW:
+
+```toml
+[defaults.bot.pow_challenge]
+enabled = true
+difficulty = "medium"  # easy, medium, hard
+timeout_seconds = 12  # Default is 12 seconds
+```
+
+| Difficulty | Target Bits | Typical Solve Time |
+|------------|-------------|-------------------|
+| easy       | 16 bits     | 1-2 seconds       |
+| medium     | 24 bits     | 4-8 seconds       |
+| hard       | 32 bits     | 15-30 seconds    |
+
 ### IP Whitelist
 
 Whitelist specific IPs or ranges:
@@ -143,8 +160,8 @@ ip_ranges = [
 | **AI Crawler** | GPTBot, ClaudeBot, etc. | Block (configurable) |
 | **Security Scanner** | sqlmap, nikto, etc. | Block |
 | **Scraper** | Generic scraping tools | Block |
-| **Headless Browser** | Puppeteer, Selenium | Challenge |
-| **Unknown** | No recognized signature | Challenge |
+| **Headless Browser** | Puppeteer, Selenium | Challenge (PoW: 12s timeout) |
+| **Unknown** | No recognized signature | Challenge (PoW: 12s timeout) |
 
 ## Testing Bot Protection
 

@@ -66,7 +66,7 @@ host = "127.0.0.1"  # Localhost only
 port = 8081
 ```
 
-For remote admin, use VPN or wireguard tunnel.
+For remote admin, use VPN or mesh tunnel.
 
 ## IPC Security
 

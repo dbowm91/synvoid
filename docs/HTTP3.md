@@ -54,6 +54,8 @@ alt_svc_max_age = 86400
 | `port` | `443` | HTTP/3 listen port |
 | `host_v6` | - | IPv6 bind address |
 | `alt_svc_max_age` | `86400` | Alt-Svc header max-age (seconds) |
+| `quic_enable_0rtt` | `false` | Enable 0-RTT connection resumption. **Security note**: 0-RTT has replay attack risks and should be disabled in high-security environments |
+| `prefer_post_quantum` | `false` | Use post-quantum key exchange (CRYSTALS-Kyber) for TLS. **Recommended**: Enable for long-term security against quantum computing threats. Protected traffic cannot be decrypted by quantum adversaries even if captured today |
 
 ## Per-Site HTTP/3
 

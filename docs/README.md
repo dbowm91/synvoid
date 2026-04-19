@@ -51,7 +51,7 @@ MaluWAF includes additional features for specific use cases:
 | Document | Description |
 |----------|-------------|
 | [HTTP3.md](HTTP3.md) | HTTP/3 (QUIC) support for lower latency |
-| [TUNNELS.md](TUNNELS.md) | WireGuard VPN tunnels and site-to-site connectivity |
+| [TUNNELS.md](TUNNELS.md) | QUIC tunnels and site-to-site connectivity |
 | [WAF_MESH.md](WAF_MESH.md) | Peer-to-peer mesh networking for DDoS mitigation |
 | [UPLOADS.md](UPLOADS.md) | File upload validation and malware scanning |
 | [FASTCGI.md](FASTCGI.md) | FastCGI proxy support for PHP, Python, etc. |

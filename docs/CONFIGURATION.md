@@ -378,26 +378,6 @@ SCRIPT_FILENAME = "$document_root$fastcgi_script_name"
 SCRIPT_NAME = "$fastcgi_script_name"
 ```
 
-## WireGuard VPN Tunnel
-
-```toml
-[tunnel.vpn]
-enabled = true
-bind_address = "0.0.0.0"
-port = 51820
-interface = "wg0"
-private_key = "<your-private-key>"
-
-[tunnel.vpn.addresses]
-ipv4 = ["10.0.0.1/24"]
-
-[tunnel.vpn.peers]
-public_key = "<peer-public-key>"
-allowed_ips = ["10.0.0.0/24"]
-endpoint = "peer.example.com:51820"
-persistent_keepalive = 25
-```
-
 ## WAF Clustering
 
 ```toml
@@ -698,3 +678,15 @@ per_minute = 100
 ├── db/                     # SQLite database
 └── certs/                  # TLS certificates
 ```
+
+## Common Configuration Mistakes
+
+| Mistake | Problem | Solution |
+|---------|---------|----------|
+| TLS Passthrough bypassing WAF | When `tls_passthrough = true`, all L7 WAF inspection (SQLi, XSS, etc.) is bypassed | Use `tls_passthrough_enforce_waf = true` to still apply WAF rules |
+| Port conflicts | Default ports 8080, 8081, 9090 may be in use | Check ports are available before starting MaluWAF |
+| Trusted proxies misconfiguration | X-Forwarded-For header not working | Ensure client IP is in `trusted_proxies` list |
+| Weak admin token | Using default or short tokens exposes admin API | Use a strong, random token in production |
+| Mesh network isolation | Different mesh networks can see each other | Use `network_id` to isolate different mesh deployments |
+| DNSSEC with non-recursive provider | DNSSEC validation requires recursive resolver | Use `"Recursive"` provider with `dnssec_validation = true` |
+| ACME terms_of_service_agreed | Let's Encrypt ACME fails without agreement | Set `terms_of_service_agreed = true` in ACME config |

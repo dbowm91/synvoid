@@ -1073,3 +1073,273 @@ pub enum UpgradeError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::preflight::PreflightResult;
+
+    #[test]
+    fn test_auto_rollback_config_defaults() {
+        let config = AutoRollbackConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.health_check_retries, 3);
+        assert_eq!(config.health_check_interval_secs, 5);
+        assert_eq!(config.error_rate_threshold, 0.1);
+        assert_eq!(config.latency_degradation_threshold_percent, 50.0);
+        assert_eq!(config.min_sample_requests, 5);
+        assert_eq!(config.rollback_timeout_secs, 30);
+    }
+
+    #[test]
+    fn test_upgrade_mode_detection() {
+        let mode = detect_upgrade_mode();
+        match mode {
+            UpgradeMode::ReusePort => {}
+            UpgradeMode::PortSwap { temp_port_offset } => {
+                assert_eq!(temp_port_offset, 1000);
+            }
+        }
+    }
+
+    #[test]
+    fn test_upgrade_mode_requires_temp_ports() {
+        let reuse_port_mode = UpgradeMode::ReusePort;
+        assert!(!reuse_port_mode.requires_temp_ports());
+
+        let port_swap_mode = UpgradeMode::PortSwap { temp_port_offset: 1000 };
+        assert!(port_swap_mode.requires_temp_ports());
+    }
+
+    #[test]
+    fn test_upgrade_mode_name() {
+        assert_eq!(UpgradeMode::ReusePort.name(), "SO_REUSEPORT");
+        assert_eq!(
+            UpgradeMode::PortSwap { temp_port_offset: 1000 }.name(),
+            "Port Swap"
+        );
+    }
+
+    #[test]
+    fn test_orchestrator_construction() {
+        let orchestrator = Orchestrator::new(None, None, None);
+        assert!(orchestrator.preflight_config.require_config_check);
+        assert!(orchestrator.auto_rollback_config.enabled);
+    }
+
+    #[test]
+    fn test_orchestrator_with_custom_configs() {
+        let preflight_config = PreflightConfig {
+            validation_timeout_secs: 60,
+            require_config_check: false,
+            require_capability_check: false,
+            min_startup_time_ms: 200,
+            max_startup_time_ms: 20000,
+        };
+
+        let auto_rollback_config = AutoRollbackConfig {
+            enabled: false,
+            health_check_retries: 5,
+            health_check_interval_secs: 10,
+            error_rate_threshold: 0.2,
+            latency_degradation_threshold_percent: 75.0,
+            min_sample_requests: 10,
+            rollback_timeout_secs: 60,
+        };
+
+        let orchestrator = Orchestrator::new(None, None, None)
+            .with_preflight_config(preflight_config.clone())
+            .with_auto_rollback_config(auto_rollback_config.clone());
+
+        assert!(!orchestrator.preflight_config.require_config_check);
+        assert!(!orchestrator.auto_rollback_config.enabled);
+        assert_eq!(orchestrator.preflight_config.validation_timeout_secs, 60);
+        assert_eq!(orchestrator.auto_rollback_config.health_check_retries, 5);
+    }
+
+    #[test]
+    fn test_upgrade_state_transitions() {
+        use super::super::state::UpgradeState;
+
+        assert!(UpgradeState::Idle.is_terminal());
+        assert!(UpgradeState::Committed.is_terminal());
+        assert!(UpgradeState::Failed.is_terminal());
+
+        assert!(!UpgradeState::Staging.is_terminal());
+        assert!(!UpgradeState::Spawning.is_terminal());
+        assert!(!UpgradeState::Validating.is_terminal());
+        assert!(!UpgradeState::Draining.is_terminal());
+        assert!(!UpgradeState::RollingBack.is_terminal());
+
+        assert!(UpgradeState::Staging.is_transition());
+        assert!(UpgradeState::Idle.is_transition());
+    }
+
+    #[test]
+    fn test_overseer_state_can_stage() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let state = OverseerState::new();
+        assert!(state.can_stage());
+
+        let mut staging_state = OverseerState::new();
+        staging_state.state = UpgradeState::Staging;
+        assert!(!staging_state.can_stage());
+
+        let mut committed_state = OverseerState::new();
+        committed_state.state = UpgradeState::Committed;
+        assert!(committed_state.can_stage());
+
+        let mut failed_state = OverseerState::new();
+        failed_state.state = UpgradeState::Failed;
+        assert!(failed_state.can_stage());
+    }
+
+    #[test]
+    fn test_overseer_state_can_apply() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut staging_state = OverseerState::new();
+        staging_state.state = UpgradeState::Staging;
+        assert!(staging_state.can_apply());
+
+        let idle_state = OverseerState::new();
+        assert!(!idle_state.can_apply());
+    }
+
+    #[test]
+    fn test_overseer_state_can_rollback() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut validating_state = OverseerState::new();
+        validating_state.state = UpgradeState::Validating;
+        assert!(validating_state.can_rollback());
+
+        let mut failed_state = OverseerState::new();
+        failed_state.state = UpgradeState::Failed;
+        assert!(failed_state.can_rollback());
+
+        let idle_state = OverseerState::new();
+        assert!(!idle_state.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_max_duration() {
+        use super::super::state::UpgradeState;
+
+        assert_eq!(UpgradeState::Staging.max_duration_secs(), Some(300));
+        assert_eq!(UpgradeState::Spawning.max_duration_secs(), Some(120));
+        assert_eq!(UpgradeState::Validating.max_duration_secs(), Some(300));
+        assert_eq!(UpgradeState::Draining.max_duration_secs(), Some(600));
+        assert_eq!(UpgradeState::RollingBack.max_duration_secs(), Some(300));
+        assert!(UpgradeState::Idle.max_duration_secs().is_none());
+        assert!(UpgradeState::Committed.max_duration_secs().is_none());
+    }
+
+    #[test]
+    fn test_preflight_validation_logic() {
+        let config = PreflightConfig::default();
+        assert_eq!(config.validation_timeout_secs, 30);
+        assert!(config.require_config_check);
+        assert!(config.require_capability_check);
+        assert_eq!(config.min_startup_time_ms, 100);
+        assert_eq!(config.max_startup_time_ms, 10000);
+    }
+
+    #[test]
+    fn test_preflight_result_validation() {
+        let valid_result = PreflightResult {
+            success: true,
+            version: "1.0.0".to_string(),
+            startup_time_ms: 500,
+            config_compatible: true,
+            capabilities: vec!["http1".to_string()],
+            warnings: vec![],
+            errors: vec![],
+        };
+        assert!(valid_result.is_valid());
+
+        let invalid_result = PreflightResult {
+            success: true,
+            version: "1.0.0".to_string(),
+            startup_time_ms: 500,
+            config_compatible: true,
+            capabilities: vec![],
+            warnings: vec![],
+            errors: vec!["Error 1".to_string()],
+        };
+        assert!(!invalid_result.is_valid());
+
+        let failed_result = PreflightResult {
+            success: false,
+            version: "1.0.0".to_string(),
+            startup_time_ms: 500,
+            config_compatible: true,
+            capabilities: vec![],
+            warnings: vec![],
+            errors: vec![],
+        };
+        assert!(!failed_result.is_valid());
+    }
+
+    #[test]
+    fn test_validation_metrics() {
+        let metrics = ValidationMetrics {
+            total_checks: 100,
+            successful_checks: 95,
+            success_rate: 0.95,
+        };
+        assert_eq!(metrics.total_checks, 100);
+        assert_eq!(metrics.successful_checks, 95);
+        assert_eq!(metrics.success_rate, 0.95);
+    }
+
+    #[test]
+    fn test_upgrade_result_struct() {
+        let metrics = ValidationMetrics {
+            total_checks: 10,
+            successful_checks: 10,
+            success_rate: 1.0,
+        };
+
+        let result = UpgradeResult {
+            version: "2.0.0".to_string(),
+            mode: UpgradeMode::ReusePort,
+            metrics,
+            old_ports: vec![8080, 8081],
+            new_ports: vec![8080, 8081],
+        };
+
+        assert_eq!(result.version, "2.0.0");
+        assert_eq!(result.old_ports, vec![8080, 8081]);
+        assert_eq!(result.new_ports, vec![8080, 8081]);
+    }
+
+    #[test]
+    fn test_upgrade_error_display() {
+        let error = UpgradeError::NoStagedUpgrade;
+        assert_eq!(error.to_string(), "No staged upgrade found");
+
+        let error = UpgradeError::BinaryNotFound(PathBuf::from("/bin/fake"));
+        assert_eq!(error.to_string(), "Binary not found: /bin/fake");
+
+        let error = UpgradeError::ChecksumMismatch {
+            expected: "abc123".to_string(),
+            actual: "def456".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Checksum mismatch: expected abc123, got def456"
+        );
+    }
+
+    #[test]
+    fn test_orchestrator_state_persistence() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(state.staged_version.is_none());
+        assert!(state.current_version.is_none());
+        assert!(state.worker_ports.is_none());
+    }
+}

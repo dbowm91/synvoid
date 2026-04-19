@@ -169,7 +169,6 @@ maluwaf = { version = "0.1", features = ["socket-handoff", "daemonize"] }
 |---------|---------|-------------|
 | `socket-handoff` | Yes | Socket FD passing for zero-downtime upgrades (Unix only) |
 | `daemonize` | No | Unix daemonization support |
-| `wireguard` | No | WireGuard tunnel support |
 
 ## Building for Specific Platforms
 
