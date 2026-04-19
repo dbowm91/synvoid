@@ -286,6 +286,25 @@ Wave 4 (Dependent): Starts after Wave 1-3 complete
 
 **Parallelization rule**: Within a wave, phases can run in parallel if they don't depend on each other's outputs. Each phase can use a separate sub-agent.
 
+### Consolidated Plan Location
+
+All implementation plans are consolidated in `plans/plan.md`. This file contains:
+- **Waves 1-10**: Completed/ongoing work status
+- **Waves A-L**: New implementation plans organized by feature area
+
+Key waves and their dependencies:
+| Wave | Focus | Dependencies |
+|------|-------|--------------|
+| Wave G | Dependency Audit | None - run first |
+| Wave H | Performance | None - run in parallel with G |
+| Wave A | Mesh/DHT | None - run in parallel with G, H |
+| Wave B | Plugin Architecture | None - run in parallel with A |
+| Wave C | Web App Stack | None - run in parallel with A, B |
+| Wave F | YARA/Security | After A complete |
+| Wave I | WASM Extensions | After B complete |
+| Wave E | Edge Caching | After A complete |
+| Wave D | Serverless | After A, B complete |
+
 ## Subagent Execution Best Practices
 
 When using subagents to make code changes:

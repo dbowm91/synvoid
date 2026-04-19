@@ -1,13 +1,13 @@
 # MaluWAF Implementation Plan
 
 **Last updated**: 2026-04-19
-**Status**: CONSOLIDATED - All plan files merged (plan3-plan9, dependency_audit_plan.md)
+**Status**: CONSOLIDATED - All plan files merged (plan2-plan8, dependency_audit_plan.md)
 
 ---
 
 ## Overview
 
-This is the consolidated implementation plan combining items from all plan files. Waves 1-8 contain completed/ongoing work. Waves A-E contain new implementation plans.
+This is the consolidated implementation plan combining items from all plan files. Waves 1-10 contain completed/ongoing work. Waves A-L contain new implementation plans.
 
 **Status Legend**:
 - ✅ COMPLETED - Item fully implemented and verified
@@ -39,6 +39,8 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave E | Edge Caching & Image Poison | 📋 PLANNING | Yes - 3 phases can parallelize |
 | Wave F | YARA/File Upload Security | 📋 PLANNING | Yes - 3 steps can parallelize |
 | Wave G | Dependency Audit & Updates | 📋 PLANNING | No - sequential security patches |
+| Wave H | Reverse Proxy Performance | 📋 PLANNING | Yes - 3 phases can parallelize |
+| Wave I | Web App Stack Extensions | 📋 PLANNING | Yes - 4 phases can parallelize |
 
 ---
 
@@ -401,7 +403,7 @@ cargo test
 
 ---
 
-# NEW IMPLEMENTATION PLANS (Waves A-G)
+# NEW IMPLEMENTATION PLANS (Waves A-L)
 
 ---
 
@@ -464,6 +466,17 @@ cargo test
 | A.6.2 | Origin Attestation Refresh: Mandatory periodic refreshing of `global_node_attestation_sig` for Origin nodes | src/mesh/discovery.rs | 📋 PLANNING |
 | A.6.3 | Strict Key Prefixing: Audit and enforce strict key prefixes in `DhtAccessControl` | src/mesh/dht/record_store_crud.rs | 📋 PLANNING |
 | A.6.4 | Value Encryption: Mandatory encryption for sensitive DHT values using `TierKeyEncryption` | src/mesh/tier_key_encryption.rs | 📋 PLANNING |
+
+### Phase A.7: Additional Security Improvements (from plan3.md)
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| A.7.1 | **TLS Certificate Distribution**: Never export Origin private keys to Edge nodes. Implement SNI routing with delegated credentials or Edge-specific TLS certificates | src/mesh/cert_dist.rs | 📋 PLANNING |
+| A.7.2 | **Threat Intel Poisoning Protection**: Enforce Telemetry-to-Truth model - Edge nodes submit Threat Telemetry to Global nodes via dedicated API/RPC, not directly to DHT. Only Global nodes evaluate, sign, and publish final `threat_indicator` | src/mesh/threat_intel.rs | 📋 PLANNING |
+| A.7.3 | **Cuckoo Filter Threat Intel**: Transition from individual DHT keys per IP to Compressed Filter Synchronization (Cuckoo/Bloom Filters) published by Global nodes | src/mesh/dht/ | 📋 PLANNING |
+| A.7.4 | **DHT Routing Optimization**: Delegate reachability verification to Edge nodes using quorum-based consensus with Global node final attestation. Optimize `ping_peers_loop` and `refresh_sparse_buckets` to prevent ping storms | src/mesh/dht/routing/manager.rs | 📋 PLANNING |
+| A.7.5 | **ACME HTTP-01 Redundancy**: Store pending ACME challenges in DHT (signed by Global node) instead of relying solely on ephemeral one-hop broadcasts. Edge can perform fast DHT lookup on unknown token | src/mesh/ | 📋 PLANNING |
+| A.7.6 | **Multi-Genesis Key Rotation**: Implement overlapping trust window where Edge nodes fetch Genesis Key Manifest from DHT, allowing disconnected/partitioned Edge nodes to catch up on rotated Genesis keys securely | src/mesh/config_identity.rs | 📋 PLANNING |
 
 ### Verification Strategy
 
@@ -537,7 +550,7 @@ cargo test
 
 ## Wave C: Web Application Stack Enhancements
 
-**Source**: plan6.md
+**Source**: plan5.md, plan6.md
 
 ### Phase C.1: Unified Theme & Directory Viewer
 
@@ -585,7 +598,7 @@ cargo test
 
 ## Wave D: Serverless Architecture Improvements
 
-**Source**: plan7.md
+**Source**: plan6.md, plan7.md
 
 **Background**: Current serverless functions are local-only. Goal is distributed edge-computing platform with mesh-wide discovery and routing.
 
@@ -691,6 +704,25 @@ cargo test
 |----|-------------|------|--------|
 | F.3.1 | Apply same logic as F.2 for HTTPS uploads | src/tls/server.rs | 📋 PLANNING |
 
+### Phase F.4: YARA Distribution Enhancements
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | 📋 PLANNING |
+| F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | 📋 PLANNING |
+| F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | 📋 PLANNING |
+| F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | 📋 PLANNING |
+
+### Phase F.5: Advanced File Upload Security
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth and sandbox strictness based on source IP reputation from ThreatIntelligence | src/http/server.rs | 📋 PLANNING |
+| F.5.2 | **Enhanced Sandbox**: Implement stricter OS-level sandboxing (landlock on Linux, sandbox_init on macOS) for scanning process | src/static_files/ | 📋 PLANNING |
+| F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/static_files/ | 📋 PLANNING |
+| F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | 📋 PLANNING |
+| F.5.5 | **Tiered Distribution**: Broadcast critical threats (high severity) instantly, sync low-priority via DHT only | src/mesh/threat_intel.rs | 📋 PLANNING |
+
 ### Verification
 
 - **Unit/Integration Tests**: Verify `YaraRuleAnnounce` messages correctly forwarded without role filter
@@ -741,6 +773,93 @@ cargo test
 
 ---
 
+## Wave H: Reverse Proxy Performance Improvements
+
+**Source**: plan2.md
+
+**Objective**: Improve scalability, performance, and security of the reverse proxy and WAF components.
+
+### Phase H.1: Immediate Performance Fixes
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| H.1.1 | **Zero-copy Static Serving**: Replace `std::fs::read` with streaming `tokio::fs::File` and `http_body_util::StreamBody` for large files. Implement response cache for small-to-medium static assets | src/http/server.rs, src/worker/response_builder.rs | 📋 PLANNING |
+| H.1.2 | **Router Suffix Optimization**: Replace `Vec` linear scan for suffix/wildcard matches with Radix Tree or Trie optimized for domain suffixes | src/router.rs | 📋 PLANNING |
+| H.1.3 | **Handle Request Split**: Split monolithic `handle_request` (~3400 lines) into discrete stages: Sanitization, Auth, RateLimit, WafEarly, BodyCollect, WafFull, Routing, BackendDispatch. Use `RequestCtx` struct to pass state | src/http/server.rs | 📋 PLANNING |
+
+### Phase H.2: Architectural Refinement
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| H.2.1 | **Middleware Pipeline**: Implement full Middleware/Pipeline pattern for request handling | src/http/server.rs | 📋 PLANNING |
+| H.2.2 | **Granular Resource Quotas**: Implement per-site CPU/Memory soft limits. Enhance `connection_limit` and `bandwidth_limit` for more granular control | src/config/site/, src/waf/ | 📋 PLANNING |
+| H.2.3 | **Upstream Connection Pooling**: Fine-tune `pool_max_idle_per_host` and `pool_idle_timeout` per-site. Support Keep-Alive tuning | src/upstream/pool.rs, src/http_client/mod.rs | 📋 PLANNING |
+
+### Phase H.3: Advanced Scalability & Security
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| H.3.1 | **Dedicated Worker Pools**: Implement dedicated worker pools for high-traffic sites | src/worker/, src/process/ | 📋 PLANNING |
+| H.3.2 | **Mesh Protocol Sandboxing**: Move complex mesh protocol parsing to restricted submodule or separate "Mesh Sidecar" process | src/mesh/ | 📋 PLANNING |
+| H.3.3 | **Streaming WAF Engine**: Support rules that can be evaluated on chunks as they arrive without waiting for full body. Only collect body if specific rules require it | src/waf/ | 📋 PLANNING |
+| H.3.4 | **Upstream TLS Hardening**: Default `verify: true` for upstream TLS. Implement "Security Audit" log highlighting sites using `skip_verify` or weak upstream ciphers | src/http_client/mod.rs | 📋 PLANNING |
+| H.3.5 | **Mesh Traffic Circuit Breaker**: Implement aggressive timeouts and circuit breaking for mesh-proxied backends | src/mesh/proxy.rs | 📋 PLANNING |
+
+### Verification
+
+- **Benchmark**: Compare latency and throughput before/after zero-copy static serving
+- **Load Test**: Verify Router suffix matching with 10,000 wildcard domains
+- **Middleware Test**: Verify each pipeline stage executes in correct order
+- **Resource Quota Test**: Verify high-traffic site doesn't starve neighboring sites
+
+---
+
+## Wave I: Web App Stack Extensions
+
+**Source**: plan4.md, plan5.md
+
+### Phase I.1: WASM Runtime & Performance
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| I.1.1 | **Unified Pooling**: Simplify pooling logic in `WasmRuntime`. Ensure newly created instances are added to pool if capacity allows | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| I.1.2 | **Instance Snapshotting**: Explore wasmtime instance snapshotting or ensure `Module` caching is fully utilized across all runtimes | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| I.1.3 | **Efficient ABI V2**: Replace JSON-based header passing with shared-memory buffer format. Support streaming body access for WASM plugins | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| I.1.4 | **WASI Support**: Fully enable WASI with controlled access to specific host resources (restricted filesystem paths) | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+
+### Phase I.2: Serverless Enhancements
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| I.2.1 | **Flattened Pooling**: Remove redundant pool in `ServerlessManager`. `ServerlessInstance` should directly manage WASM resources or use single unified pool | src/serverless/manager.rs | 📋 PLANNING |
+| I.2.2 | **Mesh-Distributed Execution**: Allow nodes to "offload" serverless execution to mesh peers if local load is high or peer has module "warmed up". Implement `MeshServerlessRequest` protocol message | src/mesh/, src/serverless/ | 📋 PLANNING |
+| I.2.3 | **State Persistence**: Provide guest API for WASM functions to access mesh-wide Key-Value store (backed by existing DHT) | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+
+### Phase I.3: Routing & Axum Integration
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| I.3.1 | **Unified Router**: Integrate `ServerlessManager` routing and `router.rs` into single high-performance matcher. Support "Axum Native" sites where site is defined by Axum `Router` called directly | src/router.rs, src/serverless/routing.rs | 📋 PLANNING |
+| I.3.2 | **Optimized Bridge**: Improve `handle_axum_dynamic_request` to use `axum::body::Body` more efficiently without unnecessary cloning if plugin supports streaming | src/http/server.rs | 📋 PLANNING |
+| I.3.3 | **Dynamic Axum Plugins**: Improve safety and version checking for native Axum plugins (`.so` files) | src/plugin/axum_loader.rs | 📋 PLANNING |
+
+### Phase I.4: Directory Viewer Enhancements
+
+| ID | Description | File | Status |
+|----|-------------|------|--------|
+| I.4.1 | **Extended Configuration**: Add `show_icons`, `hide_patterns`, `custom_styles`, `readme_rendering` to `DirectoryViewerConfig` | src/config/site/static_files.rs | 📋 PLANNING |
+| I.4.2 | **Performance**: Implement caching for directory metadata to speed up large listings | src/theme/dir_listing.rs | 📋 PLANNING |
+| I.4.3 | **README Rendering**: Automatically render `README.md` if present in directory using markdown-to-html crate | src/theme/ | 📋 PLANNING |
+
+### Verification
+
+- **Benchmarks**: Use existing `benches/bench_wasm.rs` and add new ones for Serverless and Axum bridge
+- **Compatibility**: Ensure existing WASM plugins still work (V1 ABI support)
+- **Mesh Testing**: Deploy 3-node mesh and verify serverless execution offloading
+- **Resource Limits**: Verify WASM memory and CPU limits are strictly enforced with new ABI
+
+---
+
 ## Reference Commands
 
 ```bash
@@ -771,3 +890,30 @@ cargo test
 # Dependency audit
 cargo audit
 ```
+
+---
+
+## Wave Parallelization Summary
+
+| Wave | Dependencies | Parallelization Possible |
+|------|--------------|------------------------|
+| Wave A (Mesh/DHT) | None | Yes - Phases A.1-A.6 can parallelize |
+| Wave B (Plugin) | None | Yes - Phases B.1-B.6 can parallelize |
+| Wave C (Web App Stack) | None | Yes - Phases C.1-C.5 can parallelize |
+| Wave D (Serverless) | A (mesh), B (plugin) | Partial - D.1 independent, D.2-D.4 depend on A |
+| Wave E (Edge Caching) | A (mesh) | Partial - E.1-E.3 can parallelize |
+| Wave F (YARA/Security) | A (mesh) | Partial - F.1-F.3 independent, F.4-F.5 can parallelize |
+| Wave G (Dependencies) | None | No - sequential security patches |
+| Wave H (Performance) | None | Yes - Phases H.1-H.3 can parallelize |
+| Wave I (WASM Extensions) | B (plugin) | Partial - I.1 independent, I.2-I.4 depend on B |
+
+**Recommended Implementation Order**:
+1. **Wave G** (Dependency Audit) - Security patches, no dependencies
+2. **Wave H** (Performance) - Can run in parallel with G
+3. **Wave A** (Mesh/DHT) - Core infrastructure, can run in parallel with G, H
+4. **Wave B** (Plugin) - Can run in parallel with A
+5. **Wave C** (Web App Stack) - Can run in parallel with A, B
+6. **Wave F** (YARA/Security) - Can run in parallel after A complete
+7. **Wave I** (WASM Extensions) - Can run in parallel after B complete
+8. **Wave E** (Edge Caching) - After A complete
+9. **Wave D** (Serverless) - After A, B complete
