@@ -16,6 +16,13 @@ use crate::admin::state::AdminState;
             url = "https://github.com/anomalyco/maluwaf"
         )
     ),
+    servers(
+        (url = "http://localhost:8080", description = "Local development server"),
+        (url = "https://localhost:8080", description = "Production server")
+    ),
+    components(
+        schemas()
+    ),
     paths(
         crate::admin::handlers::stats::get_summary,
         crate::admin::handlers::stats::get_sites_stats,
@@ -455,5 +462,95 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_openapi_servers_defined() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        assert!(openapi.servers.is_some(), "OpenAPI should have servers defined");
+        let servers = openapi.servers.unwrap();
+        assert!(!servers.is_empty(), "At least one server should be defined");
+
+        let server_urls: Vec<_> = servers.iter().map(|s| s.url.as_str()).collect();
+        assert!(
+            server_urls.iter().any(|u| u.contains("localhost")),
+            "Should have localhost server"
+        );
+        assert!(
+            server_urls.iter().any(|u| u.contains("https")),
+            "Should have HTTPS server"
+        );
+    }
+
+    #[test]
+    fn test_openapi_paths_accessible() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        for path_key in openapi.paths.paths.keys() {
+            let operation_exists = openapi
+                .paths
+                .get_path_operation(path_key, openapi::path::PathItemType::Get)
+                .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Post)
+                    .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Put)
+                    .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Delete)
+                    .is_some();
+
+            assert!(
+                operation_exists,
+                "Path {} should have at least one operation",
+                path_key
+            );
+        }
+    }
+
+    #[test]
+    fn test_openapi_tags_have_descriptions() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        assert!(openapi.tags.is_some(), "Tags should be defined");
+        let tags = openapi.tags.unwrap();
+
+        for tag in tags {
+            assert!(
+                tag.description.is_some() && !tag.description.as_ref().unwrap().is_empty(),
+                "Tag {} should have a description",
+                tag.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_openapi_path_count_reasonable() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        let path_count = openapi.paths.paths.len();
+        assert!(
+            path_count >= 50,
+            "Should have at least 50 API paths defined, found {}",
+            path_count
+        );
+    }
+
+    #[test]
+    fn test_openapi_components_count_reasonable() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        let components = openapi.components.as_ref().expect("Components should exist");
+        let schema_count = components.schemas.len();
+        assert!(
+            schema_count >= 50,
+            "Should have at least 50 schemas defined, found {}",
+            schema_count
+        );
     }
 }

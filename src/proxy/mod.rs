@@ -154,9 +154,11 @@ impl ProxyServer {
     }
 
     pub fn with_cache(mut self, cache: Arc<ProxyCache>) -> Self {
-        let settings = cache.settings().clone();
+        let settings = cache.settings();
+        let key_pattern = settings.key_pattern.clone();
+        let vary_by = settings.vary_by.clone();
         self.cache = Some(cache);
-        self.cache_key_builder = Some(CacheKeyBuilder::new(settings.key_pattern, settings.vary_by));
+        self.cache_key_builder = Some(CacheKeyBuilder::new(key_pattern, vary_by));
         self
     }
 

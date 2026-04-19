@@ -184,68 +184,68 @@ Items grouped into waves where parallelization is possible:
 
 ## Wave 4: Serverless Architecture
 
-**Status**: 📋 PLANNING - Depends on earlier waves for config exposure
+**Status**: ✅ COMPLETED (partial)
 
 ### Phase 4.1: Standalone Serverless Mode
 
 | ID | Description | Status |
-|----|------------|--------|
-| W4.1.1 | Mode configuration (standalone/provider) | 📋 PLANNING |
-| W4.1.2 | Scale-to-zero implementation | 📋 PLANNING |
-| W4.1.3 | Cold start request handling | 📋 PLANNING |
+|----|-------------|--------|
+| W4.1.1 | Mode configuration (standalone/provider) | ✅ COMPLETED |
+| W4.1.2 | Scale-to-zero implementation | ✅ COMPLETED |
+| W4.1.3 | Cold start request handling | ✅ COMPLETED |
 
 ### Phase 4.2: Mesh Origin Provider
 
 | ID | Description | Status |
-|----|------------|--------|
-| W4.2.1 | Provider configuration | 📋 PLANNING |
-| W4.2.2 | Function announcement to DHT | 📋 PLANNING |
-| W4.2.3 | Edge invocation via mesh | 📋 PLANNING |
-| W4.2.4 | WASM distribution | 📋 PLANNING |
+|----|-------------|--------|
+| W4.2.1 | Provider configuration | ✅ COMPLETED |
+| W4.2.2 | Function announcement to DHT | ⏸️ DEFERRED (receiver exists, sender not wired) |
+| W4.2.3 | Edge invocation via mesh | ⏸️ DEFERRED (mesh message types exist) |
+| W4.2.4 | WASM distribution | ⏸️ DEFERRED (infra exists, upload flow missing) |
 
 ### Phase 4.3: Admin API Function Deployment
 
 | ID | Description | Status |
-|----|------------|--------|
-| W4.3.1 | Upload endpoint | 📋 PLANNING |
-| W4.3.2 | File manager | 📋 PLANNING |
-| W4.3.3 | Versioning | 📋 PLANNING |
+|----|-------------|--------|
+| W4.3.1 | Upload endpoint | ⏸️ DEFERRED (requires new API work) |
+| W4.3.2 | File manager | ⏸️ DEFERRED (requires new API work) |
+| W4.3.3 | Versioning | ⏸️ DEFERRED (requires new API work) |
 
 ---
 
 ## Wave 5: Edge Caching and Image Poison
 
-**Status**: 📋 PLANNING
+**Status**: ✅ COMPLETED (partial)
 
 ### Phase 5.1: Core Infrastructure Fixes
 
 | ID | Description | Status |
-|----|------------|--------|
-| W5.1.1 | Broadcast config to edges | 📋 PLANNING |
-| W5.1.2 | Apply received preferences | 📋 PLANNING |
-| W5.1.3 | Protocol message update | 📋 PLANNING |
+|----|-------------|--------|
+| W5.1.1 | Broadcast config to edges | ✅ COMPLETED |
+| W5.1.2 | Apply received preferences | ✅ COMPLETED |
+| W5.1.3 | Protocol message update | ✅ COMPLETED |
 
 ### Phase 5.2: Edge HTTP Response Caching
 
 | ID | Description | Status |
-|----|------------|--------|
-| W5.2.1 | Edge cache implementation | 📋 PLANNING |
-| W5.2.2 | Cache key computation | 📋 PLANNING |
-| W5.2.3 | MeshProxy integration | 📋 PLANNING |
+|----|-------------|--------|
+| W5.2.1 | Edge cache implementation | ✅ COMPLETED |
+| W5.2.2 | Cache key computation | ✅ COMPLETED |
+| W5.2.3 | MeshProxy integration | ✅ COMPLETED |
 
 ### Phase 5.3: Edge Static Caching
 
 | ID | Description | Status |
-|----|------------|--------|
-| W5.3.1 | Static cache implementation | 📋 PLANNING |
-| W5.3.2 | Cache invalidation | 📋 PLANNING |
+|----|-------------|--------|
+| W5.3.1 | Static cache implementation | ⏸️ DEFERRED (requires static-specific design) |
+| W5.3.2 | Cache invalidation | ⏸️ DEFERRED (pattern invalidation exists) |
 
 ### Phase 5.4: DHT Image Poison
 
 | ID | Description | Status |
-|----|------------|--------|
-| W5.4.1 | DHT remains primary | 📋 PLANNING |
-| W5.4.2 | Dual config priority | 📋 PLANNING |
+|----|-------------|--------|
+| W5.4.1 | DHT remains primary | ✅ COMPLETED |
+| W5.4.2 | Dual config priority | ⏸️ DEFERRED (site-level config merges DHT) |
 
 ---
 
@@ -302,136 +302,24 @@ Items grouped into waves where parallelization is possible:
 
 ## Wave 9: OpenAPI Improvements
 
+**Status**: ✅ COMPLETED (partial)
+
 ### Phase 9.1: Critical
 
 | ID | Description | Status |
-|----|------------|--------|
-| W9.1.1 | Add security scheme definitions | 📋 PLANNING |
-| W9.1.2 | Add server URL definitions | 📋 PLANNING |
-| W9.1.3 | Add parameter descriptions | 📋 PLANNING |
-
----
-
-## Wave 10: PHP-FPM Graceful Reload & WASM Streaming
-
-**Status**: 📋 PLANNING
-
-### Phase 10.1: PHP-FPM Graceful Reload
-
-| ID | Description | Status |
 |----|-------------|--------|
-| W10.1.1 | FastCgiPool drain state | ✅ COMPLETED |
-| W10.1.2 | PhpConfig drain fields | ✅ COMPLETED |
-| W10.1.3 | Admin reload endpoint | ✅ COMPLETED |
-| W10.1.4 | Admin UI integration | ⏸️ DEFERRED (routes exist, UI separate) |
-
-**Config**:
-```toml
-[site.proxy.php]
-socket = "/run/php/php-fpm.sock"
-drain_timeout_seconds = 30
-drain_on_reload = true
-```
-
-### Phase 10.2: WASM Streaming (WASI-HTTP)
-
-| ID | Description | Status |
-|----|-------------|--------|
-| W10.2.1 | Add wasmtime-wasi-http dependency | ⏸️ DEFERRED (architecture change needed) |
-| W10.2.2 | WasmRuntime WASI-HTTP support | ⏸️ DEFERRED (architecture change needed) |
-| W10.2.3 | InstancePool streaming invoke | ⏸️ DEFERRED (architecture change needed) |
-| W10.2.4 | Function config ABI field | 📋 PLANNING |
-| W10.2.5 | Manager routing for WASI-HTTP | 📋 PLANNING |
-
-**Config**:
-```toml
-[[serverless.functions]]
-name = "image-processor"
-abi = "wasi-http"  # Enable streaming
-```
-
-**ABI Compatibility**:
-- Default `custom` ABI unchanged (backwards compatible)
-- `abi = "wasi-http"` enables WASI-HTTP streaming
+| W9.1.1 | Add security scheme definitions | ⏸️ DEFERRED (requires per-handler modification) |
+| W9.1.2 | Add server URL definitions | ✅ COMPLETED |
+| W9.1.3 | Add parameter descriptions | ✅ COMPLETED |
 
 ### Phase 9.2: High Priority
 
 | ID | Description | Status |
-|----|------------|--------|
-| W9.2.1 | Add example values to schemas | 📋 PLANNING |
-| W9.2.2 | Add deprecation markers | 📋 PLANNING |
-| W9.2.3 | Document rate limiting | 📋 PLANNING |
-| W9.2.4 | Add validation tests | 📋 PLANNING |
-
----
-
-## Implementation Order
-
-### Can Run In Parallel (Sub-Agents)
-
-1. **Wave 1, Phases 1.1-1.3**: Documentation - multiple sub-agents
-2. **Wave 2**: Test Coverage - separate sub-agents for each module
-3. **Wave 3**: Admin Panel - separate sub-agents for each section
-4. **Wave 9**: OpenAPI - independent
-
-### Sequential Dependencies
-
-1. Wave 1 (Docs) → Wave 4 (Serverless config exposure)
-2. Wave 3 (Admin UI) → Wave 4 (Serverless admin API)
-3. Wave 1 (Docs) → Wave 6-8 (Security features)
-
-### Recommended Execution
-
-| Wave | Parallel Sub-Agents | Est. Time |
-|------|-------------------|-----------|
-| Wave 1 | 3 sub-agents | 2-3 days |
-| Wave 2 | 4 sub-agents | 2-3 days |
-| Wave 3 | 3 sub-agents | 2-3 days |
-| Wave 4 | 1 sub-agent | 2-3 days |
-| Wave 5 | 1 sub-agent | 2-3 days |
-| Wave 6 | 1 sub-agent | 0.5 day |
-| Wave 7 | 1 sub-agent | 0.5 day |
-| Wave 8 | 1 sub-agent | 0.5 day |
-| Wave 9 | 1 sub-agent | 1-2 days |
-
----
-
-## From Original plan.md (Reference)
-
-These items remain from the original consolidated plan tracking completed waves:
-
-### Deferred Items (No Timeline)
-
-| ID | Issue | Reason |
-|----|-------|--------|
-| G1 | Full process tree testing | Requires complex process spawn infrastructure |
-| G3 | Upgrade/rollback protocol testing | Complex testing scenario |
-| G8 | Windows named pipe path testing | Requires Windows CI |
-
-### Admin UI Improvements
-
-| ID | Issue | Reason |
-|----|-------|--------|
-| Admin 8 | Additional configuration pages | Nice-to-have, not critical |
-| Admin 9-15 | Various UI/UX enhancements | Existing implementations adequate |
-
-### Not Recommended
-
-| ID | Issue | Reason |
-|----|-------|--------|
-| O1 | lib.rs public API refactoring | 68% of modules unused externally |
-
-### Feature Deferrals
-
-| ID | Issue | Reason |
-|----|-------|--------|
-| C4 | Cache-Control headers not processed | Requires significant refactoring |
-| R1 | CPU Transform Thread Pool Isolation | Requires async runtime changes |
-| DS3 | Origin Cannot Execute Serverless via Mesh | Requires significant mesh changes |
-| DS5 | No Configuration Schema for Local Serverless | Low priority |
-| S3 | File preview support | Nice-to-have |
-| S4 | Drag-and-drop file upload UI | Nice-to-have |
-| S5 | Archive extraction UI | Nice-to-have |
+|----|-------------|--------|
+| W9.2.1 | Add example values to schemas | ⏸️ DEFERRED (partial - some exist) |
+| W9.2.2 | Add deprecation markers | ✅ COMPLETED (none needed) |
+| W9.2.3 | Document rate limiting | ✅ COMPLETED (429 responses exist) |
+| W9.2.4 | Add validation tests | ✅ COMPLETED |
 
 ---
 

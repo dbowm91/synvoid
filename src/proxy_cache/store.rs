@@ -140,7 +140,7 @@ impl CacheEntryInner {
 
 pub struct ProxyCache {
     entries: Cache<CacheKey, CacheEntryInner>,
-    settings: ProxyCacheSettings,
+    settings: RwLock<ProxyCacheSettings>,
     disk_path: PathBuf,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
@@ -153,7 +153,7 @@ impl Clone for ProxyCache {
     fn clone(&self) -> Self {
         Self {
             entries: self.entries.clone(),
-            settings: self.settings.clone(),
+            settings: RwLock::new(self.settings.read().clone()),
             disk_path: self.disk_path.clone(),
             cache_hits: AtomicU64::new(self.cache_hits.load(Ordering::Relaxed)),
             cache_misses: AtomicU64::new(self.cache_misses.load(Ordering::Relaxed)),
@@ -189,7 +189,7 @@ impl ProxyCache {
         let (shutdown_tx, _) = tokio::sync::watch::channel(());
         Self {
             entries: cache,
-            settings,
+            settings: RwLock::new(settings),
             disk_path,
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
@@ -200,11 +200,32 @@ impl ProxyCache {
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.settings.enabled
+        self.settings.read().enabled
     }
 
-    pub fn settings(&self) -> &ProxyCacheSettings {
-        &self.settings
+    pub fn settings(&self) -> Arc<ProxyCacheSettings> {
+        Arc::new(self.settings.read().clone())
+    }
+
+    pub fn apply_preferences(&self, preferences: &crate::mesh::protocol::ProxyCachePreferences) {
+        let mut settings = self.settings.read().clone();
+        settings.enabled = preferences.enable;
+        settings.inactive = std::time::Duration::from_secs(preferences.inactive);
+        settings.valid_status = preferences.valid_status.iter().map(|&v| v as u16).collect();
+        settings.methods = preferences.methods.clone();
+        settings.use_stale = preferences.use_stale.clone();
+        settings.min_uses = preferences.min_uses;
+        settings.stale_while_revalidate = if preferences.stale_while_revalidate > 0 {
+            Some(std::time::Duration::from_secs(preferences.stale_while_revalidate))
+        } else {
+            None
+        };
+        settings.stale_if_error = if preferences.stale_if_error > 0 {
+            Some(std::time::Duration::from_secs(preferences.stale_if_error))
+        } else {
+            None
+        };
+        *self.settings.write() = settings;
     }
 
     pub fn start_background_cleanup(&self, interval_secs: u64) -> tokio::task::JoinHandle<()> {
@@ -236,7 +257,7 @@ impl ProxyCache {
 
     #[inline]
     pub async fn get(&self, key: &CacheKey) -> Option<Arc<ProxyCacheEntry>> {
-        if !self.settings.enabled {
+        if !self.settings.read().enabled {
             return None;
         }
 
@@ -322,7 +343,7 @@ impl ProxyCache {
 
     #[inline]
     pub fn get_hit_status(&self, key: &CacheKey) -> Option<CacheHit> {
-        if !self.settings.enabled {
+        if !self.settings.read().enabled {
             return None;
         }
 
@@ -380,7 +401,7 @@ impl ProxyCache {
         headers: HeaderMap,
         max_age: Option<Duration>,
     ) -> Result<(), CacheError> {
-        if !self.settings.enabled {
+        if !self.settings.read().enabled {
             return Err(CacheError::Disabled);
         }
 
@@ -389,15 +410,16 @@ impl ProxyCache {
         }
 
         let size = content.len();
-        let swr = self.settings.stale_while_revalidate;
-        let sie = self.settings.stale_if_error;
+        let settings = self.settings.read();
+        let swr = settings.stale_while_revalidate;
+        let sie = settings.stale_if_error;
         let entry = ProxyCacheEntry::new(content.clone(), status, headers, max_age, swr, sie);
 
         let mut should_store_disk = false;
         let mut disk_path = None;
 
-        if size > self.settings.max_memory_size {
-            if self.settings.use_temp_file {
+        if size > settings.max_memory_size {
+            if settings.use_temp_file {
                 should_store_disk = true;
             } else {
                 return Err(CacheError::NotCacheable);
@@ -582,7 +604,7 @@ impl ProxyCache {
     }
 
     pub fn is_status_cacheable(&self, status: u16) -> bool {
-        self.settings.valid_status.contains(&status)
+        self.settings.read().valid_status.contains(&status)
     }
 
     pub async fn write_to_disk_async(&self, key: &CacheKey, content: Bytes) -> PathBuf {
@@ -630,7 +652,7 @@ impl ProxyCache {
 
     pub fn cleanup_expired(&self) -> usize {
         let now = Instant::now();
-        let inactive = self.settings.inactive;
+        let inactive = self.settings.read().inactive;
 
         let to_remove: Vec<CacheKey> = self
             .entries
