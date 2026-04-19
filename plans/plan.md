@@ -32,15 +32,15 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave 6 | YARA Distribution | ✅ COMPLETED | Yes - independent phases |
 | Wave 7 | Mesh & DHT Architecture | ⚠️ PARTIAL | Some items deferred |
 | Wave 8 | OpenAPI Improvements | ⚠️ PARTIAL | Some items deferred |
-| Wave A | Mesh/DHT Subsystem Improvements | 📋 PLANNING | Yes - 4 phases can parallelize |
-| Wave B | Plugin Architecture | 📋 PLANNING | Yes - 5 waves can parallelize |
-| Wave C | Web Application Stack | 📋 PLANNING | Yes - 5 sections can parallelize |
-| Wave D | Serverless Architecture | 📋 PLANNING | Yes - 4 phases can parallelize |
-| Wave E | Edge Caching & Image Poison | 📋 PLANNING | Yes - 3 phases can parallelize |
-| Wave F | YARA/File Upload Security | 📋 PLANNING | Yes - 3 steps can parallelize |
-| Wave G | Dependency Audit & Updates | 📋 PLANNING | No - sequential security patches |
-| Wave H | Reverse Proxy Performance | 📋 PLANNING | Yes - 3 phases can parallelize |
-| Wave I | Web App Stack Extensions | 📋 PLANNING | Yes - 4 phases can parallelize |
+| Wave A | Mesh/DHT Subsystem Improvements | ✅ COMPLETED | Yes - Phases A.1-A.6 can parallelize |
+| Wave B | Plugin Architecture | ⚠️ PARTIAL | Some items deferred |
+| Wave C | Web Application Stack | ⚠️ PARTIAL | Some items deferred |
+| Wave D | Serverless Architecture | ⚠️ PARTIAL | All 11 items deferred |
+| Wave E | Edge Caching & Image Poison | ⚠️ PARTIAL | 2/7 items implemented |
+| Wave F | YARA/File Upload Security | ⚠️ PARTIAL | F.1.x completed, rest deferred |
+| Wave G | Dependency Audit & Updates | ✅ COMPLETED | No - sequential security patches |
+| Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | Some items deferred |
+| Wave I | Web App Stack Extensions | ⚠️ PARTIAL | 4/13 items implemented |
 
 ---
 
@@ -598,6 +598,8 @@ cargo test
 
 ## Wave D: Serverless Architecture Improvements
 
+**Status**: ⚠️ PARTIAL (0 items implemented, 11 items deferred)
+
 **Source**: plan6.md, plan7.md
 
 **Background**: Current serverless functions are local-only. Goal is distributed edge-computing platform with mesh-wide discovery and routing.
@@ -606,32 +608,32 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | 📋 PLANNING |
-| D.1.2 | ABI Enhancements: Add `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| D.1.3 | Documentation: Update docs/WASM-ABI.md for new capabilities | docs/WASM-ABI.md | 📋 PLANNING |
+| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | ⏸️ DEFERRED (no serverless_only config found) |
+| D.1.2 | ABI Enhancements: Add `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (only has get_env, check_timeout, abort) |
+| D.1.3 | Documentation: Update docs/WASM-ABI.md for new capabilities | docs/WASM-ABI.md | ⏸️ DEFERRED |
 
 ### Phase D.2: Mesh Integration & Function Discovery
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.2.1 | Origin Role Definition: Extend `MeshNodeRole` with `SERVERLESS_ORIGIN` flag | src/mesh/config.rs | 📋 PLANNING |
-| D.2.2 | DHT Registration: Register `node_id` as active provider when node loads function | src/mesh/transport_peer.rs, src/serverless/manager.rs | 📋 PLANNING |
-| D.2.3 | Hierarchical Routing Integration: Treat serverless function names as routable upstreams | src/mesh/hierarchical_routing.rs | 📋 PLANNING |
+| D.2.1 | Origin Role Definition: Extend `MeshNodeRole` with `SERVERLESS_ORIGIN` flag | src/mesh/config.rs | ⏸️ DEFERRED (no SERVERLESS_ORIGIN flag) |
+| D.2.2 | DHT Registration: Register `node_id` as active provider when node loads function | src/mesh/transport_peer.rs, src/serverless/manager.rs | ⏸️ DEFERRED (ServerlessFunctionAnnounce exists but DHT registration on load not wired) |
+| D.2.3 | Hierarchical Routing Integration: Treat serverless function names as routable upstreams | src/mesh/hierarchical_routing.rs | ⏸️ DEFERRED (file exists but not integrated with serverless) |
 
 ### Phase D.3: Mesh-Wide Remote Execution (Proxying)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.3.1 | Protocol Extension: Add `Serverless` variant to `UpstreamProtocol` | src/mesh/protocol.rs | 📋 PLANNING |
-| D.3.2 | Remote Execution Dispatch: If `find_matching_route` fails locally, query mesh for provider and forward | src/serverless/manager.rs | 📋 PLANNING |
-| D.3.3 | Proxy Handler Updates: Handle incoming remote execution requests securely | src/mesh/proxy.rs | 📋 PLANNING |
+| D.3.1 | Protocol Extension: Add `Serverless` variant to `UpstreamProtocol` | src/mesh/protocol.rs | ⏸️ DEFERRED (UpstreamProtocol has no Serverless variant) |
+| D.3.2 | Remote Execution Dispatch: If `find_matching_route` fails locally, query mesh for provider and forward | src/serverless/manager.rs | ⏸️ DEFERRED (handle_serverless_function only local) |
+| D.3.3 | Proxy Handler Updates: Handle incoming remote execution requests securely | src/mesh/proxy.rs | ⏸️ DEFERRED (no remote serverless proxy handling) |
 
 ### Phase D.4: Event-Driven Triggers
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | 📋 PLANNING |
-| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | 📋 PLANNING |
+| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | ⏸️ DEFERRED (no event subscription system) |
+| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | ⏸️ DEFERRED (no event dispatch mechanism) |
 
 ### Verification
 
@@ -644,6 +646,8 @@ cargo test
 
 ## Wave E: Edge Node Caching and Image Poisoning
 
+**Status**: ⚠️ PARTIAL (2 items implemented, 4 not implemented, 1 partial)
+
 **Source**: plan8.md
 
 **Objective**: Enforce clear separation - origin publishes preferences to DHT, edge applies transformations and caches.
@@ -652,23 +656,23 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| E.1.1 | Remove `apply_response_transforms` method from origin node | src/mesh/transport_peer.rs | 📋 PLANNING |
-| E.1.2 | Simplify `handle_http_proxy_stream` to send raw `full_response` back to edge | src/mesh/transport_peer.rs | 📋 PLANNING |
+| E.1.1 | Remove `apply_response_transforms` method from origin node | src/mesh/transport_peer.rs | ⚠️ PARTIAL (method exists but only performs minification, not image poisoning) |
+| E.1.2 | Simplify `handle_http_proxy_stream` to send raw `full_response` back to edge | src/mesh/transport_peer.rs | ⚠️ PARTIAL (applies minification, falls back to raw on error) |
 
 ### Phase E.2: Standalone Mode Configuration Fix
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| E.2.1 | Modify `apply_image_poisoning` to accept optional `SiteImagePoisonConfig` reference | src/http/server.rs | 📋 PLANNING |
-| E.2.2 | Pass configuration fields to `PoisonImageClient` instead of hardcoding `None` | src/http/server.rs | 📋 PLANNING |
-| E.2.3 | Update all call sites to pass appropriate config (DHT via `MeshTransportManager` or `site_config`) | src/http/server.rs | 📋 PLANNING |
+| E.2.1 | Modify `apply_image_poisoning` to accept optional `SiteImagePoisonConfig` reference | src/http/server.rs | ⏸️ DEFERRED (signature is 3 params, proxy.rs correctly uses 6 params) |
+| E.2.2 | Pass configuration fields to `PoisonImageClient` instead of hardcoding `None` | src/http/server.rs | ⏸️ DEFERRED (all None passed at server.rs:3639-3649) |
+| E.2.3 | Update all call sites to pass appropriate config (DHT via `MeshTransportManager` or `site_config`) | src/http/server.rs | ⏸️ DEFERRED (3 call sites at 1974, 2674, 2746 use old signature) |
 
 ### Phase E.3: Edge Node Verification
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| E.3.1 | Verify `transform_response` retrieves preferences from `transport_manager` | src/mesh/proxy.rs | 📋 PLANNING |
-| E.3.2 | Verify edge applies transforms and caches result using DHT transform cache | src/mesh/proxy.rs | 📋 PLANNING |
+| E.3.1 | Verify `transform_response` retrieves preferences from `transport_manager` | src/mesh/proxy.rs | ✅ COMPLETED (proxy.rs:1119-1122 gets image_poison_config) |
+| E.3.2 | Verify edge applies transforms and caches result using DHT transform cache | src/mesh/proxy.rs | ✅ COMPLETED (proxy.rs:1289-1317 applies, 1456-1468 stores) |
 
 ### Verification
 
@@ -687,41 +691,41 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.1.1 | Update forwarder to selectively apply role filter based on message type | src/worker/unified_server.rs | 📋 PLANNING |
-| F.1.2 | Use `None` role filter for announcements reaching all nodes (YaraRuleAnnounce, ThreatAnnounce, etc.) | src/worker/unified_server.rs | 📋 PLANNING |
-| F.1.3 | Keep `Some(MeshNodeRole::GLOBAL)` filter for submissions/requests meant only for global | src/worker/unified_server.rs | 📋 PLANNING |
+| F.1.1 | Update forwarder to selectively apply role filter based on message type | src/worker/unified_server.rs | ✅ COMPLETED (broadcast_to_random_peers accepts role_filter parameter) |
+| F.1.2 | Use `None` role filter for announcements reaching all nodes (YaraRuleAnnounce, ThreatAnnounce, etc.) | src/worker/unified_server.rs | ✅ COMPLETED (threat_intel broadcasts use None for role_filter) |
+| F.1.3 | Keep `Some(MeshNodeRole::GLOBAL)` filter for submissions/requests meant only for global | src/worker/unified_server.rs | ✅ COMPLETED (most broadcasts use Some(GLOBAL) for requests) |
 
 ### Phase F.2: Integrate Malware Detection with Threat Intel (HTTP)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.2.1 | When `UploadValidator` detects malware, extract client IP | src/http/server.rs | 📋 PLANNING |
-| F.2.2 | Call `threat_intel.announce_local_block(client_ip, reason, ttl, site_scope)` | src/http/server.rs | 📋 PLANNING |
+| F.2.1 | When `UploadValidator` detects malware, extract client IP | src/http/server.rs | ⏸️ DEFERRED (malware detection exists, threat intel integration not wired) |
+| F.2.2 | Call `threat_intel.announce_local_block(client_ip, reason, ttl, site_scope)` | src/http/server.rs | ⏸️ DEFERRED (blocked by F.2.1) |
 
 ### Phase F.3: Integrate Malware Detection with Threat Intel (TLS)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.3.1 | Apply same logic as F.2 for HTTPS uploads | src/tls/server.rs | 📋 PLANNING |
+| F.3.1 | Apply same logic as F.2 for HTTPS uploads | src/tls/server.rs | ⏸️ DEFERRED (blocked by F.2.x) |
 
 ### Phase F.4: YARA Distribution Enhancements
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | 📋 PLANNING |
-| F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | 📋 PLANNING |
-| F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | 📋 PLANNING |
-| F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | 📋 PLANNING |
+| F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | ⏸️ DEFERRED (chunking not implemented) |
+| F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | ⏸️ DEFERRED (compression not implemented) |
+| F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | ⏸️ DEFERRED (incremental updates not implemented) |
+| F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | ⏸️ DEFERRED (local persistence not implemented) |
 
 ### Phase F.5: Advanced File Upload Security
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth and sandbox strictness based on source IP reputation from ThreatIntelligence | src/http/server.rs | 📋 PLANNING |
-| F.5.2 | **Enhanced Sandbox**: Implement stricter OS-level sandboxing (landlock on Linux, sandbox_init on macOS) for scanning process | src/static_files/ | 📋 PLANNING |
-| F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/static_files/ | 📋 PLANNING |
-| F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | 📋 PLANNING |
-| F.5.5 | **Tiered Distribution**: Broadcast critical threats (high severity) instantly, sync low-priority via DHT only | src/mesh/threat_intel.rs | 📋 PLANNING |
+| F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth and sandbox strictness based on source IP reputation from ThreatIntelligence | src/http/server.rs | ⏸️ DEFERRED (threat-aware scanning not implemented) |
+| F.5.2 | **Enhanced Sandbox**: Implement stricter OS-level sandboxing (landlock on Linux, sandbox_init on macOS) for scanning process | src/static_files/ | ⏸️ DEFERRED (OS-level sandboxing not implemented) |
+| F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/static_files/ | ⏸️ DEFERRED (heuristic analysis not implemented) |
+| F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | ⏸️ DEFERRED (indicator batching not implemented) |
+| F.5.5 | **Tiered Distribution**: Broadcast critical threats (high severity) instantly, sync low-priority via DHT only | src/mesh/threat_intel.rs | ⏸️ DEFERRED (tiered distribution not implemented) |
 
 ### Verification
 
@@ -833,40 +837,42 @@ Most Wave H items are significant architectural changes that could introduce ris
 
 ## Wave I: Web App Stack Extensions
 
+**Status**: ⚠️ PARTIAL (4 items implemented)
+
 **Source**: plan4.md, plan5.md
 
 ### Phase I.1: WASM Runtime & Performance
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.1.1 | **Unified Pooling**: Simplify pooling logic in `WasmRuntime`. Ensure newly created instances are added to pool if capacity allows | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| I.1.2 | **Instance Snapshotting**: Explore wasmtime instance snapshotting or ensure `Module` caching is fully utilized across all runtimes | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| I.1.3 | **Efficient ABI V2**: Replace JSON-based header passing with shared-memory buffer format. Support streaming body access for WASM plugins | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| I.1.4 | **WASI Support**: Fully enable WASI with controlled access to specific host resources (restricted filesystem paths) | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| I.1.1 | **Unified Pooling**: Simplify pooling logic in `WasmRuntime`. Ensure newly created instances are added to pool if capacity allows | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (each WasmRuntime creates own pool) |
+| I.1.2 | **Instance Snapshotting**: Explore wasmtime instance snapshotting or ensure `Module` caching is fully utilized across all runtimes | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (Module cached per runtime, Instance/Store created fresh per request) |
+| I.1.3 | **Efficient ABI V2**: Replace JSON-based header passing with shared-memory buffer format. Support streaming body access for WASM plugins | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (current binary format copies data) |
+| I.1.4 | **WASI Support**: Fully enable WASI with controlled access to specific host resources (restricted filesystem paths) | src/plugin/wasm_runtime.rs | ⚠️ PARTIAL (`wasi_enabled` flag exists but not wired to linker) |
 
 ### Phase I.2: Serverless Enhancements
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.2.1 | **Flattened Pooling**: Remove redundant pool in `ServerlessManager`. `ServerlessInstance` should directly manage WASM resources or use single unified pool | src/serverless/manager.rs | 📋 PLANNING |
-| I.2.2 | **Mesh-Distributed Execution**: Allow nodes to "offload" serverless execution to mesh peers if local load is high or peer has module "warmed up". Implement `MeshServerlessRequest` protocol message | src/mesh/, src/serverless/ | 📋 PLANNING |
-| I.2.3 | **State Persistence**: Provide guest API for WASM functions to access mesh-wide Key-Value store (backed by existing DHT) | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| I.2.1 | **Flattened Pooling**: Remove redundant pool in `ServerlessManager`. `ServerlessInstance` should directly manage WASM resources or use single unified pool | src/serverless/manager.rs | ✅ COMPLETED (flat HashMap pools at manager.rs:40,109) |
+| I.2.2 | **Mesh-Distributed Execution**: Allow nodes to "offload" serverless execution to mesh peers if local load is high or peer has module "warmed up". Implement `MeshServerlessRequest` protocol message | src/mesh/, src/serverless/ | ⏸️ DEFERRED (mesh lookup on load exists but no actual offload) |
+| I.2.3 | **State Persistence**: Provide guest API for WASM functions to access mesh-wide Key-Value store (backed by existing DHT) | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (RequestContext only has env HashMap) |
 
 ### Phase I.3: Routing & Axum Integration
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.3.1 | **Unified Router**: Integrate `ServerlessManager` routing and `router.rs` into single high-performance matcher. Support "Axum Native" sites where site is defined by Axum `Router` called directly | src/router.rs, src/serverless/routing.rs | 📋 PLANNING |
-| I.3.2 | **Optimized Bridge**: Improve `handle_axum_dynamic_request` to use `axum::body::Body` more efficiently without unnecessary cloning if plugin supports streaming | src/http/server.rs | 📋 PLANNING |
-| I.3.3 | **Dynamic Axum Plugins**: Improve safety and version checking for native Axum plugins (`.so` files) | src/plugin/axum_loader.rs | 📋 PLANNING |
+| I.3.1 | **Unified Router**: Integrate `ServerlessManager` routing and `router.rs` into single high-performance matcher. Support "Axum Native" sites where site is defined by Axum `Router` called directly | src/router.rs, src/serverless/routing.rs | ✅ COMPLETED (Router::route returns BackendType::Serverless, routing.rs integration complete) |
+| I.3.2 | **Optimized Bridge**: Improve `handle_axum_dynamic_request` to use `axum::body::Body` more efficiently without unnecessary cloning if plugin supports streaming | src/http/server.rs | ⏸️ DEFERRED (no streaming optimization) |
+| I.3.3 | **Dynamic Axum Plugins**: Improve safety and version checking for native Axum plugins (`.so` files) | src/plugin/axum_loader.rs | ✅ COMPLETED (ABI version check, hot reload, AxumPluginError::AbiMismatch) |
 
 ### Phase I.4: Directory Viewer Enhancements
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.4.1 | **Extended Configuration**: Add `show_icons`, `hide_patterns`, `custom_styles`, `readme_rendering` to `DirectoryViewerConfig` | src/config/site/static_files.rs | 📋 PLANNING |
-| I.4.2 | **Performance**: Implement caching for directory metadata to speed up large listings | src/theme/dir_listing.rs | 📋 PLANNING |
-| I.4.3 | **README Rendering**: Automatically render `README.md` if present in directory using markdown-to-html crate | src/theme/ | 📋 PLANNING |
+| I.4.1 | **Extended Configuration**: Add `show_icons`, `hide_patterns`, `custom_styles`, `readme_rendering` to `DirectoryViewerConfig` | src/config/site/static_files.rs | ⚠️ PARTIAL (show_icons, custom_styles, readme_rendering not implemented) |
+| I.4.2 | **Performance**: Implement caching for directory metadata to speed up large listings | src/theme/dir_listing.rs | ✅ COMPLETED (MinifierCache at router.rs:237, file cache with TTL) |
+| I.4.3 | **README Rendering**: Automatically render `README.md` if present in directory using markdown-to-html crate | src/theme/ | ⏸️ DEFERRED (no markdown rendering) |
 
 ### Verification
 
