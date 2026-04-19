@@ -79,7 +79,7 @@ impl Default for FileManagerConfig {
             blocked_extensions: BLOCKED_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             allowed_extensions: Vec::new(),
             allowed_mime_types: Vec::new(),
-            scan_on_upload: false,
+            scan_on_upload: true,
             rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: false,
             allow_symlinks: false,
@@ -104,7 +104,7 @@ impl FileManagerConfig {
             blocked_extensions: BLOCKED_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             allowed_extensions: Vec::new(),
             allowed_mime_types: Vec::new(),
-            scan_on_upload: false,
+            scan_on_upload: true,
             rate_limit_config: RateLimitConfig::default(),
             allow_hidden_files: config.block_hidden_files.map(|v| !v).unwrap_or(false),
             allow_symlinks: config.allow_symlinks.unwrap_or(false),
@@ -789,7 +789,10 @@ impl FileManager {
 
         if self.config.scan_on_upload {
             if let Err(e) = self.reload_yara_rules_if_needed() {
-                tracing::warn!("Failed to reload YARA rules for FileManager: {}", e);
+                tracing::error!("Failed to reload YARA rules for FileManager: {}", e);
+                return Err(FileManagerError::IoError(std::io::Error::other(
+                    format!("YARA rules reload failed: {}", e),
+                )));
             }
 
             match self.malware_scanner.scan_bytes(&data).await {

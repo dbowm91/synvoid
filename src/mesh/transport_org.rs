@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future organization protocol handling
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future organization protocol handling
 
 use crate::mesh::transport::MeshTransport;
 

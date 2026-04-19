@@ -1,6 +1,6 @@
 # WAF Mesh Networking
 
-MaluWAF supports peer-to-peer mesh networking for distributed DDoS mitigation, threat intelligence sharing, and coordinated protection.
+MaluWAF supports peer-to-peer mesh networking for distributed DDoS mitigation, threat intelligence sharing, and coordinated protection via QUIC-based communication.
 
 ## Opt-In by Default
 
@@ -9,12 +9,12 @@ MaluWAF supports peer-to-peer mesh networking for distributed DDoS mitigation, t
 To enable mesh networking:
 
 ```toml
-[tunnel.mesh]
+[mesh]
 enabled = true
 role = "edge"  # or "global" for directory nodes
 
 # Optional: customize connection settings
-[tunnel.mesh.connection]
+[mesh.connection]
 min_peer_connections = 3
 max_peer_connections = 20
 ```
@@ -33,7 +33,7 @@ The WAF mesh enables multiple MaluWAF instances to communicate directly using QU
         │   ┌────────┐     ┌────────┐     ┌────────┐                 │
         │   │  WAF   │◄───►│  WAF   │◄───►│  WAF   │                 │
         │   │ Node 1 │     │ Node 2 │     │ Node 3 │                 │
-        │   └────────┘     └────────┘     └────────┘                 │
+        │   └────────┘     └────────┘     └────────┘                   │
         │        │              │              │                       │
         │        │   QUIC Streams (Encrypted) │                       │
         │        │              │              │                       │
@@ -56,18 +56,18 @@ The WAF mesh enables multiple MaluWAF instances to communicate directly using QU
 When one node detects an attack, all nodes benefit:
 
 ```toml
-[tunnel.mesh]
+[mesh]
 enabled = true
 bind_address = "0.0.0.0"
-port = 51820
+port = 5001
 
 # Connect to peers
-[tunnel.mesh.peers]
-"waf-node-2.example.com" = "10.0.0.2:51820"
-"waf-node-3.example.com" = "10.0.0.3:51820"
+[mesh.seeds]
+"waf-2.internal" = "10.0.1.20:5001"
+"waf-3.internal" = "10.0.1.30:5001"
 
 # Share threat intelligence
-[tunnel.mesh.sync]
+[mesh.sync]
 ip_reputation = true
 blocklists = true
 bot_signatures = true
@@ -115,31 +115,31 @@ Deploy scrubbing centers that inspect and clean traffic:
                    Attack Traffic
                         │
                         ▼
-         ┌────────────────────────────┐
-         │    Edge WAF Nodes          │
-         │  (Traffic Aggregation)     │
-         └────────────┬───────────────┘
-                      │
-                      ▼
-         ┌────────────────────────────┐
-         │    Scrubbing Center       │
-         │  ┌────────────────────┐  │
-         │  │  WAF Mesh Cluster │  │
-         │  │                   │  │
-         │  │  ┌───┐  ┌───┐    │  │
-         │  │  │WAF│  │WAF│    │  │
-         │  │  └───┘  └───┘    │  │
-         │  │  ┌───┐  ┌───┐    │  │
-         │  │  │WAF│  │WAF│    │  │
-         │  │  └───┘  └───┘    │  │
-         │  └────────────────────┘  │
-         └────────────┬───────────────┘
-                      │
-                      ▼
-         ┌────────────────────────────┐
-         │   Clean Traffic            │
-         │   to Origin Servers        │
-         └────────────────────────────┘
+           ┌────────────────────────────┐
+           │    Edge WAF Nodes          │
+           │  (Traffic Aggregation)     │
+           └────────────┬───────────────┘
+                        │
+                        ▼
+           ┌────────────────────────────┐
+           │    Scrubbing Center       │
+           │  ┌────────────────────┐  │
+           │  │  WAF Mesh Cluster │  │
+           │  │                   │  │
+           │  │  ┌───┐  ┌───┐    │  │
+           │  │  │WAF│  │WAF│    │  │
+           │  │  └───┘  └───┘    │  │
+           │  │  ┌───┐  ┌───┐    │  │
+           │  │  │WAF│  │WAF│    │  │
+           │  │  └───┘  └───┘    │  │
+           │  └────────────────────┘  │
+           └────────────┬───────────────┘
+                        │
+                        ▼
+           ┌────────────────────────────┐
+           │   Clean Traffic            │
+           │   to Origin Servers        │
+           └────────────────────────────┘
 ```
 
 ## Configuration
@@ -147,22 +147,19 @@ Deploy scrubbing centers that inspect and clean traffic:
 ### Basic Mesh Setup
 
 ```toml
-[tunnel]
-enabled = true
-
-[tunnel.mesh]
+[mesh]
 enabled = true
 bind_address = "0.0.0.0"
-port = 51820
+port = 5001
+role = "edge"
 
-[tunnel.mesh.peers]
+[mesh.seeds]
 # Using DNS names (resolved at startup)
-"waf-2.internal" = "10.0.1.20:51820"
-"waf-3.internal" = "10.0.1.30:51820"
-"waf-4.internal" = "10.0.1.40:51820"
+"waf-2.internal" = "10.0.1.20:5001"
+"waf-3.internal" = "10.0.1.30:5001"
 
 # Connection settings
-[tunnel.mesh.connection]
+[mesh.connection]
 keepalive = 30
 reconnect_interval = 5
 max_reconnect_attempts = 10
@@ -171,12 +168,11 @@ max_reconnect_attempts = 10
 ### Synchronization Settings
 
 ```toml
-[tunnel.mesh.sync]
+[mesh.sync]
 # What to share with peers
 share_ip_reputation = true
 share_blocklists = true
 share_bot_signatures = true
-share_config = false
 
 # How often to sync
 sync_interval = "5s"
@@ -186,226 +182,39 @@ full_sync_interval = "5m"
 ### Bandwidth Limits
 
 ```toml
-[tunnel.mesh.limits]
+[mesh.limits]
 # Limit mesh traffic to preserve production bandwidth
 max_bandwidth_mbps = 100
 max_peers = 20
-```
-
-## Use Cases
-
-### Use Case 1: Multi-Region Deployment
-
-Deploy WAF nodes across regions with synchronized protection:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Multi-Region WAF Mesh                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-  │   US-East       │     │   EU-West      │     │   Asia-Pacific  │
-  │                 │     │                 │     │                 │
-  │  ┌───────────┐  │     │  ┌───────────┐  │     │  ┌───────────┐  │
-  │  │ WAF Node │  │◄───►│  │ WAF Node │  │◄───►│  │ WAF Node │  │
-  │  │           │  │     │  │           │  │     │  │           │  │
-  │  └───────────┘  │     │  └───────────┘  │     │  └───────────┘  │
-  │        │        │     │        │        │     │        │        │
-  └────────┼────────┘     └────────┼────────┘     └────────┼────────┘
-           │                       │                       │
-           ▼                       ▼                       ▼
-     ┌──────────┐            ┌──────────┐           ┌──────────┐
-     │  Origin  │            │  Origin  │           │  Origin  │
-     │ Servers  │            │ Servers  │           │ Servers  │
-     └──────────┘            └──────────┘           └──────────┘
-```
-
-**Benefits:**
-- Attack in EU is blocked in US before it reaches origin
-- Consistent security policies across regions
-- Shared IP reputation database
-
-### Use Case 2: Scrubbing Center
-
-Dedicated high-capacity nodes for traffic cleaning:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Dedicated Scrubbing Center                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-  Internet Traffic
-        │
-        ▼
-  ┌─────────────────────────────────────────┐
-  │         Edge DNS / Anycast              │
-  └────────────────────┬────────────────────┘
-                       │
-                       ▼
-  ┌─────────────────────────────────────────┐
-  │     WAF Mesh (Scrubbing Cluster)       │
-  │                                          │
-  │   ┌─────────┐  ┌─────────┐  ┌─────────┐│
-  │   │  Scrub  │  │  Scrub  │  │  Scrub  ││
-  │   │  Node 1 │  │  Node 2 │  │  Node 3 ││
-  │   └─────────┘  └─────────┘  └─────────┘│
-  │        │              │              │  │
-  │        └──────────────┼──────────────┘  │
-  │                      │                   │
-  └──────────────────────┼───────────────────┘
-                         │
-                         ▼
-              Clean Traffic to Origins
-```
-
-### Use Case 3: Hybrid Cloud
-
-On-premises WAF nodes coordinating with cloud:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        Hybrid Cloud Setup                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-  ┌─────────────────────────────────────┐
-  │           Cloud Provider             │
-  │                                      │
-  │   ┌─────────────────────────────┐   │
-  │   │   WAF Mesh (Cloud Nodes)    │   │
-  │   │   ┌──────┐  ┌──────┐        │   │
-  │   │   │ WAF  │  │ WAF  │        │   │
-  │   │   └──────┘  └──────┘        │   │
-  │   └─────────────────────────────┘   │
-  └───────────────────┬─────────────────┘
-                      │ QUIC Tunnel
-                      │ (Site-to-Site VPN)
-                      ▼
-  ┌─────────────────────────────────────┐
-  │         On-Premises                  │
-  │                                      │
-  │   ┌─────────────────────────────┐   │
-  │   │   WAF Mesh (Local Nodes)    │   │
-  │   │   ┌──────┐  ┌──────┐        │   │
-  │   │   │ WAF  │  │ WAF  │        │   │
-  │   │   └──────┘  └──────┘        │   │
-  │   └─────────────────────────────┘   │
-  └─────────────────────────────────────┘
 ```
 
 ## Security
 
 ### Encryption
 
-All mesh traffic is encrypted:
-
-- **QUIC** provides built-in TLS 1.3
-- **Certificate verification** between nodes
-- **Pre-shared keys** for additional security (optional)
+All mesh traffic is encrypted via QUIC with TLS 1.3:
 
 ```toml
-[tunnel.mesh.security]
-# Enable TLS
-tls_enabled = true
-
+[mesh.tls]
 # Certificate verification
 verify_certificates = true
 
-# Or use pre-shared key
-psk_enabled = false
-psk_key = ""  # Set if using PSK
+# Post-quantum key exchange (recommended for long-term security)
+enable_post_quantum = true
 ```
 
 ### Authentication
 
-Control which nodes can join:
+Control which nodes can join using genesis keys:
 
 ```toml
-[tunnel.mesh.auth]
-# Node authentication tokens
-allowed_tokens = [
-    "node-token-1",
-    "node-token-2",
-    "node-token-3",
-]
+[mesh.node_identity]
+# Genesis key for identity derivation (32 bytes, base64 encoded)
+genesis_key_base64 = "your-genesis-key-here"
+
+# Authorized genesis keys (empty = any genesis key allowed)
+authorized_genesis_keys = []
 ```
-
-## Monitoring
-
-### Mesh Statistics
-
-```bash
-# Active peer connections
-maluwaf_mesh_peers_connected
-
-# Messages sent/received
-maluwaf_mesh_messages_total
-
-# Sync operations
-maluwaf_mesh_sync_total
-
-# Blocklist updates
-maluwaf_mesh_blocklist_updates_total
-```
-
-### Per-Site Mesh Bandwidth
-
-When using mesh proxying to route traffic through other WAF nodes, bandwidth is tracked per-site in the admin dashboard. Each site shows:
-
-| Metric | Description |
-|--------|-------------|
-| `mesh_bytes_sent` | Request bytes sent to mesh peers |
-| `mesh_bytes_received` | Response bytes received from mesh peers |
-
-This is distinct from direct proxy bandwidth (`proxied_bytes_sent`/`proxied_bytes_received`) where the WAF connects directly to the origin server.
-
-**Use cases:**
-- Track bandwidth costs when mesh traffic crosses network boundaries
-- Identify sites heavily using mesh proxying vs direct connections
-- Monitor for unexpected mesh traffic patterns
-
-The breakdown is visible in the dashboard's Sites Status panel - expand any site to see ingress/egress breakdown including mesh contributions.
-
-### Debugging
-
-```bash
-# View mesh status
-maluwafctl mesh status
-
-# View peer connections
-maluwafctl mesh peers
-
-# View sync status
-maluwafctl mesh sync
-```
-
-## Performance Considerations
-
-| Setting | Default | Adjust For |
-|---------|---------|------------|
-| `max_peers` | 20 | Larger meshes need more memory |
-| `sync_interval` | 5s | Faster sync = more network traffic |
-| `max_bandwidth_mbps` | 100 | Reserve bandwidth for production traffic |
-
-## Troubleshooting
-
-### Nodes Not Connecting
-
-1. Check firewall allows UDP port 51820
-2. Verify network connectivity
-3. Check time synchronization (NTP)
-4. Review logs: `RUST_LOG=debug`
-
-### High Mesh Traffic
-
-1. Reduce sync frequency
-2. Disable unnecessary sync types
-3. Limit number of peers
-
-### Split Brain
-
-Ensure odd number of overseer nodes for consensus.
-
----
 
 ## Mesh Node Types
 
@@ -417,12 +226,17 @@ Global nodes maintain a complete view of the entire mesh network and serve as:
 - **Seed sources** for new edge nodes joining the network
 - **Directory servers** for discovering other peers
 - **Route aggregators** for upstream service discovery
+- **Certificate Authority** for signing node identities
 
 ```toml
 [mesh]
 enabled = true
-role = "global"  # This node is a global node
-global_node_key = "your-secret-key"  # Key for authenticating other global nodes
+role = "global"
+bind_address = "0.0.0.0"
+port = 5001
+
+[mesh.node_identity]
+genesis_key_base64 = "your-secret-genesis-key"
 ```
 
 ### Edge Nodes
@@ -436,6 +250,10 @@ Edge nodes are typical WAF instances that:
 [mesh]
 enabled = true
 role = "edge"
+
+[mesh.seeds]
+- address = "global-1.mesh.example.com:5001"
+  global_node_key = "your-genesis-key"
 ```
 
 ### Origin Nodes
@@ -444,42 +262,11 @@ Origin nodes are WAFs with direct upstream server connections:
 - Announce their upstreams to the mesh
 - Preferred routing targets for traffic
 
----
-
-## Seed Nodes & Bootstrap
-
-### Startup Sequence
-
-When an edge node starts:
-
-1. **Connect to seeds** - Attempts connection to configured seed nodes
-2. **Request seed list** - Asks global node for complete network view
-3. **Receive topology** - Gets list of known global and edge nodes
-4. **Establish connections** - Connects to prioritized peers based on scores
-
-### Default Seeds
-
-By default, edge nodes attempt to connect to these global seeds:
-
 ```toml
-[mesh.seeds]
-# These are example addresses - replace with your network's global nodes
-- address = "global-1.mesh.example.com:5001"
-- address = "global-2.mesh.example.com:5001"  
-- address = "global-3.mesh.example.com:5001"
+[mesh]
+enabled = true
+role = "origin"
 ```
-
-### Custom Seed Configuration
-
-```toml
-[mesh.seeds]
-- address = "global-1.mycompany.com:5001"
-  public_key = "optional-pk"  # For authentication
-  network_id = "production"   # Network isolation
-  global_node_key = "key"     # Required for global node verification
-```
-
----
 
 ## Network Isolation
 
@@ -511,254 +298,94 @@ Nodes with different `network_id` values will not connect to each other, even if
 
 ---
 
-## Global Node Verification
+## Admin API Endpoints
 
-### Key-Based Authentication
+The mesh provides the following admin API endpoints:
 
-Global nodes use a shared secret key for verification:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/mesh/status` | GET | Get mesh status and node information |
+| `/api/mesh/nodes` | GET | List all connected mesh nodes |
+| `/api/mesh/nodes/{node_id}` | GET | Get specific node details |
+| `/api/mesh/bans` | GET | List active IP bans |
+| `/api/mesh/ban/ip` | POST | Ban an IP address |
+| `/api/mesh/ban/mesh-id` | POST | Ban a mesh node ID |
+| `/api/mesh/ban` | DELETE | Unban an IP or mesh ID |
+| `/api/mesh/derive-signing-key` | POST | Derive signing key from genesis key |
+| `/api/mesh/audit/report` | POST | Submit client audit report |
 
-1. **Configure the key** on your global nodes:
-
-```toml
-[mesh]
-role = "global"
-global_node_key = "secure-random-key-12345"
-```
-
-2. **Configure the same key** in edge node seeds:
-
-```toml
-[mesh.seeds]
-- address = "global-1.mycompany.com:5001"
-  global_node_key = "secure-random-key-12345"
-```
-
-3. **Connection validation** - During handshake, global nodes exchange keys and reject connections with invalid keys
-
-### Generating Keys
-
-Generate a secure key:
+### Get Mesh Status
 
 ```bash
-# Using openssl
-openssl rand -hex 16
+curl -H "Authorization: Bearer your-admin-token" \
+  http://127.0.0.1:8081/api/mesh/status
+```
 
-# Using uuid
-uuidgen | tr -d '-'
+**Response:**
+```json
+{
+  "is_global_node": true,
+  "node_id": "node-abc123",
+  "connected_peers": 5,
+  "global_nodes": 2,
+  "edge_nodes": 3,
+  "genesis_key_configured": true,
+  "genesis_public_key_fingerprint": "sha256:abc123...",
+  "signing_key_derived": true,
+  "signing_public_key": "abc123def456...",
+  "quic_0rtt_enabled": false,
+  "quic_0rtt_warning": null
+}
+```
+
+### List Mesh Nodes
+
+```bash
+curl -H "Authorization: Bearer your-admin-token" \
+  http://127.0.0.1:8081/api/mesh/nodes
+```
+
+### Ban an IP
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ip": "192.168.1.100",
+    "reason": "detected_attack",
+    "duration_seconds": 3600,
+    "site_scope": "global"
+  }' \
+  http://127.0.0.1:8081/api/mesh/ban/ip
+```
+
+### Derive Signing Key
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "genesis_key_base64": "YWJjZDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Ng=="
+  }' \
+  http://127.0.0.1:8081/api/mesh/derive-signing-key
 ```
 
 ---
 
-## Connection Quality & Scoring
+## Per-Site Mesh Bandwidth
 
-### Peer Score Components
+When using mesh proxying to route traffic through other WAF nodes, bandwidth is tracked per-site. Each site shows:
 
-Each peer is scored based on multiple factors:
+| Metric | Description |
+|--------|-------------|
+| `mesh_bytes_sent` | Request bytes sent to mesh peers |
+| `mesh_bytes_received` | Response bytes received from mesh peers |
 
-| Component | Weight | Description |
-|-----------|--------|-------------|
-| `latency` | 0.30 | Round-trip time (lower is better) |
-| `stability` | 0.25 | Connection success rate |
-| `load` | 0.20 | Peer CPU/memory usage |
-| `traffic` | 0.15 | Request volume on routes |
-| `upstream` | 0.10 | Has upstream servers |
-
-### Connection Persistence
-
-```toml
-[mesh.connection]
-min_peer_connections = 3   # Minimum connections to maintain
-max_peer_connections = 20  # Maximum concurrent connections
-health_check_interval_secs = 30  # How often to check peer health
-
-# Score weights (must sum to 1.0)
-[mesh.connection.connection_score_weights]
-latency = 0.30
-stability = 0.25
-load = 0.20
-traffic = 0.15
-upstream = 0.10
-
-# Reconnection priorities
-[mesh.connection.reconnection_priority]
-global_nodes = 3       # Always maintain N global connections
-upstream_providers = 5 # Keep connections to N upstream providers
-frequent_routes = 3    # Keep connections to N frequently-used routes
-```
-
-### Priority Connection Targets
-
-The system prioritizes connections in this order:
-
-1. **Global nodes** - Required for network discovery
-2. **Upstream providers** - Nodes with announced upstreams
-3. **High-traffic peers** - Frequently-used route endpoints
+This is distinct from direct proxy bandwidth (`proxied_bytes_sent`/`proxied_bytes_received`) where the WAF connects directly to the origin server.
 
 ---
-
-## Protocol Messages
-
-### Core Messages
-
-| Message | Description |
-|---------|-------------|
-| `Hello` / `HelloAck` | Initial handshake with role, capabilities, network_id |
-| `SeedListRequest` / `SeedListResponse` | Request full mesh topology |
-| `RouteQuery` / `RouteResponse` | Discover routes to upstreams |
-| `PeerHealthCheck` / `PeerHealthResponse` | Latency and status monitoring |
-| `PeerLoadReport` | Periodic load metrics (CPU, memory, connections) |
-| `RouteUsageReport` | Route traffic statistics |
-
-### Message Flow
-
-```
-Edge Node Start
-      │
-      ▼
-┌─────────────┐
-│  Connect to │  Hello + network_id + global_node_key
-│  Seed Node  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  Request    │  SeedListRequest (full_mesh=true)
-│  Seed List  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  Receive    │  SeedListResponse {global_nodes, edge_nodes}
-│  Topology   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  Connect to │  Priority: global → upstream → high-traffic
-│  Peers      │
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│  Ongoing    │  Periodic health checks & load reports
-│  Health     │
-└─────────────┘
-```
-
----
-
-## Bootstrap New Global Nodes
-
-### Initial Setup
-
-1. **Start first global node** with a global_node_key:
-
-```toml
-[mesh]
-enabled = true
-role = "global"
-global_node_key = "my-secure-key"
-bind_address = "0.0.0.0"
-port = 5001
-```
-
-2. **Configure edge nodes** to use this global node as seed:
-
-```toml
-[mesh]
-enabled = true
-role = "edge"
-network_id = "production"
-
-[[mesh.seeds]]
-address = "first-global-node.example.com:5001"
-global_node_key = "my-secure-key"
-network_id = "production"
-```
-
-3. **Start additional global nodes** - they can join via existing global nodes
-
-### Verification Checklist
-
-- [ ] Global node has `global_node_key` configured
-- [ ] Edge node seeds include matching `global_node_key`
-- [ ] Network IDs match between nodes
-- [ ] Firewall allows TCP/UDP on mesh port
-- [ ] Nodes can resolve each other's DNS names
-
----
-
-## CLI Commands
-
-MaluWAF provides mesh management commands:
-
-### Generate a Global Node Key
-
-```bash
-maluwaf mesh generate-key
-```
-
-Generates a secure key for global node authentication.
-
-### Bootstrap a New Global Node
-
-```bash
-# Basic bootstrap with auto-generated key
-maluwaf mesh bootstrap-global
-
-# With custom network ID
-maluwaf mesh bootstrap-global --network-id production
-
-# With custom bind address and port
-maluwaf mesh bootstrap-global --bind-address 0.0.0.0 --port 5001
-
-# Output to config file
-maluwaf mesh bootstrap-global --output /etc/maluwaf/mesh-global.toml
-```
-
-This creates a mesh configuration for a new global node with:
-- `enabled = true`
-- `role = "global"`
-- Auto-generated `global_node_key` (unless `--no-generate-key`)
-- Specified `network_id`, `bind_address`, and `port`
-
-### Print Example Configuration
-
-```bash
-# Print config with default seeds
-maluwaf mesh print-config
-
-# Print config without seeds
-maluwaf mesh print-config --no-with-seeds
-```
-
-### Examples
-
-**Create a global node configuration:**
-
-```bash
-maluwaf mesh bootstrap-global \
-  --network-id production \
-  --bind-address 0.0.0.0 \
-  --port 5001 \
-  --output /etc/maluwaf/mesh-global.toml
-```
-
-Then add to main config:
-
-```toml
-# /etc/maluwaf/main.toml
-[tunnel.mesh]
-# Include the generated config
-__include = "mesh-global.toml"
-```
-
-Or copy the printed config into your main.toml:
-
-```bash
-maluwaf mesh bootstrap-global --network-id staging > /etc/maluwaf/mesh-staging.toml
-```
-
 
 ## When to Use Mesh vs Clustering
 
@@ -784,4 +411,3 @@ Choose the right architecture for your deployment:
 - You need to hide origin servers behind edge WAFs
 - You're building a private CDN or DDoS mitigation network
 - You want automatic origin server discovery across nodes
-

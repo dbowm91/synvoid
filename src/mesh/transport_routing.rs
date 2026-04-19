@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future routing protocol handling
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future routing protocol handling
 
 use crate::mesh::transport::{MeshPeerConnection, MeshTransport, MeshTransportError};
 use std::time::{Duration, Instant};

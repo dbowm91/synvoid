@@ -422,7 +422,7 @@ impl YaraRulesManager {
             return Err("Record store not set".to_string());
         };
 
-        let dht_records = record_store.get_all_records();
+        let dht_records = record_store.get_by_prefix("yara_rules_manifest:");
         let local_rules = self.local_rules.read().clone();
         let local_hash = local_rules.as_ref().map(|r| self.compute_rules_hash(r));
 
@@ -1587,6 +1587,57 @@ impl YaraRulesManager {
             } => None,
             _ => None,
         }
+    }
+
+    pub fn start_background_tasks(&self) {
+        let config = self.config.clone();
+        let yara_rules = Arc::new(self.clone());
+        let is_global = self.is_global();
+        let sync_interval_secs = config.sync_interval_secs;
+        let re_announce_interval_secs = config.re_announce_interval_secs;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut last_sync = Instant::now();
+
+            loop {
+                interval.tick().await;
+
+                if !config.enabled {
+                    continue;
+                }
+
+                if last_sync.elapsed().as_secs() > sync_interval_secs {
+                    tracing::debug!("YARA rules sync interval reached, syncing from DHT");
+
+                    if let Err(e) = yara_rules.sync_from_dht() {
+                        tracing::debug!("YARA DHT sync failed: {}", e);
+                    } else {
+                        yara_rules.record_sync();
+                    }
+
+                    last_sync = Instant::now();
+                }
+            }
+        });
+
+        if re_announce_interval_secs > 0 && is_global {
+            let yara_rules_reannounce = Arc::new(self.clone());
+            let re_announce_interval = Duration::from_secs(re_announce_interval_secs);
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(re_announce_interval);
+                loop {
+                    ticker.tick().await;
+                    yara_rules_reannounce.publish_rules_to_dht();
+                }
+            });
+            tracing::info!(
+                "YARA rules re-announce task started (interval: {}s)",
+                re_announce_interval_secs
+            );
+        }
+
+        tracing::info!("YARA rules background tasks started");
     }
 
     pub fn get_stats(&self) -> YaraRulesStats {

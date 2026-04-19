@@ -85,6 +85,9 @@ pub enum DhtKey {
         node_id: String,
         capability: String,
     },
+    ServerlessFunction {
+        function_name: String,
+    },
 }
 
 impl DhtKey {
@@ -262,6 +265,12 @@ impl DhtKey {
         }
     }
 
+    pub fn serverless_function(function_name: &str) -> Self {
+        DhtKey::ServerlessFunction {
+            function_name: function_name.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -373,6 +382,11 @@ impl DhtKey {
             } => {
                 format!("capability_attestation:{}:{}", node_id, capability)
             }
+            DhtKey::ServerlessFunction {
+                function_name,
+            } => {
+                format!("serverless_function:{}", function_name)
+            }
         }
     }
 
@@ -480,6 +494,9 @@ impl DhtKey {
                 node_id: parts[1].to_string(),
                 capability: parts[2].to_string(),
             },
+            "serverless_function" if parts.len() >= 2 => DhtKey::ServerlessFunction {
+                function_name: parts[1..].join(":"),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -527,6 +544,7 @@ impl DhtKey {
                 | DhtKey::UpstreamOwnershipChallenge(_)
                 | DhtKey::GenesisKeyTransition { .. }
                 | DhtKey::RevokedGlobalNode { .. }
+                | DhtKey::ServerlessFunction { .. }
         )
     }
 
@@ -587,6 +605,7 @@ impl DhtKey {
             DhtKey::UpstreamOwnershipChallenge(_) => "upstream_ownership_challenge",
             DhtKey::GenesisKeyTransition { .. } => "genesis_key_transition",
             DhtKey::RevokedGlobalNode { .. } => "revoked_global_node",
+            DhtKey::ServerlessFunction { .. } => "serverless_function",
         }
     }
 
@@ -628,6 +647,7 @@ impl DhtKey {
             DhtKey::UpstreamOwnershipChallenge(_) => None,
             DhtKey::GenesisKeyTransition { .. } => None,
             DhtKey::RevokedGlobalNode { .. } => None,
+            DhtKey::ServerlessFunction { .. } => None,
         }
     }
 

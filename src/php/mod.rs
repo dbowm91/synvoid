@@ -101,6 +101,51 @@ impl PhpClient {
         pool.execute(method, uri, headers, body, &fcgi_config).await
     }
 
+    pub async fn execute_status(
+        &self,
+        query: Option<&str>,
+    ) -> Result<crate::fastcgi::FastCgiResponse, crate::fastcgi::FastCgiError> {
+        let socket = Self::auto_detect_socket(&self.config);
+        let status_path = self
+            .config
+            .pm_status_path
+            .as_deref()
+            .unwrap_or("/status");
+
+        let uri_path = if let Some(q) = query {
+            format!("{}?{}", status_path, q)
+        } else {
+            status_path.to_string()
+        };
+
+        let uri: Uri = uri_path.parse().map_err(|_| {
+            crate::fastcgi::FastCgiError::RequestFailed("Invalid status URI".to_string())
+        })?;
+
+        let method = Method::GET;
+        let headers = http::HeaderMap::new();
+        let body = Bytes::new();
+
+        let mut fcgi_config = self.build_fcgi_config();
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "SCRIPT_FILENAME".to_string(),
+            status_path.to_string(),
+        );
+        params.insert(
+            "SCRIPT_NAME".to_string(),
+            status_path.to_string(),
+        );
+        if let Some(ref existing) = fcgi_config.params {
+            params.extend(existing.clone());
+        }
+        fcgi_config.params = Some(params);
+
+        let pool = crate::fastcgi::get_pool(&socket, &fcgi_config);
+        pool.execute(&method, &uri, &headers, body, &fcgi_config)
+            .await
+    }
+
     fn build_fcgi_config(&self) -> FastCgiConfig {
         let mut fcgi_config = FastCgiConfig::default();
 
@@ -267,6 +312,27 @@ fn merge_php_location_config(site: &mut PhpConfig, location: &PhpLocationConfig)
     }
     if location.post_max_size.is_some() {
         site.post_max_size = location.post_max_size.clone();
+    }
+    if location.pm.is_some() {
+        site.pm = location.pm.clone();
+    }
+    if location.pm_max_children.is_some() {
+        site.pm_max_children = location.pm_max_children;
+    }
+    if location.pm_start_servers.is_some() {
+        site.pm_start_servers = location.pm_start_servers;
+    }
+    if location.pm_min_spare_servers.is_some() {
+        site.pm_min_spare_servers = location.pm_min_spare_servers;
+    }
+    if location.pm_max_spare_servers.is_some() {
+        site.pm_max_spare_servers = location.pm_max_spare_servers;
+    }
+    if location.pm_max_requests.is_some() {
+        site.pm_max_requests = location.pm_max_requests;
+    }
+    if location.pm_status_path.is_some() {
+        site.pm_status_path = location.pm_status_path.clone();
     }
 }
 

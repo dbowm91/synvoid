@@ -167,7 +167,7 @@ impl DirectoryListingTemplate {
         let sort_options = ["name", "date", "size"];
         let order_options = [("asc", "Ascending"), ("desc", "Descending")];
 
-        let mut html = String::from(r#"<div class="waf-dir-sort">Sort by: "#);
+        let mut html = String::from(r#"<nav class="waf-dir-sort" aria-label="Sort options"><span class="waf-sr-only">Sort by:</span>"#);
 
         for sort_opt in &sort_options {
             let is_active = self.sort_by == *sort_opt;
@@ -183,9 +183,11 @@ impl DirectoryListingTemplate {
                 format!("?{}", pairs.join("&"))
             };
             html.push_str(&format!(
-                r#"<a href="{}" class="{}">{}</a>"#,
+                r#"<a href="{}" class="{}" aria-label="Sort by {}" aria-current="{}">{}</a>"#,
                 query,
                 if is_active { "active" } else { "" },
+                sort_opt,
+                if is_active { "true" } else { "false" },
                 sort_opt.chars().next().unwrap().to_uppercase().to_string() + &sort_opt[1..]
             ));
         }
@@ -206,15 +208,20 @@ impl DirectoryListingTemplate {
                 format!("?{}", pairs.join("&"))
             };
             html.push_str(&format!(
-                r#"<a href="{}" class="{}">{}</a>"#,
+                r#"<a href="{}" class="{}" aria-label="Sort {}">{}</a>"#,
                 query,
                 if is_active { "active" } else { "" },
+                order_label,
                 order_label
             ));
         }
 
-        html.push_str("</div>");
+        html.push_str("</nav>");
         html
+    }
+
+    fn generate_skip_link(&self) -> String {
+        r##"<a href="#directory-listing" class="waf-skip-link">Skip to directory listing</a>"##.to_string()
     }
 
     fn generate_breadcrumbs(&self) -> String {
@@ -259,12 +266,12 @@ impl DirectoryListingTemplate {
 
         let pagination = PaginationInfo::new(self.page, self.limit, self.total_entries);
 
-        let mut html = String::from(r#"<div class="waf-dir-pagination">"#);
+        let mut html = String::from(r#"<nav class="waf-dir-pagination" aria-label="Directory listing pagination">"#);
 
         let showing_start = pagination.offset() + 1;
         let showing_end = (pagination.offset() + self.limit).min(pagination.total);
         html.push_str(&format!(
-            r#"<div class="waf-dir-pagination-info">Showing {}-{} of {} entries</div>"#,
+            r#"<div class="waf-dir-pagination-info" aria-live="polite">Showing {}-{} of {} entries</div>"#,
             showing_start, showing_end, pagination.total
         ));
 
@@ -287,7 +294,7 @@ impl DirectoryListingTemplate {
             format!("?{}", pairs.join("&"))
         };
         html.push_str(&format!(
-            r#"<a href="{}" class="{}">First</a>"#,
+            r#"<a href="{}" class="{}" aria-label="First page">First</a>"#,
             first_query,
             if pagination.has_prev { "" } else { "disabled" }
         ));
@@ -307,13 +314,13 @@ impl DirectoryListingTemplate {
             format!("?{}", pairs.join("&"))
         };
         html.push_str(&format!(
-            r#"<a href="{}" class="{}">Prev</a>"#,
+            r#"<a href="{}" class="{}" aria-label="Previous page">Prev</a>"#,
             prev_query,
             if pagination.has_prev { "" } else { "disabled" }
         ));
 
         html.push_str(&format!(
-            "<span>Page {} of {}</span>",
+            "<span aria-current=\"page\">Page {} of {}</span>",
             pagination.page, pagination.total_pages
         ));
 
@@ -332,7 +339,7 @@ impl DirectoryListingTemplate {
             format!("?{}", pairs.join("&"))
         };
         html.push_str(&format!(
-            r#"<a href="{}" class="{}">Next</a>"#,
+            r#"<a href="{}" class="{}" aria-label="Next page">Next</a>"#,
             next_query,
             if pagination.has_next { "" } else { "disabled" }
         ));
@@ -352,12 +359,12 @@ impl DirectoryListingTemplate {
             format!("?{}", pairs.join("&"))
         };
         html.push_str(&format!(
-            r#"<a href="{}" class="{}">Last</a>"#,
+            r#"<a href="{}" class="{}" aria-label="Last page">Last</a>"#,
             last_query,
             if pagination.has_next { "" } else { "disabled" }
         ));
 
-        html.push_str("</div></div>");
+        html.push_str("</div></nav>");
         html
     }
 
@@ -461,6 +468,7 @@ impl DirectoryListingTemplate {
         let breadcrumbs = self.generate_breadcrumbs();
         let sort_controls = self.generate_sort_controls();
         let pagination = self.generate_pagination();
+        let skip_link = self.generate_skip_link();
 
         let filter_pattern = self.filter_pattern.clone();
         let filtered = Self::filter_entries(self.entries, &filter_pattern);
@@ -512,8 +520,9 @@ impl DirectoryListingTemplate {
     <style>{css}{dir_css}</style>
 </head>
 <body>
+    {skip_link}
     {theme_toggle_button}
-    <div class="waf-container waf-pixel-border">
+    <div class="waf-container waf-pixel-border" id="directory-listing" tabindex="-1">
         {logo_html}
         <h1 class="waf-dir-title">Index of {url_path}</h1>
         {breadcrumbs}

@@ -773,6 +773,53 @@ body {{
 .waf-dir-filter input:focus {{
     outline: none;
     border-color: var(--waf-primary);
+}}
+
+/* Skip Link for Accessibility */
+.waf-skip-link {{
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--waf-primary);
+    color: #fff;
+    padding: 0.5rem 1rem;
+    z-index: 9999;
+    transition: top 0.2s;
+    text-decoration: none;
+    font-weight: bold;
+    border-radius: var(--waf-border-radius);
+}}
+
+.waf-skip-link:focus {{
+    top: 1rem;
+    outline: 2px solid var(--waf-primary);
+    outline-offset: 2px;
+}}
+
+/* Screen reader only class */
+.waf-sr-only {{
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}}
+
+/* Focus Styles for Keyboard Navigation */
+.waf-dir-table a:focus,
+.waf-dir-sort a:focus,
+.waf-dir-pagination-controls a:focus {{
+    outline: 2px solid var(--waf-primary);
+    outline-offset: 2px;
+}}
+
+/* High contrast focus indicator */
+.waf-dir-pagination-controls a:focus {{
+    box-shadow: 0 0 0 3px rgba(var(--waf-primary), 0.4);
 }}"#,
             padding = s.padding,
         )

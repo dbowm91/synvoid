@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future global node protocol handling
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future global node protocol handling
 
 use crate::mesh::transport::MeshTransport;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

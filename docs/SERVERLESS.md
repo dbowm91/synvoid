@@ -1,45 +1,79 @@
 # Serverless Functions
 
-MaluWAF supports serverless function execution via WebAssembly, allowing custom request handlers to be deployed as portable, sandboxed WASM modules.
+MaluWAF supports serverless function execution via WebAssembly (WASM), allowing custom request handlers to be deployed as portable, sandboxed WASM modules.
 
 ## Overview
 
-Serverless functions provide a way to run custom logic at the WAF layer without native compilation. Functions are loaded from `.wasm` files in the `plugins/` directory and execute in a WASM runtime with resource limits.
+Serverless functions provide a way to run custom logic at the WAF layer without native compilation. Functions are loaded from `.wasm` files and execute in a WASM runtime (wasmtime) with resource limits.
 
 **Key Features:**
-- WASM-based sandboxed execution
+- WASM-based sandboxed execution via wasmtime
 - Instance pooling with auto-scaling
 - Per-function resource limits (memory, CPU fuel, timeout)
-- Request/response handling via `handle_request` ABI
+- Request/response handling via ABI functions
 
-## Architecture
+## Supported Backends
 
+### WASM (wasmtime)
+
+Primary serverless backend using WebAssembly:
+
+```toml
+[serverless]
+enabled = true
+default_memory_mb = 64
+default_cpu_fuel = 1000000
+default_timeout_seconds = 30
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      MaluWAF                             │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │           Serverless Manager                     │   │
-│  │  ┌─────────────────────────────────────────┐   │   │
-│  │  │           Instance Pool                  │   │   │
-│  │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  │   │   │
-│  │  │  │Instance │  │Instance │  │Instance │  │   │   │
-│  │  │  │   1     │  │   2     │  │   N     │  │   │   │
-│  │  │  │(WASM)   │  │(WASM)   │  │(WASM)   │  │   │   │
-│  │  │  └─────────┘  └─────────┘  └─────────┘  │   │   │
-│  │  └─────────────────────────────────────────┘   │   │
-│  └─────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+
+### Python (Granian)
+
+Python applications run via [Granian](https://github.com/emselu/granian), a high-performance ASGI/WSGI server:
+
+```toml
+[site.app_server]
+enabled = true
+backend = "granian"
+app_path = "/opt/app/main:app"
+workers = 4
+```
+
+See [CONFIGURATION.md](./CONFIGURATION.md) for full Granian configuration options.
+
+### PHP-FPM
+
+PHP applications run via PHP-FPM:
+
+```toml
+[site.php]
+enabled = true
+root = "/var/www/html"
+pool_size = 4
+```
+
+### FastCGI
+
+Generic FastCGI backend support:
+
+```toml
+[site.fastcgi]
+enabled = true
+host = "127.0.0.1"
+port = 9000
 ```
 
 ---
 
-## Configuration
+## WASM Serverless Configuration
 
 ### Enable Serverless
 
 ```toml
 [serverless]
 enabled = true
+default_memory_mb = 64
+default_cpu_fuel = 1000000
+default_timeout_seconds = 30
 
 [[serverless.functions]]
 name = "auth-handler"
@@ -65,6 +99,9 @@ timeout_seconds = 10
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `false` | Enable serverless function execution |
+| `default_memory_mb` | `64` | Default max memory per function |
+| `default_cpu_fuel` | `1000000` | Default CPU fuel units (0 = unlimited) |
+| `default_timeout_seconds` | `30` | Default max execution time |
 | `functions` | `[]` | List of function definitions |
 
 ### Function Definition
@@ -72,7 +109,7 @@ timeout_seconds = 10
 | Option | Default | Description |
 |--------|---------|-------------|
 | `name` | - | Unique function name |
-| `path` | - | Path to `.wasm` file in `plugins/` directory |
+| `path` | - | Path to `.wasm` file |
 | `handler` | `"handle_request"` | Exported function to call |
 | `memory_mb` | `64` | Max memory for the function |
 | `cpu_fuel` | `1000000` | CPU fuel units (0 = unlimited) |
@@ -81,11 +118,11 @@ timeout_seconds = 10
 
 ---
 
-## Writing WASM Functions
+## WASM ABI Specification
 
-### Required ABI
+Your WASM module must implement the following interface:
 
-Your WASM module must export:
+### Request Handling
 
 ```rust
 #[no_mangle]
@@ -101,15 +138,19 @@ pub extern "C" fn handle_request(
 ) -> i32;
 ```
 
-### Memory Model
+**Parameters:**
+- `method_ptr`: Pointer to method string (e.g., "GET", "POST")
+- `method_len`: Length of method string
+- `uri_ptr`: Pointer to URI string
+- `uri_len`: Length of URI string
+- `headers_ptr`: Pointer to headers JSON string
+- `headers_len`: Length of headers string
+- `body_ptr`: Pointer to body bytes
+- `body_len`: Length of body bytes
 
-- WASM memory is linear with a maximum of `memory_mb` pages (64KB each)
-- Input data (method, URI, headers, body) is copied into WASM memory
-- Return value: `0` = success, negative = error
+**Returns:** `0` = success, negative = error
 
-### Response Format
-
-Functions write response via exported memory:
+### Response Retrieval
 
 ```rust
 #[no_mangle]
@@ -128,13 +169,28 @@ pub extern "C" fn get_response_headers_ptr() -> *mut u8;
 pub extern "C" fn get_response_headers_len() -> i32;
 ```
 
-### Example WASM (Rust)
+### Memory Model
+
+- WASM memory is linear with a maximum of `memory_mb` pages (64KB each)
+- Input data (method, URI, headers, body) is copied into WASM memory
+- Response data must be written to WASM memory before returning
+- Return value: `0` = success, negative = error
+
+### Headers Format
+
+Headers are passed as a JSON string:
+```json
+{"Content-Type": ["application/json"], "X-Custom": ["value"]}
+```
+
+### Example WASM Module (Rust)
 
 ```rust
 use wasm_bindgen::prelude::*;
 
 static mut RESPONSE_BODY: Vec<u8> = Vec::new();
 static mut RESPONSE_STATUS: i32 = 200;
+static mut RESPONSE_HEADERS: Vec<u8> = Vec::new();
 
 #[wasm_bindgen]
 pub fn handle_request(
@@ -151,23 +207,25 @@ pub fn handle_request(
         std::str::from_utf8(std::slice::from_raw_parts(method_ptr, method_len as usize))
             .unwrap_or("")
     };
-    
+
     let uri = unsafe {
         std::str::from_utf8(std::slice::from_raw_parts(uri_ptr, uri_len as usize))
             .unwrap_or("")
     };
-    
+
     if method == "GET" && uri == "/api/hello" {
         unsafe {
             RESPONSE_BODY = b"Hello, World!".to_vec();
             RESPONSE_STATUS = 200;
+            RESPONSE_HEADERS = b"Content-Type: text/plain".to_vec();
         }
         return 0;
     }
-    
+
     unsafe {
         RESPONSE_BODY = b"Not Found".to_vec();
         RESPONSE_STATUS = 404;
+        RESPONSE_HEADERS = b"Content-Type: text/plain".to_vec();
     }
     0
 }
@@ -185,6 +243,16 @@ pub extern "C" fn get_response_body_len() -> i32 {
 #[no_mangle]
 pub extern "C" fn get_response_status() -> i32 {
     unsafe { RESPONSE_STATUS }
+}
+
+#[no_mangle]
+pub extern "C" fn get_response_headers_ptr() -> *mut u8 {
+    unsafe { RESPONSE_HEADERS.as_mut_ptr() }
+}
+
+#[no_mangle]
+pub extern "C" fn get_response_headers_len() -> i32 {
+    unsafe { RESPONSE_HEADERS.len() as i32 }
 }
 ```
 
@@ -209,44 +277,84 @@ serde_json = "1.0"
 ```bash
 cd function
 cargo build --release --target wasm32-wasi
-cp target/wasm32-wasi/release/my_function.wasm plugins/
+cp target/wasm32-wasi/release/my_function.wasm /path/to/functions/
 ```
 
 ---
 
-## Instance Pooling
+## Admin API Endpoints
 
-The instance pool manages pre-warmed WASM instances for each function.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/serverless/health` | GET | Get serverless functions health status |
+| `/api/serverless/functions` | GET | List all serverless functions |
+| `/api/serverless/functions/{name}/stats` | GET | Get function statistics |
 
-### Configuration
+### Get Serverless Health
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `min_instances` | `1` | Minimum instances to keep warm |
-| `max_instances` | `10` | Maximum instances per function |
-| `idle_timeout_seconds` | `300` | Idle time before eviction |
-| `scale_up_threshold` | `0.7` | Utilization % to trigger scale up |
-| `scale_down_threshold` | `0.3` | Utilization % to trigger scale down |
-| `scale_up_cooldown_seconds` | `30` | Cooldown between scale up events |
-| `scale_down_cooldown_seconds` | `60` | Cooldown between scale down events |
-| `pre_warm_instances` | `2` | Instances to create at startup |
+```bash
+curl -H "Authorization: Bearer your-admin-token" \
+  http://127.0.0.1:8081/api/serverless/health
+```
 
-### Auto-Scaling
+**Response:**
+```json
+{
+  "enabled": true,
+  "total_functions": 2,
+  "total_invocations": 15420,
+  "total_errors": 3,
+  "healthy_functions": 2,
+  "unhealthy_functions": 0
+}
+```
 
-The pool runs an autoscaler that:
-1. Checks utilization every 10 seconds
-2. Scales up when active instances exceed `scale_up_threshold`
-3. Scales down when active instances fall below `scale_down_threshold`
-4. Evicts idle instances after `idle_timeout_seconds`
+### List Functions
 
-### Instance States
+```bash
+curl -H "Authorization: Bearer your-admin-token" \
+  http://127.0.0.1:8081/api/serverless/functions
+```
 
-| State | Description |
-|-------|-------------|
-| `Initializing` | Being created/compiled |
-| `Ready` | Idle and available |
-| `Busy` | Handling a request |
-| `Evicted` | Removed from pool |
+**Response:**
+```json
+{
+  "functions": [
+    {
+      "name": "auth-handler",
+      "description": "JWT authentication",
+      "route_count": 1,
+      "allowed_methods": ["GET", "POST"],
+      "memory_mb": 64,
+      "timeout_seconds": 30,
+      "registered_at": 3600,
+      "last_invoked": 120,
+      "invocation_count": 12000,
+      "error_count": 2
+    }
+  ],
+  "total_functions": 1
+}
+```
+
+### Get Function Stats
+
+```bash
+curl -H "Authorization: Bearer your-admin-token" \
+  http://127.0.0.1:8081/api/serverless/functions/auth-handler/stats
+```
+
+**Response:**
+```json
+{
+  "name": "auth-handler",
+  "stats": {
+    "invocation_count": 12000,
+    "error_count": 2,
+    "avg_errors_per_invocation": 0.0002
+  }
+}
+```
 
 ---
 
@@ -263,23 +371,6 @@ The pool runs an autoscaler that:
 | `total_duration_ms` | Cumulative execution time |
 | `utilization` | Active / Total ratio |
 
-### Accessing Metrics
-
-```rust
-use maluwaf::serverless::instance_pool::ServerlessManager;
-
-let manager = ServerlessManager::new(config);
-let metrics = manager.get_all_metrics();
-
-for (name, pool_metrics) in metrics {
-    println!("{}: {} active, {:.1}% util", 
-        name, 
-        pool_metrics.active_instances,
-        pool_metrics.utilization * 100.0
-    );
-}
-```
-
 ### Prometheus Metrics
 
 ```
@@ -295,22 +386,7 @@ maluwaf_serverless_duration_ms{function="auth-handler"}
 
 ---
 
-## Limitations
-
-This is a **stub implementation**. The following are known limitations:
-
-1. **No Deno Runtime** - The Deno/V8 isolate pool is not yet implemented (feature gate `deno`)
-2. **Single-Threaded WASM** - WASM instances execute sequentially per pool
-3. **No Cold Start Optimization** - Instance creation has no caching of compiled modules
-4. **No Streaming Support** - Request/response bodies must fit in memory
-5. **No Concurrency Limits** - Per-function concurrent request limits not enforced
-6. **Basic Auto-Scaling** - Scale decisions are simple threshold-based, no predictive scaling
-7. **No Distributed Execution** - Functions cannot span multiple workers
-
----
-
 ## See Also
 
-- [PLUGINS.md](./PLUGINS.md) - WASM plugin system (similar runtime)
-- [CONFIGURATION.md](./CONFIGURATION.md) - Serverless configuration reference
+- [CONFIGURATION.md](./CONFIGURATION.md) - Serverless and app server configuration
 - [DEVELOPER.md](./DEVELOPER.md) - WASM development guide

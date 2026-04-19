@@ -70,6 +70,20 @@ pub struct PhpConfig {
     pub upload_max_filesize: Option<String>,
     #[serde(default)]
     pub post_max_size: Option<String>,
+    #[serde(default)]
+    pub pm: Option<String>,
+    #[serde(default)]
+    pub pm_max_children: Option<usize>,
+    #[serde(default)]
+    pub pm_start_servers: Option<usize>,
+    #[serde(default)]
+    pub pm_min_spare_servers: Option<usize>,
+    #[serde(default)]
+    pub pm_max_spare_servers: Option<usize>,
+    #[serde(default)]
+    pub pm_max_requests: Option<usize>,
+    #[serde(default)]
+    pub pm_status_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -203,6 +217,20 @@ pub struct PhpLocationConfig {
     pub upload_max_filesize: Option<String>,
     #[serde(default)]
     pub post_max_size: Option<String>,
+    #[serde(default)]
+    pub pm: Option<String>,
+    #[serde(default)]
+    pub pm_max_children: Option<usize>,
+    #[serde(default)]
+    pub pm_start_servers: Option<usize>,
+    #[serde(default)]
+    pub pm_min_spare_servers: Option<usize>,
+    #[serde(default)]
+    pub pm_max_spare_servers: Option<usize>,
+    #[serde(default)]
+    pub pm_max_requests: Option<usize>,
+    #[serde(default)]
+    pub pm_status_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

@@ -178,6 +178,34 @@ pub fn Settings() -> Html {
             ],
         );
         m.insert(
+            "security".to_string(),
+            vec![
+                ("security", "security"),
+                ("ipc", "security"),
+                ("signing", "security"),
+                ("headers", "security"),
+                ("x-forwarded", "security"),
+            ],
+        );
+        m.insert(
+            "tunnel".to_string(),
+            vec![
+                ("tunnel", "tunnel"),
+                ("vpn", "tunnel"),
+                ("wireguard", "tunnel"),
+                ("quic", "tunnel"),
+                ("mesh", "tunnel"),
+            ],
+        );
+        m.insert(
+            "plugins".to_string(),
+            vec![
+                ("plugins", "plugins"),
+                ("wasm", "plugins"),
+                ("extension", "plugins"),
+            ],
+        );
+        m.insert(
             "theme".to_string(),
             vec![
                 ("theme", "theme"),
@@ -425,9 +453,12 @@ pub fn Settings() -> Html {
                         <SectionButton label="Bot Defaults" section="bot" active={*active_section == "bot"} on_click={on_section_click.clone()} />
                         <SectionButton label="Tarpit" section="tarpit" active={*active_section == "tarpit"} on_click={on_section_click.clone()} />
                         <SectionButton label="IP Feeds" section="ip_feeds" active={*active_section == "ip_feeds"} on_click={on_section_click.clone()} />
+                        <SectionButton label="Security" section="security" active={*active_section == "security"} on_click={on_section_click.clone()} />
                         <SectionButton label="TLS" section="tls" active={*active_section == "tls"} on_click={on_section_click.clone()} />
                         <SectionButton label="ACME" section="acme" active={*active_section == "acme"} on_click={on_section_click.clone()} />
                         <SectionButton label="HTTP/3" section="http3" active={*active_section == "http3"} on_click={on_section_click.clone()} />
+                        <SectionButton label="Tunnel" section="tunnel" active={*active_section == "tunnel"} on_click={on_section_click.clone()} />
+                        <SectionButton label="Plugins" section="plugins" active={*active_section == "plugins"} on_click={on_section_click.clone()} />
                         <SectionButton label="Upload" section="upload" active={*active_section == "upload"} on_click={on_section_click.clone()} />
                         <SectionButton label="Theme" section="theme" active={*active_section == "theme"} on_click={on_section_click.clone()} />
                     </div>
@@ -446,9 +477,12 @@ pub fn Settings() -> Html {
                             "bot" => "Bot Protection Defaults",
                             "tarpit" => "Tarpit Configuration",
                             "ip_feeds" => "IP Feeds Configuration",
+                            "security" => "Security Configuration",
                             "tls" => "TLS Configuration",
                             "acme" => "ACME Configuration",
                             "http3" => "HTTP/3 Configuration",
+                            "tunnel" => "Tunnel/VPN Configuration",
+                            "plugins" => "Plugins Configuration",
                             "upload" => "Upload Configuration",
                             "theme" => "Theme Configuration",
                             _ => "Server Configuration",
@@ -478,9 +512,12 @@ pub fn Settings() -> Html {
                             "bot" => html! { <BotSection /> },
                             "tarpit" => html! { <TarpitSection /> },
                             "ip_feeds" => html! { <IpFeedsSection /> },
+                            "security" => html! { <SecuritySection /> },
                             "tls" => html! { <TlsSection /> },
                             "acme" => html! { <AcmeSection /> },
                             "http3" => html! { <Http3Section /> },
+                            "tunnel" => html! { <TunnelSection /> },
+                            "plugins" => html! { <PluginsSection /> },
                             "theme" => html! { <ThemeSection /> },
                             _ => html! { <ServerSection /> },
                         }}
@@ -3448,6 +3485,553 @@ fn ThemeSection() -> Html {
                     }}
                 >
                     { if *saving { "Saving..." } else if is_dirty { "Save Changes*" } else { "Save Changes" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn SecuritySection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let global_security_headers = use_state(|| true);
+    let sanitize_forwarded_headers = use_state(|| true);
+    let ipc_enforce_signing = use_state(|| true);
+    let allow_insecure_ipc_key = use_state(|| false);
+    let more_clear_headers = use_state(|| String::new());
+
+    let original_global_security_headers = use_state(|| true);
+    let original_sanitize_forwarded_headers = use_state(|| true);
+    let original_ipc_enforce_signing = use_state(|| true);
+    let original_allow_insecure_ipc_key = use_state(|| false);
+    let original_more_clear_headers = use_state(|| String::new());
+
+    let is_dirty = *global_security_headers != *original_global_security_headers
+        || *sanitize_forwarded_headers != *original_sanitize_forwarded_headers
+        || *ipc_enforce_signing != *original_ipc_enforce_signing
+        || *allow_insecure_ipc_key != *original_allow_insecure_ipc_key
+        || *more_clear_headers != *original_more_clear_headers;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let global_security_headers = global_security_headers.clone();
+        let sanitize_forwarded_headers = sanitize_forwarded_headers.clone();
+        let ipc_enforce_signing = ipc_enforce_signing.clone();
+        let allow_insecure_ipc_key = allow_insecure_ipc_key.clone();
+        let more_clear_headers = more_clear_headers.clone();
+        let original_global_security_headers = original_global_security_headers.clone();
+        let original_sanitize_forwarded_headers = original_sanitize_forwarded_headers.clone();
+        let original_ipc_enforce_signing = original_ipc_enforce_signing.clone();
+        let original_allow_insecure_ipc_key = original_allow_insecure_ipc_key.clone();
+        let original_more_clear_headers = original_more_clear_headers.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_security_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("global_security_headers").and_then(|v| v.as_bool()) {
+                            global_security_headers.set(v);
+                            original_global_security_headers.set(v);
+                        }
+                        if let Some(v) = config.get("sanitize_forwarded_headers").and_then(|v| v.as_bool()) {
+                            sanitize_forwarded_headers.set(v);
+                            original_sanitize_forwarded_headers.set(v);
+                        }
+                        if let Some(v) = config.get("ipc_enforce_signing").and_then(|v| v.as_bool()) {
+                            ipc_enforce_signing.set(v);
+                            original_ipc_enforce_signing.set(v);
+                        }
+                        if let Some(v) = config.get("allow_insecure_ipc_key").and_then(|v| v.as_bool()) {
+                            allow_insecure_ipc_key.set(v);
+                            original_allow_insecure_ipc_key.set(v);
+                        }
+                        if let Some(v) = config.get("more_clear_headers").and_then(|v| v.as_array()) {
+                            let headers: Vec<String> = v.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect();
+                            let s = headers.join(", ");
+                            more_clear_headers.set(s.clone());
+                            original_more_clear_headers.set(s);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_save = {
+        let saving = saving.clone();
+        let global_security_headers = global_security_headers.clone();
+        let sanitize_forwarded_headers = sanitize_forwarded_headers.clone();
+        let ipc_enforce_signing = ipc_enforce_signing.clone();
+        let allow_insecure_ipc_key = allow_insecure_ipc_key.clone();
+        let more_clear_headers = more_clear_headers.clone();
+        let original_global_security_headers = original_global_security_headers.clone();
+        let original_sanitize_forwarded_headers = original_sanitize_forwarded_headers.clone();
+        let original_ipc_enforce_signing = original_ipc_enforce_signing.clone();
+        let original_allow_insecure_ipc_key = original_allow_insecure_ipc_key.clone();
+        let original_more_clear_headers = original_more_clear_headers.clone();
+        Callback::from(move |_| {
+            let headers: Vec<String> = more_clear_headers
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let config = serde_json::json!({
+                "config": {
+                    "global_security_headers": *global_security_headers,
+                    "sanitize_forwarded_headers": *sanitize_forwarded_headers,
+                    "ipc_enforce_signing": *ipc_enforce_signing,
+                    "allow_insecure_ipc_key": *allow_insecure_ipc_key,
+                    "more_clear_headers": headers,
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_security_config(&config).await;
+                saving.set(false);
+                toast_success("Security configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Global Security Headers" }</p>
+                    <p class="text-sm text-secondary">{ "Enable HSTS, X-Frame-Options, and other security headers globally" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let global_security_headers = global_security_headers.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            global_security_headers.set(!*global_security_headers);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *global_security_headers { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *global_security_headers { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Sanitize Forwarded Headers" }</p>
+                    <p class="text-sm text-secondary">{ "Remove potentially spoofed X-Forwarded-For headers from clients" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let sanitize_forwarded_headers = sanitize_forwarded_headers.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            sanitize_forwarded_headers.set(!*sanitize_forwarded_headers);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *sanitize_forwarded_headers { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *sanitize_forwarded_headers { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "IPC Enforce Signing" }</p>
+                    <p class="text-sm text-secondary">{ "Require HMAC signatures on IPC messages between processes" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let ipc_enforce_signing = ipc_enforce_signing.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            ipc_enforce_signing.set(!*ipc_enforce_signing);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *ipc_enforce_signing { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *ipc_enforce_signing { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Allow Insecure IPC Key" }</p>
+                    <p class="text-sm text-secondary">{ "Allow IPC key via environment variable (less secure)" } { restart_badge() }</p>
+                </div>
+                <button
+                    onclick={{
+                        let allow_insecure_ipc_key = allow_insecure_ipc_key.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            allow_insecure_ipc_key.set(!*allow_insecure_ipc_key);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *allow_insecure_ipc_key { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *allow_insecure_ipc_key { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <Input
+                label="Headers to Clear"
+                name="more_clear_headers"
+                value={(*more_clear_headers).clone()}
+                on_change={Callback::from(move |v: String| more_clear_headers.set(v))}
+                help="Comma-separated list of headers to remove from responses"
+            />
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn TunnelSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let enabled = use_state(|| false);
+    let vpn_enabled = use_state(|| false);
+    let quic_enabled = use_state(|| false);
+    let listen_port = use_state(|| "51820".to_string());
+
+    let original_enabled = use_state(|| false);
+    let original_vpn_enabled = use_state(|| false);
+    let original_quic_enabled = use_state(|| false);
+    let original_listen_port = use_state(|| "51820".to_string());
+
+    let is_dirty = *enabled != *original_enabled
+        || *vpn_enabled != *original_vpn_enabled
+        || *quic_enabled != *original_quic_enabled
+        || *listen_port != *original_listen_port;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let enabled = enabled.clone();
+        let vpn_enabled = vpn_enabled.clone();
+        let quic_enabled = quic_enabled.clone();
+        let listen_port = listen_port.clone();
+        let original_enabled = original_enabled.clone();
+        let original_vpn_enabled = original_vpn_enabled.clone();
+        let original_quic_enabled = original_quic_enabled.clone();
+        let original_listen_port = original_listen_port.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_tunnel_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(v) = config.get("enabled").and_then(|v| v.as_bool()) {
+                            enabled.set(v);
+                            original_enabled.set(v);
+                        }
+                        if let Some(vpn) = config.get("vpn") {
+                            if let Some(v) = vpn.get("enabled").and_then(|v| v.as_bool()) {
+                                vpn_enabled.set(v);
+                                original_vpn_enabled.set(v);
+                            }
+                        }
+                        if let Some(quic) = config.get("quic") {
+                            if let Some(v) = quic.get("enabled").and_then(|v| v.as_bool()) {
+                                quic_enabled.set(v);
+                                original_quic_enabled.set(v);
+                            }
+                        }
+                        if let Some(v) = config.get("quic").and_then(|v| v.get("port")).and_then(|v| v.as_u64()) {
+                            let s = v.to_string();
+                            listen_port.set(s.clone());
+                            original_listen_port.set(s);
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_save = {
+        let saving = saving.clone();
+        let enabled = enabled.clone();
+        let vpn_enabled = vpn_enabled.clone();
+        let quic_enabled = quic_enabled.clone();
+        let listen_port = listen_port.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "enabled": *enabled,
+                    "vpn": {
+                        "enabled": *vpn_enabled,
+                    },
+                    "quic": {
+                        "enabled": *quic_enabled,
+                        "port": listen_port.parse::<u16>().unwrap_or(51820),
+                    },
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_tunnel_config(&config).await;
+                saving.set(false);
+                toast_success("Tunnel configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "Enable Tunnel" }</p>
+                    <p class="text-sm text-secondary">{ "Enable tunnel/VPN services" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let enabled = enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            enabled.set(!*enabled);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "WireGuard VPN" }</p>
+                    <p class="text-sm text-secondary">{ "Enable WireGuard VPN support" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let vpn_enabled = vpn_enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            vpn_enabled.set(!*vpn_enabled);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *vpn_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *vpn_enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between py-2">
+                <div>
+                    <p class="text-primary font-medium">{ "QUIC Tunnel" }</p>
+                    <p class="text-sm text-secondary">{ "Enable QUIC-based tunnel support" }</p>
+                </div>
+                <button
+                    onclick={{
+                        let quic_enabled = quic_enabled.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            quic_enabled.set(!*quic_enabled);
+                        })
+                    }}
+                    class={format!("relative w-10 h-6 rounded-full {}", if *quic_enabled { "bg-blue-600" } else { "bg-gray-600" })}
+                >
+                    <span class={format!("absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform {}", if *quic_enabled { "translate-x-5" } else { "translate-x-0" })} />
+                </button>
+            </div>
+
+            <Input
+                label="QUIC Listen Port"
+                name="listen_port"
+                input_type="number"
+                value={(*listen_port).clone()}
+                on_change={Callback::from(move |v: String| listen_port.set(v))}
+                help="Port for QUIC tunnel listener"
+                badge={restart_badge()}
+            />
+
+            <p class="text-sm text-secondary">{ "Note: Full tunnel configuration requires advanced setup. Configure WireGuard peers, QUIC certificates, and mesh settings via config file." }</p>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[function_component]
+fn PluginsSection() -> Html {
+    let loading = use_state(|| true);
+    let saving = use_state(|| false);
+
+    let max_memory_mb = use_state(|| "64".to_string());
+    let max_cpu_fuel = use_state(|| "1000000".to_string());
+    let timeout_seconds = use_state(|| "30".to_string());
+
+    let original_max_memory_mb = use_state(|| "64".to_string());
+    let original_max_cpu_fuel = use_state(|| "1000000".to_string());
+    let original_timeout_seconds = use_state(|| "30".to_string());
+
+    let is_dirty = *max_memory_mb != *original_max_memory_mb
+        || *max_cpu_fuel != *original_max_cpu_fuel
+        || *timeout_seconds != *original_timeout_seconds;
+
+    use_effect_with((), {
+        let loading = loading.clone();
+        let max_memory_mb = max_memory_mb.clone();
+        let max_cpu_fuel = max_cpu_fuel.clone();
+        let timeout_seconds = timeout_seconds.clone();
+        let original_max_memory_mb = original_max_memory_mb.clone();
+        let original_max_cpu_fuel = original_max_cpu_fuel.clone();
+        let original_timeout_seconds = original_timeout_seconds.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let result = api.get_plugins_config().await;
+                loading.set(false);
+
+                if let Ok(data) = result {
+                    if let Some(config) = data.get("config") {
+                        if let Some(wasm) = config.get("wasm") {
+                            if let Some(v) = wasm.get("max_memory_mb").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                max_memory_mb.set(s.clone());
+                                original_max_memory_mb.set(s);
+                            }
+                            if let Some(v) = wasm.get("max_cpu_fuel").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                max_cpu_fuel.set(s.clone());
+                                original_max_cpu_fuel.set(s);
+                            }
+                            if let Some(v) = wasm.get("timeout_seconds").and_then(|v| v.as_u64()) {
+                                let s = v.to_string();
+                                timeout_seconds.set(s.clone());
+                                original_timeout_seconds.set(s);
+                            }
+                        }
+                    }
+                }
+            });
+            || {}
+        }
+    });
+
+    if *loading {
+        return html! { <LoadingSpinner /> };
+    }
+
+    let on_change = |state: UseStateHandle<String>| -> Callback<String> {
+        Callback::from(move |value: String| {
+            state.set(value);
+        })
+    };
+
+    let on_save = {
+        let saving = saving.clone();
+        let max_memory_mb = max_memory_mb.clone();
+        let max_cpu_fuel = max_cpu_fuel.clone();
+        let timeout_seconds = timeout_seconds.clone();
+        let original_max_memory_mb = original_max_memory_mb.clone();
+        let original_max_cpu_fuel = original_max_cpu_fuel.clone();
+        let original_timeout_seconds = original_timeout_seconds.clone();
+        Callback::from(move |_| {
+            let config = serde_json::json!({
+                "config": {
+                    "wasm": {
+                        "max_memory_mb": max_memory_mb.parse::<usize>().unwrap_or(64),
+                        "max_cpu_fuel": max_cpu_fuel.parse::<u64>().unwrap_or(1000000),
+                        "timeout_seconds": timeout_seconds.parse::<u64>().unwrap_or(30),
+                    }
+                }
+            });
+            let saving = saving.clone();
+            saving.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+                let _ = api.update_plugins_config(&config).await;
+                saving.set(false);
+                original_max_memory_mb.set((*max_memory_mb).clone());
+                original_max_cpu_fuel.set((*max_cpu_fuel).clone());
+                original_timeout_seconds.set((*timeout_seconds).clone());
+                toast_success("Plugins configuration saved");
+            });
+        })
+    };
+
+    html! {
+        <div class="space-y-6">
+            <p class="text-sm text-secondary">{ "Configure WASM plugin runtime settings. Individual plugins can override these defaults." }</p>
+
+            <div class="grid grid-cols-3 gap-4">
+                <Input
+                    label="Max Memory (MB)"
+                    name="max_memory_mb"
+                    input_type="number"
+                    value={(*max_memory_mb).clone()}
+                    on_change={on_change(max_memory_mb.clone())}
+                    help="Maximum memory per plugin instance"
+                />
+                <Input
+                    label="Max CPU Fuel"
+                    name="max_cpu_fuel"
+                    input_type="number"
+                    value={(*max_cpu_fuel).clone()}
+                    on_change={on_change(max_cpu_fuel.clone())}
+                    help="CPU fuel limit for plugin execution"
+                />
+                <Input
+                    label="Timeout (seconds)"
+                    name="timeout_seconds"
+                    input_type="number"
+                    value={(*timeout_seconds).clone()}
+                    on_change={on_change(timeout_seconds.clone())}
+                    help="Maximum execution time per plugin"
+                />
+            </div>
+
+            <p class="text-sm text-secondary">{ "Note: Plugin instances are configured per-site. Manage plugin instances in site security settings." }</p>
+
+            <div class="flex justify-end">
+                <button
+                    onclick={on_save}
+                    disabled={*saving}
+                    class={if is_dirty {
+                        "px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    } else {
+                        "px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    }}
+                >
+                    { if *saving { "Saving..." } else if is_dirty { "Save*" } else { "Save" } }
                 </button>
             </div>
         </div>

@@ -2333,12 +2333,61 @@ impl MeshTransport {
                 let _ = send_stream.write_all(&len).await;
                 let _ = send_stream.write_all(&encoded).await;
             }
+            MeshMessage::ServerlessFunctionAnnounce(announce) => {
+                tracing::debug!(
+                    "Received serverless function announce: {} v{}",
+                    announce.function_name,
+                    announce.version
+                );
+                self.handle_serverless_function_announce(announce).await;
+            }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");
             }
         }
 
         Ok(())
+    }
+
+    pub(crate) async fn handle_serverless_function_announce(
+        &self,
+        announce: crate::mesh::protocol::ServerlessFunctionAnnounce,
+    ) {
+        let Some(record_store) = self.record_store.clone() else {
+            tracing::warn!("Serverless function announce received but no record store available");
+            return;
+        };
+
+        let key = crate::mesh::dht::keys::DhtKey::serverless_function(&announce.function_name);
+        let key_str = key.as_str();
+
+        let value = serde_json::json!({
+            "function_name": announce.function_name,
+            "version": announce.version,
+            "checksum": announce.checksum,
+            "routes": announce.routes,
+            "allowed_methods": announce.allowed_methods,
+            "memory_mb": announce.memory_mb,
+            "timeout_seconds": announce.timeout_seconds,
+            "priority": announce.priority,
+            "announced_at": chrono::Utc::now().timestamp(),
+        });
+
+        if let Ok(bytes) = serde_json::to_vec(&value) {
+            let ttl = 3600;
+            if record_store.store_and_announce(key_str.to_string(), bytes, ttl) {
+                tracing::debug!(
+                    "Stored serverless function {} in DHT with TTL {}s",
+                    announce.function_name,
+                    ttl
+                );
+            } else {
+                tracing::warn!(
+                    "Failed to store serverless function {} in DHT",
+                    announce.function_name
+                );
+            }
+        }
     }
 
     pub(crate) async fn perform_health_check(&self, peer_id: &str) -> Option<u32> {

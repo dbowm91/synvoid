@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future DNS mesh protocol handling
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future DNS mesh protocol handling
 
 use crate::mesh::transport::MeshTransport;
 use crate::utils::current_timestamp;

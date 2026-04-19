@@ -18,8 +18,8 @@ Client Request
      │
      ▼
 ┌─────────────────────────┐
-│   2. Flood Protection   │ ◄── Connection-level protection
-│   • SYN flood           │     Handles TCP-level attacks
+│   2. Connection Limit   │ ◄── Connection-level protection
+│   • Connection count    │     Enforces connection limits
 │   • Connection rate     │
 └─────────────────────────┘
      │
@@ -35,12 +35,13 @@ Client Request
 │   4. Bot Detection     │ ◄── Automated traffic
 │   • User-agent analysis │     Identifies scanners
 │   • Behavioral analysis │     and crawlers
+│   • Honeypot endpoints  │
 └─────────────────────────┘
      │
      ▼
 ┌─────────────────────────┐
-│   5. Attack Detection  │ ◄── Payload inspection
-│   • SQLi, XSS, etc.     │     Core WAF functionality
+│   5. Attack Detection   │ ◄── Payload inspection
+│   • SQLi, XSS, etc.      │     Core WAF functionality
 │   • Pattern matching    │
 └─────────────────────────┘
      │
@@ -52,7 +53,7 @@ Client Request
 └─────────────────────────┘
      │
      ▼
-  Allow / Block / Challenge / Tarpit
+   Allow / Block / Challenge / Tarpit
 ```
 
 Each layer can independently block, challenge, or allow a request. The request is rejected at the first layer that decides to block.
@@ -168,18 +169,12 @@ Pattern-based detection using Aho-Corasick automaton:
 - Sensitive file access: `/etc/passwd`, `/windows/system32`
 - Protocol handlers: `file://`, `php://`, `expect://`
 
-### Remote File Inclusion (RFI)
-
-- URL parameter injection detection
-- IP address in URL parameters
-- PHP-specific RFI vectors
-- Protocol handlers in parameters
-
 ### Server-Side Request Forgery (SSRF)
 
 - Internal IP detection (127.0.0.1, 10.x.x.x, 172.16-31.x.x, 192.168.x.x)
 - Cloud metadata endpoints (169.254.169.254, metadata.google, metadata.azure)
 - Alternative localhost representations (0.0.0.0, localhost, [::1])
+- IPv6 zone IDs (`%eth0`)
 - Dangerous protocols (gopher://, dict://)
 
 ### Command Injection
@@ -219,6 +214,8 @@ Validates redirect URLs:
 - Blocked protocols (javascript:, data:, vbscript:)
 - External domain redirects (configurable allowlist)
 - IP-based redirects
+- Newline injection protection
+- Homograph attack protection
 
 ### Server-Side Template Injection (SSTI)
 
@@ -246,6 +243,14 @@ HTTP Request Smuggling detection:
 - Content-Length vs Transfer-Encoding conflicts
 - H2 CL/TE smuggling
 - Response queue poisoning
+- Proper comma-separated TE header parsing
+
+### Remote File Inclusion (RFI)
+
+- URL parameter injection detection
+- IP address in URL parameters
+- PHP-specific RFI vectors
+- Protocol handlers in parameters
 
 ### Header Validation
 
@@ -266,7 +271,7 @@ paranoia_level = 2  # 1=low, 2=medium, 3=high
 ```
 
 - **Level 1 (Low)**: Minimal false positives, basic detection
-- **Level 2 (Medium)**: Balanced detection, moderate false positives
+- **Level 2 (Medium)**: Balanced detection, moderate false positives (recommended)
 - **Level 3 (High)**: Aggressive detection, higher false positive rate
 
 **What changes between levels:**
@@ -295,11 +300,10 @@ action = "stall"  # "stall", "block", or "log"
 Add site-specific detection patterns:
 
 ```toml
-[defaults.attack_detection.path_traversal]
-custom_patterns = ["/etc/shadow", "boot.ini"]
-
-[defaults.attack_detection.cmd_injection]
-custom_patterns = ["nmap", "nc "]
+[defaults.attack_detection]
+custom_sqli_patterns = ["union.*select", "sleep\\("]
+custom_xss_patterns = ["<script", "javascript:"]
+custom_rce_patterns = ["nmap", "nc "]
 ```
 
 ### Domain Allowlists
@@ -326,17 +330,6 @@ curl -X PUT -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"level": "debug"}' \
   http://127.0.0.1:8081/api/config/log-level
-```
-
-Look for log entries like:
-```
-2024-01-15T10:30:00.123Z [WAF] INFO  Attack detected: sqli
-  client_ip: 192.168.1.100
-  uri: /search
-  param: term
-  payload: 1' OR '1'='1
-  fingerprint: sqli-boolean-based
-  action: block
 ```
 
 ### Testing Detection
@@ -416,8 +409,6 @@ curl -H "Host: example.com" "http://localhost/path?param=value"
 
 ## Tuning for Your Application Stack
 
-Different application frameworks have different patterns that may trigger false positives. Here are recommendations for common stacks:
-
 ### PHP Applications
 
 PHP applications often use:
@@ -429,13 +420,6 @@ PHP applications often use:
 ```toml
 [site.attack_detection]
 paranoia_level = 2
-
-# Allow common PHP patterns
-[site.attack_detection.sqli]
-enabled = true
-
-[site.attack_detection.path_traversal]
-custom_patterns = ["/var/www/uploads"]
 ```
 
 ### REST APIs
@@ -450,13 +434,6 @@ REST APIs frequently use:
 [site.attack_detection]
 paranoia_level = 2
 action = "log"  # Start with logging, then switch to block
-
-# More granular control
-[site.attack_detection.sqli]
-enabled = true
-
-[site.attack_detection.path_traversal]
-enabled = true  # Keep enabled but allowlist specific paths
 ```
 
 ### Single Page Applications (SPAs)
@@ -491,50 +468,7 @@ CMS platforms like WordPress use:
 [site.attack_detection]
 paranoia_level = 2
 action = "stall"  # Silent blocking for CMS
-
-# Allow common CMS query patterns
-[site.attack_detection.sqli]
-enabled = true
 ```
-
-## Paranoia Level Selection Guide
-
-| Level | Use Case | False Positive Rate |
-|-------|----------|-------------------|
-| 1 | Production with strict uptime requirements | Low |
-| 2 | Standard protection (recommended) | Moderate |
-| 3 | High-security environments | High |
-
-**Start at Level 2** and adjust based on your observations. Monitor false positives for the first few days after deployment.
-
-### Using the Probe API
-
-MaluWAF tracks probe (reconnaissance) detections separately:
-
-```bash
-# Get probe statistics
-curl -H "Authorization: Bearer <token>" \
-  http://127.0.0.1:8081/api/probes/stats
-
-# Get list of detected probes
-curl -H "Authorization: Bearer <token>" \
-  http://127.0.0.1:8081/api/probes
-
-# Block all detected probes
-curl -X POST -H "Authorization: Bearer <token>" \
-  http://127.0.0.1:8081/api/probes/block
-```
-
-## Detection Pipeline Flow
-
-```
-Request → Paranoia Check → Pattern Matching → Context Analysis → Decision
-```
-
-1. **Paranoia Check**: Skip if level too low for detection type
-2. **Pattern Matching**: Aho-Corasick for fast multi-pattern matching
-3. **Context Analysis**: Additional validation for complex attacks
-4. **Decision**: Log, stall, or block based on configuration
 
 ## Metrics
 
@@ -566,27 +500,9 @@ rate(maluwaf_attack_detected_total[5m])
 topk(10, maluwaf_attack_detected_total)
 
 # Blocked request percentage
-sum(rate(maluwaf_waf_decision_total{decision="block"}[5m])) 
-/ 
-sum(rate(maluwaf_waf_decision_total[5m])) * 100
+sum(rate(maluwaf_waf_decision_total{decision="block"}[5m]))
+/ sum(rate(maluwaf_waf_decision_total[5m])) * 100
 ```
-
-## Integration with Threat Level
-
-Attack detection feeds into the threat level system:
-
-```toml
-[threat_level]
-enabled = true
-auto_scale = true
-scale_up_attacks_per_min = 50   # Attacks/min to trigger escalation
-scale_up_window_secs = 60
-```
-
-When attacks exceed the threshold, threat level automatically increases, applying stricter controls:
-- Reduced rate limits
-- Longer block durations
-- More aggressive challenges
 
 ## See Also
 
@@ -594,4 +510,3 @@ When attacks exceed the threshold, threat level automatically increases, applyin
 - [REQUEST_SANITIZATION.md](./REQUEST_SANITIZATION.md) - Request sanitization and header handling
 - [CONFIGURATION.md](./CONFIGURATION.md) - Attack detection configuration options
 - [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) - Debugging false positives/negatives
-

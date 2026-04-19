@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future mesh connection handling
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future mesh connection handling
 
 use crate::mesh::transport::{
     MeshPeerConnection, MeshTransport, MeshTransportError, MAX_MESSAGE_SIZE,

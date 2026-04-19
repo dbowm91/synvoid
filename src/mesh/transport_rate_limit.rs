@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future rate limiting integration
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future rate limiting integration
 
 use crate::mesh::transport::{MeshTransport, PEER_RATE_LIMIT_WINDOW_SECS};
 use std::time::{Duration, Instant};

@@ -10,6 +10,7 @@ MaluWAF can serve static files directly with the following optimizations:
 - **Compression** - Serve pre-compressed versions (gzip, Brotli) or compress on-the-fly
 - **Caching** - Efficient caching with ETags and Last-Modified headers
 - **Security** - Prevent directory traversal and unauthorized access
+- **Directory Listing** - Customizable file browser with themes
 
 ## Configuration
 
@@ -18,7 +19,7 @@ MaluWAF can serve static files directly with the following optimizations:
 ```toml
 [site.static]
 enabled = true
-root = "/var/www/static"
+default_root = "/var/www/static"
 ```
 
 ### Full Configuration
@@ -26,7 +27,28 @@ root = "/var/www/static"
 ```toml
 [site.static]
 enabled = true
-root = "/var/www/static"
+default_root = "/var/www/static"
+
+# File handling
+max_file_size = "100M"
+allow_symlinks = false
+block_hidden_files = true
+
+# Compression
+enable_compression = true
+compression_min_size = 256
+gzip_on_the_fly = true
+gzip_level = 5
+gzip_min_size = 256
+gzip_types = ["text/html", "text/css", "application/javascript", ...]
+enable_brotli = true
+brotli_level = 11
+enable_svg_compression = true
+
+# Caching
+enable_file_cache = true
+cache_max_entries = 10000
+cache_ttl_seconds = 3600
 
 # Minification
 enable_minification = true
@@ -34,58 +56,64 @@ enable_html_minification = true
 enable_css_minification = true
 enable_js_minification = true
 
-# Compression
-enable_compression = true
-compression_min_size = 1024  # Only compress files larger than 1KB
+# Directory listing
+directory_listing = true
+directory_listing_format = "json"
 
-# Caching
-cache_enabled = true
-cache_ttl_secs = 3600
-cache_max_size_mb = 512
+# File watching (for development)
+enable_file_watching = true
+watch_interval_ms = 5000
 
-# Directories
-index_files = ["index.html", "index.htm"]
+# Preload on startup
+preload_on_startup = true
+
+# Locations (per-path overrides)
+[[site.static.locations]]
+path = "/assets"
+root = "/var/www/assets"
+index = "index.html"
+cache_ttl = 86400
 ```
 
-## Minification
-
-### How It Works
-
-When minification is enabled, MaluWAF automatically minifies static files before serving:
-
-| Type | What It Does | Savings |
-|------|-------------|---------|
-| HTML | Removes comments, whitespace, optional tags | 20-30% |
-| CSS | Removes comments, whitespace, shortens colors | 20-30% |
-| JavaScript | Removes comments, whitespace, shortens variables | 20-40% |
-
-### Configuration
+### Per-Location Configuration
 
 ```toml
-[site.static]
-enable_minification = true
-enable_html_minification = true
-enable_css_minification = true
-enable_js_minification = true
+[[site.static.locations]]
+path = "/api/static"
+root = "/var/www/api_static"
+index = "index.html"
+try_files = ["{path}", "{path}/index.html", "/404.html"]
+cache_ttl = 3600
 
-# Cache minified files
-minified_dir = "/var/cache/maluwaf/minified"
+[[site.static.locations]]
+path = "/images"
+root = "/var/www/images"
+cache_ttl = 86400
+
+[site.static.locations[0].theme]
+preset = "dark"
 ```
 
-### Performance
+## Directory Listing Theme
 
-Minification is performed:
-- **First request**: On-the-fly, may add latency
-- **Subsequent requests**: Served from cache
+MaluWAF supports customizable directory listing with themes:
 
-For best performance, pre-minify during build:
+```toml
+[site.static.theme]
+preset = "dark"  # or "light"
 
-```bash
-# Pre-minify your static files
-npx minify-html index.html > index.min.html
-npx minify-css styles.css > styles.min.css
-npx minify-js app.js > app.min.js
+# Or use custom template
+directory_template_path = "/etc/maluwaf/templates/directory.html"
 ```
+
+**Available presets:** `dark`, `light`
+
+**Template placeholders:**
+- `{{url_path}}` - current URL path
+- `{{parent_link}}` - parent directory link
+- `{{rows}}` - file/folder entries
+- `{{site_name}}` - site name (RustWAF)
+- `{{title}}` - page title ("Index of {url_path}")
 
 ## Compression
 
@@ -122,27 +150,15 @@ gzip -k -f index.html styles.css app.js
 brotli -k -f index.html styles.css app.js
 ```
 
-### On-the-Fly Compression
-
-If pre-compressed files aren't available, MaluWAF can compress on-the-fly:
-
-```toml
-[site.static]
-enable_compression = true
-compression_min_size = 1024  # Minimum size to compress
-```
-
-**Note**: On-the-fly compression uses CPU. Pre-compressed files are recommended for production.
-
 ## Caching
 
 ### Cache Configuration
 
 ```toml
 [site.static]
-cache_enabled = true
-cache_ttl_secs = 3600  # 1 hour default
-cache_max_size_mb = 512
+enable_file_cache = true
+cache_max_entries = 10000
+cache_ttl_seconds = 3600
 ```
 
 ### Cache Headers
@@ -151,22 +167,9 @@ MaluWAF automatically sets appropriate cache headers:
 
 | Header | Value |
 |--------|-------|
-| `Cache-Control` | `public, max-age=3600` |
+| `Cache-Control` | `public, max-age=<ttl>` |
 | `ETag` | File hash |
 | `Last-Modified` | File modification time |
-
-### Cache Invalidation
-
-```bash
-# Clear all static cache
-curl -X POST -H "Authorization: Bearer <token>" \
-  http://localhost:8081/api/cache/clear
-
-# Clear specific site cache
-curl -X POST -H "Authorization: Bearer <token>" \
-  -d '{"site": "example.com"}' \
-  http://localhost:8081/api/cache/clear
-```
 
 ## Security
 
@@ -182,36 +185,11 @@ curl "http://localhost/../../etc/passwd"
 
 ### Forbidden Files
 
-Block access to sensitive files:
+Block access to sensitive files by not placing them in the static root, or use `block_hidden_files`:
 
 ```toml
 [site.static]
-forbidden_files = [".htaccess", ".git", ".env"]
-```
-
-### Example: Complete Static Site Configuration
-
-```toml
-[site.static]
-enabled = true
-root = "/var/www/static"
-
-# Optimization
-enable_minification = true
-enable_html_minification = true
-enable_css_minification = true
-enable_js_minification = true
-enable_compression = true
-
-# Performance
-cache_enabled = true
-cache_ttl_secs = 86400  # 24 hours
-
-# Security
-forbidden_files = [".git", ".svn", ".env", "wp-config.php"]
-
-# Index
-index_files = ["index.html"]
+block_hidden_files = true  # Blocks .htaccess, .git, .env, etc.
 ```
 
 ## Monitoring
@@ -230,23 +208,6 @@ maluwaf_static_cache_misses      # Cache misses
 maluwaf_static_compression_saved # Bytes saved by compression
 ```
 
-### Logs
-
-Static file access is logged in the access log:
-
-```json
-{
-  "timestamp": "2024-01-15T10:30:00.123Z",
-  "method": "GET",
-  "path": "/static/styles.css",
-  "status": 200,
-  "size": 12345,
-  "compressed": true,
-  "minified": true,
-  "cached": true
-}
-```
-
 ## Performance Tuning
 
 ### Recommended Settings
@@ -254,86 +215,19 @@ Static file access is logged in the access log:
 **High Traffic Site:**
 ```toml
 [site.static]
-enable_minification = true
+enable_file_cache = true
+cache_ttl_seconds = 86400
 enable_compression = true
-cache_enabled = true
-cache_ttl_secs = 86400  # 24 hours
-
-# Pre-compress during build, don't compress on-the-fly
-```
-
-**Low Traffic Site:**
-```toml
-[site.static]
-enable_minification = true
-enable_compression = true
-cache_enabled = true
-cache_ttl_secs = 3600
+gzip_on_the_fly = false  # Pre-compress instead
 ```
 
 **Development:**
 ```toml
 [site.static]
+enable_file_cache = false
 enable_minification = false
 enable_compression = false
-cache_enabled = false
-```
-
-## Troubleshooting
-
-### Files Not Being Served
-
-1. Check static is enabled: `enable_static = true`
-2. Verify root path exists and is readable
-3. Check file permissions
-
-```bash
-# Verify path
-ls -la /var/www/static
-
-# Check logs
-tail -f /var/log/maluwaf/access.log | grep static
-```
-
-### Minification Not Working
-
-1. Ensure minification is enabled
-2. Check file types (HTML, CSS, JS only)
-3. Verify cache directory is writable
-
-```toml
-[site.static]
-enable_minification = true
-minified_dir = "/var/cache/maluwaf/minified"
-```
-
-### Compression Not Working
-
-1. Check client sends `Accept-Encoding` header
-2. Verify pre-compressed files exist or on-the-fly compression is enabled
-3. Check file isn't already compressed (e.g., .zip)
-
-```bash
-# Test with compression
-curl -H "Accept-Encoding: gzip" -I http://localhost/static/app.js
-
-# Should show:
-# Content-Encoding: gzip
-```
-
-### Cache Not Working
-
-1. Verify cache is enabled
-2. Check cache directory is writable
-3. Ensure TTL is appropriate
-
-```bash
-# Check cache directory
-ls -la /var/cache/maluwaf/
-
-# Clear cache
-curl -X POST -H "Authorization: Bearer <token>" \
-  http://localhost:8081/api/cache/clear
+enable_file_watching = true
 ```
 
 ## Integration with Build Process
@@ -344,26 +238,16 @@ curl -X POST -H "Authorization: Bearer <token>" \
 #!/bin/bash
 STATIC_DIR="/var/www/static"
 
-# Minify HTML
-for f in $(find $STATIC_DIR -name "*.html"); do
-    minify-html -o "${f%.html}.min.html" "$f"
-    mv "${f%.html}.min.html" "$f"
-done
-
-# Minify and compress CSS
+# Compress CSS
 for f in $(find $STATIC_DIR -name "*.css"); do
-    minify-css -o "$f.min" "$f"
-    gzip -k -f "$f.min"
-    brotli -k -f "$f.min"
-    mv "$f.min" "$f"
+    gzip -k -f "$f"
+    brotli -k -f "$f"
 done
 
-# Minify and compress JS
+# Compress JS
 for f in $(find $STATIC_DIR -name "*.js"); do
-    minify-js -o "$f.min" "$f"
-    gzip -k -f "$f.min"
-    brotli -k -f "$f.min"
-    mv "$f.min" "$f"
+    gzip -k -f "$f"
+    brotli -k -f "$f"
 done
 ```
 
@@ -375,9 +259,9 @@ If you're migrating from Nginx:
 |-----------------|-------------------|
 | `gzip on` | `enable_compression = true` |
 | `gzip_types text/html` | Automatic |
-| `expires 24h` | `cache_ttl_secs = 86400` |
+| `expires 24h` | `cache_ttl_seconds = 86400` |
 | `add_header Cache-Control` | Automatic |
-| `minify on` | `enable_minification = true` |
+| `autoindex on` | `directory_listing = true` |
 
 ## See Also
 

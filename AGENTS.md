@@ -533,6 +533,73 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | WAF detection integration tests | `tests/integration_test.rs` | Fixed 17 failing tests - payloads now trigger correct detectors; fixed open_redirect.rs URL-encoded pattern detection |
 | Directory listing enhanced features | `src/theme/dir_listing.rs`, `src/theme/renderer.rs` | Sorting (sort, order params), pagination (page, limit), filtering (filter param), breadcrumbs navigation |
 | Directory listing theme alignment | `src/theme/renderer.rs` | CSS consolidated into generate_directory_listing_css() using theme variables |
+| Port honeypot immediate IP blocking | `src/honeypot_port/listener.rs:208-223` | `announce_honeypot_indicator()` called on attack detection |
+| Threat intel signer=None bypass | `src/mesh/threat_intel.rs:742-752` | Rejects threats when signer is None but signature claimed |
+| Threat intel source verification | `src/mesh/threat_intel.rs:776-783` | Verifies from_node matches indicator.source_node_id |
+| TSIG replay attack prevention | `src/dns/tsig.rs` | Replay cache with SHA-256 MAC hash, 5min TTL |
+| PID spoofing rejection | `src/master/ipc.rs:365` | Connection rejected when PID mismatch detected |
+| TOCTOU rate limiter race | `src/waf/ratelimit/core.rs:436-461` | Atomic fetch_update with checked_add |
+| Connection limiter TOCTOU | `src/waf/flood/connection_limiter.rs` | fetch_update checks limit BEFORE increment |
+| TSIG MAC timing attack | `src/dns/tsig.rs:185` | Uses subtle::ConstantTimeEq::ct_eq() |
+| Unsigned DHT anti-entropy | `src/mesh/dht/record_store_message.rs:426-475` | Signature verification before storing records |
+| Port honeypot connection limit blocking | `src/honeypot_port/listener.rs` | Calls announce_honeypot_indicator() on max connections |
+| Auth rate limiter lockout bypass | `src/admin/auth.rs:77-84` | record_success doesn't remove entry when locked |
+| Admin rate limiter race | `src/admin/state.rs:53-84` | Atomic fetch_add with rollback on limit exceeded |
+| SQLi/XSS normalizer bypass | `src/waf/attack_detection/mod.rs` | Passes Some(&normalizer) to SQLi/XSS detectors |
+| Per-user session limit | `src/auth/mod.rs:38,483-497` | MAX_SESSIONS_PER_USER=5, oldest evicted |
+| Session invalidation on password change | `src/auth/mod.rs:375-398` | update_password() invalidates all sessions |
+| TLS passthrough WAF default | `src/worker/unified_server.rs:296` | WAF enforced by default (!= Some(false)) |
+| skip_verify warning level | `src/http_client/mod.rs` | WARN level logging for skip_verify usage |
+| Genesis key OsRng | `src/mesh/config_identity.rs:115-119` | Uses OsRng directly with try_fill_bytes |
+| Whitespace normalization | `src/waf/attack_detection/normalizer.rs:381-385` | Collapses consecutive whitespace to single space |
+| DNS TTL validation | `src/dns/update.rs:8-9,156-158` | MIN_TTL=1, MAX_TTL=604800 (7 days) |
+| Cache fingerprint threshold | `src/dns/cache.rs:79,113,146` | max_fingerprints_per_name increased to 50 |
+| Compression pointer OOB | `src/dns/update.rs:192-195` | Bounds check before query[pos+1] access |
+| Quorum auto-approve | `src/mesh/dht/record_store_message.rs:703-715` | 0 nodes = reject, 1-2 = warning, 3+ = normal |
+| Stake weight in quorum | `src/mesh/dht/quorum.rs` | 66.7% of total stake required |
+| Routing table lock | `src/mesh/dht/routing/manager.rs` | parking_lot::RwLock replaces tokio::sync::RwLock |
+| Bucket refresh jitter | `src/mesh/dht/routing/manager.rs:556-568` | Random 0-100ms jitter before FindNode requests |
+| find_verified_upstreams O(n) | `src/mesh/topology.rs:739-741` | Returns cached immediately, no background rescan |
+| Rate limiter lock-free bitset | `src/waf/ratelimit/core.rs` | AtomicU64 bitset replaces Mutex<HashSet> |
+| OpenRedirectDetector HashSet | `src/waf/attack_detection/open_redirect.rs` | HashSet<String> for O(1) lookup |
+| JwtDetector HashSet | `src/waf/attack_detection/jwt.rs` | HashSet for O(1) privilege pattern lookup |
+| Mesh provider semaphore | `src/mesh/proxy.rs:803-815` | Semaphore limits concurrent requests to 10 |
+| WebSocket Cow<str> | `src/http/headers.rs` | Cow<'_, str> avoids allocation for lowercase |
+| headers_to_filter cache | `src/http/server.rs:2367`, `src/config/site/mod.rs` | Built once per site config, cached |
+| XXE Cow allocation | `src/waf/attack_detection/xxe.rs` | Cow<Borrowed> when no decoding needed |
+| stealth_timestamp thread-local | `src/http/headers.rs` | Pre-allocated buffer, write! formatting |
+| MeshTopology parking_lot | `src/mesh/topology.rs` | parking_lot::RwLock throughout |
+| ProxyCache DashMap | `src/proxy_cache/store.rs` | DashMap replaces RwLock<HashMap> |
+| Upstream pool reduced lock | `src/upstream/pool.rs` | Lock only during clone, not algorithm |
+| Router BTreeMap suffix | `src/router.rs` | BTreeMap<usize, Vec> for binary search |
+| Route matching trailing slash | `src/serverless/routing.rs` | Exact routes handle / prefix |
+| Route regex cached | `src/serverless/routing.rs` | Pre-compiled regex in RouteMatch::Regex |
+| Route conflict detection | `src/serverless/routing.rs` | HashMap detects duplicate exact routes |
+| Pool mode visibility | `src/serverless/instance_pool.rs` | InstancePoolMode enum tracks Pool/Direct/Hybrid |
+| Route dirty flag | `src/serverless/manager.rs` | routes_dirty flag avoids unnecessary rebuild |
+| CPU fuel default enabled | `src/serverless/instance_pool.rs:142` | Default 1000000 instead of 0 |
+| Serverless DHT key | `src/mesh/dht/keys.rs` | ServerlessFunction key type added |
+| Serverless announce handler | `src/mesh/transport_peer.rs` | handle_serverless_function_announce() added |
+| Serverless discovery | `src/mesh/transport.rs` | discover_serverless_functions() added |
+| Proxy cache preferences | `src/admin/state.rs`, `src/mesh/proxy.rs` | Wired up with set_proxy_cache_preferences() |
+| YaraRulesManager background | `src/mesh/yara_rules.rs:1592-1641` | start_background_tasks() added |
+| YARA get_by_prefix | `src/mesh/yara_rules.rs:425` | Uses get_by_prefix("yara_rules_manifest:") |
+| scan_on_upload default | `src/static_files/file_manager.rs:82,107` | Default changed to true |
+| YARA reload error propagation | `src/static_files/file_manager.rs:791-795` | Upload fails if reload fails |
+| Threat intel warn levels | `src/mesh/threat_intel.rs:657,662,1631` | Changed to WARN level |
+| Standalone background tasks | `src/mesh/threat_intel.rs:1597-1600` | Skips if hub_only_mode && !is_global() |
+| CQ2 misleading log | `src/tunnel/wireguard/userspace.rs:207` | Accurate message about userspace peer |
+| SAFETY_REASON comments | `src/mesh/transport_*.rs` | Added to reserved transport modules |
+| Admin UI Security section | `admin-ui/src/pages/settings.rs` | SecuritySection added |
+| Admin UI Tunnel section | `admin-ui/src/pages/settings.rs` | TunnelSection added |
+| Admin UI Plugins section | `admin-ui/src/pages/settings.rs` | PluginsSection added |
+| OpenAPI validation tests | `src/admin/openapi.rs` | Schema, paths, components validation |
+| Accessibility ARIA | `src/theme/dir_listing.rs`, `src/theme/renderer.rs` | Skip links, aria-labels, focus styles |
+| PHP-FPM status | `src/php/mod.rs:104-147` | execute_status() method added |
+| PHP-FPM PM config | `src/config/site/backend.rs:73-86` | PM fields added to PhpConfig |
+| FastCGI status | `src/fastcgi/pool.rs:15-27,221-238` | FastCgiPoolStatus struct and status() method |
+| Granian logging config | `src/app_server/granian.rs` | GranianLogLevel, GranianLogFormat enums |
+| Drain test fix | `tests/drain_e2e_test.rs:292-310` | Uses existing master_streams |
 
 ## Performance Hot Paths
 

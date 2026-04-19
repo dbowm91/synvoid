@@ -280,7 +280,7 @@ mod drain_e2e_tests {
             master_streams.push(stream);
         }
 
-        for mut stream in master_streams {
+        for stream in master_streams.iter_mut() {
             let _: Message = stream.recv().await.unwrap().unwrap();
             stream
                 .send(&Message::HealthCheckAck { timestamp: 0 })
@@ -290,7 +290,7 @@ mod drain_e2e_tests {
         }
 
         for i in 0..worker_count {
-            let mut stream = listener.accept().await.unwrap();
+            let stream = &mut master_streams[i];
 
             stream
                 .send(&Message::WorkerDrain {

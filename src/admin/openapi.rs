@@ -334,9 +334,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_openapi_generation() {
+    fn test_openapi_required_fields() {
         let openapi = MaluWafOpenApi::openapi();
+
         assert_eq!(openapi.info.title, "MaluWAF Admin API");
         assert_eq!(openapi.info.version.as_str(), "1.0.0");
+        assert!(openapi.info.description.is_some());
+        assert!(openapi.info.contact.is_some());
+
+        assert!(matches!(openapi.openapi, openapi::OpenApiVersion::Version3));
+    }
+
+    #[test]
+    fn test_openapi_paths_exist() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        assert!(!openapi.paths.paths.is_empty());
+
+        let path_names: Vec<_> = openapi.paths.paths.keys().collect();
+        assert!(path_names.iter().any(|p| p.contains("stats")), "Should have stats path. Found: {:?}", path_names);
+        assert!(path_names.iter().any(|p| p.contains("site")), "Should have site path. Found: {:?}", path_names);
+        assert!(path_names.iter().any(|p| p.contains("config")), "Should have config path. Found: {:?}", path_names);
+    }
+
+    #[test]
+    fn test_openapi_paths_have_operations() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        for path_key in openapi.paths.paths.keys() {
+            let has_operation = openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Get).is_some()
+                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Post).is_some()
+                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Put).is_some()
+                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Delete).is_some()
+                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Patch).is_some();
+            assert!(
+                has_operation,
+                "Path {} should have at least one operation",
+                path_key
+            );
+        }
+    }
+
+    #[test]
+    fn test_openapi_components_schemas() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        assert!(openapi.components.is_some());
+        let components = openapi.components.unwrap();
+        assert!(!components.schemas.is_empty());
+
+        let schema_names: Vec<_> = components.schemas.keys().collect();
+        assert!(schema_names.iter().any(|s| s.contains("SystemStats")));
+        assert!(schema_names.iter().any(|s| s.contains("SiteInfo")));
+        assert!(schema_names.iter().any(|s| s.contains("Config")));
+    }
+
+    #[test]
+    fn test_openapi_tags_defined() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        assert!(openapi.tags.is_some());
+        let tags = openapi.tags.unwrap();
+        assert!(!tags.is_empty());
+
+        let tag_names: Vec<_> = tags.iter().map(|t| t.name.as_str()).collect();
+        assert!(tag_names.contains(&"stats"));
+        assert!(tag_names.contains(&"sites"));
+        assert!(tag_names.contains(&"config"));
+        assert!(tag_names.contains(&"mesh"));
+    }
+
+    #[test]
+    fn test_openapi_paths_have_tags() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        for path_key in openapi.paths.paths.keys() {
+            if let Some(operation) = openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Get) {
+                if let Some(tags) = &operation.tags {
+                    assert!(
+                        !tags.is_empty(),
+                        "GET {} must have tags",
+                        path_key
+                    );
+                }
+            }
+        }
     }
 }

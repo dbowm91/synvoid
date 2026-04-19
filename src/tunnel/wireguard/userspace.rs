@@ -204,7 +204,7 @@ impl UserspaceWireGuard {
         self.running = true;
         gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
 
-        tracing::info!("WireGuard stub started (no actual tunnel)");
+        tracing::info!("WireGuard userspace peer session started (no tunnel - wireguard feature not compiled in)");
         Ok(())
     }
 

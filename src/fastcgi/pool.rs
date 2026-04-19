@@ -5,10 +5,26 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use http::{Method, Uri};
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
+use utoipa::ToSchema;
 
 use crate::config::site::FastCgiConfig;
 use crate::fastcgi::{FastCgiClient, FastCgiError, FastCgiResponse};
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FastCgiPoolStatus {
+    pub socket: String,
+    pub max_connections: usize,
+    pub active_connections: usize,
+    pub available_connections: usize,
+    pub in_use_connections: usize,
+    pub is_healthy: bool,
+    pub is_closed: bool,
+    pub connection_timeout_ms: u64,
+    pub health_check_interval_secs: u64,
+    pub max_idle_time_secs: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct FastCgiPoolConfig {
@@ -200,6 +216,25 @@ impl FastCgiPool {
 
     pub fn available_connections(&self) -> usize {
         self.semaphore.available_permits()
+    }
+
+    pub fn status(&self) -> FastCgiPoolStatus {
+        let connections = self.connections.read();
+        let in_use = connections.iter().filter(|c| c.in_use).count();
+        let active = connections.len();
+
+        FastCgiPoolStatus {
+            socket: self.config.socket.clone(),
+            max_connections: self.config.max_connections,
+            active_connections: active,
+            available_connections: self.semaphore.available_permits(),
+            in_use_connections: in_use,
+            is_healthy: self.health_check(),
+            is_closed: *self.closed.read(),
+            connection_timeout_ms: self.config.connection_timeout.as_millis() as u64,
+            health_check_interval_secs: self.config.health_check_interval.as_secs() as u64,
+            max_idle_time_secs: self.config.max_idle_time.as_secs() as u64,
+        }
     }
 }
 

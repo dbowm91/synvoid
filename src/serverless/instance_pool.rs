@@ -61,12 +61,20 @@ pub struct ServerlessInstance {
     pub state: RwLock<InstanceState>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceState {
     Initializing,
     Ready,
     Busy,
     Evicted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InstancePoolMode {
+    #[default]
+    Pool,
+    Direct,
+    Hybrid,
 }
 
 pub struct InstancePool {
@@ -79,6 +87,8 @@ pub struct InstancePool {
     last_scale_up: RwLock<Instant>,
     last_scale_down: RwLock<Instant>,
     shutdown_tx: tokio::sync::watch::Sender<()>,
+    mode: RwLock<InstancePoolMode>,
+    last_mode_used: RwLock<InstancePoolMode>,
 }
 
 impl ServerlessInstance {
@@ -158,6 +168,8 @@ impl InstancePool {
             last_scale_up: RwLock::new(Instant::now()),
             last_scale_down: RwLock::new(Instant::now()),
             shutdown_tx: tokio::sync::watch::channel(()).0,
+            mode: RwLock::new(InstancePoolMode::Pool),
+            last_mode_used: RwLock::new(InstancePoolMode::Pool),
         }
     }
 
@@ -218,6 +230,7 @@ impl InstancePool {
         self.active_instances
             .write()
             .insert(instance.id.clone(), instance.clone());
+        self.record_pool_mode_used();
         Ok(instance)
     }
 
@@ -333,6 +346,26 @@ impl InstancePool {
 
     pub fn get_active_count(&self) -> usize {
         self.active_instances.read().len()
+    }
+
+    pub fn get_mode(&self) -> InstancePoolMode {
+        *self.mode.read()
+    }
+
+    pub fn set_mode(&self, mode: InstancePoolMode) {
+        *self.mode.write() = mode;
+    }
+
+    pub fn record_pool_mode_used(&self) {
+        *self.last_mode_used.write() = InstancePoolMode::Pool;
+    }
+
+    pub fn record_direct_mode_used(&self) {
+        *self.last_mode_used.write() = InstancePoolMode::Direct;
+    }
+
+    pub fn get_last_mode_used(&self) -> InstancePoolMode {
+        *self.last_mode_used.read()
     }
 
     pub fn get_utilization(&self) -> f64 {
@@ -459,6 +492,8 @@ impl InstancePool {
             total_requests,
             total_duration_ms: total_duration,
             utilization: self.get_utilization(),
+            mode: self.get_mode(),
+            last_mode_used: self.get_last_mode_used(),
         }
     }
 
@@ -521,6 +556,8 @@ pub struct PoolMetrics {
     pub total_requests: u64,
     pub total_duration_ms: u64,
     pub utilization: f64,
+    pub mode: InstancePoolMode,
+    pub last_mode_used: InstancePoolMode,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,6 +1,6 @@
 # MaluWAF Architecture
 
-A production-ready WAF and reverse proxy built for high-performance, high-availability deployments.
+A production-ready WAF and reverse proxy built for high-performance, high-availability deployments with mesh networking capabilities.
 
 ## Overview
 
@@ -11,16 +11,16 @@ MaluWAF combines a nginx-inspired reverse proxy concurrency model with a sophist
 │                              MaluWAF Architecture                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-                                    Internet
-                                        │
-                                        ▼
+                                     Internet
+                                         │
+                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Overseer Node                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  • Global health monitoring                                         │   │
 │  │  • Traffic distribution orchestration                                │   │
-│  │  • Leader election (Raft consensus) — Planned                      │   │
 │  │  • Configuration synchronization                                     │   │
+│  │  • Worker lifecycle management                                       │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
             │                           │                           │
@@ -28,8 +28,8 @@ MaluWAF combines a nginx-inspired reverse proxy concurrency model with a sophist
     ┌───────────────┐           ┌───────────────┐           ┌───────────────┐
     │ Master Node 1 │           │ Master Node 2 │           │ Master Node 3 │
     │ ┌───────────┐ │           │ ┌───────────┐ │           │ ┌───────────┐ │
-    │ │  Worker   │ │           │ │  Worker   │ │           │ │  Worker   │ │
-    │ │  Pool A   │ │           │ │  Pool B   │ │           │ │  Pool C   │ │
+    │ │ Unified   │ │           │ │ Unified   │ │           │ │ Unified   │ │
+    │ │ Server    │ │           │ │ Server    │ │           │ │ Server    │ │
     │ └───────────┘ │           │ └───────────┘ │           │ └───────────┘ │
     └───────────────┘           └───────────────┘           └───────────────┘
             │                           │                           │
@@ -42,6 +42,7 @@ MaluWAF combines a nginx-inspired reverse proxy concurrency model with a sophist
                               │  • PHP-FPM      │
                               │  • Granian      │
                               │  • FastCGI      │
+                              │  • WASM         │
                               └─────────────────┘
 ```
 
@@ -53,6 +54,7 @@ The reverse proxy layer is heavily inspired by nginx's event-driven architecture
 
 - **Tokio** - Asynchronous runtime for efficient I/O handling
 - **Hyper** - HTTP/1.1 and HTTP/2 protocol implementation
+- **Quinn** - QUIC/HTTP3 support
 
 This combination provides:
 - Non-blocking I/O for maximum concurrency
@@ -60,26 +62,12 @@ This combination provides:
 - HTTP/2 multiplexing
 - HTTP/3 (QUIC) support
 
-```mermaid
-graph TB
-    subgraph "MaluWAF Node"
-        A["Event Loop<br/>(Tokio)"] --> B["Connection Handler"]
-        B --> C["Request Parser<br/>(Hyper)"]
-        C --> D["WAF Pipeline"]
-        D --> E["Upstream Router"]
-        E --> F["Backend Pool"]
-    end
-    
-    G["Client"] --> A
-    F --> H["Application Servers"]
-```
-
 ### Request Flow Through Components
 
 When a request arrives, it passes through these components in sequence:
 
 ```
-1. Listener (TCP/UDP)
+1. Listener (TCP/UDP/QUIC)
       │
       ▼
 2. Connection Handler (TLS termination, HTTP parsing)
@@ -117,7 +105,7 @@ When a request arrives, it passes through these components in sequence:
 
 ### 2. WAF Protection Layers
 
-The WAF implements multiple protection layers inspired by EvilWaf, BunkerWeb, and SafeLine:
+The WAF implements multiple protection layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -129,7 +117,7 @@ The WAF implements multiple protection layers inspired by EvilWaf, BunkerWeb, an
           ▼
 ┌─────────────────────────┐
 │  1. Connection Layer   │
-│  • SYN Flood Guard     │
+│  • Connection Limits    │
 │  • Rate Limiting       │
 │  • IP Reputation       │
 └─────────────────────────┘
@@ -170,39 +158,7 @@ The WAF implements multiple protection layers inspired by EvilWaf, BunkerWeb, an
 └─────────────────────────┘
           │
           ▼
-    Allow / Stall / Block / Tarpit
-```
-
-### How WAF Components Interact
-
-```
-WafCore (main orchestrator)
-    │
-    ├── RateLimiterManager ──► Token bucket algorithm
-    │                              │
-    │                              ▼
-    │                         Per-IP tracking in memory
-    │
-    ├── BotDetector ───────────────► User-agent analysis
-    │                              │   Behavior analysis
-    │                              ▼   CSS honeypot
-    │                             Scoring engine
-    │
-    ├── AttackDetector ───────────► Pattern matching
-    │                              │   libinjection (SQLi/XSS)
-    │                              ▼   Aho-Corasick (path traversal)
-    │                             Context analysis
-    │
-    ├── ChallengeManager ─────────► PoW challenges
-    │                              │   JS challenges
-    │                              ▼   Cookie management
-    │
-    ├── BlockStore ───────────────► IP blocklist
-    │                              │   Persistent storage
-    │                              ▼   In-memory cache
-    │
-    └── ThreatIntelligence ──────► Mesh sync
-                                     Local reputation
+    Allow / Stall / Block / Tarpit / Challenge
 ```
 
 ### 3. Overseer > Master-Worker Model
@@ -218,8 +174,8 @@ For high availability, MaluWAF uses a hierarchical node model:
 │                               Overseer Cluster                               │
 │                                                                             │
 │    ┌──────────┐      ┌──────────┐      ┌──────────┐                      │
-│    │ Overseer │      │ Overseer │      │ Overseer │                      │
-│    │  Leader  │◄────►│  Follower│◄────►│  Follower│                      │
+│    │ Overseer │◄────►│ Overseer │◄────►│ Overseer │                      │
+│    │  Leader  │      │ Follower │      │ Follower │                      │
 │    └──────────┘      └──────────┘      └──────────┘                      │
 │         │                                                        (Raft)     │
 └─────────┼───────────────────────────────────────────────────────────────────┘
@@ -232,19 +188,19 @@ For high availability, MaluWAF uses a hierarchical node model:
 │  ┌────────────┐    ┌────────────┐    ┌────────────┐                      │
 │  │  Master 1  │    │  Master 2  │    │  Master 3  │                      │
 │  │ ┌────────┐ │    │ ┌────────┐ │    │ ┌────────┐ │                      │
-│  │ │Worker 1│ │    │ │Worker 1│ │    │ │Worker 1│ │                      │
-│  │ └────────┘ │    │ └────────┘ │    │ └────────┘ │                      │
-│  │ ┌────────┐ │    │ ┌────────┐ │    │ ┌────────┐ │                      │
-│  │ │Worker 2│ │    │ │Worker 2│ │    │ │Worker 2│ │                      │
+│  │ │Unified │ │    │ │Unified │ │    │ │Unified │ │                      │
+│  │ │Server  │ │    │ │Server  │ │    │ │Server  │ │                      │
 │  │ └────────┘ │    │ └────────┘ │    │ └────────┘ │                      │
 │  └────────────┘    └────────────┘    └────────────┘                      │
 │                                                                             │
 │  Each Master:                                                              │
-│  • Manages worker lifecycle                                                │
+│  • Manages unified server lifecycle                                         │
 │  • Handles site-specific configuration                                     │
 │  • Reports health to Overseer                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Note:** The unified server runs a single Tokio async event loop which handles thousands of concurrent requests. This is more efficient than spawning multiple worker processes.
 
 #### Process Communication
 
@@ -256,8 +212,8 @@ For high availability, MaluWAF uses a hierarchical node model:
                                            │ Spawn
                                            ▼
                                   ┌─────────────────┐
-                                  │     Worker      │
-                                  │  (Request IO)   │
+                                  │    Worker       │
+                                  │  (Request IO)    │
                                   └─────────────────┘
 ```
 
@@ -271,125 +227,62 @@ For high availability, MaluWAF uses a hierarchical node model:
 | Function | Description |
 |----------|-------------|
 | **Health Monitoring** | Continuous health checks of all master nodes |
-| **Leader Election** | Raft-based consensus for overseer leadership |
 | **Config Sync** | Distributed configuration propagation |
 | **Traffic Routing** | Global load balancing decisions |
 | **Failover** | Automatic redirection on node failure |
 
 ### 4. WAF-WAF Mesh Networking
 
-MaluWAF supports QUIC-based peer-to-peer communication for distributed protection:
+MaluWAF supports QUIC-based peer-to-peer mesh networking for distributed protection:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                        WAF-WAF QUIC Mesh Network                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-                    ┌─────────────────┐
-                    │   WAF Node A   │
-                    │  (Primary DC)  │
-                    │    10.0.0.1     │
-                    └────────┬────────┘
-                             │
-               QUIC Streams  │  │
-                     ┌───────┼───────┐
-                     │       │       │
-                     ▼       ▼       ▼
-             ┌───────────┐   │   ┌───────────┐
-             │           │   │   │           │
-             ▼           ▼   ▼   ▼           ▼
-       ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-       │ WAF Node  │ │ WAF Node  │ │ WAF Node  │ │ WAF Node  │
-       │    B      │ │    C      │ │    D      │ │    E      │
-       │(Regional)│ │(Regional)│ │(Regional)│ │(Regional)│
-       └──────────┘ └──────────┘ └──────────┘ └──────────┘
-             │                                           │
-             └───────────────────┬───────────────────────┘
-                                 │
-                     ┌───────────┴───────────┐
-                     │                       │
-                     ▼                       ▼
-             ┌──────────────┐        ┌──────────────┐
-             │   Attack     │        │    Clean     │
-             │   Traffic    │        │   Traffic    │
-             └──────────────┘        └──────────────┘
+                     ┌─────────────────┐
+                     │   Global Node   │
+                     │   (Directory)   │
+                     │    10.0.0.1     │
+                     └────────┬────────┘
+                              │
+                QUIC Streams  │  │
+                      ┌───────┼───────┐
+                      │       │       │
+                      ▼       ▼       ▼
+              ┌───────────┐   │   ┌───────────┐
+              │ Edge Node │   │   │Origin Node│
+              │  (WAF)    │   │   │ (Backend) │
+              └───────────┘   │   └───────────┘
+                              │
+                     ┌────────┴────────┐
+                     │                 │
+                     ▼                 ▼
+              ┌──────────┐       ┌──────────┐
+              │   Edge   │       │   Edge   │
+              │   Node   │       │   Node   │
+              └──────────┘       └──────────┘
 ```
 
-#### Mesh Communication Protocol
+#### Mesh Node Types
 
-```
-Node A                          Node B
-   │                                │
-   │──── QUIC Connection (TLS) ────│
-   │                                │
-   │──── Hello (role, capabilities)─│
-   │◄─── HelloAck ─────────────────│
-   │                                │
-   │──── SeedListRequest ──────────│
-   │◄─── SeedListResponse ─────────│
-   │                                │
-   │──── RouteQuery ───────────────│
-   │◄─── RouteResponse ────────────│
-   │                                │
-   │──── Periodic HealthCheck ─────│
-   │◄─── PeerLoadReport ───────────│
-```
+| Role | Description |
+|------|-------------|
+| **Global** | Directory server, CA, network authority (configured explicitly) |
+| **Edge** | Typical WAF instance, connects to global for discovery |
+| **Origin** | WAF with direct upstream connections, announces routes |
 
-#### Use Cases
+#### Mesh Capabilities
 
-1. **DDoS Mitigation**
-   - Shared IP reputation database
-   - Coordinated rate limiting
-   - Traffic scrubbing centers
-
-2. **Threat Intelligence**
-   - Real-time attack pattern sharing
-   - Blocklist synchronization
-   - Collective bot detection
-
-3. **Geographic Distribution**
-   - Regional traffic inspection
-   - Cross-datacenter coordination
-   - Consistent policy enforcement
+1. **Distributed DDoS Mitigation** - Shared IP reputation, coordinated rate limiting
+2. **Threat Intelligence Sharing** - Real-time attack pattern sharing via DHT
+3. **Certificate Distribution** - Origin → Edge TLS cert distribution via mesh
+4. **Route Aggregation** - Upstream discovery across mesh nodes
+5. **YARA Rule Distribution** - Global → Edge rule synchronization
 
 ### 5. Metrics Collection
 
 MaluWAF collects comprehensive metrics across all components, with per-site attribution for billing, quota management, and traffic analysis.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Metrics Collection Pipeline                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-
- Worker Process                      Master Process              Admin API
-      │                                    │                           │
-      │  ┌─────────────────────┐          │                           │
-      │  │  Per-Site Metrics  │          │                           │
-      │  │  • Requests        │          │                           │
-      │  │  • Blocked         │          │                           │
-      │  │  • Bandwidth       │          │                           │
-      │  └──────────┬──────────┘          │                           │
-      │             │                      │                           │
-      │        Heartbeat                  │                           │
-      │             │                      │                           │
-      │             ▼                      │                           │
-      │    ┌────────────────┐              │                           │
-      │    │    IPC Link   │──────────────►                           │
-      │    │  (Unix Socket)│              │                           │
-      │    └────────────────┘              │                           │
-      │                                    │                           │
-      │                             ┌──────▼──────┐                   │
-      │                             │   Aggregate │                   │
-      │                             │  Per-Site   │                   │
-      │                             │   Metrics   │                   │
-      │                             └──────┬──────┘                   │
-      │                                    │                           │
-      │                                    │  /api/stats/sites         │
-      │                                    ▼                           │
-      │                             ┌─────────────┐  ◄────────────  │
-      │                             │  Admin API  │─────────────────┘
-      │                             └─────────────┘
-```
 
 #### Per-Site Bandwidth Tracking
 
@@ -402,26 +295,7 @@ MaluWAF tracks bandwidth at multiple levels for comprehensive traffic accounting
 | **Direct Proxy** | WAF ↔ Origin | When connecting directly to origin |
 | **Mesh Proxy** | WAF ↔ Peer | When routing through WAF mesh |
 
-This granular tracking is essential for:
-- **Bandwidth quota management** in environments with limits
-- **Per-site billing/chargeback** in multi-tenant deployments  
-- **Traffic analysis** to identify unusual patterns
-- **Capacity planning** based on actual usage
-
-#### Security Through Process Isolation
-
-The metrics pipeline maintains security through process separation:
-
-1. **Worker processes** are isolated - each handles requests independently
-2. **Heartbeat IPC** transmits only aggregated metrics, not raw request data
-3. **Master process** aggregates without exposing worker internals
-4. **Admin API** serves sanitized metrics to authorized clients
-
-This architecture ensures that even if a worker is compromised, raw request data cannot be exfiltrated through the metrics channel.
-
-## Deployment Features
-
-### Built-in Application Support
+## Built-in Application Support
 
 MaluWAF handles common web serving scenarios without external dependencies:
 
@@ -431,23 +305,23 @@ MaluWAF handles common web serving scenarios without external dependencies:
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  Static Files   │  │    PHP-FPM      │  │     CGI        │
-│                 │  │                 │  │  (Legacy)      │
-│ • Directory     │  │ • Socket/TCP    │  │ • Perl         │
-│   Listing       │  │ • Process Mgmt  │  │ • Shell         │
-│ • MIME Types    │  │ • Pool Config   │  │ • Custom       │
-│ • Caching       │  │ • Chroot        │  │   Scripts     │
+│  Static Files   │  │    PHP-FPM      │  │    FastCGI      │
+│                 │  │                 │  │                 │
+│ • Directory     │  │ • Socket/TCP    │  │ • PHP-FPM       │
+│   Listing       │  │ • Process Mgmt  │  │ • Python        │
+│ • MIME Types    │  │ • Pool Config   │  │ • Custom        │
+│ • Caching       │  │ • Security      │  │   Protocols     │
+│ • Themes       │  │   Settings     │  │                 │
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│    FastCGI      │  │    Granian      │  │   QUIC/HTTP3   │
-│                 │ GI/ASGI │   (WS/   │  │                 │
-│ • PHP-FPM       │  │    RSGI)        │  │ • HTTP/3       │
-│ • Python        │  │                 │  │ • 0-RTT        │
-│ • Custom        │  │ • Django        │  │ • Connection   │
-│   Protocols     │  │ • Flask         │  │   Migration    │
-│                 │  │ • FastAPI       │  │                 │
-│                 │  │ • Flask         │  │                 │
+│    Granian      │  │   WASM          │  │   QUIC/HTTP3   │
+│    (Python)     │  │  (Serverless)   │  │                 │
+│                 │  │                 │  │ • HTTP/3       │
+│ • ASGI/WSGI     │  │ • wasmtime      │  │ • 0-RTT        │
+│ • Django        │  │ • Instance Pool │  │ • Connection   │
+│ • Flask         │  │ • Resource      │  │   Migration    │
+│ • FastAPI       │  │   Limits        │  │                 │
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 ```
 
@@ -470,20 +344,6 @@ Request ──► Path Normalization ──► Security Check ──► File Loo
                                              Response to Client
 ```
 
-**FastCGI Handler:**
-```
-Request ──► Parameter Mapping ──► Socket/TCP Connect ──► FCGI Request
-                                                            │
-                                                            ▼
-                                                   Upstream Response
-                                                            │
-                                                            ▼
-                                                   Response Transform
-                                                            │
-                                                            ▼
-                                                   Response to Client
-```
-
 **Granian Handler (Python):**
 ```
 Request ──► Unix Socket Connect ──► HTTP/1.1 to Granian ──► ASGI/WSGI Call
@@ -495,62 +355,20 @@ Request ──► Unix Socket Connect ──► HTTP/1.1 to Granian ──► AS
                                                          Response to Client
 ```
 
-### Granian Integration
+## Deployment Modes
 
-Granian is a production-proven application server that runs inside MaluWAF workers:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Granian Worker Model                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-    MaluWAF Worker Process
-    ┌─────────────────────────────────────────────────────┐
-    │                                                     │
-    │   ┌─────────────────────────────────────────────┐   │
-    │   │           Granian Supervisor                │   │
-    │   │                                             │   │
-    │   │   Watches child processes                   │   │
-    │   │   Handles IPC with main event loop         │   │
-    │   │   Automatic restart on crash               │   │
-    │   └─────────────────────────────────────────────┘   │
-    │                       │                            │
-    │           ┌───────────┼───────────┐                │
-    │           ▼           ▼           ▼                │
-    │      ┌────────┐  ┌────────┐  ┌────────┐           │
-    │      │ Granian│  │ Granian│  │ Granian│           │
-    │      │ Child  │  │ Child  │  │ Child  │           │
-    │      │   1    │  │   2    │  │   3    │           │
-    │      │(Python)│  │(Python)│  │(Python)│           │
-    │      └────────┘  └────────┘  └────────┘           │
-    │                                                     │
-    │   Python WSGI/ASGI/RSGI Applications              │
-    │   (Django, Flask, FastAPI, Starlette, etc.)      │
-    │                                                     │
-    └─────────────────────────────────────────────────────┘
-
-    Benefits:
-    ✓ No separate worker process management
-    ✓ Zero-copy IPC where possible
-    ✓ Automatic process supervision
-    ✓ Minimal memory overhead
-    ✓ Request/response passthrough
-```
-
-## Use Cases
-
-### 1. Single Server Deployment
+### 1. Standalone Mode
 
 Simple deployment for small to medium websites:
 
 ```
 ┌─────────────────────────────────────────┐
-│           Single Node Setup              │
+│           Standalone Setup               │
 └─────────────────────────────────────────┘
 
-Internet ──► MaluWAF ──► PHP-FPM
-              │
-              └──► Static Files
+Internet ──► MaluWAF ──► PHP-FPM / Granian
+               │
+               └──► Static Files
 ```
 
 ### 2. High Availability Cluster
@@ -562,15 +380,20 @@ Production-grade deployment with failover:
 │                   High Availability Setup                    │
 └─────────────────────────────────────────────────────────────┘
 
-          ┌─────────────────┐
-          │   Load Balancer │ (cloud provider or HAProxy)
-          └────────┬────────┘
-                   │
-      ┌────────────┼────────────┐
-      │            │            │
-      ▼            ▼            ▼
+           ┌─────────────────┐
+           │   Load Balancer │ (cloud provider or HAProxy)
+           └────────┬────────┘
+                    │
+       ┌────────────┼────────────┐
+       │            │            │
+       ▼            ▼            ▼
 ┌─────────┐ ┌─────────┐ ┌─────────┐
 │ MaluWAF │ │ MaluWAF │ │ MaluWAF │
+│ Overseer│ │ Overseer│ │ Overseer│
+└────┬────┘ └────┬────┘ └────┬────┘
+     │           │           │
+     ▼           ▼           ▼
+┌─────────┐ ┌─────────┐ ┌─────────┐
 │ Master  │ │ Master  │ │ Master  │
 └────┬────┘ └────┬────┘ └────┬────┘
      │           │           │
@@ -581,7 +404,7 @@ Production-grade deployment with failover:
 └─────────┘ └─────────┘ └─────────┘
 ```
 
-### 3. WAF-WAF DDoS Protection
+### 3. WAF Mesh DDoS Protection
 
 Distributed WAF mesh for large-scale attacks:
 
@@ -590,26 +413,26 @@ Distributed WAF mesh for large-scale attacks:
 │              WAF Mesh DDoS Mitigation                       │
 └─────────────────────────────────────────────────────────────┘
 
-                    ┌─────────────────┐
-        ┌───────────►│  Scrubbing DC  │◄───────────┐
-        │           │   (WAF Mesh)    │             │
-        │           └────────┬────────┘             │
-        │                    │                      │
-        │      ┌─────────────┼─────────────┐       │
-        │      │             │             │       │
-        │      ▼             ▼             ▼       │
-        │  ┌──────┐     ┌──────┐     ┌──────┐      │
-        │  │ WAF  │     │ WAF  │     │ WAF  │      │
-        │  │  1   │◄───►│  2   │◄───►│  3   │      │
-        │  └──────┘     └──────┘     └──────┘      │
-        │      │             │             │        │
-        └──────┼─────────────┼─────────────┼────────┘
-               │             │             │
-               ▼             ▼             ▼
-          ┌─────────┐  ┌─────────┐  ┌─────────┐
-          │  Origin │  │  Origin │  │  Origin │
-          │ Server  │  │ Server  │  │ Server  │
-          └─────────┘  └─────────┘  └─────────┘
+                     ┌─────────────────┐
+         ┌───────────►│  Scrubbing DC  │◄───────────┐
+         │           │ (Mesh Cluster)  │             │
+         │           └────────┬────────┘             │
+         │                    │                      │
+         │      ┌─────────────┼─────────────┐       │
+         │      │             │             │       │
+         │      ▼             ▼             ▼       │
+         │  ┌──────┐     ┌──────┐     ┌──────┐      │
+         │  │ Edge │◄───►│ Edge │◄───►│ Edge │      │
+         │  │  1   │     │  2   │     │  3   │      │
+         │  └──────┘     └──────┘     └──────┘      │
+         │      │             │             │        │
+         └──────┼─────────────┼─────────────┼────────┘
+                │             │             │
+                ▼             ▼             ▼
+           ┌─────────┐  ┌─────────┐  ┌─────────┐
+           │  Origin │  │  Origin │  │  Origin │
+           │ Server  │  │ Server  │  │ Server  │
+           └─────────┘  └─────────┘  └─────────┘
 ```
 
 ## Configuration Data Flow
@@ -623,7 +446,7 @@ Distributed WAF mesh for large-scale attacks:
        │  ┌──────────────────┼─────────────────────┘
        ▼  ▼
 ┌─────────────────────────────────────┐
-│        ConfigManager                │
+│        ConfigManager                 │
 │  • Loads and validates configs      │
 │  • Handles hot reload               │
 │  • Notifies components of changes   │
@@ -651,7 +474,7 @@ Distributed WAF mesh for large-scale attacks:
 ./maluwaf --overseer --master --workers 4
 
 # Connect to WAF mesh
-./maluwaf --peer waf-node-1.example.com:51820
+./maluwaf --mesh --role edge --seeds global-node:5001
 ```
 
 ## Next Steps
@@ -659,5 +482,5 @@ Distributed WAF mesh for large-scale attacks:
 - [Getting Started](./GETTING_STARTED.md) - Get started with MaluWAF
 - [Configuration Reference](./CONFIGURATION.md) - Full configuration options
 - [Attack Detection](./ATTACK_DETECTION.md) - WAF detection rules
+- [WAF Mesh](./WAF_MESH.md) - Mesh networking
 - [Deployment Examples](./DEPLOYMENT.md) - Production setups
-- [Plugin Development](./PLUGINS.md) - Extend MaluWAF

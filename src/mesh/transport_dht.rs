@@ -1,4 +1,5 @@
-#![allow(dead_code)] // Reserved for future DHT protocol handling
+#![allow(dead_code)]
+// SAFETY_REASON: Reserved for future DHT protocol handling
 
 use std::time::{Duration, Instant};
 

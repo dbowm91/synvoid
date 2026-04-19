@@ -701,12 +701,17 @@ impl RecordStoreManager {
         };
 
         let global_nodes = topology.get_global_nodes().await;
+        if global_nodes.is_empty() {
+            tracing::warn!(
+                "No global nodes available for quorum - rejecting store request"
+            );
+            return false;
+        }
         if global_nodes.len() < 3 {
             tracing::warn!(
-                "Not enough global nodes ({}) for quorum - auto-approving",
+                "Fewer than 3 global nodes ({}) for quorum - auto-approving with reduced fault tolerance",
                 global_nodes.len()
             );
-            return true;
         }
 
         quorum_manager

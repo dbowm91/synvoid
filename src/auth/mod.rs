@@ -34,6 +34,7 @@ async fn verify_dummy_password(password: &str) {
 }
 
 const DUMMY_PASSWORD_HASH: &str = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
+const MAX_SESSIONS_PER_USER: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -490,7 +491,19 @@ impl AuthManager {
                 csrf_token: Some(Uuid::new_v4().to_string()),
             };
 
-            store.sessions.retain(|_, s| s.user_id != user_id);
+            let count = store.sessions.iter()
+                .filter(|(_, s)| s.user_id == user_id)
+                .count();
+            if count >= MAX_SESSIONS_PER_USER {
+                let mut session_ids: Vec<_> = store.sessions.iter()
+                    .filter(|(_, s)| s.user_id == user_id)
+                    .map(|(k, v)| (k.clone(), v.created_at))
+                    .collect();
+                session_ids.sort_by_key(|(_, created)| *created);
+                for (id, _) in session_ids.into_iter().take(count - MAX_SESSIONS_PER_USER + 1) {
+                    store.sessions.remove(id.as_str());
+                }
+            }
             store.sessions.insert(session.id.clone(), session.clone());
 
             store.login_logs.push(LoginLog {
@@ -510,6 +523,28 @@ impl AuthManager {
             verify_dummy_password(password).await;
             Err(AuthError::InvalidCredentials)
         }
+    }
+
+    pub async fn update_password(&self, user_id: &str, new_password: &str) -> Result<(), AuthError> {
+        if new_password.len() < 8 {
+            return Err(AuthError::InvalidCredentials);
+        }
+
+        let password_hash = hash(new_password, DEFAULT_COST)
+            .map_err(|_| AuthError::InvalidCredentials)?;
+
+        let mut store = self.store.write().await;
+
+        if let Some(user) = store.users.get_mut(user_id) {
+            user.password_hash = password_hash;
+        } else {
+            return Err(AuthError::UserNotFound);
+        }
+
+        store.sessions.retain(|_, s| s.user_id != user_id);
+
+        self.save_store(&store).await;
+        Ok(())
     }
 
     pub async fn validate_session(&self, session_id: &str) -> Option<SessionInfo> {

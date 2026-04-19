@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub use granian::{GranianConfig, GranianInterface, GranianSupervisor};
+pub use granian::{GranianConfig, GranianInterface, GranianLogFormat, GranianLogLevel, GranianSupervisor};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppServerConfig {
@@ -28,6 +28,9 @@ pub struct AppServerConfig {
     pub auto_detect_venv: bool,
     pub auto_detect_app: bool,
     pub auto_install_requirements: bool,
+    pub log_level: GranianLogLevel,
+    pub log_format: GranianLogFormat,
+    pub log_verbose: bool,
 }
 
 impl Default for AppServerConfig {
@@ -53,6 +56,9 @@ impl Default for AppServerConfig {
             auto_detect_venv: true,
             auto_detect_app: true,
             auto_install_requirements: true,
+            log_level: GranianLogLevel::Info,
+            log_format: GranianLogFormat::Text,
+            log_verbose: false,
         }
     }
 }

@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use sha1::Sha1;
-use sha2::{Sha256, Sha384, Sha512};
+use sha2::{Digest, Sha256, Sha384, Sha512};
+
 use thiserror::Error;
 
 use crate::config::dns::{TsigAlgorithm, TsigKeyConfig};
@@ -14,6 +16,63 @@ type HmacSha1 = Hmac<Sha1>;
 type HmacSha256 = Hmac<Sha256>;
 type HmacSha384 = Hmac<Sha384>;
 type HmacSha512 = Hmac<Sha512>;
+
+const TSIG_REPLAY_CACHE_TTL_SECS: u64 = 300;
+const MAX_REPLAY_CACHE_SIZE: usize = 10000;
+
+struct ReplayCacheEntry {
+    timestamp: Instant,
+}
+
+struct ReplayCache {
+    entries: HashMap<Vec<u8>, ReplayCacheEntry>,
+    last_cleanup: Instant,
+}
+
+impl ReplayCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            last_cleanup: Instant::now(),
+        }
+    }
+
+    fn is_replay(&self, mac_hash: &[u8]) -> bool {
+        self.entries.contains_key(mac_hash)
+    }
+
+    fn insert(&mut self, mac_hash: Vec<u8>) {
+        if self.entries.len() >= MAX_REPLAY_CACHE_SIZE {
+            self.evict_oldest();
+        }
+        self.entries.insert(mac_hash, ReplayCacheEntry { timestamp: Instant::now() });
+
+        if self.last_cleanup.elapsed().as_secs() >= TSIG_REPLAY_CACHE_TTL_SECS {
+            self.cleanup_expired();
+        }
+    }
+
+    fn evict_oldest(&mut self) {
+        let key_to_remove = self.entries.iter()
+            .min_by_key(|(_, v)| v.timestamp)
+            .map(|(k, _)| k.clone());
+        if let Some(key) = key_to_remove {
+            self.entries.remove(&key);
+        }
+    }
+
+    fn cleanup_expired(&mut self) {
+        let cutoff = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(TSIG_REPLAY_CACHE_TTL_SECS))
+            .unwrap_or(Instant::now());
+        self.entries.retain(|_, v| v.timestamp > cutoff);
+        self.last_cleanup = Instant::now();
+    }
+
+    fn compute_mac_hash(mac: &[u8]) -> Vec<u8> {
+        Sha256::digest(mac).to_vec()
+    }
+}
 
 #[derive(Clone)]
 pub struct TsigKey {
@@ -45,6 +104,7 @@ impl TsigKey {
 
 pub struct TsigVerifier {
     keys: Arc<RwLock<HashMap<String, TsigKey>>>,
+    replay_cache: Arc<RwLock<ReplayCache>>,
 }
 
 impl TsigVerifier {
@@ -58,6 +118,7 @@ impl TsigVerifier {
 
         Ok(Self {
             keys: Arc::new(RwLock::new(keys)),
+            replay_cache: Arc::new(RwLock::new(ReplayCache::new())),
         })
     }
 
@@ -94,6 +155,14 @@ impl TsigVerifier {
 
         if time_diff > fudge_val {
             return Err(TsigError::TimeInvalid);
+        }
+
+        let mac_hash = ReplayCache::compute_mac_hash(original_mac);
+        {
+            let cache = self.replay_cache.read();
+            if cache.is_replay(&mac_hash) {
+                return Err(TsigError::ReplayAttack);
+            }
         }
 
         let keys = self.keys.read();
@@ -165,6 +234,11 @@ impl TsigVerifier {
 
         if diff != 0 {
             return Err(TsigError::MacVerificationFailed);
+        }
+
+        {
+            let mut cache = self.replay_cache.write();
+            cache.insert(mac_hash);
         }
 
         Ok(())
@@ -272,6 +346,8 @@ pub enum TsigError {
     AlgorithmMismatch,
     #[error("TSIG parse error: {0}")]
     ParseError(String),
+    #[error("TSIG replay attack detected")]
+    ReplayAttack,
 }
 
 pub fn parse_tsig_from_query(query: &[u8], qd_end: usize) -> Option<TsigParseResult> {

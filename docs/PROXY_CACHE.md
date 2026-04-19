@@ -8,104 +8,63 @@ The proxy cache:
 - **Stores** responses from upstream servers
 - **Serves** cached responses for matching requests
 - **Invalidates** based on configurable rules
-- **Optimizes** with vary header support
+- **Optimizes** with Vary header support
 
 ## Configuration
 
 ### Basic Configuration
 
 ```toml
-[defaults.proxy_cache]
-enabled = true
-max_entries = 10000
-max_size_mb = 512
-ttl_secs = 300
+[site.proxy]
+proxy_cache_enable = true
 ```
 
 ### Full Configuration
 
 ```toml
-[defaults.proxy_cache]
-enabled = true
+[site.proxy]
+proxy_cache_enable = true
 
-# Storage limits
-max_entries = 10000
-max_size_mb = 512
+# Storage
+proxy_cache_path = "/var/cache/maluwaf/proxy"
+proxy_cache_max_size = "1G"
+proxy_cache_memory_max = "256M"
+proxy_cache_disk_max = "1G"
 
 # Time-to-live
-ttl_secs = 300           # Default TTL
-min_ttl_secs = 60        # Minimum TTL
-max_ttl_secs = 3600      # Maximum TTL
-
-# Response matching
-[defaults.proxy_cache.match]
-status_codes = [200, 201, 301, 302]
-methods = ["GET", "HEAD"]
-headers = ["Accept-Encoding"]
-
-# Vary header support
-[defaults.proxy_cache.vary]
-enabled = true
-headers = ["Accept-Encoding", "Accept-Language", "Cookie"]
+proxy_cache_inactive = 3600
+proxy_cache_valid_status = [200, 301, 302, 304]
+proxy_cache_methods = ["GET", "HEAD"]
+proxy_cache_min_uses = 1
 
 # Cache key
-[defaults.proxy_cache.key]
-include_query = true
-include_method = true
-include_headers = ["Accept-Encoding"]
+proxy_cache_key = "$scheme$request_method$host$uri"
+proxy_cache_vary_by = ["Accept-Encoding", "Accept-Language"]
+
+# Stale-while-revalidate
+proxy_cache_stale_while_revalidate = 60
+proxy_cache_stale_if_error = 60
+
+# Options
+proxy_cache_use_temp_file = true
+proxy_cache_use_stale = ["error", "timeout", "updating"]
 ```
 
-### Per-Site Configuration
-
-```toml
-# config/sites/example.com.toml
-[site.proxy_cache]
-enabled = true
-max_entries = 5000
-ttl_secs = 600  # Longer TTL for static content
-```
-
-## Configuration Options
-
-### Basic Options
+### Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable proxy cache |
-| `max_entries` | `10000` | Maximum cached entries |
-| `max_size_mb` | `512` | Maximum cache size in MB |
-| `ttl_secs` | `300` | Default TTL in seconds |
-
-### TTL Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ttl_secs` | `300` | Default time-to-live |
-| `min_ttl_secs` | `0` | Minimum TTL |
-| `max_ttl_secs` | `86400` | Maximum TTL |
-
-### Match Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `status_codes` | `[200]` | Status codes to cache |
-| `methods` | `["GET"]` | Methods to cache |
-| `headers` | `[]` | Headers that trigger no-cache |
-
-### Vary Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable Vary header support |
-| `headers` | `[]` | Headers to vary on |
-
-### Cache Key Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `include_query` | `true` | Include query string |
-| `include_method` | `false` | Include HTTP method |
-| `include_headers` | `[]` | Include headers in key |
+| `proxy_cache_enable` | `false` | Enable proxy cache |
+| `proxy_cache_path` | - | Cache directory path |
+| `proxy_cache_max_size` | - | Maximum cache size (e.g., "1G") |
+| `proxy_cache_inactive` | `3600` | Time to keep inactive cache entries |
+| `proxy_cache_valid_status` | `[200, 301, 302, 304]` | Status codes to cache |
+| `proxy_cache_methods` | `["GET", "HEAD"]` | HTTP methods to cache |
+| `proxy_cache_min_uses` | `1` | Minimum requests before caching |
+| `proxy_cache_key` | - | Custom cache key format |
+| `proxy_cache_vary_by` | `[]` | Headers to vary on |
+| `proxy_cache_stale_while_revalidate` | - | Serve stale while revalidating |
+| `proxy_cache_stale_if_error` | - | Serve stale on upstream errors |
 
 ## How It Works
 
@@ -139,95 +98,59 @@ Client Request
 
 ### Cache Key Generation
 
-Default cache key format:
+Default cache key uses the full request URL. Custom keys can be configured using variables:
+
 ```
-{METHOD}:{URL}?{QUERY}:{ACCEPT_ENCODING}
+$scheme, $request_method, $host, $uri, $args
 ```
 
 Example:
 ```
-GET:/api/users:application/json,gzip
+proxy_cache_key = "$scheme$host$uri$args";
 ```
-
-## Cache Invalidation
-
-### By URL Pattern
-
-```toml
-[site.proxy_cache.invalidate]
-patterns = [
-    "/api/cache/*",
-    "/static/*"
-]
-```
-
-### On Demand
-
-```bash
-# Invalidate specific URL
-curl -X POST -H "Authorization: Bearer <token>" \
-  -d '{"url": "/api/users/123"}' \
-  http://localhost:8081/api/cache/invalidate
-
-# Invalidate by pattern
-curl -X POST -H "Authorization: Bearer <token>" \
-  -d '{"pattern": "/api/cache/*"}' \
-  http://localhost:8081/api/cache/invalidate
-```
-
-### Automatic Invalidation
-
-Based on response headers:
-
-- `Cache-Control: no-cache`
-- `Cache-Control: private`
-- `Expires` past
-- `Set-Cookie` present (when configured)
 
 ## Vary Header Support
 
 When Vary is enabled, MaluWAF stores separate cache entries for different header combinations:
+
+```toml
+proxy_cache_vary_by = ["Accept-Encoding", "Accept-Language"]
+```
 
 ```
 GET /api/data
 Accept-Encoding: gzip
 -> Cache key: ...:gzip
 
-GET /api/data  
+GET /api/data
 Accept-Encoding: br
 -> Cache key: ...:br (separate entry)
 ```
 
-### Configuration
+## Cache Invalidation
 
-```toml
-[defaults.proxy_cache.vary]
-enabled = true
-headers = [
-    "Accept-Encoding",
-    "Accept-Language", 
-    "Accept"
-]
-```
+### Automatic Invalidation
+
+Based on response headers:
+- `Cache-Control: no-cache`
+- `Cache-Control: private`
+- `Expires` past
+- `Set-Cookie` present
+
+### Manual Invalidation
+
+Cache invalidation is handled via configuration reload or site restart.
 
 ## Admin API
 
-Cache management endpoints are currently not exposed via the Admin API. Cache behavior can be configured through:
-
-1. **Configuration files** - Set cache parameters in `main.toml` or site configs
-2. **Cache-Control headers** - Upstream responses with appropriate headers control caching
-3. **Configuration reload** - Use `POST /api/config/reload` after config changes
-
-### Monitoring Cache via Metrics
-
-Cache statistics are available through Prometheus metrics on port 9090:
+Cache statistics are available through Prometheus metrics:
 
 ```bash
 # View cache metrics
 curl http://localhost:9090/metrics | grep maluwaf_cache
 ```
 
-## Prometheus Metrics
+### Prometheus Metrics
 
 ```bash
 maluwaf.proxy.cache.hit                   # Cache hits
@@ -242,15 +165,10 @@ maluwaf.proxy.cache.stale_while_revalidate # Stale-while-revalidate served
 Cache static assets aggressively:
 
 ```toml
-# config/sites/static.example.com.toml
-[site.proxy_cache]
-enabled = true
-ttl_secs = 86400  # 24 hours
-max_size_mb = 2048
-
-[site.proxy_cache.match]
-status_codes = [200, 304]
-methods = ["GET", "HEAD"]
+[site.proxy]
+proxy_cache_enable = true
+proxy_cache_inactive = 86400
+proxy_cache_valid_status = [200, 304]
 ```
 
 ### API Responses
@@ -258,106 +176,38 @@ methods = ["GET", "HEAD"]
 Cache API responses with shorter TTL:
 
 ```toml
-# config/sites/api.example.com.toml
-[site.proxy_cache]
-enabled = true
-ttl_secs = 60   # 1 minute
-max_entries = 1000
-
-[site.proxy_cache.match]
-status_codes = [200]
-methods = ["GET"]
+[site.proxy]
+proxy_cache_enable = true
+proxy_cache_inactive = 60
+proxy_cache_valid_status = [200]
+proxy_cache_min_uses = 3
 ```
 
 ### User-Specific Content
 
-Use vary for user-specific caching:
+Use Vary for user-specific caching:
 
 ```toml
-[site.proxy_cache]
-enabled = true
-
-[site.proxy_cache.vary]
-enabled = true
-headers = ["Accept-Language"]
-
-# Exclude private responses
-[site.proxy_cache.match]
-headers = ["Cookie"]  # If present, don't cache
+[site.proxy]
+proxy_cache_enable = true
+proxy_cache_vary_by = ["Accept-Language"]
+proxy_cache_valid_status = [200]
 ```
 
 ## Performance Considerations
 
-### Memory Usage
+### Memory vs Disk
 
-Approximate cache size:
-- Each entry: ~1KB metadata + response size
-- 10,000 entries at 50KB avg: ~500MB
+The cache can use both memory and disk:
+- **Memory**: Faster but limited by `proxy_cache_memory_max`
+- **Disk**: Larger storage via `proxy_cache_disk_max`
 
-### Disk vs Memory
+### Hit Rate Optimization
 
-Currently memory-only. For larger caches:
-- Reduce TTL
-- Increase eviction
-- Use CDN upstream
-
-## Troubleshooting
-
-### Cache Not Working
-
-1. Check cache is enabled
-2. Verify method is GET/HEAD
-3. Check status code is cacheable
-4. Look for no-cache headers
-
-### Low Hit Rate
-
-1. Too many unique URLs
-2. TTL too short
-3. Query strings vary too much
-4. Vary headers too broad
-
-### Memory Growth
-
-1. Reduce max_entries
-2. Reduce TTL
-3. Monitor eviction rate
-
-### Stale Data
-
-1. Check TTL settings
-2. Verify upstream sends proper headers
-3. Implement manual invalidation
-
-## Integration
-
-### With Traffic Shaping
-
-```toml
-[proxy_cache]
-enabled = true
-ttl_secs = 300
-
-[traffic_shaping]
-enabled = true
-max_rate_mbps = 100
-```
-
-Cached responses bypass traffic shaping limits.
-
-### With Rate Limiting
-
-```toml
-[proxy_cache]
-enabled = true
-ttl_secs = 300
-
-[ratelimit]
-enabled = true
-per_second = 10
-```
-
-Cached responses still count against rate limits.
+1. **Use appropriate TTLs** - Static = long TTL, Dynamic = short
+2. **Minimize Vary headers** - Each header creates separate entries
+3. **Set `proxy_cache_min_uses`** - Avoid caching one-off requests
+4. **Monitor eviction rate** - Adjust max_size if too high
 
 ## Best Practices
 
@@ -372,4 +222,3 @@ Cached responses still count against rate limits.
 - [STATIC_FILES.md](./STATIC_FILES.md) - Static file serving
 - [PERFORMANCE.md](./PERFORMANCE.md) - Performance optimization
 - [CONFIGURATION.md](./CONFIGURATION.md) - Cache configuration
-- [RATE_LIMITING.md](./RATE_LIMITING.md) - Rate limiting with caching

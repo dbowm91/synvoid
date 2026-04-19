@@ -200,6 +200,17 @@ impl SiteConfig {
             auto_detect_venv: site_config.auto_detect_venv.unwrap_or(true),
             auto_detect_app: site_config.auto_detect_app.unwrap_or(true),
             auto_install_requirements: site_config.auto_install_requirements.unwrap_or(true),
+            log_level: site_config
+                .log_level
+                .as_ref()
+                .map(|s| crate::app_server::GranianLogLevel::from(s.as_str()))
+                .unwrap_or(crate::app_server::GranianLogLevel::Info),
+            log_format: site_config
+                .log_format
+                .as_ref()
+                .map(|s| crate::app_server::GranianLogFormat::from(s.as_str()))
+                .unwrap_or(crate::app_server::GranianLogFormat::Text),
+            log_verbose: site_config.log_verbose.unwrap_or(false),
         }
     }
 }

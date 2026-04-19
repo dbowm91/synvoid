@@ -43,6 +43,12 @@ pub struct SiteAppServerConfig {
     pub auto_detect_app: Option<bool>,
     #[serde(default = "default_some_true")]
     pub auto_install_requirements: Option<bool>,
+    #[serde(default)]
+    pub log_level: Option<String>,
+    #[serde(default)]
+    pub log_format: Option<String>,
+    #[serde(default)]
+    pub log_verbose: Option<bool>,
 }
 
 fn default_some_true() -> Option<bool> {

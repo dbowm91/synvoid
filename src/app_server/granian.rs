@@ -64,6 +64,100 @@ impl serde::Serialize for GranianInterface {
     }
 }
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
+pub enum GranianLogLevel {
+    #[default]
+    Info,
+    Debug,
+    Warning,
+    Error,
+}
+
+impl std::fmt::Display for GranianLogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GranianLogLevel::Info => write!(f, "info"),
+            GranianLogLevel::Debug => write!(f, "debug"),
+            GranianLogLevel::Warning => write!(f, "warning"),
+            GranianLogLevel::Error => write!(f, "error"),
+        }
+    }
+}
+
+impl From<&str> for GranianLogLevel {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "debug" => GranianLogLevel::Debug,
+            "warning" | "warn" => GranianLogLevel::Warning,
+            "error" => GranianLogLevel::Error,
+            _ => GranianLogLevel::Info,
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GranianLogLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(GranianLogLevel::from(s.as_str()))
+    }
+}
+
+impl serde::Serialize for GranianLogLevel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
+pub enum GranianLogFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+impl std::fmt::Display for GranianLogFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GranianLogFormat::Text => write!(f, "text"),
+            GranianLogFormat::Json => write!(f, "json"),
+        }
+    }
+}
+
+impl From<&str> for GranianLogFormat {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "json" => GranianLogFormat::Json,
+            _ => GranianLogFormat::Text,
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GranianLogFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(GranianLogFormat::from(s.as_str()))
+    }
+}
+
+impl serde::Serialize for GranianLogFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 #[derive(Clone)]
 pub struct GranianConfig {
     pub app_path: String,
@@ -85,6 +179,9 @@ pub struct GranianConfig {
     pub auto_detect_venv: bool,
     pub auto_detect_app: bool,
     pub auto_install_requirements: bool,
+    pub log_level: GranianLogLevel,
+    pub log_format: GranianLogFormat,
+    pub log_verbose: bool,
     pub site_id: String,
     pub worker_id: usize,
 }
@@ -111,6 +208,9 @@ impl From<&AppServerConfig> for GranianConfig {
             auto_detect_venv: config.auto_detect_venv,
             auto_detect_app: config.auto_detect_app,
             auto_install_requirements: config.auto_install_requirements,
+            log_level: config.log_level,
+            log_format: config.log_format,
+            log_verbose: config.log_verbose,
             site_id: String::new(),
             worker_id: 0,
         }
@@ -619,6 +719,13 @@ impl GranianSupervisor {
         cmd.arg("--workers").arg(self.config.workers.to_string());
         cmd.arg("--blocking-threads")
             .arg(self.config.blocking_threads.to_string());
+
+        cmd.arg("--log-level").arg(self.config.log_level.to_string());
+        cmd.arg("--log-format").arg(self.config.log_format.to_string());
+
+        if self.config.log_verbose {
+            cmd.arg("--log-verbose");
+        }
 
         if let Some(ref working_dir) = self.config.working_directory {
             cmd.current_dir(working_dir);
