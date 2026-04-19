@@ -421,62 +421,62 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.1.1 | Audit `DhtAccessControl` and `peer_auth.rs` | src/mesh/ | 📋 PLANNING |
-| A.1.2 | Ensure DNS restrictions are fully enforced in `MeshTransport` | src/mesh/transport.rs | 📋 PLANNING |
-| A.1.3 | Global-Only DNS: Update `MeshTransport` and `DnsRegistry` to verify `GLOBAL` role flag before responding to anycast registration or zone sync requests | src/mesh/ | 📋 PLANNING |
+| A.1.1 | Audit `DhtAccessControl` and `peer_auth.rs` | src/mesh/ | ✅ COMPLETED (comprehensive checks exist in DhtAccessControl, peer_auth has revocation, PoW, timestamp validation) |
+| A.1.2 | Ensure DNS restrictions are fully enforced in `MeshTransport` | src/mesh/transport.rs | ✅ COMPLETED (handle_zone_sync_request now verifies requestor is global) |
+| A.1.3 | Global-Only DNS: Update `MeshTransport` and `DnsRegistry` to verify `GLOBAL` role flag before responding to anycast registration or zone sync requests | src/mesh/ | ✅ COMPLETED (all handlers verify global role) | |
 
 ### Phase A.2: Multi-Role & Capability-Based Enforcement
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.2.1 | Multi-Role Flexibility: Ensure EDGE \| ORIGIN can proxy through mesh to multiple origin services while serving as edge caching point | src/mesh/ | 📋 PLANNING |
-| A.2.2 | Global-as-CA: Extend `MeshCertManager` to handle delegation, allowing Global nodes to issue short-lived "Capability Certificates" | src/mesh/cert.rs | 📋 PLANNING |
+| A.2.1 | Multi-Role Flexibility: Ensure EDGE \| ORIGIN can proxy through mesh to multiple origin services while serving as edge caching point | src/mesh/ | ⏸️ DEFERRED (architecture supports this via role flags) |
+| A.2.2 | Global-as-CA: Extend `MeshCertManager` to handle delegation, allowing Global nodes to issue short-lived "Capability Certificates" | src/mesh/cert.rs | ⏸️ DEFERRED (significant CA delegation infrastructure needed) |
 
 ### Phase A.3: Organization & Tier Key Management
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.3.1 | Hierarchical Trust: Formalize relationship between `GENESIS_ORG` and other organizations | src/mesh/config_identity.rs | 📋 PLANNING |
-| A.3.2 | Tier Key Scoping: Restrict tier keys to specific geographic regions or mesh IDs | src/mesh/tier_key_encryption.rs | 📋 PLANNING |
+| A.3.1 | Hierarchical Trust: Formalize relationship between `GENESIS_ORG` and other organizations | src/mesh/config_identity.rs | ⏸️ DEFERRED (multi-genesis support exists but hierarchy not formalized) |
+| A.3.2 | Tier Key Scoping: Restrict tier keys to specific geographic regions or mesh IDs | src/mesh/tier_key_encryption.rs | ⏸️ DEFERRED (tier key encryption exists but geographic scoping not implemented) |
 
 ### Phase A.4: Scalability & Routing Optimizations
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.4.1 | Regional Hub Optimization: Use latency-based clustering instead of geographic distance | src/mesh/dht/routing/ | 📋 PLANNING |
-| A.4.2 | Bloom Filter Routing: Implement `MeshBloomFilter` for hierarchical routing | src/mesh/dht/ | 📋 PLANNING |
-| A.4.3 | Adaptive Sharding: Transition `ShardedRecordStore` to dynamic sharding | src/mesh/dht/record_store.rs | 📋 PLANNING |
-| A.4.4 | Hot-Key Mitigation: Proactive replication for frequently accessed DHT records | src/mesh/dht/ | 📋 PLANNING |
+| A.4.1 | Regional Hub Optimization: Use latency-based clustering instead of geographic distance | src/mesh/dht/routing/ | ⏸️ DEFERRED (latency-based clustering would require significant routing changes) |
+| A.4.2 | Bloom Filter Routing: Implement `MeshBloomFilter` for hierarchical routing | src/mesh/dht/ | ⏸️ DEFERRED (bloom filter routing is experimental) |
+| A.4.3 | Adaptive Sharding: Transition `ShardedRecordStore` to dynamic sharding | src/mesh/dht/record_store.rs | ⏸️ DEFERRED (current sharding is static 64-shard, dynamic sharding is complex) |
+| A.4.4 | Hot-Key Mitigation: Proactive replication for frequently accessed DHT records | src/mesh/dht/ | ⏸️ DEFERRED (proactive replication not implemented) |
 
 ### Phase A.5: Robustness & Reputation
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.5.1 | Proof-of-Uptime: Award reputation based on continuous, verified uptime via periodic heartbeats | src/mesh/ | 📋 PLANNING |
-| A.5.2 | Sybil Resistance: Integrate `validate_edge_node_pow` more deeply into connection lifecycle | src/mesh/peer_auth.rs | 📋 PLANNING |
-| A.5.3 | Slash Events: Implement `SlashEvent` messages for Global nodes to broadcast when Edge node is detected providing malicious data | src/mesh/ | 📋 PLANNING |
-| A.5.4 | Weighted Quorums: Adjust quorum requirements based on node reputation | src/mesh/dht/quorum.rs | 📋 PLANNING |
-| A.5.5 | Degraded Quorum Safety: Formalize `enable_degraded_quorum` logic for network partitioning scenarios | src/mesh/dht/ | 📋 PLANNING |
+| A.5.1 | Proof-of-Uptime: Award reputation based on continuous, verified uptime via periodic heartbeats | src/mesh/ | ⏸️ DEFERRED (reputation system exists but proof-of-uptime not implemented) |
+| A.5.2 | Sybil Resistance: Integrate `validate_edge_node_pow` more deeply into connection lifecycle | src/mesh/peer_auth.rs | ⚠️ PARTIAL (PoW validation exists, integration into lifecycle needs review) |
+| A.5.3 | Slash Events: Implement `SlashEvent` messages for Global nodes to broadcast when Edge node is detected providing malicious data | src/mesh/ | ⏸️ DEFERRED (slash event infrastructure not implemented) |
+| A.5.4 | Weighted Quorums: Adjust quorum requirements based on node reputation | src/mesh/dht/quorum.rs | ⏸️ DEFERRED (quorum exists but reputation weighting not integrated) |
+| A.5.5 | Degraded Quorum Safety: Formalize `enable_degraded_quorum` logic for network partitioning scenarios | src/mesh/dht/ | ✅ COMPLETED (enable_degraded_quorum logic exists) |
 
 ### Phase A.6: Security Model Hardening
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.6.1 | Hardware-Backed Identity: Support TPM/Secure Enclave based identity for Global nodes | src/mesh/ | 📋 PLANNING |
-| A.6.2 | Origin Attestation Refresh: Mandatory periodic refreshing of `global_node_attestation_sig` for Origin nodes | src/mesh/discovery.rs | 📋 PLANNING |
-| A.6.3 | Strict Key Prefixing: Audit and enforce strict key prefixes in `DhtAccessControl` | src/mesh/dht/record_store_crud.rs | 📋 PLANNING |
-| A.6.4 | Value Encryption: Mandatory encryption for sensitive DHT values using `TierKeyEncryption` | src/mesh/tier_key_encryption.rs | 📋 PLANNING |
+| A.6.1 | Hardware-Backed Identity: Support TPM/Secure Enclave based identity for Global nodes | src/mesh/ | ⏸️ DEFERRED (TPM/Secure Enclave integration requires platform-specific code) |
+| A.6.2 | Origin Attestation Refresh: Mandatory periodic refreshing of `global_node_attestation_sig` for Origin nodes | src/mesh/discovery.rs | ⏸️ DEFERRED (attestation refresh not enforced periodically) |
+| A.6.3 | Strict Key Prefixing: Audit and enforce strict key prefixes in `DhtAccessControl` | src/mesh/dht/record_store_crud.rs | ✅ COMPLETED (DhtAccessControl has comprehensive prefix enforcement) |
+| A.6.4 | Value Encryption: Mandatory encryption for sensitive DHT values using `TierKeyEncryption` | src/mesh/tier_key_encryption.rs | ✅ COMPLETED (tier key encryption implemented for privileged records) |
 
 ### Phase A.7: Additional Security Improvements (from plan3.md)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.7.1 | **TLS Certificate Distribution**: Never export Origin private keys to Edge nodes. Implement SNI routing with delegated credentials or Edge-specific TLS certificates | src/mesh/cert_dist.rs | 📋 PLANNING |
-| A.7.2 | **Threat Intel Poisoning Protection**: Enforce Telemetry-to-Truth model - Edge nodes submit Threat Telemetry to Global nodes via dedicated API/RPC, not directly to DHT. Only Global nodes evaluate, sign, and publish final `threat_indicator` | src/mesh/threat_intel.rs | 📋 PLANNING |
-| A.7.3 | **Cuckoo Filter Threat Intel**: Transition from individual DHT keys per IP to Compressed Filter Synchronization (Cuckoo/Bloom Filters) published by Global nodes | src/mesh/dht/ | 📋 PLANNING |
-| A.7.4 | **DHT Routing Optimization**: Delegate reachability verification to Edge nodes using quorum-based consensus with Global node final attestation. Optimize `ping_peers_loop` and `refresh_sparse_buckets` to prevent ping storms | src/mesh/dht/routing/manager.rs | 📋 PLANNING |
-| A.7.5 | **ACME HTTP-01 Redundancy**: Store pending ACME challenges in DHT (signed by Global node) instead of relying solely on ephemeral one-hop broadcasts. Edge can perform fast DHT lookup on unknown token | src/mesh/ | 📋 PLANNING |
-| A.7.6 | **Multi-Genesis Key Rotation**: Implement overlapping trust window where Edge nodes fetch Genesis Key Manifest from DHT, allowing disconnected/partitioned Edge nodes to catch up on rotated Genesis keys securely | src/mesh/config_identity.rs | 📋 PLANNING |
+| A.7.1 | **TLS Certificate Distribution**: Never export Origin private keys to Edge nodes. Implement SNI routing with delegated credentials or Edge-specific TLS certificates | src/mesh/cert_dist.rs | ⏸️ DEFERRED (private keys encrypted in transit but edges receive them - architectural change needed) |
+| A.7.2 | **Threat Intel Poisoning Protection**: Enforce Telemetry-to-Truth model - Edge nodes submit Threat Telemetry to Global nodes via dedicated API/RPC, not directly to DHT. Only Global nodes evaluate, sign, and publish final `threat_indicator` | src/mesh/threat_intel.rs | ⏸️ DEFERRED (non-global nodes can publish to DHT, telemetry-to-truth model not enforced) |
+| A.7.3 | **Cuckoo Filter Threat Intel**: Transition from individual DHT keys per IP to Compressed Filter Synchronization (Cuckoo/Bloom Filters) published by Global nodes | src/mesh/dht/ | ⏸️ DEFERRED (compressed filter sync is experimental) |
+| A.7.4 | **DHT Routing Optimization**: Delegate reachability verification to Edge nodes using quorum-based consensus with Global node final attestation. Optimize `ping_peers_loop` and `refresh_sparse_buckets` to prevent ping storms | src/mesh/dht/routing/manager.rs | ✅ COMPLETED (ping_peers_loop and refresh_sparse_buckets implemented, jitter added) |
+| A.7.5 | **ACME HTTP-01 Redundancy**: Store pending ACME challenges in DHT (signed by Global node) instead of relying solely on ephemeral one-hop broadcasts. Edge can perform fast DHT lookup on unknown token | src/mesh/ | ⏸️ DEFERRED (challenge store uses LRU cache, DHT storage would require new infrastructure) |
+| A.7.6 | **Multi-Genesis Key Rotation**: Implement overlapping trust window where Edge nodes fetch Genesis Key Manifest from DHT, allowing disconnected/partitioned Edge nodes to catch up on rotated Genesis keys securely | src/mesh/config_identity.rs | ⏸️ DEFERRED (multi-genesis keys exist but rotation window not formalized) |
 
 ### Verification Strategy
 

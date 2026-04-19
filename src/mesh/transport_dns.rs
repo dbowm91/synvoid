@@ -170,6 +170,21 @@ impl MeshTransport {
             client_serial
         );
 
+        let is_global_requester = if let Some(peer) = self.topology.get_peer(peer_id).await {
+            peer.role.is_global()
+        } else {
+            false
+        };
+
+        if !is_global_requester {
+            tracing::warn!(
+                "Rejected zone sync request for zone {} from non-global node: {}",
+                zone_origin,
+                requesting_node_id
+            );
+            return;
+        }
+
         let (records_json, response_serial, complete, previous_serial) = if let Some(
             ref dns_registry,
         ) = self.dns_registry
