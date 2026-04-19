@@ -80,7 +80,7 @@ pub fn render_custom_template(
         .collect();
     html = html.replace("{{rows}}", &rows);
 
-    html = html.replace("{{site_name}}", "RustWAF");
+    html = html.replace("{{site_name}}", "MaluWAF");
     html = html.replace("{{title}}", &format!("Index of {}", url_path));
 
     Ok(html)
@@ -359,6 +359,9 @@ fn format_modified(timestamp: u64) -> String {
         return "Just now".to_string();
     }
     if diff < 3600 {
+        return format!("{} minutes ago", diff / 60);
+    }
+    if diff < 86400 {
         return format!("{} hours ago", diff / 3600);
     }
 

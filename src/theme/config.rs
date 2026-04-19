@@ -232,7 +232,7 @@ fn default_logo_url() -> Option<String> {
     None
 }
 fn default_title() -> String {
-    "RustWAF".to_string()
+    "MaluWAF".to_string()
 }
 fn default_show_logo() -> bool {
     true

@@ -25,7 +25,7 @@ impl ThemeRenderer {
         };
 
         format!(
-            r#"/* RustWAF Unified Theme */
+            r#"/* MaluWAF Unified Theme */
 :root {{
     --waf-font-family: 'Courier New', 'Monaco', 'Consolas', monospace;
     --waf-border-radius: {border_radius};
