@@ -639,6 +639,50 @@ impl ApiService {
         self.put("/config/rate-limits", config).await
     }
 
+    pub async fn get_mime_types_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/mime-types").await
+    }
+
+    pub async fn update_mime_types_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/mime-types", config).await
+    }
+
+    pub async fn get_tcp_udp_defaults_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/tcp-udp-defaults").await
+    }
+
+    pub async fn update_tcp_udp_defaults_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/tcp-udp-defaults", config).await
+    }
+
+    pub async fn get_fallback_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/fallback").await
+    }
+
+    pub async fn update_fallback_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/fallback", config).await
+    }
+
+    pub async fn get_upgrade_config(&self) -> Result<serde_json::Value, String> {
+        self.get("/config/upgrade").await
+    }
+
+    pub async fn update_upgrade_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.put("/config/upgrade", config).await
+    }
+
     pub async fn get_bot_detection_config(&self) -> Result<serde_json::Value, String> {
         self.get("/config/bot-detection").await
     }
@@ -741,5 +785,21 @@ impl ApiService {
         config: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         self.post("/icmp/config", config).await
+    }
+
+    pub async fn get_yara_status(&self) -> Result<serde_json::Value, String> {
+        self.get("/yara/status").await
+    }
+
+    pub async fn get_yara_submissions(&self) -> Result<serde_json::Value, String> {
+        self.get("/yara/submissions").await
+    }
+
+    pub async fn get_serverless_health(&self) -> Result<serde_json::Value, String> {
+        self.get("/serverless/health").await
+    }
+
+    pub async fn get_serverless_functions(&self) -> Result<serde_json::Value, String> {
+        self.get("/serverless/functions").await
     }
 }

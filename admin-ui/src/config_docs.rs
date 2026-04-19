@@ -109,6 +109,104 @@ pub const SECTIONS: &[(&str, ConfigSectionDoc)] = &[
             description: "File upload limits and scanning",
         },
     ),
+    (
+        "bandwidth",
+        ConfigSectionDoc {
+            title: "Bandwidth Limits",
+            description: "Traffic shaping and bandwidth control settings",
+        },
+    ),
+    (
+        "metrics",
+        ConfigSectionDoc {
+            title: "Metrics",
+            description: "Prometheus metrics endpoint configuration",
+        },
+    ),
+    (
+        "tunnel",
+        ConfigSectionDoc {
+            title: "Tunnel/VPN",
+            description: "WireGuard VPN and QUIC tunnel settings",
+        },
+    ),
+    (
+        "plugins",
+        ConfigSectionDoc {
+            title: "Plugins",
+            description: "WASM plugin and serverless function settings",
+        },
+    ),
+    (
+        "theme",
+        ConfigSectionDoc {
+            title: "Theme",
+            description: "Admin UI appearance and color scheme",
+        },
+    ),
+    (
+        "yara",
+        ConfigSectionDoc {
+            title: "YARA Rules",
+            description: "Malware scanning rule management",
+        },
+    ),
+    (
+        "serverless",
+        ConfigSectionDoc {
+            title: "Serverless",
+            description: "WASM serverless function configuration",
+        },
+    ),
+    (
+        "process",
+        ConfigSectionDoc {
+            title: "Process Status",
+            description: "Worker process monitoring and management",
+        },
+    ),
+    (
+        "defaults",
+        ConfigSectionDoc {
+            title: "Default Settings",
+            description: "Default values for new sites and upload limits",
+        },
+    ),
+    (
+        "dns",
+        ConfigSectionDoc {
+            title: "DNS Settings",
+            description: "DNS resolver and DNSsec configuration",
+        },
+    ),
+    (
+        "mime_types",
+        ConfigSectionDoc {
+            title: "MIME Types",
+            description: "Custom MIME type mappings",
+        },
+    ),
+    (
+        "tcp_udp_defaults",
+        ConfigSectionDoc {
+            title: "TCP/UDP Defaults",
+            description: "Default network settings for TCP and UDP listeners",
+        },
+    ),
+    (
+        "fallback",
+        ConfigSectionDoc {
+            title: "Fallback Settings",
+            description: "HTTP/2 upgrade and fallback configuration",
+        },
+    ),
+    (
+        "upgrade",
+        ConfigSectionDoc {
+            title: "Upgrade Settings",
+            description: "HTTP upgrade protocol configuration",
+        },
+    ),
 ];
 
 pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
@@ -520,6 +618,84 @@ pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
         description: "Execute potentially dangerous files in sandbox before allowing.",
         impact: Some("Additional protection against zero-day malware."),
         default: "true",
+    }),
+
+    ("bandwidth", "ingress_max_mb_s", ConfigFieldDoc {
+        label: "Ingress Bandwidth (MB/s)",
+        description: "Maximum incoming bandwidth in megabytes per second.",
+        impact: Some("Lower values protect against bandwidth exhaustion."),
+        default: "128",
+    }),
+    ("bandwidth", "egress_max_mb_s", ConfigFieldDoc {
+        label: "Egress Bandwidth (MB/s)",
+        description: "Maximum outgoing bandwidth in megabytes per second.",
+        impact: Some("Lower values protect your server from being used as a file server."),
+        default: "128",
+    }),
+
+    ("metrics", "enabled", ConfigFieldDoc {
+        label: "Enable Metrics",
+        description: "Expose Prometheus metrics endpoint.",
+        impact: Some("Provides observability into server performance."),
+        default: "true",
+    }),
+    ("metrics", "port", ConfigFieldDoc {
+        label: "Metrics Port",
+        description: "TCP port for Prometheus metrics endpoint.",
+        impact: Some("Must be accessible for metrics collection."),
+        default: "9090",
+    }),
+
+    ("tunnel", "enabled", ConfigFieldDoc {
+        label: "Enable Tunnel",
+        description: "Enable tunnel/VPN services.",
+        impact: Some("Allows secure mesh networking between nodes."),
+        default: "false",
+    }),
+    ("tunnel", "quic", ConfigFieldDoc {
+        label: "QUIC Tunnel",
+        description: "Enable QUIC-based tunnel support.",
+        impact: Some("Provides faster tunnel establishment."),
+        default: "false",
+    }),
+
+    ("plugins", "max_memory_mb", ConfigFieldDoc {
+        label: "Max Memory (MB)",
+        description: "Maximum memory per WASM plugin instance.",
+        impact: Some("Prevents plugins from consuming too much memory."),
+        default: "64",
+    }),
+    ("plugins", "max_cpu_fuel", ConfigFieldDoc {
+        label: "Max CPU Fuel",
+        description: "Maximum CPU cycles for plugin execution.",
+        impact: Some("Prevents runaway plugin execution."),
+        default: "1000000",
+    }),
+
+    ("serverless", "enabled", ConfigFieldDoc {
+        label: "Enable Serverless",
+        description: "Enable WASM serverless function execution.",
+        impact: Some("Allows running serverless functions at the edge."),
+        default: "false",
+    }),
+    ("serverless", "timeout_seconds", ConfigFieldDoc {
+        label: "Timeout (seconds)",
+        description: "Maximum execution time for serverless functions.",
+        impact: Some("Prevents long-running functions."),
+        default: "30",
+    }),
+
+    ("dns", "enabled", ConfigFieldDoc {
+        label: "Enable DNS",
+        description: "Enable integrated DNS server.",
+        impact: Some("Required for mesh DNS resolution."),
+        default: "false",
+    }),
+    ("dns", "upstream_provider", ConfigFieldDoc {
+        label: "Upstream Provider",
+        description: "DNS resolver to use for external lookups.",
+        impact: Some("Affects DNS resolution speed and privacy."),
+        default: "System",
     }),
 ];
 

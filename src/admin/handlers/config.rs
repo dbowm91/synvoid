@@ -1708,6 +1708,246 @@ pub async fn update_mesh_config(
     Ok(Json(StatusResponse::success("Mesh config updated.")))
 }
 
+// --- Mime types config ---
+
+#[derive(Debug, Serialize)]
+pub struct MimeTypesConfigResponse {
+    pub config: crate::config::protection::MimesConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMimeTypesConfigRequest {
+    pub config: crate::config::protection::MimesConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/mime-types",
+    responses(
+        (status = 200, description = "MIME types configuration", body = MimeTypesConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_mime_types_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<MimeTypesConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(MimeTypesConfigResponse {
+        config: config.main.mimes.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/mime-types",
+    request_body = UpdateMimeTypesConfigRequest,
+    responses(
+        (status = 200, description = "MIME types config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_mime_types_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateMimeTypesConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.mimes = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("MIME types config updated.")))
+}
+
+// --- TCP/UDP Defaults config ---
+
+#[derive(Debug, Serialize)]
+pub struct TcpUdpDefaultsConfigResponse {
+    pub tcp: crate::config::network::TcpDefaults,
+    pub udp: crate::config::network::UdpDefaults,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTcpUdpDefaultsConfigRequest {
+    pub tcp: Option<crate::config::network::TcpDefaults>,
+    pub udp: Option<crate::config::network::UdpDefaults>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/tcp-udp-defaults",
+    responses(
+        (status = 200, description = "TCP/UDP defaults configuration", body = TcpUdpDefaultsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_tcp_udp_defaults_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TcpUdpDefaultsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TcpUdpDefaultsConfigResponse {
+        tcp: config.main.tcp.clone(),
+        udp: config.main.udp.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/tcp-udp-defaults",
+    request_body = UpdateTcpUdpDefaultsConfigRequest,
+    responses(
+        (status = 200, description = "TCP/UDP defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_tcp_udp_defaults_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTcpUdpDefaultsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        if let Some(tcp) = req.tcp {
+            config.main.tcp = tcp;
+        }
+        if let Some(udp) = req.udp {
+            config.main.udp = udp;
+        }
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("TCP/UDP defaults config updated.")))
+}
+
+// --- Fallback config ---
+
+#[derive(Debug, Serialize)]
+pub struct FallbackConfigResponse {
+    pub config: crate::config::server::FallbackConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateFallbackConfigRequest {
+    pub config: crate::config::server::FallbackConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/fallback",
+    responses(
+        (status = 200, description = "Fallback configuration", body = FallbackConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_fallback_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<FallbackConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(FallbackConfigResponse {
+        config: config.main.fallback.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/fallback",
+    request_body = UpdateFallbackConfigRequest,
+    responses(
+        (status = 200, description = "Fallback config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_fallback_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateFallbackConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.fallback = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("Fallback config updated.")))
+}
+
+// --- Upgrade config ---
+
+#[derive(Debug, Serialize)]
+pub struct UpgradeConfigResponse {
+    pub config: Option<crate::config::upgrade::UpgradeConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUpgradeConfigRequest {
+    pub config: Option<crate::config::upgrade::UpgradeConfig>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/upgrade",
+    responses(
+        (status = 200, description = "Upgrade configuration", body = UpgradeConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_upgrade_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<UpgradeConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(UpgradeConfigResponse {
+        config: config.main.upgrade.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/upgrade",
+    request_body = UpdateUpgradeConfigRequest,
+    responses(
+        (status = 200, description = "Upgrade config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_upgrade_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateUpgradeConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.upgrade = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("Upgrade config updated.")))
+}
+
 // --- Validate config ---
 
 #[derive(Debug, Deserialize)]

@@ -268,6 +268,26 @@ fn build_router_from_state(
             get(handlers::config::get_ip_feeds_config)
                 .put(handlers::config::update_ip_feeds_config),
         )
+        .route(
+            "/config/mime-types",
+            get(handlers::config::get_mime_types_config)
+                .put(handlers::config::update_mime_types_config),
+        )
+        .route(
+            "/config/tcp-udp-defaults",
+            get(handlers::config::get_tcp_udp_defaults_config)
+                .put(handlers::config::update_tcp_udp_defaults_config),
+        )
+        .route(
+            "/config/fallback",
+            get(handlers::config::get_fallback_config)
+                .put(handlers::config::update_fallback_config),
+        )
+        .route(
+            "/config/upgrade",
+            get(handlers::config::get_upgrade_config)
+                .put(handlers::config::update_upgrade_config),
+        )
         .route("/config/validate", post(handlers::config::validate_config))
         .route(
             "/config/process-manager",

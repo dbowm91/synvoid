@@ -144,41 +144,41 @@ Items grouped into waves where parallelization is possible:
 ### Phase 3.1: Critical UI Fixes
 
 | ID | Description | Status |
-|----|------------|--------|
-| W3.1.1 | Fix Upload section disconnected (BUGFIX) | 📋 PLANNING |
-| W3.1.2 | Complete Security Headers section | 📋 PLANNING |
+|----|-------------|--------|
+| W3.1.1 | Fix Upload section disconnected (BUGFIX) | ✅ COMPLETED |
+| W3.1.2 | Complete Security Headers section | ✅ COMPLETED |
 
 ### Phase 3.2: High Priority Config Sections
 
 | ID | Description | Status |
-|----|------------|--------|
-| W3.2.1 | YARA Rules section | 📋 PLANNING |
-| W3.2.2 | Serverless config section | 📋 PLANNING |
-| W3.2.3 | Bot Detection section (consolidate) | 📋 PLANNING |
-| W3.2.4 | Process Status Summary in Settings | 📋 PLANNING |
-| W3.2.5 | Defaults section | 📋 PLANNING |
-| W3.2.6 | DNS Integration (enhance page) | 📋 PLANNING |
+|----|-------------|--------|
+| W3.2.1 | YARA Rules section | ✅ COMPLETED |
+| W3.2.2 | Serverless config section | ✅ COMPLETED |
+| W3.2.3 | Bot Detection section (consolidate) | ✅ COMPLETED |
+| W3.2.4 | Process Status Summary in Settings | ✅ COMPLETED |
+| W3.2.5 | Defaults section | ✅ COMPLETED |
+| W3.2.6 | DNS Integration (enhance page) | ✅ COMPLETED |
 
 ### Phase 3.3: Medium Priority Config Sections
 
 | ID | Description | Status |
-|----|------------|--------|
-| W3.3.1 | Persistence section | 📋 PLANNING |
-| W3.3.2 | Mime Types section | 📋 PLANNING |
-| W3.3.3 | Proxy Limits section | 📋 PLANNING |
-| W3.3.4 | Blocklist Limits section | 📋 PLANNING |
-| W3.3.5 | TCP/UDP Defaults section | 📋 PLANNING |
-| W3.3.6 | Fallback section | 📋 PLANNING |
-| W3.3.7 | Upgrade section | 📋 PLANNING |
+|----|-------------|--------|
+| W3.3.1 | Persistence section | ✅ COMPLETED |
+| W3.3.2 | Mime Types section | ✅ COMPLETED |
+| W3.3.3 | Proxy Limits section | ✅ COMPLETED |
+| W3.3.4 | Blocklist Limits section | ✅ COMPLETED |
+| W3.3.5 | TCP/UDP Defaults section | ✅ COMPLETED |
+| W3.3.6 | Fallback section | ✅ COMPLETED |
+| W3.3.7 | Upgrade section | ✅ COMPLETED |
 
 ### Phase 3.4: Low Priority Config Sections
 
 | ID | Description | Status |
-|----|------------|--------|
-| W3.4.1 | Rule Feed section | 📋 PLANNING |
-| W3.4.2 | Static Files config section | 📋 PLANNING |
-| W3.4.3 | Update search index | 📋 PLANNING |
-| W3.4.4 | Config documentation tooltips | 📋 PLANNING |
+|----|-------------|--------|
+| W3.4.1 | Rule Feed section | ⏸️ DEFERRED (needs backend API) |
+| W3.4.2 | Static Files config section | ✅ COMPLETED (per-site) |
+| W3.4.3 | Update search index | ✅ COMPLETED |
+| W3.4.4 | Config documentation tooltips | ✅ COMPLETED |
 
 ---
 
