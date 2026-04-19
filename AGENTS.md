@@ -269,15 +269,6 @@ Keys transition through these states:
 
 ## Planning and Implementation Patterns
 
-### Plan Consolidation
-
-When consolidating multiple plan files:
-1. Merge into logical "waves" based on parallelization potential
-2. Identify sequential dependencies between waves
-3. Group similar items (docs, tests, UI) into same wave for sub-agent parallelism
-4. Keep reference to original deferred items in plan.md
-5. Remove individual plan files after consolidation
-
 ### Multi-Wave Implementation
 
 When a project has multiple waves/phases:
@@ -288,10 +279,12 @@ When a project has multiple waves/phases:
 Example wave structure:
 ```
 Wave 1 (Docs): 3 sub-agents in parallel
-Wave 2 (Tests): 4 sub-agents in parallel  
+Wave 2 (Tests): 4 sub-agents in parallel
 Wave 3 (UI): 3 sub-agents in parallel
 Wave 4 (Dependent): Starts after Wave 1-3 complete
 ```
+
+**Parallelization rule**: Within a wave, phases can run in parallel if they don't depend on each other's outputs. Each phase can use a separate sub-agent.
 
 ## Subagent Execution Best Practices
 
@@ -314,8 +307,11 @@ Common failure mode: subagent reports success but code wasn't actually modified,
 - Architectural changes requiring wiring new components
 - Proto file changes requiring code generation
 - Cases where fix requires understanding existing code patterns
+- Documentation changes (harder to verify than code)
 
 For complex changes, prefer direct implementation or verify each step incrementally.
+
+**Verification for documentation tasks**: When verifying docs changes, use `grep` to search for expected content patterns rather than just reading the file. Subagents may claim docs were updated but the content may be incomplete or incorrect.
 
 ### Module Splitting Decisions
 
