@@ -267,6 +267,32 @@ Keys transition through these states:
 5. **Removed** - Revoked key waiting for extended confirmation
 6. **Missing** - Valid key not seen for retention period
 
+## Planning and Implementation Patterns
+
+### Plan Consolidation
+
+When consolidating multiple plan files:
+1. Merge into logical "waves" based on parallelization potential
+2. Identify sequential dependencies between waves
+3. Group similar items (docs, tests, UI) into same wave for sub-agent parallelism
+4. Keep reference to original deferred items in plan.md
+5. Remove individual plan files after consolidation
+
+### Multi-Wave Implementation
+
+When a project has multiple waves/phases:
+- **Wave 1 (Foundation)**: Items that must complete first (e.g., docs cleanup)
+- **Wave 2-3 (Core)**: Items that can run parallel via sub-agents
+- **Wave N+1 (Dependent)**: Items depending on earlier waves
+
+Example wave structure:
+```
+Wave 1 (Docs): 3 sub-agents in parallel
+Wave 2 (Tests): 4 sub-agents in parallel  
+Wave 3 (UI): 3 sub-agents in parallel
+Wave 4 (Dependent): Starts after Wave 1-3 complete
+```
+
 ## Subagent Execution Best Practices
 
 When using subagents to make code changes:
