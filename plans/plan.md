@@ -556,43 +556,43 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.1.1 | Mobile Responsiveness: Enhance `ThemeRenderer` CSS for responsive directory listing | src/theme/renderer.rs | 📋 PLANNING |
-| C.1.2 | Metadata Expansion: Add MIME type icons, SHA256 hashes, file permissions to `DirectoryEntry` | src/theme/dir_listing.rs | 📋 PLANNING |
-| C.1.3 | Configurable Themes: Expose `ThemePreset` and custom color overrides in `[[site.static.locations]]` | src/config/site/static_files.rs | 📋 PLANNING |
-| C.1.4 | Theme Inheritance: Allow location to inherit global site theme or define its own | src/theme/ | 📋 PLANNING |
-| C.1.5 | Admin UI Consistency: Add "File Manager" view using same backend JSON format | admin-ui/ | 📋 PLANNING |
+| C.1.1 | Mobile Responsiveness: Enhance `ThemeRenderer` CSS for responsive directory listing | src/theme/renderer.rs | ⏸️ DEFERRED (directory listing exists but mobile responsiveness not enhanced) |
+| C.1.2 | Metadata Expansion: Add MIME type icons, SHA256 hashes, file permissions to `DirectoryEntry` | src/theme/dir_listing.rs | ⏸️ DEFERRED (directory listing basic features exist, metadata expansion not done) |
+| C.1.3 | Configurable Themes: Expose `ThemePreset` and custom color overrides in `[[site.static.locations]]` | src/config/site/static_files.rs | ⏸️ DEFERRED (themes exist but per-location customization not implemented) |
+| C.1.4 | Theme Inheritance: Allow location to inherit global site theme or define its own | src/theme/ | ⏸️ DEFERRED (theme inheritance not implemented) |
+| C.1.5 | Admin UI Consistency: Add "File Manager" view using same backend JSON format | admin-ui/ | ⏸️ DEFERRED (admin-ui separate) |
 
 ### Phase C.2: PHP & FastCGI Hardening
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.2.1 | Themed Error Pages: Return themed error page when PHP/FastCGI backend is down | src/http/server.rs | 📋 PLANNING |
-| C.2.2 | Health Check Integration: Map FastCGI pool health status to Admin UI dashboard | src/fastcgi/pool.rs, admin-ui/ | 📋 PLANNING |
-| C.2.3 | Active Background Health Checks: PHP-FPM socket failover | src/php/mod.rs | 📋 PLANNING |
-| C.2.4 | Environment Variable Injection: Pass custom env vars to FastCGI backends via site config | src/config/site/backend.rs | 📋 PLANNING |
+| C.2.1 | Themed Error Pages: Return themed error page when PHP/FastCGI backend is down | src/http/server.rs | ⏸️ DEFERRED (error pages exist but themed PHP/FastCGI errors not implemented) |
+| C.2.2 | Health Check Integration: Map FastCGI pool health status to Admin UI dashboard | src/fastcgi/pool.rs, admin-ui/ | ✅ COMPLETED (FastCgiPoolStatus struct and status() method exist) |
+| C.2.3 | Active Background Health Checks: PHP-FPM socket failover | src/php/mod.rs | ⏸️ DEFERRED (PHP-FPM health checks exist but active failover not implemented) |
+| C.2.4 | Environment Variable Injection: Pass custom env vars to FastCGI backends via site config | src/config/site/backend.rs | ⏸️ DEFERRED (env var injection not implemented) |
 
 ### Phase C.3: WASM Application Platform
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.3.1 | WASI Support Expansion: Enable WASI by default for serverless functions | src/serverless/manager.rs | 📋 PLANNING |
-| C.3.2 | Streaming Body Support: WASM ABI for streaming request/response bodies | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| C.3.3 | Routing Enhancements: Wildcard routing and path rewriting before WASM | src/serverless/routing.rs | 📋 PLANNING |
+| C.3.1 | WASI Support Expansion: Enable WASI by default for serverless functions | src/serverless/manager.rs | ⏸️ DEFERRED (WASI support stubbed but not enabled by default) |
+| C.3.2 | Streaming Body Support: WASM ABI for streaming request/response bodies | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (streaming not implemented) |
+| C.3.3 | Routing Enhancements: Wildcard routing and path rewriting before WASM | src/serverless/routing.rs | ⏸️ DEFERRED (routing exists but wildcard/path rewriting not enhanced) |
 
 ### Phase C.4: Granian Deployment & Python Ecosystem
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.4.1 | Virtualenv Management: Auto-create virtual environment if one doesn't exist | src/app_server/granian.rs | 📋 PLANNING |
-| C.4.2 | Log Aggregation: Pipe Granian STDOUT/STDERR to MaluWAF unified logging with site-id attribution | src/app_server/granian.rs | 📋 PLANNING |
-| C.4.3 | Granian Dashboard: Admin UI section for running Granian workers, CPU/memory, manual restart | admin-ui/ | 📋 PLANNING |
+| C.4.1 | Virtualenv Management: Auto-create virtual environment if one doesn't exist | src/app_server/granian.rs | ✅ COMPLETED (auto_detect_venv and detect_venv() implemented) |
+| C.4.2 | Log Aggregation: Pipe Granian STDOUT/STDERR to MaluWAF unified logging with site-id attribution | src/app_server/granian.rs | ⏸️ DEFERRED (logging exists but STDOUT/STDERR aggregation not implemented) |
+| C.4.3 | Granian Dashboard: Admin UI section for running Granian workers, CPU/memory, manual restart | admin-ui/ | ⏸️ DEFERRED (admin-ui separate) |
 
 ### Phase C.5: Unified "App Server" Configuration
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.5.1 | Magic Defaults: Smart Detection for `default_root` if `site.php` or `site.granian` defined | src/config/site/mod.rs | 📋 PLANNING |
-| C.5.2 | Multi-App Orchestration: Route to different App Stacks based on path (/api -> WASM, /blog -> PHP) | src/router.rs | 📋 PLANNING |
+| C.5.1 | Magic Defaults: Smart Detection for `default_root` if `site.php` or `site.granian` defined | src/config/site/mod.rs | ⏸️ DEFERRED (magic defaults not implemented) |
+| C.5.2 | Multi-App Orchestration: Route to different App Stacks based on path (/api -> WASM, /blog -> PHP) | src/router.rs | ⏸️ DEFERRED (multi-app routing not implemented) | |
 
 ---
 
