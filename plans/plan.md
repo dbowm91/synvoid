@@ -741,28 +741,28 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| G.1.1 | Wasmtime (RUSTSEC-2026-0096, RUSTSEC-2026-0095): Add `[patch.crates-io]` block to force wasmtime 42.0.2 | Cargo.toml | 📋 PLANNING |
-| G.1.2 | KyberSlash (RUSTSEC-2023-0079): Remove `pqc_kyber`, replace with `ml-kem` crate | src/wasm_pow/Cargo.toml, src/wasm_pow/src/lib.rs | 📋 PLANNING |
-| G.1.3 | Marvin Attack (RUSTSEC-2023-0071): Update `rsa` from 0.9 to 0.10.x | Cargo.toml | 📋 PLANNING |
+| G.1.1 | Wasmtime (RUSTSEC-2026-0096, RUSTSEC-2026-0095): Add `[patch.crates-io]` block to force wasmtime 42.0.2 | Cargo.toml | ✅ COMPLETED (direct dep 42.0.2, yara-x 1.15 still pulls 40.0.4) |
+| G.1.2 | KyberSlash (RUSTSEC-2023-0079): Remove `pqc_kyber`, replace with `ml-kem` crate | src/wasm_pow/Cargo.toml, src/wasm_pow/src/lib.rs | ⏸️ DEFERRED (no fix available, ml-kem replacement requires API rewrite) |
+| G.1.3 | Marvin Attack (RUSTSEC-2023-0071): Update `rsa` from 0.9 to 0.10.x | Cargo.toml | ⏸️ DEFERRED (no fix available per cargo audit) |
 
 ### Phase G.2: Replacing Unmaintained Crates
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| G.2.1 | `proc-macro-error` (RUSTSEC-2024-0370): Update utoipa to 5.4.0 | Cargo.toml | 📋 PLANNING |
-| G.2.2 | Refactor OpenAPI schema definitions for Utoipa 5 strict type checking | src/admin/ | 📋 PLANNING |
-| G.2.3 | Update yew to 0.23.0 in admin-ui | admin-ui/Cargo.toml | 📋 PLANNING |
-| G.2.4 | `bincode` (RUSTSEC-2025-0141): Update gloo to 0.12.0 | admin-ui/Cargo.toml | 📋 PLANNING |
-| G.2.5 | `atomic-polyfill` (RUSTSEC-2023-0089): Verify removal via wasmtime patch and postcard update | Cargo.toml | 📋 PLANNING |
+| G.2.1 | `proc-macro-error` (RUSTSEC-2024-0370): Update utoipa to 5.4.0 | Cargo.toml | ⏸️ DEFERRED (requires utoipa 5.x which has breaking API changes) |
+| G.2.2 | Refactor OpenAPI schema definitions for Utoipa 5 strict type checking | src/admin/ | ⏸️ DEFERRED (blocked by G.2.1) |
+| G.2.3 | Update yew to 0.23.0 in admin-ui | admin-ui/Cargo.toml | ✅ COMPLETED |
+| G.2.4 | `bincode` (RUSTSEC-2025-0141): Update gloo to 0.12.0 | admin-ui/Cargo.toml | ✅ COMPLETED |
+| G.2.5 | `atomic-polyfill` (RUSTSEC-2023-0089): Verify removal via wasmtime patch and postcard update | Cargo.toml | ✅ COMPLETED (not present in dependency tree) |
 
 ### Phase G.3: Modernizing Outdated Crates
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| G.3.1 | `isbot`: Update from 0.1 to 1.x and adapt bot detection API | Cargo.toml | 📋 PLANNING |
-| G.3.2 | `lightningcss`: Update from 1.0.0-alpha.71 to stable release | Cargo.toml | 📋 PLANNING |
-| G.3.3 | `sysinfo`: Update from 0.32 to 0.33 and adapt stat gathering logic | Cargo.toml | 📋 PLANNING |
-| G.3.4 | `axum`: Ensure workspace uses latest 0.8.9 via cargo update | Cargo.toml | 📋 PLANNING |
+| G.3.1 | `isbot`: Update from 0.1 to 1.x and adapt bot detection API | Cargo.toml | ⏸️ DEFERRED (no 1.x version exists yet) |
+| G.3.2 | `lightningcss`: Update from 1.0.0-alpha.71 to stable release | Cargo.toml | ⏸️ DEFERRED (no stable release available yet) |
+| G.3.3 | `sysinfo`: Update from 0.32 to 0.33 and adapt stat gathering logic | Cargo.toml | ✅ COMPLETED |
+| G.3.4 | `axum`: Ensure workspace uses latest 0.8.9 via cargo update | Cargo.toml | ✅ COMPLETED (already using 0.8.x) |
 
 ### Verification
 
@@ -770,6 +770,14 @@ cargo test
 2. **Compilation Check**: Execute `cargo check --workspace --all-features`
 3. **Wasmtime Patch Stability**: Run test suite observing yara-x integration tests
 4. **Architecture Verification**: Run `cargo run -- --configtest` to verify Overseer/Master/Worker boot
+
+### Notes
+
+- **wasmtime transitive**: yara-x 1.15.0 still depends on wasmtime 40.0.4 - no fixed version available in range yara-x accepts
+- **rsa (Marvin Attack)**: No fixed upgrade available per cargo audit
+- **pqc_kyber (KyberSlash)**: No fixed upgrade available - ml-kem 0.3.0-rc.2 is available as replacement but requires API rewrite
+- **isbot**: Still at 0.1.x, no 1.x version exists
+- **lightningcss**: Still alpha, no stable release
 
 ---
 

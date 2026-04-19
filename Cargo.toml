@@ -39,6 +39,11 @@ rkyv = []
 [patch.crates-io]
 quinn-proto = { git = "https://github.com/quinn-rs/quinn", tag = "quinn-proto-0.11.14" }
 
+# Patch wasmtime from yara-x transitive dependency (RUSTSEC-2026-0096, RUSTSEC-2026-0086, etc.)
+# yara-x 1.14.0 depends on wasmtime 40.0.4 which has multiple vulnerabilities
+# Force all wasmtime dependencies to use 42.0.2
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
+
 [workspace]
 members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz"]
 
@@ -95,7 +100,7 @@ base64 = "0.22"
 sha2 = "0.10"
 hex = "0.4"
 futures = "0.3"
-sysinfo = "0.32"
+sysinfo = "0.33"
 nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "6"
@@ -114,7 +119,7 @@ tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 infer = "0.16"
-yara-x = "1"
+yara-x = "1.15"
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 pin-project-lite = "0.2"

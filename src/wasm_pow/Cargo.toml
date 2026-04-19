@@ -22,6 +22,9 @@ hex = "0.4"
 console_error_panic_hook = "0.1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand = "0.8"
+base64 = "0.22"
+tracing = "0.1"
+tracing-wasm = "0.2"
 
 # Post-quantum cryptography - ML-KEM-768 for key exchange
 pqc_kyber = { version = "0.7", features = ["wasm", "kyber768", "zeroize"] }
