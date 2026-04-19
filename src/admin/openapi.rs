@@ -352,9 +352,21 @@ mod tests {
         assert!(!openapi.paths.paths.is_empty());
 
         let path_names: Vec<_> = openapi.paths.paths.keys().collect();
-        assert!(path_names.iter().any(|p| p.contains("stats")), "Should have stats path. Found: {:?}", path_names);
-        assert!(path_names.iter().any(|p| p.contains("site")), "Should have site path. Found: {:?}", path_names);
-        assert!(path_names.iter().any(|p| p.contains("config")), "Should have config path. Found: {:?}", path_names);
+        assert!(
+            path_names.iter().any(|p| p.contains("stats")),
+            "Should have stats path. Found: {:?}",
+            path_names
+        );
+        assert!(
+            path_names.iter().any(|p| p.contains("site")),
+            "Should have site path. Found: {:?}",
+            path_names
+        );
+        assert!(
+            path_names.iter().any(|p| p.contains("config")),
+            "Should have config path. Found: {:?}",
+            path_names
+        );
     }
 
     #[test]
@@ -362,11 +374,26 @@ mod tests {
         let openapi = MaluWafOpenApi::openapi();
 
         for path_key in openapi.paths.paths.keys() {
-            let has_operation = openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Get).is_some()
-                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Post).is_some()
-                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Put).is_some()
-                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Delete).is_some()
-                || openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Patch).is_some();
+            let has_operation = openapi
+                .paths
+                .get_path_operation(path_key, openapi::path::PathItemType::Get)
+                .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Post)
+                    .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Put)
+                    .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Delete)
+                    .is_some()
+                || openapi
+                    .paths
+                    .get_path_operation(path_key, openapi::path::PathItemType::Patch)
+                    .is_some();
             assert!(
                 has_operation,
                 "Path {} should have at least one operation",
@@ -409,13 +436,12 @@ mod tests {
         let openapi = MaluWafOpenApi::openapi();
 
         for path_key in openapi.paths.paths.keys() {
-            if let Some(operation) = openapi.paths.get_path_operation(path_key, openapi::path::PathItemType::Get) {
+            if let Some(operation) = openapi
+                .paths
+                .get_path_operation(path_key, openapi::path::PathItemType::Get)
+            {
                 if let Some(tags) = &operation.tags {
-                    assert!(
-                        !tags.is_empty(),
-                        "GET {} must have tags",
-                        path_key
-                    );
+                    assert!(!tags.is_empty(), "GET {} must have tags", path_key);
                 }
             }
         }

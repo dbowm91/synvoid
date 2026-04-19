@@ -45,7 +45,12 @@ impl ReplayCache {
         if self.entries.len() >= MAX_REPLAY_CACHE_SIZE {
             self.evict_oldest();
         }
-        self.entries.insert(mac_hash, ReplayCacheEntry { timestamp: Instant::now() });
+        self.entries.insert(
+            mac_hash,
+            ReplayCacheEntry {
+                timestamp: Instant::now(),
+            },
+        );
 
         if self.last_cleanup.elapsed().as_secs() >= TSIG_REPLAY_CACHE_TTL_SECS {
             self.cleanup_expired();
@@ -53,7 +58,9 @@ impl ReplayCache {
     }
 
     fn evict_oldest(&mut self) {
-        let key_to_remove = self.entries.iter()
+        let key_to_remove = self
+            .entries
+            .iter()
             .min_by_key(|(_, v)| v.timestamp)
             .map(|(k, _)| k.clone());
         if let Some(key) = key_to_remove {

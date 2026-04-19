@@ -382,9 +382,7 @@ impl DhtKey {
             } => {
                 format!("capability_attestation:{}:{}", node_id, capability)
             }
-            DhtKey::ServerlessFunction {
-                function_name,
-            } => {
+            DhtKey::ServerlessFunction { function_name } => {
                 format!("serverless_function:{}", function_name)
             }
         }

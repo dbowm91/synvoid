@@ -491,16 +491,23 @@ impl AuthManager {
                 csrf_token: Some(Uuid::new_v4().to_string()),
             };
 
-            let count = store.sessions.iter()
+            let count = store
+                .sessions
+                .iter()
                 .filter(|(_, s)| s.user_id == user_id)
                 .count();
             if count >= MAX_SESSIONS_PER_USER {
-                let mut session_ids: Vec<_> = store.sessions.iter()
+                let mut session_ids: Vec<_> = store
+                    .sessions
+                    .iter()
                     .filter(|(_, s)| s.user_id == user_id)
                     .map(|(k, v)| (k.clone(), v.created_at))
                     .collect();
                 session_ids.sort_by_key(|(_, created)| *created);
-                for (id, _) in session_ids.into_iter().take(count - MAX_SESSIONS_PER_USER + 1) {
+                for (id, _) in session_ids
+                    .into_iter()
+                    .take(count - MAX_SESSIONS_PER_USER + 1)
+                {
                     store.sessions.remove(id.as_str());
                 }
             }
@@ -525,13 +532,17 @@ impl AuthManager {
         }
     }
 
-    pub async fn update_password(&self, user_id: &str, new_password: &str) -> Result<(), AuthError> {
+    pub async fn update_password(
+        &self,
+        user_id: &str,
+        new_password: &str,
+    ) -> Result<(), AuthError> {
         if new_password.len() < 8 {
             return Err(AuthError::InvalidCredentials);
         }
 
-        let password_hash = hash(new_password, DEFAULT_COST)
-            .map_err(|_| AuthError::InvalidCredentials)?;
+        let password_hash =
+            hash(new_password, DEFAULT_COST).map_err(|_| AuthError::InvalidCredentials)?;
 
         let mut store = self.store.write().await;
 

@@ -790,9 +790,10 @@ impl FileManager {
         if self.config.scan_on_upload {
             if let Err(e) = self.reload_yara_rules_if_needed() {
                 tracing::error!("Failed to reload YARA rules for FileManager: {}", e);
-                return Err(FileManagerError::IoError(std::io::Error::other(
-                    format!("YARA rules reload failed: {}", e),
-                )));
+                return Err(FileManagerError::IoError(std::io::Error::other(format!(
+                    "YARA rules reload failed: {}",
+                    e
+                ))));
             }
 
             match self.malware_scanner.scan_bytes(&data).await {

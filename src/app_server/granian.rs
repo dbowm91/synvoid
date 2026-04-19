@@ -720,8 +720,10 @@ impl GranianSupervisor {
         cmd.arg("--blocking-threads")
             .arg(self.config.blocking_threads.to_string());
 
-        cmd.arg("--log-level").arg(self.config.log_level.to_string());
-        cmd.arg("--log-format").arg(self.config.log_format.to_string());
+        cmd.arg("--log-level")
+            .arg(self.config.log_level.to_string());
+        cmd.arg("--log-format")
+            .arg(self.config.log_format.to_string());
 
         if self.config.log_verbose {
             cmd.arg("--log-verbose");

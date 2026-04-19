@@ -3534,24 +3534,38 @@ fn SecuritySection() -> Html {
 
                 if let Ok(data) = result {
                     if let Some(config) = data.get("config") {
-                        if let Some(v) = config.get("global_security_headers").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config
+                            .get("global_security_headers")
+                            .and_then(|v| v.as_bool())
+                        {
                             global_security_headers.set(v);
                             original_global_security_headers.set(v);
                         }
-                        if let Some(v) = config.get("sanitize_forwarded_headers").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config
+                            .get("sanitize_forwarded_headers")
+                            .and_then(|v| v.as_bool())
+                        {
                             sanitize_forwarded_headers.set(v);
                             original_sanitize_forwarded_headers.set(v);
                         }
-                        if let Some(v) = config.get("ipc_enforce_signing").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config.get("ipc_enforce_signing").and_then(|v| v.as_bool())
+                        {
                             ipc_enforce_signing.set(v);
                             original_ipc_enforce_signing.set(v);
                         }
-                        if let Some(v) = config.get("allow_insecure_ipc_key").and_then(|v| v.as_bool()) {
+                        if let Some(v) = config
+                            .get("allow_insecure_ipc_key")
+                            .and_then(|v| v.as_bool())
+                        {
                             allow_insecure_ipc_key.set(v);
                             original_allow_insecure_ipc_key.set(v);
                         }
-                        if let Some(v) = config.get("more_clear_headers").and_then(|v| v.as_array()) {
-                            let headers: Vec<String> = v.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect();
+                        if let Some(v) = config.get("more_clear_headers").and_then(|v| v.as_array())
+                        {
+                            let headers: Vec<String> = v
+                                .iter()
+                                .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                                .collect();
                             let s = headers.join(", ");
                             more_clear_headers.set(s.clone());
                             original_more_clear_headers.set(s);
@@ -3758,7 +3772,11 @@ fn TunnelSection() -> Html {
                                 original_quic_enabled.set(v);
                             }
                         }
-                        if let Some(v) = config.get("quic").and_then(|v| v.get("port")).and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("quic")
+                            .and_then(|v| v.get("port"))
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             listen_port.set(s.clone());
                             original_listen_port.set(s);

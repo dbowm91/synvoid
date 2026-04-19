@@ -702,9 +702,7 @@ impl RecordStoreManager {
 
         let global_nodes = topology.get_global_nodes().await;
         if global_nodes.is_empty() {
-            tracing::warn!(
-                "No global nodes available for quorum - rejecting store request"
-            );
+            tracing::warn!("No global nodes available for quorum - rejecting store request");
             return false;
         }
         if global_nodes.len() < 3 {

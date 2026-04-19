@@ -167,7 +167,9 @@ impl DirectoryListingTemplate {
         let sort_options = ["name", "date", "size"];
         let order_options = [("asc", "Ascending"), ("desc", "Descending")];
 
-        let mut html = String::from(r#"<nav class="waf-dir-sort" aria-label="Sort options"><span class="waf-sr-only">Sort by:</span>"#);
+        let mut html = String::from(
+            r#"<nav class="waf-dir-sort" aria-label="Sort options"><span class="waf-sr-only">Sort by:</span>"#,
+        );
 
         for sort_opt in &sort_options {
             let is_active = self.sort_by == *sort_opt;
@@ -221,7 +223,8 @@ impl DirectoryListingTemplate {
     }
 
     fn generate_skip_link(&self) -> String {
-        r##"<a href="#directory-listing" class="waf-skip-link">Skip to directory listing</a>"##.to_string()
+        r##"<a href="#directory-listing" class="waf-skip-link">Skip to directory listing</a>"##
+            .to_string()
     }
 
     fn generate_breadcrumbs(&self) -> String {
@@ -266,7 +269,9 @@ impl DirectoryListingTemplate {
 
         let pagination = PaginationInfo::new(self.page, self.limit, self.total_entries);
 
-        let mut html = String::from(r#"<nav class="waf-dir-pagination" aria-label="Directory listing pagination">"#);
+        let mut html = String::from(
+            r#"<nav class="waf-dir-pagination" aria-label="Directory listing pagination">"#,
+        );
 
         let showing_start = pagination.offset() + 1;
         let showing_end = (pagination.offset() + self.limit).min(pagination.total);

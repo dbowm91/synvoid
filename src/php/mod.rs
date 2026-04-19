@@ -106,11 +106,7 @@ impl PhpClient {
         query: Option<&str>,
     ) -> Result<crate::fastcgi::FastCgiResponse, crate::fastcgi::FastCgiError> {
         let socket = Self::auto_detect_socket(&self.config);
-        let status_path = self
-            .config
-            .pm_status_path
-            .as_deref()
-            .unwrap_or("/status");
+        let status_path = self.config.pm_status_path.as_deref().unwrap_or("/status");
 
         let uri_path = if let Some(q) = query {
             format!("{}?{}", status_path, q)
@@ -128,14 +124,8 @@ impl PhpClient {
 
         let mut fcgi_config = self.build_fcgi_config();
         let mut params = std::collections::HashMap::new();
-        params.insert(
-            "SCRIPT_FILENAME".to_string(),
-            status_path.to_string(),
-        );
-        params.insert(
-            "SCRIPT_NAME".to_string(),
-            status_path.to_string(),
-        );
+        params.insert("SCRIPT_FILENAME".to_string(), status_path.to_string());
+        params.insert("SCRIPT_NAME".to_string(), status_path.to_string());
         if let Some(ref existing) = fcgi_config.params {
             params.extend(existing.clone());
         }

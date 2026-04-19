@@ -617,7 +617,9 @@ impl MeshTransport {
         }
     }
 
-    pub fn discover_serverless_functions(&self) -> Vec<crate::mesh::protocol::ServerlessFunctionAnnounce> {
+    pub fn discover_serverless_functions(
+        &self,
+    ) -> Vec<crate::mesh::protocol::ServerlessFunctionAnnounce> {
         let Some(record_store) = self.record_store.clone() else {
             tracing::warn!("No record store available for serverless function discovery");
             return Vec::new();
@@ -628,33 +630,41 @@ impl MeshTransport {
 
         for record in dht_records {
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                let function_name = value.get("function_name")
+                let function_name = value
+                    .get("function_name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let version = value.get("version")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let checksum = value.get("checksum")
+                let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+                let checksum = value
+                    .get("checksum")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let routes = value.get("routes")
+                let routes = value
+                    .get("routes")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
-                let allowed_methods = value.get("allowed_methods")
+                let allowed_methods = value
+                    .get("allowed_methods")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
-                let memory_mb = value.get("memory_mb")
+                let memory_mb = value
+                    .get("memory_mb")
                     .and_then(|v| v.as_u64())
                     .map(|v| v as usize);
-                let timeout_seconds = value.get("timeout_seconds")
-                    .and_then(|v| v.as_u64());
-                let priority = value.get("priority")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i32;
+                let timeout_seconds = value.get("timeout_seconds").and_then(|v| v.as_u64());
+                let priority = value.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
                 functions.push(crate::mesh::protocol::ServerlessFunctionAnnounce {
                     function_name,
@@ -669,7 +679,10 @@ impl MeshTransport {
             }
         }
 
-        tracing::debug!("Discovered {} serverless functions from DHT", functions.len());
+        tracing::debug!(
+            "Discovered {} serverless functions from DHT",
+            functions.len()
+        );
         functions
     }
 

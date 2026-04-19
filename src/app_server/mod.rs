@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub use granian::{GranianConfig, GranianInterface, GranianLogFormat, GranianLogLevel, GranianSupervisor};
+pub use granian::{
+    GranianConfig, GranianInterface, GranianLogFormat, GranianLogLevel, GranianSupervisor,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppServerConfig {
