@@ -84,6 +84,10 @@ pub struct PhpConfig {
     pub pm_max_requests: Option<usize>,
     #[serde(default)]
     pub pm_status_path: Option<String>,
+    #[serde(default)]
+    pub drain_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub drain_on_reload: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -231,6 +235,10 @@ pub struct PhpLocationConfig {
     pub pm_max_requests: Option<usize>,
     #[serde(default)]
     pub pm_status_path: Option<String>,
+    #[serde(default)]
+    pub drain_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub drain_on_reload: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

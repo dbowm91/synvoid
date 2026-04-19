@@ -21,6 +21,7 @@ pub struct FastCgiPoolStatus {
     pub in_use_connections: usize,
     pub is_healthy: bool,
     pub is_closed: bool,
+    pub is_draining: bool,
     pub connection_timeout_ms: u64,
     pub health_check_interval_secs: u64,
     pub max_idle_time_secs: u64,
@@ -61,6 +62,7 @@ pub struct FastCgiPool {
     semaphore: tokio::sync::Semaphore,
     health_check_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
     closed: RwLock<bool>,
+    draining: RwLock<bool>,
 }
 
 impl FastCgiPool {
@@ -74,6 +76,7 @@ impl FastCgiPool {
             semaphore: tokio::sync::Semaphore::new(max_connections),
             health_check_task: RwLock::new(None),
             closed: RwLock::new(false),
+            draining: RwLock::new(false),
         });
 
         Self::start_health_check(Arc::clone(&pool), health_check_interval);
@@ -91,6 +94,20 @@ impl FastCgiPool {
         };
 
         Self::new(config)
+    }
+
+    pub fn start_drain(&self) {
+        *self.draining.write() = true;
+        tracing::info!("FastCGI pool for {} entering drain mode", self.config.socket);
+    }
+
+    pub fn is_draining(&self) -> bool {
+        *self.draining.read()
+    }
+
+    pub fn finish_drain(&self) {
+        *self.draining.write() = false;
+        tracing::info!("FastCGI pool for {} drain complete", self.config.socket);
     }
 
     fn start_health_check(pool: Arc<Self>, interval: Duration) {
@@ -231,6 +248,7 @@ impl FastCgiPool {
             in_use_connections: in_use,
             is_healthy: self.health_check(),
             is_closed: *self.closed.read(),
+            is_draining: *self.draining.read(),
             connection_timeout_ms: self.config.connection_timeout.as_millis() as u64,
             health_check_interval_secs: self.config.health_check_interval.as_secs() as u64,
             max_idle_time_secs: self.config.max_idle_time.as_secs() as u64,
@@ -285,6 +303,50 @@ impl FastCgiPoolManager {
         for (_, pool) in pools {
             pool.close();
         }
+    }
+
+    pub fn get_all_pool_statuses(&self) -> Vec<FastCgiPoolStatus> {
+        let pools = self.pools.read();
+        pools.values().map(|p| p.status()).collect()
+    }
+
+    pub fn drain_and_reload_pool(&self, socket: &str, timeout: Duration) -> Result<(), String> {
+        let pool = self
+            .pools
+            .read()
+            .get(socket)
+            .cloned()
+            .ok_or_else(|| format!("Pool not found for socket: {}", socket))?;
+
+        pool.start_drain();
+
+        let start = std::time::Instant::now();
+        loop {
+            let active = pool.connection_count();
+            let in_use = pool.status().in_use_connections;
+
+            if in_use == 0 || start.elapsed() >= timeout {
+                break;
+            }
+
+            tracing::debug!(
+                "PHP-FPM pool drain in progress for {}: {} active, {} in use",
+                socket,
+                active,
+                in_use
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        pool.finish_drain();
+
+        tracing::info!(
+            "PHP-FPM pool drain completed for {} (was draining for {:?})",
+            socket,
+            start.elapsed()
+        );
+
+        Ok(())
     }
 }
 

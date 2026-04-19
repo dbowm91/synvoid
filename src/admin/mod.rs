@@ -444,6 +444,8 @@ fn build_router_from_state(
             post(handlers::system::restart_worker),
         )
         .route("/system/overseer", get(handlers::system::get_overseer))
+        .route("/system/php-pools", get(handlers::php::list_php_pools))
+        .route("/system/php-pools/reload", post(handlers::php::reload_php_pool))
         .route(
             "/alerts/config",
             get(handlers::alerting::get_alert_config).put(handlers::alerting::update_alert_config),

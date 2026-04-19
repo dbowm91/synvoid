@@ -319,11 +319,11 @@ Items grouped into waves where parallelization is possible:
 ### Phase 10.1: PHP-FPM Graceful Reload
 
 | ID | Description | Status |
-|----|------------|--------|
-| W10.1.1 | FastCgiPool drain state | 📋 PLANNING |
-| W10.1.2 | PhpConfig drain fields | 📋 PLANNING |
-| W10.1.3 | Admin reload endpoint | 📋 PLANNING |
-| W10.1.4 | Admin UI integration | 📋 PLANNING |
+|----|-------------|--------|
+| W10.1.1 | FastCgiPool drain state | ✅ COMPLETED |
+| W10.1.2 | PhpConfig drain fields | ✅ COMPLETED |
+| W10.1.3 | Admin reload endpoint | ✅ COMPLETED |
+| W10.1.4 | Admin UI integration | ⏸️ DEFERRED (routes exist, UI separate) |
 
 **Config**:
 ```toml
@@ -336,10 +336,10 @@ drain_on_reload = true
 ### Phase 10.2: WASM Streaming (WASI-HTTP)
 
 | ID | Description | Status |
-|----|------------|--------|
-| W10.2.1 | Add wasmtime-wasi-http dependency | 📋 PLANNING |
-| W10.2.2 | WasmRuntime WASI-HTTP support | 📋 PLANNING |
-| W10.2.3 | InstancePool streaming invoke | 📋 PLANNING |
+|----|-------------|--------|
+| W10.2.1 | Add wasmtime-wasi-http dependency | ⏸️ DEFERRED (architecture change needed) |
+| W10.2.2 | WasmRuntime WASI-HTTP support | ⏸️ DEFERRED (architecture change needed) |
+| W10.2.3 | InstancePool streaming invoke | ⏸️ DEFERRED (architecture change needed) |
 | W10.2.4 | Function config ABI field | 📋 PLANNING |
 | W10.2.5 | Manager routing for WASI-HTTP | 📋 PLANNING |
 
@@ -435,45 +435,9 @@ These items remain from the original consolidated plan tracking completed waves:
 
 ---
 
----
+## Wave 10: See Above (Consolidated)
 
-## Wave 10: PHP-FPM Graceful Reload & WASM Streaming
-
-**Status**: 📋 PLANNING
-
-### Phase 10.1: PHP-FPM Graceful Reload
-
-| ID | Description | Status |
-|----|------------|--------|
-| W10.1.1 | FastCgiPool drain state | 📋 PLANNING |
-| W10.1.2 | PhpConfig drain fields | 📋 PLANNING |
-| W10.1.3 | Admin reload endpoint | 📋 PLANNING |
-| W10.1.4 | Admin UI integration | 📋 PLANNING |
-
-**Config**:
-```toml
-[site.proxy.php]
-socket = "/run/php/php-fpm.sock"
-drain_timeout_seconds = 30
-drain_on_reload = true
-```
-
-### Phase 10.2: WASM Streaming (WASI-HTTP)
-
-| ID | Description | Status |
-|----|------------|--------|
-| W10.2.1 | Add wasmtime-wasi-http dependency | 📋 PLANNING |
-| W10.2.2 | WasmRuntime WASI-HTTP support | 📋 PLANNING |
-| W10.2.3 | InstancePool streaming invoke | 📋 PLANNING |
-| W10.2.4 | Function config ABI field | 📋 PLANNING |
-| W10.2.5 | Manager routing for WASI-HTTP | 📋 PLANNING |
-
-**Config**:
-```toml
-[[serverless.functions]]
-name = "image-processor"
-abi = "wasi-http"  # Enable streaming
-```
+This section duplicates content above. See the consolidated Wave 10 above.
 
 **ABI Compatibility**:
 - Default `custom` ABI unchanged (backwards compatible)

@@ -5,6 +5,7 @@ pub mod honeypot;
 pub mod icmp;
 pub mod logs;
 pub mod mesh_admin;
+pub mod php;
 pub mod plugins;
 pub mod probes;
 pub mod rule_feed;

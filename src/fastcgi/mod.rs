@@ -3,6 +3,7 @@ pub mod pool;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use bytes::Bytes;
 use fastcgi_client::{Client, Params, Request};
@@ -29,6 +30,16 @@ pub fn remove_pool(socket: &str) {
 pub fn close_all_pools() {
     let manager = FASTCGI_POOL_MANAGER.read();
     manager.close_all();
+}
+
+pub fn get_all_pool_statuses() -> Vec<pool::FastCgiPoolStatus> {
+    let manager = FASTCGI_POOL_MANAGER.read();
+    manager.get_all_pool_statuses()
+}
+
+pub fn drain_and_reload_pool(socket: &str, timeout: Duration) -> Result<(), String> {
+    let manager = FASTCGI_POOL_MANAGER.read();
+    manager.drain_and_reload_pool(socket, timeout)
 }
 
 pub struct FastCgiClient {

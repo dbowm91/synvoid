@@ -44,6 +44,8 @@ use crate::admin::state::AdminState;
         crate::admin::handlers::system::get_worker_count,
         crate::admin::handlers::system::scale_workers,
         crate::admin::handlers::system::get_overseer,
+        crate::admin::handlers::php::list_php_pools,
+        crate::admin::handlers::php::reload_php_pool,
         crate::admin::handlers::logs::get_logs,
         crate::admin::handlers::logs::list_error_pages,
         crate::admin::handlers::logs::get_error_page,
