@@ -364,6 +364,30 @@ All signed records undergo Ed25519 signature verification:
 2. Reconstruct the signed content using known format
 3. Verify signature using Ed25519 verify
 4. Reject record if verification fails
+5. For YARA rules: If `trusted_signers` is non-empty, verify signer is in the list
+
+### Timestamp Bounds Checking
+
+YARA rules sync enforces timestamp bounds to prevent replay attacks:
+
+- **Future bound**: 60 seconds (handles clock skew)
+- **Past bound**: 24 hours (allows for delayed propagation)
+
+Records with timestamps outside these bounds are rejected with a warning log.
+
+### Trusted Signers
+
+When `trusted_signers` is configured with one or more Ed25519 public keys:
+- Only rules signed by keys in the `trusted_signers` list are accepted
+- When empty (default), any signer is accepted (backward compatible)
+
+```toml
+[mesh.yara_rules]
+trusted_signers = [
+    "base64_encoded_ed25519_pubkey_1",
+    "base64_encoded_ed25519_pubkey_2"
+]
+```
 
 ### Verification Failure Handling
 

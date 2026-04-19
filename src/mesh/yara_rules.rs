@@ -16,6 +16,8 @@ use crate::upload::yara_rule_feed::YaraRuleFeedManager;
 
 const MAX_PENDING_SUBMISSIONS: usize = 1000;
 const SUBMISSION_EXPIRY_SECS: u64 = 86400 * 7;
+const YARA_TIMESTAMP_PAST_BOUND_SECS: u64 = 86400;
+const YARA_TIMESTAMP_FUTURE_BOUND_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct BroadcastAckTracker {
@@ -452,6 +454,25 @@ impl YaraRulesManager {
                         .and_then(|v| v.as_str())
                         .unwrap_or("0");
                     let manifest_timestamp: u64 = manifest_timestamp_str.parse().unwrap_or(0);
+                    let now = crate::utils::current_timestamp();
+                    if manifest_timestamp > now + YARA_TIMESTAMP_FUTURE_BOUND_SECS {
+                        tracing::warn!(
+                            "YARA DHT sync: manifest timestamp {} is too far in the future (now: {}) from {}",
+                            manifest_timestamp,
+                            now,
+                            manifest_node_id
+                        );
+                        continue;
+                    }
+                    if now > manifest_timestamp && now - manifest_timestamp > YARA_TIMESTAMP_PAST_BOUND_SECS {
+                        tracing::warn!(
+                            "YARA DHT sync: manifest timestamp {} is too old (now: {}) from {}",
+                            manifest_timestamp,
+                            now,
+                            manifest_node_id
+                        );
+                        continue;
+                    }
                     let manifest_signature = value
                         .get("signature")
                         .and_then(|v| v.as_str())
@@ -499,6 +520,16 @@ impl YaraRulesManager {
                         if !signer.verify(&content, &sig_bytes, &pk_bytes) {
                             tracing::warn!(
                                 "YARA DHT sync: manifest signature verification failed for record from {}",
+                                manifest_node_id
+                            );
+                            continue;
+                        }
+                        if !self.config.trusted_signers.is_empty()
+                            && !self.config.trusted_signers.contains(&manifest_signer_pk.to_string())
+                        {
+                            tracing::warn!(
+                                "YARA DHT sync: manifest signer pk {} is not in trusted signers list for record from {}",
+                                manifest_signer_pk,
                                 manifest_node_id
                             );
                             continue;

@@ -271,14 +271,14 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|------------|--------|
-| W7.1.1 | Add YARA mesh broadcast | 📋 PLANNING |
+| W7.1.1 | Add YARA mesh broadcast | ✅ COMPLETED |
 
 ### Phase 7.2: Security Enhancements
 
 | ID | Description | Status |
 |----|------------|--------|
-| W7.2.1 | Enforce trusted signers | 📋 PLANNING |
-| W7.2.2 | Timestamp bounds check | 📋 PLANNING |
+| W7.2.1 | Enforce trusted signers | ✅ COMPLETED |
+| W7.2.2 | Timestamp bounds check | ✅ COMPLETED |
 
 ---
 
