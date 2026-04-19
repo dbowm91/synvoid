@@ -1078,12 +1078,14 @@ pub async fn run_unified_server_worker(
         )
     };
 
-    // Wire up port honeypot threat publishing to mesh network
+    // Wire up port honeypot threat publishing to mesh network (or standalone)
     if let Some(ref runner) = port_honeypot_runner {
         if let Some(ref threat_intel) = _threat_intel_manager {
+            runner.start_mesh_threat_publishing(threat_intel.clone(), 30);
             if _mesh_transport_manager.is_some() {
-                runner.start_mesh_threat_publishing(threat_intel.clone(), 30);
                 tracing::info!("Port honeypot threat publishing wired to mesh network");
+            } else {
+                tracing::info!("Port honeypot threat publishing in standalone mode");
             }
         }
     }

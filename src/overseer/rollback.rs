@@ -246,7 +246,12 @@ mod tests {
     #[test]
     fn test_rollback_manager_defaults() {
         let manager = RollbackManager::new(None);
-        assert!(manager.persistence.state_file.to_str().unwrap().contains(".maluwaf"));
+        assert!(manager
+            .persistence
+            .state_file
+            .to_str()
+            .unwrap()
+            .contains(".maluwaf"));
     }
 
     #[test]
@@ -266,11 +271,20 @@ mod tests {
         let err = RollbackError::NoWorkerPorts;
         assert_eq!(err.to_string(), "No worker ports available");
 
-        let failures = vec![(8080, super::super::health::HealthStatus::Unhealthy { status: 500, message: "test".to_string() })];
+        let failures = vec![(
+            8080,
+            super::super::health::HealthStatus::Unhealthy {
+                status: 500,
+                message: "test".to_string(),
+            },
+        )];
         let err = RollbackError::ValidationFailed(failures.clone());
         assert!(err.to_string().contains("Validation failed"));
 
-        let io_err = RollbackError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        let io_err = RollbackError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
         assert!(io_err.to_string().contains("file not found"));
     }
 
@@ -325,7 +339,11 @@ mod tests {
     #[test]
     fn test_rollback_target_parsing() {
         fn is_version_string(s: &str) -> bool {
-            s.starts_with('v') || s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+            s.starts_with('v')
+                || s.chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
         }
 
         fn is_date_string(s: &str) -> bool {

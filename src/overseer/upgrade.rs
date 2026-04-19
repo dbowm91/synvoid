@@ -1076,8 +1076,8 @@ pub enum UpgradeError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::preflight::PreflightResult;
+    use super::*;
 
     #[test]
     fn test_auto_rollback_config_defaults() {
@@ -1107,7 +1107,9 @@ mod tests {
         let reuse_port_mode = UpgradeMode::ReusePort;
         assert!(!reuse_port_mode.requires_temp_ports());
 
-        let port_swap_mode = UpgradeMode::PortSwap { temp_port_offset: 1000 };
+        let port_swap_mode = UpgradeMode::PortSwap {
+            temp_port_offset: 1000,
+        };
         assert!(port_swap_mode.requires_temp_ports());
     }
 
@@ -1115,7 +1117,10 @@ mod tests {
     fn test_upgrade_mode_name() {
         assert_eq!(UpgradeMode::ReusePort.name(), "SO_REUSEPORT");
         assert_eq!(
-            UpgradeMode::PortSwap { temp_port_offset: 1000 }.name(),
+            UpgradeMode::PortSwap {
+                temp_port_offset: 1000
+            }
+            .name(),
             "Port Swap"
         );
     }

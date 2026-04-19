@@ -885,10 +885,14 @@ mod tests {
         let healthy = HealthStatus::Healthy;
         assert_eq!(healthy, HealthStatus::Healthy);
 
-        let draining = HealthStatus::Draining { active_connections: 5 };
+        let draining = HealthStatus::Draining {
+            active_connections: 5,
+        };
         assert_eq!(
             draining,
-            HealthStatus::Draining { active_connections: 5 }
+            HealthStatus::Draining {
+                active_connections: 5,
+            }
         );
 
         let unhealthy = HealthStatus::Unhealthy {
@@ -904,13 +908,15 @@ mod tests {
         );
 
         let error = HealthStatus::Error("connection refused".to_string());
-        assert_eq!(
-            error,
-            HealthStatus::Error("connection refused".to_string())
-        );
+        assert_eq!(error, HealthStatus::Error("connection refused".to_string()));
 
         assert_eq!(healthy.clone(), HealthStatus::Healthy);
-        assert_eq!(draining.clone(), HealthStatus::Draining { active_connections: 5 });
+        assert_eq!(
+            draining.clone(),
+            HealthStatus::Draining {
+                active_connections: 5
+            }
+        );
         assert_eq!(
             unhealthy.clone(),
             HealthStatus::Unhealthy {
@@ -945,7 +951,10 @@ mod tests {
         assert_eq!(config.latency_threshold_ms, 1000);
         assert_eq!(config.error_rate_threshold, 0.1);
         assert!(config.compare_with_baseline);
-        assert_eq!(config.shadow_traffic_path, Some("/__internal__/health".to_string()));
+        assert_eq!(
+            config.shadow_traffic_path,
+            Some("/__internal__/health".to_string())
+        );
     }
 
     #[test]

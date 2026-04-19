@@ -131,6 +131,42 @@ Nodes can announce local threats that get propagated to the mesh:
 - `announce_local_rate_limit()` - Rate limit exceeded
 - `announce_local_suspicious()` - Suspicious activity pattern
 
+#### HTTP Honeypot Integration
+
+HTTP honeypot detections are announced via `announce_honeypot_indicator()` when a client accesses a honeypot trap path. The integration works as follows:
+
+**By-Design Behavior:**
+
+1. **Local blocking always works**: When `block_ip_for_honeypot()` is called, the IP is always blocked locally via `BlockStore`, regardless of whether threat intel is available. This ensures honeypot protection works in standalone mode.
+
+2. **Mesh announcement is best-effort**: If threat intel is configured, the honeypot hit is announced to the mesh network via `announce_honeypot_indicator()`. If threat intel is unavailable, local blocking still proceeds normally.
+
+3. **Per-IP trap isolation**: Trap paths are generated uniquely per IP address using random path segments. This prevents one IP from enumerating all trap paths and ensures bots cannotlearn trap locations from other clients' behavior.
+
+4. **TTL-based trap expiration**: Generated traps expire after `ttl_secs` (default 3600s), preventing stale traps from accumulating.
+
+**Flow:**
+```
+Bot accesses honeypot path /_waf_hp_xxxxxxxx/xxxxxxxx
+    ↓
+HoneypotTracker::is_honeypot_hit() detects trap hit
+    ↓
+WAF::block_ip_for_honeypot() called
+    ↓
+┌─────────────────────────────────────────────┐
+│ 1. BlockStore.block_ip() - Always succeeds  │
+│    (local IP blocking)                      │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ 2. If threat_intel available:               │
+│    threat_intel.announce_honeypot_indicator │
+│    (mesh distribution)                      │
+└─────────────────────────────────────────────┘
+```
+
+**Configuration**: HTTP honeypots are configured under `[defaults.bot.css_honeypot]` in the bot protection settings. See [BOT_PROTECTION.md](./BOT_PROTECTION.md) for details.
+
 ### DHT Propagation
 
 When publishing to DHT:

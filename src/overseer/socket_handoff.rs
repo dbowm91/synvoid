@@ -637,21 +637,35 @@ mod tests {
     fn test_socket_handoff_error_types() {
         use std::io;
 
-        let socket_create = SocketHandoffError::SocketCreate(io::Error::new(io::ErrorKind::NotFound, "test"));
-        let socket_connect = SocketHandoffError::SocketConnect(io::Error::new(io::ErrorKind::NotFound, "test"));
+        let socket_create =
+            SocketHandoffError::SocketCreate(io::Error::new(io::ErrorKind::NotFound, "test"));
+        let socket_connect =
+            SocketHandoffError::SocketConnect(io::Error::new(io::ErrorKind::NotFound, "test"));
         let timeout = SocketHandoffError::Timeout;
         let cancelled = SocketHandoffError::Cancelled("test cancelled".to_string());
         let invalid_state = SocketHandoffError::InvalidState("test state".to_string());
         let not_supported = SocketHandoffError::NotSupported("test".to_string());
 
-        assert_eq!(socket_create.to_string(), "Failed to create handoff socket: test");
-        assert_eq!(socket_connect.to_string(), "Failed to connect to handoff socket: test");
+        assert_eq!(
+            socket_create.to_string(),
+            "Failed to create handoff socket: test"
+        );
+        assert_eq!(
+            socket_connect.to_string(),
+            "Failed to connect to handoff socket: test"
+        );
         assert_eq!(timeout.to_string(), "Timeout waiting for handoff");
         assert_eq!(cancelled.to_string(), "Handoff cancelled: test cancelled");
         assert_eq!(invalid_state.to_string(), "Invalid state: test state");
-        assert_eq!(not_supported.to_string(), "Feature not supported on this platform: test");
+        assert_eq!(
+            not_supported.to_string(),
+            "Feature not supported on this platform: test"
+        );
 
-        assert_eq!(format!("{:?}", socket_create).contains("SocketCreate"), true);
+        assert_eq!(
+            format!("{:?}", socket_create).contains("SocketCreate"),
+            true
+        );
         assert_eq!(format!("{:?}", timeout), "Timeout");
     }
 
@@ -677,7 +691,13 @@ mod tests {
     #[test]
     fn test_handoff_client_connection_timeout() {
         let client = SocketHandoffClient::new();
-        assert_eq!(client.socket_path.to_string_lossy().contains(HANDOFF_SOCKET_NAME), true);
+        assert_eq!(
+            client
+                .socket_path
+                .to_string_lossy()
+                .contains(HANDOFF_SOCKET_NAME),
+            true
+        );
     }
 
     #[test]
