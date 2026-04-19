@@ -73,7 +73,7 @@ cargo test --lib --no-run
 
 - `src/process/` - IPC communication, process management
 - `src/overseer/` - Master process orchestration
-- `src/master/` - Parent process implementation  
+- `src/master/` - Parent process implementation
 - `src/worker/` - Worker process implementation
 - `src/supervisor/` - Worker supervision
 - `tests/` - Integration and benchmark tests
@@ -266,14 +266,6 @@ Keys transition through these states:
 4. **Revoked** - Key has REVOKE bit set
 5. **Removed** - Revoked key waiting for extended confirmation
 6. **Missing** - Valid key not seen for retention period
-
-## Important Notes
-
-1. **Never commit secrets** - Use `.gitignore` for credentials
-2. **Test isolation** - Use temp dirs for socket tests
-3. **Async tests** - Use `#[tokio::test]` for async code
-4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
-5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
 
 ## Subagent Execution Best Practices
 
@@ -834,100 +826,6 @@ rrsig.extend_from_slice(&timestamp.to_be_bytes());
 
 **Fixed**: Origin local backend selection is now implemented. Origin nodes accept incoming QUIC streams and route HTTP requests to local backends based on Host header. See `src/mesh/transport.rs:mesh_accept_loop` and `src/mesh/transport_peer.rs:handle_http_proxy_stream`.
 
-## Implementation Plan Reference
-
-**Location**: `plans/plan.md`
-
-This consolidated plan contains all remaining deferred items organized into waves for parallel implementation. All critical security fixes, performance improvements, and feature work has been completed as of 2026-04-18.
-
-### Consolidated Plan Structure
-
-The plan is organized into three main waves that can be executed in parallel:
-
-| Wave | Content | Parallelizable |
-|------|---------|----------------|
-| Wave 1 | Security P0-P2 (Critical/High vulnerabilities) | Yes - 4 sub-agents |
-| Wave 2 | Performance, Mesh & WASM improvements | Yes - 4 sub-agents |
-| Wave 3 | Infrastructure & Polish (Admin UI, Docs, Testing, Dependencies) | Yes - 6 sub-agents |
-
-### Sub-agent Assignment Best Practices
-
-When assigning work from the plan to sub-agents:
-
-1. **Wave 1 Security** can split across 4 parallel agents:
-   - Agent 1: P0-1 through P0-5 (Auth/Admin security)
-   - Agent 2: P0-6 through P0-10 (Mesh/DNS security)
-   - Agent 3: P0-11 through P0-14, P1-1 through P1-5 (IPC/RL security)
-   - Agent 4: P1-6 through P1-18 (Remaining high priority)
-
-2. **Wave 2 Performance** can split across 4 parallel agents:
-   - Agent 5: P-C0 through P-C3 (Critical performance)
-   - Agent 6: R1, R2, R3 (Reverse proxy scalability)
-   - Agent 7: P-H1 through P-H6 (High priority performance)
-   - Agent 8: WASM improvements (W1-W7, DS1-DS5)
-
-3. **Wave 3 Infrastructure** can split across 6 parallel agents:
-   - Agent 9: Edge caching (C1-C4), YARA/ThreatIntel (Y1-Y5, H1-H4)
-   - Agent 10: Admin UI improvements (A1-A5, O1-O2)
-   - Agent 11: Testing fixes (T1-T5)
-   - Agent 12: Documentation (D1-D8)
-   - Agent 13: Web stack (S1-S5, P1-P2, F1, G1-G2, Web4-*, Web5-*)
-   - Agent 14: Dependency security (DS-1 through DS-4)
-   - Agent 15: Code quality (CQ1-CQ4)
-
-**Wave organization for sub-agent parallelization**:
-- **Wave 1**: Security P0-P2 (Critical/High priority)
-- **Wave 2**: Performance, Mesh & WASM improvements
-- **Wave 3**: Infrastructure & Polish
-
-**Remaining deferred items** (as of 2026-04-18):
-- G1: Full process tree testing (infrastructure complexity)
-- G3: Upgrade/rollback protocol testing (complex scenario)
-- G8: Windows named pipe path testing (requires Windows CI)
-- Admin 8-15: UI improvements (existing implementations adequate)
-- O1: lib.rs public API refactoring (NOT RECOMMENDED - effort vs. benefit not justified)
-
-## Admin Panel Architecture Notes
-
-### Config Propagation
-
-Config changes via the admin API now propagate to workers. `MasterConfigReload` handlers implement real reload in `src/worker/mod.rs` and `src/worker/unified_server.rs`. `PUT /config/main` updates in-memory config and broadcasts via `ProcessManager::broadcast_config_reload()`. `POST /config/reload` also broadcasts. Section-specific handlers (HTTP, TLS, security, etc.) call broadcast after persisting.
-
-Worker `common.rs` handler still logs only (full restart required for that worker type). Hot-reloadable vs restart-required field distinction is tracked for future implementation.
-
-### Frontend Orphaned Files
-
-These admin UI files were previously orphaned but are now reachable:
-
-- `admin-ui/src/pages/system_status.rs` — now at Route `/system-status` ✅
-- `admin-ui/src/pages/threat_level.rs` — now at Route `/threat-level` ✅
-
-Still orphaned (not declared as module):
-- `admin-ui/src/config_docs.rs` (538 lines — field documentation)
-
-### Genesis Key Handling
-
-The Admin UI System Status page now includes mesh status and genesis key management:
-
-**Backend API**:
-- `GET /mesh/status` - Returns `MeshAdminStatusResponse` with:
-  - `is_global_node`, `node_id`, `connected_peers`, `global_nodes`, `edge_nodes`
-  - `genesis_key_configured`, `genesis_public_key_fingerprint`
-  - `signing_key_derived`, `signing_public_key`
-- `POST /mesh/derive-signing-key` - Accepts `DeriveSigningKeyRequest { genesis_key_base64 }`, derives signing key
-
-**Frontend API** (`admin-ui/src/services/api.rs`):
-- `get_mesh_status()` - fetches mesh status
-- `derive_signing_key(genesis_key_base64)` - derives signing key
-
-**Multi-Genesis Key Support**: The system supports multiple authorized genesis keys for key rotation and disaster recovery. Empty `authorized_genesis_keys` means any key is allowed (backward compatible). Non-empty list requires the genesis key's public key to be in the list.
-
-### Capability Attestation System
-
-Global nodes can attest to other nodes' capabilities after verification. DHT key type `CapabilityAttestation` stores:
-- `node_id`, `capability` (dns_server, waf, edge_proxy, origin)
-- `attested_by_global_node`, `signer_public_key`, `signature`, `timestamp`
-
 ## DNS & DNSSEC Architecture
 
 **DNSSEC validation is by design limited to the `Recursive` provider.**
@@ -1130,3 +1028,20 @@ The skill file was originally maintained at `~/.config/opencode/skills/malu_mesh
 **Location**: `skills/dns_dnssec.md`
 
 Detailed architecture documentation for the DNS and DNSSEC subsystems.
+
+### Other Skills
+
+- `skills/admin_ui.md` - Admin UI architecture and patterns
+- `skills/httpserver.md` - HTTP server implementation details
+- `skills/performance_patterns.md` - Performance optimization patterns
+- `skills/security_patterns.md` - Security implementation patterns
+- `skills/static_files.md` - Static files and directory listing
+- `skills/waf_bot_detection.md` - WAF and bot detection architecture
+
+## Important Notes
+
+1. **Never commit secrets** - Use `.gitignore` for credentials
+2. **Test isolation** - Use temp dirs for socket tests
+3. **Async tests** - Use `#[tokio::test]` for async code
+4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
+5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
