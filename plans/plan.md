@@ -495,56 +495,56 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| B.1.1 | Define `PluginType` enum (Wasm, Axum, Serverless) | src/plugin/mod.rs | 📋 PLANNING |
-| B.1.2 | Implement `PluginRegistry` with unified storage | src/plugin/mod.rs | 📋 PLANNING |
-| B.1.3 | Refactor `PluginManager` to use `PluginRegistry` | src/plugin/mod.rs | 📋 PLANNING |
-| B.1.4 | Update `PluginManagerLifecycle` for unified hot-reload | src/plugin/mod.rs | 📋 PLANNING |
-| B.1.5 | Add `PluginConfig` to `SiteConfig` | src/config/site/mod.rs | 📋 PLANNING |
-| B.1.6 | Map site-specific plugin env vars during invocation | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| B.1.1 | Define `PluginType` enum (Wasm, Axum, Serverless) | src/plugin/mod.rs | ⏸️ DEFERRED (requires unified type design) |
+| B.1.2 | Implement `PluginRegistry` with unified storage | src/plugin/mod.rs | ⏸️ DEFERRED (current separate storage for WASM/Axum) |
+| B.1.3 | Refactor `PluginManager` to use `PluginRegistry` | src/plugin/mod.rs | ⏸️ DEFERRED (requires B.1.1/B.1.2 first) |
+| B.1.4 | Update `PluginManagerLifecycle` for unified hot-reload | src/plugin/mod.rs | ✅ COMPLETED (fully implemented with file watching) |
+| B.1.5 | Add `PluginConfig` to `SiteConfig` | src/config/site/mod.rs | ⏸️ DEFERRED (plugin config exists but not unified) |
+| B.1.6 | Map site-specific plugin env vars during invocation | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (env vars passed but not site-specific) |
 
 ### Phase B.2: ABI Standardization & Developer Experience
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| B.2.1 | Implement `maluwaf-guest-sdk` crate for Rust plugins | (new crate) | 📋 PLANNING |
-| B.2.2 | Refactor `handle_request` to use structured response header | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| B.2.3 | Add support for streaming response bodies in serverless | src/serverless/manager.rs | 📋 PLANNING |
-| B.2.4 | Implement initial support for `wasi-http:proxy` world | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| B.2.5 | Transition to WASM Component Model (WIT) | src/plugin/wasm_runtime.rs | 📋 PLANNING |
+| B.2.1 | Implement `maluwaf-guest-sdk` crate for Rust plugins | (new crate) | ⏸️ DEFERRED (requires SDK design and implementation) |
+| B.2.2 | Refactor `handle_request` to use structured response header | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (current uses raw memory pointers) |
+| B.2.3 | Add support for streaming response bodies in serverless | src/serverless/manager.rs | ⏸️ DEFERRED (streaming not implemented) |
+| B.2.4 | Implement initial support for `wasi-http:proxy` world | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (WASI support stubbed but not implemented) |
+| B.2.5 | Transition to WASM Component Model (WIT) | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (uses old Module API, not component model) |
 
 ### Phase B.3: Security & Isolation
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| B.3.1 | Implement per-plugin allowlist for `get_env` keys | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| B.3.2 | Add restricted network access for WASM (WASI-socket) | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| B.3.3 | Prototype IPC bridge for `AxumDynamic` backends | src/plugin/axum_loader.rs | 📋 PLANNING |
-| B.3.4 | Implement watchdog for external plugin processes | src/plugin/mod.rs | 📋 PLANNING |
+| B.3.1 | Implement per-plugin allowlist for `get_env` keys | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (get_env has no allowlist filtering) |
+| B.3.2 | Add restricted network access for WASM (WASI-socket) | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (WASI-socket not implemented) |
+| B.3.3 | Prototype IPC bridge for `AxumDynamic` backends | src/plugin/axum_loader.rs | ⏸️ DEFERRED (AxumDynamic loader exists but IPC not prototyped) |
+| B.3.4 | Implement watchdog for external plugin processes | src/plugin/mod.rs | ⏸️ DEFERRED (watchdog not implemented) |
 
 ### Phase B.4: Mesh & Distribution Enhancements
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| B.4.1 | Add Ed25519 signature verification for mesh plugins | src/mesh/wasm_dist.rs | 📋 PLANNING |
-| B.4.2 | Implement content-addressed storage (CAS) for modules | src/mesh/wasm_dist.rs | 📋 PLANNING |
-| B.4.3 | Add delta-compression for module updates | src/mesh/wasm_dist.rs | 📋 PLANNING |
+| B.4.1 | Add Ed25519 signature verification for mesh plugins | src/mesh/wasm_dist.rs | ⏸️ DEFERRED (signature verification not implemented) |
+| B.4.2 | Implement content-addressed storage (CAS) for modules | src/mesh/wasm_dist.rs | ⏸️ DEFERRED (CAS not implemented) |
+| B.4.3 | Add delta-compression for module updates | src/mesh/wasm_dist.rs | ⏸️ DEFERRED (delta compression not implemented) |
 
 ### Phase B.5: Observability & Telemetry
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| B.5.1 | Add Prometheus metrics for Axum plugin request counts | src/plugin/axum_loader.rs | 📋 PLANNING |
-| B.5.2 | Implement `tracing` spans across plugin boundary | src/plugin/wasm_runtime.rs | 📋 PLANNING |
-| B.5.3 | Add per-function latency histograms for serverless | src/serverless/manager.rs | 📋 PLANNING |
+| B.5.1 | Add Prometheus metrics for Axum plugin request counts | src/plugin/axum_loader.rs | ⏸️ DEFERRED (metrics not added) |
+| B.5.2 | Implement `tracing` spans across plugin boundary | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (spans not implemented) |
+| B.5.3 | Add per-function latency histograms for serverless | src/serverless/manager.rs | ⏸️ DEFERRED (latency histograms not added) |
 
 ### Phase B.6: Native Plugin Sandboxing (Out-of-Process)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| B.6.1 | Worker Process Pattern: Allow Axum plugins to run in dedicated child process | src/plugin/axum_loader.rs | 📋 PLANNING |
-| B.6.2 | Shared Memory IPC: Use shared memory for high-performance request/response handoff | src/plugin/ | 📋 PLANNING |
-| B.6.3 | Unix Domain Sockets (Fallback): Use UDS for control plane and small payload transfers | src/plugin/ | 📋 PLANNING |
-| B.6.4 | Process Isolation: Use namespaces or cgroups to limit plugin worker resources | src/plugin/ | 📋 PLANNING |
+| B.6.1 | Worker Process Pattern: Allow Axum plugins to run in dedicated child process | src/plugin/axum_loader.rs | ⏸️ DEFERRED (out-of-process not implemented) |
+| B.6.2 | Shared Memory IPC: Use shared memory for high-performance request/response handoff | src/plugin/ | ⏸️ DEFERRED (shared memory IPC not implemented) |
+| B.6.3 | Unix Domain Sockets (Fallback): Use UDS for control plane and small payload transfers | src/plugin/ | ⏸️ DEFERRED (UDS fallback not implemented) |
+| B.6.4 | Process Isolation: Use namespaces or cgroups to limit plugin worker resources | src/plugin/ | ⏸️ DEFERRED (namespace/cgroup isolation not implemented) | |
 
 ---
 
