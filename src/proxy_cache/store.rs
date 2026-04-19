@@ -216,7 +216,9 @@ impl ProxyCache {
         settings.use_stale = preferences.use_stale.clone();
         settings.min_uses = preferences.min_uses;
         settings.stale_while_revalidate = if preferences.stale_while_revalidate > 0 {
-            Some(std::time::Duration::from_secs(preferences.stale_while_revalidate))
+            Some(std::time::Duration::from_secs(
+                preferences.stale_while_revalidate,
+            ))
         } else {
             None
         };

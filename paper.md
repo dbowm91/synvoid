@@ -415,15 +415,7 @@ With traditional TCP proxying, each edge node must bind to unique ports. With QU
 
 #### Historical: WireGuard (Removed)
 
-**Note**: The WireGuard transport was removed from MaluWAF in 2025. All mesh communication now uses QUIC exclusively. This section is retained for historical context.
-
-WireGuard was a simpler, faster VPN protocol designed for modern security requirements. It featured:
-- **Minimal Codebase**: ~4,000 lines vs tens of thousands for OpenVPN/IPsec
-- **Cryptographic Tunnels**: Every packet encrypted with ChaCha20-Poly1305
-- **Kernel Integration**: Linux kernel implementation for native performance
-- **Modern Cryptography**: Curve25519 for key exchange, Blake2s for hashing
-
-All WireGuard use cases are now served by QUIC, which provides equivalent or better performance for mesh backhaul communication while offering additional benefits like stream multiplexing and connection migration.
+**Note**: WireGuard was removed from MaluWAF in 2025. All mesh communication now uses QUIC exclusively, which provides equivalent performance with additional benefits like stream multiplexing and connection migration.
 
 #### Protocol Selection Guidelines
 

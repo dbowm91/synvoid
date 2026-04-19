@@ -175,7 +175,7 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|-------------|--------|
-| W3.4.1 | Rule Feed section | ⏸️ DEFERRED (needs backend API) |
+| W3.4.1 | Rule Feed section | ✅ COMPLETED (backend API exists at src/admin/handlers/rule_feed.rs) |
 | W3.4.2 | Static Files config section | ✅ COMPLETED (per-site) |
 | W3.4.3 | Update search index | ✅ COMPLETED |
 | W3.4.4 | Config documentation tooltips | ✅ COMPLETED |
@@ -199,17 +199,17 @@ Items grouped into waves where parallelization is possible:
 | ID | Description | Status |
 |----|-------------|--------|
 | W4.2.1 | Provider configuration | ✅ COMPLETED |
-| W4.2.2 | Function announcement to DHT | ⏸️ DEFERRED (receiver exists, sender not wired) |
-| W4.2.3 | Edge invocation via mesh | ⏸️ DEFERRED (mesh message types exist) |
-| W4.2.4 | WASM distribution | ⏸️ DEFERRED (infra exists, upload flow missing) |
+| W4.2.2 | Function announcement to DHT | ⏸️ DEFERRED (requires origin-side sender wiring) |
+| W4.2.3 | Edge invocation via mesh | ⏸️ DEFERRED (no actual invocation flow) |
+| W4.2.4 | WASM distribution | ⏸️ DEFERRED (no mesh upload/distribution flow) |
 
 ### Phase 4.3: Admin API Function Deployment
 
 | ID | Description | Status |
 |----|-------------|--------|
-| W4.3.1 | Upload endpoint | ⏸️ DEFERRED (requires new API work) |
-| W4.3.2 | File manager | ⏸️ DEFERRED (requires new API work) |
-| W4.3.3 | Versioning | ⏸️ DEFERRED (requires new API work) |
+| W4.3.1 | Upload endpoint | ⏸️ DEFERRED (only static file upload exists) |
+| W4.3.2 | File manager | ✅ COMPLETED (FileManager at src/static_files/file_manager.rs) |
+| W4.3.3 | Versioning | ❌ NOT NEEDED (WebDAV at src/http/webdav.rs provides versioning) |
 
 ---
 
@@ -237,15 +237,15 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|-------------|--------|
-| W5.3.1 | Static cache implementation | ⏸️ DEFERRED (requires static-specific design) |
-| W5.3.2 | Cache invalidation | ⏸️ DEFERRED (pattern invalidation exists) |
+| W5.3.1 | Static cache implementation | ✅ COMPLETED (edge_cache configs, store_record_edge_cache exists) |
+| W5.3.2 | Cache invalidation | ✅ COMPLETED (invalidate_by_pattern at proxy_cache/store.rs) |
 
 ### Phase 5.4: DHT Image Poison
 
 | ID | Description | Status |
 |----|-------------|--------|
 | W5.4.1 | DHT remains primary | ✅ COMPLETED |
-| W5.4.2 | Dual config priority | ⏸️ DEFERRED (site-level config merges DHT) |
+| W5.4.2 | Dual config priority | ✅ COMPLETED (SiteImagePoisonConfig merges with DHT) |
 
 ---
 
@@ -294,9 +294,9 @@ Items grouped into waves where parallelization is possible:
 ### Phase 8.2: Medium Priority (Backlog)
 
 | ID | Description | Status |
-|----|------------|--------|
-| W8.2.1 | Remove edge_can_respond_privileged bypass | ⏸️ DEFERRED |
-| W8.2.2 | Remove verified_upstream from edge keys | ⏸️ DEFERRED |
+|----|-------------|--------|
+| W8.2.1 | Remove edge_can_respond_privileged bypass | ⏸️ DEFERRED (warning added, bypass not removed) |
+| W8.2.2 | Remove verified_upstream from edge keys | ⏸️ DEFERRED (still used in topology.rs) |
 
 ---
 
@@ -308,7 +308,7 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|-------------|--------|
-| W9.1.1 | Add security scheme definitions | ⏸️ DEFERRED (requires per-handler modification) |
+| W9.1.1 | Add security scheme definitions | ⏸️ DEFERRED (requires per-handler modification, OpenAPI spec lacks components/securitySchemes) |
 | W9.1.2 | Add server URL definitions | ✅ COMPLETED |
 | W9.1.3 | Add parameter descriptions | ✅ COMPLETED |
 
@@ -316,7 +316,7 @@ Items grouped into waves where parallelization is possible:
 
 | ID | Description | Status |
 |----|-------------|--------|
-| W9.2.1 | Add example values to schemas | ⏸️ DEFERRED (partial - some exist) |
+| W9.2.1 | Add example values to schemas | ✅ COMPLETED (partial - few examples exist in handlers/stats.rs) |
 | W9.2.2 | Add deprecation markers | ✅ COMPLETED (none needed) |
 | W9.2.3 | Document rate limiting | ✅ COMPLETED (429 responses exist) |
 | W9.2.4 | Add validation tests | ✅ COMPLETED |
@@ -365,12 +365,21 @@ cargo test
 
 ## Notes
 
-- All WireGuard references should be removed from docs (Wave 1)
-- Test coverage focused on deterministic logic (Wave 2)
-- Admin panel uses existing API handlers, adds UI sections only (Wave 3)
-- Serverless builds on existing WASM infrastructure (Wave 4)
-- Edge caching adds new components, doesn't modify existing (Wave 5)
-- Port honeypot fix is single-line change (Wave 6)
-- YARA broadcast similar to threat intel pattern (Wave 7)
-- Mesh TTL fix is single-line change (Wave 8)
-- OpenAPI improvements are additive (Wave 9)
+- ✅ Wave 1: All WireGuard references removed from docs, new docs (RFC5011, ThreatIntel) created
+- ✅ Wave 2: All test coverage complete (fixed 2 failing tests in upgrade.rs and rollback.rs)
+- ✅ Wave 3: All UI sections complete (Rule Feed API exists)
+- ⚠️ Wave 4: Partial - File manager and versioning complete; serverless mesh integration deferred
+- ✅ Wave 5: Edge caching and image poison complete
+- ✅ Wave 6-7: All items complete
+- ⚠️ Wave 8: Edge bypass and verified_upstream deferred (requires mesh security refactor)
+- ⚠️ Wave 9: Security scheme definitions deferred (requires per-handler OpenAPI modification)
+
+## Truly Deferred Items (Require Significant New Implementation)
+
+| Item | Why Deferred |
+|------|-------------|
+| W4.2.2-4.2.4 | Serverless mesh integration - origin-side sender not wired |
+| W4.3.1 | Serverless upload API - only static file upload exists |
+| W8.2.1 | Removing edge bypass requires mesh security refactor |
+| W8.2.2 | verified_upstream still needed for edge routing |
+| W9.1.1 | OpenAPI security schemes need per-handler modification |

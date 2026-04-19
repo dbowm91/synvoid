@@ -346,8 +346,12 @@ mod tests {
                     .unwrap_or(false)
         }
 
-        fn is_date_string(s: &str) -> bool {
-            s.contains('-') && s.len() == 10 && s.chars().filter(|c| *c == '-').count() == 2
+        fn is_valid_date_string(s: &str) -> bool {
+            let parts: Vec<&str> = s.split('-').collect();
+            if parts.len() != 3 {
+                return false;
+            }
+            parts[0].len() == 4 && parts[1].len() == 2 && parts[2].len() == 2
         }
 
         assert!(is_version_string("v1.2.3"));
@@ -355,11 +359,11 @@ mod tests {
         assert!(!is_version_string("invalid"));
         assert!(!is_version_string(""));
 
-        assert!(is_date_string("2024-01-15"));
-        assert!(!is_date_string("v1.2.3"));
-        assert!(!is_date_string("01-15-2024"));
-        assert!(!is_date_string("2024-1-15"));
-        assert!(!is_date_string("2024-01-1"));
+        assert!(is_valid_date_string("2024-01-15"));
+        assert!(!is_valid_date_string("v1.2.3"));
+        assert!(!is_valid_date_string("01-15-2024"));
+        assert!(!is_valid_date_string("2024-1-15"));
+        assert!(!is_valid_date_string("2024-01-1"));
 
         let target = RollbackTarget {
             version: "v1.2.3".to_string(),

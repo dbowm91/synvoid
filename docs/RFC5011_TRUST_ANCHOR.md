@@ -1,5 +1,20 @@
 # RFC 5011 Trust Anchor Management in MaluWAF
 
+> **Related Documentation:** [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) | [WAF Mesh](WAF_MESH.md) | [Troubleshooting](TROUBLESHOOTING.md)
+
+## Table of Contents
+
+1. [What is RFC 5011?](#what-is-rfc-5011)
+2. [Trust Anchor State Machine](#trust-anchor-state-machine)
+3. [Configuration Options](#configuration-options)
+4. [How It Works](#how-it-works)
+5. [Debugging Trust Anchor Issues](#debugging-trust-anchor-issues)
+6. [Security Considerations](#security-considerations)
+7. [Relationship to DNSSEC Validation](#relationship-to-dnssec-validation)
+8. [Initial Trust Anchor File Format](#initial-trust-anchor-file-format)
+
+---
+
 This document describes RFC 5011 automated trust anchor management implementation in MaluWAF for DNSSEC validation.
 
 ## What is RFC 5011?
@@ -346,3 +361,10 @@ The anchor file should contain DNSKEY records in standard zone file format:
 - Multiple keys can be defined (for algorithm rollover)
 
 MaluWAF provides bundled default anchors for the root zone that are updated with each release.
+
+## See Also
+
+- [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) - Complete DNS and DNSSEC documentation
+- [WAF Mesh](WAF_MESH.md) - Mesh networking for global node coordination
+- [Troubleshooting](TROUBLESHOOTING.md) - General debugging techniques
+- [skills/dns_dnssec.md](../../skills/dns_dnssec.md) - Detailed DNS architecture for developers

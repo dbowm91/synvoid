@@ -464,7 +464,9 @@ impl YaraRulesManager {
                         );
                         continue;
                     }
-                    if now > manifest_timestamp && now - manifest_timestamp > YARA_TIMESTAMP_PAST_BOUND_SECS {
+                    if now > manifest_timestamp
+                        && now - manifest_timestamp > YARA_TIMESTAMP_PAST_BOUND_SECS
+                    {
                         tracing::warn!(
                             "YARA DHT sync: manifest timestamp {} is too old (now: {}) from {}",
                             manifest_timestamp,
@@ -525,7 +527,10 @@ impl YaraRulesManager {
                             continue;
                         }
                         if !self.config.trusted_signers.is_empty()
-                            && !self.config.trusted_signers.contains(&manifest_signer_pk.to_string())
+                            && !self
+                                .config
+                                .trusted_signers
+                                .contains(&manifest_signer_pk.to_string())
                         {
                             tracing::warn!(
                                 "YARA DHT sync: manifest signer pk {} is not in trusted signers list for record from {}",

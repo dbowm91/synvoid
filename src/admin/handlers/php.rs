@@ -1,9 +1,5 @@
 use super::super::state::AdminState;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,11 +74,10 @@ pub async fn reload_php_pool(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let timeout = Duration::from_secs(req.drain_timeout_secs);
 
-    crate::fastcgi::drain_and_reload_pool(&req.socket, timeout)
-        .map_err(|e| {
-            tracing::error!("Failed to reload PHP-FPM pool for {}: {}", req.socket, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    crate::fastcgi::drain_and_reload_pool(&req.socket, timeout).map_err(|e| {
+        tracing::error!("Failed to reload PHP-FPM pool for {}: {}", req.socket, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(StatusResponse::success(format!(
         "PHP-FPM pool reload initiated for {}",

@@ -468,7 +468,10 @@ mod tests {
     fn test_openapi_servers_defined() {
         let openapi = MaluWafOpenApi::openapi();
 
-        assert!(openapi.servers.is_some(), "OpenAPI should have servers defined");
+        assert!(
+            openapi.servers.is_some(),
+            "OpenAPI should have servers defined"
+        );
         let servers = openapi.servers.unwrap();
         assert!(!servers.is_empty(), "At least one server should be defined");
 
@@ -545,7 +548,10 @@ mod tests {
     fn test_openapi_components_count_reasonable() {
         let openapi = MaluWafOpenApi::openapi();
 
-        let components = openapi.components.as_ref().expect("Components should exist");
+        let components = openapi
+            .components
+            .as_ref()
+            .expect("Components should exist");
         let schema_count = components.schemas.len();
         assert!(
             schema_count >= 50,

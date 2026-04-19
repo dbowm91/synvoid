@@ -1051,9 +1051,17 @@ The skill file was originally maintained at `~/.config/opencode/skills/malu_mesh
 
 ### DNS & DNSSEC
 
-**Location**: `skills/dns_dnssec.md`
+**Location**: `skills/dns_dnssec.md` (for AI agents)
 
 Detailed architecture documentation for the DNS and DNSSEC subsystems.
+
+**User-facing documentation**: `docs/RFC5011_TRUST_ANCHOR.md` and `docs/DNS_DNSSEC.md`
+
+### Threat Intelligence
+
+**User-facing documentation**: `docs/THREAT_INTEL.md`
+
+Covers ThreatIntel indicators, YARA rules, DHT-based distribution, and signature verification.
 
 ### Other Skills
 

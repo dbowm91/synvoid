@@ -280,10 +280,7 @@ pub fn Settings() -> Html {
         );
         m.insert(
             "fallback".to_string(),
-            vec![
-                ("fallback", "fallback"),
-                ("default", "fallback"),
-            ],
+            vec![("fallback", "fallback"), ("default", "fallback")],
         );
         m.insert(
             "upgrade".to_string(),
@@ -2320,9 +2317,21 @@ fn RateLimitsSection() -> Html {
                                         orig.set(s);
                                     }
                                 };
-                            set_field("per_second", &global_per_second, &original_global_per_second);
-                            set_field("per_minute", &global_per_minute, &original_global_per_minute);
-                            set_field("max_connections", &max_connections, &original_max_connections);
+                            set_field(
+                                "per_second",
+                                &global_per_second,
+                                &original_global_per_second,
+                            );
+                            set_field(
+                                "per_minute",
+                                &global_per_minute,
+                                &original_global_per_minute,
+                            );
+                            set_field(
+                                "max_connections",
+                                &max_connections,
+                                &original_max_connections,
+                            );
                         }
                     }
                 }
@@ -4705,7 +4714,7 @@ fn ProcessSection() -> Html {
                                             <p class="text-primary font-medium">{ id }</p>
                                             <p class="text-secondary text-sm">{ format!("PID: {}", pid) }</p>
                                         </div>
-                                        <span class={format!("px-2 py-1 rounded text-xs {}", 
+                                        <span class={format!("px-2 py-1 rounded text-xs {}",
                                             if status == "running" { "bg-green-500/20 text-green-400" } else { "bg-red-500/20 text-red-400" }
                                         )}>{ status }</span>
                                     </div>
@@ -5082,12 +5091,14 @@ fn TcpUdpDefaultsSection() -> Html {
                             original_tcp_nodelay.set(v);
                         }
                         if let Some(socket) = tcp.get("socket") {
-                            if let Some(v) = socket.get("send_buffer_size").and_then(|v| v.as_u64()) {
+                            if let Some(v) = socket.get("send_buffer_size").and_then(|v| v.as_u64())
+                            {
                                 let s = v.to_string();
                                 tcp_send_buffer_size.set(s.clone());
                                 original_tcp_send_buffer_size.set(s);
                             }
-                            if let Some(v) = socket.get("recv_buffer_size").and_then(|v| v.as_u64()) {
+                            if let Some(v) = socket.get("recv_buffer_size").and_then(|v| v.as_u64())
+                            {
                                 let s = v.to_string();
                                 tcp_recv_buffer_size.set(s.clone());
                                 original_tcp_recv_buffer_size.set(s);
@@ -5103,12 +5114,14 @@ fn TcpUdpDefaultsSection() -> Html {
                             tcp_syn_rate_global.set(s.clone());
                             original_tcp_syn_rate_global.set(s);
                         }
-                        if let Some(v) = tcp.get("connection_rate_per_ip").and_then(|v| v.as_u64()) {
+                        if let Some(v) = tcp.get("connection_rate_per_ip").and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             tcp_connection_rate_per_ip.set(s.clone());
                             original_tcp_connection_rate_per_ip.set(s);
                         }
-                        if let Some(v) = tcp.get("connection_rate_global").and_then(|v| v.as_u64()) {
+                        if let Some(v) = tcp.get("connection_rate_global").and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             tcp_connection_rate_global.set(s.clone());
                             original_tcp_connection_rate_global.set(s);
@@ -5136,12 +5149,14 @@ fn TcpUdpDefaultsSection() -> Html {
                             original_udp_worker_pool_size.set(s);
                         }
                         if let Some(socket) = udp.get("socket") {
-                            if let Some(v) = socket.get("recv_buffer_size").and_then(|v| v.as_u64()) {
+                            if let Some(v) = socket.get("recv_buffer_size").and_then(|v| v.as_u64())
+                            {
                                 let s = v.to_string();
                                 udp_recv_buffer_size.set(s.clone());
                                 original_udp_recv_buffer_size.set(s);
                             }
-                            if let Some(v) = socket.get("send_buffer_size").and_then(|v| v.as_u64()) {
+                            if let Some(v) = socket.get("send_buffer_size").and_then(|v| v.as_u64())
+                            {
                                 let s = v.to_string();
                                 udp_send_buffer_size.set(s.clone());
                                 original_udp_send_buffer_size.set(s);
@@ -5631,7 +5646,10 @@ fn UpgradeSection() -> Html {
                             health_check_path.set(s.clone());
                             original_health_check_path.set(s);
                         }
-                        if let Some(v) = config.get("health_check_timeout_secs").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("health_check_timeout_secs")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             health_check_timeout_secs.set(s.clone());
                             original_health_check_timeout_secs.set(s);
@@ -5641,7 +5659,10 @@ fn UpgradeSection() -> Html {
                             validation_retries.set(s.clone());
                             original_validation_retries.set(s);
                         }
-                        if let Some(v) = config.get("validation_interval_secs").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("validation_interval_secs")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             validation_interval_secs.set(s.clone());
                             original_validation_interval_secs.set(s);
@@ -5651,12 +5672,18 @@ fn UpgradeSection() -> Html {
                             drain_timeout_secs.set(s.clone());
                             original_drain_timeout_secs.set(s);
                         }
-                        if let Some(v) = config.get("drain_check_interval_ms").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("drain_check_interval_ms")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             drain_check_interval_ms.set(s.clone());
                             original_drain_check_interval_ms.set(s);
                         }
-                        if let Some(v) = config.get("port_swap_cutover_timeout_ms").and_then(|v| v.as_u64()) {
+                        if let Some(v) = config
+                            .get("port_swap_cutover_timeout_ms")
+                            .and_then(|v| v.as_u64())
+                        {
                             let s = v.to_string();
                             port_swap_cutover_timeout_ms.set(s.clone());
                             original_port_swap_cutover_timeout_ms.set(s);
@@ -5747,7 +5774,8 @@ fn UpgradeSection() -> Html {
             let original_validation_interval_secs = original_validation_interval_secs.clone();
             let original_drain_timeout_secs = original_drain_timeout_secs.clone();
             let original_drain_check_interval_ms = original_drain_check_interval_ms.clone();
-            let original_port_swap_cutover_timeout_ms = original_port_swap_cutover_timeout_ms.clone();
+            let original_port_swap_cutover_timeout_ms =
+                original_port_swap_cutover_timeout_ms.clone();
             let original_keep_old_versions = original_keep_old_versions.clone();
             let original_staged_dir = original_staged_dir.clone();
             let original_bin_dir = original_bin_dir.clone();

@@ -242,7 +242,10 @@ impl MeshProxy {
         &self.proxy_cache
     }
 
-    pub fn set_proxy_cache_preferences(&self, preferences: &crate::mesh::protocol::ProxyCachePreferences) {
+    pub fn set_proxy_cache_preferences(
+        &self,
+        preferences: &crate::mesh::protocol::ProxyCachePreferences,
+    ) {
         let proxy_cache = self.proxy_cache.read();
         if let Some(cache) = proxy_cache.as_ref() {
             cache.apply_preferences(preferences);

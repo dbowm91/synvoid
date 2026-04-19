@@ -142,6 +142,99 @@ Deploy scrubbing centers that inspect and clean traffic:
            └────────────────────────────┘
 ```
 
+### 4. DHT-Based Rule Distribution
+
+YARA rules and threat intelligence are distributed via the mesh DHT for decentralized propagation:
+
+#### YARA Rules Distribution
+
+Global nodes publish signed YARA rules to the DHT:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      YARA Rule Distribution                        │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Global Node publishes rules
+         │
+         ├──► publish_rules_to_dht()
+         │        │
+         │        └──► DHT key: yara_rule:{content_hash}
+         │                     DHT key: yara_rules_manifest:{node_id}
+         │
+         └──► broadcast DhtRecordAnnounce to k closest peers
+                      │
+                      ▼
+           Peers store in local DHT cache
+                      │
+                      ▼
+           Non-global: sync_from_dht() → apply newest version
+```
+
+| DHT Key Pattern | Purpose | TTL |
+|-----------------|---------|-----|
+| `yara_rule:{content_hash}` | Actual rule content (content-addressed) | 24 hours |
+| `yara_rules_manifest:{node_id}` | Global node's current ruleset metadata | 24 hours |
+
+**Signature Verification:** YARA rules are signed using Ed25519. Both manifest and rule content signatures are verified during DHT sync before acceptance.
+
+#### Threat Intelligence Distribution
+
+Threat indicators use composite DHT keys for type-specific lookups:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  Threat Intelligence Distribution                   │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Threat detected at node
+         │
+         ├──► Signed with Ed25519 (signer_public_key embedded)
+         │
+         ├──► DHT key: threat_indicator:{ip}:{threat_type}
+         │        Example: threat_indicator:1.2.3.4:IpBlock
+         │
+         └──► One-hop broadcast to k closest peers
+                      │
+                      ▼
+           Peers verify signature using from_node's public key
+                      │
+                      ▼
+           Store if signature valid, skip if invalid
+```
+
+| DHT Key Pattern | Purpose |
+|-----------------|---------|
+| `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key prevents collision) |
+
+**Important:** The composite key format (`{ip}:{threat_type}`) is required. A key without threat_type will NOT match type-specific queries.
+
+#### Re-announcement
+
+Global nodes periodically re-announce active indicators:
+- YARA rules: Every `re_announce_interval_secs` (default: 300s)
+- ThreatIntel: Every `re_announce_interval_secs` (default: 300s)
+
+Non-global nodes do not re-announce (respects `hub_only_mode`).
+
+#### Configuration
+
+```toml
+[mesh.yara_rules]
+enabled = true
+sync_interval_secs = 3600
+re_announce_interval_secs = 300
+require_signature = true  # Verify Ed25519 signatures (default: true)
+```
+
+```toml
+[mesh.threat_intel]
+enabled = true
+sync_interval_secs = 300
+re_announce_interval_secs = 300
+require_signature = true   # Verify threat indicator signatures
+```
+
 ## Configuration
 
 ### Basic Mesh Setup
@@ -235,6 +328,55 @@ genesis_key_base64 = "your-genesis-key-here"
 # Authorized genesis keys (empty = any genesis key allowed)
 authorized_genesis_keys = []
 ```
+
+### Key Derivation from Genesis Key
+
+MaluWAF uses a hierarchical key derivation scheme from the genesis key:
+
+```
+Genesis Key
+    │
+    ├──► Signing Key (Ed25519)
+    │        │
+    │        └──► Tier Key Master
+    │                   │
+    │                   ├──► Tier 1 Key (per-node)
+    │                   ├──► Tier 2 Key (per-site)
+    │                   └──► Tier 3 Key (per-backend)
+    │
+    └──► TLS Certificate (X.509)
+```
+
+This hierarchy enables:
+- **Signing key**: Signs mesh messages, DHT records, and threat intelligence
+- **Tier keys**: Encrypt sensitive data at different privilege levels
+- **TLS certificates**: Secures mesh QUIC connections
+
+### Tier Key Encryption Scope
+
+Tier keys control access to sensitive mesh records:
+
+| Tier | Key Pattern | Encrypted Records |
+|------|-------------|-------------------|
+| **Tier 1** | Node-specific | Node metadata, peer reputation |
+| **Tier 2** | Site-specific | Upstream configurations, site routes |
+| **Tier 3** | Backend-specific | Backend credentials, internal services |
+
+Higher tiers provide more granular access control. A compromised key only affects records at its level.
+
+### 0-RTT Configuration
+
+QUIC 0-RTT allows clients to send data before the TLS handshake completes:
+
+```toml
+[mesh.tls]
+quic_enable_0rtt = false  # Default: false (disabled for security)
+```
+
+**Warning:** 0-RTT has replay attack risks. Only enable when:
+- The application handles replay detection
+- Early data latency is critical
+- Risk of replay attacks is acceptable
 
 ## Mesh Node Types
 

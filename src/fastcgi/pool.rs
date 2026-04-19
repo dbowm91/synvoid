@@ -98,7 +98,10 @@ impl FastCgiPool {
 
     pub fn start_drain(&self) {
         *self.draining.write() = true;
-        tracing::info!("FastCGI pool for {} entering drain mode", self.config.socket);
+        tracing::info!(
+            "FastCGI pool for {} entering drain mode",
+            self.config.socket
+        );
     }
 
     pub fn is_draining(&self) -> bool {

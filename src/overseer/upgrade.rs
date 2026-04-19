@@ -1177,7 +1177,7 @@ mod tests {
         assert!(!UpgradeState::RollingBack.is_terminal());
 
         assert!(UpgradeState::Staging.is_transition());
-        assert!(UpgradeState::Idle.is_transition());
+        assert!(!UpgradeState::Idle.is_transition());
     }
 
     #[test]

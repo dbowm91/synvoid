@@ -11,7 +11,7 @@ All notable changes to MaluWAF will be documented in this file.
 
 ### Added
 - HTTP/3 (QUIC) support
-- WireGuard VPN tunnel integration (removed)
+- WireGuard VPN tunnel integration (removed, use QUIC mesh instead)
 - WAF clustering with peer-to-peer communication
 - WASM plugin system for custom logic
 - Upload validation with YARA malware scanning

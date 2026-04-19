@@ -315,6 +315,93 @@ host_v6 = "::"
 alt_svc_max_age = 86400
 ```
 
+## TLS/SSL Configuration
+
+### Basic TLS Settings
+
+```toml
+[tls]
+enabled = true
+cert_path = "/etc/maluwaf/certs/server.crt"
+key_path = "/etc/maluwaf/certs/server.key"
+port = 443
+tls_1_3_only = true
+prefer_post_quantum = true
+```
+
+### Post-Quantum TLS
+
+MaluWAF supports hybrid post-quantum TLS key exchange for long-term security against quantum computers:
+
+```toml
+[tls]
+prefer_post_quantum = true  # Use hybrid PQ KEX (default: true)
+```
+
+When enabled, MaluWAF negotiates TLS connections using hybrid key exchange that combines:
+- Classical X25519 or ECDH
+- ML-KEM (post-quantum KEM)
+
+This provides security against both classical and quantum adversaries.
+
+### 0-RTT (Early Data)
+
+QUIC 0-RTT allows clients to send data before the TLS handshake completes, reducing latency for repeat connections:
+
+```toml
+[mesh.tls]
+quic_enable_0rtt = false  # Default: false (disabled for security)
+```
+
+**Security Note:** 0-RTT has replay attack risks. Only enable when the risk of replay attacks is acceptable for your use case.
+
+### TLS Passthrough
+
+For sites where TLS termination should happen at the origin server:
+
+```toml
+[[site.proxy]]
+host = "example.com"
+port = 443
+tls_passthrough = true  # Forward TLS traffic without decryption
+
+# Force WAF L7 inspection even with TLS passthrough
+tls_passthrough_enforce_waf = true
+```
+
+| Setting | Description |
+|---------|-------------|
+| `tls_passthrough` | Forward encrypted traffic directly to origin (bypasses WAF L7 inspection) |
+| `tls_passthrough_enforce_waf` | Apply WAF attack detection rules to passthrough traffic |
+| `tls_passthrough_warn_only` | Log WAF violations but don't block (for monitoring) |
+
+**Warning:** When `tls_passthrough = true` without `tls_passthrough_enforce_waf`, L7 attacks (SQLi, XSS, etc.) in encrypted traffic will not be detected. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
+
+### ACME (Let's Encrypt)
+
+Automatic certificate management via ACME protocol:
+
+```toml
+[tls.acme]
+enabled = true
+email = "admin@example.com"
+domains = ["example.com", "www.example.com"]
+cache_dir = "/var/lib/maluwaf/acme"
+challenge_type = "Http01"  # or "Dns01" (requires dns feature)
+terms_of_service_agreed = true  # Required for Let's Encrypt
+staging = false  # Use Let's Encrypt staging for testing
+```
+
+**Note:** You must set `terms_of_service_agreed = true` after reviewing the ACME provider's terms of service.
+
+### TLS Client Authentication (mTLS)
+
+```toml
+[tls.client_auth]
+enabled = false
+ca_cert_path = "/etc/maluwaf/certs/ca.crt"
+```
+
 ## Traffic Shaping
 
 ```toml
@@ -380,19 +467,7 @@ SCRIPT_NAME = "$fastcgi_script_name"
 
 ## WAF Clustering
 
-```toml
-[tunnel.waf_peers]
-enabled = true
-bind_address = "0.0.0.0"
-port = 5001
-allow_unauthenticated = false
-require_tls = true
-
-[tunnel.waf_peers.peers.waf2]
-address = "10.0.1.20:5001"
-auth_token = "shared-secret"
-weight = 100
-```
+> **Note:** WAF clustering is now handled via QUIC mesh networking. See [WAF_MESH.md](WAF_MESH.md) for details. The `[tunnel.waf_peers]` configuration has been removed.
 
 ## QUIC Tunnels
 

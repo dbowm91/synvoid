@@ -595,10 +595,12 @@ GLOBAL NODE updates rules
 
 **DHT Keys**:
 | Key Pattern | Purpose |
-|-------------|---------|
+|------------|---------|
 | `threat_indicator:{ip}:{threat_type}` | Per-type indicator (composite key, e.g., `threat_indicator:1.2.3.4:IpBlock`) |
 
 **Important**: ThreatIntel uses composite keys with threat_type suffix to prevent collision between different threat types for the same IP. A key without threat_type (e.g., `threat_indicator:1.2.3.4`) will NOT match.
+
+**User-facing documentation**: `docs/THREAT_INTEL.md` covers full ThreatIntel architecture for humans.
 
 **Signature Verification**:
 ThreatIntel indicators are signed using Ed25519. The signature content format is:

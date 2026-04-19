@@ -1829,7 +1829,9 @@ pub async fn update_tcp_udp_defaults_config(
         }
     }
     persist_main_config_and_notify(&state).await?;
-    Ok(Json(StatusResponse::success("TCP/UDP defaults config updated.")))
+    Ok(Json(StatusResponse::success(
+        "TCP/UDP defaults config updated.",
+    )))
 }
 
 // --- Fallback config ---

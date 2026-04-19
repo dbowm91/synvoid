@@ -7,60 +7,14 @@ MaluWAF supports multiple tunnel types for site-to-site connectivity and WAF clu
 1. **WAF Peers** - Peer-to-peer communication between WAF instances
 2. **QUIC Tunnels** - High-performance tunnels between WAF nodes
 
-## WAF Clustering (Peers)
+## WAF Clustering
 
-Connect multiple MaluWAF instances for shared threat intelligence and coordinated protection.
+> **Note:** WAF clustering is now handled via QUIC mesh networking. See the [WAF Mesh documentation](./WAF_MESH.md) for details on peer-to-peer communication between WAF instances using the mesh network.
 
-### Basic Configuration
-
-```toml
-[tunnel.waf_peers]
-enabled = true
-bind_address = "0.0.0.0"
-port = 5001
-allow_unauthenticated = false
-require_tls = true
-```
-
-### Peer Configuration
-
-```toml
-[tunnel.waf_peers.peers.waf2]
-address = "10.0.1.20:5001"
-auth_token = "shared-secret-between-wafs"
-weight = 100
-enabled = true
-```
-
-### TLS Configuration
-
-```toml
-[tunnel.waf_peers]
-client_cert_path = "/etc/maluwafwaf/certs/client.crt"
-client_key_path = "/etc/maluwafwaf/certs/client.key"
-ca_cert_path = "/etc/maluwafwaf/certs/ca.crt"
-```
-
-### Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable WAF peers |
-| `bind_address` | `"0.0.0.0"` | Bind address |
-| `port` | `5001` | Peer listen port |
-| `allow_unauthenticated` | `false` | Accept unauthenticated peers |
-| `require_tls` | `false` | Enforce TLS for connections |
-| `client_cert_path` | - | TLS client certificate |
-| `client_key_path` | - | TLS client key |
-| `ca_cert_path` | - | CA certificate for peer verification |
-
-### Shared Features
-
-When peers are connected:
-- **Blocklist Sharing** - Automatically share blocked IPs
-- **Attack Intelligence** - Share detected attack patterns
-- **Threat Level Sync** - Coordinate threat responses
-- **Statistics** - Aggregate metrics across cluster
+Previously, WAF clustering used a separate `[tunnel.waf_peers]` configuration. This has been replaced by the mesh networking layer which provides:
+- **Shared Threat Intelligence** - Automatic propagation of blocked IPs and attack patterns
+- **Coordinated Protection** - Real-time threat level synchronization across nodes
+- **Aggregated Metrics** - Statistics shared across the cluster
 
 ## QUIC Tunnels
 
