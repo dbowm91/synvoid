@@ -106,6 +106,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 | KyberSlash | `pqc_kyber` | RUSTSEC-2023-0079 | No fix | Used by wasm-pow for PoW challenges |
 | ~~Denial of Service~~ | ~~`quinn-proto`~~ | ~~RUSTSEC-2026-0037~~ | **Patched** | Fixed via git patch to 0.11.14 |
 | Winch compiler backend sandbox escape | `wasmtime` | RUSTSEC-2026-0095 | **Patched** | Updated to 42.0.2 |
+| Cranelift aarch64 sandbox escape | `wasmtime` 40.0.4 | RUSTSEC-2026-0096 | **Yanked** | Transitive via yara-x |
 
 ### Medium Severity
 
@@ -124,6 +125,37 @@ The following vulnerabilities exist in transitive dependencies and are documente
 | ~~`rustls-pemfile`~~ | ~~`rustls-pki-types`~~ | **Removed** | Migrated to rustls-pki-types PEM iterator |
 | `once_cell` | `std::sync::LazyLock` | **Removed** | Replaced with std library equivalent |
 | `unicode-segmentation` 1.13.1 | 1.13.2 | **Yanked** | Transitive dep; 1.13.1 yanked, 1.13.2 available |
+| `gimli` 0.33.1 | None | **Yanked** | Transitive via wasmtime; build warning only |
+
+### Cryptographic Dependencies
+
+| Crate | Version | Language | Purpose |
+|-------|---------|----------|---------|
+| `aws-lc-rs` | 1.16.2 | C (compiled) | TLS 1.3, ML-KEM, ML-DSA |
+| `ring` | 0.17.14 | Rust | DNS/QUIC (transitive via hickory/quinn) |
+| `libcrux-ml-dsa` | 0.0.8 | Pure Rust | ML-DSA signatures |
+| `pqc_kyber` | 0.7.1 | Pure Rust | ML-KEM key exchange |
+| `ed25519-dalek` | 2.1.0 | Pure Rust | Ed25519 signatures |
+| `x25519-dalek` | 2.0.0 | Pure Rust | X25519 key exchange |
+| `sha2`, `sha3` | 0.10 | Pure Rust | Hashing |
+| `hmac` | 0.12 | Pure Rust | HMAC |
+| `aes-gcm` | 0.10 | Pure Rust | AES-GCM |
+| `zeroize` | 1.8 | Pure Rust | Secret destruction |
+| `subtle` | 2.12 | Pure Rust | Constant-time ops |
+
+### Post-Quantum Crates
+
+| Crate | Algorithm | Location | Vulnerability |
+|-------|-----------|----------|----------------|
+| `pqc_kyber` | ML-KEM-768 | src/wasm_pow | RUSTSEC-2023-0079 (no fix) |
+| `libcrux-ml-dsa` | ML-DSA-65/87 | pqc/workspace | ✅ Secure |
+| `aws-lc-rs` | ML-KEM + ML-DSA | Cargo.toml | ✅ Secure |
+
+### NASM Not Used
+
+- **Status**: Confirmed - NASM assembler is NOT used
+- pqc_kyber uses pure Rust implementation (no `nasm` feature)
+- No C/asm additions at build time
 
 ---
 
@@ -179,12 +211,26 @@ The following vulnerabilities exist in transitive dependencies and are documente
 ### yara-x/rsa Exposure Assessment (RUSTSEC-2023-0071)
 - **Vulnerability**: Marvin Attack - potential key recovery through timing side-channels
 - **Exposure**: LOW
-- **Analysis**: 
+- **Analysis**:
   - The `rsa` crate is a transitive dependency via yara-x
   - yara-x uses RSA only for optional YARA rule signature verification
   - MaluWAF uses **ed25519-dalek** for YARA rule feed signature verification (not RSA)
   - The RSA functionality is loaded but never invoked in the current code path
 - **Recommendation**: No action required unless you enable RSA-based YARA rule signing
+
+### yara-x/wasmtime Transitive Vulnerability (RUSTSEC-2026-0096)
+- **Issue**: yara-x pulls wasmtime 40.0.4 which has multiple vulnerabilities
+- **Severity**: CRITICAL - wasmtime 40.0.4 is yanked
+- **Your direct version**: wasmtime 42.0.2 (secure) - direct dependency is fine
+- **Affected path**: yara-x → wasmtime 40.0.4 (transitive)
+- **Mitigation**: Wait for yara-x to update to wasmtime 42+; your direct dependency is secure
+- **Recommendation**: Monitor yara-x releases for update; current risk is acceptable
+
+### Post-Quantum Architecture
+- **Hybrid Key Exchange**: X25519 + pqc_kyber provides defense-in-depth
+- **ML-DSA**: Uses libcrux-ml-dsa (pure Rust) in pqc workspace
+- **TLS Post-Quantum**: Via aws-lc-rs feature in rustls
+- **Reference**: See `skills/crypto_dependencies.md` for full documentation
 
 ---
 
