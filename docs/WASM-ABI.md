@@ -226,6 +226,90 @@ Read an environment variable from the host.
 
 **Return**: Length written, or -1 if key not found.
 
+### `mesh_query_dht`
+
+```wat
+(import "env" "mesh_query_dht"
+  (func $mesh_query_dht
+    (param $key_ptr i32) (param $key_len i32)
+    (param $out_ptr i32) (param $out_max i32)
+    (result i32)))
+```
+
+Query the distributed hash table (DHT) for a record.
+
+**Parameters**:
+- `key_ptr/key_len`: DHT key to query (e.g., "serverless_function:my_func")
+- `out_ptr/out_max`: Output buffer for record value
+
+**Return**: Bytes written to output buffer, 0 if not found, -1 on error.
+
+**Example**:
+```wat
+;; Query for serverless function info
+i32.const 20  ;; key_ptr (example)
+i32.const 20  ;; key_len
+i32.const 1024  ;; out_ptr
+i32.const 4096  ;; out_max
+call $mesh_query_dht
+```
+
+### `mesh_check_threat`
+
+```wat
+(import "env" "mesh_check_threat"
+  (func $mesh_check_threat
+    (param $ip_ptr i32) (param $ip_len i32)
+    (result i32)))
+```
+
+Check if an IP address is blocked or marked as a threat in the mesh threat intelligence.
+
+**Parameters**:
+- `ip_ptr/ip_len`: IP address string (e.g., "192.168.1.1")
+
+**Return**: 1 if IP is threatened/blocked, 0 if clean, -1 on error.
+
+**Example**:
+```wat
+;; Check if client IP is a known threat
+i32.const 0  ;; ip_ptr (assumes IP string at start of memory)
+i32.const 15  ;; "192.168.1.100".len()
+call $mesh_check_threat
+i32.eqz
+if
+  ;; IP is clean, proceed
+end
+```
+
+### `mesh_emit_event`
+
+```wat
+(import "env" "mesh_emit_event"
+  (func $mesh_emit_event
+    (param $topic_ptr i32) (param $topic_len i32)
+    (param $data_ptr i32) (param $data_len i32)
+    (result i32)))
+```
+
+Emit an event to the mesh event system. Functions can subscribe to events via `event_subscriptions` config.
+
+**Parameters**:
+- `topic_ptr/topic_len`: Event topic name
+- `data_ptr/data_len`: Event payload data
+
+**Return**: 0 on success, -1 on error.
+
+**Example**:
+```wat
+;; Emit a custom event
+i32.const 256  ;; topic string location
+i32.const 6     ;; "myevent".len()
+i32.const 512   ;; data location
+i32.const 100   ;; data length
+call $mesh_emit_event
+```
+
 ## Header Serialization Format
 
 Headers are serialized into a compact binary format:
@@ -354,3 +438,4 @@ Metrics available:
 | Version | Changes |
 |---------|---------|
 | 1.0 | Initial stable ABI with filter_request, transform_response, handle_request |
+| 1.1 | Added mesh host functions: mesh_query_dht, mesh_check_threat, mesh_emit_event |

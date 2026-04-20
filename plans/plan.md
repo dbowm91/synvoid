@@ -598,7 +598,7 @@ cargo test
 
 ## Wave D: Serverless Architecture Improvements
 
-**Status**: ⚠️ PARTIAL (8 items implemented, 3 items deferred)
+**Status**: ⚠️ PARTIAL (9 items implemented, 2 items deferred)
 
 **Source**: plan6.md, plan7.md
 
@@ -608,9 +608,9 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | ⏸️ DEFERRED (requires site config integration) |
+| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | ⏸️ DEFERRED (requires site config integration; target site level) |
 | D.1.2 | ABI Enhancements: Add `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions | src/plugin/wasm_runtime.rs | ✅ COMPLETED (3 new host functions added to linker: mesh_query_dht, mesh_check_threat, mesh_emit_event; global record store set via set_global_record_store()) |
-| D.1.3 | Documentation: Update docs/WASM-ABI.md for new capabilities | docs/WASM-ABI.md | ⏸️ DEFERRED |
+| D.1.3 | Documentation: Update docs/WASM-ABI.md for new capabilities | docs/WASM-ABI.md | ✅ COMPLETED (added documentation for mesh_query_dht, mesh_check_threat, mesh_emit_event; version 1.1) |
 
 ### Phase D.2: Mesh Integration & Function Discovery
 
