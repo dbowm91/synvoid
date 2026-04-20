@@ -942,7 +942,8 @@ pub async fn run_unified_server_worker(
 
                     // Wire record store for YARA rules DHT distribution
                     if let Some(record_store) = transport_manager.get_record_store() {
-                        yara_rules.set_record_store(record_store);
+                        yara_rules.set_record_store(record_store.clone());
+                        crate::mesh::set_global_record_store(record_store);
                     }
 
                     // Get elevated threat level for feed polling interval
@@ -1084,6 +1085,10 @@ pub async fn run_unified_server_worker(
             if let Some(rs) = tm.get_record_store() {
                 sm.set_record_store(rs);
                 tracing::info!("Serverless manager wired to DHT record store");
+            }
+            if let Some(quic) = tm.get_quic_transport() {
+                sm.set_transport(quic.get_inner());
+                tracing::info!("Serverless manager wired to mesh transport");
             }
         }
     }

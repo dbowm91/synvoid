@@ -53,6 +53,8 @@ pub mod verification;
 pub mod wasm_dist;
 pub mod yara_rules;
 
+use std::sync::Arc;
+
 pub use crate::utils::{safe_unix_duration, safe_unix_timestamp};
 
 pub use audit::{
@@ -132,6 +134,17 @@ pub use wasm_dist::{
     get_global_wasm_dist_manager, set_global_wasm_dist_manager, WasmDistManager, WasmModuleStore,
     WasmStoreError,
 };
+
+static RECORD_STORE_GLOBAL: std::sync::LazyLock<parking_lot::RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>> =
+    std::sync::LazyLock::new(|| parking_lot::RwLock::new(None));
+
+pub fn set_global_record_store(store: Arc<crate::mesh::dht::RecordStoreManager>) {
+    *RECORD_STORE_GLOBAL.write() = Some(store);
+}
+
+pub fn get_global_record_store() -> Option<Arc<crate::mesh::dht::RecordStoreManager>> {
+    RECORD_STORE_GLOBAL.read().clone()
+}
 pub use yara_rules::{
     YaraRuleSource, YaraRuleSubmission, YaraRuleSubmissionStatus, YaraRuleVersionInfo,
     YaraRulesManager, YaraRulesStats,

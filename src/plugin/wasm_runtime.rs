@@ -558,6 +558,146 @@ impl WasmRuntime {
             )
             .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link get_env: {}", e)))?;
 
+        // Provide env::mesh_query_dht(host_function) -> i32
+        // Signature: mesh_query_dht(key_ptr, key_len, out_ptr, out_max) -> bytes_written
+        linker
+            .func_wrap(
+                "env",
+                "mesh_query_dht",
+                |mut caller: wasmtime::Caller<'_, RequestContext>,
+                 key_ptr: i32,
+                 key_len: i32,
+                 out_ptr: i32,
+                 out_max: i32|
+                 -> i32 {
+                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let mem_data = mem.data(&caller);
+
+                    let key_start = key_ptr as usize;
+                    let key_end = key_start.saturating_add(key_len as usize);
+                    if key_end > mem_data.len() {
+                        return -1;
+                    }
+
+                    let key = String::from_utf8_lossy(&mem_data[key_start..key_end]).to_string();
+
+                    let result = if let Some(rs) = crate::mesh::get_global_record_store() {
+                        if let Some(record) = rs.get_record(&key) {
+                            let value = &record.value;
+                            let value_len = value.len().min(out_max as usize);
+                            let out_start = out_ptr as usize;
+                            let out_end = out_start.saturating_add(value_len);
+                            if out_end <= mem_data.len() {
+                                unsafe {
+                                    let mem_ptr = mem.data_ptr(&caller) as *mut u8;
+                                    std::slice::from_raw_parts_mut(mem_ptr.add(out_start), out_end - out_start)
+                                        .copy_from_slice(&value[..value_len]);
+                                }
+                                value_len as i32
+                            } else {
+                                -1
+                            }
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    if result > 0 {
+                        tracing::debug!("WASM mesh_query_dht('{}') -> {} bytes", key, result);
+                    }
+                    result
+                },
+            )
+            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link mesh_query_dht: {}", e)))?;
+
+        // Provide env::mesh_check_threat(ip_ptr, ip_len) -> i32
+        // Returns: 1 if IP is blocked/threatened, 0 if clean, -1 on error
+        linker
+            .func_wrap(
+                "env",
+                "mesh_check_threat",
+                |mut caller: wasmtime::Caller<'_, RequestContext>, ip_ptr: i32, ip_len: i32|
+                 -> i32 {
+                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let mem_data = mem.data(&caller);
+
+                    let ip_start = ip_ptr as usize;
+                    let ip_end = ip_start.saturating_add(ip_len as usize);
+                    if ip_end > mem_data.len() {
+                        return -1;
+                    }
+
+                    let ip_str = String::from_utf8_lossy(&mem_data[ip_start..ip_end]).to_string();
+
+                    if let Some(rs) = crate::mesh::get_global_record_store() {
+                        let key = format!("threat_indicator:{}:IpBlock", ip_str);
+                        if rs.get_record(&key).is_some() {
+                            tracing::debug!("WASM mesh_check_threat('{}') -> THREATENED", ip_str);
+                            return 1;
+                        }
+                    }
+
+                    tracing::debug!("WASM mesh_check_threat('{}') -> CLEAN", ip_str);
+                    0
+                },
+            )
+            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link mesh_check_threat: {}", e)))?;
+
+        // Provide env::mesh_emit_event(topic_ptr, topic_len, data_ptr, data_len) -> i32
+        // Returns: 0 on success, -1 on error
+        linker
+            .func_wrap(
+                "env",
+                "mesh_emit_event",
+                |mut caller: wasmtime::Caller<'_, RequestContext>,
+                 topic_ptr: i32,
+                 topic_len: i32,
+                 data_ptr: i32,
+                 data_len: i32|
+                 -> i32 {
+                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let mem_data = mem.data(&caller);
+
+                    let topic_start = topic_ptr as usize;
+                    let topic_end = topic_start.saturating_add(topic_len as usize);
+                    if topic_end > mem_data.len() {
+                        return -1;
+                    }
+
+                    let data_start = data_ptr as usize;
+                    let data_end = data_start.saturating_add(data_len as usize);
+                    if data_end > mem_data.len() {
+                        return -1;
+                    }
+
+                    let topic = String::from_utf8_lossy(&mem_data[topic_start..topic_end]).to_string();
+                    let data = mem_data[data_start..data_end].to_vec();
+
+                    tracing::debug!("WASM mesh_emit_event('{}', {} bytes)", topic, data.len());
+
+                    if let Some(rs) = crate::mesh::get_global_record_store() {
+                        let key = format!("event:{}", topic);
+                        if let Ok(bytes) = serde_json::to_vec(&data) {
+                            rs.store_and_announce(key, bytes, 300);
+                        }
+                    }
+
+                    0
+                },
+            )
+            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link mesh_emit_event: {}", e)))?;
+
         let instance = linker
             .instantiate(&mut *store, &self.module)
             .map_err(|e| WasmPluginError::ExecutionFailed(format!("instantiate failed: {}", e)))?;

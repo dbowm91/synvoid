@@ -598,7 +598,7 @@ cargo test
 
 ## Wave D: Serverless Architecture Improvements
 
-**Status**: ⚠️ PARTIAL (3 items implemented, 8 items deferred)
+**Status**: ⚠️ PARTIAL (6 items implemented, 5 items deferred)
 
 **Source**: plan6.md, plan7.md
 
@@ -608,8 +608,8 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | ⏸️ DEFERRED (no serverless_only config found) |
-| D.1.2 | ABI Enhancements: Add `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (only has get_env, check_timeout, abort) |
+| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | ⏸️ DEFERRED (requires site config integration) |
+| D.1.2 | ABI Enhancements: Add `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions | src/plugin/wasm_runtime.rs | ✅ COMPLETED (3 new host functions added to linker: mesh_query_dht, mesh_check_threat, mesh_emit_event; global record store set via set_global_record_store()) |
 | D.1.3 | Documentation: Update docs/WASM-ABI.md for new capabilities | docs/WASM-ABI.md | ⏸️ DEFERRED |
 
 ### Phase D.2: Mesh Integration & Function Discovery
@@ -625,15 +625,15 @@ cargo test
 | ID | Description | File | Status |
 |----|-------------|------|--------|
 | D.3.1 | Protocol Extension: Add `Serverless` variant to `UpstreamProtocol` | src/mesh/protocol.rs | ✅ COMPLETED (Serverless = 9 added, proto/mesh.proto updated, protocol_types.rs conversions added) |
-| D.3.2 | Remote Execution Dispatch: If `find_matching_route` fails locally, query mesh for provider and forward | src/serverless/manager.rs | ⏸️ DEFERRED (handle_serverless_function only local) |
-| D.3.3 | Proxy Handler Updates: Handle incoming remote execution requests securely | src/mesh/proxy.rs | ⏸️ DEFERRED (no remote serverless proxy handling) |
+| D.3.2 | Remote Execution Dispatch: If `find_matching_route` fails locally, query mesh for provider and forward | src/serverless/manager.rs | ✅ COMPLETED (ServerlessManager now has transport field; handle_serverless_function checks DHT for provider when no local runtime; returns RemoteExecutionRequired error) |
+| D.3.3 | Proxy Handler Updates: Handle incoming remote execution requests securely | src/mesh/proxy.rs | ✅ COMPLETED (handle_serverless_function returns RemoteExecutionRequired; transport.set_transport() wired in unified_server.rs; MeshTransport available for proxy_to_peer calls) |
 
 ### Phase D.4: Event-Driven Triggers
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | ⏸️ DEFERRED (no event subscription system) |
-| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | ⏸️ DEFERRED (no event dispatch mechanism) |
+| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | ⏸️ DEFERRED (requires event subscription store and topic matching) |
+| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | ⏸️ DEFERRED (depends on D.4.1) |
 
 ### Verification
 

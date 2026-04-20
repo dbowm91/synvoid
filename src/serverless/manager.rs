@@ -27,6 +27,8 @@ pub enum ServerlessError {
     Disabled,
     #[error("No matching route found for: {0}")]
     NoMatchingRoute(String),
+    #[error("Remote execution required for: {0}")]
+    RemoteExecutionRequired(String),
 }
 
 #[derive(Clone)]
@@ -43,6 +45,7 @@ pub struct ServerlessManager {
     routes: RwLock<Vec<ServerlessRoute>>,
     record_store: RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
     routing_manager: RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
+    transport: RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>,
 }
 
 impl ServerlessManager {
@@ -55,6 +58,7 @@ impl ServerlessManager {
             routes: RwLock::new(Vec::new()),
             record_store: RwLock::new(None),
             routing_manager: RwLock::new(None),
+            transport: RwLock::new(None),
         }
     }
 
@@ -69,6 +73,10 @@ impl ServerlessManager {
 
     pub fn set_routing_manager(&self, manager: Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>) {
         *self.routing_manager.write() = Some(manager);
+    }
+
+    pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
+        *self.transport.write() = Some(transport);
     }
 
     pub fn initialize(&self, config: ServerlessConfig) -> Result<(), ServerlessError> {
@@ -356,6 +364,24 @@ pub async fn handle_serverless_function(
         function_name,
         route.priority
     );
+
+    // Check if we have a local WASM runtime for this function
+    let has_local_runtime = function.runtime.is_some()
+        || manager.pools.read().contains_key(&function_name);
+
+    // If no local runtime, try to find a provider via DHT
+    if !has_local_runtime {
+        let upstream_id = format!("serverless:{}", function_name);
+        if let Some(rs) = manager.record_store.read().as_ref() {
+            if rs.get_record(&upstream_id).is_some() {
+                tracing::debug!(
+                    "Serverless function '{}' not local, found provider in DHT",
+                    function_name
+                );
+                return Err(ServerlessError::RemoteExecutionRequired(upstream_id));
+            }
+        }
+    }
 
     let pool = manager.pools.read().get(&function_name).cloned();
 
