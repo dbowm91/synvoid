@@ -699,14 +699,14 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.2.1 | When `UploadValidator` detects malware, extract client IP | src/http/server.rs | ⏸️ DEFERRED (malware detection exists, threat intel integration not wired) |
-| F.2.2 | Call `threat_intel.announce_local_block(client_ip, reason, ttl, site_scope)` | src/http/server.rs | ⏸️ DEFERRED (blocked by F.2.1) |
+| F.2.1 | When `UploadValidator` detects malware, extract client IP | src/http/server.rs | ✅ COMPLETED (client_ip extracted from request, block_ip_with_threat_intel called) |
+| F.2.2 | Call `threat_intel.announce_local_block(client_ip, reason, ttl, site_scope)` | src/http/server.rs | ✅ COMPLETED (waf.block_ip_with_threat_intel() called with malware_upload reason, 3600s TTL) |
 
 ### Phase F.3: Integrate Malware Detection with Threat Intel (TLS)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.3.1 | Apply same logic as F.2 for HTTPS uploads | src/tls/server.rs | ⏸️ DEFERRED (blocked by F.2.x) |
+| F.3.1 | Apply same logic as F.2 for HTTPS uploads | src/tls/server.rs | ✅ COMPLETED (client_ip extracted, block_ip_with_threat_intel called with site_id) |
 
 ### Phase F.4: YARA Distribution Enhancements
 
