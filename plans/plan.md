@@ -646,7 +646,7 @@ cargo test
 
 ## Wave E: Edge Node Caching and Image Poisoning
 
-**Status**: ⚠️ PARTIAL (2 items implemented, 4 not implemented, 1 partial)
+**Status**: ⚠️ PARTIAL (4 items completed, 3 items deferred)
 
 **Source**: plan8.md
 
@@ -656,16 +656,16 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| E.1.1 | Remove `apply_response_transforms` method from origin node | src/mesh/transport_peer.rs | ⚠️ PARTIAL (method exists but only performs minification, not image poisoning) |
-| E.1.2 | Simplify `handle_http_proxy_stream` to send raw `full_response` back to edge | src/mesh/transport_peer.rs | ⚠️ PARTIAL (applies minification, falls back to raw on error) |
+| E.1.1 | Remove `apply_response_transforms` method from origin node | src/mesh/transport_peer.rs | ⏸️ DEFERRED (origin minification is "safe" optimization, image poisoning not implemented by design) |
+| E.1.2 | Simplify `handle_http_proxy_stream` to send raw `full_response` back to edge | src/mesh/transport_peer.rs | ⏸️ DEFERRED (applies minification, falls back to raw on error) |
 
 ### Phase E.2: Standalone Mode Configuration Fix
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| E.2.1 | Modify `apply_image_poisoning` to accept optional `SiteImagePoisonConfig` reference | src/http/server.rs | ⏸️ DEFERRED (signature is 3 params, proxy.rs correctly uses 6 params) |
-| E.2.2 | Pass configuration fields to `PoisonImageClient` instead of hardcoding `None` | src/http/server.rs | ⏸️ DEFERRED (all None passed at server.rs:3639-3649) |
-| E.2.3 | Update all call sites to pass appropriate config (DHT via `MeshTransportManager` or `site_config`) | src/http/server.rs | ⏸️ DEFERRED (3 call sites at 1974, 2674, 2746 use old signature) |
+| E.2.1 | Modify `apply_image_poisoning` to accept optional `SiteImagePoisonConfig` reference | src/http/server.rs | ✅ COMPLETED (signature updated, accepts poison_config param) |
+| E.2.2 | Pass configuration fields to `PoisonImageClient` instead of hardcoding `None` | src/http/server.rs | ✅ COMPLETED (passes level, intensity, seed, max_dimension, jpeg_quality) |
+| E.2.3 | Update all call sites to pass appropriate config (DHT via `MeshTransportManager` or `site_config`) | src/http/server.rs | ✅ COMPLETED (3 call sites: line 1974 FastCGI, line 2676 mesh, line 2749 static) |
 
 ### Phase E.3: Edge Node Verification
 

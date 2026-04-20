@@ -1975,6 +1975,7 @@ impl HttpServer {
                                                 body,
                                                 site_id.to_string(),
                                                 None,
+                                                Some(image_poison_config),
                                             )
                                             .await;
                                         }
@@ -2622,9 +2623,10 @@ impl HttpServer {
                             .and_then(|v: &http::HeaderValue| v.to_str().ok());
 
                         if let Some(ref mt) = mesh_transport {
-                            let (minification, image_protection, compression) = tokio::join!(
+                            let (minification, image_protection, image_poison_config, compression) = tokio::join!(
                                 mt.get_minification_for_site(&site_id),
                                 mt.get_image_protection_for_site(&site_id),
+                                mt.get_image_poison_config_for_site(&site_id),
                                 mt.get_compression_for_site(&site_id),
                             );
 
@@ -2675,6 +2677,7 @@ impl HttpServer {
                                             body,
                                             site_id_for_poison,
                                             last_modified.clone(),
+                                            image_poison_config.as_ref(),
                                         )
                                         .await;
                                         body_len = body.len() as u64;
@@ -2747,6 +2750,7 @@ impl HttpServer {
                                             body,
                                             site_id_for_poison,
                                             last_modified.clone(),
+                                            Some(image_poison_config),
                                         )
                                         .await;
                                         body_len = body.len() as u64;
@@ -3607,6 +3611,7 @@ impl HttpServer {
         body: Bytes,
         site_id: String,
         last_modified: Option<String>,
+        poison_config: Option<&crate::config::site::SiteImagePoisonConfig>,
     ) -> Bytes {
         if body.is_empty() {
             return body;
@@ -3641,11 +3646,11 @@ impl HttpServer {
                 &site_id,
                 body.to_vec(),
                 last_modified,
-                None,
-                None,
-                None,
-                None,
-                None,
+                poison_config.and_then(|c| c.level.clone()),
+                poison_config.and_then(|c| c.intensity),
+                poison_config.and_then(|c| c.seed),
+                poison_config.and_then(|c| c.max_dimension),
+                poison_config.and_then(|c| c.jpeg_quality),
             )
             .await
         {
