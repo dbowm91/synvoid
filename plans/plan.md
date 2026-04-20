@@ -598,7 +598,7 @@ cargo test
 
 ## Wave D: Serverless Architecture Improvements
 
-**Status**: ⚠️ PARTIAL (6 items implemented, 5 items deferred)
+**Status**: ⚠️ PARTIAL (8 items implemented, 3 items deferred)
 
 **Source**: plan6.md, plan7.md
 
@@ -632,8 +632,8 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | ⏸️ DEFERRED (requires event subscription store and topic matching) |
-| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | ⏸️ DEFERRED (depends on D.4.1) |
+| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | ✅ COMPLETED (event_subscriptions HashMap added; subscribe_to_event/unsubscribe_from_event/get_subscribed_functions methods; event_subscriptions config field added to FunctionDefinition) |
+| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | ✅ COMPLETED (publish_event method spawns async tasks to invoke WASM handlers for each subscriber with /_events/{topic} path) |
 
 ### Verification
 

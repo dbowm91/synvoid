@@ -55,6 +55,8 @@ pub struct FunctionDefinition {
     pub description: Option<String>,
     #[serde(default)]
     pub allowed_methods: Option<Vec<String>>,
+    #[serde(default)]
+    pub event_subscriptions: Option<Vec<String>>,
 }
 
 fn default_handler_name() -> String {

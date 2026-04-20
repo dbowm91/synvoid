@@ -46,6 +46,7 @@ pub struct ServerlessManager {
     record_store: RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
     routing_manager: RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
     transport: RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>,
+    event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
 }
 
 impl ServerlessManager {
@@ -59,6 +60,7 @@ impl ServerlessManager {
             record_store: RwLock::new(None),
             routing_manager: RwLock::new(None),
             transport: RwLock::new(None),
+            event_subscriptions: RwLock::new(HashMap::new()),
         }
     }
 
@@ -77,6 +79,73 @@ impl ServerlessManager {
 
     pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
         *self.transport.write() = Some(transport);
+    }
+
+    pub fn subscribe_to_event(&self, function_name: &str, topic: String) {
+        let mut subs = self.event_subscriptions.write();
+        subs.entry(topic.clone()).or_insert_with(Vec::new);
+        if let Some(funcs) = subs.get_mut(&topic) {
+            if !funcs.contains(&function_name.to_string()) {
+                funcs.push(function_name.to_string());
+                tracing::debug!("Function '{}' subscribed to event topic '{}'", function_name, topic);
+            }
+        }
+    }
+
+    pub fn unsubscribe_from_event(&self, function_name: &str, topic: &str) {
+        let mut subs = self.event_subscriptions.write();
+        if let Some(funcs) = subs.get_mut(topic) {
+            funcs.retain(|f| f != function_name);
+            tracing::debug!("Function '{}' unsubscribed from event topic '{}'", function_name, topic);
+        }
+    }
+
+    pub fn get_subscribed_functions(&self, topic: &str) -> Vec<String> {
+        self.event_subscriptions
+            .read()
+            .get(topic)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn publish_event(&self, topic: &str, payload: &[u8]) {
+        let subscribers = self.get_subscribed_functions(topic);
+        if subscribers.is_empty() {
+            return;
+        }
+
+        tracing::debug!("Publishing event to topic '{}' for {} subscribers", topic, subscribers.len());
+
+        let pools = self.pools.read().clone();
+        let functions = self.functions.read().clone();
+        let topic_owned = topic.to_string();
+
+        for function_name in subscribers {
+            if let Some(function) = functions.get(&function_name) {
+                if let Some(pool) = pools.get(&function_name) {
+                    let payload = payload.to_vec();
+                    let function_name = function_name.clone();
+                    let pool = pool.clone();
+                    let env = function.definition.env.clone();
+                    let topic_for_spawn = topic_owned.clone();
+                    tokio::spawn(async move {
+                        if let Ok(instance) = pool.get_instance().await {
+                            let result = instance.instance.invoke_handler(
+                                "POST",
+                                &format!("/_events/{}", topic_for_spawn),
+                                &String::new(),
+                                &payload,
+                                env,
+                            );
+                            if result.is_ok() {
+                                tracing::debug!("Event dispatched to function '{}'", function_name);
+                            }
+                            pool.return_instance(&instance.id);
+                        }
+                    });
+                }
+            }
+        }
     }
 
     pub fn initialize(&self, config: ServerlessConfig) -> Result<(), ServerlessError> {
@@ -134,6 +203,17 @@ impl ServerlessManager {
                 });
 
                 self.pools.write().insert(func_def.name.clone(), pool);
+
+                if let Some(ref topics) = func_def.event_subscriptions {
+                    for topic in topics {
+                        self.subscribe_to_event(&func_def.name, topic.clone());
+                    }
+                    tracing::debug!(
+                        "Function '{}' subscribed to {} event topics",
+                        func_def.name,
+                        topics.len()
+                    );
+                }
             }
 
             let record_store = self.record_store.read().clone();
