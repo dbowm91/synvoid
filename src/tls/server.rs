@@ -887,9 +887,16 @@ impl HttpsServer {
                                         if !result.is_clean() {
                                             tracing::warn!(
                                                 path = %path,
+                                                client_ip = %client_ip,
                                                 mime_type = %result.mime_type,
                                                 matches = ?result.yara_matches,
-                                                "Upload blocked due to malware detection"
+                                                "Malware detected in upload, blocking client IP"
+                                            );
+                                            waf.block_ip_with_threat_intel(
+                                                client_ip,
+                                                "malware_upload",
+                                                3600,
+                                                &site_id,
                                             );
                                             let body = waf.error_page_manager.render_page(
                                                 403,
@@ -903,12 +910,7 @@ impl HttpsServer {
                                         }
                                     }
                                     Err(e) => {
-                                        tracing::warn!(
-                                            path = %path,
-                                            error = %e,
-                                            "Upload validation failed"
-                                        );
-                                        let (status, _message) = match &e {
+                                        let (status, message) = match &e {
                                             crate::upload::UploadValidationError::SizeExceeded { .. } => (
                                                 413,
                                                 "Upload size exceeds maximum allowed",
@@ -917,14 +919,34 @@ impl HttpsServer {
                                                 415,
                                                 "Upload file type not allowed",
                                             ),
+                                            crate::upload::UploadValidationError::MalwareDetected { matches } => {
+                                                tracing::warn!(
+                                                    path = %path,
+                                                    client_ip = %client_ip,
+                                                    matches = ?matches,
+                                                    "Malware detected in upload, blocking client IP"
+                                                );
+                                                waf.block_ip_with_threat_intel(
+                                                    client_ip,
+                                                    "malware_upload",
+                                                    3600,
+                                                    &site_id,
+                                                );
+                                                (403, "Upload blocked: malware detected")
+                                            }
                                             _ => (
                                                 400,
                                                 "Upload validation failed",
                                             ),
                                         };
+                                        tracing::warn!(
+                                            path = %path,
+                                            error = %e,
+                                            "Upload validation failed"
+                                        );
                                         let body = waf
                                             .error_page_manager
-                                            .render_page(status, Some(&e.to_string()));
+                                            .render_page(status, Some(message));
                                         return Ok(Self::build_response(status, body, "text/html"));
                                     }
                                 }
