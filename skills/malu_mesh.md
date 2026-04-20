@@ -77,6 +77,7 @@ Examples:
 | `capability_attestation:{node_id}:{capability}` | Signed capability attestation | 24 hours |
 | `genesis_key_transition:{sequence}` | Genesis key rotation record | 24 hours |
 | `revoked_global_node:{node_id}` | Revoked global node | 24 hours |
+| `serverless_function:{name}` | Serverless function registration | 1 hour |
 
 ## Routing Flow
 

@@ -147,7 +147,7 @@ impl ServerlessManager {
                             let result = instance.instance.invoke_handler(
                                 "POST",
                                 &format!("/_events/{}", topic_for_spawn),
-                                &String::new(),
+                                "",
                                 &payload,
                                 env,
                             );
@@ -358,6 +358,7 @@ impl ServerlessManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn register_function_dht(&self, func_def: &FunctionDefinition) {
         let store = self.record_store.read().clone();
         if let Some(rs) = store {
@@ -379,6 +380,7 @@ impl ServerlessManager {
         }
     }
 
+    #[allow(dead_code)]
     async fn register_function_routing(&self, func_def: &FunctionDefinition) {
         let rm = self.routing_manager.read().clone();
         if let Some(routing) = rm {
