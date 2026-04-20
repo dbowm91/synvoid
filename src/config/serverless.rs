@@ -57,6 +57,14 @@ pub struct FunctionDefinition {
     pub allowed_methods: Option<Vec<String>>,
     #[serde(default)]
     pub event_subscriptions: Option<Vec<String>>,
+    #[serde(default)]
+    pub allowed_callers: Option<Vec<String>>,
+    #[serde(default)]
+    pub allowed_orgs: Option<Vec<String>>,
+    #[serde(default)]
+    pub require_trusted_caller: bool,
+    #[serde(default)]
+    pub min_tier_level: Option<u32>,
 }
 
 fn default_handler_name() -> String {

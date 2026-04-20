@@ -2175,6 +2175,30 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::ServerlessInvokeRequest(msg) => {
+                let permission_claim = msg.permission_claim.as_ref().map(|pc| {
+                    proto::ServerlessPermissionClaim {
+                        function_name: pc.function_name.clone(),
+                        caller_node_id: pc.caller_node_id.clone(),
+                        caller_org_id: pc.caller_org_id.clone(),
+                        timestamp: pc.timestamp,
+                        nonce: pc.nonce.clone(),
+                        signature: pc.signature.clone(),
+                    }
+                });
+                proto::MeshMessage {
+                    message_type: 150,
+                    payload: Some(proto::mesh_message::Payload::ServerlessInvokeRequest(
+                        proto::ServerlessInvokeRequest {
+                            function_name: msg.function_name.clone(),
+                            caller_node_id: msg.caller_node_id.clone(),
+                            timestamp: msg.timestamp,
+                            call_signature: msg.call_signature.clone(),
+                            permission_claim,
+                        },
+                    )),
+                }
+            }
             MeshMessage::UpstreamOwnershipChallenge {
                 request_id,
                 upstream_id,

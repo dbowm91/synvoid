@@ -1369,6 +1369,27 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     },
                 ))
             }
+            proto::mesh_message::Payload::ServerlessInvokeRequest(r) => {
+                let permission_claim = r.permission_claim.as_ref().map(|pc| {
+                    crate::mesh::protocol::ServerlessPermissionClaim {
+                        function_name: pc.function_name.clone(),
+                        caller_node_id: pc.caller_node_id.clone(),
+                        caller_org_id: pc.caller_org_id.clone(),
+                        timestamp: pc.timestamp,
+                        nonce: pc.nonce.clone(),
+                        signature: pc.signature.clone(),
+                    }
+                });
+                Ok(MeshMessage::ServerlessInvokeRequest(
+                    crate::mesh::protocol::ServerlessInvokeRequest {
+                        function_name: r.function_name.clone(),
+                        caller_node_id: r.caller_node_id.clone(),
+                        timestamp: r.timestamp,
+                        call_signature: r.call_signature.clone(),
+                        permission_claim,
+                    },
+                ))
+            }
             proto::mesh_message::Payload::UpstreamOwnershipChallenge(r) => {
                 let challenge_type = match r.challenge_type {
                     Some(ct) => match ct.challenge {

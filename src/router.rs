@@ -1169,6 +1169,7 @@ impl SiteConfig {
             tunnel: Default::default(),
             app_server: Default::default(),
             serverless: Default::default(),
+            serverless_only: Default::default(),
             image_poison: Default::default(),
             file_manager: Default::default(),
         }

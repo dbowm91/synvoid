@@ -274,6 +274,7 @@ message MeshMessage {
         SiteTlsCertSync site_tls_cert_sync = 137;
         SiteTlsCertRequest site_tls_cert_request = 138;
         SiteTlsCertResponse site_tls_cert_response = 139;
+        ServerlessInvokeRequest serverless_invoke_request = 150;
     }
 }
 
@@ -1446,4 +1447,21 @@ message SiteTlsCertResponse {
     bytes signature = 4;
     optional string signer_public_key = 5;
     repeated SiteTlsCertEntry certs = 6;
+}
+
+message ServerlessPermissionClaim {
+    string function_name = 1;
+    string caller_node_id = 2;
+    optional string caller_org_id = 3;
+    uint64 timestamp = 4;
+    string nonce = 5;
+    bytes signature = 6;
+}
+
+message ServerlessInvokeRequest {
+    string function_name = 1;
+    string caller_node_id = 2;
+    uint64 timestamp = 3;
+    bytes call_signature = 4;
+    optional ServerlessPermissionClaim permission_claim = 5;
 }

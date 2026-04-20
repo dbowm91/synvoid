@@ -29,6 +29,8 @@ pub enum ServerlessError {
     NoMatchingRoute(String),
     #[error("Remote execution required for: {0}")]
     RemoteExecutionRequired(String),
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
 }
 
 #[derive(Clone)]
@@ -47,6 +49,8 @@ pub struct ServerlessManager {
     routing_manager: RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
     transport: RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>,
     event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
+    org_manager: RwLock<Option<Arc<crate::mesh::organization::OrganizationManager>>>,
+    revocation_list: RwLock<Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>>,
 }
 
 impl ServerlessManager {
@@ -61,6 +65,8 @@ impl ServerlessManager {
             routing_manager: RwLock::new(None),
             transport: RwLock::new(None),
             event_subscriptions: RwLock::new(HashMap::new()),
+            org_manager: RwLock::new(None),
+            revocation_list: RwLock::new(None),
         }
     }
 
@@ -75,6 +81,14 @@ impl ServerlessManager {
 
     pub fn set_routing_manager(&self, manager: Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>) {
         *self.routing_manager.write() = Some(manager);
+    }
+
+    pub fn set_org_manager(&self, manager: Arc<crate::mesh::organization::OrganizationManager>) {
+        *self.org_manager.write() = Some(manager);
+    }
+
+    pub fn set_revocation_list(&self, list: Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>) {
+        *self.revocation_list.write() = Some(list);
     }
 
     pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
@@ -146,6 +160,97 @@ impl ServerlessManager {
                 }
             }
         }
+    }
+
+    pub fn verify_caller_permission(
+        &self,
+        function_name: &str,
+        caller_node_id: &str,
+        caller_role: crate::mesh::config::MeshNodeRole,
+        caller_org_id: Option<&str>,
+        caller_tier: Option<u32>,
+    ) -> Result<(), ServerlessError> {
+        let functions_guard = self.functions.read();
+        let function = functions_guard.get(function_name)
+            .ok_or_else(|| ServerlessError::FunctionNotFound(function_name.to_string()))?;
+
+        let def = &function.definition;
+
+        if let Some(ref revocation_list) = *self.revocation_list.read() {
+            if let Some(info) = revocation_list.is_node_revoked(caller_node_id) {
+                return Err(ServerlessError::PermissionDenied(format!(
+                    "Node {} is revoked: {}", caller_node_id, info.reason
+                )));
+            }
+        }
+
+        if def.require_trusted_caller {
+            if !caller_role.is_global() {
+                return Err(ServerlessError::PermissionDenied(format!(
+                    "Function {} requires trusted (global) caller, but node {} is not global",
+                    function_name, caller_node_id
+                )));
+            }
+        }
+
+        if let Some(ref allowed_callers) = def.allowed_callers {
+            if !allowed_callers.is_empty() && !allowed_callers.contains(&caller_node_id.to_string()) {
+                return Err(ServerlessError::PermissionDenied(format!(
+                    "Node {} not in allowed callers list for function {}",
+                    caller_node_id, function_name
+                )));
+            }
+        }
+
+        if let Some(ref allowed_orgs) = def.allowed_orgs {
+            if !allowed_orgs.is_empty() {
+                let caller_org = caller_org_id.ok_or_else(|| {
+                    ServerlessError::PermissionDenied(format!(
+                        "Function {} requires org membership, but caller {} has no org",
+                        function_name, caller_node_id
+                    ))
+                })?;
+                if !allowed_orgs.contains(&caller_org.to_string()) {
+                    return Err(ServerlessError::PermissionDenied(format!(
+                        "Org {} not in allowed orgs list for function {}",
+                        caller_org, function_name
+                    )));
+                }
+            }
+        }
+
+        if let Some(min_tier) = def.min_tier_level {
+            let caller_tier_val = caller_tier.ok_or_else(|| {
+                ServerlessError::PermissionDenied(format!(
+                    "Function {} requires tier {}, but caller {} has no tier",
+                    function_name, min_tier, caller_node_id
+                ))
+            })?;
+            if caller_tier_val < min_tier {
+                return Err(ServerlessError::PermissionDenied(format!(
+                    "Caller tier {} is below minimum tier {} for function {}",
+                    caller_tier_val, min_tier, function_name
+                )));
+            }
+
+            if let Some(ref org_manager) = *self.org_manager.read() {
+                let claim = crate::mesh::organization::TierClaim::new(
+                    min_tier,
+                    format!("tier_{}", min_tier),
+                    caller_org_id.unwrap_or("default").to_string(),
+                    "mesh".to_string(),
+                    uuid::Uuid::new_v4().to_string(),
+                );
+                if !org_manager.validate_tier_claim(&claim) {
+                    return Err(ServerlessError::PermissionDenied(format!(
+                        "Tier claim verification failed for function {}",
+                        function_name
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn initialize(&self, config: ServerlessConfig) -> Result<(), ServerlessError> {

@@ -1349,10 +1349,19 @@ impl HttpServer {
         let method_str = method.to_string();
 
         // ============================================================================
-        // SECTION 13: WAF Full Request Check
+        // SECTION 13: WAF Full Request Check (skip for serverless_only sites with Serverless backend)
         // ============================================================================
-        let waf_decision = waf
-            .check_request_full(
+        let waf_decision = if matches!(target.backend_type, crate::router::BackendType::Serverless)
+            && target.site_config.serverless_only
+        {
+            tracing::debug!(
+                "serverless_only site - skipping WAF check for {} {}",
+                method_str,
+                path
+            );
+            crate::proxy::WafDecision::Pass
+        } else {
+            waf.check_request_full(
                 client_ip,
                 method_str.as_str(),
                 &path,
@@ -1362,7 +1371,8 @@ impl HttpServer {
                 user_agent.as_deref(),
                 None,
             )
-            .await;
+            .await
+        };
 
         let response = match waf_decision {
             // ============================================================================

@@ -119,6 +119,8 @@ pub struct SiteConfig {
     #[serde(default)]
     pub serverless: Option<super::serverless::ServerlessConfig>,
     #[serde(default)]
+    pub serverless_only: bool,
+    #[serde(default)]
     pub image_poison: SiteImagePoisonConfig,
     #[serde(default)]
     pub file_manager: SiteFileManagerConfig,

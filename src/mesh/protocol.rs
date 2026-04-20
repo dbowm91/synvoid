@@ -986,6 +986,7 @@ pub enum MeshMessage {
         timestamp: u64,
     },
     ServerlessFunctionAnnounce(ServerlessFunctionAnnounce),
+    ServerlessInvokeRequest(ServerlessInvokeRequest),
     GenesisKeyTransition {
         sequence: u32,
         new_key_fingerprint: ArcStr,
@@ -1437,6 +1438,77 @@ pub struct ServerlessFunctionAnnounce {
     pub memory_mb: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub priority: i32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServerlessPermissionClaim {
+    pub function_name: String,
+    pub caller_node_id: String,
+    pub caller_org_id: Option<String>,
+    pub timestamp: u64,
+    pub nonce: String,
+    pub signature: Vec<u8>,
+}
+
+impl ServerlessPermissionClaim {
+    pub fn new(function_name: String, caller_node_id: String, caller_org_id: Option<String>) -> Self {
+        Self {
+            function_name,
+            caller_node_id,
+            caller_org_id,
+            timestamp: crate::utils::safe_unix_timestamp(),
+            nonce: uuid::Uuid::new_v4().to_string(),
+            signature: Vec::new(),
+        }
+    }
+
+    pub fn sign(&mut self, key: &[u8]) {
+        let data = self.get_signable_data();
+        self.signature = crate::mesh::cert::sign_ed25519(&data, key).unwrap_or_default();
+    }
+
+    pub fn verify_signature(&self, key: &[u8]) -> bool {
+        if self.signature.is_empty() {
+            return false;
+        }
+        let data = self.get_signable_data();
+        let Some(public_key) = crate::mesh::cert::get_ed25519_public_key(key) else {
+            return false;
+        };
+        crate::mesh::cert::verify_ed25519(&data, &self.signature, &public_key)
+    }
+
+    fn get_signable_data(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.function_name,
+            self.caller_node_id,
+            self.caller_org_id.as_deref().unwrap_or("none"),
+            self.timestamp,
+            self.nonce
+        )
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServerlessInvokeRequest {
+    pub function_name: String,
+    pub caller_node_id: String,
+    pub timestamp: u64,
+    pub call_signature: Vec<u8>,
+    pub permission_claim: Option<ServerlessPermissionClaim>,
+}
+
+impl ServerlessInvokeRequest {
+    pub fn new(function_name: String, caller_node_id: String) -> Self {
+        Self {
+            function_name,
+            caller_node_id,
+            timestamp: crate::utils::safe_unix_timestamp(),
+            call_signature: Vec::new(),
+            permission_claim: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
