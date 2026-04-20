@@ -30,6 +30,7 @@ impl MeshNodeRole {
     pub const GLOBAL_ORIGIN: MeshNodeRole = MeshNodeRole(0b110);
     pub const EDGE_ORIGIN: MeshNodeRole = MeshNodeRole(0b101);
     pub const ALL: MeshNodeRole = MeshNodeRole(0b111);
+    pub const SERVERLESS_ORIGIN: MeshNodeRole = MeshNodeRole(0b1000);
 
     pub fn is_global(&self) -> bool {
         self.0 & 0b010 != 0
@@ -43,12 +44,16 @@ impl MeshNodeRole {
         self.0 & 0b100 != 0
     }
 
+    pub fn is_serverless_origin(&self) -> bool {
+        self.0 & 0b1000 != 0
+    }
+
     pub fn contains(self, flag: MeshNodeRole) -> bool {
         self.0 & flag.0 == flag.0
     }
 
     pub fn from_u8(v: u8) -> Self {
-        MeshNodeRole(v & 0b111)
+        MeshNodeRole(v & 0b1111)
     }
 
     pub fn to_u8(self) -> u8 {
@@ -90,8 +95,11 @@ impl fmt::Debug for MeshNodeRole {
         if self.is_origin() {
             flags.push("ORIGIN");
         }
+        if self.is_serverless_origin() {
+            flags.push("SERVERLESS_ORIGIN");
+        }
         if flags.is_empty() {
-            write!(f, "MeshNodeRole(0b{:03b})", self.0)
+            write!(f, "MeshNodeRole(0b{:04b})", self.0)
         } else {
             write!(f, "MeshNodeRole({})", flags.join(" | "))
         }

@@ -1209,6 +1209,7 @@ pub enum UpstreamProtocol {
     Grpc = 5,
     Websocket = 6,
     Websockets = 7,
+    Serverless = 9,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, schemars::JsonSchema)]

@@ -1078,6 +1078,16 @@ pub async fn run_unified_server_worker(
         )
     };
 
+    // Wire serverless manager to record store and routing manager if mesh is enabled
+    if let Some(sm) = unified_server.get_serverless_manager() {
+        if let Some(ref tm) = _mesh_transport_manager {
+            if let Some(rs) = tm.get_record_store() {
+                sm.set_record_store(rs);
+                tracing::info!("Serverless manager wired to DHT record store");
+            }
+        }
+    }
+
     // Wire up port honeypot threat publishing to mesh network (or standalone)
     if let Some(ref runner) = port_honeypot_runner {
         if let Some(ref threat_intel) = _threat_intel_manager {

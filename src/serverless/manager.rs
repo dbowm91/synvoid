@@ -41,6 +41,8 @@ pub struct ServerlessManager {
     config: RwLock<Option<ServerlessConfig>>,
     runtime: Arc<WasmPluginManager>,
     routes: RwLock<Vec<ServerlessRoute>>,
+    record_store: RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
+    routing_manager: RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
 }
 
 impl ServerlessManager {
@@ -51,12 +53,22 @@ impl ServerlessManager {
             config: RwLock::new(None),
             runtime: Arc::new(WasmPluginManager::new()),
             routes: RwLock::new(Vec::new()),
+            record_store: RwLock::new(None),
+            routing_manager: RwLock::new(None),
         }
     }
 
     pub fn with_runtime(mut self, runtime: Arc<WasmPluginManager>) -> Self {
         self.runtime = runtime;
         self
+    }
+
+    pub fn set_record_store(&self, store: Arc<crate::mesh::dht::RecordStoreManager>) {
+        *self.record_store.write() = Some(store);
+    }
+
+    pub fn set_routing_manager(&self, manager: Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>) {
+        *self.routing_manager.write() = Some(manager);
     }
 
     pub fn initialize(&self, config: ServerlessConfig) -> Result<(), ServerlessError> {
@@ -115,12 +127,72 @@ impl ServerlessManager {
 
                 self.pools.write().insert(func_def.name.clone(), pool);
             }
+
+            let record_store = self.record_store.read().clone();
+            if let Some(rs) = record_store {
+                let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_def.name);
+                let value = serde_json::json!({
+                    "function_name": func_def.name,
+                    "version": 1,
+                    "routes": func_def.routes,
+                    "allowed_methods": func_def.allowed_methods,
+                    "memory_mb": func_def.memory_mb,
+                    "timeout_seconds": func_def.timeout_seconds,
+                    "priority": 100,
+                    "announced_at": chrono::Utc::now().timestamp(),
+                });
+                if let Ok(bytes) = serde_json::to_vec(&value) {
+                    rs.store_and_announce(key.as_str().to_string(), bytes, 3600);
+                    tracing::debug!("Registered serverless function {} in DHT", func_def.name);
+                }
+            }
+
+            let routing_manager = self.routing_manager.read().clone();
+            if let Some(routing) = routing_manager {
+                let upstream_id = format!("serverless:{}", func_def.name);
+                let routing_clone = routing.clone();
+                let func_name = func_def.name.clone();
+                tokio::spawn(async move {
+                    routing_clone.register_local_upstream(&upstream_id).await;
+                    tracing::debug!("Registered serverless function {} in hierarchical routing", func_name);
+                });
+            }
         }
 
         all_routes.sort_by_key(|r| r.priority);
         *self.routes.write() = all_routes;
 
         Ok(())
+    }
+
+    async fn register_function_dht(&self, func_def: &FunctionDefinition) {
+        let store = self.record_store.read().clone();
+        if let Some(rs) = store {
+            let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_def.name);
+            let value = serde_json::json!({
+                "function_name": func_def.name,
+                "version": 1,
+                "routes": func_def.routes,
+                "allowed_methods": func_def.allowed_methods,
+                "memory_mb": func_def.memory_mb,
+                "timeout_seconds": func_def.timeout_seconds,
+                "priority": 100,
+                "announced_at": chrono::Utc::now().timestamp(),
+            });
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                rs.store_and_announce(key.as_str().to_string(), bytes, 3600);
+                tracing::debug!("Registered serverless function {} in DHT", func_def.name);
+            }
+        }
+    }
+
+    async fn register_function_routing(&self, func_def: &FunctionDefinition) {
+        let rm = self.routing_manager.read().clone();
+        if let Some(routing) = rm {
+            let upstream_id = format!("serverless:{}", func_def.name);
+            routing.register_local_upstream(&upstream_id).await;
+            tracing::debug!("Registered serverless function {} in hierarchical routing", func_def.name);
+        }
     }
 
     fn load_function_wasm(

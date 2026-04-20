@@ -159,6 +159,7 @@ impl TryFrom<proto::UpstreamInfo> for UpstreamInfo {
             5 => UpstreamProtocol::Grpc,
             6 => UpstreamProtocol::Websocket,
             7 => UpstreamProtocol::Websockets,
+            9 => UpstreamProtocol::Serverless,
             _ => UpstreamProtocol::Unknown,
         };
 
@@ -251,6 +252,7 @@ impl From<UpstreamProtocol> for proto::UpstreamProtocol {
             UpstreamProtocol::Grpc => proto::UpstreamProtocol::Grpc,
             UpstreamProtocol::Websocket => proto::UpstreamProtocol::Websocket,
             UpstreamProtocol::Websockets => proto::UpstreamProtocol::Websockets,
+            UpstreamProtocol::Serverless => proto::UpstreamProtocol::Serverless,
         }
     }
 }
@@ -268,6 +270,7 @@ impl TryFrom<proto::UpstreamProtocol> for UpstreamProtocol {
             proto::UpstreamProtocol::Grpc => Ok(UpstreamProtocol::Grpc),
             proto::UpstreamProtocol::Websocket => Ok(UpstreamProtocol::Websocket),
             proto::UpstreamProtocol::Websockets => Ok(UpstreamProtocol::Websockets),
+            proto::UpstreamProtocol::Serverless => Ok(UpstreamProtocol::Serverless),
         }
     }
 }

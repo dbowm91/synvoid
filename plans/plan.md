@@ -598,7 +598,7 @@ cargo test
 
 ## Wave D: Serverless Architecture Improvements
 
-**Status**: ⚠️ PARTIAL (0 items implemented, 11 items deferred)
+**Status**: ⚠️ PARTIAL (3 items implemented, 8 items deferred)
 
 **Source**: plan6.md, plan7.md
 
@@ -616,15 +616,15 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.2.1 | Origin Role Definition: Extend `MeshNodeRole` with `SERVERLESS_ORIGIN` flag | src/mesh/config.rs | ⏸️ DEFERRED (no SERVERLESS_ORIGIN flag) |
-| D.2.2 | DHT Registration: Register `node_id` as active provider when node loads function | src/mesh/transport_peer.rs, src/serverless/manager.rs | ⏸️ DEFERRED (ServerlessFunctionAnnounce exists but DHT registration on load not wired) |
-| D.2.3 | Hierarchical Routing Integration: Treat serverless function names as routable upstreams | src/mesh/hierarchical_routing.rs | ⏸️ DEFERRED (file exists but not integrated with serverless) |
+| D.2.1 | Origin Role Definition: Extend `MeshNodeRole` with `SERVERLESS_ORIGIN` flag | src/mesh/config.rs | ✅ COMPLETED (added SERVERLESS_ORIGIN = MeshNodeRole(0b1000), is_serverless_origin() helper) |
+| D.2.2 | DHT Registration: Register `node_id` as active provider when node loads function | src/mesh/transport_peer.rs, src/serverless/manager.rs | ✅ COMPLETED (record_store and routing_manager wired to ServerlessManager via setter methods; unified_server.rs wires transport_manager.get_record_store()) |
+| D.2.3 | Hierarchical Routing Integration: Treat serverless function names as routable upstreams | src/mesh/hierarchical_routing.rs | ✅ COMPLETED (ServerlessManager.initialize() calls register_local_upstream("serverless:{name}"); done via D.2.2) |
 
 ### Phase D.3: Mesh-Wide Remote Execution (Proxying)
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| D.3.1 | Protocol Extension: Add `Serverless` variant to `UpstreamProtocol` | src/mesh/protocol.rs | ⏸️ DEFERRED (UpstreamProtocol has no Serverless variant) |
+| D.3.1 | Protocol Extension: Add `Serverless` variant to `UpstreamProtocol` | src/mesh/protocol.rs | ✅ COMPLETED (Serverless = 9 added, proto/mesh.proto updated, protocol_types.rs conversions added) |
 | D.3.2 | Remote Execution Dispatch: If `find_matching_route` fails locally, query mesh for provider and forward | src/serverless/manager.rs | ⏸️ DEFERRED (handle_serverless_function only local) |
 | D.3.3 | Proxy Handler Updates: Handle incoming remote execution requests securely | src/mesh/proxy.rs | ⏸️ DEFERRED (no remote serverless proxy handling) |
 

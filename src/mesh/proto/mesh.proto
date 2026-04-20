@@ -137,6 +137,7 @@ enum UpstreamProtocol {
     GRPC = 5;
     WEBSOCKET = 6;
     WEBSOCKETS = 7;
+    SERVERLESS = 9;
 }
 
 message MeshPeerInfo {
@@ -1348,7 +1349,7 @@ message SiteConfigSync {
 
 enum WasmModuleType {
     PLUGIN = 0;
-    SERVERLESS = 1;
+    SERVERLESS_FUNC = 1;
 }
 
 message WasmModuleInfo {

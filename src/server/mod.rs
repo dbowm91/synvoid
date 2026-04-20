@@ -455,6 +455,10 @@ impl UnifiedServer {
         self
     }
 
+    pub fn get_serverless_manager(&self) -> Option<Arc<crate::serverless::manager::ServerlessManager>> {
+        self.serverless_manager.clone()
+    }
+
     #[cfg(feature = "dns")]
     pub fn setup_acme(&self) -> Option<Arc<AcmeManager>> {
         let tls_config = self.tls_config.clone();
