@@ -712,9 +712,9 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | ⏸️ DEFERRED (chunking not implemented) |
-| F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | ⏸️ DEFERRED (compression not implemented) |
-| F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | ⏸️ DEFERRED (incremental updates not implemented) |
+| F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | ✅ COMPLETED (rules >32KB split into compressed chunks, stored as yara_chunk:{hash}:{index}) |
+| F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | ✅ COMPLETED (flate2 Gzip level 6 compression, logged compression ratio) |
+| F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | ✅ COMPLETED (hash check in apply_rules() skips update if unchanged) |
 | F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | ✅ COMPLETED (rules persisted to data_dir/yara_rules/; loads on startup) |
 
 ### Phase F.5: Advanced File Upload Security
