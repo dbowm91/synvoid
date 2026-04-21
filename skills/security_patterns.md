@@ -1,12 +1,12 @@
-# Security Patterns Skill (Wave 1 & Wave 2)
+# Security Patterns Skill
 
 ## Overview
 
-This skill documents the security patterns implemented in Wave 1 and Wave 2 (2026-04-13) for the MaluWAF codebase.
+This skill documents the security patterns implemented for the MaluWAF codebase.
 
-## Wave 1: Critical Security (Completed 2026-04-11)
+## Critical Security
 
-## Wave 1: Critical Security (Completed 2026-04-16)
+## Critical Security
 
 ### ML-KEM/ML-DSA Key Pair Derivation from Loaded Secrets
 
@@ -132,7 +132,7 @@ pub fn is_privileged(&self) -> bool {
 
 ---
 
-## Wave 1: Critical Security (Completed 2026-04-11)
+## Critical Security
 
 ## Constant-Time Comparison for Sensitive Data
 
@@ -357,7 +357,7 @@ fn evict_oldest() {
 
 ---
 
-## Wave 2: High Security (Completed 2026-04-13)
+## High Security
 
 ### bcrypt Cost Validation (W2.1)
 
@@ -471,7 +471,7 @@ fn attest_capability(node_id: &str, capability: &str) {
 
 ---
 
-### Additional Wave 2 Security Fixes (2026-04-13)
+### Additional Security Fixes
 
 ### SSRF Allowlist Bypass Prevention (S2.6)
 
@@ -654,7 +654,7 @@ fn refresh_sparse_buckets(&self) {
 
 ---
 
-## Wave 4: Code Quality (Completed 2026-04-13)
+## Code Quality
 
 ### SAFETY_REASON Comments for Intentional Dead Code
 
@@ -726,7 +726,7 @@ rg "unsafe \{" src/ --glob '*.rs' -l | xargs -I{} rg "SAFETY" {}
 
 ---
 
-## Wave 4 Critical Security Fixes (2026-04-14)
+## Critical Security Fixes
 
 ### Session Fixation Prevention
 
@@ -914,7 +914,7 @@ Quorum table:
 
 ---
 
-## Wave 4 Security Fixes (2026-04-14)
+## Security Fixes
 
 ### TLS Passthrough WAF Enforcement
 
@@ -1072,7 +1072,7 @@ if current >= limit {
 
 ---
 
-## Wave 2 Security (Completed 2026-04-16)
+## Security
 
 ### VerifiedUpstream Signature Verification
 

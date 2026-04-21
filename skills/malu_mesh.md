@@ -42,7 +42,7 @@ pub fn validate_peer_role(
 
 ## Upstream ID Format
 
-**Current format** (after Phase 7b): `http://host:port`
+**Current format**: `http://host:port`
 
 Examples:
 - `http://example.com:80`
@@ -361,32 +361,21 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 | `src/mesh/transport_peer.rs` | Peer message handling |
 | `src/mesh/verification.rs` | Reachability tracking |
 
-## Phase Status
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 2.5.1-5 | Capability signaling | ✅ Complete |
-| 2.5.6 | Origin Reachability System | ✅ Complete |
-| 2.5.7 | Multi-Origin Discovery & Load Balancing | ✅ Complete |
-| 2.5.7b | Nginx-like Domain Routing | ✅ Complete |
-| 2.6 | TierKey Encryption for DHT | ✅ Complete |
-| 2.7 | TierKey Encryption for Transmission | ✅ Complete |
-| 2.8 | Global Node Bootstrap & Key Derivation | ✅ Complete |
+## TierKey Encryption
 
-## TierKey Encryption (Phase 2.6/2.7)
 
-**Phase 2.6 (DHT Storage) - Complete**:
 - `src/mesh/tier_key_encryption.rs` - `TierKeyEncryption` struct with AES-256-GCM
 - Master key derived from `node_identity.private_key` via HKDF("maluwaf-tier-key-master")
 - `handle_tier_key_announce` encrypts before DHT storage on global nodes
 - Non-global nodes skip encryption (they don't store tier keys in DHT)
 
-**Phase 2.7 (Transmission) - Complete**:
+
 - Session key from ML-KEM session used to derive transmission key via HKDF("maluwaf-tier-key-transmit")
 - `encrypt_for_transmission()` / `decrypt_for_transmission()` methods added
 - Both send and receive paths handle encrypted tier keys with fallback to plaintext
 
-## Global Node Bootstrap (Phase 2.8)
+## Global Node Bootstrap
 
 **Purpose**: Global nodes derive their signing key from a shared genesis key, enabling secure bootstrap without manual key distribution.
 
@@ -440,7 +429,7 @@ $ maluwaf
 - `src/config/main.rs` - calls `load_node_identity()` during config load
 - `src/main.rs` - `--genesis` and `--show-node-info` flags
 
-## Origin Reachability System (Phase 2.5.6)
+## Origin Reachability System
 
 **Purpose**: Edge nodes report route failures, global nodes coordinate verification, penalties applied to unreliable origins.
 
@@ -738,7 +727,7 @@ if dht_key.is_privileged() {
 
 ---
 
-## Wave 5 Fixes (2026-04-14)
+## Recent Architectural Refinements
 
 ### Threat Intel Key Format Standardization (T.I)
 

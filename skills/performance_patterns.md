@@ -289,7 +289,7 @@ cargo bench --bench bench_waf_detection
 
 ---
 
-## Wave 4 Performance Fixes (2026-04-14)
+## Performance Fixes
 
 ### Cache Invalidation with Secondary Index
 
@@ -563,7 +563,7 @@ impl ConnectionTracker {
 
 ---
 
-## Wave 5 Performance & Observability (2026-04-15)
+## Performance & Observability
 
 ### HTTP Request Latency Tracking
 
@@ -716,7 +716,7 @@ impl AcmeConfig {
 
 ---
 
-## Wave 2 Performance & Security Fixes (2026-04-16)
+## Performance & Security Fixes
 
 ### HotHashMap Type Alias
 
