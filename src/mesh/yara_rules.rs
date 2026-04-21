@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
+use flate2::read::GzDecoder;
+use flate2::{write::GzEncoder, Compression};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -18,6 +21,8 @@ const MAX_PENDING_SUBMISSIONS: usize = 1000;
 const SUBMISSION_EXPIRY_SECS: u64 = 86400 * 7;
 const YARA_TIMESTAMP_PAST_BOUND_SECS: u64 = 86400;
 const YARA_TIMESTAMP_FUTURE_BOUND_SECS: u64 = 60;
+const YARA_RULE_CHUNK_SIZE: usize = 32 * 1024;
+const YARA_COMPRESSION_LEVEL: u32 = 6;
 
 #[derive(Debug, Clone)]
 pub struct BroadcastAckTracker {
@@ -370,6 +375,37 @@ impl YaraRulesManager {
         *rs = Some(record_store);
     }
 
+    fn compress_rules(&self, rules: &str) -> Result<Vec<u8>, String> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::new(YARA_COMPRESSION_LEVEL));
+        encoder
+            .write_all(rules.as_bytes())
+            .map_err(|e| format!("Compression write error: {}", e))?;
+        encoder
+            .finish()
+            .map_err(|e| format!("Compression finish error: {}", e))
+    }
+
+    fn split_into_chunks(&self, data: &[u8]) -> Vec<Vec<u8>> {
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        while start < data.len() {
+            let end = (start + YARA_RULE_CHUNK_SIZE).min(data.len());
+            chunks.push(data[start..end].to_vec());
+            start = end;
+        }
+        chunks
+    }
+
+    fn reassemble_chunks(&self, chunks: &[Vec<u8>]) -> Result<String, String> {
+        let mut decompressed = Vec::new();
+        for chunk in chunks {
+            let mut decoder = GzDecoder::new(chunk.as_slice());
+            std::io::copy(&mut decoder, &mut decompressed)
+                .map_err(|e| format!("Decompression error: {}", e))?;
+        }
+        String::from_utf8(decompressed).map_err(|e| format!("UTF-8 error: {}", e))
+    }
+
     pub fn publish_rules_to_dht(&self) {
         if !self.config.enabled {
             return;
@@ -403,17 +439,48 @@ impl YaraRulesManager {
         };
 
         let content_hash = self.compute_rules_hash(&rules);
-        let rule_key = DhtKey::yara_rule_content(&content_hash);
-        let rule_key_str = rule_key.as_str();
-
-        let manifest_key = DhtKey::yara_rules_manifest(&self.node_id);
-        let manifest_key_str = manifest_key.as_str();
-
         let timestamp = crate::mesh::safe_unix_timestamp();
+
+        let compressed = match self.compress_rules(&rules) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to compress rules: {}", e);
+                return;
+            }
+        };
+
+        let chunks = self.split_into_chunks(&compressed);
+        let chunk_count = chunks.len();
+        let is_chunked = chunk_count > 1;
+        let uncompressed_size = rules.len();
+        let compressed_size = compressed.len();
+
+        tracing::debug!(
+            "YARA rules: {} bytes -> {} bytes ({} chunks, chunked={})",
+            uncompressed_size,
+            compressed_size,
+            chunk_count,
+            is_chunked
+        );
+
+        let chunk_hashes: Vec<String> = chunks
+            .iter()
+            .map(|c| {
+                let mut hasher = Sha256::new();
+                hasher.update(c);
+                format!("{:x}", hasher.finalize())[..16].to_string()
+            })
+            .collect();
+
         let (manifest_signature, manifest_signer_pk) = if let Some(ref signer) = self.signer {
             let content = format!(
-                "{}:{}:{}:{}",
-                version, content_hash, self.node_id, timestamp
+                "{}:{}:{}:{}:{}:{}",
+                version,
+                content_hash,
+                self.node_id,
+                timestamp,
+                chunk_count,
+                is_chunked
             );
             let sig = signer.sign(&content);
             let pk = base64::Engine::encode(
@@ -432,62 +499,197 @@ impl YaraRulesManager {
             "timestamp": timestamp,
             "signature": manifest_signature,
             "signer_public_key": manifest_signer_pk,
+            "is_chunked": is_chunked,
+            "chunk_count": chunk_count,
+            "uncompressed_size": uncompressed_size,
+            "compressed_size": compressed_size,
+            "chunk_hashes": chunk_hashes,
         });
+
+        let manifest_key = DhtKey::yara_rules_manifest(&self.node_id);
+        let manifest_key_str = manifest_key.as_str();
 
         if let Ok(bytes) = serde_json::to_vec(&manifest_value) {
             if record_store.store_and_announce(manifest_key_str.to_string(), bytes, 86400) {
                 tracing::debug!(
-                    "Published YARA manifest to DHT: {} -> {}",
+                    "Published YARA manifest to DHT: {} -> {} (chunked={})",
                     manifest_key_str,
-                    version
+                    version,
+                    is_chunked
                 );
             } else {
                 tracing::warn!("Failed to store YARA manifest in DHT");
             }
         }
 
-        if let Some(_existing) = record_store.get(&rule_key_str) {
-            tracing::debug!("YARA rule content already in DHT: {}", rule_key_str);
-            return;
-        }
+        if is_chunked {
+            for (i, chunk) in chunks.iter().enumerate() {
+                let chunk_key = format!("yara_chunk:{}:{}", content_hash, i);
+                let chunk_signature = if let Some(ref signer) = self.signer {
+                    let content = format!(
+                        "{}:{}:{}:{}:{}",
+                        content_hash, i, chunk.len(), self.node_id, timestamp
+                    );
+                    signer.sign(&content)
+                } else {
+                    Vec::new()
+                };
 
-        let rule_timestamp = crate::mesh::safe_unix_timestamp();
-        let (rule_signature, rule_signer_pk) = if let Some(ref signer) = self.signer {
-            let content = format!(
-                "{}:{}:{}:{}:{}",
-                version, rules, content_hash, self.node_id, rule_timestamp
+                let chunk_value = serde_json::json!({
+                    "chunk_index": i,
+                    "total_chunks": chunk_count,
+                    "content_hash": content_hash,
+                    "node_id": self.node_id,
+                    "timestamp": timestamp,
+                    "compressed_data": base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        chunk
+                    ),
+                    "signature": chunk_signature,
+                });
+
+                if let Ok(bytes) = serde_json::to_vec(&chunk_value) {
+                    let _ = record_store.store_and_announce(chunk_key, bytes, 86400);
+                }
+            }
+            tracing::info!(
+                "Published YARA rules as {} chunks to DHT (version: {})",
+                chunk_count,
+                version
             );
-            let sig = signer.sign(&content);
-            let pk = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                signer.get_public_key_bytes(),
-            );
-            (sig, Some(pk))
         } else {
-            (Vec::new(), None)
-        };
+            if let Some(_existing) = record_store.get(&DhtKey::yara_rule_content(&content_hash).as_str()) {
+                tracing::debug!("YARA rule content already in DHT: {}", content_hash);
+                return;
+            }
 
-        let rule_value = serde_json::json!({
-            "version": version,
-            "rules": rules,
-            "content_hash": content_hash,
-            "node_id": self.node_id,
-            "timestamp": rule_timestamp,
-            "signature": rule_signature,
-            "signer_public_key": rule_signer_pk,
-        });
-
-        if let Ok(bytes) = serde_json::to_vec(&rule_value) {
-            if record_store.store_and_announce(rule_key_str.to_string(), bytes, 86400) {
-                tracing::info!(
-                    "Published YARA rules to DHT: {} (version: {})",
-                    rule_key_str,
-                    version
+            let (rule_signature, rule_signer_pk) = if let Some(ref signer) = self.signer {
+                let content = format!(
+                    "{}:{}:{}:{}:{}",
+                    version, rules, content_hash, self.node_id, timestamp
                 );
+                let sig = signer.sign(&content);
+                let pk = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    signer.get_public_key_bytes(),
+                );
+                (sig, Some(pk))
             } else {
-                tracing::warn!("Failed to store YARA rules in DHT");
+                (Vec::new(), None)
+            };
+
+            let rule_value = serde_json::json!({
+                "version": version,
+                "rules": rules,
+                "content_hash": content_hash,
+                "node_id": self.node_id,
+                "timestamp": timestamp,
+                "signature": rule_signature,
+                "signer_public_key": rule_signer_pk,
+                "is_chunked": false,
+            });
+
+            if let Ok(bytes) = serde_json::to_vec(&rule_value) {
+                if record_store.store_and_announce(
+                    DhtKey::yara_rule_content(&content_hash).as_str().to_string(),
+                    bytes,
+                    86400,
+                ) {
+                    tracing::info!(
+                        "Published YARA rules to DHT: {} (version: {})",
+                        content_hash,
+                        version
+                    );
+                } else {
+                    tracing::warn!("Failed to store YARA rules in DHT");
+                }
             }
         }
+    }
+
+    fn fetch_rules_from_dht(
+        &self,
+        content_hash: &str,
+        record_store: &Arc<crate::mesh::dht::RecordStoreManager>,
+    ) -> Option<(String, String, u64)> {
+        let rule_key = DhtKey::yara_rule_content(content_hash);
+        let Some(rule_record) = record_store.get(&rule_key.as_str()) else {
+            tracing::debug!("YARA sync: no rule record found for hash {}", content_hash);
+            return None;
+        };
+
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&rule_record.value) else {
+            tracing::warn!("YARA sync: failed to parse rule record");
+            return None;
+        };
+
+        let rules_str = value.get("rules").and_then(|v| v.as_str())?.to_string();
+        let version_str = value.get("version").and_then(|v| v.as_str())?.to_string();
+        let timestamp_str = value.get("timestamp").and_then(|v| v.as_str()).unwrap_or("0");
+        let timestamp: u64 = timestamp_str.parse().unwrap_or(0);
+
+        let is_chunked = value.get("is_chunked").and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_chunked {
+            tracing::debug!("YARA sync: expected chunked data but got single record for hash {}", content_hash);
+            return None;
+        }
+
+        Some((version_str, rules_str, timestamp))
+    }
+
+    fn fetch_chunks_from_dht(
+        &self,
+        content_hash: &str,
+        chunk_count: usize,
+        record_store: &Arc<crate::mesh::dht::RecordStoreManager>,
+    ) -> Option<(String, String, u64)> {
+        let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(chunk_count);
+        let mut version_str = None;
+        let mut timestamp: u64 = 0;
+
+        for i in 0..chunk_count {
+            let chunk_key = format!("yara_chunk:{}:{}", content_hash, i);
+            let Some(chunk_record) = record_store.get(&chunk_key) else {
+                tracing::warn!("YARA sync: missing chunk {} for hash {}", i, content_hash);
+                return None;
+            };
+
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&chunk_record.value) else {
+                tracing::warn!("YARA sync: failed to parse chunk record");
+                return None;
+            };
+
+            let compressed_b64 = value.get("compressed_data").and_then(|v| v.as_str())?;
+            let compressed_data = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                compressed_b64,
+            )
+            .ok()?;
+
+            if version_str.is_none() {
+                version_str = value.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+            }
+
+            let ts_str = value.get("timestamp").and_then(|v| v.as_str()).unwrap_or("0");
+            let ts: u64 = ts_str.parse().unwrap_or(0);
+            if ts > timestamp {
+                timestamp = ts;
+            }
+
+            chunks.push(compressed_data);
+        }
+
+        let version_str = version_str?;
+
+        let rules_str = match self.reassemble_chunks(&chunks) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("YARA sync: failed to reassemble chunks: {}", e);
+                return None;
+            }
+        };
+
+        Some((version_str, rules_str, timestamp))
     }
 
     pub fn sync_from_dht(&self) -> Result<(), String> {
@@ -551,6 +753,10 @@ impl YaraRulesManager {
                         );
                         continue;
                     }
+
+                    let is_chunked = value.get("is_chunked").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let chunk_count = value.get("chunk_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+
                     let manifest_signature = value
                         .get("signature")
                         .and_then(|v| v.as_str())
@@ -560,11 +766,19 @@ impl YaraRulesManager {
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
-                    if !manifest_signature.is_empty() && !manifest_signer_pk.is_empty() {
-                        let content = format!(
+                    let signature_content = if is_chunked {
+                        format!(
+                            "{}:{}:{}:{}:{}:{}",
+                            manifest_version, peer_hash, manifest_node_id, manifest_timestamp, chunk_count, is_chunked
+                        )
+                    } else {
+                        format!(
                             "{}:{}:{}:{}",
                             manifest_version, peer_hash, manifest_node_id, manifest_timestamp
-                        );
+                        )
+                    };
+
+                    if !manifest_signature.is_empty() && !manifest_signer_pk.is_empty() {
                         let sig_bytes = match base64::Engine::decode(
                             &base64::engine::general_purpose::STANDARD,
                             manifest_signature,
@@ -595,7 +809,7 @@ impl YaraRulesManager {
                         let signer = crate::mesh::protocol::MeshMessageSigner::new(
                             pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
                         );
-                        if !signer.verify(&content, &sig_bytes, &pk_bytes) {
+                        if !signer.verify(&signature_content, &sig_bytes, &pk_bytes) {
                             tracing::warn!(
                                 "YARA DHT sync: manifest signature verification failed for record from {}",
                                 manifest_node_id
@@ -628,97 +842,33 @@ impl YaraRulesManager {
                         }
                     }
 
-                    let rule_key = DhtKey::yara_rule_content(peer_hash);
-                    if let Some(rule_record) = record_store.get(&rule_key.as_str()) {
-                        if let Ok(rule_value) =
-                            serde_json::from_slice::<serde_json::Value>(&rule_record.value)
-                        {
-                            let rules_str = rule_value
-                                .get("rules")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let version_str = rule_value
-                                .get("version")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let timestamp_str = rule_value
-                                .get("timestamp")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("0");
-                            let timestamp: u64 = timestamp_str.parse().unwrap_or(0);
+                    let rules_str = if is_chunked {
+                        self.fetch_chunks_from_dht(peer_hash, chunk_count, &record_store)
+                    } else {
+                        self.fetch_rules_from_dht(peer_hash, &record_store)
+                    };
 
-                            if rules_str.is_empty() {
-                                continue;
-                            }
+                    let Some((version_str, rules_string, timestamp)) = rules_str else {
+                        continue;
+                    };
 
-                            let signature_str = rule_value
-                                .get("signature")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let signer_pk_str = rule_value
-                                .get("signer_public_key")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                    if rules_string.is_empty() {
+                        continue;
+                    }
 
-                            if !signature_str.is_empty() && !signer_pk_str.is_empty() {
-                                let content = format!(
-                                    "{}:{}:{}:{}:{}",
-                                    version_str, rules_str, peer_hash, manifest_node_id, timestamp
-                                );
-                                let sig_bytes = match base64::Engine::decode(
-                                    &base64::engine::general_purpose::STANDARD,
-                                    signature_str,
-                                ) {
-                                    Ok(s) => s,
-                                    Err(_) => {
-                                        tracing::warn!(
-                                            "YARA DHT sync: invalid signature base64 from {}",
-                                            manifest_node_id
-                                        );
-                                        continue;
-                                    }
-                                };
-                                let pk_bytes = match base64::Engine::decode(
-                                    &base64::engine::general_purpose::STANDARD,
-                                    signer_pk_str,
-                                ) {
-                                    Ok(p) => p,
-                                    Err(_) => {
-                                        tracing::warn!(
-                                            "YARA DHT sync: invalid signer pk base64 from {}",
-                                            manifest_node_id
-                                        );
-                                        continue;
-                                    }
-                                };
-
-                                let signer = crate::mesh::protocol::MeshMessageSigner::new(
-                                    pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
-                                );
-                                if !signer.verify(&content, &sig_bytes, &pk_bytes) {
-                                    tracing::warn!(
-                                        "YARA DHT sync: signature verification failed for record from {}",
-                                        manifest_node_id
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            match &best_timestamp {
-                                None => {
-                                    best_version = Some(version_str.to_string());
-                                    best_rules = Some(rules_str.to_string());
-                                    best_hash = Some(peer_hash.to_string());
-                                    best_timestamp = Some(timestamp);
-                                }
-                                Some(current_best) => {
-                                    if timestamp > *current_best {
-                                        best_version = Some(version_str.to_string());
-                                        best_rules = Some(rules_str.to_string());
-                                        best_hash = Some(peer_hash.to_string());
-                                        best_timestamp = Some(timestamp);
-                                    }
-                                }
+                    match &best_timestamp {
+                        None => {
+                            best_version = Some(version_str.to_string());
+                            best_rules = Some(rules_string);
+                            best_hash = Some(peer_hash.to_string());
+                            best_timestamp = Some(timestamp);
+                        }
+                        Some(current_best) => {
+                            if timestamp > *current_best {
+                                best_version = Some(version_str.to_string());
+                                best_rules = Some(rules_string);
+                                best_hash = Some(peer_hash.to_string());
+                                best_timestamp = Some(timestamp);
                             }
                         }
                     }
@@ -804,6 +954,16 @@ impl YaraRulesManager {
         version: String,
         source: YaraRuleSource,
     ) -> Result<String, String> {
+        let current_rules = self.local_rules.read().clone();
+        let current_hash = current_rules.as_ref().map(|r| self.compute_rules_hash(r));
+        let new_hash = self.compute_rules_hash(&rules);
+
+        if current_hash.as_ref() == Some(&new_hash) {
+            tracing::debug!("Rules unchanged (hash {}), skipping publish", &new_hash[..8]);
+            *self.current_version.write() = Some(version.clone());
+            return Ok(version);
+        }
+
         *self.local_rules.write() = Some(rules.clone());
         *self.current_version.write() = Some(version.clone());
 
