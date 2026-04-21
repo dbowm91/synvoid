@@ -40,7 +40,7 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave F | YARA/Security | ✅ COMPLETED | F.1-F.5 fully implemented (10/10) |
 | Wave G | Dependency Audit | ⚠️ PARTIAL | G.1.1, G.2.3-G.2.5, G.3.3-G.3.4 implemented |
 | Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | H.3.4, H.3.5 implemented (rest deferred) |
-| Wave I | Web App Stack Extensions | ⚠️ PARTIAL | I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
+| Wave I | Web App Stack Extensions | ⚠️ PARTIAL | I.1.4 blocked (wasmtime version mismatch), I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
 
 ---
 
@@ -917,7 +917,7 @@ Most Wave H items are significant architectural changes that could introduce ris
 | I.1.1 | **Unified Pooling**: Simplify pooling logic in `WasmRuntime`. Ensure newly created instances are added to pool if capacity allows | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (each WasmRuntime creates own pool) |
 | I.1.2 | **Instance Snapshotting**: Explore wasmtime instance snapshotting or ensure `Module` caching is fully utilized across all runtimes | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (Module cached per runtime, Instance/Store created fresh per request) |
 | I.1.3 | **Efficient ABI V2**: Replace JSON-based header passing with shared-memory buffer format. Support streaming body access for WASM plugins | src/plugin/wasm_runtime.rs | ⏸️ DEFERRED (current binary format copies data) |
-| I.1.4 | **WASI Support**: Fully enable WASI with controlled access to specific host resources (restricted filesystem paths) | src/plugin/wasm_runtime.rs | ⚠️ PARTIAL (`wasi_enabled` flag exists but not wired to linker) |
+| I.1.4 | **WASI Support**: Fully enable WASI with controlled access to specific host resources (restricted filesystem paths) | src/plugin/wasm_runtime.rs | ⚠️ PARTIAL (`wasi_enabled` flag exists, investigation shows wasmtime-wasi 42.0.2 is incompatible - requires wasmtime 44.0.0+) |
 
 ### Phase I.2: Serverless Enhancements
 
@@ -959,7 +959,7 @@ Most Wave H items are significant architectural changes that could introduce ris
 - I.4.2 (Performance): `MinifierCache` at router.rs:237, file cache with TTL
 
 **Partial**:
-- I.1.4 (WASI Support): `wasi_enabled` flag exists but not wired to linker
+- I.1.4 (WASI Support): `wasi_enabled` flag exists but not wired to linker; investigation shows wasmtime-wasi 42.0.2 is incompatible with wasmtime 42.0.2 (requires wasmtime 44.0.0+) - blocked by dependency version mismatch
 
 **Deferred**:
 - I.1.1-I.1.3: Requires WASM Component Model (WIT) transition and significant ABI redesign
