@@ -279,9 +279,85 @@ impl YaraRulesManager {
 
         if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::GLOBAL) {
             let _ = manager.load_submissions_from_disk();
+            let _ = manager.load_rules_from_disk();
         }
 
         manager
+    }
+
+    fn rules_dir(&self) -> Option<std::path::PathBuf> {
+        self.data_dir.as_ref().map(|d| d.join("yara_rules"))
+    }
+
+    fn load_rules_from_disk(&self) -> Result<(), String> {
+        let Some(dir) = self.rules_dir() else {
+            return Ok(());
+        };
+
+        let rules_path = dir.join("current_rules.yar");
+        if !rules_path.exists() {
+            return Ok(());
+        }
+
+        let version_path = dir.join("version.txt");
+        let version = if version_path.exists() {
+            std::fs::read_to_string(&version_path)
+                .ok()
+                .map(|v| v.trim().to_string())
+        } else {
+            None
+        };
+
+        let rules_content = std::fs::read_to_string(&rules_path)
+            .map_err(|e| format!("Failed to read rules file: {}", e))?;
+
+        if rules_content.is_empty() {
+            return Ok(());
+        }
+
+        {
+            let mut local = self.local_rules.write();
+            *local = Some(rules_content.clone());
+        }
+
+        if let Some(v) = version {
+            let mut current = self.current_version.write();
+            *current = Some(v.clone());
+            tracing::info!("Loaded YARA rules from disk, version: {}", v);
+        } else {
+            tracing::info!("Loaded YARA rules from disk (unknown version)");
+        }
+
+        Ok(())
+    }
+
+    fn save_rules_to_disk(&self) -> Result<(), String> {
+        let Some(dir) = self.rules_dir() else {
+            return Ok(());
+        };
+
+        let rules = match self.local_rules.read().clone() {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+
+        let version = self.current_version.read().clone();
+
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create rules dir: {}", e))?;
+
+        let rules_path = dir.join("current_rules.yar");
+        std::fs::write(&rules_path, &rules)
+            .map_err(|e| format!("Failed to write rules file: {}", e))?;
+
+        if let Some(v) = version {
+            let version_path = dir.join("version.txt");
+            std::fs::write(&version_path, &v)
+                .map_err(|e| format!("Failed to write version file: {}", e))?;
+        }
+
+        tracing::debug!("Saved YARA rules to disk");
+        Ok(())
     }
 
     pub fn set_mesh_sender(&self, sender: mpsc::Sender<MeshMessage>) {
@@ -710,6 +786,8 @@ impl YaraRulesManager {
                 *self.current_version.write() = Some(version.clone());
                 tracing::info!("Applied YARA rules from feed, version: {}", version);
 
+                let _ = self.save_rules_to_disk();
+
                 if self.node_role.is_global() {
                     let _ = self.broadcast_approved_rules(&version);
                 }
@@ -728,6 +806,8 @@ impl YaraRulesManager {
     ) -> Result<String, String> {
         *self.local_rules.write() = Some(rules.clone());
         *self.current_version.write() = Some(version.clone());
+
+        let _ = self.save_rules_to_disk();
 
         if let Some(ref fm) = self.feed_manager {
             let source_str = match source {

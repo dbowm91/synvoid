@@ -534,7 +534,10 @@ impl ThreatIntelligenceManager {
 
         self.publish_indicator_to_dht(&indicator);
         if self.config.push_enabled {
-            self.queue_for_push(indicator);
+            let threshold = self.config.push_severity_threshold as u32;
+            if ThreatSeverity::Medium as u32 >= threshold {
+                self.queue_for_push(indicator);
+            }
         }
 
         tracing::debug!(
@@ -1447,6 +1450,19 @@ impl ThreatIntelligenceManager {
         let Some(message) = self.create_threat_announce() else {
             return;
         };
+
+        let pending_count = self.pending_announces.read().len();
+        if pending_count == 0 {
+            return;
+        }
+
+        if pending_count < 3 {
+            tracing::debug!(
+                "Skipping threat broadcast: only {} pending (threshold 3)",
+                pending_count
+            );
+            return;
+        }
 
         let transport_opt = self.transport.read().clone();
         let fanout_factor = self.config.fanout_factor;
