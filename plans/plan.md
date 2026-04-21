@@ -715,7 +715,7 @@ cargo test
 | F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | ⏸️ DEFERRED (chunking not implemented) |
 | F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | ⏸️ DEFERRED (compression not implemented) |
 | F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | ⏸️ DEFERRED (incremental updates not implemented) |
-| F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | ⏸️ DEFERRED (local persistence not implemented) |
+| F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | ✅ COMPLETED (rules persisted to data_dir/yara_rules/; loads on startup) |
 
 ### Phase F.5: Advanced File Upload Security
 
@@ -723,9 +723,9 @@ cargo test
 |----|-------------|------|--------|
 | F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth and sandbox strictness based on source IP reputation from ThreatIntelligence | src/http/server.rs | ⏸️ DEFERRED (threat-aware scanning not implemented) |
 | F.5.2 | **Enhanced Sandbox**: Implement stricter OS-level sandboxing (landlock on Linux, sandbox_init on macOS) for scanning process | src/static_files/ | ⏸️ DEFERRED (OS-level sandboxing not implemented) |
-| F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/static_files/ | ⏸️ DEFERRED (heuristic analysis not implemented) |
-| F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | ⏸️ DEFERRED (indicator batching not implemented) |
-| F.5.5 | **Tiered Distribution**: Broadcast critical threats (high severity) instantly, sync low-priority via DHT only | src/mesh/threat_intel.rs | ⏸️ DEFERRED (tiered distribution not implemented) |
+| F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/upload/malware_scanner.rs | ✅ COMPLETED (HighEntropy detection with Shannon entropy > 7.5 threshold) |
+| F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | ✅ COMPLETED (skips broadcast if pending < 3 indicators) |
+| F.5.5 | **Tiered Distribution**: Broadcast critical threats (high severity) instantly, sync low-priority via DHT only | src/mesh/threat_intel.rs | ✅ COMPLETED (severity threshold check before queue_for_push) |
 
 ### Verification
 
