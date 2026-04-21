@@ -721,7 +721,7 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth and sandbox strictness based on source IP reputation from ThreatIntelligence | src/http/server.rs | ❌ PERMANENTLY DEFERRED (security model concern: trust earning, IP spoofing, botnet risk) |
+| F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth based on source IP reputation from ThreatIntelligence | src/http/server.rs | ❌ PERMANENTLY REJECTED - Security design flaw: creates attack surface where attackers earn trust over time, spoof IPs of trusted clients, or use residential botnets. All external uploads must be treated as potential malware. |
 | F.5.2 | **Enhanced Sandbox**: Implement stricter OS-level sandboxing (landlock on Linux, sandbox_init on macOS) for scanning process | src/platform/sandbox.rs, src/upload/sandbox.rs | ✅ COMPLETED (abstraction layer with Landlock on Linux, stub on other platforms) |
 | F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/upload/malware_scanner.rs | ✅ COMPLETED (HighEntropy detection with Shannon entropy > 7.5 threshold) |
 | F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | ✅ COMPLETED (skips broadcast if pending < 3 indicators) |
