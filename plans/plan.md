@@ -34,7 +34,7 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave 8 | OpenAPI Improvements | ⚠️ PARTIAL | Some items deferred |
 | Wave A | Mesh/DHT Subsystem Improvements | ✅ COMPLETED | Yes - Phases A.1-A.6 can parallelize |
 | Wave B | Plugin Architecture | ⚠️ PARTIAL | B.1.4 only (lifecycle hot-reload implemented) |
-| Wave C | Web Application Stack | ⚠️ PARTIAL | C.1.1, C.2.1, C.2.2, C.4.1 implemented (4/13) |
+| Wave C | Web Application Stack | ⚠️ PARTIAL | C.1.1, C.1.3, C.2.1, C.2.2, C.2.4, C.4.1 implemented (6/13) |
 | Wave E | Edge Caching & Image Poison | ⚠️ PARTIAL | E.2, E.3 implemented (4/7) |
 | Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | H.3.4, H.3.5 implemented (rest deferred) |
 | Wave I | Web App Stack Extensions | ⚠️ PARTIAL | I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
@@ -576,7 +576,7 @@ cargo test
 |----|-------------|------|--------|
 | C.1.1 | Mobile Responsiveness: Enhance `ThemeRenderer` CSS for responsive directory listing | src/theme/renderer.rs | ✅ COMPLETED (added @media queries at 768px and 480px breakpoints) |
 | C.1.2 | Metadata Expansion: Add MIME type icons, SHA256 hashes, file permissions to `DirectoryEntry` | src/theme/dir_listing.rs | ⏸️ DEFERRED (directory listing basic features exist, metadata expansion not done) |
-| C.1.3 | Configurable Themes: Expose `ThemePreset` and custom color overrides in `[[site.static.locations]]` | src/config/site/static_files.rs | ⏸️ DEFERRED (themes exist but per-location customization not implemented) |
+| C.1.3 | Configurable Themes: Expose `ThemePreset` and custom color overrides in `[[site.static.locations]]` | src/config/site/static_files.rs | ✅ COMPLETED (location.theme already wired - `to_theme_config` used in serve_directory at line 761-765) |
 | C.1.4 | Theme Inheritance: Allow location to inherit global site theme or define its own | src/theme/ | ⏸️ DEFERRED (theme inheritance not implemented) |
 | C.1.5 | Admin UI Consistency: Add "File Manager" view using same backend JSON format | admin-ui/ | ⏸️ DEFERRED (admin-ui separate) |
 
@@ -587,7 +587,7 @@ cargo test
 | C.2.1 | Themed Error Pages: Return themed error page when PHP/FastCGI backend is down | src/http/server.rs | ✅ COMPLETED (uses ErrorPageManager.render_page_with_theme for 502/503 errors on backend failure) |
 | C.2.2 | Health Check Integration: Map FastCGI pool health status to Admin UI dashboard | src/fastcgi/pool.rs, admin-ui/ | ✅ COMPLETED (FastCgiPoolStatus struct and status() method exist) |
 | C.2.3 | Active Background Health Checks: PHP-FPM socket failover | src/php/mod.rs | ⏸️ DEFERRED (PHP-FPM health checks exist but active failover not implemented) |
-| C.2.4 | Environment Variable Injection: Pass custom env vars to FastCGI backends via site config | src/config/site/backend.rs | ⏸️ DEFERRED (env var injection not implemented) |
+| C.2.4 | Environment Variable Injection: Pass custom env vars to FastCGI backends via site config | src/config/site/backend.rs, src/fastcgi/mod.rs, src/php/mod.rs | ✅ COMPLETED (env_vars field added to FastCgiConfig and PhpConfig, passed via FCGI_ENV: prefix) |
 
 ### Phase C.3: WASM Application Platform
 
@@ -615,20 +615,20 @@ cargo test
 ### Notes
 
 **Implemented**:
+- C.1.1 (Mobile Responsiveness): Added @media queries at 768px and 480px breakpoints
+- C.1.3 (Configurable Themes): Location.theme already wired - `to_theme_config` used in serve_directory (line 761-765)
+- C.2.1 (Themed Error Pages): ErrorPageManager.render_page_with_theme used for 502 errors on PHP/FastCGI backend failure
 - C.2.2 (Health Check Integration): `FastCgiPoolStatus` struct and `status()` method in `src/fastcgi/pool.rs`
+- C.2.4 (Env Var Injection): `env_vars` field added to FastCgiConfig and PhpConfig, passed via FCGI_ENV: prefix
 - C.4.1 (Virtualenv Management): `auto_detect_venv` and `detect_venv()` in `src/app_server/granian.rs`
 
 **Deferred - UX Polish (Low Priority)**:
-- C.1.1 (Mobile Responsiveness): Directory listing is primarily admin/debug feature; mobile is nice-to-have
 - C.1.2 (Metadata Expansion): SHA256 requires reading entire file per entry; adds I/O overhead
-- C.1.3 (Configurable Themes): Per-location theme requires config schema change
 - C.1.4 (Theme Inheritance): Complexity in theme resolution for marginal value
 - C.1.5 (Admin UI File Manager): Admin UI is separate project; low priority
 
 **Deferred - PHP/FastCGI Hardening**:
-- C.2.1 (Themed Error Pages): Error page rendering during failure adds complexity for marginal UX gain
 - C.2.3 (Active Health Checks): PHP-FPM already has self-healing via socket failover; adds background task overhead
-- C.2.4 (Env Var Injection): Security concern - env vars in config file could leak sensitive data
 
 **Deferred - WASM Dependencies (Blocked by Wave B)**:
 - C.3.1 (WASI by default): Security implications - WASI gives plugins filesystem/network access

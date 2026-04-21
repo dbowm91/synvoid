@@ -214,6 +214,15 @@ impl PhpClient {
             }
         }
 
+        if let Some(ref env_vars) = self.config.env_vars {
+            for (key, value) in env_vars {
+                fcgi_config.params.get_or_insert_with(Default::default).insert(
+                    format!("FCGI_ENV:{}", key),
+                    value.clone(),
+                );
+            }
+        }
+
         if !admin_values.is_empty() || !php_values.is_empty() {
             let mut params = std::collections::HashMap::new();
             for (key, value) in admin_values {

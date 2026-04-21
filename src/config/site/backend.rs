@@ -19,6 +19,8 @@ pub struct FastCgiConfig {
     #[serde(default)]
     pub params: Option<HashMap<String, String>>,
     #[serde(default)]
+    pub env_vars: Option<HashMap<String, String>>,
+    #[serde(default)]
     pub split_path_info: Option<String>,
     #[serde(default)]
     pub try_files: Option<String>,
@@ -50,6 +52,8 @@ pub struct PhpConfig {
     pub extensions_dir: Option<String>,
     #[serde(default)]
     pub ini_settings: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub env_vars: Option<HashMap<String, String>>,
     #[serde(default)]
     pub connect_timeout: Option<u64>,
     #[serde(default)]
