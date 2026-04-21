@@ -33,14 +33,9 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave 7 | Mesh & DHT Architecture | ⚠️ PARTIAL | Some items deferred |
 | Wave 8 | OpenAPI Improvements | ⚠️ PARTIAL | Some items deferred |
 | Wave A | Mesh/DHT Subsystem Improvements | ✅ COMPLETED | Yes - Phases A.1-A.6 can parallelize |
-| Wave B | Plugin Architecture | ⚠️ PARTIAL | Some items deferred |
-| Wave C | Web Application Stack | ⚠️ PARTIAL | Some items deferred |
-| Wave D | Serverless Architecture | ⚠️ PARTIAL | All 11 items deferred |
-| Wave E | Edge Caching & Image Poison | ⚠️ PARTIAL | 2/7 items implemented |
-| Wave F | YARA/File Upload Security | ⚠️ PARTIAL | F.1.x completed, rest deferred |
-| Wave G | Dependency Audit & Updates | ✅ COMPLETED | No - sequential security patches |
-| Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | Some items deferred |
-| Wave I | Web App Stack Extensions | ⚠️ PARTIAL | 4/13 items implemented |
+| Wave B | Plugin Architecture | ⚠️ PARTIAL | B.1.4 only (lifecycle hot-reload implemented) |
+| Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | H.3.4, H.3.5 implemented (rest deferred) |
+| Wave I | Web App Stack Extensions | ⚠️ PARTIAL | I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
 
 ---
 
@@ -546,6 +541,25 @@ cargo test
 | B.6.3 | Unix Domain Sockets (Fallback): Use UDS for control plane and small payload transfers | src/plugin/ | ⏸️ DEFERRED (UDS fallback not implemented) |
 | B.6.4 | Process Isolation: Use namespaces or cgroups to limit plugin worker resources | src/plugin/ | ⏸️ DEFERRED (namespace/cgroup isolation not implemented) | |
 
+### Notes
+
+**Implemented**:
+- B.1.4 (PluginManagerLifecycle): Fully implemented with file watching for hot-reload
+
+**Deferred (significant architectural changes required)**:
+- B.1.1-B.1.3: Requires unified type design for PluginType enum and PluginRegistry
+- B.1.5-B.1.6: Plugin config exists but not unified; env vars passed but not site-specific
+- B.2.1-B.2.5: Requires SDK design, raw memory pointer refactor, streaming, WASI, and WIT transition
+- B.3.1-B.3.4: Security features requiring allowlist filtering, WASI-socket, IPC bridge, watchdog
+- B.4.1-B.4.3: Mesh distribution requiring signature verification, CAS, delta-compression
+- B.5.1-B.5.3: Observability requiring metrics, tracing spans, latency histograms
+- B.6.1-B.6.4: Out-of-process sandboxing requiring worker processes, shared memory, UDS, namespaces
+
+**Architecture Considerations**:
+- PluginManagerLifecycle (B.1.4) is the only stable foundation - other items are interdependent
+- B.2.5 (WASM Component Model) is a prerequisite for many B.3, B.4, and I.1 items
+- Native plugin sandboxing (B.6) would require significant process architecture changes
+
 ---
 
 ## Wave C: Web Application Stack Enhancements
@@ -826,12 +840,22 @@ cargo test
 
 ### Notes
 
-Most Wave H items are significant architectural changes that could introduce risk. Current codebase has:
-- Sorted Vec for suffix domains (acceptable for typical site counts)
-- Section-commented handle_request (already maintainable)
-- Admin API middleware pattern (proven in codebase)
-- Provider cooldown with exponential backoff (partial circuit breaker)
-- skip_verify WARN logging
+Most Wave H items are significant architectural changes that could introduce risk. Current implementation status:
+
+**Implemented**:
+- H.3.4 (Upstream TLS Hardening): `skip_verify_reason` field and WARN logging exist in `src/http_client/mod.rs`
+- H.3.5 (Mesh Traffic Circuit Breaker): `provider_stats` with cooldown, exponential backoff, decay in `src/mesh/proxy.rs`
+
+**Deferred (not recommended without specific need)**:
+- H.1.1: Sorted Vec suffix matching acceptable for typical site counts (O(n log n) build, O(n) lookup)
+- H.1.2: `handle_request` already maintainable with 16 section comments
+- H.1.3: Middleware pattern proven in Admin API, no need to force onto main pipeline
+- H.2.1: Admin API uses middleware pattern, main pipeline section-commented
+- H.2.2: Connection limiting exists, per-site CPU/Memory limits need new infrastructure
+- H.2.3: Basic pooling exists, per-site tuning needs config changes
+- H.3.1: Against architecture - single async process recommended per AGENTS.md
+- H.3.2: Significant architectural change, not needed for current scale
+- H.3.3: WAF checks are fast hash lookups, body collection already incremental
 
 ---
 
@@ -880,6 +904,25 @@ Most Wave H items are significant architectural changes that could introduce ris
 - **Compatibility**: Ensure existing WASM plugins still work (V1 ABI support)
 - **Mesh Testing**: Deploy 3-node mesh and verify serverless execution offloading
 - **Resource Limits**: Verify WASM memory and CPU limits are strictly enforced with new ABI
+
+### Notes
+
+**Implemented**:
+- I.2.1 (Flattened Pooling): HashMap-based pool at `manager.rs:40,109` with InstancePool per function
+- I.3.1 (Unified Router): `Router::route` returns `BackendType::Serverless`, routing.rs integration complete
+- I.3.3 (Dynamic Axum Plugins): ABI version check, hot reload, `AxumPluginError::AbiMismatch` in axum_loader.rs
+- I.4.2 (Performance): `MinifierCache` at router.rs:237, file cache with TTL
+
+**Partial**:
+- I.1.4 (WASI Support): `wasi_enabled` flag exists but not wired to linker
+
+**Deferred**:
+- I.1.1-I.1.3: Requires WASM Component Model (WIT) transition and significant ABI redesign
+- I.2.2 (Mesh-Distributed Execution): Mesh lookup on load exists but no actual offload implementation
+- I.2.3 (State Persistence): RequestContext only has env HashMap, no DHT-backed KV store
+- I.3.2 (Optimized Bridge): No streaming optimization implemented
+- I.4.1 (Extended Configuration): show_icons, custom_styles, readme_rendering not implemented
+- I.4.3 (README Rendering): No markdown rendering
 
 ---
 
