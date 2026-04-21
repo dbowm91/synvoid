@@ -22,25 +22,6 @@ This is the consolidated implementation plan combining items from all plan files
 
 Items grouped into waves where parallelization is possible. Sub-agents can work in parallel within waves that have independent phases.
 
-| Wave | Focus | Status | Sub-Agents Possible |
-|------|-------|--------|---------------------|
-| Wave 1 | Documentation & Documentation Cleanup | ✅ COMPLETED | Yes - 3 sub-agents in Phase 1.1, Phase 1.2, Phase 1.3 |
-| Wave 2 | Test Coverage | ✅ COMPLETED | Yes - 4 sub-agents in parallel (one per phase) |
-| Wave 3 | Admin Panel UI Parity | ✅ COMPLETED | Yes - 4 sub-agents in parallel |
-| Wave 4 | Serverless & Edge Caching | ✅ COMPLETED (Feasible parts implemented) | No - some items deferred |
-| Wave 5 | Honeypot & Threat Intel | ✅ COMPLETED | Yes - independent phases |
-| Wave 6 | YARA Distribution | ✅ COMPLETED | Yes - independent phases |
-| Wave 7 | Mesh & DHT Architecture | ✅ COMPLETED (Feasible parts implemented) | Some items deferred |
-| Wave 8 | OpenAPI Improvements | ✅ COMPLETED (Feasible parts implemented) | Some items deferred |
-| Wave A | Mesh/DHT Subsystem Improvements | ✅ COMPLETED | Yes - Phases A.1-A.6 can parallelize |
-| Wave B | Plugin Architecture | ✅ COMPLETED (Feasible parts implemented) | B.1.4 only (lifecycle hot-reload implemented) |
-| Wave C | Web Application Stack | ✅ COMPLETED (Feasible parts implemented) | C.1.1, C.1.3, C.2.1, C.2.2, C.2.4, C.4.1 implemented (6/13) |
-| Wave D | Serverless Architecture | ✅ COMPLETED | D.1-D.4 fully implemented (11/11) |
-| Wave E | Edge Caching & Image Poison | ✅ COMPLETED (Feasible parts implemented) | E.2, E.3 implemented (4/7) |
-| Wave F | YARA/Security | ✅ COMPLETED | F.1-F.5 fully implemented (10/10) |
-| Wave G | Dependency Audit | ✅ COMPLETED (Feasible parts implemented) | G.1.1, G.2.3-G.2.5, G.3.3-G.3.4 implemented |
-| Wave H | Reverse Proxy Performance | ✅ COMPLETED (Feasible parts implemented) | H.3.4, H.3.5 implemented (rest deferred) |
-| Wave I | Web App Stack Extensions | ✅ COMPLETED (Feasible parts implemented) | I.1.4 blocked (wasmtime version mismatch), I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
 
 ---
 
@@ -52,22 +33,9 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 1.1: Remove Outdated WireGuard Content
 
-| ID | Action | File | Status |
-|----|--------|------|--------|
-| W1.1.1 | Remove WireGuard Tunnel section (keep note) | docs/TUNNELS.md | ✅ COMPLETED |
-| W1.1.2 | Remove WireGuard config example | docs/CONFIGURATION.md | ✅ COMPLETED |
-| W1.1.3 | Remove wireguard from platform table | docs/PLATFORM_SUPPORT.md | ✅ COMPLETED |
-| W1.1.4 | Update README.md WireGuard claims | README.md | ✅ COMPLETED |
-| W1.1.5 | Update docs/README.md WireGuard | docs/README.md | ✅ COMPLETED |
-| W1.1.6 | Fix CHANGELOG.md WireGuard | CHANGELOG.md | ✅ COMPLETED |
-| W1.1.7 | Update paper.md WireGuard refs | paper.md | ✅ COMPLETED |
 
 ### Phase 1.2: New Documentation Files
 
-| ID | Description | Status |
-|----|------------|--------|
-| W1.2.1 | RFC 5011 Trust Anchor doc (docs/RFC5011_TRUST_ANCHOR.md) | ✅ COMPLETED |
-| W1.2.2 | Threat Intelligence doc (docs/THREAT_INTEL.md) | ✅ COMPLETED |
 
 **Content Outline for RFC 5011 doc**:
 1. What is RFC 5011 and why it matters
@@ -84,14 +52,6 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 1.3: Update Existing Documentation
 
-| ID | Description | Status |
-|----|------------|--------|
-| W1.3.1 | TLS/ACME - add PQ config, 0-RTT, passthrough | ✅ COMPLETED (docs/CONFIGURATION.md, docs/HTTP3.md have these sections) |
-| W1.3.2 | WAF Mesh - DHT distribution, tier keys | ✅ COMPLETED (docs/WAF_MESH.md has DHT section) |
-| W1.3.3 | Bot Protection - PoW 12s, challenge types | ✅ COMPLETED (docs/BOT_PROTECTION.md has PoW section) |
-| W1.3.4 | Attack Detection - decision types | ✅ COMPLETED (docs/ATTACK_DETECTION.md exists) |
-| W1.3.5 | DNS/DNSSEC - RFC 5011 integration | ✅ COMPLETED (docs/RFC5011_TRUST_ANCHOR.md has full integration) |
-| W1.3.6 | CONFIG common mistakes section | ✅ COMPLETED (docs/CONFIGURATION.md has troubleshooting section) |
 
 ---
 
@@ -105,50 +65,21 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 **Module**: `src/overseer/health.rs` (tests exist)
 
-| ID | Test Name | Status |
-|----|----------|--------|
-| W2.1.1 | test_health_status_enum_variants | ✅ COMPLETED (tests exist at health.rs:884) |
-| W2.1.2 | test_worker_readiness_status_default | ✅ COMPLETED (tests exist) |
-| W2.1.3 | test_enhanced_health_config_defaults | ✅ COMPLETED (tests exist) |
-| W2.1.4 | test_baseline_comparison_calculation | ✅ COMPLETED (tests exist) |
-| W2.1.5 | test_shadow_traffic_result_fields | ✅ COMPLETED (tests exist) |
-| W2.1.6 | test_worker_readiness_status_creation | ✅ COMPLETED (tests exist) |
 
 ### Phase 2.2: Upgrade Process Tests
 
 **Module**: `src/overseer/upgrade.rs` (tests exist)
 
-| ID | Test Name | Status |
-|----|----------|--------|
-| W2.2.1 | test_auto_rollback_config_defaults | ✅ COMPLETED (tests exist at upgrade.rs) |
-| W2.2.2 | test_upgrade_mode_detection | ✅ COMPLETED (tests exist) |
-| W2.2.3 | test_orchestrator_construction | ✅ COMPLETED (tests exist) |
-| W2.2.4 | test_upgrade_state_transitions | ✅ COMPLETED (tests exist) |
-| W2.2.5 | test_preflight_validation_logic | ✅ COMPLETED (tests exist) |
-| W2.2.6 | test_health_check_metrics | ✅ COMPLETED (tests exist) |
 
 ### Phase 2.3: Rollback Mechanism Tests
 
 **Module**: `src/overseer/rollback.rs` (tests exist)
 
-| ID | Test Name | Status |
-|----|----------|--------|
-| W2.3.1 | test_rollback_manager_defaults | ✅ COMPLETED (tests exist at rollback.rs) |
-| W2.3.2 | test_rollback_error_display | ✅ COMPLETED (tests exist) |
-| W2.3.3 | test_rollback_target_construction | ✅ COMPLETED (tests exist) |
-| W2.3.4 | test_can_rollback_logic | ✅ COMPLETED (tests exist) |
-| W2.3.5 | test_rollback_target_parsing | ✅ COMPLETED (tests exist) |
 
 ### Phase 2.4: Socket Handoff Tests
 
 **Module**: `src/overseer/socket_handoff.rs` (tests exist)
 
-| ID | Test Name | Status |
-|----|----------|--------|
-| W2.4.1 | test_socket_handoff_error_types | ✅ COMPLETED (tests exist at socket_handoff.rs) |
-| W2.4.2 | test_handoff_server_construction | ✅ COMPLETED (tests exist) |
-| W2.4.3 | test_handoff_client_connection_timeout | ✅ COMPLETED (tests exist) |
-| W2.4.4 | test_handoff_invalid_state_errors | ✅ COMPLETED (tests exist) |
 
 ---
 
@@ -160,42 +91,15 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 3.1: Critical UI Fixes
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W3.1.1 | Fix Upload section disconnected (BUGFIX) | ✅ COMPLETED |
-| W3.1.2 | Complete Security Headers section | ✅ COMPLETED |
 
 ### Phase 3.2: High Priority Config Sections
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W3.2.1 | YARA Rules section | ✅ COMPLETED |
-| W3.2.2 | Serverless config section | ✅ COMPLETED |
-| W3.2.3 | Bot Detection section (consolidate) | ✅ COMPLETED |
-| W3.2.4 | Process Status Summary in Settings | ✅ COMPLETED |
-| W3.2.5 | Defaults section | ✅ COMPLETED |
-| W3.2.6 | DNS Integration (enhance page) | ✅ COMPLETED |
 
 ### Phase 3.3: Medium Priority Config Sections
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W3.3.1 | Persistence section | ✅ COMPLETED |
-| W3.3.2 | Mime Types section | ✅ COMPLETED |
-| W3.3.3 | Proxy Limits section | ✅ COMPLETED |
-| W3.3.4 | Blocklist Limits section | ✅ COMPLETED |
-| W3.3.5 | TCP/UDP Defaults section | ✅ COMPLETED |
-| W3.3.6 | Fallback section | ✅ COMPLETED |
-| W3.3.7 | Upgrade section | ✅ COMPLETED |
 
 ### Phase 3.4: Low Priority Config Sections
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W3.4.1 | Rule Feed section | ✅ COMPLETED (backend API exists at src/admin/handlers/rule_feed.rs) |
-| W3.4.2 | Static Files config section | ✅ COMPLETED (per-site) |
-| W3.4.3 | Update search index | ✅ COMPLETED |
-| W3.4.4 | Config documentation tooltips | ✅ COMPLETED |
 
 ---
 
@@ -205,17 +109,11 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 4.1: Standalone Serverless Mode
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W4.1.1 | Mode configuration (standalone/provider) | ✅ COMPLETED |
-| W4.1.2 | Scale-to-zero implementation | ✅ COMPLETED |
-| W4.1.3 | Cold start request handling | ✅ COMPLETED |
 
 ### Phase 4.2: Mesh Origin Provider
 
 | ID | Description | Status |
 |----|-------------|--------|
-| W4.2.1 | Provider configuration | ✅ COMPLETED |
 | W4.2.2 | Function announcement to DHT | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (requires origin-side sender wiring) |
 | W4.2.3 | Edge invocation via mesh | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no actual invocation flow) |
 | W4.2.4 | WASM distribution | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no mesh upload/distribution flow) |
@@ -225,7 +123,6 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | ID | Description | Status |
 |----|-------------|--------|
 | W4.3.1 | Upload endpoint | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (only static file upload exists) |
-| W4.3.2 | File manager | ✅ COMPLETED (FileManager at src/static_files/file_manager.rs) |
 | W4.3.3 | Versioning | ❌ NOT NEEDED (WebDAV at src/http/webdav.rs provides versioning) |
 
 ---
@@ -236,33 +133,15 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 5.1: Core Infrastructure Fixes
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W5.1.1 | Broadcast config to edges | ✅ COMPLETED |
-| W5.1.2 | Apply received preferences | ✅ COMPLETED |
-| W5.1.3 | Protocol message update | ✅ COMPLETED |
 
 ### Phase 5.2: Edge HTTP Response Caching
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W5.2.1 | Edge cache implementation | ✅ COMPLETED |
-| W5.2.2 | Cache key computation | ✅ COMPLETED |
-| W5.2.3 | MeshProxy integration | ✅ COMPLETED |
 
 ### Phase 5.3: Edge Static Caching
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W5.3.1 | Static cache implementation | ✅ COMPLETED (edge_cache configs, store_record_edge_cache exists) |
-| W5.3.2 | Cache invalidation | ✅ COMPLETED (invalidate_by_pattern at proxy_cache/store.rs) |
 
 ### Phase 5.4: DHT Image Poison
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W5.4.1 | DHT remains primary | ✅ COMPLETED |
-| W5.4.2 | Dual config priority | ✅ COMPLETED (SiteImagePoisonConfig merges with DHT) |
 
 ---
 
@@ -270,15 +149,9 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 6.1: Port Honeypot Fix
 
-| ID | Description | Status |
-|----|------------|--------|
-| W6.1.1 | Enable standalone publishing | ✅ COMPLETED |
 
 ### Phase 6.2: HTTP Honeypot
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W6.2.1 | Document by-design behavior | ✅ COMPLETED |
 
 ---
 
@@ -286,16 +159,9 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 7.1: Propagation Speed
 
-| ID | Description | Status |
-|----|------------|--------|
-| W7.1.1 | Add YARA mesh broadcast | ✅ COMPLETED |
 
 ### Phase 7.2: Security Enhancements
 
-| ID | Description | Status |
-|----|------------|--------|
-| W7.2.1 | Enforce trusted signers | ✅ COMPLETED |
-| W7.2.2 | Timestamp bounds check | ✅ COMPLETED |
 
 ---
 
@@ -303,10 +169,6 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 
 ### Phase 8.1: High Priority
 
-| ID | Description | Status |
-|----|------------|--------|
-| W8.1.1 | Fix verified_upstream_cache TTL (30s → 300s) | ✅ COMPLETED |
-| W8.1.2 | DNS serving docs update | ✅ COMPLETED |
 
 ### Phase 8.2: Medium Priority (Backlog)
 
@@ -326,17 +188,9 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | ID | Description | Status |
 |----|-------------|--------|
 | W9.1.1 | Add security scheme definitions | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (requires per-handler modification, OpenAPI spec lacks components/securitySchemes) |
-| W9.1.2 | Add server URL definitions | ✅ COMPLETED |
-| W9.1.3 | Add parameter descriptions | ✅ COMPLETED |
 
 ### Phase 9.2: High Priority
 
-| ID | Description | Status |
-|----|-------------|--------|
-| W9.2.1 | Add example values to schemas | ✅ COMPLETED (partial - few examples exist in handlers/stats.rs) |
-| W9.2.2 | Add deprecation markers | ✅ COMPLETED (none needed) |
-| W9.2.3 | Document rate limiting | ✅ COMPLETED (429 responses exist) |
-| W9.2.4 | Add validation tests | ✅ COMPLETED |
 
 ---
 
@@ -419,11 +273,6 @@ cargo test
 
 ### Phase A.1: Security & Attestation (Audit/Fixes)
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| A.1.1 | Audit `DhtAccessControl` and `peer_auth.rs` | src/mesh/ | ✅ COMPLETED (comprehensive checks exist in DhtAccessControl, peer_auth has revocation, PoW, timestamp validation) |
-| A.1.2 | Ensure DNS restrictions are fully enforced in `MeshTransport` | src/mesh/transport.rs | ✅ COMPLETED (handle_zone_sync_request now verifies requestor is global) |
-| A.1.3 | Global-Only DNS: Update `MeshTransport` and `DnsRegistry` to verify `GLOBAL` role flag before responding to anycast registration or zone sync requests | src/mesh/ | ✅ COMPLETED (all handlers verify global role) | |
 
 ### Phase A.2: Multi-Role & Capability-Based Enforcement
 
@@ -436,8 +285,8 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| A.3.1 | Hierarchical Trust: Formalize relationship between `GENESIS_ORG` and other organizations | src/mesh/config_identity.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (multi-genesis support exists but hierarchy not formalized) |
 | A.3.2 | Tier Key Scoping: Restrict tier keys to specific geographic regions or mesh IDs | src/mesh/tier_key_encryption.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (tier key encryption exists but geographic scoping not implemented) |
+| A.3.1 | Hierarchical Trust: Formalize relationship between `GENESIS_ORG` and other organizations | src/mesh/config_identity.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (multi-genesis support exists but hierarchy not formalized) |
 
 ### Phase A.4: Scalability & Routing Optimizations
 
@@ -453,10 +302,8 @@ cargo test
 | ID | Description | File | Status |
 |----|-------------|------|--------|
 | A.5.1 | Proof-of-Uptime: Award reputation based on continuous, verified uptime via periodic heartbeats | src/mesh/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (reputation system exists but proof-of-uptime not implemented) |
-| A.5.2 | Sybil Resistance: Integrate `validate_edge_node_pow` more deeply into connection lifecycle | src/mesh/peer_auth.rs | ✅ COMPLETED (Feasible parts implemented) (PoW validation exists, integration into lifecycle needs review) |
 | A.5.3 | Slash Events: Implement `SlashEvent` messages for Global nodes to broadcast when Edge node is detected providing malicious data | src/mesh/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (slash event infrastructure not implemented) |
 | A.5.4 | Weighted Quorums: Adjust quorum requirements based on node reputation | src/mesh/dht/quorum.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (quorum exists but reputation weighting not integrated) |
-| A.5.5 | Degraded Quorum Safety: Formalize `enable_degraded_quorum` logic for network partitioning scenarios | src/mesh/dht/ | ✅ COMPLETED (enable_degraded_quorum logic exists) |
 
 ### Phase A.6: Security Model Hardening
 
@@ -464,8 +311,6 @@ cargo test
 |----|-------------|------|--------|
 | A.6.1 | Hardware-Backed Identity: Support TPM/Secure Enclave based identity for Global nodes | src/mesh/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (TPM/Secure Enclave integration requires platform-specific code) |
 | A.6.2 | Origin Attestation Refresh: Mandatory periodic refreshing of `global_node_attestation_sig` for Origin nodes | src/mesh/discovery.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (attestation refresh not enforced periodically) |
-| A.6.3 | Strict Key Prefixing: Audit and enforce strict key prefixes in `DhtAccessControl` | src/mesh/dht/record_store_crud.rs | ✅ COMPLETED (DhtAccessControl has comprehensive prefix enforcement) |
-| A.6.4 | Value Encryption: Mandatory encryption for sensitive DHT values using `TierKeyEncryption` | src/mesh/tier_key_encryption.rs | ✅ COMPLETED (tier key encryption implemented for privileged records) |
 
 ### Phase A.7: Additional Security Improvements (from plan3.md)
 
@@ -474,7 +319,6 @@ cargo test
 | A.7.1 | **TLS Certificate Distribution**: Never export Origin private keys to Edge nodes. Implement SNI routing with delegated credentials or Edge-specific TLS certificates | src/mesh/cert_dist.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (private keys encrypted in transit but edges receive them - architectural change needed) |
 | A.7.2 | **Threat Intel Poisoning Protection**: Enforce Telemetry-to-Truth model - Edge nodes submit Threat Telemetry to Global nodes via dedicated API/RPC, not directly to DHT. Only Global nodes evaluate, sign, and publish final `threat_indicator` | src/mesh/threat_intel.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (non-global nodes can publish to DHT, telemetry-to-truth model not enforced) |
 | A.7.3 | **Cuckoo Filter Threat Intel**: Transition from individual DHT keys per IP to Compressed Filter Synchronization (Cuckoo/Bloom Filters) published by Global nodes | src/mesh/dht/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (compressed filter sync is experimental) |
-| A.7.4 | **DHT Routing Optimization**: Delegate reachability verification to Edge nodes using quorum-based consensus with Global node final attestation. Optimize `ping_peers_loop` and `refresh_sparse_buckets` to prevent ping storms | src/mesh/dht/routing/manager.rs | ✅ COMPLETED (ping_peers_loop and refresh_sparse_buckets implemented, jitter added) |
 | A.7.5 | **ACME HTTP-01 Redundancy**: Store pending ACME challenges in DHT (signed by Global node) instead of relying solely on ephemeral one-hop broadcasts. Edge can perform fast DHT lookup on unknown token | src/mesh/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (challenge store uses LRU cache, DHT storage would require new infrastructure) |
 | A.7.6 | **Multi-Genesis Key Rotation**: Implement overlapping trust window where Edge nodes fetch Genesis Key Manifest from DHT, allowing disconnected/partitioned Edge nodes to catch up on rotated Genesis keys securely | src/mesh/config_identity.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (multi-genesis keys exist but rotation window not formalized) |
 
@@ -498,7 +342,6 @@ cargo test
 | B.1.1 | Define `PluginType` enum (Wasm, Axum, Serverless) | src/plugin/mod.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (requires unified type design) |
 | B.1.2 | Implement `PluginRegistry` with unified storage | src/plugin/mod.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (current separate storage for WASM/Axum) |
 | B.1.3 | Refactor `PluginManager` to use `PluginRegistry` | src/plugin/mod.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (requires B.1.1/B.1.2 first) |
-| B.1.4 | Update `PluginManagerLifecycle` for unified hot-reload | src/plugin/mod.rs | ✅ COMPLETED (fully implemented with file watching) |
 | B.1.5 | Add `PluginConfig` to `SiteConfig` | src/config/site/mod.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (plugin config exists but not unified) |
 | B.1.6 | Map site-specific plugin env vars during invocation | src/plugin/wasm_runtime.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (env vars passed but not site-specific) |
 
@@ -577,9 +420,7 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.1.1 | Mobile Responsiveness: Enhance `ThemeRenderer` CSS for responsive directory listing | src/theme/renderer.rs | ✅ COMPLETED (added @media queries at 768px and 480px breakpoints) |
 | C.1.2 | Metadata Expansion: Add MIME type icons, SHA256 hashes, file permissions to `DirectoryEntry` | src/theme/dir_listing.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (directory listing basic features exist, metadata expansion not done) |
-| C.1.3 | Configurable Themes: Expose `ThemePreset` and custom color overrides in `[[site.static.locations]]` | src/config/site/static_files.rs | ✅ COMPLETED (location.theme already wired - `to_theme_config` used in serve_directory at line 761-765) |
 | C.1.4 | Theme Inheritance: Allow location to inherit global site theme or define its own | src/theme/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (theme inheritance not implemented) |
 | C.1.5 | Admin UI Consistency: Add "File Manager" view using same backend JSON format | admin-ui/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (admin-ui separate) |
 
@@ -587,10 +428,7 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.2.1 | Themed Error Pages: Return themed error page when PHP/FastCGI backend is down | src/http/server.rs | ✅ COMPLETED (uses ErrorPageManager.render_page_with_theme for 502/503 errors on backend failure) |
-| C.2.2 | Health Check Integration: Map FastCGI pool health status to Admin UI dashboard | src/fastcgi/pool.rs, admin-ui/ | ✅ COMPLETED (FastCgiPoolStatus struct and status() method exist) |
 | C.2.3 | Active Background Health Checks: PHP-FPM socket failover | src/php/mod.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (PHP-FPM health checks exist but active failover not implemented) |
-| C.2.4 | Environment Variable Injection: Pass custom env vars to FastCGI backends via site config | src/config/site/backend.rs, src/fastcgi/mod.rs, src/php/mod.rs | ✅ COMPLETED (env_vars field added to FastCgiConfig and PhpConfig, passed via FCGI_ENV: prefix) |
 
 ### Phase C.3: WASM Application Platform
 
@@ -604,7 +442,6 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| C.4.1 | Virtualenv Management: Auto-create virtual environment if one doesn't exist | src/app_server/granian.rs | ✅ COMPLETED (auto_detect_venv and detect_venv() implemented) |
 | C.4.2 | Log Aggregation: Pipe Granian STDOUT/STDERR to MaluWAF unified logging with site-id attribution | src/app_server/granian.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (logging exists but STDOUT/STDERR aggregation not implemented) |
 | C.4.3 | Granian Dashboard: Admin UI section for running Granian workers, CPU/memory, manual restart | admin-ui/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (admin-ui separate) |
 
@@ -658,34 +495,15 @@ cargo test
 
 ### Phase D.1: Standalone Optimization & ABI Expansion
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| D.1.1 | Fast-Path Routing: Add `serverless_only = true` config to bypass L7 WAF pipeline | src/config/site.rs, src/router.rs | ✅ COMPLETED (serverless_only site config added; WAF bypass in http/server.rs SECTION 13 for Serverless backend; permission verification via verify_caller_permission() checks revocation, trusted, allowed_callers, allowed_orgs, and tier level; ServerlessPermissionClaim and ServerlessInvokeRequest message types added) |
-| D.1.2 | ABI Enhancements: Add `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions | src/plugin/wasm_runtime.rs | ✅ COMPLETED (3 new host functions added to linker: mesh_query_dht, mesh_check_threat, mesh_emit_event; global record store set via set_global_record_store()) |
-| D.1.3 | Documentation: Update docs/WASM-ABI.md for new capabilities | docs/WASM-ABI.md | ✅ COMPLETED (added documentation for mesh_query_dht, mesh_check_threat, mesh_emit_event; version 1.1) |
 
 ### Phase D.2: Mesh Integration & Function Discovery
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| D.2.1 | Origin Role Definition: Extend `MeshNodeRole` with `SERVERLESS_ORIGIN` flag | src/mesh/config.rs | ✅ COMPLETED (added SERVERLESS_ORIGIN = MeshNodeRole(0b1000), is_serverless_origin() helper) |
-| D.2.2 | DHT Registration: Register `node_id` as active provider when node loads function | src/mesh/transport_peer.rs, src/serverless/manager.rs | ✅ COMPLETED (record_store and routing_manager wired to ServerlessManager via setter methods; unified_server.rs wires transport_manager.get_record_store()) |
-| D.2.3 | Hierarchical Routing Integration: Treat serverless function names as routable upstreams | src/mesh/hierarchical_routing.rs | ✅ COMPLETED (ServerlessManager.initialize() calls register_local_upstream("serverless:{name}"); done via D.2.2) |
 
 ### Phase D.3: Mesh-Wide Remote Execution (Proxying)
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| D.3.1 | Protocol Extension: Add `Serverless` variant to `UpstreamProtocol` | src/mesh/protocol.rs | ✅ COMPLETED (Serverless = 9 added, proto/mesh.proto updated, protocol_types.rs conversions added) |
-| D.3.2 | Remote Execution Dispatch: If `find_matching_route` fails locally, query mesh for provider and forward | src/serverless/manager.rs | ✅ COMPLETED (ServerlessManager now has transport field; handle_serverless_function checks DHT for provider when no local runtime; returns RemoteExecutionRequired error) |
-| D.3.3 | Proxy Handler Updates: Handle incoming remote execution requests securely | src/mesh/proxy.rs | ✅ COMPLETED (handle_serverless_function returns RemoteExecutionRequired; transport.set_transport() wired in unified_server.rs; MeshTransport available for proxy_to_peer calls) |
 
 ### Phase D.4: Event-Driven Triggers
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| D.4.1 | Event Subscription: Functions can subscribe to mesh event topics | src/serverless/manager.rs | ✅ COMPLETED (event_subscriptions HashMap added; subscribe_to_event/unsubscribe_from_event/get_subscribed_functions methods; event_subscriptions config field added to FunctionDefinition) |
-| D.4.2 | Event Dispatch: Dispatch serialized payload to subscribed WASM functions | src/mesh/transport_peer.rs | ✅ COMPLETED (publish_event method spawns async tasks to invoke WASM handlers for each subscriber with /_events/{topic} path) |
 
 ### Verification
 
@@ -713,18 +531,9 @@ cargo test
 
 ### Phase E.2: Standalone Mode Configuration Fix
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| E.2.1 | Modify `apply_image_poisoning` to accept optional `SiteImagePoisonConfig` reference | src/http/server.rs | ✅ COMPLETED (signature updated, accepts poison_config param) |
-| E.2.2 | Pass configuration fields to `PoisonImageClient` instead of hardcoding `None` | src/http/server.rs | ✅ COMPLETED (passes level, intensity, seed, max_dimension, jpeg_quality) |
-| E.2.3 | Update all call sites to pass appropriate config (DHT via `MeshTransportManager` or `site_config`) | src/http/server.rs | ✅ COMPLETED (3 call sites: line 1974 FastCGI, line 2676 mesh, line 2749 static) |
 
 ### Phase E.3: Edge Node Verification
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| E.3.1 | Verify `transform_response` retrieves preferences from `transport_manager` | src/mesh/proxy.rs | ✅ COMPLETED (proxy.rs:1119-1122 gets image_poison_config) |
-| E.3.2 | Verify edge applies transforms and caches result using DHT transform cache | src/mesh/proxy.rs | ✅ COMPLETED (proxy.rs:1289-1317 applies, 1456-1468 stores) |
 
 ### Notes
 
@@ -748,43 +557,21 @@ cargo test
 
 ### Phase F.1: Fix Mesh Forwarder Broadcast Filter
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| F.1.1 | Update forwarder to selectively apply role filter based on message type | src/worker/unified_server.rs | ✅ COMPLETED (broadcast_to_random_peers accepts role_filter parameter) |
-| F.1.2 | Use `None` role filter for announcements reaching all nodes (YaraRuleAnnounce, ThreatAnnounce, etc.) | src/worker/unified_server.rs | ✅ COMPLETED (threat_intel broadcasts use None for role_filter) |
-| F.1.3 | Keep `Some(MeshNodeRole::GLOBAL)` filter for submissions/requests meant only for global | src/worker/unified_server.rs | ✅ COMPLETED (most broadcasts use Some(GLOBAL) for requests) |
 
 ### Phase F.2: Integrate Malware Detection with Threat Intel (HTTP)
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| F.2.1 | When `UploadValidator` detects malware, extract client IP | src/http/server.rs | ✅ COMPLETED (client_ip extracted from request, block_ip_with_threat_intel called) |
-| F.2.2 | Call `threat_intel.announce_local_block(client_ip, reason, ttl, site_scope)` | src/http/server.rs | ✅ COMPLETED (waf.block_ip_with_threat_intel() called with malware_upload reason, 3600s TTL) |
 
 ### Phase F.3: Integrate Malware Detection with Threat Intel (TLS)
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| F.3.1 | Apply same logic as F.2 for HTTPS uploads | src/tls/server.rs | ✅ COMPLETED (client_ip extracted, block_ip_with_threat_intel called with site_id) |
 
 ### Phase F.4: YARA Distribution Enhancements
 
-| ID | Description | File | Status |
-|----|-------------|------|--------|
-| F.4.1 | **Chunking**: Split large rule sets (up to 1MB) into smaller chunks (e.g., 32KB) for DHT storage | src/mesh/yara_rules.rs | ✅ COMPLETED (rules >32KB split into compressed chunks, stored as yara_chunk:{hash}:{index}) |
-| F.4.2 | **Compression**: Use Zstd or Gzip compression before publishing rules to mesh | src/mesh/yara_rules.rs | ✅ COMPLETED (flate2 Gzip level 6 compression, logged compression ratio) |
-| F.4.3 | **Incremental Updates**: Implement delta-based updates where only changed/new rules are broadcast | src/mesh/yara_rules.rs | ✅ COMPLETED (hash check in apply_rules() skips update if unchanged) |
-| F.4.4 | **Local Persistence**: Cache current active rules to disk for immediate availability after restart | src/mesh/yara_rules.rs | ✅ COMPLETED (rules persisted to data_dir/yara_rules/; loads on startup) |
 
 ### Phase F.5: Advanced File Upload Security
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
 | F.5.1 | **Threat-Aware Scanning**: Adjust YARA scan depth based on source IP reputation from ThreatIntelligence | src/http/server.rs | ❌ PERMANENTLY REJECTED - Security design flaw: creates attack surface where attackers earn trust over time, spoof IPs of trusted clients, or use residential botnets. All external uploads must be treated as potential malware. |
-| F.5.2 | **Enhanced Sandbox**: Implement stricter OS-level sandboxing (landlock on Linux, sandbox_init on macOS) for scanning process | src/platform/sandbox.rs, src/upload/sandbox.rs | ✅ COMPLETED (abstraction layer with Landlock on Linux, stub on other platforms) |
-| F.5.3 | **Heuristic Analysis**: Add basic heuristic checks (entropy analysis) alongside YARA rules | src/upload/malware_scanner.rs | ✅ COMPLETED (HighEntropy detection with Shannon entropy > 7.5 threshold) |
-| F.5.4 | **Indicator Batching**: Batch multiple threat indicators into single mesh message | src/mesh/threat_intel.rs | ✅ COMPLETED (skips broadcast if pending < 3 indicators) |
-| F.5.5 | **Tiered Distribution**: Broadcast critical threats (high severity) instantly, sync low-priority via DHT only | src/mesh/threat_intel.rs | ✅ COMPLETED (severity threshold check before queue_for_push) |
 
 ### Verification
 
@@ -804,7 +591,6 @@ cargo test
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| G.1.1 | Wasmtime (RUSTSEC-2026-0096, RUSTSEC-2026-0095): Add `[patch.crates-io]` block to force wasmtime 42.0.2 | Cargo.toml | ✅ COMPLETED (direct dep 42.0.2, yara-x 1.15 still pulls 40.0.4) |
 | G.1.2 | KyberSlash (RUSTSEC-2023-0079): Remove `pqc_kyber`, replace with `ml-kem` crate | src/wasm_pow/Cargo.toml, src/wasm_pow/src/lib.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no fix available, ml-kem replacement requires API rewrite) |
 | G.1.3 | Marvin Attack (RUSTSEC-2023-0071): Update `rsa` from 0.9 to 0.10.x | Cargo.toml | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no fix available per cargo audit) |
 
@@ -814,9 +600,6 @@ cargo test
 |----|-------------|------|--------|
 | G.2.1 | `proc-macro-error` (RUSTSEC-2024-0370): Update utoipa to 5.4.0 | Cargo.toml | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (requires utoipa 5.x which has breaking API changes) |
 | G.2.2 | Refactor OpenAPI schema definitions for Utoipa 5 strict type checking | src/admin/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (blocked by G.2.1) |
-| G.2.3 | Update yew to 0.23.0 in admin-ui | admin-ui/Cargo.toml | ✅ COMPLETED |
-| G.2.4 | `bincode` (RUSTSEC-2025-0141): Update gloo to 0.12.0 | admin-ui/Cargo.toml | ✅ COMPLETED |
-| G.2.5 | `atomic-polyfill` (RUSTSEC-2023-0089): Verify removal via wasmtime patch and postcard update | Cargo.toml | ✅ COMPLETED (not present in dependency tree) |
 
 ### Phase G.3: Modernizing Outdated Crates
 
@@ -824,8 +607,6 @@ cargo test
 |----|-------------|------|--------|
 | G.3.1 | `isbot`: Update from 0.1 to 1.x and adapt bot detection API | Cargo.toml | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no 1.x version exists yet) |
 | G.3.2 | `lightningcss`: Update from 1.0.0-alpha.71 to stable release | Cargo.toml | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no stable release available yet) |
-| G.3.3 | `sysinfo`: Update from 0.32 to 0.33 and adapt stat gathering logic | Cargo.toml | ✅ COMPLETED |
-| G.3.4 | `axum`: Ensure workspace uses latest 0.8.9 via cargo update | Cargo.toml | ✅ COMPLETED (already using 0.8.x) |
 
 ### Verification
 
@@ -873,8 +654,6 @@ cargo test
 | H.3.1 | **Dedicated Worker Pools**: Implement dedicated worker pools for high-traffic sites | src/worker/, src/process/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (against architecture - single async process recommended) |
 | H.3.2 | **Mesh Protocol Sandboxing**: Move complex mesh protocol parsing to restricted submodule or separate "Mesh Sidecar" process | src/mesh/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (significant architectural change) |
 | H.3.3 | **Streaming WAF Engine**: Support rules that can be evaluated on chunks as they arrive without waiting for full body. Only collect body if specific rules require it | src/waf/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (WAF checks are fast hash lookups, body collection already incremental) |
-| H.3.4 | **Upstream TLS Hardening**: Default `verify: true` for upstream TLS. Implement "Security Audit" log highlighting sites using `skip_verify` or weak upstream ciphers | src/http_client/mod.rs | ✅ COMPLETED (skip_verify_reason field and WARN logging exists) |
-| H.3.5 | **Mesh Traffic Circuit Breaker**: Implement aggressive timeouts and circuit breaking for mesh-proxied backends | src/mesh/proxy.rs | ✅ COMPLETED (provider_stats with cooldown, exponential backoff, decay - partial circuit breaker) |
 
 ### Verification
 
@@ -917,13 +696,11 @@ Most Wave H items are significant architectural changes that could introduce ris
 | I.1.1 | **Unified Pooling**: Simplify pooling logic in `WasmRuntime`. Ensure newly created instances are added to pool if capacity allows | src/plugin/wasm_runtime.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (each WasmRuntime creates own pool) |
 | I.1.2 | **Instance Snapshotting**: Explore wasmtime instance snapshotting or ensure `Module` caching is fully utilized across all runtimes | src/plugin/wasm_runtime.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (Module cached per runtime, Instance/Store created fresh per request) |
 | I.1.3 | **Efficient ABI V2**: Replace JSON-based header passing with shared-memory buffer format. Support streaming body access for WASM plugins | src/plugin/wasm_runtime.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (current binary format copies data) |
-| I.1.4 | **WASI Support**: Fully enable WASI with controlled access to specific host resources (restricted filesystem paths) | src/plugin/wasm_runtime.rs | ✅ COMPLETED (Feasible parts implemented) (`wasi_enabled` flag exists, investigation shows wasmtime-wasi 42.0.2 is incompatible - requires wasmtime 44.0.0+) |
 
 ### Phase I.2: Serverless Enhancements
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.2.1 | **Flattened Pooling**: Remove redundant pool in `ServerlessManager`. `ServerlessInstance` should directly manage WASM resources or use single unified pool | src/serverless/manager.rs | ✅ COMPLETED (flat HashMap pools at manager.rs:40,109) |
 | I.2.2 | **Mesh-Distributed Execution**: Allow nodes to "offload" serverless execution to mesh peers if local load is high or peer has module "warmed up". Implement `MeshServerlessRequest` protocol message | src/mesh/, src/serverless/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (mesh lookup on load exists but no actual offload) |
 | I.2.3 | **State Persistence**: Provide guest API for WASM functions to access mesh-wide Key-Value store (backed by existing DHT) | src/plugin/wasm_runtime.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (RequestContext only has env HashMap) |
 
@@ -931,16 +708,12 @@ Most Wave H items are significant architectural changes that could introduce ris
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.3.1 | **Unified Router**: Integrate `ServerlessManager` routing and `router.rs` into single high-performance matcher. Support "Axum Native" sites where site is defined by Axum `Router` called directly | src/router.rs, src/serverless/routing.rs | ✅ COMPLETED (Router::route returns BackendType::Serverless, routing.rs integration complete) |
 | I.3.2 | **Optimized Bridge**: Improve `handle_axum_dynamic_request` to use `axum::body::Body` more efficiently without unnecessary cloning if plugin supports streaming | src/http/server.rs | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no streaming optimization) |
-| I.3.3 | **Dynamic Axum Plugins**: Improve safety and version checking for native Axum plugins (`.so` files) | src/plugin/axum_loader.rs | ✅ COMPLETED (ABI version check, hot reload, AxumPluginError::AbiMismatch) |
 
 ### Phase I.4: Directory Viewer Enhancements
 
 | ID | Description | File | Status |
 |----|-------------|------|--------|
-| I.4.1 | **Extended Configuration**: Add `show_icons`, `hide_patterns`, `custom_styles`, `readme_rendering` to `DirectoryViewerConfig` | src/config/site/static_files.rs | ✅ COMPLETED (Feasible parts implemented) (show_icons, custom_styles, readme_rendering not implemented) |
-| I.4.2 | **Performance**: Implement caching for directory metadata to speed up large listings | src/theme/dir_listing.rs | ✅ COMPLETED (MinifierCache at router.rs:237, file cache with TTL) |
 | I.4.3 | **README Rendering**: Automatically render `README.md` if present in directory using markdown-to-html crate | src/theme/ | ❌ PERMANENTLY REJECTED (Requires complex rewrite/architectural change)  (no markdown rendering) |
 
 ### Verification
@@ -1006,17 +779,6 @@ cargo audit
 
 ## Wave Parallelization Summary
 
-| Wave | Dependencies | Parallelization Possible |
-|------|--------------|------------------------|
-| Wave A (Mesh/DHT) | None | Yes - Phases A.1-A.6 can parallelize |
-| Wave B (Plugin) | None | Yes - Phases B.1-B.6 can parallelize |
-| Wave C (Web App Stack) | None | Yes - Phases C.1-C.5 can parallelize |
-| Wave D (Serverless) | A (mesh), B (plugin) | Partial - D.1 independent, D.2-D.4 depend on A |
-| Wave E (Edge Caching) | A (mesh) | Partial - E.1-E.3 can parallelize |
-| Wave F (YARA/Security) | A (mesh) | Partial - F.1-F.3 independent, F.4-F.5 can parallelize |
-| Wave G (Dependencies) | None | No - sequential security patches |
-| Wave H (Performance) | None | Yes - Phases H.1-H.3 can parallelize |
-| Wave I (WASM Extensions) | B (plugin) | Partial - I.1 independent, I.2-I.4 depend on B |
 
 **Recommended Implementation Order**:
 1. **Wave G** (Dependency Audit) - Security patches, no dependencies
