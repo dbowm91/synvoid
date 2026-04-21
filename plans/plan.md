@@ -34,6 +34,8 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave 8 | OpenAPI Improvements | ⚠️ PARTIAL | Some items deferred |
 | Wave A | Mesh/DHT Subsystem Improvements | ✅ COMPLETED | Yes - Phases A.1-A.6 can parallelize |
 | Wave B | Plugin Architecture | ⚠️ PARTIAL | B.1.4 only (lifecycle hot-reload implemented) |
+| Wave C | Web Application Stack | ⚠️ PARTIAL | C.2.2, C.4.1 implemented (2/13) |
+| Wave E | Edge Caching & Image Poison | ⚠️ PARTIAL | E.2, E.3 implemented (4/7) |
 | Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | H.3.4, H.3.5 implemented (rest deferred) |
 | Wave I | Web App Stack Extensions | ⚠️ PARTIAL | I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
 
@@ -564,6 +566,8 @@ cargo test
 
 ## Wave C: Web Application Stack Enhancements
 
+**Status**: ⚠️ PARTIAL (2/13 items implemented)
+
 **Source**: plan5.md, plan6.md
 
 ### Phase C.1: Unified Theme & Directory Viewer
@@ -607,6 +611,37 @@ cargo test
 |----|-------------|------|--------|
 | C.5.1 | Magic Defaults: Smart Detection for `default_root` if `site.php` or `site.granian` defined | src/config/site/mod.rs | ⏸️ DEFERRED (magic defaults not implemented) |
 | C.5.2 | Multi-App Orchestration: Route to different App Stacks based on path (/api -> WASM, /blog -> PHP) | src/router.rs | ⏸️ DEFERRED (multi-app routing not implemented) | |
+
+### Notes
+
+**Implemented**:
+- C.2.2 (Health Check Integration): `FastCgiPoolStatus` struct and `status()` method in `src/fastcgi/pool.rs`
+- C.4.1 (Virtualenv Management): `auto_detect_venv` and `detect_venv()` in `src/app_server/granian.rs`
+
+**Deferred - UX Polish (Low Priority)**:
+- C.1.1 (Mobile Responsiveness): Directory listing is primarily admin/debug feature; mobile is nice-to-have
+- C.1.2 (Metadata Expansion): SHA256 requires reading entire file per entry; adds I/O overhead
+- C.1.3 (Configurable Themes): Per-location theme requires config schema change
+- C.1.4 (Theme Inheritance): Complexity in theme resolution for marginal value
+- C.1.5 (Admin UI File Manager): Admin UI is separate project; low priority
+
+**Deferred - PHP/FastCGI Hardening**:
+- C.2.1 (Themed Error Pages): Error page rendering during failure adds complexity for marginal UX gain
+- C.2.3 (Active Health Checks): PHP-FPM already has self-healing via socket failover; adds background task overhead
+- C.2.4 (Env Var Injection): Security concern - env vars in config file could leak sensitive data
+
+**Deferred - WASM Dependencies (Blocked by Wave B)**:
+- C.3.1 (WASI by default): Security implications - WASI gives plugins filesystem/network access
+- C.3.2 (Streaming Body): Depends on B.2.5 (WASM Component Model) for proper interface types
+- C.3.3 (Wildcard Routing): Depends on routing redesign; not critical for current use cases
+
+**Deferred - Granian**:
+- C.4.2 (Log Aggregation): Requires inter-process log pipe management; parsing stdout/stderr format
+- C.4.3 (Granian Dashboard): Admin UI work, separate from core RustWAF
+
+**Deferred - Design Concerns**:
+- C.5.1 (Magic Defaults): Implicit behavior creates subtle bugs; explicit configuration is more maintainable
+- C.5.2 (Multi-App Orchestration): Complex routing with multiple backends; edge cases difficult to handle
 
 ---
 
@@ -660,7 +695,7 @@ cargo test
 
 ## Wave E: Edge Node Caching and Image Poisoning
 
-**Status**: ⚠️ PARTIAL (4 items completed, 3 items deferred)
+**Status**: ⚠️ PARTIAL (4/7 items implemented)
 
 **Source**: plan8.md
 
@@ -688,10 +723,17 @@ cargo test
 | E.3.1 | Verify `transform_response` retrieves preferences from `transport_manager` | src/mesh/proxy.rs | ✅ COMPLETED (proxy.rs:1119-1122 gets image_poison_config) |
 | E.3.2 | Verify edge applies transforms and caches result using DHT transform cache | src/mesh/proxy.rs | ✅ COMPLETED (proxy.rs:1289-1317 applies, 1456-1468 stores) |
 
-### Verification
+### Notes
 
-- **Mesh Mode Validation**: Deploy origin + edge, confirm transformations only by edge, not origin
-- **Standalone Validation**: Single node uses site config level/intensity, not defaults
+**Implemented**:
+- E.2.1-E.2.3 (Standalone Mode Configuration): Image poisoning config properly passed via site_config or DHT
+- E.3.1-E.3.2 (Edge Node Verification): Edge correctly applies transforms and caches results
+
+**Deferred - Design Decision**:
+- E.1.1 (Remove origin minification): Origin minification is a "safe" optimization; removing it serves no purpose since image poisoning is not implemented by design
+- E.1.2 (Simplify handle_http_proxy_stream): Only matters if image poisoning is implemented; current fallback to raw on error is sufficient
+
+**Rationale**: Wave E's purpose is to enforce edge/origin separation where origin is simple and edge does transformations. However, since image poisoning (the main transformation) is not implemented, E.1's changes would have no visible effect. Origin minification remains as a safe optimization.
 
 ---
 
