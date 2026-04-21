@@ -78,8 +78,9 @@ Examples:
 | `genesis_key_transition:{sequence}` | Genesis key rotation record | 24 hours |
 | `revoked_global_node:{node_id}` | Revoked global node | 24 hours |
 | `serverless_function:{name}` | Serverless function registration | 1 hour |
+| `yara_chunk:{content_hash}:{index}` | Compressed YARA rule chunk (for large rulesets) | 24 hours |
 
-## Routing Flow
+## DHT Key Types - ThreatIntel & YARA
 
 ### 1. Edge Receives Request
 ```

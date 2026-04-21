@@ -633,6 +633,17 @@ All duplicate `current_timestamp()` definitions have been consolidated into `src
 | FastCGI status | `src/fastcgi/pool.rs:15-27,221-238` | FastCgiPoolStatus struct and status() method |
 | Granian logging config | `src/app_server/granian.rs` | GranianLogLevel, GranianLogFormat enums |
 | Drain test fix | `tests/drain_e2e_test.rs:292-310` | Uses existing master_streams |
+| F.2/F.3 malware-threat integration | `src/http/server.rs:2335-2399`, `src/tls/server.rs:883-961` | block_ip_with_threat_intel() called on malware detection |
+| F.5.3 entropy heuristic | `src/upload/malware_scanner.rs:139,163-167` | HighEntropy detection with Shannon entropy > 7.5 threshold |
+| F.5.4 indicator batching | `src/mesh/threat_intel.rs:1460-1467` | Skips broadcast if pending < 3 indicators |
+| F.5.5 tiered distribution | `src/mesh/threat_intel.rs:536-541` | Severity threshold check before queue_for_push |
+| F.4.1 YARA chunking | `src/mesh/yara_rules.rs:377-607` | Rules > 32KB split into compressed chunks |
+| F.4.2 YARA compression | `src/mesh/yara_rules.rs:382-397` | flate2 Gzip level 6 compression |
+| F.4.3 YARA incremental | `src/mesh/yara_rules.rs:977-987` | Hash check in apply_rules() skips unchanged |
+| F.4.4 YARA persistence | `src/mesh/yara_rules.rs:322-365` | Rules persisted to data_dir/yara_rules/ |
+| F.5.2 OS sandbox abstraction | `src/platform/sandbox.rs` | SandboxBackend trait, LandlockSandbox, StubSandbox |
+| F.5.2 Linux landlock | `src/platform/sandbox.rs:linux` | Landlock syscalls for kernel 5.13+ |
+| F.5.1 permanently rejected | - | Security flaw: creates trust earning attack surface |
 
 ## Performance Hot Paths
 
