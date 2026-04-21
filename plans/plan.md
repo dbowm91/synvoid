@@ -35,7 +35,10 @@ Items grouped into waves where parallelization is possible. Sub-agents can work 
 | Wave A | Mesh/DHT Subsystem Improvements | ✅ COMPLETED | Yes - Phases A.1-A.6 can parallelize |
 | Wave B | Plugin Architecture | ⚠️ PARTIAL | B.1.4 only (lifecycle hot-reload implemented) |
 | Wave C | Web Application Stack | ⚠️ PARTIAL | C.1.1, C.1.3, C.2.1, C.2.2, C.2.4, C.4.1 implemented (6/13) |
+| Wave D | Serverless Architecture | ✅ COMPLETED | D.1-D.4 fully implemented (11/11) |
 | Wave E | Edge Caching & Image Poison | ⚠️ PARTIAL | E.2, E.3 implemented (4/7) |
+| Wave F | YARA/Security | ✅ COMPLETED | F.1-F.5 fully implemented (10/10) |
+| Wave G | Dependency Audit | ⚠️ PARTIAL | G.1.1, G.2.3-G.2.5, G.3.3-G.3.4 implemented |
 | Wave H | Reverse Proxy Performance | ⚠️ PARTIAL | H.3.4, H.3.5 implemented (rest deferred) |
 | Wave I | Web App Stack Extensions | ⚠️ PARTIAL | I.2.1, I.3.1, I.3.3, I.4.2 implemented (4/13) |
 
