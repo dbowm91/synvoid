@@ -1865,16 +1865,23 @@ impl HttpServer {
                                             .map(|b| Full::new(b).boxed()));
                                     }
                                     Err(e) => {
-                                        tracing::warn!(
-                                            "PHP backend error for site {} path {}: {}",
-                                            site_id,
-                                            path,
-                                            e
-                                        );
-                                        return Ok(Self::build_response_with_alt_svc(
+                                        let site_theme = target
+                                            .site_config
+                                            .error_pages
+                                            .theme
+                                            .as_ref()
+                                            .map(|theme_config| {
+                                                theme_config.to_theme_config(waf.error_page_manager.theme())
+                                            });
+                                        let body = waf.error_page_manager.render_page_with_theme(
                                             502,
-                                            format!("Backend Error: {}", e),
-                                            "text/plain",
+                                            Some(&format!("Backend Error: {}", e)),
+                                            site_theme.as_ref(),
+                                        );
+                                        return Ok(crate::http::response_builder::build_response_with_alt_svc(
+                                            502,
+                                            body,
+                                            "text/html",
                                             &alt_svc,
                                             &main_config,
                                         ));
@@ -2022,16 +2029,23 @@ impl HttpServer {
                                 ));
                             }
                             Err(e) => {
-                                tracing::warn!(
-                                    "FastCGI error for site {} path {}: {}",
-                                    site_id,
-                                    path,
-                                    e
-                                );
-                                return Ok(Self::build_response_with_alt_svc(
+                                let site_theme = target
+                                    .site_config
+                                    .error_pages
+                                    .theme
+                                    .as_ref()
+                                    .map(|theme_config| {
+                                        theme_config.to_theme_config(waf.error_page_manager.theme())
+                                    });
+                                let body = waf.error_page_manager.render_page_with_theme(
                                     502,
-                                    format!("Backend Error: {}", e),
-                                    "text/plain",
+                                    Some(&format!("Backend Error: {}", e)),
+                                    site_theme.as_ref(),
+                                );
+                                return Ok(crate::http::response_builder::build_response_with_alt_svc(
+                                    502,
+                                    body,
+                                    "text/html",
                                     &alt_svc,
                                     &main_config,
                                 ));
@@ -2042,10 +2056,23 @@ impl HttpServer {
                         "FastCGI/PHP backend for site {} but no socket configured",
                         site_id
                     );
-                    return Ok(Self::build_response_with_alt_svc(
+                    let site_theme = target
+                        .site_config
+                        .error_pages
+                        .theme
+                        .as_ref()
+                        .map(|theme_config| {
+                            theme_config.to_theme_config(waf.error_page_manager.theme())
+                        });
+                    let body = waf.error_page_manager.render_page_with_theme(
                         502,
-                        "Backend misconfigured: no socket configured".to_string(),
-                        "text/plain",
+                        Some("Backend misconfigured: no socket configured"),
+                        site_theme.as_ref(),
+                    );
+                    return Ok(crate::http::response_builder::build_response_with_alt_svc(
+                        502,
+                        body,
+                        "text/html",
                         &alt_svc,
                         &main_config,
                     ));

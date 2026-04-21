@@ -820,6 +820,64 @@ body {{
 /* High contrast focus indicator */
 .waf-dir-pagination-controls a:focus {{
     box-shadow: 0 0 0 3px rgba(var(--waf-primary), 0.4);
+}}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {{
+    .waf-dir-table {{
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }}
+
+    .waf-dir-table th,
+    .waf-dir-table td {{
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+    }}
+
+    .waf-dir-pagination {{
+        flex-direction: column;
+        gap: 0.75rem;
+    }}
+
+    .waf-dir-pagination-controls {{
+        flex-wrap: wrap;
+        justify-content: center;
+    }}
+
+    .waf-dir-sort {{
+        flex-wrap: wrap;
+        justify-content: center;
+    }}
+}}
+
+@media (max-width: 480px) {{
+    .waf-dir-table {{
+        font-size: 0.8125rem;
+    }}
+
+    .waf-dir-table th,
+    .waf-dir-table td {{
+        padding: 0.4rem 0.5rem;
+    }}
+
+    .waf-container {{
+        padding: 1rem;
+    }}
+
+    .waf-dir-title {{
+        font-size: 1.25rem;
+    }}
+
+    .waf-dir-breadcrumbs {{
+        font-size: 0.875rem;
+    }}
+
+    .waf-dir-pagination-controls a {{
+        padding: 0.4rem 0.6rem;
+        font-size: 0.8125rem;
+    }}
 }}"#,
             padding = s.padding,
         )
