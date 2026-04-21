@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub struct SandboxConfig {
     pub sandbox_dir: PathBuf,
     pub quarantine_dir: PathBuf,
+    pub sandbox_level: crate::platform::SandboxLevel,
 }
 
 impl Default for SandboxConfig {
@@ -15,6 +16,7 @@ impl Default for SandboxConfig {
         Self {
             sandbox_dir: PathBuf::from("/var/lib/maluwaf/sandbox"),
             quarantine_dir: PathBuf::from("/var/lib/maluwaf/quarantine"),
+            sandbox_level: crate::platform::SandboxLevel::Off,
         }
     }
 }
@@ -24,13 +26,55 @@ impl SandboxConfig {
         Self {
             sandbox_dir: sandbox_dir.into(),
             quarantine_dir: quarantine_dir.into(),
+            sandbox_level: crate::platform::SandboxLevel::Off,
         }
+    }
+
+    pub fn with_sandbox_level(mut self, level: crate::platform::SandboxLevel) -> Self {
+        self.sandbox_level = level;
+        self
     }
 
     pub async fn ensure_dirs_exist(&self) -> std::io::Result<()> {
         fs::create_dir_all(&self.sandbox_dir).await?;
         fs::create_dir_all(&self.quarantine_dir).await?;
         Ok(())
+    }
+
+    pub fn apply_platform_sandbox(&self) -> Option<crate::platform::ProcessSandbox> {
+        if self.sandbox_level == crate::platform::SandboxLevel::Off {
+            return None;
+        }
+
+        if !crate::platform::is_sandbox_supported() {
+            tracing::warn!(
+                "OS-level sandboxing requested but not supported on this platform. \
+                 Using basic directory isolation instead."
+            );
+            return None;
+        }
+
+        let paths = crate::platform::SandboxPaths::new()
+            .add_read_path(&self.sandbox_dir)
+            .add_write_path(&self.quarantine_dir);
+
+        match crate::platform::ProcessSandbox::with_paths(self.sandbox_level, paths) {
+            Ok(sandbox) => {
+                tracing::info!(
+                    "Platform sandbox applied (level: {:?}, feature: {})",
+                    sandbox.level(),
+                    sandbox.feature_name()
+                );
+                Some(sandbox)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to apply platform sandbox: {}. Using basic directory isolation instead.",
+                    e
+                );
+                None
+            }
+        }
     }
 }
 

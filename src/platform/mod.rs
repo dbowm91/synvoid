@@ -1,12 +1,16 @@
 pub mod fs;
 pub mod ipc;
 pub mod process;
+pub mod sandbox;
 pub mod service;
 pub mod socket;
 
 pub use fs::{PlatformPaths, SecureDir};
 pub use ipc::{IpcListener, IpcStream, IpcTransport};
 pub use process::{ProcessControl, SignalHandler};
+pub use sandbox::{
+    SandboxBackend, SandboxError, SandboxLevel, SandboxPaths, ProcessSandbox, StubSandbox,
+};
 pub use service::{ServiceConfig, ServiceControl, ServiceState};
 pub use socket::{
     OwnedTcpListener, OwnedTcpStream, SocketFDPassing, SocketHandle, SocketHandoffError,
@@ -165,6 +169,10 @@ impl Platform {
         }
     }
 
+    pub fn supports_sandbox(&self) -> bool {
+        matches!(self, Platform::Linux | Platform::LinuxMusl)
+    }
+
     pub fn libc_name(&self) -> &'static str {
         match self {
             Platform::Linux => "glibc",
@@ -241,4 +249,8 @@ pub fn is_wireguard_kernel_supported() -> bool {
 
 pub fn is_admin_required_for_tun() -> bool {
     platform().is_admin_required_for_tun()
+}
+
+pub fn is_sandbox_supported() -> bool {
+    platform().supports_sandbox()
 }
