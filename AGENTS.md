@@ -269,12 +269,26 @@ Keys transition through these states:
 
 ## Planning and Implementation Patterns
 
-The monolithic implementation plan (`plans/plan.md`) has been fully executed (all feasible items completed, and unfeasible complex rewrites permanently rejected). Future work should be planned incrementally and contextually rather than relying on massive, multi-wave pre-computed plans.
+The implementation plan is consolidated in `plans/plan.md`. This plan organizes work into waves based on parallelization potential. Sub-agents can work in parallel within waves that have independent phases.
 
 When undertaking new features:
 1. **Research First**: Read relevant `skills/` files and `AGENTS.md` sections.
-2. **Draft a mini-plan**: Propose changes to the user before diving into massive code edits.
+2. **Draft a mini-plan**: Propose changes to the user before diving into massive code edits. Use the wave structure in plan.md as a guide.
 3. **Avoid Complex Rewrites**: Maintain the existing architecture unless explicitly authorized to rewrite.
+
+**Wave Organization**:
+- Wave A: Critical Security Fixes (can parallelize with Wave J)
+- Wave B: Performance Hot Paths (can parallelize with A, J)
+- Wave C: Web App Stack Improvements (independent)
+- Wave D: YARA & ThreatIntel Distribution (after A, B)
+- Wave E: Mesh & DHT Architecture (after A, parallel with D)
+- Wave F: Serverless Architecture (after E.1)
+- Wave G: Edge Caching & Image Poison (after E)
+- Wave H: Admin Panel Improvements (independent)
+- Wave I: Stub/Incomplete Items (low priority)
+- Wave J: Dependency & Security Updates (can parallelize with A)
+- Wave K: Documentation (independent)
+- Wave L: Testing Improvements (independent)
 ## Subagent Execution Best Practices
 
 When using subagents to make code changes:
