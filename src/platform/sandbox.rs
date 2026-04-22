@@ -281,14 +281,12 @@ pub mod linux {
             const LANDLOCK_RESTRICT_SELF: u64 = 3;
 
             unsafe {
-                let ret = libc::syscall(
-                    libc::SYS_landlock_restrict_self,
-                    ruleset_fd as i64,
-                    0u64,
-                );
+                let ret = libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd as i64, 0u64);
 
                 if ret < 0 {
-                    return Err(SandboxError::Syscall("landlock_restrict_self failed".into()));
+                    return Err(SandboxError::Syscall(
+                        "landlock_restrict_self failed".into(),
+                    ));
                 }
             }
 
@@ -297,7 +295,11 @@ pub mod linux {
     }
 
     impl SandboxBackend for LandlockSandbox {
-        fn apply(&self, allowed_paths: &[&Path], denied_paths: &[&Path]) -> Result<(), SandboxError> {
+        fn apply(
+            &self,
+            allowed_paths: &[&Path],
+            denied_paths: &[&Path],
+        ) -> Result<(), SandboxError> {
             if !Self::is_landlock_available() {
                 tracing::warn!(
                     "Landlock not available (kernel < 5.13 or disabled). \

@@ -55,7 +55,8 @@ pub struct ServerlessManager {
     runtime: Arc<WasmPluginManager>,
     routes: RwLock<Vec<ServerlessRoute>>,
     record_store: RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
-    routing_manager: RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
+    routing_manager:
+        RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
     transport: RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>,
     event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
     org_manager: RwLock<Option<Arc<crate::mesh::organization::OrganizationManager>>>,
@@ -88,7 +89,10 @@ impl ServerlessManager {
         *self.record_store.write() = Some(store);
     }
 
-    pub fn set_routing_manager(&self, manager: Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>) {
+    pub fn set_routing_manager(
+        &self,
+        manager: Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>,
+    ) {
         *self.routing_manager.write() = Some(manager);
     }
 
@@ -110,7 +114,11 @@ impl ServerlessManager {
         if let Some(funcs) = subs.get_mut(&topic) {
             if !funcs.contains(&function_name.to_string()) {
                 funcs.push(function_name.to_string());
-                tracing::debug!("Function '{}' subscribed to event topic '{}'", function_name, topic);
+                tracing::debug!(
+                    "Function '{}' subscribed to event topic '{}'",
+                    function_name,
+                    topic
+                );
             }
         }
     }
@@ -119,7 +127,11 @@ impl ServerlessManager {
         let mut subs = self.event_subscriptions.write();
         if let Some(funcs) = subs.get_mut(topic) {
             funcs.retain(|f| f != function_name);
-            tracing::debug!("Function '{}' unsubscribed from event topic '{}'", function_name, topic);
+            tracing::debug!(
+                "Function '{}' unsubscribed from event topic '{}'",
+                function_name,
+                topic
+            );
         }
     }
 
@@ -137,7 +149,11 @@ impl ServerlessManager {
             return;
         }
 
-        tracing::debug!("Publishing event to topic '{}' for {} subscribers", topic, subscribers.len());
+        tracing::debug!(
+            "Publishing event to topic '{}' for {} subscribers",
+            topic,
+            subscribers.len()
+        );
 
         let pools = self.pools.read().clone();
         let functions = self.functions.read().clone();
@@ -180,7 +196,8 @@ impl ServerlessManager {
         caller_tier: Option<u32>,
     ) -> Result<(), ServerlessError> {
         let functions_guard = self.functions.read();
-        let function = functions_guard.get(function_name)
+        let function = functions_guard
+            .get(function_name)
             .ok_or_else(|| ServerlessError::FunctionNotFound(function_name.to_string()))?;
 
         let def = &function.definition;
@@ -188,7 +205,8 @@ impl ServerlessManager {
         if let Some(ref revocation_list) = *self.revocation_list.read() {
             if let Some(info) = revocation_list.is_node_revoked(caller_node_id) {
                 return Err(ServerlessError::PermissionDenied(format!(
-                    "Node {} is revoked: {}", caller_node_id, info.reason
+                    "Node {} is revoked: {}",
+                    caller_node_id, info.reason
                 )));
             }
         }
@@ -203,7 +221,8 @@ impl ServerlessManager {
         }
 
         if let Some(ref allowed_callers) = def.allowed_callers {
-            if !allowed_callers.is_empty() && !allowed_callers.contains(&caller_node_id.to_string()) {
+            if !allowed_callers.is_empty() && !allowed_callers.contains(&caller_node_id.to_string())
+            {
                 return Err(ServerlessError::PermissionDenied(format!(
                     "Node {} not in allowed callers list for function {}",
                     caller_node_id, function_name
@@ -356,7 +375,10 @@ impl ServerlessManager {
                 let func_name = func_def.name.clone();
                 tokio::spawn(async move {
                     routing_clone.register_local_upstream(&upstream_id).await;
-                    tracing::debug!("Registered serverless function {} in hierarchical routing", func_name);
+                    tracing::debug!(
+                        "Registered serverless function {} in hierarchical routing",
+                        func_name
+                    );
                 });
             }
         }
@@ -395,7 +417,10 @@ impl ServerlessManager {
         if let Some(routing) = rm {
             let upstream_id = format!("serverless:{}", func_def.name);
             routing.register_local_upstream(&upstream_id).await;
-            tracing::debug!("Registered serverless function {} in hierarchical routing", func_def.name);
+            tracing::debug!(
+                "Registered serverless function {} in hierarchical routing",
+                func_def.name
+            );
         }
     }
 
@@ -540,7 +565,11 @@ impl ServerlessManager {
         headers: &HeaderMap,
         body: Option<Bytes>,
     ) -> Result<ServerlessResponse, ServerlessError> {
-        let function = self.functions.read().get(function_name).cloned()
+        let function = self
+            .functions
+            .read()
+            .get(function_name)
+            .cloned()
             .ok_or_else(|| ServerlessError::FunctionNotFound(function_name.to_string()))?;
 
         get_global_serverless_registry().record_invocation(function_name);
@@ -631,7 +660,8 @@ impl ServerlessManager {
         let body_vec = body.map(|b| b.to_vec()).unwrap_or_default();
         let env = function.definition.env.clone();
 
-        runtime.invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
+        runtime
+            .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
             .map(|response| {
                 let status_code = response.status().as_u16();
                 let mut resp_headers = HashMap::new();
@@ -685,8 +715,8 @@ pub async fn handle_serverless_function(
     );
 
     // Check if we have a local WASM runtime for this function
-    let has_local_runtime = function.runtime.is_some()
-        || manager.pools.read().contains_key(&function_name);
+    let has_local_runtime =
+        function.runtime.is_some() || manager.pools.read().contains_key(&function_name);
 
     // If no local runtime, try to find a provider via DHT
     if !has_local_runtime {

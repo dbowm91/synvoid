@@ -135,8 +135,9 @@ pub use wasm_dist::{
     WasmStoreError,
 };
 
-static RECORD_STORE_GLOBAL: std::sync::LazyLock<parking_lot::RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>> =
-    std::sync::LazyLock::new(|| parking_lot::RwLock::new(None));
+static RECORD_STORE_GLOBAL: std::sync::LazyLock<
+    parking_lot::RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(None));
 
 pub fn set_global_record_store(store: Arc<crate::mesh::dht::RecordStoreManager>) {
     *RECORD_STORE_GLOBAL.write() = Some(store);

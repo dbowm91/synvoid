@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+// SAFETY_REASON: Admin API handlers for common functionality - future expansion planned
 
 use axum::{
     extract::Request,

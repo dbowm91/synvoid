@@ -377,7 +377,12 @@ mod process_lifecycle_tests {
         let decoded: Message = serde_json::from_str(&json).unwrap();
 
         match decoded {
-            Message::WorkerError { id, error, severity, error_code } => {
+            Message::WorkerError {
+                id,
+                error,
+                severity,
+                error_code,
+            } => {
                 assert_eq!(id, WorkerId(1));
                 assert_eq!(error, "connection timeout");
                 assert_eq!(severity, ErrorSeverity::Error);
@@ -389,34 +394,16 @@ mod process_lifecycle_tests {
 
     #[test]
     fn test_error_severity_display() {
-        assert_eq!(
-            format!("{}", ErrorSeverity::Warning),
-            "warning"
-        );
-        assert_eq!(
-            format!("{}", ErrorSeverity::Error),
-            "error"
-        );
-        assert_eq!(
-            format!("{}", ErrorSeverity::Critical),
-            "critical"
-        );
+        assert_eq!(format!("{}", ErrorSeverity::Warning), "warning");
+        assert_eq!(format!("{}", ErrorSeverity::Error), "error");
+        assert_eq!(format!("{}", ErrorSeverity::Critical), "critical");
     }
 
     #[test]
     fn test_error_code_display() {
-        assert_eq!(
-            format!("{}", ErrorCode::Unknown),
-            "unknown"
-        );
-        assert_eq!(
-            format!("{}", ErrorCode::WorkerPanic),
-            "worker_panic"
-        );
-        assert_eq!(
-            format!("{}", ErrorCode::Timeout),
-            "timeout"
-        );
+        assert_eq!(format!("{}", ErrorCode::Unknown), "unknown");
+        assert_eq!(format!("{}", ErrorCode::WorkerPanic), "worker_panic");
+        assert_eq!(format!("{}", ErrorCode::Timeout), "timeout");
         assert_eq!(
             format!("{}", ErrorCode::AuthenticationFailed),
             "authentication_failed"
@@ -428,7 +415,10 @@ mod process_lifecycle_tests {
         let ack = Message::HealthCheckAck { timestamp: 9999999 };
         let json = serde_json::to_string(&ack).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
-        assert!(matches!(decoded, Message::HealthCheckAck { timestamp: 9999999 }));
+        assert!(matches!(
+            decoded,
+            Message::HealthCheckAck { timestamp: 9999999 }
+        ));
     }
 
     #[test]

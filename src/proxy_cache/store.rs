@@ -44,9 +44,8 @@ pub struct ProxyCacheEntry {
     pub is_fresh: bool,
 }
 
-type InflightRequestsMap = Arc<
-    DashMap<CacheKey, Vec<oneshot::Sender<Option<Arc<ProxyCacheEntry>>>>>,
->;
+type InflightRequestsMap =
+    Arc<DashMap<CacheKey, Vec<oneshot::Sender<Option<Arc<ProxyCacheEntry>>>>>>;
 
 impl ProxyCacheEntry {
     pub fn new(
@@ -405,7 +404,9 @@ impl ProxyCache {
         let (tx, rx) = oneshot::channel();
 
         {
-            let mut entry = inflight_requests.entry(key_clone.clone()).or_insert_with(Vec::new);
+            let mut entry = inflight_requests
+                .entry(key_clone.clone())
+                .or_insert_with(Vec::new);
             if entry.is_empty() {
                 entry.push(tx);
                 drop(entry);
@@ -413,7 +414,13 @@ impl ProxyCache {
                 let (content, status, headers, max_age) = fetch().await?;
 
                 let result = if self
-                    .insert(key_clone.clone(), content, status.as_u16(), headers, max_age)
+                    .insert(
+                        key_clone.clone(),
+                        content,
+                        status.as_u16(),
+                        headers,
+                        max_age,
+                    )
                     .is_ok()
                 {
                     self.get(&key_clone).await

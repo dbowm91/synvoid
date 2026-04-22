@@ -349,7 +349,11 @@ impl FastCgiPoolManager {
         pools.values().map(|p| p.status()).collect()
     }
 
-    pub async fn drain_and_reload_pool(&self, socket: &str, timeout: Duration) -> Result<(), String> {
+    pub async fn drain_and_reload_pool(
+        &self,
+        socket: &str,
+        timeout: Duration,
+    ) -> Result<(), String> {
         let pool = self
             .pools
             .read()

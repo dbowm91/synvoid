@@ -1,9 +1,9 @@
 #[cfg(unix)]
 mod ipc_tests {
     use maluwaf::process::ipc::{
-        BlockEntryData, ErrorCode, ErrorSeverity, Message, RequestLogPayload,
-        RulePatternData, ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel,
-        UpgradeModePayload, WorkerId, WorkerMetricsPayload, WorkerStatusInfo,
+        BlockEntryData, ErrorCode, ErrorSeverity, Message, RequestLogPayload, RulePatternData,
+        ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel, UpgradeModePayload,
+        WorkerId, WorkerMetricsPayload, WorkerStatusInfo,
     };
     use maluwaf::process::{ipc_transport::IpcStream, IpcEndpoint};
     use tempfile::TempDir;
@@ -771,10 +771,7 @@ mod ipc_tests {
         Message::MasterResizeThreadpool { worker_threads: 16 }
     );
 
-    roundtrip_test!(
-        test_roundtrip_master_cert_reload,
-        Message::MasterCertReload
-    );
+    roundtrip_test!(test_roundtrip_master_cert_reload, Message::MasterCertReload);
 
     // Static Worker Messages
     roundtrip_test!(
@@ -1274,7 +1271,9 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_commit_upgrade,
-        Message::OverseerCommitUpgrade { old_master_timeout_secs: 60 }
+        Message::OverseerCommitUpgrade {
+            old_master_timeout_secs: 60
+        }
     );
 
     roundtrip_test!(
@@ -1438,10 +1437,7 @@ mod ipc_tests {
         }
     );
 
-    roundtrip_test!(
-        test_roundtrip_restore_from_drain,
-        Message::RestoreFromDrain
-    );
+    roundtrip_test!(test_roundtrip_restore_from_drain, Message::RestoreFromDrain);
 
     roundtrip_test!(
         test_roundtrip_restore_from_drain_ack_success,
@@ -1513,7 +1509,9 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_socket_handoff_ready_full,
-        Message::SocketHandoffReady { ports: vec![8080, 8443] }
+        Message::SocketHandoffReady {
+            ports: vec![8080, 8443]
+        }
     );
 
     roundtrip_test!(

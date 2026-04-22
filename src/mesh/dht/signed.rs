@@ -447,7 +447,9 @@ impl TtlManager {
             SignedRecordType::UpstreamImageProtection => self.upstream_image_protection_ttl,
             SignedRecordType::UpstreamMinification => self.upstream_minification_ttl,
             SignedRecordType::UpstreamCompression => self.upstream_compression_ttl,
-            SignedRecordType::UpstreamProxyCachePreferences => self.upstream_proxy_cache_preferences_ttl,
+            SignedRecordType::UpstreamProxyCachePreferences => {
+                self.upstream_proxy_cache_preferences_ttl
+            }
             SignedRecordType::SiteImagePoisonConfig => self.site_image_poison_config_ttl,
         }
     }

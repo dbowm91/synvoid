@@ -593,8 +593,11 @@ impl WasmRuntime {
                             if out_end <= mem_data.len() {
                                 unsafe {
                                     let mem_ptr = mem.data_ptr(&caller) as *mut u8;
-                                    std::slice::from_raw_parts_mut(mem_ptr.add(out_start), out_end - out_start)
-                                        .copy_from_slice(&value[..value_len]);
+                                    std::slice::from_raw_parts_mut(
+                                        mem_ptr.add(out_start),
+                                        out_end - out_start,
+                                    )
+                                    .copy_from_slice(&value[..value_len]);
                                 }
                                 value_len as i32
                             } else {
@@ -613,7 +616,9 @@ impl WasmRuntime {
                     result
                 },
             )
-            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link mesh_query_dht: {}", e)))?;
+            .map_err(|e| {
+                WasmPluginError::LoadFailed(format!("failed to link mesh_query_dht: {}", e))
+            })?;
 
         // Provide env::mesh_check_threat(ip_ptr, ip_len) -> i32
         // Returns: 1 if IP is blocked/threatened, 0 if clean, -1 on error
@@ -621,7 +626,9 @@ impl WasmRuntime {
             .func_wrap(
                 "env",
                 "mesh_check_threat",
-                |mut caller: wasmtime::Caller<'_, RequestContext>, ip_ptr: i32, ip_len: i32|
+                |mut caller: wasmtime::Caller<'_, RequestContext>,
+                 ip_ptr: i32,
+                 ip_len: i32|
                  -> i32 {
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
@@ -649,7 +656,9 @@ impl WasmRuntime {
                     0
                 },
             )
-            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link mesh_check_threat: {}", e)))?;
+            .map_err(|e| {
+                WasmPluginError::LoadFailed(format!("failed to link mesh_check_threat: {}", e))
+            })?;
 
         // Provide env::mesh_emit_event(topic_ptr, topic_len, data_ptr, data_len) -> i32
         // Returns: 0 on success, -1 on error
@@ -681,7 +690,8 @@ impl WasmRuntime {
                         return -1;
                     }
 
-                    let topic = String::from_utf8_lossy(&mem_data[topic_start..topic_end]).to_string();
+                    let topic =
+                        String::from_utf8_lossy(&mem_data[topic_start..topic_end]).to_string();
                     let data = mem_data[data_start..data_end].to_vec();
 
                     tracing::debug!("WASM mesh_emit_event('{}', {} bytes)", topic, data.len());
@@ -696,7 +706,9 @@ impl WasmRuntime {
                     0
                 },
             )
-            .map_err(|e| WasmPluginError::LoadFailed(format!("failed to link mesh_emit_event: {}", e)))?;
+            .map_err(|e| {
+                WasmPluginError::LoadFailed(format!("failed to link mesh_emit_event: {}", e))
+            })?;
 
         let instance = linker
             .instantiate(&mut *store, &self.module)

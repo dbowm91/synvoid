@@ -54,7 +54,15 @@ pub fn Login() -> Html {
 
             spawn_local(async move {
                 let api = crate::services::api::ApiService::new();
-                match api.post::<LoginResponse, _>("/auth/login", &LoginRequest { token: token.clone() }).await {
+                match api
+                    .post::<LoginResponse, _>(
+                        "/auth/login",
+                        &LoginRequest {
+                            token: token.clone(),
+                        },
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.success {
                             if let Some(jwt) = response.token {

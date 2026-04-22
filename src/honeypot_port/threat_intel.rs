@@ -24,8 +24,9 @@ static ADMIN_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)/admin(?:/login)?|/administrator").unwrap());
 static VC_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)/\.git/|/\.svn/HEAD").unwrap());
-static AWS_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(aws_access_key|aws_secret|access_key_id|secret_access_key)").unwrap());
+static AWS_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(aws_access_key|aws_secret|access_key_id|secret_access_key)").unwrap()
+});
 static REDIS_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bredis.*config\s+set\b").unwrap());
 static MONGO_PATTERN: LazyLock<Regex> =

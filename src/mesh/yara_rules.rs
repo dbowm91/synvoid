@@ -10,6 +10,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
+use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::mesh::config::{MeshNodeRole, YaraRulesMeshConfig};
@@ -17,6 +18,48 @@ use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::protocol::MeshMessage;
 use crate::upload::yara_rule_feed::YaraRuleFeedManager;
+
+#[derive(Debug, Error)]
+pub enum YaraRulesError {
+    #[error("Record store not set")]
+    RecordStoreNotSet,
+    #[error("No feed manager or no applied rules")]
+    NoFeedManager,
+    #[error("Edge submissions are disabled")]
+    EdgeSubmissionsDisabled,
+    #[error("Only edge nodes can submit rules")]
+    NotEdgeNode,
+    #[error("Rules size exceeds limit: {size}KB > {limit}KB max")]
+    RulesSizeExceedsLimit { size: usize, limit: usize },
+    #[error("Rules must contain at least one 'rule' declaration")]
+    MissingRuleDeclaration,
+    #[error("Invalid YARA syntax: {0}")]
+    InvalidYaraSyntax(String),
+    #[error("Only global nodes can approve submissions")]
+    NotGlobalNode,
+    #[error("Submission not found")]
+    SubmissionNotFound,
+    #[error("Submission already processed")]
+    SubmissionAlreadyProcessed,
+    #[error("Only global nodes can reject submissions")]
+    NotGlobalNodeForRejection,
+    #[error("Only global nodes can apply rules directly")]
+    NotGlobalNodeForDirectApply,
+    #[error("Can only delete Pending or Rejected submissions")]
+    InvalidSubmissionState,
+    #[error("No local rules")]
+    NoLocalRules,
+    #[error("Received rules are not newer")]
+    RulesNotNewer,
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+    #[error("Compression error: {0}")]
+    CompressionError(String),
+    #[error("UTF-8 error: {0}")]
+    Utf8Error(#[from] std::string::FromUtf8Error),
+}
 
 const MAX_PENDING_SUBMISSIONS: usize = 1000;
 const SUBMISSION_EXPIRY_SECS: u64 = 86400 * 7;
@@ -296,7 +339,7 @@ impl YaraRulesManager {
         self.data_dir.as_ref().map(|d| d.join("yara_rules"))
     }
 
-    fn load_rules_from_disk(&self) -> Result<(), String> {
+    fn load_rules_from_disk(&self) -> Result<(), YaraRulesError> {
         let Some(dir) = self.rules_dir() else {
             return Ok(());
         };
@@ -316,7 +359,7 @@ impl YaraRulesManager {
         };
 
         let rules_content = std::fs::read_to_string(&rules_path)
-            .map_err(|e| format!("Failed to read rules file: {}", e))?;
+            .map_err(YaraRulesError::IoError)?;
 
         if rules_content.is_empty() {
             return Ok(());
@@ -338,7 +381,7 @@ impl YaraRulesManager {
         Ok(())
     }
 
-    fn save_rules_to_disk(&self) -> Result<(), String> {
+fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         let Some(dir) = self.rules_dir() else {
             return Ok(());
         };
@@ -351,16 +394,16 @@ impl YaraRulesManager {
         let version = self.current_version.read().clone();
 
         std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create rules dir: {}", e))?;
+            .map_err(YaraRulesError::IoError)?;
 
         let rules_path = dir.join("current_rules.yar");
         std::fs::write(&rules_path, &rules)
-            .map_err(|e| format!("Failed to write rules file: {}", e))?;
+            .map_err(YaraRulesError::IoError)?;
 
         if let Some(v) = version {
             let version_path = dir.join("version.txt");
             std::fs::write(&version_path, &v)
-                .map_err(|e| format!("Failed to write version file: {}", e))?;
+                .map_err(YaraRulesError::IoError)?;
         }
 
         tracing::debug!("Saved YARA rules to disk");
@@ -377,14 +420,14 @@ impl YaraRulesManager {
         *rs = Some(record_store);
     }
 
-    fn compress_rules(&self, rules: &str) -> Result<Vec<u8>, String> {
+    fn compress_rules(&self, rules: &str) -> Result<Vec<u8>, YaraRulesError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::new(YARA_COMPRESSION_LEVEL));
         encoder
             .write_all(rules.as_bytes())
-            .map_err(|e| format!("Compression write error: {}", e))?;
+            .map_err(|e| YaraRulesError::CompressionError(e.to_string()))?;
         encoder
             .finish()
-            .map_err(|e| format!("Compression finish error: {}", e))
+            .map_err(|e| YaraRulesError::CompressionError(e.to_string()))
     }
 
     fn split_into_chunks(&self, data: &[u8]) -> Vec<Vec<u8>> {
@@ -398,14 +441,14 @@ impl YaraRulesManager {
         chunks
     }
 
-    fn reassemble_chunks(&self, chunks: &[Vec<u8>]) -> Result<String, String> {
+    fn reassemble_chunks(&self, chunks: &[Vec<u8>]) -> Result<String, YaraRulesError> {
         let mut decompressed = Vec::new();
         for chunk in chunks {
             let mut decoder = GzDecoder::new(chunk.as_slice());
             std::io::copy(&mut decoder, &mut decompressed)
-                .map_err(|e| format!("Decompression error: {}", e))?;
+                .map_err(|e| YaraRulesError::CompressionError(e.to_string()))?;
         }
-        String::from_utf8(decompressed).map_err(|e| format!("UTF-8 error: {}", e))
+        String::from_utf8(decompressed).map_err(YaraRulesError::from)
     }
 
     pub fn publish_rules_to_dht(&self) {
@@ -482,12 +525,7 @@ impl YaraRulesManager {
         let (manifest_signature, manifest_signer_pk) = if let Some(ref signer) = self.signer {
             let content = format!(
                 "{}:{}:{}:{}:{}:{}",
-                version,
-                content_hash,
-                self.node_id,
-                timestamp,
-                chunk_count,
-                is_chunked
+                version, content_hash, self.node_id, timestamp, chunk_count, is_chunked
             );
             let sig = signer.sign(&content);
             let pk = base64::Engine::encode(
@@ -535,7 +573,11 @@ impl YaraRulesManager {
                 let chunk_signature = if let Some(ref signer) = self.signer {
                     let content = format!(
                         "{}:{}:{}:{}:{}",
-                        content_hash, i, chunk.len(), self.node_id, timestamp
+                        content_hash,
+                        i,
+                        chunk.len(),
+                        self.node_id,
+                        timestamp
                     );
                     signer.sign(&content)
                 } else {
@@ -565,7 +607,9 @@ impl YaraRulesManager {
                 version
             );
         } else {
-            if let Some(_existing) = record_store.get(&DhtKey::yara_rule_content(&content_hash).as_str()) {
+            if let Some(_existing) =
+                record_store.get(&DhtKey::yara_rule_content(&content_hash).as_str())
+            {
                 tracing::debug!("YARA rule content already in DHT: {}", content_hash);
                 return;
             }
@@ -598,7 +642,9 @@ impl YaraRulesManager {
 
             if let Ok(bytes) = serde_json::to_vec(&rule_value) {
                 if record_store.store_and_announce(
-                    DhtKey::yara_rule_content(&content_hash).as_str().to_string(),
+                    DhtKey::yara_rule_content(&content_hash)
+                        .as_str()
+                        .to_string(),
                     bytes,
                     86400,
                 ) {
@@ -632,12 +678,21 @@ impl YaraRulesManager {
 
         let rules_str = value.get("rules").and_then(|v| v.as_str())?.to_string();
         let version_str = value.get("version").and_then(|v| v.as_str())?.to_string();
-        let timestamp_str = value.get("timestamp").and_then(|v| v.as_str()).unwrap_or("0");
+        let timestamp_str = value
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0");
         let timestamp: u64 = timestamp_str.parse().unwrap_or(0);
 
-        let is_chunked = value.get("is_chunked").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_chunked = value
+            .get("is_chunked")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if is_chunked {
-            tracing::debug!("YARA sync: expected chunked data but got single record for hash {}", content_hash);
+            tracing::debug!(
+                "YARA sync: expected chunked data but got single record for hash {}",
+                content_hash
+            );
             return None;
         }
 
@@ -668,23 +723,30 @@ impl YaraRulesManager {
             };
 
             let compressed_b64 = value.get("compressed_data").and_then(|v| v.as_str())?;
-            let compressed_data = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                compressed_b64,
-            )
-            .ok()?;
+            let compressed_data =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, compressed_b64)
+                    .ok()?;
 
             if version_str.is_none() {
-                version_str = value.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+                version_str = value
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
             }
 
-            let ts_str = value.get("timestamp").and_then(|v| v.as_str()).unwrap_or("0");
+            let ts_str = value
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0");
             let ts: u64 = ts_str.parse().unwrap_or(0);
             if ts > timestamp {
                 timestamp = ts;
             }
 
-            let chunk_signature = value.get("signature").and_then(|v| v.as_str()).unwrap_or("");
+            let chunk_signature = value
+                .get("signature")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !chunk_signature.is_empty() && !signer_pk.is_empty() {
                 let sig_bytes = match base64::Engine::decode(
                     &base64::engine::general_purpose::STANDARD,
@@ -711,7 +773,11 @@ impl YaraRulesManager {
                 );
                 let sig_content = format!(
                     "{}:{}:{}:{}:{}",
-                    content_hash, i, compressed_data.len(), self.node_id, ts
+                    content_hash,
+                    i,
+                    compressed_data.len(),
+                    self.node_id,
+                    ts
                 );
                 if !signer.verify(&sig_content, &sig_bytes, &pk_bytes) {
                     tracing::warn!(
@@ -739,17 +805,18 @@ impl YaraRulesManager {
         Some((version_str, rules_str, timestamp))
     }
 
-    pub fn sync_from_dht(&self) -> Result<(), String> {
+    pub fn sync_from_dht(&self) -> Result<(), YaraRulesError> {
         if !self.config.enabled {
             return Ok(());
         }
 
         let record_store_opt = self.record_store.read().clone();
         let Some(record_store) = record_store_opt else {
-            return Err("Record store not set".to_string());
+            return Err(YaraRulesError::RecordStoreNotSet);
         };
 
-        let dht_records = record_store.get_by_prefix("yara_rules_manifest:", DEFAULT_GET_BY_PREFIX_LIMIT);
+        let dht_records =
+            record_store.get_by_prefix("yara_rules_manifest:", DEFAULT_GET_BY_PREFIX_LIMIT);
         let local_rules = self.local_rules.read().clone();
         let local_hash = local_rules.as_ref().map(|r| self.compute_rules_hash(r));
 
@@ -801,8 +868,14 @@ impl YaraRulesManager {
                         continue;
                     }
 
-                    let is_chunked = value.get("is_chunked").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let chunk_count = value.get("chunk_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+                    let is_chunked = value
+                        .get("is_chunked")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let chunk_count = value
+                        .get("chunk_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1) as usize;
 
                     let manifest_signature = value
                         .get("signature")
@@ -816,7 +889,12 @@ impl YaraRulesManager {
                     let signature_content = if is_chunked {
                         format!(
                             "{}:{}:{}:{}:{}:{}",
-                            manifest_version, peer_hash, manifest_node_id, manifest_timestamp, chunk_count, is_chunked
+                            manifest_version,
+                            peer_hash,
+                            manifest_node_id,
+                            manifest_timestamp,
+                            chunk_count,
+                            is_chunked
                         )
                     } else {
                         format!(
@@ -890,7 +968,12 @@ impl YaraRulesManager {
                     }
 
                     let rules_str = if is_chunked {
-                        self.fetch_chunks_from_dht(peer_hash, chunk_count, &record_store, manifest_signer_pk)
+                        self.fetch_chunks_from_dht(
+                            peer_hash,
+                            chunk_count,
+                            &record_store,
+                            manifest_signer_pk,
+                        )
                     } else {
                         self.fetch_rules_from_dht(peer_hash, &record_store)
                     };
@@ -986,9 +1069,10 @@ impl YaraRulesManager {
         self.node_role.is_global() || self.node_role.contains(MeshNodeRole::GLOBAL)
     }
 
-    pub fn apply_rules_from_feed(&self) -> Result<String, String> {
+    pub fn apply_rules_from_feed(&self) -> Result<String, YaraRulesError> {
         if let Some(ref feed_manager) = self.feed_manager {
-            let version = feed_manager.apply_rules()?;
+            let version = feed_manager.apply_rules()
+                .map_err(|_| YaraRulesError::NoFeedManager)?;
             if let Some(rules) = feed_manager.get_rules_for_scanner() {
                 *self.local_rules.write() = Some(rules.clone());
                 *self.current_version.write() = Some(version.clone());
@@ -1003,7 +1087,7 @@ impl YaraRulesManager {
                 return Ok(version);
             }
         }
-        Err("No feed manager or no applied rules".to_string())
+        Err(YaraRulesError::NoFeedManager)
     }
 
     pub fn apply_rules(
@@ -1011,13 +1095,16 @@ impl YaraRulesManager {
         rules: String,
         version: String,
         source: YaraRuleSource,
-    ) -> Result<String, String> {
+    ) -> Result<String, YaraRulesError> {
         let current_rules = self.local_rules.read().clone();
         let current_hash = current_rules.as_ref().map(|r| self.compute_rules_hash(r));
         let new_hash = self.compute_rules_hash(&rules);
 
         if current_hash.as_ref() == Some(&new_hash) {
-            tracing::debug!("Rules unchanged (hash {}), skipping publish", &new_hash[..8]);
+            tracing::debug!(
+                "Rules unchanged (hash {}), skipping publish",
+                &new_hash[..8]
+            );
             *self.current_version.write() = Some(version.clone());
             return Ok(version);
         }
@@ -1056,13 +1143,13 @@ impl YaraRulesManager {
         &self,
         rules: String,
         description: String,
-    ) -> Result<String, String> {
+    ) -> Result<String, YaraRulesError> {
         if !self.config.allow_edge_submissions {
-            return Err("Edge submissions are disabled".to_string());
+            return Err(YaraRulesError::EdgeSubmissionsDisabled);
         }
 
         if !self.node_role.is_edge() && !self.node_role.contains(MeshNodeRole::EDGE) {
-            return Err("Only edge nodes can submit rules".to_string());
+            return Err(YaraRulesError::NotEdgeNode);
         }
 
         self.validate_rules_content(&rules)?;
@@ -1132,18 +1219,17 @@ impl YaraRulesManager {
         self.submission_hashes.read().get(content_hash).cloned()
     }
 
-    fn validate_rules_content(&self, rules: &str) -> Result<(), String> {
+    fn validate_rules_content(&self, rules: &str) -> Result<(), YaraRulesError> {
         let max_size = (self.config.max_rules_size_kb as usize) * 1024;
         if rules.len() > max_size {
-            return Err(format!(
-                "Rules size {} exceeds maximum allowed size {}KB",
-                rules.len(),
-                self.config.max_rules_size_kb
-            ));
+            return Err(YaraRulesError::RulesSizeExceedsLimit {
+                size: rules.len() / 1024,
+                limit: self.config.max_rules_size_kb as usize,
+            });
         }
 
         if !rules.contains("rule ") {
-            return Err("Rules must contain at least one 'rule' declaration".to_string());
+            return Err(YaraRulesError::MissingRuleDeclaration);
         }
 
         let rule_count = rules.matches("rule ").count();
@@ -1157,7 +1243,7 @@ impl YaraRulesManager {
         Ok(())
     }
 
-    fn validate_rules_syntax(&self, rules: &str) -> Result<(), String> {
+    fn validate_rules_syntax(&self, rules: &str) -> Result<(), YaraRulesError> {
         match yara_x::compile(rules) {
             Ok(_) => {
                 tracing::debug!("YARA rules syntax validation passed");
@@ -1165,12 +1251,12 @@ impl YaraRulesManager {
             }
             Err(e) => {
                 tracing::warn!("YARA rules syntax validation failed: {}", e);
-                Err(format!("Invalid YARA syntax: {}", e))
+                Err(YaraRulesError::InvalidYaraSyntax(e.to_string()))
             }
         }
     }
 
-    fn broadcast_submission(&self, submission: &YaraRuleSubmission) -> Result<(), String> {
+    fn broadcast_submission(&self, submission: &YaraRuleSubmission) -> Result<(), YaraRulesError> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
             let signer_public_key = self
@@ -1241,18 +1327,18 @@ impl YaraRulesManager {
         &self,
         submission_id: &str,
         review_notes: Option<String>,
-    ) -> Result<String, String> {
+    ) -> Result<String, YaraRulesError> {
         if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::GLOBAL) {
-            return Err("Only global nodes can approve submissions".to_string());
+            return Err(YaraRulesError::NotGlobalNode);
         }
 
         let mut submissions = self.submissions.write();
         let submission = submissions
             .get_mut(submission_id)
-            .ok_or("Submission not found")?;
+            .ok_or(YaraRulesError::SubmissionNotFound)?;
 
         if submission.status != YaraRuleSubmissionStatus::Pending {
-            return Err("Submission already processed".to_string());
+            return Err(YaraRulesError::SubmissionAlreadyProcessed);
         }
 
         let now = crate::mesh::safe_unix_timestamp();
@@ -1282,18 +1368,18 @@ impl YaraRulesManager {
         &self,
         submission_id: &str,
         review_notes: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), YaraRulesError> {
         if !self.node_role.is_global() && !self.node_role.contains(MeshNodeRole::GLOBAL) {
-            return Err("Only global nodes can reject submissions".to_string());
+            return Err(YaraRulesError::NotGlobalNodeForRejection);
         }
 
         let mut submissions = self.submissions.write();
         let submission = submissions
             .get_mut(submission_id)
-            .ok_or("Submission not found")?;
+            .ok_or(YaraRulesError::SubmissionNotFound)?;
 
         if submission.status != YaraRuleSubmissionStatus::Pending {
-            return Err("Submission already processed".to_string());
+            return Err(YaraRulesError::SubmissionAlreadyProcessed);
         }
 
         let now = crate::mesh::safe_unix_timestamp();
@@ -1368,23 +1454,23 @@ impl YaraRulesManager {
         self.submissions.read().get(submission_id).cloned()
     }
 
-    pub fn apply_rules_direct(&self, rules: String, version: String) -> Result<String, String> {
+    pub fn apply_rules_direct(&self, rules: String, version: String) -> Result<String, YaraRulesError> {
         if !self.is_global() {
-            return Err("Only global nodes can apply rules directly".to_string());
+            return Err(YaraRulesError::NotGlobalNodeForDirectApply);
         }
         self.apply_rules(rules, version, YaraRuleSource::Local)
     }
 
-    pub fn delete_submission(&self, submission_id: &str) -> Result<(), String> {
+    pub fn delete_submission(&self, submission_id: &str) -> Result<(), YaraRulesError> {
         let mut submissions = self.submissions.write();
         let submission = submissions
             .get(submission_id)
-            .ok_or("Submission not found")?;
+            .ok_or(YaraRulesError::SubmissionNotFound)?;
 
         if submission.status != YaraRuleSubmissionStatus::Pending
             && submission.status != YaraRuleSubmissionStatus::Rejected
         {
-            return Err("Can only delete Pending or Rejected submissions".to_string());
+            return Err(YaraRulesError::InvalidSubmissionState);
         }
 
         submissions.remove(submission_id);
@@ -1395,10 +1481,10 @@ impl YaraRulesManager {
         Ok(())
     }
 
-    pub fn broadcast_approved_rules(&self, version: &str) -> Result<(), String> {
+    pub fn broadcast_approved_rules(&self, version: &str) -> Result<(), YaraRulesError> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
-            let rules = self.local_rules.read().clone().ok_or("No local rules")?;
+            let rules = self.local_rules.read().clone().ok_or(YaraRulesError::NoLocalRules)?;
 
             let signer_public_key = self
                 .signer
@@ -1506,7 +1592,7 @@ impl YaraRulesManager {
         self.data_dir.as_ref().map(|d| d.join("yara_submissions"))
     }
 
-    fn save_submission_to_disk(&self, submission: &YaraRuleSubmission) -> Result<(), String> {
+    fn save_submission_to_disk(&self, submission: &YaraRuleSubmission) -> Result<(), YaraRulesError> {
         let Some(dir) = self.submissions_dir() else {
             return Ok(());
         };
@@ -1514,18 +1600,18 @@ impl YaraRulesManager {
         let path = dir.join(format!("{}.json", submission.submission_id));
 
         let json = serde_json::to_string_pretty(submission)
-            .map_err(|e| format!("Failed to serialize submission: {}", e))?;
+            .map_err(YaraRulesError::JsonError)?;
 
         std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create submissions dir: {}", e))?;
+            .map_err(YaraRulesError::IoError)?;
 
-        std::fs::write(&path, json).map_err(|e| format!("Failed to write submission: {}", e))?;
+        std::fs::write(&path, json).map_err(YaraRulesError::IoError)?;
 
         tracing::debug!("Saved submission {} to disk", submission.submission_id);
         Ok(())
     }
 
-    fn load_submissions_from_disk(&self) -> Result<(), String> {
+    fn load_submissions_from_disk(&self) -> Result<(), YaraRulesError> {
         let Some(dir) = self.submissions_dir() else {
             return Ok(());
         };
@@ -1535,7 +1621,7 @@ impl YaraRulesManager {
         }
 
         let entries = std::fs::read_dir(&dir)
-            .map_err(|e| format!("Failed to read submissions dir: {}", e))?;
+            .map_err(YaraRulesError::IoError)?;
 
         let mut loaded = 0;
         for entry in entries.flatten() {
@@ -1569,7 +1655,7 @@ impl YaraRulesManager {
         Ok(())
     }
 
-    pub fn delete_submission_from_disk(&self, submission_id: &str) -> Result<(), String> {
+    pub fn delete_submission_from_disk(&self, submission_id: &str) -> Result<(), YaraRulesError> {
         let Some(dir) = self.submissions_dir() else {
             return Ok(());
         };
@@ -1578,7 +1664,7 @@ impl YaraRulesManager {
 
         if path.exists() {
             std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete submission: {}", e))?;
+                .map_err(YaraRulesError::IoError)?;
             tracing::debug!("Deleted submission {} from disk", submission_id);
         }
 
@@ -1620,9 +1706,12 @@ impl YaraRulesManager {
         version: String,
         rules: String,
         _from_node: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, YaraRulesError> {
         if rules.len() > (self.config.max_rules_size_kb as usize) * 1024 {
-            return Err("Rules size exceeds limit".to_string());
+            return Err(YaraRulesError::RulesSizeExceedsLimit {
+                size: rules.len() / 1024,
+                limit: self.config.max_rules_size_kb as usize,
+            });
         }
 
         let current = self.current_version.read();
@@ -1636,7 +1725,7 @@ impl YaraRulesManager {
                         return Ok(current_ver.clone());
                     }
                 }
-                return Err("Received rules are not newer".to_string());
+                return Err(YaraRulesError::RulesNotNewer);
             }
         }
         drop(current);

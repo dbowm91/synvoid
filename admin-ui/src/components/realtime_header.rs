@@ -43,24 +43,22 @@ pub fn RealtimeHeader() -> Html {
         let req_history = req_history.clone();
         let blocked_history = blocked_history.clone();
 
-        use_effect_with((), move |_| {
-            match ws_state {
-                UseWebSocketState::Connected(metrics) => {
-                    set_current_metrics.set(Some(metrics.clone()));
-                    let now = chrono_lite();
-                    set_last_updated.set(now);
+        use_effect_with((), move |_| match ws_state {
+            UseWebSocketState::Connected(metrics) => {
+                set_current_metrics.set(Some(metrics.clone()));
+                let now = chrono_lite();
+                set_last_updated.set(now);
 
-                    let mut req_hist = (*req_history).clone();
-                    let mut block_hist = (*blocked_history).clone();
-                    req_hist.remove(0);
-                    req_hist.push(metrics.requests_per_second);
-                    block_hist.remove(0);
-                    block_hist.push(metrics.blocked_per_second);
-                    req_history.set(req_hist);
-                    blocked_history.set(block_hist);
-                }
-                _ => {}
+                let mut req_hist = (*req_history).clone();
+                let mut block_hist = (*blocked_history).clone();
+                req_hist.remove(0);
+                req_hist.push(metrics.requests_per_second);
+                block_hist.remove(0);
+                block_hist.push(metrics.blocked_per_second);
+                req_history.set(req_hist);
+                blocked_history.set(block_hist);
             }
+            _ => {}
         });
     }
 
@@ -72,16 +70,32 @@ pub fn RealtimeHeader() -> Html {
                 format!("{:.1}", m.requests_per_second),
                 format!("{:.1}", m.blocked_per_second),
                 m.current_concurrent.to_string(),
-                format!("{:.1}%", if m.total_requests > 0 {
-                    (m.total_requests - m.blocked - m.errors) as f64 / m.total_requests as f64 * 100.0
-                } else { 100.0 }),
+                format!(
+                    "{:.1}%",
+                    if m.total_requests > 0 {
+                        (m.total_requests - m.blocked - m.errors) as f64 / m.total_requests as f64
+                            * 100.0
+                    } else {
+                        100.0
+                    }
+                ),
                 format!("{:.0}ms", m.avg_latency_ms),
             )
         } else {
-            ("0".to_string(), "0".to_string(), "0".to_string(), "100%".to_string(), "0ms".to_string())
+            (
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "100%".to_string(),
+                "0ms".to_string(),
+            )
         };
 
-    let threat_level = metrics.as_ref().map(|m| m.requests_per_second as u8 / 50).unwrap_or(0).min(10);
+    let threat_level = metrics
+        .as_ref()
+        .map(|m| m.requests_per_second as u8 / 50)
+        .unwrap_or(0)
+        .min(10);
     let (threat_bg, threat_label) = get_threat_level_color_and_label(threat_level);
 
     html! {

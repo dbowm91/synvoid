@@ -445,8 +445,7 @@ impl NormalizedInputs {
         let mut normalized_headers = Vec::new();
         for (name, value) in headers.iter() {
             if let Ok(value_str) = value.to_str() {
-                normalized_headers
-                    .push((name.as_str().into(), normalizer.normalize(value_str)));
+                normalized_headers.push((name.as_str().into(), normalizer.normalize(value_str)));
             }
         }
 

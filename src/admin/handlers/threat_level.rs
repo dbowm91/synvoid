@@ -70,8 +70,7 @@ pub struct BaselineMetric {
     pub computed_at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[allow(dead_code)]
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct SetLevelRequest {
     pub level: u8,
 }

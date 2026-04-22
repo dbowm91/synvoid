@@ -963,7 +963,9 @@ impl WafCore {
             return decision;
         }
 
-        if let Some(decision) = self.check_bot_protection(client_ip, path, user_agent, ja4_hash, site_bot_config) {
+        if let Some(decision) =
+            self.check_bot_protection(client_ip, path, user_agent, ja4_hash, site_bot_config)
+        {
             return decision;
         }
 
@@ -1237,9 +1239,9 @@ impl WafCore {
         let site_block_ai = site_bot_config
             .and_then(|c| c.block_ai_crawlers)
             .or(self.config.block_ai_crawlers.into());
-        let bot_result = self
-            .bot_detector
-            .check_with_fingerprints(user_agent, site_block_ai, None, ja4_hash);
+        let bot_result =
+            self.bot_detector
+                .check_with_fingerprints(user_agent, site_block_ai, None, ja4_hash);
 
         if self.test_mode.enabled && self.test_mode.bot_off {
             return None;

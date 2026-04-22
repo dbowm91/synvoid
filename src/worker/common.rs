@@ -186,7 +186,8 @@ pub fn handle_shutdown_message(
             let now = current_timestamp();
             const MAX_AGE_SECS: u64 = 30;
             const MAX_FUTURE_SECS: u64 = 5;
-            if *timestamp > now.saturating_sub(MAX_AGE_SECS) && *timestamp <= now + MAX_FUTURE_SECS {
+            if *timestamp > now.saturating_sub(MAX_AGE_SECS) && *timestamp <= now + MAX_FUTURE_SECS
+            {
                 if let Err(e) = lifecycle.ipc.lock().send(&Message::HealthCheckAck {
                     timestamp: *timestamp,
                 }) {

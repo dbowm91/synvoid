@@ -644,7 +644,9 @@ impl DhtKey {
             DhtKey::UpstreamImageProtection(_) => Some(SignedRecordType::UpstreamImageProtection),
             DhtKey::UpstreamMinification(_) => Some(SignedRecordType::UpstreamMinification),
             DhtKey::UpstreamCompression(_) => Some(SignedRecordType::UpstreamCompression),
-            DhtKey::UpstreamProxyCachePreferences(_) => Some(SignedRecordType::UpstreamProxyCachePreferences),
+            DhtKey::UpstreamProxyCachePreferences(_) => {
+                Some(SignedRecordType::UpstreamProxyCachePreferences)
+            }
             DhtKey::SiteImagePoisonConfig(_) => Some(SignedRecordType::SiteImagePoisonConfig),
             DhtKey::SiteContentVersion(_) => None,
             DhtKey::TransformedContent { .. } => None,

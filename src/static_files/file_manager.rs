@@ -24,7 +24,8 @@ fn make_blocked_extensions_set() -> HashSet<String> {
         .collect()
 }
 
-static BLOCKED_EXTENSIONS_SET: LazyLock<HashSet<String>> = LazyLock::new(make_blocked_extensions_set);
+static BLOCKED_EXTENSIONS_SET: LazyLock<HashSet<String>> =
+    LazyLock::new(make_blocked_extensions_set);
 
 const BLOCKED_EXTENSIONS: &[&str] = &[
     "exe",
@@ -258,7 +259,10 @@ impl FileManager {
         }
     }
 
-    pub fn new_with_periodic_refresh(config: FileManagerConfig, interval_secs: u64) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
+    pub fn new_with_periodic_refresh(
+        config: FileManagerConfig,
+        interval_secs: u64,
+    ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
         let file_manager = Arc::new(Self::new(config));
         let handle = Self::start_periodic_yara_refresh(file_manager.clone(), interval_secs);
         (file_manager, handle)
@@ -291,9 +295,13 @@ impl FileManager {
         Ok(())
     }
 
-    pub fn start_periodic_yara_refresh(file_manager: Arc<Self>, interval_secs: u64) -> tokio::task::JoinHandle<()> {
+    pub fn start_periodic_yara_refresh(
+        file_manager: Arc<Self>,
+        interval_secs: u64,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
             loop {
                 interval.tick().await;
                 if let Err(e) = file_manager.reload_yara_rules_if_needed() {

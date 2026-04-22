@@ -317,7 +317,9 @@ impl MeshProxy {
                     use_stale: preferences.use_stale.clone(),
                     min_uses: preferences.min_uses,
                     stale_while_revalidate: if preferences.stale_while_revalidate > 0 {
-                        Some(std::time::Duration::from_secs(preferences.stale_while_revalidate))
+                        Some(std::time::Duration::from_secs(
+                            preferences.stale_while_revalidate,
+                        ))
                     } else {
                         None
                     },
@@ -1205,9 +1207,13 @@ impl MeshProxy {
         let minification = tm.get_minification_for_site(upstream_id).await;
 
         if let Some(ref record_store) = tm.get_record_store() {
-            let prefs_key = crate::mesh::dht::keys::DhtKey::upstream_proxy_cache_preferences(upstream_id);
+            let prefs_key =
+                crate::mesh::dht::keys::DhtKey::upstream_proxy_cache_preferences(upstream_id);
             if let Some(record) = record_store.get_record(&prefs_key.as_str()) {
-                if let Ok(prefs) = serde_json::from_slice::<crate::mesh::protocol::ProxyCachePreferences>(&record.value) {
+                if let Ok(prefs) = serde_json::from_slice::<
+                    crate::mesh::protocol::ProxyCachePreferences,
+                >(&record.value)
+                {
                     self.set_proxy_cache_preferences(&prefs);
                 }
             }

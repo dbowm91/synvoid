@@ -1,11 +1,11 @@
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
 use crate::utils::ip_to_slot;
 use crate::utils::ratelimit::{
     IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
 };
 use crate::RunningFlag;
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
 
 const SHARD_COUNT: usize = 16;
 

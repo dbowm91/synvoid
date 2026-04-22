@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+// SAFETY_REASON: Cross-platform socket abstractions - reserved for platform-specific optimizations
 
 use std::io;
 use std::net::{TcpListener, TcpStream};

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+// SAFETY_REASON: Hierarchical routing for mesh - reserved for multi-region topology
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

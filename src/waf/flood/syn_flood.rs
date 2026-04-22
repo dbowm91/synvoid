@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+// SAFETY_REASON: SYN flood protection - reserved for DDoS mitigation enhancements
 
 use std::collections::HashMap;
 use std::net::IpAddr;

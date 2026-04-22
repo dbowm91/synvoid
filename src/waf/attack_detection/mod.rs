@@ -298,11 +298,9 @@ impl AttackDetector {
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = SqliDetector::detect(
-                value.as_bytes(),
-                InputLocation::Header(name.clone()),
-                None,
-            ) {
+            if let Some(result) =
+                SqliDetector::detect(value.as_bytes(), InputLocation::Header(name.clone()), None)
+            {
                 return Some(result);
             }
         }
@@ -334,11 +332,9 @@ impl AttackDetector {
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = XssDetector::detect(
-                value.as_bytes(),
-                InputLocation::Header(name.clone()),
-                None,
-            ) {
+            if let Some(result) =
+                XssDetector::detect(value.as_bytes(), InputLocation::Header(name.clone()), None)
+            {
                 return Some(result);
             }
         }

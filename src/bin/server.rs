@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+// SAFETY_REASON: VPN client functionality - reserved for future standalone VPN client binary
 
 use std::sync::Arc;
 

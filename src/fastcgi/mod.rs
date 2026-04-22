@@ -277,10 +277,7 @@ impl FastCgiClient {
 
         if let Some(ref env_vars) = config.env_vars {
             for (key, value) in env_vars {
-                params.insert(
-                    format!("FCGI_ENV:{}", key).into(),
-                    value.clone().into(),
-                );
+                params.insert(format!("FCGI_ENV:{}", key).into(), value.clone().into());
             }
         }
 
@@ -313,7 +310,9 @@ impl FastCgiResponse {
             }
         }
 
-        builder.body(self.body.clone()).unwrap_or_else(|_| http::Response::new(self.body))
+        builder
+            .body(self.body.clone())
+            .unwrap_or_else(|_| http::Response::new(self.body))
     }
 }
 

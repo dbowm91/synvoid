@@ -995,7 +995,7 @@ impl HttpServer {
         } else {
             match body.collect().await {
                 Ok(collected) => collected.to_bytes(),
-                        Err(_) => Bytes::from_static(&[]),
+                Err(_) => Bytes::from_static(&[]),
             }
         };
         request_body_size = full_body.len() as u64;
@@ -1900,14 +1900,14 @@ impl HttpServer {
                                             .map(|b| Full::new(b).boxed()));
                                     }
                                     Err(e) => {
-                                        let site_theme = target
-                                            .site_config
-                                            .error_pages
-                                            .theme
-                                            .as_ref()
-                                            .map(|theme_config| {
-                                                theme_config.to_theme_config(waf.error_page_manager.theme())
-                                            });
+                                        let site_theme =
+                                            target.site_config.error_pages.theme.as_ref().map(
+                                                |theme_config| {
+                                                    theme_config.to_theme_config(
+                                                        waf.error_page_manager.theme(),
+                                                    )
+                                                },
+                                            );
                                         let body = waf.error_page_manager.render_page_with_theme(
                                             502,
                                             Some(&format!("Backend Error: {}", e)),
@@ -2064,26 +2064,25 @@ impl HttpServer {
                                 ));
                             }
                             Err(e) => {
-                                let site_theme = target
-                                    .site_config
-                                    .error_pages
-                                    .theme
-                                    .as_ref()
-                                    .map(|theme_config| {
+                                let site_theme = target.site_config.error_pages.theme.as_ref().map(
+                                    |theme_config| {
                                         theme_config.to_theme_config(waf.error_page_manager.theme())
-                                    });
+                                    },
+                                );
                                 let body = waf.error_page_manager.render_page_with_theme(
                                     502,
                                     Some(&format!("Backend Error: {}", e)),
                                     site_theme.as_ref(),
                                 );
-                                return Ok(crate::http::response_builder::build_response_with_alt_svc(
-                                    502,
-                                    body,
-                                    "text/html",
-                                    &alt_svc,
-                                    &main_config,
-                                ));
+                                return Ok(
+                                    crate::http::response_builder::build_response_with_alt_svc(
+                                        502,
+                                        body,
+                                        "text/html",
+                                        &alt_svc,
+                                        &main_config,
+                                    ),
+                                );
                             }
                         }
                     }
@@ -2091,14 +2090,15 @@ impl HttpServer {
                         "FastCGI/PHP backend for site {} but no socket configured",
                         site_id
                     );
-                    let site_theme = target
-                        .site_config
-                        .error_pages
-                        .theme
-                        .as_ref()
-                        .map(|theme_config| {
-                            theme_config.to_theme_config(waf.error_page_manager.theme())
-                        });
+                    let site_theme =
+                        target
+                            .site_config
+                            .error_pages
+                            .theme
+                            .as_ref()
+                            .map(|theme_config| {
+                                theme_config.to_theme_config(waf.error_page_manager.theme())
+                            });
                     let body = waf.error_page_manager.render_page_with_theme(
                         502,
                         Some("Backend misconfigured: no socket configured"),
@@ -2255,7 +2255,7 @@ impl HttpServer {
                     let filter_req = filter_builder.body(body_bytes.clone()).unwrap_or_else(|_| {
                         http::Request::builder()
                             .method(method.clone())
-                                        .body(Bytes::from_static(&[]))
+                            .body(Bytes::from_static(&[]))
                             .unwrap_or_else(|_| http::Request::new(Bytes::new()))
                     });
 
@@ -2574,7 +2574,11 @@ impl HttpServer {
                             }
 
                             let mut filtered_headers_buf = Vec::new();
-                            filter_response_headers_buf(&resp_parts.headers, &headers_to_filter, &mut filtered_headers_buf);
+                            filter_response_headers_buf(
+                                &resp_parts.headers,
+                                &headers_to_filter,
+                                &mut filtered_headers_buf,
+                            );
 
                             let mut builder = Response::builder().status(status);
                             for (key, value) in filtered_headers_buf {
@@ -2667,7 +2671,11 @@ impl HttpServer {
                             .map(|s| s.to_string());
 
                         let mut headers = Vec::new();
-                        filter_response_headers_buf(&resp.headers, &headers_to_filter, &mut headers);
+                        filter_response_headers_buf(
+                            &resp.headers,
+                            &headers_to_filter,
+                            &mut headers,
+                        );
 
                         let mut body = resp.body;
                         let mut body_len = body.len() as u64;
@@ -2682,7 +2690,9 @@ impl HttpServer {
                                     http::Response::builder()
                                         .status(status)
                                         .body(Bytes::from_static(&[]))
-                                        .unwrap_or_else(|_| http::Response::new(Bytes::from_static(&[])))
+                                        .unwrap_or_else(|_| {
+                                            http::Response::new(Bytes::from_static(&[]))
+                                        })
                                 });
                             // Use per-site WASM plugins for response transforms if configured
                             let transform_result = if let Some(ref plugin_names) =
@@ -2790,7 +2800,9 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
+                                    headers.retain(|(k, _)| {
+                                        !k.eq_ignore_ascii_case("content-encoding")
+                                    });
                                     headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }
@@ -2863,7 +2875,9 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
+                                    headers.retain(|(k, _)| {
+                                        !k.eq_ignore_ascii_case("content-encoding")
+                                    });
                                     headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }

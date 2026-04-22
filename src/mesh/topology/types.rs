@@ -899,6 +899,8 @@ impl ServerlessRouteInfo {
         if self.allowed_methods.is_empty() {
             return true;
         }
-        self.allowed_methods.iter().any(|m| m.eq_ignore_ascii_case(method))
+        self.allowed_methods
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case(method))
     }
 }

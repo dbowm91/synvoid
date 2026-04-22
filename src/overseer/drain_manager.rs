@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+// SAFETY_REASON: Worker drain management - reserved for graceful shutdown coordination
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

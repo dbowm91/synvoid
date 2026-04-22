@@ -1108,7 +1108,10 @@ impl MeshTransportManager {
             "upstream_proxy_cache_preferences:",
             |parsed| {
                 Some(crate::mesh::protocol::ProxyCachePreferences {
-                    enable: parsed.get("enable").and_then(|v| v.as_bool()).unwrap_or(false),
+                    enable: parsed
+                        .get("enable")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                     inactive: parsed.get("inactive").and_then(|v| v.as_u64()).unwrap_or(0),
                     valid_status: parsed
                         .get("valid_status")
@@ -1306,7 +1309,8 @@ impl MeshTransportManager {
         }
 
         if let Some(ref cache_config) = site_config.proxy.cache {
-            let proxy_cache_prefs = crate::mesh::protocol::ProxyCachePreferences::from(cache_config);
+            let proxy_cache_prefs =
+                crate::mesh::protocol::ProxyCachePreferences::from(cache_config);
             if let Ok(bytes) = serde_json::to_vec(&proxy_cache_prefs) {
                 let key = format!("upstream_proxy_cache_preferences:{}", site_id);
                 record_store.store_and_announce(key, bytes, 3600);

@@ -1228,7 +1228,8 @@ impl ThreatIntelligenceManager {
             }
         };
 
-        let dht_records = record_store.get_by_prefix("threat_indicator:", DEFAULT_GET_BY_PREFIX_LIMIT);
+        let dht_records =
+            record_store.get_by_prefix("threat_indicator:", DEFAULT_GET_BY_PREFIX_LIMIT);
         let mut local_indicators = self.indicators.write();
 
         let dht_keys: std::collections::HashSet<String> =
@@ -1318,7 +1319,8 @@ impl ThreatIntelligenceManager {
                         if let Some(ref transport) = *self.transport.read() {
                             let topology = transport.get_topology();
                             let global_nodes = tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
+                                tokio::runtime::Handle::current()
+                                    .block_on(topology.get_global_nodes())
                             });
                             if !global_nodes.contains(&indicator.source_node_id) {
                                 tracing::warn!(

@@ -650,7 +650,11 @@ impl GranianSupervisor {
                     if buffer.len() >= MAX_LOG_BUFFER_LINES {
                         buffer.remove(0);
                     }
-                    buffer.push(format!("[{}] stdout: {}", crate::utils::current_timestamp(), trimmed));
+                    buffer.push(format!(
+                        "[{}] stdout: {}",
+                        crate::utils::current_timestamp(),
+                        trimmed
+                    ));
                     line.clear();
                 }
             });
@@ -678,7 +682,11 @@ impl GranianSupervisor {
                     if buffer.len() >= MAX_LOG_BUFFER_LINES {
                         buffer.remove(0);
                     }
-                    buffer.push(format!("[{}] stderr: {}", crate::utils::current_timestamp(), trimmed));
+                    buffer.push(format!(
+                        "[{}] stderr: {}",
+                        crate::utils::current_timestamp(),
+                        trimmed
+                    ));
                     line.clear();
                 }
             });
@@ -1028,4 +1036,3 @@ impl Drop for GranianSupervisor {
         let _ = self.shutdown_tx.send(());
     }
 }
-

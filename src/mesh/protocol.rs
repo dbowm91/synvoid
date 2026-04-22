@@ -1452,7 +1452,11 @@ pub struct ServerlessPermissionClaim {
 }
 
 impl ServerlessPermissionClaim {
-    pub fn new(function_name: String, caller_node_id: String, caller_org_id: Option<String>) -> Self {
+    pub fn new(
+        function_name: String,
+        caller_node_id: String,
+        caller_org_id: Option<String>,
+    ) -> Self {
         Self {
             function_name,
             caller_node_id,

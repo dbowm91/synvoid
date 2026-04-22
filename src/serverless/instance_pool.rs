@@ -500,10 +500,7 @@ impl InstancePool {
             .map(|i| i.metrics.read().total_duration_ms)
             .sum();
 
-        let total_cold_starts: u64 = instances
-            .iter()
-            .map(|i| i.metrics.read().cold_starts)
-            .sum();
+        let total_cold_starts: u64 = instances.iter().map(|i| i.metrics.read().cold_starts).sum();
 
         let mut last_cold_start_time: Option<Instant> = None;
         let mut last_cold_start_duration_ms: u64 = 0;

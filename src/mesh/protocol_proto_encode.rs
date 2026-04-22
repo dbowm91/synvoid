@@ -2176,16 +2176,17 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 )),
             },
             MeshMessage::ServerlessInvokeRequest(msg) => {
-                let permission_claim = msg.permission_claim.as_ref().map(|pc| {
-                    proto::ServerlessPermissionClaim {
-                        function_name: pc.function_name.clone(),
-                        caller_node_id: pc.caller_node_id.clone(),
-                        caller_org_id: pc.caller_org_id.clone(),
-                        timestamp: pc.timestamp,
-                        nonce: pc.nonce.clone(),
-                        signature: pc.signature.clone(),
-                    }
-                });
+                let permission_claim =
+                    msg.permission_claim
+                        .as_ref()
+                        .map(|pc| proto::ServerlessPermissionClaim {
+                            function_name: pc.function_name.clone(),
+                            caller_node_id: pc.caller_node_id.clone(),
+                            caller_org_id: pc.caller_org_id.clone(),
+                            timestamp: pc.timestamp,
+                            nonce: pc.nonce.clone(),
+                            signature: pc.signature.clone(),
+                        });
                 proto::MeshMessage {
                     message_type: 150,
                     payload: Some(proto::mesh_message::Payload::ServerlessInvokeRequest(
@@ -2199,23 +2200,21 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     )),
                 }
             }
-            MeshMessage::ServerlessInvokeResponse(msg) => {
-                proto::MeshMessage {
-                    message_type: 151,
-                    payload: Some(proto::mesh_message::Payload::ServerlessInvokeResponse(
-                        proto::ServerlessInvokeResponse {
-                            function_name: msg.function_name.clone(),
-                            caller_node_id: msg.caller_node_id.clone(),
-                            timestamp: msg.timestamp,
-                            response_data: msg.response_data.clone(),
-                            success: msg.success,
-                            error_message: msg.error_message.clone(),
-                            execution_time_ms: msg.execution_time_ms,
-                            response_signature: msg.response_signature.clone(),
-                        },
-                    )),
-                }
-            }
+            MeshMessage::ServerlessInvokeResponse(msg) => proto::MeshMessage {
+                message_type: 151,
+                payload: Some(proto::mesh_message::Payload::ServerlessInvokeResponse(
+                    proto::ServerlessInvokeResponse {
+                        function_name: msg.function_name.clone(),
+                        caller_node_id: msg.caller_node_id.clone(),
+                        timestamp: msg.timestamp,
+                        response_data: msg.response_data.clone(),
+                        success: msg.success,
+                        error_message: msg.error_message.clone(),
+                        execution_time_ms: msg.execution_time_ms,
+                        response_signature: msg.response_signature.clone(),
+                    },
+                )),
+            },
             MeshMessage::UpstreamOwnershipChallenge {
                 request_id,
                 upstream_id,

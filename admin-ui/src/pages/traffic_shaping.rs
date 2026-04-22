@@ -112,50 +112,32 @@ pub fn TrafficShaping() -> Html {
                             global_connection_timeout.set(s.clone());
                             original_global_connection_timeout.set(s);
                         }
-                        if let Some(v) = config
-                            .get("idle_timeout_secs")
-                            .and_then(|v| v.as_u64())
-                        {
+                        if let Some(v) = config.get("idle_timeout_secs").and_then(|v| v.as_u64()) {
                             let s = v.to_string();
                             global_idle_timeout.set(s.clone());
                             original_global_idle_timeout.set(s);
                         }
-                        if let Some(v) = config
-                            .get("read_timeout_secs")
-                            .and_then(|v| v.as_u64())
-                        {
+                        if let Some(v) = config.get("read_timeout_secs").and_then(|v| v.as_u64()) {
                             let s = v.to_string();
                             global_read_timeout.set(s.clone());
                             original_global_read_timeout.set(s);
                         }
-                        if let Some(v) = config
-                            .get("write_timeout_secs")
-                            .and_then(|v| v.as_u64())
-                        {
+                        if let Some(v) = config.get("write_timeout_secs").and_then(|v| v.as_u64()) {
                             let s = v.to_string();
                             global_write_timeout.set(s.clone());
                             original_global_write_timeout.set(s);
                         }
-                        if let Some(v) = config
-                            .get("write_buf_size")
-                            .and_then(|v| v.as_u64())
-                        {
+                        if let Some(v) = config.get("write_buf_size").and_then(|v| v.as_u64()) {
                             let s = bytes_to_human(v as usize);
                             global_write_buf_size.set(s.clone());
                             original_global_write_buf_size.set(s);
                         }
-                        if let Some(v) = config
-                            .get("read_buf_size")
-                            .and_then(|v| v.as_u64())
-                        {
+                        if let Some(v) = config.get("read_buf_size").and_then(|v| v.as_u64()) {
                             let s = bytes_to_human(v as usize);
                             global_read_buf_size.set(s.clone());
                             original_global_read_buf_size.set(s);
                         }
-                        if let Some(v) = config
-                            .get("max_request_size")
-                            .and_then(|v| v.as_u64())
-                        {
+                        if let Some(v) = config.get("max_request_size").and_then(|v| v.as_u64()) {
                             let s = bytes_to_human(v as usize);
                             global_max_request_size.set(s.clone());
                             original_global_max_request_size.set(s);

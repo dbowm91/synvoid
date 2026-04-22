@@ -1924,7 +1924,10 @@ impl MeshTransport {
             request_id
         );
 
-        if let Err(e) = self.verify_challenge_signature(request_id, global_node_id, timestamp, challenge_token).await {
+        if let Err(e) = self
+            .verify_challenge_signature(request_id, global_node_id, timestamp, challenge_token)
+            .await
+        {
             tracing::warn!(
                 "Challenge signature verification failed from global node {}: {}",
                 global_node_id,
@@ -2021,9 +2024,8 @@ impl MeshTransport {
         }
 
         if let Some(signature_hex) = challenge_token.strip_prefix("signed:") {
-            let signature_bytes = hex::decode(signature_hex).map_err(|e| {
-                format!("Invalid signature hex: {}", e)
-            })?;
+            let signature_bytes =
+                hex::decode(signature_hex).map_err(|e| format!("Invalid signature hex: {}", e))?;
 
             if signature_bytes.len() != 64 {
                 return Err(format!(
@@ -2035,14 +2037,15 @@ impl MeshTransport {
             let cert_manager = self.cert_manager.read();
             let public_key_bytes = cert_manager
                 .get_global_node_key(global_node_id)
-                .ok_or_else(|| {
-                    format!("No public key found for global node {}", global_node_id)
-                })?;
+                .ok_or_else(|| format!("No public key found for global node {}", global_node_id))?;
 
             let signable = format!("{}:{}:{}", request_id, global_node_id, timestamp);
 
             if crate::mesh::cert::verify_ed25519(&signable, &signature_bytes, &public_key_bytes) {
-                tracing::debug!("Challenge signature verified for global node {}", global_node_id);
+                tracing::debug!(
+                    "Challenge signature verified for global node {}",
+                    global_node_id
+                );
                 Ok(())
             } else {
                 Err(format!(
@@ -2568,11 +2571,9 @@ impl MeshTransport {
         }
 
         if upstream_id.starts_with("serverless:") {
-            return self.handle_serverless_proxy_stream(
-                &upstream_id,
-                &http_data,
-                send_stream,
-            ).await;
+            return self
+                .handle_serverless_proxy_stream(&upstream_id, &http_data, send_stream)
+                .await;
         }
 
         let parsed_url = match url::Url::parse(&backend_url) {
@@ -2710,7 +2711,8 @@ impl MeshTransport {
             {
                 if let Some(second_space) = trimmed.find(' ') {
                     if let Some(third_space) = trimmed[second_space + 1..].find(' ') {
-                        return trimmed[second_space + 1..second_space + 1 + third_space].to_string();
+                        return trimmed[second_space + 1..second_space + 1 + third_space]
+                            .to_string();
                     }
                 }
             }
@@ -2934,7 +2936,10 @@ impl MeshTransport {
             }
         }
 
-        let body_offset = header_str.find("\r\n\r\n").map(|p| p + 4).unwrap_or(header_str.len());
+        let body_offset = header_str
+            .find("\r\n\r\n")
+            .map(|p| p + 4)
+            .unwrap_or(header_str.len());
         let body = if body_offset < http_data.len() {
             Some(bytes::Bytes::copy_from_slice(&http_data[body_offset..]))
         } else {
@@ -2972,7 +2977,11 @@ impl MeshTransport {
                 );
             }
             Err(e) => {
-                tracing::warn!("Serverless function '{}' invocation failed: {}", function_name, e);
+                tracing::warn!(
+                    "Serverless function '{}' invocation failed: {}",
+                    function_name,
+                    e
+                );
                 let error_body = format!("Serverless error: {}", e);
                 let error_resp = format!(
                     "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",

@@ -6,6 +6,39 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum YaraFeedError {
+    #[error("Request failed: {0}")]
+    RequestFailed(String),
+    #[error("HTTP error: {0}")]
+    HttpError(u16),
+    #[error("Rules size {size}KB exceeds limit {limit}KB")]
+    RulesSizeExceedsLimit { size: usize, limit: usize },
+    #[error("Failed to parse JSON: {0}")]
+    JsonError(#[from] serde_json::Error),
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(String),
+    #[error("Invalid signature encoding: {0}")]
+    InvalidSignatureEncoding(String),
+    #[error("Invalid signature length: {0}")]
+    InvalidSignatureLength(usize),
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
+    #[error("Signature verification failed")]
+    SignatureVerificationFailed,
+    #[error("No rules downloaded")]
+    NoRulesDownloaded,
+    #[error("No rule history available for rollback")]
+    NoRuleHistory,
+    #[error("Version {0} not found in history")]
+    VersionNotFound(String),
+    #[error("Need at least 2 rule versions for rollback")]
+    InsufficientHistory,
+    #[error("Invalid history index")]
+    InvalidHistoryIndex,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YaraRuleFeedResponse {
@@ -164,31 +197,29 @@ impl YaraRuleFeedManager {
         }
     }
 
-    async fn fetch_rules(&self, url: &str) -> Result<ParsedYaraRules, String> {
+    async fn fetch_rules(&self, url: &str) -> Result<ParsedYaraRules, YaraFeedError> {
         let response = get_with_timeout(&self.client, url, Duration::from_secs(30))
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+            .map_err(|e| YaraFeedError::RequestFailed(e.to_string()))?;
 
         if !response.status.is_success() {
-            return Err(format!("HTTP error: {}", response.status));
+            return Err(YaraFeedError::HttpError(response.status.as_u16()));
         }
 
         let rules_size = response.body.len();
         let max_size = (self.config.max_rules_size_kb as usize) * 1024;
         if rules_size > max_size {
-            return Err(format!(
-                "Rules size {}KB exceeds limit {}KB",
-                rules_size / 1024,
-                self.config.max_rules_size_kb
-            ));
+            return Err(YaraFeedError::RulesSizeExceedsLimit {
+                size: rules_size / 1024,
+                limit: self.config.max_rules_size_kb as usize,
+            });
         }
 
         let body_str = String::from_utf8_lossy(&response.body);
         let feed_response: YaraRuleFeedResponse =
-            serde_json::from_str(&body_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+            serde_json::from_str(&body_str).map_err(YaraFeedError::JsonError)?;
 
-        let timestamp = Self::parse_timestamp(&feed_response.timestamp)
-            .map_err(|e| format!("Invalid timestamp: {}", e))?;
+        let timestamp = Self::parse_timestamp(&feed_response.timestamp)?;
 
         if let Some(ref public_key) = self.embedded_public_key {
             let payload_for_sig = Self::create_payload_for_signature(&feed_response);
@@ -210,7 +241,7 @@ impl YaraRuleFeedManager {
         Ok(parsed)
     }
 
-    fn parse_timestamp(ts: &str) -> Result<u64, String> {
+    fn parse_timestamp(ts: &str) -> Result<u64, YaraFeedError> {
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
             return Ok(dt.timestamp() as u64);
         }
@@ -219,7 +250,7 @@ impl YaraRuleFeedManager {
             return Ok(t);
         }
 
-        Err("Invalid timestamp format".to_string())
+        Err(YaraFeedError::InvalidTimestamp(ts.to_string()))
     }
 
     fn create_payload_for_signature(response: &YaraRuleFeedResponse) -> String {
@@ -233,33 +264,30 @@ impl YaraRuleFeedManager {
         payload: &str,
         signature_b64: &str,
         public_key: &VerifyingKey,
-    ) -> Result<(), String> {
+    ) -> Result<(), YaraFeedError> {
         let signature_bytes = STANDARD
             .decode(signature_b64)
-            .map_err(|e| format!("Invalid signature encoding: {}", e))?;
+            .map_err(|e| YaraFeedError::InvalidSignatureEncoding(e.to_string()))?;
 
         if signature_bytes.len() != 64 {
-            return Err(format!(
-                "Invalid signature length: {}",
-                signature_bytes.len()
-            ));
+            return Err(YaraFeedError::InvalidSignatureLength(signature_bytes.len()));
         }
 
         let signature = Ed25519Signature::from_slice(&signature_bytes)
-            .map_err(|e| format!("Invalid signature: {}", e))?;
+            .map_err(|e| YaraFeedError::InvalidSignature(e.to_string()))?;
 
         let payload_bytes = payload.as_bytes();
 
         if public_key.verify(payload_bytes, &signature).is_err() {
-            return Err("Signature verification failed".to_string());
+            return Err(YaraFeedError::SignatureVerificationFailed);
         }
 
         Ok(())
     }
 
-    pub fn apply_rules(&self) -> Result<String, String> {
+    pub fn apply_rules(&self) -> Result<String, YaraFeedError> {
         let rules = self.downloaded_rules.read();
-        let rules = rules.as_ref().ok_or("No rules downloaded")?;
+        let rules = rules.as_ref().ok_or(YaraFeedError::NoRulesDownloaded)?;
 
         let version = rules.version.clone();
         let rules_content = rules.rules.clone();
@@ -287,7 +315,7 @@ impl YaraRuleFeedManager {
         self.add_to_history(version, rules, source_enum);
     }
 
-    pub fn apply_rules_from_mesh(&self, version: String, rules: String) -> Result<String, String> {
+    pub fn apply_rules_from_mesh(&self, version: String, rules: String) -> Result<String, YaraFeedError> {
         *self.current_rules.write() = Some(rules.clone());
         self.add_to_history(version.clone(), rules, YaraRuleSource::MeshApproved);
         *self.current_version.write() = Some(version.clone());
@@ -310,25 +338,25 @@ impl YaraRuleFeedManager {
         }
     }
 
-    pub fn rollback(&self, target_version: Option<String>) -> Result<String, String> {
+    pub fn rollback(&self, target_version: Option<String>) -> Result<String, YaraFeedError> {
         let history = self.history.read();
 
         if history.is_empty() {
-            return Err("No rule history available for rollback".to_string());
+            return Err(YaraFeedError::NoRuleHistory);
         }
 
         let target_idx = if let Some(ref ver) = target_version {
             match history.iter().position(|r| r.version == *ver) {
                 Some(idx) => idx,
-                None => return Err(format!("Version {} not found in history", ver)),
+                None => return Err(YaraFeedError::VersionNotFound(ver.clone())),
             }
         } else if history.len() < 2 {
-            return Err("Need at least 2 rule versions for rollback".to_string());
+            return Err(YaraFeedError::InsufficientHistory);
         } else {
             history.len() - 2
         };
 
-        let target = history.get(target_idx).ok_or("Invalid history index")?;
+        let target = history.get(target_idx).ok_or(YaraFeedError::InvalidHistoryIndex)?;
 
         let target_version_str = target.version.clone();
         let target_rules_str = target.rules.clone();

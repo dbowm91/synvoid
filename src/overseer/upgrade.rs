@@ -1398,9 +1398,18 @@ mod tests {
         assert_eq!(format!("{}", UpgradeState::Committed), "COMMITTED");
         assert_eq!(format!("{}", UpgradeState::RollingBack), "ROLLING_BACK");
         assert_eq!(format!("{}", UpgradeState::Failed), "FAILED");
-        assert_eq!(format!("{}", UpgradeState::RecoveryNeeded), "RECOVERY_NEEDED");
-        assert_eq!(format!("{}", UpgradeState::DualMasterActive), "DUAL_MASTER_ACTIVE");
-        assert_eq!(format!("{}", UpgradeState::DrainingOldMaster), "DRAINING_OLD_MASTER");
+        assert_eq!(
+            format!("{}", UpgradeState::RecoveryNeeded),
+            "RECOVERY_NEEDED"
+        );
+        assert_eq!(
+            format!("{}", UpgradeState::DualMasterActive),
+            "DUAL_MASTER_ACTIVE"
+        );
+        assert_eq!(
+            format!("{}", UpgradeState::DrainingOldMaster),
+            "DRAINING_OLD_MASTER"
+        );
     }
 
     #[test]
@@ -1412,8 +1421,14 @@ mod tests {
         assert_eq!(UpgradeState::Validating.max_duration_secs(), Some(300));
         assert_eq!(UpgradeState::Draining.max_duration_secs(), Some(600));
         assert_eq!(UpgradeState::RollingBack.max_duration_secs(), Some(300));
-        assert_eq!(UpgradeState::DualMasterActive.max_duration_secs(), Some(600));
-        assert_eq!(UpgradeState::DrainingOldMaster.max_duration_secs(), Some(600));
+        assert_eq!(
+            UpgradeState::DualMasterActive.max_duration_secs(),
+            Some(600)
+        );
+        assert_eq!(
+            UpgradeState::DrainingOldMaster.max_duration_secs(),
+            Some(600)
+        );
 
         assert!(UpgradeState::Idle.max_duration_secs().is_none());
         assert!(UpgradeState::Committed.max_duration_secs().is_none());
@@ -1747,7 +1762,9 @@ mod tests {
         let decoded: UpgradeModePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(reuse, decoded);
 
-        let port_swap = UpgradeModePayload::PortSwap { temp_port_offset: 1000 };
+        let port_swap = UpgradeModePayload::PortSwap {
+            temp_port_offset: 1000,
+        };
         let json = serde_json::to_string(&port_swap).unwrap();
         let decoded: UpgradeModePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(port_swap, decoded);

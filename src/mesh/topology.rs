@@ -44,7 +44,9 @@ pub struct MeshTopology {
     degraded_mode: AtomicBool,
     peer_scores_compat: RwLock<HashMap<String, PeerScore>>,
     record_store: ParkingLotRwLock<Option<Arc<RecordStoreManager>>>,
-    inflight_dht_queries: Arc<DashMap<String, Vec<tokio::sync::oneshot::Sender<Vec<crate::mesh::dht::VerifiedUpstream>>>>>,
+    inflight_dht_queries: Arc<
+        DashMap<String, Vec<tokio::sync::oneshot::Sender<Vec<crate::mesh::dht::VerifiedUpstream>>>>,
+    >,
 }
 
 impl MeshTopology {
@@ -1721,7 +1723,8 @@ impl MeshTopology {
         let heartbeat_ttl: u64 = 90;
         let mut live_count: u64 = 0;
 
-        let heartbeat_records = rs.get_by_prefix("global_node_heartbeat:", DEFAULT_GET_BY_PREFIX_LIMIT);
+        let heartbeat_records =
+            rs.get_by_prefix("global_node_heartbeat:", DEFAULT_GET_BY_PREFIX_LIMIT);
         for record in heartbeat_records {
             if let Ok(heartbeat) =
                 serde_json::from_slice::<crate::mesh::dht::GlobalNodeHeartbeat>(&record.value)

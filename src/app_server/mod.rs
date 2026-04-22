@@ -14,7 +14,9 @@ static GRANIAN_SUPERVISORS: std::sync::LazyLock<RwLock<HashMap<String, Arc<Grani
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub fn register_granian_supervisor(site_id: &str, supervisor: Arc<GranianSupervisor>) {
-    GRANIAN_SUPERVISORS.write().insert(site_id.to_string(), supervisor);
+    GRANIAN_SUPERVISORS
+        .write()
+        .insert(site_id.to_string(), supervisor);
 }
 
 pub fn unregister_granian_supervisor(site_id: &str) {
@@ -34,7 +36,10 @@ pub fn get_all_granian_supervisors() -> Vec<(String, Arc<GranianSupervisor>)> {
 }
 
 pub fn get_granian_logs(site_id: &str) -> Option<Vec<String>> {
-    GRANIAN_SUPERVISORS.read().get(site_id).map(|s| s.clone().get_logs())
+    GRANIAN_SUPERVISORS
+        .read()
+        .get(site_id)
+        .map(|s| s.clone().get_logs())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

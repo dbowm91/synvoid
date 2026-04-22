@@ -48,8 +48,8 @@ use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use crate::mesh::cert::MeshCertManager;
-use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
+use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::kem::MlKem768;
 use crate::mesh::protocol::{
     DhtRecord, MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo,
@@ -138,7 +138,8 @@ pub struct MeshTransport {
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::mesh::verification::VerificationTaskManager>>>>,
     pub(crate) revocation_list: Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>,
-    pub(crate) serverless_manager: Arc<RwLock<Option<Arc<crate::serverless::manager::ServerlessManager>>>>,
+    pub(crate) serverless_manager:
+        Arc<RwLock<Option<Arc<crate::serverless::manager::ServerlessManager>>>>,
     #[cfg(feature = "dns")]
     pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
 }
@@ -629,7 +630,8 @@ impl MeshTransport {
             return Vec::new();
         };
 
-        let dht_records = record_store.get_by_prefix("serverless_function:", DEFAULT_GET_BY_PREFIX_LIMIT);
+        let dht_records =
+            record_store.get_by_prefix("serverless_function:", DEFAULT_GET_BY_PREFIX_LIMIT);
         let mut functions = Vec::new();
 
         for record in dht_records {
@@ -898,7 +900,8 @@ impl MeshTransport {
         }
 
         if let Some(ref cache_config) = site_config.proxy.cache {
-            let proxy_cache_prefs = crate::mesh::protocol::ProxyCachePreferences::from(cache_config);
+            let proxy_cache_prefs =
+                crate::mesh::protocol::ProxyCachePreferences::from(cache_config);
             if let Ok(bytes) = serde_json::to_vec(&proxy_cache_prefs) {
                 let key = format!("upstream_proxy_cache_preferences:{}", site_id);
                 record_store.store_and_announce(key, bytes, 3600);
@@ -986,7 +989,10 @@ impl MeshTransport {
         self.runtime = Some(runtime);
     }
 
-    pub fn set_serverless_manager(&self, manager: Arc<crate::serverless::manager::ServerlessManager>) {
+    pub fn set_serverless_manager(
+        &self,
+        manager: Arc<crate::serverless::manager::ServerlessManager>,
+    ) {
         *self.serverless_manager.write() = Some(manager);
     }
 
