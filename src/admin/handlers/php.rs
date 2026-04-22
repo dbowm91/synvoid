@@ -67,6 +67,7 @@ pub async fn list_php_pools(
     ),
     tag = "system"
 )]
+#[axum::debug_handler]
 pub async fn reload_php_pool(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -74,10 +75,10 @@ pub async fn reload_php_pool(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let timeout = Duration::from_secs(req.drain_timeout_secs);
 
-    crate::fastcgi::drain_and_reload_pool(&req.socket, timeout).map_err(|e| {
+    if let Err(e) = crate::fastcgi::drain_and_reload_pool(&req.socket, timeout).await {
         tracing::error!("Failed to reload PHP-FPM pool for {}: {}", req.socket, e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
 
     Ok(Json(StatusResponse::success(format!(
         "PHP-FPM pool reload initiated for {}",

@@ -37,9 +37,14 @@ pub fn get_all_pool_statuses() -> Vec<pool::FastCgiPoolStatus> {
     manager.get_all_pool_statuses()
 }
 
-pub fn drain_and_reload_pool(socket: &str, timeout: Duration) -> Result<(), String> {
-    let manager = FASTCGI_POOL_MANAGER.read();
-    manager.drain_and_reload_pool(socket, timeout)
+pub async fn drain_and_reload_pool(socket: &str, timeout: Duration) -> Result<(), String> {
+    let pool = {
+        let manager = FASTCGI_POOL_MANAGER.read();
+        manager
+            .get_pool(socket)
+            .ok_or_else(|| format!("Pool not found for socket: {}", socket))?
+    };
+    pool.drain_with_timeout(timeout).await
 }
 
 pub struct FastCgiClient {

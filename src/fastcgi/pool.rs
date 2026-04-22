@@ -113,6 +113,38 @@ impl FastCgiPool {
         tracing::info!("FastCGI pool for {} drain complete", self.config.socket);
     }
 
+    pub async fn drain_with_timeout(&self, timeout: Duration) -> Result<(), String> {
+        self.start_drain();
+
+        let start = std::time::Instant::now();
+        loop {
+            let active = self.connection_count();
+            let in_use = self.status().in_use_connections;
+
+            if in_use == 0 || start.elapsed() >= timeout {
+                break;
+            }
+
+            tracing::debug!(
+                "PHP-FPM pool drain in progress for {}: {} active, {} in use",
+                self.config.socket,
+                active,
+                in_use
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        self.finish_drain();
+
+        tracing::info!(
+            "PHP-FPM pool drain completed for {} (was draining for {:?})",
+            self.config.socket,
+            start.elapsed()
+        );
+
+        Ok(())
+    }
+
     fn start_health_check(pool: Arc<Self>, interval: Duration) {
         let task_pool = Arc::clone(&pool);
         let handle = tokio::spawn(async move {
@@ -301,6 +333,10 @@ impl FastCgiPoolManager {
         }
     }
 
+    pub fn get_pool(&self, socket: &str) -> Option<Arc<FastCgiPool>> {
+        self.pools.read().get(socket).cloned()
+    }
+
     pub fn close_all(&self) {
         let pools: Vec<_> = self.pools.write().drain().collect();
         for (_, pool) in pools {
@@ -313,7 +349,7 @@ impl FastCgiPoolManager {
         pools.values().map(|p| p.status()).collect()
     }
 
-    pub fn drain_and_reload_pool(&self, socket: &str, timeout: Duration) -> Result<(), String> {
+    pub async fn drain_and_reload_pool(&self, socket: &str, timeout: Duration) -> Result<(), String> {
         let pool = self
             .pools
             .read()
@@ -321,35 +357,7 @@ impl FastCgiPoolManager {
             .cloned()
             .ok_or_else(|| format!("Pool not found for socket: {}", socket))?;
 
-        pool.start_drain();
-
-        let start = std::time::Instant::now();
-        loop {
-            let active = pool.connection_count();
-            let in_use = pool.status().in_use_connections;
-
-            if in_use == 0 || start.elapsed() >= timeout {
-                break;
-            }
-
-            tracing::debug!(
-                "PHP-FPM pool drain in progress for {}: {} active, {} in use",
-                socket,
-                active,
-                in_use
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        pool.finish_drain();
-
-        tracing::info!(
-            "PHP-FPM pool drain completed for {} (was draining for {:?})",
-            socket,
-            start.elapsed()
-        );
-
-        Ok(())
+        pool.drain_with_timeout(timeout).await
     }
 }
 
