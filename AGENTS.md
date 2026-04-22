@@ -273,9 +273,10 @@ The implementation plan was consolidated in `plans/plan.md`. This document conta
 
 **Current Status** (as of 2026-04-22):
 - ~60+ implementable items across 10 waves
-- 1 compile blocker: FastCGI syntax error (`src/fastcgi/mod.rs:333`)
-- Several high-priority security fixes pending
-- Performance hot-path optimizations for 500K rps target
+- **95%+ COMPLETE** (55/58 items completed, 3 deferred)
+- Deferred items: C.5 (Mesh DHT JSON Serialization), F.1 (Swagger UI), G.4 (Serverless-as-Origin partial)
+- All security fixes implemented
+- All performance hot-path optimizations implemented
 
 When undertaking new features:
 1. **Research First**: Read relevant `skills/` files and `AGENTS.md` sections.
@@ -852,18 +853,18 @@ Covers ThreatIntel indicators, YARA rules, DHT-based distribution, and signature
 
 The codebase uses placeholder values that should trigger warnings at startup:
 
-| Placeholder | Location | Expected Fix |
-|-----------|----------|-----------|
-| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:27` | Add startup warning |
-| `TOKEN_PLACEHOLDER` | `src/master/commands.rs:254` | Add startup warning |
+| Placeholder | Location | Status |
+|-----------|----------|--------|
+| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:321` | ✅ Fixed - logs warning |
+| `TOKEN_PLACEHOLDER` | `src/config/admin.rs` | ✅ Fixed - added to WEAK_TOKEN_PATTERNS |
 
-These placeholders indicate the value was not configured and may indicate a security issue. Future implementations should add startup validation to warn operators.
+These placeholders indicate the value was not configured and may indicate a security issue.
 
-### Stub Functions to Complete
+### Implemented Stub Functions
 
-Several functions return stub values and should be implemented:
+The following functions were stubbed but have been implemented:
 
-| Function | Location | Status |
-|----------|----------|--------|
-| `resolve_txt_record()` | `src/mesh/transport_dns.rs:1183` | Stub - returns empty Vec |
-| `is_global_node_ip_string()` | `src/mesh/threat_intel.rs:358` | Stub - always returns false |
+| Function | Location | Implementation |
+|----------|----------|----------------|
+| `resolve_txt_record()` | `src/mesh/transport_dns.rs:1183` | ✅ Uses dns_resolver.lookup_txt() |
+| `is_global_node_ip_string()` | `src/mesh/threat_intel.rs:358` | ✅ Delegates to is_global_node_ip() |

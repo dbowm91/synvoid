@@ -818,6 +818,38 @@ The challenge store on the edge must be populated BEFORE the ACME server probes.
 
 ---
 
+## Serverless-as-Origin (2026-04-22)
+
+### Overview
+
+Origin nodes can now serve serverless functions over mesh QUIC connections. The `handle_serverless_proxy_stream()` function (`src/mesh/transport_peer.rs:2884-2992`) handles serverless invocations.
+
+### Routing Flow
+
+```
+Edge receives request for serverless function
+    ↓
+extract_upstream_id() produces "serverless:{function_name}"
+    ↓
+MeshTransport detects "serverless:" prefix
+    ↓
+Acquires ServerlessManager from transport
+    ↓
+Parses HTTP request (method, path, headers, body)
+    ↓
+Invokes via invoke_for_mesh()
+    ↓
+Returns WASM response as HTTP response
+```
+
+### Key Implementation Details
+
+- `serverless_manager: Arc<RwLock<Option<Arc<ServerlessManager>>>>` field in `MeshTransport`
+- Set during worker initialization via `unified_server.rs:1095-1097`
+- Serverless functions can be registered in DHT via `serverless_function:{name}` keys
+
+---
+
 ### Testing Verification
 
 ```bash
