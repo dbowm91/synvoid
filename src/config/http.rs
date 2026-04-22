@@ -27,6 +27,8 @@ pub struct HttpConfig {
     pub max_connections: u32,
     #[serde(default = "default_strict_protocol_validation")]
     pub strict_protocol_validation: bool,
+    #[serde(default = "default_max_streaming_body_size")]
+    pub max_streaming_body_size: usize,
 }
 
 impl Default for HttpConfig {
@@ -43,6 +45,7 @@ impl Default for HttpConfig {
             waf_stall_timeout_secs: default_waf_stall_timeout(),
             max_connections: default_max_connections(),
             strict_protocol_validation: default_strict_protocol_validation(),
+            max_streaming_body_size: default_max_streaming_body_size(),
         }
     }
 }
@@ -82,6 +85,10 @@ fn default_max_connections() -> u32 {
 
 fn default_strict_protocol_validation() -> bool {
     false
+}
+
+fn default_max_streaming_body_size() -> usize {
+    10 * 1024 * 1024 // 10MB default
 }
 
 impl HttpConfig {

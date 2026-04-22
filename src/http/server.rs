@@ -972,6 +972,8 @@ impl HttpServer {
                     &waf,
                     client_ip,
                     &mut request_body_size,
+                    content_length,
+                    http_config.max_streaming_body_size,
                 )
                 .await
                 {
@@ -3778,6 +3780,8 @@ impl HttpServer {
         waf: &Arc<crate::waf::WafCore>,
         client_ip: IpAddr,
         request_body_size: &mut u64,
+        content_length: Option<usize>,
+        max_body_size: usize,
     ) -> Result<Bytes, ()>
     where
         B: http_body::Body<Data = Bytes> + Unpin,
@@ -3785,7 +3789,7 @@ impl HttpServer {
     {
         use crate::http::shared_handler::BodyCollectionProtocol;
         let result =
-            collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Http)
+            collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Http, content_length, max_body_size)
                 .await;
         match &result {
             Ok(body) => {

@@ -714,7 +714,7 @@ impl HttpsServer {
 
         let body_bytes = if let Some(cl) = content_length {
             if cl > CHUNK_WAF_THRESHOLD {
-                Self::collect_body_with_chunk_waf(body, &waf, client_ip).await
+                Self::collect_body_with_chunk_waf(body, &waf, client_ip, content_length, http_config.max_streaming_body_size).await
             } else {
                 match body.collect().await {
                     Ok(collected) => collected.to_bytes(),
@@ -1697,13 +1697,15 @@ impl HttpsServer {
         body: B,
         waf: &Arc<crate::waf::WafCore>,
         client_ip: std::net::IpAddr,
+        content_length: Option<usize>,
+        max_body_size: usize,
     ) -> Bytes
     where
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
     {
         use crate::http::shared_handler::BodyCollectionProtocol;
-        collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Https)
+        collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Https, content_length, max_body_size)
             .await
             .unwrap_or_else(|_| Bytes::from_static(&[]))
     }

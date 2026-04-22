@@ -328,6 +328,8 @@ pub async fn collect_body_with_chunk_waf_impl<B>(
     waf: &Arc<crate::waf::WafCore>,
     client_ip: IpAddr,
     protocol: BodyCollectionProtocol,
+    content_length: Option<usize>,
+    max_body_size: usize,
 ) -> Result<Bytes, ()>
 where
     B: http_body::Body<Data = Bytes> + Unpin,
@@ -337,6 +339,9 @@ where
     const MAX_ACCUMULATED_WAF: usize = 512 * 1024;
 
     let mut accumulated = Vec::new();
+    if let Some(cl) = content_length {
+        accumulated.reserve(cl);
+    }
     let mut waf_checked_up_to: usize = 0;
 
     while let Some(frame_result) = body.frame().await {
@@ -367,11 +372,12 @@ where
                         }
                     }
 
-                    if accumulated.len() > 100 * 1024 * 1024 {
+                    if accumulated.len() > max_body_size {
                         tracing::warn!(
                             client_ip = %client_ip,
                             size = accumulated.len(),
-                            "Request body exceeded 100MB limit during streaming"
+                            limit = max_body_size,
+                            "Request body exceeded max streaming body size limit"
                         );
                         metrics::counter!(protocol.counter_too_large()).increment(1);
                         return Ok(Bytes::from(accumulated));
