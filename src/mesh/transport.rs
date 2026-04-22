@@ -48,6 +48,7 @@ use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use crate::mesh::cert::MeshCertManager;
+use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
 use crate::mesh::kem::MlKem768;
 use crate::mesh::protocol::{
@@ -625,7 +626,7 @@ impl MeshTransport {
             return Vec::new();
         };
 
-        let dht_records = record_store.get_by_prefix("serverless_function:");
+        let dht_records = record_store.get_by_prefix("serverless_function:", DEFAULT_GET_BY_PREFIX_LIMIT);
         let mut functions = Vec::new();
 
         for record in dht_records {

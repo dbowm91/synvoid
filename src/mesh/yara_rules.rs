@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::mesh::config::{MeshNodeRole, YaraRulesMeshConfig};
 use crate::mesh::dht::keys::DhtKey;
+use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::protocol::MeshMessage;
 use crate::upload::yara_rule_feed::YaraRuleFeedManager;
 
@@ -748,7 +749,7 @@ impl YaraRulesManager {
             return Err("Record store not set".to_string());
         };
 
-        let dht_records = record_store.get_by_prefix("yara_rules_manifest:");
+        let dht_records = record_store.get_by_prefix("yara_rules_manifest:", DEFAULT_GET_BY_PREFIX_LIMIT);
         let local_rules = self.local_rules.read().clone();
         let local_hash = local_rules.as_ref().map(|r| self.compute_rules_hash(r));
 

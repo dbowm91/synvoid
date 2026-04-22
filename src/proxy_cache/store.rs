@@ -44,6 +44,10 @@ pub struct ProxyCacheEntry {
     pub is_fresh: bool,
 }
 
+type InflightRequestsMap = Arc<
+    DashMap<CacheKey, Vec<oneshot::Sender<Option<Arc<ProxyCacheEntry>>>>>,
+>;
+
 impl ProxyCacheEntry {
     pub fn new(
         content: Bytes,
@@ -149,7 +153,7 @@ pub struct ProxyCache {
     current_memory_size: AtomicU64,
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
     host_index: RwLock<AHashMap<String, Vec<CacheKey>>>,
-    inflight_requests: Arc<DashMap<CacheKey, Vec<oneshot::Sender<Option<Arc<ProxyCacheEntry>>>>>>,
+    inflight_requests: InflightRequestsMap,
 }
 
 impl Clone for ProxyCache {
@@ -417,7 +421,7 @@ impl ProxyCache {
                     None
                 };
 
-                if let Some((_, mut senders)) = inflflight_requests.remove(&key_clone) {
+                if let Some((_, senders)) = inflight_requests.remove(&key_clone) {
                     for sender in senders {
                         let _ = sender.send(result.clone());
                     }

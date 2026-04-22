@@ -183,13 +183,25 @@ pub fn handle_shutdown_message(
             true
         }
         Message::MasterHealthCheck { timestamp } => {
-            if let Err(e) = lifecycle.ipc.lock().send(&Message::HealthCheckAck {
-                timestamp: *timestamp,
-            }) {
+            let now = current_timestamp();
+            const MAX_AGE_SECS: u64 = 30;
+            const MAX_FUTURE_SECS: u64 = 5;
+            if *timestamp > now.saturating_sub(MAX_AGE_SECS) && *timestamp <= now + MAX_FUTURE_SECS {
+                if let Err(e) = lifecycle.ipc.lock().send(&Message::HealthCheckAck {
+                    timestamp: *timestamp,
+                }) {
+                    tracing::warn!(
+                        "Worker {} failed to send health check ack: {}",
+                        lifecycle.worker_id,
+                        e
+                    );
+                }
+            } else {
                 tracing::warn!(
-                    "Worker {} failed to send health check ack: {}",
+                    "Worker {} rejected health check with invalid timestamp: {} (now: {})",
                     lifecycle.worker_id,
-                    e
+                    timestamp,
+                    now
                 );
             }
             false

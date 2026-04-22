@@ -26,7 +26,10 @@ pub use network_policy::{
     AiBotEntry, BlockedNode, BotAction, GlobalAiBotList, GlobalNodeBlocklist, NetworkPolicy,
     MAX_REPUTATION_THRESHOLD, MIN_REPUTATION_THRESHOLD,
 };
-pub use record_store::{DhtRecordEntry, RecordStoreConfig, RecordStoreManager, RecordStoreStats};
+pub use record_store::{
+    DhtRecordEntry, RecordStoreConfig, RecordStoreManager, RecordStoreStats,
+    DEFAULT_GET_BY_PREFIX_LIMIT,
+};
 pub use signed::{
     validate_message_timestamp, RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager,
     DHT_MESSAGE_TIMESTAMP_WINDOW_SECS,
@@ -122,6 +125,9 @@ pub enum DhtError {
 
     #[error("Invalid key: {0}")]
     InvalidKey(String),
+
+    #[error("Signature required for DHT record")]
+    SignatureRequired,
 }
 
 #[derive(

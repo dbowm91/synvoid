@@ -21,7 +21,7 @@ use ed25519_dalek::Verifier;
 use moka::future::Cache as MokaCache;
 
 use crate::mesh::config::{MeshConfig, MeshNodeRole};
-use crate::mesh::dht::RecordStoreManager;
+use crate::mesh::dht::{RecordStoreManager, DEFAULT_GET_BY_PREFIX_LIMIT};
 use crate::mesh::protocol::{MeshPeerInfo, UpstreamInfo, UpstreamOwner};
 
 pub struct MeshTopology {
@@ -1700,7 +1700,7 @@ impl MeshTopology {
         let heartbeat_ttl: u64 = 90;
         let mut live_count: u64 = 0;
 
-        let heartbeat_records = rs.get_by_prefix("global_node_heartbeat:");
+        let heartbeat_records = rs.get_by_prefix("global_node_heartbeat:", DEFAULT_GET_BY_PREFIX_LIMIT);
         for record in heartbeat_records {
             if let Ok(heartbeat) =
                 serde_json::from_slice::<crate::mesh::dht::GlobalNodeHeartbeat>(&record.value)

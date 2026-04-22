@@ -3,6 +3,7 @@
 use crate::mesh::transport::{
     MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
 };
+use hex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -395,7 +396,7 @@ impl MeshTransport {
                 challenge_type,
                 challenge_token,
                 global_node_id,
-                timestamp: _,
+                timestamp,
             } => {
                 self.handle_upstream_ownership_challenge(
                     peer_id,
@@ -404,6 +405,7 @@ impl MeshTransport {
                     &challenge_type,
                     &challenge_token,
                     &global_node_id,
+                    timestamp,
                 )
                 .await;
             }
@@ -1911,14 +1913,29 @@ impl MeshTransport {
         request_id: &str,
         upstream_id: &str,
         challenge_type: &crate::mesh::protocol::OwnershipChallengeType,
-        _challenge_token: &str,
+        challenge_token: &str,
         global_node_id: &str,
+        timestamp: u64,
     ) {
         tracing::info!(
             "Received upstream ownership challenge for {} from global node {} (request_id: {})",
             upstream_id,
             global_node_id,
             request_id
+        );
+
+        if let Err(e) = self.verify_challenge_signature(request_id, global_node_id, timestamp, challenge_token).await {
+            tracing::warn!(
+                "Challenge signature verification failed from global node {}: {}",
+                global_node_id,
+                e
+            );
+            return;
+        }
+
+        tracing::debug!(
+            "Challenge signature verified for global node {}",
+            global_node_id
         );
 
         match challenge_type {
@@ -1989,6 +2006,52 @@ impl MeshTransport {
                     tracing::warn!("Failed to send challenge proof to {}: {}", peer_id, e);
                 }
             }
+        }
+    }
+
+    async fn verify_challenge_signature(
+        &self,
+        request_id: &str,
+        global_node_id: &str,
+        timestamp: u64,
+        challenge_token: &str,
+    ) -> Result<(), String> {
+        if challenge_token.is_empty() {
+            return Err("Empty challenge token".to_string());
+        }
+
+        if let Some(signature_hex) = challenge_token.strip_prefix("signed:") {
+            let signature_bytes = hex::decode(signature_hex).map_err(|e| {
+                format!("Invalid signature hex: {}", e)
+            })?;
+
+            if signature_bytes.len() != 64 {
+                return Err(format!(
+                    "Invalid signature length: expected 64, got {}",
+                    signature_bytes.len()
+                ));
+            }
+
+            let cert_manager = self.cert_manager.read();
+            let public_key_bytes = cert_manager
+                .get_global_node_key(global_node_id)
+                .ok_or_else(|| {
+                    format!("No public key found for global node {}", global_node_id)
+                })?;
+
+            let signable = format!("{}:{}:{}", request_id, global_node_id, timestamp);
+
+            if crate::mesh::cert::verify_ed25519(&signable, &signature_bytes, &public_key_bytes) {
+                tracing::debug!("Challenge signature verified for global node {}", global_node_id);
+                Ok(())
+            } else {
+                Err(format!(
+                    "Signature verification failed for global node {}",
+                    global_node_id
+                ))
+            }
+        } else {
+            Err("Unsupported challenge token format - expected 'signed:' prefix".to_string())
         }
     }
 

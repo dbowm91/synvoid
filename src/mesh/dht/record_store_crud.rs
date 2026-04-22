@@ -162,7 +162,16 @@ impl RecordStoreManager {
 
         let is_local_record = record.source_node_id == self.node_id;
 
-        if !is_local_record && !record.signature.is_empty() {
+        if !is_local_record {
+            if record.signature.is_empty() {
+                tracing::warn!(
+                    "Rejected record with missing signature for key {} from node {}",
+                    record.key,
+                    record.source_node_id
+                );
+                crate::metrics::record_dht_store_operation(false);
+                return false;
+            }
             if let Some(ref signer_pk) = record.signer_public_key {
                 if !signer_pk.is_empty() {
                     let rs = self.record_state.read();
@@ -186,6 +195,7 @@ impl RecordStoreManager {
                                 "Rejected record with invalid Ed25519 signature: {}",
                                 record.key
                             );
+                            crate::metrics::record_dht_store_operation(false);
                             return false;
                         }
                         tracing::debug!("Verified Ed25519 signature on record: {}", record.key);
@@ -484,10 +494,10 @@ impl RecordStoreManager {
             .collect()
     }
 
-    pub fn get_by_prefix(&self, prefix: &str) -> Vec<DhtRecord> {
+    pub fn get_by_prefix(&self, prefix: &str, limit: usize) -> Vec<DhtRecord> {
         let rs = self.record_state.read();
         rs.records
-            .get_by_prefix(prefix)
+            .get_by_prefix(prefix, limit)
             .into_iter()
             .filter(|(_, entry)| {
                 let now = crate::mesh::safe_unix_timestamp();

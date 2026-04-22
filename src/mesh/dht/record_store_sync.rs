@@ -310,6 +310,16 @@ impl RecordStoreManager {
                 continue;
             }
 
+            if record.signature.is_empty() {
+                tracing::debug!(
+                    "Rejected record announce with empty signature from {}: key {}",
+                    from_node,
+                    record.key
+                );
+                skipped_count += 1;
+                continue;
+            }
+
             if self.is_global_node() || self.can_cache_on_edge(&record.key) {
                 if self.store_record(record, source_reputation) {
                     stored_count += 1;

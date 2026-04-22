@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use crate::block_store::BlockStore;
 use crate::mesh::config::MeshNodeRole;
 use crate::mesh::dht::keys::DhtKey;
+use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::protocol::{
     MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType,
 };
@@ -1223,7 +1224,7 @@ impl ThreatIntelligenceManager {
             }
         };
 
-        let dht_records = record_store.get_by_prefix("threat_indicator:");
+        let dht_records = record_store.get_by_prefix("threat_indicator:", DEFAULT_GET_BY_PREFIX_LIMIT);
         let mut local_indicators = self.indicators.write();
 
         let dht_keys: std::collections::HashSet<String> =
@@ -1311,18 +1312,16 @@ impl ThreatIntelligenceManager {
                         }
 
                         if let Some(ref transport) = *self.transport.read() {
-                            if let Some(topology) = transport.get_topology() {
-                                if let Ok(global_nodes) = tokio::task::block_in_place(|| {
-                                    tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
-                                }) {
-                                    if !global_nodes.contains(&indicator.source_node_id) {
-                                        tracing::warn!(
-                                            "Threat intel DHT sync: indicator from non-global node {} rejected",
-                                            indicator.source_node_id
-                                        );
-                                        continue;
-                                    }
-                                }
+                            let topology = transport.get_topology();
+                            let global_nodes = tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
+                            });
+                            if !global_nodes.contains(&indicator.source_node_id) {
+                                tracing::warn!(
+                                    "Threat intel DHT sync: indicator from non-global node {} rejected",
+                                    indicator.source_node_id
+                                );
+                                continue;
                             }
                         }
                     } else {

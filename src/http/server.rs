@@ -2755,7 +2755,7 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| k.to_ascii_lowercase() != "content-encoding");
+                                    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
                                     headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }
@@ -2828,7 +2828,7 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| k.to_ascii_lowercase() != "content-encoding");
+                                    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-encoding"));
                                     headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }

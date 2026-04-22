@@ -127,7 +127,7 @@ fn validate_edge_node(
     }
 
     if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
-        return validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk));
+        validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk))?;
     }
 
     let pubkey = peer_public_key.ok_or_else(|| {

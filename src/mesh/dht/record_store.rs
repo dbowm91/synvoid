@@ -25,6 +25,7 @@ const DEFAULT_EDGE_CACHE_TTL_SECS: u64 = 300;
 const DEFAULT_EDGE_CACHE_MAX_ENTRIES: usize = 1000;
 const DEFAULT_CONVERGENCE_THRESHOLD: usize = 3;
 pub const MAX_PENDING_ANNOUNCES: usize = 10000;
+pub const DEFAULT_GET_BY_PREFIX_LIMIT: usize = 100;
 const NUM_RECORD_SHARDS: usize = 64;
 
 #[inline]
@@ -103,13 +104,16 @@ impl ShardedRecordStore {
         result
     }
 
-    pub fn get_by_prefix(&self, prefix: &str) -> Vec<(String, DhtRecordEntry)> {
+    pub fn get_by_prefix(&self, prefix: &str, limit: usize) -> Vec<(String, DhtRecordEntry)> {
         let mut result = Vec::new();
         for shard in &self.shards {
             let guard = shard.read();
             for (k, v) in guard.iter() {
                 if k.starts_with(prefix) {
                     result.push((k.clone(), v.clone()));
+                    if result.len() >= limit {
+                        return result;
+                    }
                 }
             }
         }

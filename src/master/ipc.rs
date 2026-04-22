@@ -356,12 +356,21 @@ pub async fn handle_worker_connection(
                 {
                     if let Some(actual_pid) = peer_pid {
                         if *claimed_pid as u32 != actual_pid {
-                            tracing::warn!(
-                                "IPC security: worker {} claims PID {} but socket peer PID is {}",
+                            tracing::error!(
+                                "IPC security: FATAL - worker {} claims PID {} but socket peer PID is {}",
                                 id,
                                 claimed_pid,
                                 actual_pid
                             );
+                            let _ = ipc
+                                .send(&Message::WorkerError {
+                                    id: *id,
+                                    error: "PID mismatch - possible spoofing attack".to_string(),
+                                    severity: ErrorSeverity::Critical,
+                                    error_code: ErrorCode::AuthenticationFailed,
+                                })
+                                .await;
+                            return;
                         }
                     }
                 }

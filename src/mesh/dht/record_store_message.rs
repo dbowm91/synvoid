@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_RECORDS_PER_ANNOUNCE: usize = 100;
+
 impl RecordStoreManager {
     async fn get_sender_reputation(
         &self,
@@ -79,6 +81,16 @@ impl RecordStoreManager {
                     from_node,
                     records.len()
                 );
+
+                if records.len() > MAX_RECORDS_PER_ANNOUNCE {
+                    tracing::warn!(
+                        "DhtRecordAnnounce rejected from {}: {} records exceeds limit of {}",
+                        from_node,
+                        records.len(),
+                        MAX_RECORDS_PER_ANNOUNCE
+                    );
+                    return None;
+                }
 
                 if let Some(signer) = signer {
                     if !signature.is_empty() {

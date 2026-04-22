@@ -313,23 +313,7 @@ impl FastCgiResponse {
             }
         }
 
-        builder.body(self.body).unwrap_or_else(|_| http::Response::new(self.body))
-    }
-
-            if let (Ok(name), Ok(value)) = (
-                HeaderName::from_bytes(name.as_bytes()),
-                HeaderValue::from_str(&value),
-            ) {
-                builder = builder.header(name, value);
-            }
-        }
-
-        builder.body(self.body).unwrap_or_else(|_| {
-            http::Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Bytes::new())
-                .unwrap()
-        })
+        builder.body(self.body.clone()).unwrap_or_else(|_| http::Response::new(self.body))
     }
 }
 
