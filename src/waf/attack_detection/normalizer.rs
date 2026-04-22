@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
 const MAX_OUTPUT_RATIO: usize = 100;
@@ -426,7 +427,7 @@ impl NormalizedInput {
 pub struct NormalizedInputs {
     pub path: Option<NormalizedInput>,
     pub query_string: Option<NormalizedInput>,
-    pub headers: Vec<(String, NormalizedInput)>,
+    pub headers: Vec<(Arc<str>, NormalizedInput)>,
     pub body: Option<NormalizedInput>,
 }
 
@@ -445,7 +446,7 @@ impl NormalizedInputs {
         for (name, value) in headers.iter() {
             if let Ok(value_str) = value.to_str() {
                 normalized_headers
-                    .push((name.as_str().to_string(), normalizer.normalize(value_str)));
+                    .push((name.as_str().into(), normalizer.normalize(value_str)));
             }
         }
 

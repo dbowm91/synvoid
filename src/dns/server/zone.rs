@@ -224,6 +224,8 @@ impl DnsServer {
         *self.zone_index_btree.write() = btree_index;
         *self.zone_trie.write() = trie;
         self.zone_index_dirty.store(false, Ordering::Release);
+
+        self.zones.rebuild_index();
     }
 
     pub fn with_mesh_registry(mut self, registry: Arc<MeshDnsRegistry>) -> Self {

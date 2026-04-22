@@ -470,20 +470,19 @@ impl ProxyCache {
         }
 
         if should_store_disk {
-            let disk_path_clone = self.disk_path.clone();
-            let key_clone = key.clone();
-            let content_clone = content.clone();
-
-            tokio::spawn(async move {
-                let filename = Self::key_to_filename(&key_clone);
-                let path = disk_path_clone.join(&filename);
-                if let Some(parent) = path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
+            let filename = ProxyCache::key_to_filename(&key);
+            let path = self.disk_path.join(&filename);
+            if let Some(parent) = path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    tracing::warn!(error = %e, "failed to create disk cache dir");
                 }
-                let _ = tokio::fs::write(&path, content_clone).await;
-            });
-
-            disk_path = Some(self.disk_path.join(Self::key_to_filename(&key)));
+            }
+            if let Err(e) = std::fs::write(&path, &content) {
+                tracing::warn!(error = %e, "failed to write disk cache file");
+                should_store_disk = false;
+            } else {
+                disk_path = Some(path);
+            }
         }
 
         let checksum = CacheEntryInner::compute_checksum(&content);

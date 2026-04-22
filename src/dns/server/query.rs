@@ -893,11 +893,7 @@ impl DnsServer {
             {
                 if !mesh_records.is_empty() {
                     tracing::debug!("Resolved {} from mesh network", qname);
-                    let qname_lower = qname.to_lowercase();
-                    let mesh_zone = ctx.zones.find(|origin, _| {
-                        let origin_lower = origin.to_lowercase();
-                        qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower
-                    });
+                    let mesh_zone = ctx.zones.find_by_suffix(&qname);
                     let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
                     return Some(Self::build_response(
                         query_id,
@@ -917,10 +913,7 @@ impl DnsServer {
         if qtype == 28 {
             if let Some(translator) = ctx.dns64_translator {
                 if translator.should_synthesize(28, client_ip) {
-                    if let Some(zone) = ctx.zones.find(|origin, _| {
-                        qname_lower == *origin
-                            || qname_lower.trim_end_matches('.') == origin.trim_end_matches('.')
-                    }) {
+                    if let Some(zone) = ctx.zones.find_by_suffix(&qname) {
                         let a_key = (lookup_name.clone(), RecordType::A);
                         if let Some(a_records) = zone.records.get(&a_key) {
                             let aaaa_records: Vec<DnsZoneRecord> = a_records

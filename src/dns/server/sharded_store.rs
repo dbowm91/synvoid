@@ -13,6 +13,7 @@ const NUM_SHARDS: usize = 64;
 /// `RwLock<HashMap<String, Zone>>` is eliminated.
 pub struct ShardedZoneStore {
     shards: Vec<RwLock<HashMap<String, Zone>>>,
+    suffix_index: RwLock<HashMap<String, String>>,
 }
 
 impl ShardedZoneStore {
@@ -21,7 +22,10 @@ impl ShardedZoneStore {
         for _ in 0..NUM_SHARDS {
             shards.push(RwLock::new(HashMap::new()));
         }
-        Self { shards }
+        Self {
+            shards,
+            suffix_index: RwLock::new(HashMap::new()),
+        }
     }
 
     #[inline]
@@ -31,6 +35,22 @@ impl ShardedZoneStore {
             hash = hash.wrapping_mul(33).wrapping_add(*byte as u64);
         }
         (hash as usize) % NUM_SHARDS
+    }
+
+    fn rebuild_suffix_index(&self) {
+        let mut index = HashMap::new();
+        for shard in &self.shards {
+            for origin in shard.read().keys() {
+                let origin_lower = origin.trim_end_matches('.').to_lowercase();
+                index.insert(origin_lower, origin.clone());
+            }
+        }
+        *self.suffix_index.write() = index;
+    }
+
+    /// Rebuild the suffix index from all zones (call after bulk loading).
+    pub fn rebuild_index(&self) {
+        self.rebuild_suffix_index();
     }
 
     // ── Read operations (lock one shard) ────────────────────────────────
@@ -111,7 +131,33 @@ impl ShardedZoneStore {
         }
     }
 
+    /// Find a zone by exact origin match using suffix index (O(1)).
+    pub fn find_by_exact(&self, origin: &str) -> Option<Zone> {
+        let origin_lower = origin.trim_end_matches('.').to_lowercase();
+        if let Some(origin_key) = self.suffix_index.read().get(&origin_lower) {
+            return self.get(origin_key);
+        }
+        None
+    }
+
+    /// Find a zone by suffix match (qname ends with origin) using suffix index.
+    /// This is O(k) where k is the number of labels in qname, not O(n) zones.
+    pub fn find_by_suffix(&self, qname: &str) -> Option<Zone> {
+        let qname_lower = qname.trim_end_matches('.').to_lowercase();
+        let qname_lower = qname_lower.as_str();
+
+        let labels: Vec<&str> = qname_lower.split('.').collect();
+        for i in 0..labels.len() {
+            let suffix = labels[i..].join(".");
+            if let Some(origin_key) = self.suffix_index.read().get(&suffix) {
+                return self.get(origin_key);
+            }
+        }
+        None
+    }
+
     /// Find a zone matching a predicate (acquires read lock on all shards).
+    /// Note: Prefer find_by_exact or find_by_suffix for suffix matching performance.
     pub fn find<P: Fn(&str, &Zone) -> bool>(&self, predicate: P) -> Option<Zone> {
         for shard in &self.shards {
             let guard = shard.read();
@@ -129,13 +175,20 @@ impl ShardedZoneStore {
     /// Insert a zone (acquires write lock on one shard).
     pub fn insert(&self, origin: String, zone: Zone) {
         let idx = Self::shard_index(&origin);
-        self.shards[idx].write().insert(origin, zone);
+        self.shards[idx].write().insert(origin.clone(), zone);
+        let origin_lower = origin.trim_end_matches('.').to_lowercase();
+        self.suffix_index.write().insert(origin_lower, origin);
     }
 
     /// Remove a zone (acquires write lock on one shard).
     pub fn remove(&self, origin: &str) -> Option<Zone> {
         let idx = Self::shard_index(origin);
-        self.shards[idx].write().remove(origin)
+        let result = self.shards[idx].write().remove(origin);
+        if result.is_some() {
+            let origin_lower = origin.trim_end_matches('.').to_lowercase();
+            self.suffix_index.write().remove(&origin_lower);
+        }
+        result
     }
 
     /// Update a zone with a closure (acquires write lock on one shard).

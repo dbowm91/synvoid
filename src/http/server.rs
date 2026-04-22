@@ -31,7 +31,39 @@ use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
+use crate::waf::traffic_shaper::ConnectionLimiter;
+use crate::waf::ConnectionToken;
+use std::sync::Mutex as StdMutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStream};
+
+struct ConnectionTokenGuard {
+    limiter: Arc<ConnectionLimiter>,
+    token: Arc<StdMutex<Option<ConnectionToken>>>,
+}
+
+impl ConnectionTokenGuard {
+    fn new(limiter: Arc<ConnectionLimiter>, token: ConnectionToken) -> Self {
+        Self {
+            limiter,
+            token: Arc::new(StdMutex::new(Some(token))),
+        }
+    }
+
+    fn release_and_acquire(&self, new_token: ConnectionToken) -> Option<ConnectionToken> {
+        let mut guard = self.token.lock().unwrap();
+        let old_token = guard.take();
+        *guard = Some(new_token);
+        old_token
+    }
+}
+
+impl Drop for ConnectionTokenGuard {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.lock().unwrap().take() {
+            self.limiter.release(token);
+        }
+    }
+}
 
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
@@ -79,7 +111,7 @@ use crate::process::{current_timestamp, RequestLogPayload};
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
-use crate::proxy::{build_forward_headers, build_headers_to_filter, filter_response_headers};
+use crate::proxy::{build_forward_headers, build_headers_to_filter, filter_response_headers_buf};
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
@@ -740,8 +772,13 @@ impl HttpServer {
             None
         };
 
-        #[allow(unused_assignments)]
-        let mut conn_token = connection_token;
+        let _conn_guard = if let (Some(limiter), Some(token)) =
+            (waf.connection_limiter.clone(), connection_token)
+        {
+            Some(ConnectionTokenGuard::new(limiter, token))
+        } else {
+            None
+        };
 
         // ============================================================================
         // SECTION 6: Bandwidth Limiting
@@ -1287,10 +1324,6 @@ impl HttpServer {
 
         if site_max_connections.is_some() || site_max_per_ip.is_some() {
             if let Some(ref conn_limiter) = waf.connection_limiter {
-                let old_token = conn_token.take();
-                if let Some(token) = old_token {
-                    conn_limiter.release(token);
-                }
                 match conn_limiter
                     .try_acquire_with_limits(
                         &site_id,
@@ -1301,8 +1334,9 @@ impl HttpServer {
                     .await
                 {
                     Ok(new_token) => {
-                        // conn_token is held for duration of request and released on drop
-                        conn_token = Some(new_token);
+                        if let Some(ref guard) = _conn_guard {
+                            guard.release_and_acquire(new_token);
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -2538,11 +2572,11 @@ impl HttpServer {
                                 m.bandwidth.record_site_egress(&site_id, body_len);
                             }
 
-                            let filtered_headers =
-                                filter_response_headers(&resp_parts.headers, &headers_to_filter);
+                            let mut filtered_headers_buf = Vec::new();
+                            filter_response_headers_buf(&resp_parts.headers, &headers_to_filter, &mut filtered_headers_buf);
 
                             let mut builder = Response::builder().status(status);
-                            for (key, value) in filtered_headers {
+                            for (key, value) in filtered_headers_buf {
                                 builder = builder.header(&key, &value);
                             }
 
@@ -2631,8 +2665,8 @@ impl HttpServer {
                             .and_then(|v| v.to_str().ok())
                             .map(|s| s.to_string());
 
-                        let mut headers =
-                            filter_response_headers(&resp.headers, &headers_to_filter);
+                        let mut headers = Vec::new();
+                        filter_response_headers_buf(&resp.headers, &headers_to_filter, &mut headers);
 
                         let mut body = resp.body;
                         let mut body_len = body.len() as u64;

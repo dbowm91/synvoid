@@ -1,10 +1,6 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
-
-use parking_lot::Mutex;
-
-use crate::utils::collections::AHashSet;
 use crate::utils::ip_to_slot;
 use crate::utils::ratelimit::{
     IpRateLimiter, RateLimitResult, RateLimitStats, RateLimitStatsProvider,
@@ -407,11 +403,14 @@ pub struct SlottedIpRateLimiter {
 
     start_instant: Instant,
 
-    dirty_slots: Mutex<AHashSet<usize>>,
+    dirty_bits: Vec<AtomicU32>,
 }
 
 impl SlottedIpRateLimiter {
     pub fn new(config: IpRateLimitConfig) -> Self {
+        let dirty_bits: Vec<AtomicU32> = (0..IP_RATE_LIMIT_SLOTS / 32)
+            .map(|_| AtomicU32::new(0))
+            .collect();
         Self {
             second_counters: Box::new([const { AtomicU32::new(0) }; IP_RATE_LIMIT_SLOTS]),
             minute_counters: Box::new([const { AtomicU32::new(0) }; IP_RATE_LIMIT_SLOTS]),
@@ -421,7 +420,7 @@ impl SlottedIpRateLimiter {
             current_minute: AtomicU64::new(0),
             current_five_min: AtomicU64::new(0),
             start_instant: Instant::now(),
-            dirty_slots: Mutex::new(AHashSet::default()),
+            dirty_bits,
         }
     }
 
@@ -431,7 +430,9 @@ impl SlottedIpRateLimiter {
 
         self.rotate_windows(now_secs);
 
-        self.dirty_slots.lock().insert(slot);
+        let word_idx = slot / 32;
+        let bit_idx = slot % 32;
+        self.dirty_bits[word_idx].fetch_or(1u32 << bit_idx, Ordering::Relaxed);
 
         let second_count = self.second_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if second_count > self.config.per_second {
@@ -505,28 +506,37 @@ impl SlottedIpRateLimiter {
     }
 
     pub fn decay_all(&self, factor: u32) {
-        let slots: Vec<usize> = {
-            let mut dirty = self.dirty_slots.lock();
-            let slots: Vec<usize> = dirty.drain().collect();
-            slots
-        };
-        for i in slots {
-            let second = self.second_counters[i].load(Ordering::Relaxed);
-            let minute = self.minute_counters[i].load(Ordering::Relaxed);
-            let five_min = self.five_min_counters[i].load(Ordering::Relaxed);
-
-            if second == 0 && minute == 0 && five_min == 0 {
+        for (word_idx, word) in self.dirty_bits.iter().enumerate() {
+            let bits = word.load(Ordering::Relaxed);
+            if bits == 0 {
                 continue;
             }
+            word.store(0, Ordering::Relaxed);
 
-            if second > 0 {
-                self.second_counters[i].store(second / factor, Ordering::Relaxed);
-            }
-            if minute > 0 {
-                self.minute_counters[i].store(minute / factor, Ordering::Relaxed);
-            }
-            if five_min > 0 {
-                self.five_min_counters[i].store(five_min / factor, Ordering::Relaxed);
+            let base_slot = word_idx * 32;
+            let mut remaining = bits;
+            while remaining != 0 {
+                let bit_idx = remaining.trailing_zeros() as usize;
+                let slot = base_slot + bit_idx;
+                remaining &= remaining - 1;
+
+                let second = self.second_counters[slot].load(Ordering::Relaxed);
+                let minute = self.minute_counters[slot].load(Ordering::Relaxed);
+                let five_min = self.five_min_counters[slot].load(Ordering::Relaxed);
+
+                if second == 0 && minute == 0 && five_min == 0 {
+                    continue;
+                }
+
+                if second > 0 {
+                    self.second_counters[slot].store(second / factor, Ordering::Relaxed);
+                }
+                if minute > 0 {
+                    self.minute_counters[slot].store(minute / factor, Ordering::Relaxed);
+                }
+                if five_min > 0 {
+                    self.five_min_counters[slot].store(five_min / factor, Ordering::Relaxed);
+                }
             }
         }
     }

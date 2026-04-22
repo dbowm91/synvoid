@@ -404,15 +404,12 @@ impl SsrfDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        let decoded = if input.contains('%') || input.contains('+') {
-            url_decode_all(input)
+        let decoded_lower: Cow<str> = if input.contains('%') || input.contains('+') {
+            Cow::Owned(url_decode_all(input))
+        } else if input.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(input.to_lowercase())
         } else {
-            input.to_string()
-        };
-        let decoded_lower: Cow<str> = if decoded.bytes().any(|b| b.is_ascii_uppercase()) {
-            Cow::Owned(decoded.to_lowercase())
-        } else {
-            Cow::Borrowed(&decoded)
+            Cow::Borrowed(input)
         };
 
         if self.is_allowed_domain(&decoded_lower) {
@@ -420,7 +417,7 @@ impl SsrfDetector {
         }
 
         if let Some(mat) = self.inner.patterns_ref().find(decoded_lower.as_ref()) {
-            let matched = decoded[mat.start()..mat.end()].to_string();
+            let matched = decoded_lower[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ssrf",
                 matched_pattern = %matched,
