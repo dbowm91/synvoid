@@ -1991,6 +1991,109 @@ pub async fn validate_config(
     }
 }
 
+// --- Bulk Config Bundle ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigBundleResponse {
+    pub config: crate::config::main::MainConfig,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateConfigBundleRequest {
+    pub config: crate::config::main::MainConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/bundle",
+    responses(
+        (status = 200, description = "Full configuration bundle", body = ConfigBundleResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_config_bundle(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<ConfigBundleResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(ConfigBundleResponse {
+        config: config.main.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/bundle",
+    request_body = UpdateConfigBundleRequest,
+    responses(
+        (status = 200, description = "Configuration bundle updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_config_bundle(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateConfigBundleRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    req.config.validate().map_err(|e| {
+        tracing::error!("Config validation failed: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let toml_content = toml::to_string_pretty(&req.config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let config_dir = {
+        let cfg = state.process.config.read().await;
+        cfg.config_dir.clone()
+    };
+
+    let main_config_path = config_dir.join("main.toml");
+
+    {
+        let _guard = state.metrics.config_write_lock.write().await;
+        tokio::fs::write(&main_config_path, toml_content)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write main config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
+
+    {
+        let mut cfg = state.process.config.write().await;
+        if cfg.load_main(&main_config_path).is_ok() {
+            cfg.discover_sites();
+        }
+    }
+
+    if let Some(ref pm) = state.process.process_manager {
+        pm.broadcast_config_reload(config_dir).await;
+    }
+
+    state.audit.log(AuditLog::new(
+        None,
+        Some("admin".to_string()),
+        "update_config_bundle".to_string(),
+        "config/bundle".to_string(),
+        "unknown".to_string(),
+        None,
+        Some("Full configuration bundle updated".to_string()),
+        true,
+    ));
+
+    Ok(Json(StatusResponse::success(
+        "Configuration bundle updated and reloaded to workers.",
+    )))
+}
+
 // --- Helper: persist MainConfig to TOML file ---
 
 async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), StatusCode> {

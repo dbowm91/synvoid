@@ -879,6 +879,7 @@ impl WafCore {
             None,
             user_agent,
             None,
+            None,
         )
         .await
     }
@@ -922,6 +923,7 @@ impl WafCore {
         body: Option<&[u8]>,
         user_agent: Option<&str>,
         ja4_hash: Option<&str>,
+        site_bot_config: Option<&crate::config::site::SiteBotConfig>,
     ) -> WafDecision {
         if self.whitelist.contains(&client_ip) {
             return WafDecision::Pass;
@@ -961,7 +963,7 @@ impl WafCore {
             return decision;
         }
 
-        if let Some(decision) = self.check_bot_protection(client_ip, path, user_agent, ja4_hash) {
+        if let Some(decision) = self.check_bot_protection(client_ip, path, user_agent, ja4_hash, site_bot_config) {
             return decision;
         }
 
@@ -1230,10 +1232,14 @@ impl WafCore {
         path: &str,
         user_agent: Option<&str>,
         ja4_hash: Option<&str>,
+        site_bot_config: Option<&crate::config::site::SiteBotConfig>,
     ) -> Option<WafDecision> {
+        let site_block_ai = site_bot_config
+            .and_then(|c| c.block_ai_crawlers)
+            .or(self.config.block_ai_crawlers.into());
         let bot_result = self
             .bot_detector
-            .check_with_fingerprints(user_agent, None, None, ja4_hash);
+            .check_with_fingerprints(user_agent, site_block_ai, None, ja4_hash);
 
         if self.test_mode.enabled && self.test_mode.bot_off {
             return None;

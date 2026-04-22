@@ -780,6 +780,7 @@ impl HttpsServer {
                 body_slice,
                 user_agent.as_deref(),
                 ja4_hash.as_deref(),
+                Some(&target.site_config.bot),
             )
             .await;
 

@@ -289,6 +289,10 @@ fn build_router_from_state(
         )
         .route("/config/validate", post(handlers::config::validate_config))
         .route(
+            "/config/bundle",
+            get(handlers::config::get_config_bundle).put(handlers::config::update_config_bundle),
+        )
+        .route(
             "/config/process-manager",
             get(handlers::config::get_process_manager_config)
                 .put(handlers::config::update_process_manager_config),
