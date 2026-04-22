@@ -619,7 +619,7 @@ impl HttpsServer {
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.https.early_drop").increment(1);
                 http_conn.request_drop();
-                let resp = Response::new(Full::new(Bytes::new()).boxed());
+                let resp = Response::new(Full::new(Bytes::from_static(&[])).boxed());
                 return Ok(resp);
             }
             crate::proxy::WafDecision::ChallengeWithCookie {
@@ -720,7 +720,7 @@ impl HttpsServer {
                     Ok(collected) => collected.to_bytes(),
                     Err(e) => {
                         tracing::warn!("Failed to collect request body: {}", e);
-                        Bytes::new()
+                        Bytes::from_static(&[])
                     }
                 }
             }
@@ -729,7 +729,7 @@ impl HttpsServer {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
                     tracing::warn!("Failed to collect request body: {}", e);
-                    Bytes::new()
+                    Bytes::from_static(&[])
                 }
             }
         };
@@ -789,7 +789,7 @@ impl HttpsServer {
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.https.blackhole_drop").increment(1);
                 http_conn.request_drop();
-                let resp = Response::new(Full::new(Bytes::new()).boxed());
+                let resp = Response::new(Full::new(Bytes::from_static(&[])).boxed());
                 Ok(resp)
             }
             crate::proxy::WafDecision::Stall => {
@@ -1646,7 +1646,7 @@ impl HttpsServer {
                 Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal Server Error")).boxed())
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::from_static(&[])).boxed()))
             }))
     }
 
@@ -1665,7 +1665,7 @@ impl HttpsServer {
                 Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal Server Error")).boxed())
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::from_static(&[])).boxed()))
             })
     }
 
@@ -1688,7 +1688,7 @@ impl HttpsServer {
                 Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::from("Internal Server Error")).boxed())
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::from_static(&[])).boxed()))
             })
     }
 
@@ -1704,7 +1704,7 @@ impl HttpsServer {
         use crate::http::shared_handler::BodyCollectionProtocol;
         collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Https)
             .await
-            .unwrap_or_else(|_| Bytes::new())
+            .unwrap_or_else(|_| Bytes::from_static(&[]))
     }
 }
 

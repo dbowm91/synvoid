@@ -809,7 +809,7 @@ impl HttpServer {
                     worker_id_clone,
                     &main_config,
                     client_ip,
-                    method.to_string().as_str(),
+                    method.as_str(),
                     &path,
                     0,
                     start.elapsed().as_millis() as u64,
@@ -819,7 +819,7 @@ impl HttpServer {
                 );
                 let resp = Response::builder()
                     .status(http::StatusCode::NOT_FOUND)
-                    .body(Full::new(Bytes::new()).boxed())
+                    .body(Full::new(Bytes::from_static(&[])).boxed())
                     .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                 return Ok(resp);
             }
@@ -840,7 +840,7 @@ impl HttpServer {
                     worker_id_clone,
                     &main_config,
                     client_ip,
-                    method.to_string().as_str(),
+                    method.as_str(),
                     &path,
                     200,
                     start.elapsed().as_millis() as u64,
@@ -865,7 +865,7 @@ impl HttpServer {
                     worker_id_clone,
                     &main_config,
                     client_ip,
-                    method.to_string().as_str(),
+                    method.as_str(),
                     &path,
                     200,
                     start.elapsed().as_millis() as u64,
@@ -892,7 +892,7 @@ impl HttpServer {
                     worker_id_clone,
                     &main_config,
                     client_ip,
-                    method.to_string().as_str(),
+                    method.as_str(),
                     &path,
                     status,
                     start.elapsed().as_millis() as u64,
@@ -952,13 +952,13 @@ impl HttpServer {
             } else {
                 match body.collect().await {
                     Ok(collected) => collected.to_bytes(),
-                    Err(_) => Bytes::new(),
+                    Err(_) => Bytes::from_static(&[]),
                 }
             }
         } else {
             match body.collect().await {
                 Ok(collected) => collected.to_bytes(),
-                Err(_) => Bytes::new(),
+                        Err(_) => Bytes::from_static(&[]),
             }
         };
         request_body_size = full_body.len() as u64;
@@ -1105,7 +1105,7 @@ impl HttpServer {
                     );
                     let mut resp = Response::builder()
                         .status(http::StatusCode::NO_CONTENT)
-                        .body(Full::new(Bytes::new()).boxed())
+                        .body(Full::new(Bytes::from_static(&[])).boxed())
                         .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
@@ -1172,7 +1172,7 @@ impl HttpServer {
                     );
                     let mut resp = Response::builder()
                         .status(http::StatusCode::NO_CONTENT)
-                        .body(Full::new(Bytes::new()).boxed())
+                        .body(Full::new(Bytes::from_static(&[])).boxed())
                         .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
@@ -1198,14 +1198,14 @@ impl HttpServer {
                         .status(http::StatusCode::FOUND)
                         .header(http::header::LOCATION, "/")
                         .header(http::header::SET_COOKIE, cookie)
-                        .body(Full::new(Bytes::new()).boxed())
+                        .body(Full::new(Bytes::from_static(&[])).boxed())
                         .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     return Ok(response);
                 }
                 crate::challenge::CssAssetAction::DropConnection => {
                     let mut resp = Response::builder()
                         .status(http::StatusCode::NO_CONTENT)
-                        .body(Full::new(Bytes::new()).boxed())
+                        .body(Full::new(Bytes::from_static(&[])).boxed())
                         .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                     resp.headers_mut().insert(
                         http::header::CONNECTION,
@@ -1398,7 +1398,7 @@ impl HttpServer {
                 );
                 let resp = Response::builder()
                     .status(http::StatusCode::NOT_FOUND)
-                    .body(Full::new(Bytes::new()).boxed())
+                    .body(Full::new(Bytes::from_static(&[])).boxed())
                     .unwrap_or_else(|_| crate::http::fallback_error_boxed());
                 return Ok(resp);
             }
@@ -1916,9 +1916,9 @@ impl HttpServer {
                                         .unwrap_or_else(|_| {
                                             http::Response::builder()
                                                 .status(response.status)
-                                                .body(Bytes::new())
+                                                .body(Bytes::from_static(&[]))
                                                 .unwrap_or_else(|_| {
-                                                    http::Response::new(Bytes::new())
+                                                    http::Response::new(Bytes::from_static(&[]))
                                                 })
                                         });
                                     let transform_result = if let Some(ref plugin_names) =
@@ -2220,7 +2220,7 @@ impl HttpServer {
                     let filter_req = filter_builder.body(body_bytes.clone()).unwrap_or_else(|_| {
                         http::Request::builder()
                             .method(method.clone())
-                            .body(Bytes::new())
+                                        .body(Bytes::from_static(&[]))
                             .unwrap_or_else(|_| http::Request::new(Bytes::new()))
                     });
 
@@ -2646,8 +2646,8 @@ impl HttpServer {
                                 .unwrap_or_else(|_| {
                                     http::Response::builder()
                                         .status(status)
-                                        .body(Bytes::new())
-                                        .unwrap_or_else(|_| http::Response::new(Bytes::new()))
+                                        .body(Bytes::from_static(&[]))
+                                        .unwrap_or_else(|_| http::Response::new(Bytes::from_static(&[])))
                                 });
                             // Use per-site WASM plugins for response transforms if configured
                             let transform_result = if let Some(ref plugin_names) =
@@ -3501,7 +3501,7 @@ impl HttpServer {
                     resp_body.collect().await;
                 let resp_bytes = match collected {
                     Ok(c) => c.to_bytes(),
-                    Err(_) => Bytes::new(),
+                    Err(_) => Bytes::from_static(&[]),
                 };
                 Ok(Response::from_parts(
                     resp_parts,

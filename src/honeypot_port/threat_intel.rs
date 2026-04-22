@@ -1,6 +1,35 @@
+use std::sync::LazyLock;
+
 use crate::honeypot_port::storage::HoneypotRecord;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+static SQL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bselect\s+[\w\s*.,-]+\s+from\b").unwrap());
+static XSS_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<\s*script[^>]*>|javascript\s*:").unwrap());
+static PATH_TRAVERSAL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\.\./|\.\.\\").unwrap());
+static LFI_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)/etc/(passwd|shadow|hosts)").unwrap());
+static RCE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\b(wget|curl|nc|ncat)\s+['"]?https?://"#).unwrap());
+static SHELL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(bash|sh)\s+-[ic]").unwrap());
+static PHP_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<\?php|phpinfo\s*\(").unwrap());
+static WP_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)/wp-admin/|/wp-login.php").unwrap());
+static ADMIN_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)/admin(?:/login)?|/administrator").unwrap());
+static VC_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)/\.git/|/\.svn/HEAD").unwrap());
+static AWS_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(aws_access_key|aws_secret|access_key_id|secret_access_key)").unwrap());
+static REDIS_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bredis.*config\s+set\b").unwrap());
+static MONGO_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bmongo(?:db)?\s*\.\s*").unwrap());
 
 pub struct HoneypotIntelExtractor;
 
@@ -49,69 +78,55 @@ impl HoneypotIntelExtractor {
         let mut attacks = Vec::new();
         let payload_lower = payload.to_lowercase();
 
-        let sql_pattern = Regex::new(r"(?i)\bselect\s+[\w\s*.,-]+\s+from\b").unwrap();
-        if sql_pattern.is_match(&payload_lower) {
+        if SQL_PATTERN.is_match(&payload_lower) {
             attacks.push("SQL Injection".to_string());
         }
 
-        let xss_pattern = Regex::new(r"(?i)<\s*script[^>]*>|javascript\s*:").unwrap();
-        if xss_pattern.is_match(&payload_lower) {
+        if XSS_PATTERN.is_match(&payload_lower) {
             attacks.push("XSS".to_string());
         }
 
-        let path_traversal_pattern = Regex::new(r"(?i)\.\./|\.\.\\").unwrap();
-        if path_traversal_pattern.is_match(&payload_lower) {
+        if PATH_TRAVERSAL_PATTERN.is_match(&payload_lower) {
             attacks.push("Path Traversal".to_string());
         }
 
-        let lfi_pattern = Regex::new(r"(?i)/etc/(passwd|shadow|hosts)").unwrap();
-        if lfi_pattern.is_match(&payload_lower) {
+        if LFI_PATTERN.is_match(&payload_lower) {
             attacks.push("LFI".to_string());
         }
 
-        let rce_pattern = Regex::new(r#"(?i)\b(wget|curl|nc|ncat)\s+['"]?https?://"#).unwrap();
-        if rce_pattern.is_match(&payload_lower) {
+        if RCE_PATTERN.is_match(&payload_lower) {
             attacks.push("Remote Code Execution Attempt".to_string());
         }
 
-        let shell_pattern = Regex::new(r"(?i)\b(bash|sh)\s+-[ic]").unwrap();
-        if shell_pattern.is_match(&payload_lower) {
+        if SHELL_PATTERN.is_match(&payload_lower) {
             attacks.push("Shell Command Injection".to_string());
         }
 
-        let php_pattern = Regex::new(r"(?i)<\?php|phpinfo\s*\(").unwrap();
-        if php_pattern.is_match(&payload_lower) {
+        if PHP_PATTERN.is_match(&payload_lower) {
             attacks.push("PHP Exploitation".to_string());
         }
 
-        let wp_pattern = Regex::new(r"(?i)/wp-admin/|/wp-login.php").unwrap();
-        if wp_pattern.is_match(&payload_lower) {
+        if WP_PATTERN.is_match(&payload_lower) {
             attacks.push("WordPress Attack".to_string());
         }
 
-        let admin_pattern = Regex::new(r"(?i)/admin(?:/login)?|/administrator").unwrap();
-        if admin_pattern.is_match(&payload_lower) && payload_lower.contains("login") {
+        if ADMIN_PATTERN.is_match(&payload_lower) && payload_lower.contains("login") {
             attacks.push("Admin Panel Probe".to_string());
         }
 
-        let vc_pattern = Regex::new(r"(?i)/\.git/|/\.svn/HEAD").unwrap();
-        if vc_pattern.is_match(&payload_lower) {
+        if VC_PATTERN.is_match(&payload_lower) {
             attacks.push("Version Control Leak".to_string());
         }
 
-        let aws_pattern =
-            Regex::new(r"(?i)(aws_access_key|aws_secret|access_key_id|secret_access_key)").unwrap();
-        if aws_pattern.is_match(&payload_lower) {
+        if AWS_PATTERN.is_match(&payload_lower) {
             attacks.push("AWS Credential Theft".to_string());
         }
 
-        let redis_pattern = Regex::new(r"(?i)\bredis.*config\s+set\b").unwrap();
-        if redis_pattern.is_match(&payload_lower) {
+        if REDIS_PATTERN.is_match(&payload_lower) {
             attacks.push("Redis Attack".to_string());
         }
 
-        let mongo_pattern = Regex::new(r"(?i)\bmongo(?:db)?\s*\.\s*").unwrap();
-        if mongo_pattern.is_match(&payload_lower) && payload_lower.contains("db") {
+        if MONGO_PATTERN.is_match(&payload_lower) && payload_lower.contains("db") {
             attacks.push("MongoDB Attack".to_string());
         }
 

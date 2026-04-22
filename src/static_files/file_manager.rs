@@ -1,7 +1,9 @@
 #![allow(unexpected_cfgs)]
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use anyhow::Result;
@@ -14,6 +16,15 @@ use crate::upload::malware_scanner::MalwareScanner;
 use crate::upload::rate_limit::{RateLimitConfig, UploadRateLimiter};
 use crate::upload::yara_scanner::YaraScanner;
 use crate::upload::YaraError;
+
+fn make_blocked_extensions_set() -> HashSet<String> {
+    BLOCKED_EXTENSIONS
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect()
+}
+
+static BLOCKED_EXTENSIONS_SET: LazyLock<HashSet<String>> = LazyLock::new(make_blocked_extensions_set);
 
 const BLOCKED_EXTENSIONS: &[&str] = &[
     "exe",
@@ -123,9 +134,7 @@ impl FileManagerConfig {
                 .any(|e| e.to_lowercase() == ext_lower);
         }
 
-        self.blocked_extensions
-            .iter()
-            .any(|e| e.to_lowercase() == ext_lower)
+        BLOCKED_EXTENSIONS_SET.contains(&ext_lower)
     }
 }
 

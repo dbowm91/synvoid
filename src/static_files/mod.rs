@@ -422,7 +422,7 @@ impl StaticFileHandler {
                             "public, max-age=31536000, immutable".to_string(),
                         ),
                     ],
-                    body: StaticResponseBody::InMemory(Bytes::new()),
+                    body: StaticResponseBody::InMemory(Bytes::from_static(&[])),
                 });
             }
         }
@@ -445,7 +445,7 @@ impl StaticFileHandler {
                                 ),
                             ),
                         ],
-                        body: StaticResponseBody::InMemory(Bytes::new()),
+                        body: StaticResponseBody::InMemory(Bytes::from_static(&[])),
                     });
                 }
             }
