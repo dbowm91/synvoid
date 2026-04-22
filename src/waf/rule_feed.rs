@@ -26,6 +26,8 @@ use std::sync::LazyLock;
 /// rule feed signature verifications will fail (rules will not be applied).
 const EMBEDDED_PUBLIC_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
+const PLACEHOLDER_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
+
 static RULE_PATTERN_STORE: LazyLock<RwLock<GlobalRulePatterns>> =
     LazyLock::new(|| RwLock::new(GlobalRulePatterns::default()));
 
@@ -316,6 +318,15 @@ impl RuleFeedManager {
     }
 
     fn parse_embedded_key(key_str: &str) -> VerifyingKey {
+        if key_str == PLACEHOLDER_KEY {
+            panic!(
+                "FATAL: Rule feed public key is still set to the placeholder value. \
+                 Set [waf.rule_feed.public_key] in the TOML config to a valid \
+                 base64-encoded 32-byte Ed25519 verifying key. \
+                 Signature verification will fail until a real key is configured."
+            );
+        }
+
         // If a real base64-encoded 32-byte Ed25519 public key is provided, use it
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(key_str) {
             if bytes.len() == 32 {

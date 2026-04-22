@@ -2055,32 +2055,32 @@ mod xff_validation_tests {
 
     #[test]
     fn test_validate_and_truncate_xff_empty() {
-        let result = validate_and_truncate_xff("", "192.168.1.1");
-        assert_eq!(result, "192.168.1.1");
+        let result = validate_and_truncate_xff("", "8.8.8.8");
+        assert_eq!(result, "8.8.8.8");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_single_valid() {
-        let result = validate_and_truncate_xff("10.0.0.1", "192.168.1.1");
-        assert_eq!(result, "10.0.0.1, 192.168.1.1");
+        let result = validate_and_truncate_xff("8.8.8.8", "1.1.1.1");
+        assert_eq!(result, "8.8.8.8, 1.1.1.1");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_multiple_valid() {
-        let result = validate_and_truncate_xff("10.0.0.1, 10.0.0.2", "192.168.1.1");
-        assert_eq!(result, "10.0.0.1, 10.0.0.2, 192.168.1.1");
+        let result = validate_and_truncate_xff("8.8.8.8, 1.1.1.1", "9.9.9.9");
+        assert_eq!(result, "8.8.8.8, 1.1.1.1, 9.9.9.9");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_invalid_ip_rejected() {
-        let result = validate_and_truncate_xff("not-an-ip, 10.0.0.1", "192.168.1.1");
-        assert_eq!(result, "10.0.0.1, 192.168.1.1");
+        let result = validate_and_truncate_xff("not-an-ip, 8.8.8.8", "1.1.1.1");
+        assert_eq!(result, "8.8.8.8, 1.1.1.1");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_ipv6_preserved() {
-        let result = validate_and_truncate_xff("::1", "192.168.1.1");
-        assert_eq!(result, "::1, 192.168.1.1");
+        let result = validate_and_truncate_xff("2001:4860:4860::8888", "8.8.8.8");
+        assert_eq!(result, "2001:4860:4860::8888, 8.8.8.8");
     }
 
     #[test]
@@ -2090,14 +2090,14 @@ mod xff_validation_tests {
             if i > 0 {
                 xff.push_str(", ");
             }
-            xff.push_str(&format!("10.0.0.{}", i));
+            xff.push_str(&format!("8.8.8.{}", i % 256));
         }
 
-        let result = validate_and_truncate_xff(&xff, "192.168.1.1");
+        let result = validate_and_truncate_xff(&xff, "1.1.1.1");
 
         let entries: Vec<&str> = result.split(", ").collect();
         assert!(entries.len() <= MAX_XFF_CHAIN_LENGTH);
-        assert!(result.ends_with("192.168.1.1"));
+        assert!(result.ends_with("1.1.1.1"));
     }
 
     #[test]
@@ -2107,30 +2107,48 @@ mod xff_validation_tests {
             if i > 0 {
                 xff.push_str(", ");
             }
-            xff.push_str(&format!("10.0.0.{}", i));
+            xff.push_str(&format!("8.8.8.{}", i + 1));
         }
 
-        let result = validate_and_truncate_xff(&xff, "192.168.1.1");
+        let result = validate_and_truncate_xff(&xff, "1.1.1.1");
         let entries: Vec<&str> = result.split(", ").collect();
         assert_eq!(entries.len(), MAX_XFF_CHAIN_LENGTH);
     }
 
     #[test]
     fn test_validate_and_truncate_xff_empty_entries_removed() {
-        let result = validate_and_truncate_xff(", , 10.0.0.1, , ", "192.168.1.1");
-        assert_eq!(result, "10.0.0.1, 192.168.1.1");
+        let result = validate_and_truncate_xff(", , 8.8.8.8, , ", "1.1.1.1");
+        assert_eq!(result, "8.8.8.8, 1.1.1.1");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_whitespace_trimmed() {
-        let result = validate_and_truncate_xff("  10.0.0.1  ,  10.0.0.2  ", "192.168.1.1");
-        assert_eq!(result, "10.0.0.1, 10.0.0.2, 192.168.1.1");
+        let result = validate_and_truncate_xff("  8.8.8.8  ,  1.1.1.1  ", "9.9.9.9");
+        assert_eq!(result, "8.8.8.8, 1.1.1.1, 9.9.9.9");
     }
 
     #[test]
     fn test_validate_and_truncate_xff_only_invalid_entries() {
-        let result = validate_and_truncate_xff("invalid, not-ip, garbage", "192.168.1.1");
-        assert_eq!(result, "192.168.1.1");
+        let result = validate_and_truncate_xff("invalid, not-ip, garbage", "8.8.8.8");
+        assert_eq!(result, "8.8.8.8");
+    }
+
+    #[test]
+    fn test_validate_and_truncate_xff_private_ip_rejected() {
+        let result = validate_and_truncate_xff("10.0.0.1", "8.8.8.8");
+        assert_eq!(result, "8.8.8.8");
+    }
+
+    #[test]
+    fn test_validate_and_truncate_xff_private_ip_middle_rejected() {
+        let result = validate_and_truncate_xff("8.8.8.8, 192.168.1.1, 1.1.1.1", "9.9.9.9");
+        assert_eq!(result, "8.8.8.8, 1.1.1.1, 9.9.9.9");
+    }
+
+    #[test]
+    fn test_validate_and_truncate_xff_loopback_rejected() {
+        let result = validate_and_truncate_xff("::1", "8.8.8.8");
+        assert_eq!(result, "8.8.8.8");
     }
 }
 

@@ -2520,6 +2520,23 @@ impl MeshTransport {
 
         let host_str = parsed_url.host_str().unwrap_or("127.0.0.1");
         let port = parsed_url.port().unwrap_or(80);
+
+        if let Ok(ip) = host_str.parse::<std::net::IpAddr>() {
+            if crate::proxy::headers::is_private_ip(&ip) {
+                tracing::warn!(
+                    "SSRF prevention: rejecting connection to private IP {} via mesh proxy",
+                    ip
+                );
+                let forbidden = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(forbidden)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
+        }
+
         let addr = format!("{}:{}", host_str, port);
 
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

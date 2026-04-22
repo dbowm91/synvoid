@@ -645,7 +645,7 @@ impl WafCore {
             self.honeypot_ban_duration_secs,
             "global",
         );
-        Some(WafDecision::Stall)
+        Some(WafDecision::Block(403, "Forbidden".to_string()))
     }
 
     fn maybe_escalate_and_block(
