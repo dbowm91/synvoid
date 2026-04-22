@@ -2347,7 +2347,8 @@ mod yara_manager_lifecycle_tests {
         let result = manager.reject_submission("nonexistent-id", "test rejection".to_string());
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("global"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("global") || err.to_string().contains("Global"));
     }
 
     #[test]
@@ -2357,7 +2358,8 @@ mod yara_manager_lifecycle_tests {
         let result = manager.reject_submission("nonexistent-id", "test rejection".to_string());
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not found") || err.to_string().contains("NotFound"));
     }
 
     #[test]

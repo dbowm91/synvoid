@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::config::ConfigManager;
+use crate::process::ipc_signed::IpcSigner;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::static_files::minifier;
 use crate::{DrainFlag, RunningFlag};
@@ -104,12 +105,20 @@ pub async fn run_static_worker(
         args.master_socket
     );
 
+    let signer = match IpcSigner::try_from_env() {
+        Some(s) => s,
+        None => {
+            tracing::warn!("No IPC session key found - static worker will use unsigned IPC");
+            return Err("No IPC session key for static worker".into());
+        }
+    };
     let ipc = Arc::new(TokioMutex::new(
-        connect::connect_to_master_async(
+        connect::connect_to_master_async_signed(
             &args.master_socket,
             5,
             std::time::Duration::from_secs(2),
             "Static worker",
+            Arc::new(signer),
         )
         .await?,
     ));

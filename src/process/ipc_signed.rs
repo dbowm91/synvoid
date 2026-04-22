@@ -106,6 +106,69 @@ impl IpcSigner {
         Self { key }
     }
 
+    pub fn try_from_env() -> Option<Self> {
+        let key = if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+            let key_hex = std::fs::read_to_string(&key_file).ok()?.trim().to_string();
+            if key_hex.len() != 64 {
+                return None;
+            }
+            let mut key = [0u8; 32];
+            let mut valid = true;
+            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                if chunk.len() != 2 {
+                    valid = false;
+                    break;
+                }
+                let Ok(s) = std::str::from_utf8(chunk) else {
+                    valid = false;
+                    break;
+                };
+                match u8::from_str_radix(s, 16) {
+                    Ok(b) => key[i] = b,
+                    Err(_) => {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            if !valid {
+                return None;
+            }
+            let _ = std::fs::remove_file(&key_file);
+            key
+        } else if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+            if key_hex.len() != 64 {
+                return None;
+            }
+            let mut key = [0u8; 32];
+            let mut valid = true;
+            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                if chunk.len() != 2 {
+                    valid = false;
+                    break;
+                }
+                let Ok(s) = std::str::from_utf8(chunk) else {
+                    valid = false;
+                    break;
+                };
+                match u8::from_str_radix(s, 16) {
+                    Ok(b) => key[i] = b,
+                    Err(_) => {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            if !valid {
+                return None;
+            }
+            key
+        } else {
+            return None;
+        };
+        Some(Self { key })
+    }
+
     pub fn sign(&self, data: &[u8]) -> [u8; HMAC_SIZE] {
         let mut mac =
             HmacSha3_256::new_from_slice(&self.key).expect("HMAC can take key of any size");
@@ -473,6 +536,75 @@ pub fn generate_session_key() -> [u8; 32] {
     let mut key = [0u8; 32];
     rand::rng().fill_bytes(&mut key);
     key
+}
+
+#[cfg(unix)]
+fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::io::Read;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_EXCL | libc::O_NOFOLLOW)
+        .open(path)
+        .ok()?;
+
+    let mut reader = std::io::BufReader::new(file);
+    let mut key_hex = String::new();
+    reader.read_to_string(&mut key_hex).ok()?;
+    drop(reader);
+
+    let _ = std::fs::remove_file(path);
+
+    let key_hex = key_hex.trim();
+    if key_hex.len() != 64 {
+        return None;
+    }
+
+    let mut key = [0u8; 32];
+    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+        if chunk.len() != 2 {
+            return None;
+        }
+        let Ok(s) = std::str::from_utf8(chunk) else {
+            return None;
+        };
+        let Ok(b) = u8::from_str_radix(s, 16) else {
+            return None;
+        };
+        key[i] = b;
+    }
+    Some(Arc::new(IpcSigner::new(&key)))
+}
+
+#[cfg(not(unix))]
+fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
+    let key_hex = std::fs::read_to_string(path).ok()?.trim().to_string();
+    let _ = std::fs::remove_file(path);
+
+    if key_hex.len() != 64 {
+        return None;
+    }
+
+    let mut key = [0u8; 32];
+    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+        if chunk.len() != 2 {
+            return None;
+        }
+        let Ok(s) = std::str::from_utf8(chunk) else {
+            return None;
+        };
+        let Ok(b) = u8::from_str_radix(s, 16) else {
+            return None;
+        };
+        key[i] = b;
+    }
+    Some(Arc::new(IpcSigner::new(&key)))
+}
+
+pub fn read_ipc_key_file(key_file: &str) -> Option<Arc<IpcSigner>> {
+    read_ipc_key_file_impl(std::path::Path::new(key_file))
 }
 
 #[cfg(test)]

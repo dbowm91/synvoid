@@ -3,7 +3,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// RFC 5011 Trust Anchor States
@@ -294,45 +294,76 @@ impl TrustAnchorManager {
     }
 
     pub fn save_anchors(&self, anchors: &HashMap<String, TrustAnchor>) -> Result<(), String> {
-        let mut conn = self.init_db()?;
+        let db_path = PathBuf::from(&self.db_path);
+        let temp_path = db_path.with_extension("tmp");
 
-        let tx = conn
-            .transaction()
-            .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+        {
+            let mut conn = Connection::open(&temp_path)
+                .map_err(|e| format!("Failed to create temp database: {}", e))?;
 
-        tx.execute("DELETE FROM trust_anchors", [])
-            .map_err(|e| format!("Failed to delete old anchors: {}", e))?;
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS trust_anchors (
+                    key_id TEXT PRIMARY KEY,
+                    key_tag INTEGER NOT NULL,
+                    algorithm INTEGER NOT NULL,
+                    public_key BLOB NOT NULL,
+                    state TEXT NOT NULL,
+                    added_at INTEGER NOT NULL,
+                    last_seen INTEGER NOT NULL,
+                    trust_point INTEGER NOT NULL,
+                    first_seen_at INTEGER,
+                    pending_since INTEGER,
+                    revoked_at INTEGER,
+                    removed_at INTEGER
+                )",
+                [],
+            )
+            .map_err(|e| format!("Failed to create table: {}", e))?;
 
-        for anchor in anchors.values() {
-            if !self.config.allow_key_rotation && anchor.state == TrustAnchorState::Removed {
-                continue;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_key_tag ON trust_anchors(key_tag)",
+                [],
+            )
+            .map_err(|e| format!("Failed to create index: {}", e))?;
+
+            let tx = conn
+                .transaction()
+                .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
+            for anchor in anchors.values() {
+                if !self.config.allow_key_rotation && anchor.state == TrustAnchorState::Removed {
+                    continue;
+                }
+
+                tx.execute(
+                    "INSERT OR REPLACE INTO trust_anchors 
+                    (key_id, key_tag, algorithm, public_key, state, added_at, last_seen, trust_point, 
+                    first_seen_at, pending_since, revoked_at, removed_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        anchor.key_id,
+                        anchor.key_tag,
+                        anchor.algorithm,
+                        anchor.public_key,
+                        anchor.state.as_str(),
+                        anchor.added_at,
+                        anchor.last_seen,
+                        anchor.trust_point,
+                        anchor.first_seen_at,
+                        anchor.pending_since,
+                        anchor.revoked_at,
+                        anchor.removed_at,
+                    ],
+                )
+                .map_err(|e| format!("Failed to insert anchor: {}", e))?;
             }
 
-            tx.execute(
-                "INSERT OR REPLACE INTO trust_anchors 
-                (key_id, key_tag, algorithm, public_key, state, added_at, last_seen, trust_point, 
-                first_seen_at, pending_since, revoked_at, removed_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![
-                    anchor.key_id,
-                    anchor.key_tag,
-                    anchor.algorithm,
-                    anchor.public_key,
-                    anchor.state.as_str(),
-                    anchor.added_at,
-                    anchor.last_seen,
-                    anchor.trust_point,
-                    anchor.first_seen_at,
-                    anchor.pending_since,
-                    anchor.revoked_at,
-                    anchor.removed_at,
-                ],
-            )
-            .map_err(|e| format!("Failed to insert anchor: {}", e))?;
+            tx.commit()
+                .map_err(|e| format!("Failed to commit transaction: {}", e))?;
         }
 
-        tx.commit()
-            .map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        std::fs::rename(&temp_path, &db_path)
+            .map_err(|e| format!("Failed to atomic rename temp database: {}", e))?;
 
         Ok(())
     }

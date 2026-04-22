@@ -7,33 +7,8 @@ use crate::utils::errors::ipc as ipc_errors;
 
 fn create_ipc_signer() -> Option<Arc<IpcSigner>> {
     if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
-        if let Ok(key_hex) = std::fs::read_to_string(&key_file) {
-            let key_hex = key_hex.trim();
-            if key_hex.len() == 64 {
-                let mut key = [0u8; 32];
-                let mut valid = true;
-                for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-                    if chunk.len() != 2 {
-                        valid = false;
-                        break;
-                    }
-                    if let Ok(s) = std::str::from_utf8(chunk) {
-                        if let Ok(b) = u8::from_str_radix(s, 16) {
-                            key[i] = b;
-                        } else {
-                            valid = false;
-                            break;
-                        }
-                    } else {
-                        valid = false;
-                        break;
-                    }
-                }
-                if valid {
-                    let _ = std::fs::remove_file(&key_file);
-                    return Some(Arc::new(IpcSigner::new(&key)));
-                }
-            }
+        if let Some(key) = crate::process::ipc_signed::read_ipc_key_file(&key_file) {
+            return Some(key);
         }
     }
     if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
