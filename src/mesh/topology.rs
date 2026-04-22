@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use parking_lot::RwLock as ParkingLotRwLock;
 use tokio::sync::RwLock;
 
@@ -43,6 +44,7 @@ pub struct MeshTopology {
     degraded_mode: AtomicBool,
     peer_scores_compat: RwLock<HashMap<String, PeerScore>>,
     record_store: ParkingLotRwLock<Option<Arc<RecordStoreManager>>>,
+    inflight_dht_queries: Arc<DashMap<String, Vec<tokio::sync::oneshot::Sender<Vec<crate::mesh::dht::VerifiedUpstream>>>>>,
 }
 
 impl MeshTopology {
@@ -113,6 +115,7 @@ impl MeshTopology {
             degraded_mode: AtomicBool::new(false),
             peer_scores_compat: RwLock::new(HashMap::new()),
             record_store: ParkingLotRwLock::new(None),
+            inflight_dht_queries: Arc::new(DashMap::new()),
         }
     }
 
@@ -837,6 +840,18 @@ impl MeshTopology {
             return Vec::new();
         }
 
+        let inflight = self.inflight_dht_queries.clone();
+        let site_key = site.to_string();
+
+        if let Some(mut waiters) = inflight.get_mut(&site_key) {
+            let (fut_tx, fut_rx) = tokio::sync::oneshot::channel();
+            waiters.push(fut_tx);
+            return fut_rx.await.unwrap_or_default();
+        }
+
+        let (tx, _): (_, tokio::sync::oneshot::Receiver<_>) = tokio::sync::oneshot::channel();
+        inflight.insert(site_key.clone(), vec![tx]);
+
         let records = {
             let guard = self.record_store.read();
             let result = guard.as_ref().unwrap().get_all_records();
@@ -912,8 +927,14 @@ impl MeshTopology {
         }
 
         self.verified_upstream_cache
-            .insert(site_key, results.clone())
+            .insert(site_key.clone(), results.clone())
             .await;
+
+        if let Some((_, waiters)) = inflight.remove(&site_key) {
+            for waiter in waiters {
+                let _ = waiter.send(results.clone());
+            }
+        }
 
         results
     }

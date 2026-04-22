@@ -44,12 +44,8 @@ use crate::proxy_cache::ProxyCacheSettings;
 const DEFAULT_POLICY_CACHE_TTL_SECS: u64 = 3600;
 /// Cooldown period after provider failure before retry (10 seconds)
 const FAILED_PROVIDER_COOLDOWN_SECS: u64 = 10;
-/// Maximum exponential backoff delay (120 seconds)
-const MAX_EXPONENTIAL_BACKOFF_SECS: u64 = 120;
 /// Window for health metrics calculation (5 minutes)
 const HEALTH_METRICS_WINDOW_SECS: u64 = 300;
-/// Minimum success rate threshold for provider health (50%)
-const MIN_SUCCESS_RATE: f64 = 0.5;
 /// Number of consecutive provider failures before broadcasting block to mesh
 const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// Duration to block an upstream when broadcasting to mesh (5 minutes).
@@ -95,17 +91,37 @@ pub struct CachedPolicy {
     pub expires_at: Instant,
 }
 
+/// Number of consecutive provider failures before opening circuit
+const CIRCUIT_OPEN_THRESHOLD: u32 = 5;
+/// Duration circuit stays open before transitioning to half-open
+const CIRCUIT_OPEN_TIMEOUT_SECS: u64 = 30;
+/// Maximum requests allowed in half-open state before evaluating
+const HALF_OPEN_MAX_REQUESTS: u32 = 3;
+/// Consecutive successes required to close circuit from half-open
+const CIRCUIT_CLOSE_THRESHOLD: u32 = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CircuitState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
 #[derive(Clone)]
 struct ProviderStats {
     total_requests: u64,
     successful_requests: u64,
     consecutive_failures: u32,
+    consecutive_successes: u32,
     last_failure: Option<Instant>,
     last_success: Option<Instant>,
-    cooldown_until: Option<Instant>,
+    circuit_state: CircuitState,
+    circuit_open_until: Option<Instant>,
+    half_open_requests: u32,
 }
 
 impl ProviderStats {
+    #[allow(dead_code)]
     fn success_rate(&self) -> f64 {
         if self.total_requests == 0 {
             return 1.0;
@@ -113,13 +129,18 @@ impl ProviderStats {
         self.successful_requests as f64 / self.total_requests as f64
     }
 
-    fn is_healthy(&self) -> bool {
-        if let Some(cooldown) = self.cooldown_until {
-            if Instant::now() < cooldown {
-                return false;
+    fn is_available(&self) -> bool {
+        match self.circuit_state {
+            CircuitState::Closed => true,
+            CircuitState::Open => {
+                if let Some(until) = self.circuit_open_until {
+                    Instant::now() >= until
+                } else {
+                    true
+                }
             }
+            CircuitState::HalfOpen => self.half_open_requests < HALF_OPEN_MAX_REQUESTS,
         }
-        self.success_rate() >= MIN_SUCCESS_RATE
     }
 
     fn record_success(&mut self) {
@@ -127,17 +148,53 @@ impl ProviderStats {
         self.successful_requests += 1;
         self.consecutive_failures = 0;
         self.last_success = Some(Instant::now());
+
+        match self.circuit_state {
+            CircuitState::Closed => {}
+            CircuitState::HalfOpen => {
+                self.consecutive_successes += 1;
+                if self.consecutive_successes >= CIRCUIT_CLOSE_THRESHOLD {
+                    self.circuit_state = CircuitState::Closed;
+                    self.consecutive_successes = 0;
+                    self.half_open_requests = 0;
+                }
+            }
+            CircuitState::Open => {
+                self.circuit_state = CircuitState::HalfOpen;
+                self.consecutive_successes = 1;
+                self.half_open_requests = 0;
+            }
+        }
     }
 
     fn record_failure(&mut self) {
         self.consecutive_failures += 1;
         self.last_failure = Some(Instant::now());
 
-        let backoff_secs = std::cmp::min(
-            FAILED_PROVIDER_COOLDOWN_SECS * 2u64.saturating_pow(self.consecutive_failures.min(6)),
-            MAX_EXPONENTIAL_BACKOFF_SECS,
-        );
-        self.cooldown_until = Some(Instant::now() + Duration::from_secs(backoff_secs));
+        match self.circuit_state {
+            CircuitState::Closed => {
+                if self.consecutive_failures >= CIRCUIT_OPEN_THRESHOLD {
+                    self.circuit_state = CircuitState::Open;
+                    self.circuit_open_until =
+                        Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                }
+            }
+            CircuitState::HalfOpen => {
+                self.circuit_state = CircuitState::Open;
+                self.circuit_open_until =
+                    Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                self.consecutive_successes = 0;
+            }
+            CircuitState::Open => {
+                self.circuit_open_until =
+                    Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn record_half_open_request(&mut self) {
+        self.half_open_requests += 1;
     }
 
     fn decay(&mut self) {
@@ -508,7 +565,7 @@ impl MeshProxy {
             let mut stats = self.provider_stats.write();
             if let Some(provider_stats) = stats.get_mut(provider_node_id) {
                 provider_stats.decay();
-                !provider_stats.is_healthy()
+                !provider_stats.is_available()
             } else {
                 drop(stats);
                 return self.is_provider_failed(provider_node_id);
@@ -531,9 +588,12 @@ impl MeshProxy {
                     total_requests: 0,
                     successful_requests: 0,
                     consecutive_failures: 0,
+                    consecutive_successes: 0,
                     last_failure: None,
                     last_success: None,
-                    cooldown_until: None,
+                    circuit_state: CircuitState::Closed,
+                    circuit_open_until: None,
+                    half_open_requests: 0,
                 };
                 new_stats.record_success();
                 e.insert(new_stats);
@@ -555,9 +615,12 @@ impl MeshProxy {
                         total_requests: 0,
                         successful_requests: 0,
                         consecutive_failures: 0,
+                        consecutive_successes: 0,
                         last_failure: None,
                         last_success: None,
-                        cooldown_until: None,
+                        circuit_state: CircuitState::Closed,
+                        circuit_open_until: None,
+                        half_open_requests: 0,
                     };
                     new_stats.record_failure();
                     e.insert(new_stats);
