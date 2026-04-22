@@ -6,7 +6,7 @@ A high-performance Web Application Firewall (WAF) and reverse proxy written in R
 
 The goal is to separate processes in case of a crash, making sure the master worker is rock solid (which is in turn watched by the overseer process) and allows for zero-downtime updates.
 
-It uses an overseer --> master --> worker model. The overseer is a process thats primary purpose is to make sure the master process is working and to handle updates without stopping. The master process spawns the workers, which there are primarily two: the minifier and unifiedrequest workers. The minifier workers job is to periodically minify html/css/js, compress, and cache as needed. Since tokio runtime can scale vertically very well, utilizing all cores if allowed, all requests are handled in the unifiedrequest worker. The one downside to this approach is that we can't so easily adjust the number of threads without restarting the loop, so for now this requires restarting that worker. This is different than how NGINX does this, but effectively tokio is doing a similar thing.
+It uses an overseer --> master --> worker model. The overseer is a process thats primary purpose is to make sure the master process is working and to handle updates without stopping. The master process spawns the worker, which handles all request processing. Since tokio runtime can scale vertically very well, utilizing all cores if allowed, all requests are handled in a single unified worker. The one downside to this approach is that we can't so easily adjust the number of threads without restarting the loop, so for now this requires restarting that worker. This is different than how NGINX does this, but effectively tokio is doing a similar thing.
 
 ## Better results on linux
 

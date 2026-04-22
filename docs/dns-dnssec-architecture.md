@@ -1,5 +1,14 @@
 # DNS / DNSSEC Architecture
 
+## DNSSEC Validation in Recursive Mode
+
+The recursive resolver (`HickoryRecursor`) performs **full inline DNSSEC validation** when `dnssec_validation = true`. This includes:
+- Trust anchor verification (DNSKEY vs DS record chain)
+- RRSIG signature verification against DNSKEY
+- NSEC/NSEC3 proof of nonexistence validation
+
+Validation is enabled via `dnssec_validation = true` in `[dns.recursive]` config.
+
 ## DNSSEC Validation in Forwarding Mode
 
 When operating as a forwarding resolver, MaluWAF does **not** perform full DNSSEC validation itself. Instead it relies on the upstream recursive resolver:
@@ -8,8 +17,6 @@ When operating as a forwarding resolver, MaluWAF does **not** perform full DNSSE
 2. MaluWAF forwards to upstream with `DO` bit set.
 3. Upstream returns RRSIG + DNSKEY/NSEC/NSEC3 records alongside the answer.
 4. MaluWAF verifies the AD (Authenticated Data) bit from upstream and, if set, propagates it to the client.
-
-Full inline validation (trust anchor → DS chain → RRSIG verification) is planned for a future release.
 
 ## NSEC3 Support
 

@@ -303,9 +303,33 @@ impl MeshProxy {
         &self,
         preferences: &crate::mesh::protocol::ProxyCachePreferences,
     ) {
-        let proxy_cache = self.proxy_cache.read();
-        if let Some(cache) = proxy_cache.as_ref() {
-            cache.apply_preferences(preferences);
+        let mut proxy_cache = self.proxy_cache.write();
+        match proxy_cache.as_ref() {
+            Some(cache) => {
+                cache.apply_preferences(preferences);
+            }
+            None => {
+                let settings = ProxyCacheSettings {
+                    enabled: preferences.enable,
+                    inactive: std::time::Duration::from_secs(preferences.inactive),
+                    valid_status: preferences.valid_status.iter().map(|&v| v as u16).collect(),
+                    methods: preferences.methods.clone(),
+                    use_stale: preferences.use_stale.clone(),
+                    min_uses: preferences.min_uses,
+                    stale_while_revalidate: if preferences.stale_while_revalidate > 0 {
+                        Some(std::time::Duration::from_secs(preferences.stale_while_revalidate))
+                    } else {
+                        None
+                    },
+                    stale_if_error: if preferences.stale_if_error > 0 {
+                        Some(std::time::Duration::from_secs(preferences.stale_if_error))
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                };
+                *proxy_cache = Some(ProxyCache::new(settings));
+            }
         }
     }
 
@@ -1227,7 +1251,7 @@ impl MeshProxy {
         };
 
         let transform_flags = format!(
-            "min:{}:{}:{}:{},img:{}:{}",
+            "min:{}:{}:{}:{},img:{}:{},poison:{}:{}:{}",
             minification
                 .as_ref()
                 .and_then(|c| c.enabled)
@@ -1252,6 +1276,18 @@ impl MeshProxy {
                 .as_ref()
                 .and_then(|c| c.min_size_bytes)
                 .unwrap_or(102400) as u64,
+            image_poison_config
+                .as_ref()
+                .and_then(|c| c.enabled)
+                .unwrap_or(false),
+            image_poison_config
+                .as_ref()
+                .and_then(|c| c.intensity)
+                .unwrap_or(0.5),
+            image_poison_config
+                .as_ref()
+                .and_then(|c| c.jpeg_quality)
+                .unwrap_or(85),
         );
 
         let cache_key = format!("{}:{}:{}", upstream_id, content_hash, transform_flags);

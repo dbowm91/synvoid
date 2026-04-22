@@ -500,10 +500,14 @@ impl DirectoryListingTemplate {
 
         let mut rows = String::new();
         for entry in &paginated {
-            let icon = if entry.is_dir { "📁" } else { "📄" };
+            let icon = if entry.is_dir {
+                self.renderer.generate_folder_icon_svg()
+            } else {
+                self.renderer.generate_file_icon_svg()
+            };
             rows.push_str(&format!(
                 r#"<tr>
-                    <td><a href="{href}">{icon} {name}</a></td>
+                    <td><a href="{href}">{icon}{name}</a></td>
                     <td>{modified}</td>
                     <td class="waf-dir-size">{size}</td>
                 </tr>"#,

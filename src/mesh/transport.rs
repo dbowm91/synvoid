@@ -138,6 +138,7 @@ pub struct MeshTransport {
     pub(crate) verification_manager:
         Arc<RwLock<Option<Arc<crate::mesh::verification::VerificationTaskManager>>>>,
     pub(crate) revocation_list: Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>,
+    pub(crate) serverless_manager: Arc<RwLock<Option<Arc<crate::serverless::manager::ServerlessManager>>>>,
     #[cfg(feature = "dns")]
     pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
 }
@@ -247,6 +248,7 @@ impl Clone for MeshTransport {
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
             revocation_list: self.revocation_list.clone(),
+            serverless_manager: self.serverless_manager.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
         }
@@ -445,6 +447,7 @@ impl MeshTransport {
             } else {
                 None
             },
+            serverless_manager: Arc::new(RwLock::new(None)),
             #[cfg(feature = "dns")]
             ownership_challenge_store: Arc::new(RwLock::new(OwnershipChallengeStore::new())),
         }
@@ -981,6 +984,10 @@ impl MeshTransport {
 
     pub fn set_runtime(&mut self, runtime: Arc<QuicRuntime>) {
         self.runtime = Some(runtime);
+    }
+
+    pub fn set_serverless_manager(&self, manager: Arc<crate::serverless::manager::ServerlessManager>) {
+        *self.serverless_manager.write() = Some(manager);
     }
 
     pub(crate) async fn update_threat_intel_global_nodes(&self) {

@@ -2567,6 +2567,14 @@ impl MeshTransport {
             }
         }
 
+        if upstream_id.starts_with("serverless:") {
+            return self.handle_serverless_proxy_stream(
+                &upstream_id,
+                &http_data,
+                send_stream,
+            ).await;
+        }
+
         let parsed_url = match url::Url::parse(&backend_url) {
             Ok(u) => u,
             Err(e) => {
@@ -2867,5 +2875,118 @@ impl MeshTransport {
             }
         }
         None
+    }
+
+    async fn handle_serverless_proxy_stream(
+        &self,
+        upstream_id: &str,
+        http_data: &[u8],
+        send_stream: &mut SendStream,
+    ) -> Result<(), MeshTransportError> {
+        let function_name = upstream_id
+            .strip_prefix("serverless:")
+            .unwrap_or(upstream_id);
+
+        let serverless_manager_opt = {
+            let sm_guard = self.serverless_manager.read();
+            sm_guard.as_ref().cloned()
+        };
+
+        let Some(serverless_manager) = serverless_manager_opt else {
+            tracing::warn!("Serverless proxy request but no serverless manager configured");
+            let not_found = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+            send_stream
+                .write_all(not_found)
+                .await
+                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+            let _ = send_stream.finish();
+            return Ok(());
+        };
+
+        let method = self.extract_method_from_http(http_data);
+        let path = self.extract_path_from_http(http_data);
+
+        let method = method.unwrap_or_else(|| "GET".to_string());
+
+        let header_str = match String::from_utf8(http_data.to_vec()) {
+            Ok(s) => s,
+            Err(_) => {
+                let error_resp = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(error_resp)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
+        };
+
+        let mut headers = http::HeaderMap::new();
+        for line in header_str.lines() {
+            if let Some(colon_pos) = line.find(':') {
+                let name = line[..colon_pos].trim();
+                let value = line[colon_pos + 1..].trim();
+                if let Ok(header_name) = name.parse::<http::header::HeaderName>() {
+                    if let Ok(header_value) = value.parse::<http::header::HeaderValue>() {
+                        headers.insert(header_name, header_value);
+                    }
+                }
+            }
+        }
+
+        let body_offset = header_str.find("\r\n\r\n").map(|p| p + 4).unwrap_or(header_str.len());
+        let body = if body_offset < http_data.len() {
+            Some(bytes::Bytes::copy_from_slice(&http_data[body_offset..]))
+        } else {
+            None
+        };
+
+        match serverless_manager
+            .invoke_for_mesh(function_name, &method, &path, &headers, body)
+            .await
+        {
+            Ok(response) => {
+                let status_line = format!("HTTP/1.1 {} \r\n", response.status_code);
+                let mut response_bytes = status_line.into_bytes();
+
+                for (name, value) in response.headers.iter() {
+                    response_bytes.extend_from_slice(name.as_str().as_bytes());
+                    response_bytes.extend_from_slice(b": ");
+                    response_bytes.extend_from_slice(value.as_bytes());
+                    response_bytes.extend_from_slice(b"\r\n");
+                }
+                response_bytes.extend_from_slice(b"\r\n");
+                response_bytes.extend_from_slice(&response.body);
+
+                send_stream
+                    .write_all(&response_bytes)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+
+                tracing::debug!(
+                    "Serverless function '{}' responded with {} in {}ms",
+                    function_name,
+                    response.status_code,
+                    response.execution_time_ms
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Serverless function '{}' invocation failed: {}", function_name, e);
+                let error_body = format!("Serverless error: {}", e);
+                let error_resp = format!(
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                    error_body.len(),
+                    error_body
+                );
+                send_stream
+                    .write_all(error_resp.as_bytes())
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+            }
+        }
+
+        Ok(())
     }
 }

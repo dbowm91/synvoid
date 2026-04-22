@@ -1091,6 +1091,11 @@ pub async fn run_unified_server_worker(
                 sm.set_transport(quic.get_inner());
                 tracing::info!("Serverless manager wired to mesh transport");
             }
+            if let Some(quic) = tm.get_quic_transport() {
+                let inner = quic.get_inner();
+                inner.set_serverless_manager(sm.clone());
+                tracing::info!("Mesh transport wired to serverless manager for origin mode");
+            }
         }
     }
 

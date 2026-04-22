@@ -59,6 +59,7 @@ impl MeshTransport {
             site_config_sync_tx: self.site_config_sync_tx.clone(),
             verification_manager: self.verification_manager.clone(),
             revocation_list: self.revocation_list.clone(),
+            serverless_manager: self.serverless_manager.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
         }
