@@ -269,26 +269,35 @@ Keys transition through these states:
 
 ## Planning and Implementation Patterns
 
-The implementation plan was consolidated in `plans/plan.md`. As of 2026-04-22, all implementable items have been completed (61/64 items, 95% completion). The remaining 3 items require significant architectural work and are documented as deferred.
+The implementation plan was consolidated in `plans/plan.md`. This document contains all implementation items organized into waves for parallel sub-agent execution.
+
+**Current Status** (as of 2026-04-22):
+- ~60+ implementable items across 10 waves
+- 1 compile blocker: FastCGI syntax error (`src/fastcgi/mod.rs:333`)
+- Several high-priority security fixes pending
+- Performance hot-path optimizations for 500K rps target
 
 When undertaking new features:
 1. **Research First**: Read relevant `skills/` files and `AGENTS.md` sections.
 2. **Avoid Complex Rewrites**: Maintain the existing architecture unless explicitly authorized to rewrite.
 3. **Follow Existing Patterns**: The codebase has established patterns for common operations (see sections below).
 
-**Completed Waves** (from plan.md):
-- Wave A: Critical Security Fixes ✅ COMPLETED
-- Wave B: Performance Hot Paths ✅ COMPLETED
-- Wave C: Web App Stack Improvements ✅ COMPLETED
-- Wave D: YARA & ThreatIntel Distribution ✅ COMPLETED (2 items deferred)
-- Wave E: Mesh & DHT Architecture ✅ COMPLETED
-- Wave F: Serverless Architecture ✅ COMPLETED (1 item deferred)
-- Wave G: Edge Caching & Image Poison ✅ COMPLETED
-- Wave H: Admin Panel Improvements ✅ COMPLETED
-- Wave I: Stub/Incomplete Items ✅ COMPLETED (2 items deferred)
-- Wave J: Dependency & Security Updates ✅ COMPLETED
-- Wave K: Documentation ✅ COMPLETED
-- Wave L: Testing Improvements ✅ COMPLETED
+### Wave Structure for Parallel Execution
+
+Each wave can be approached with parallel sub-agents (except Wave A - compile blocker):
+
+| Wave | Focus | Items |
+|------|-------|-------|
+| A | Critical Bug Fixes | 1 (compile blocker) |
+| B | Security Critical | 7 |
+| C | Performance Hot Paths | 8 |
+| D | Mesh & DHT | 10 |
+| E | Stub & Incomplete | 4 |
+| F | OpenAPI & Admin | 6 |
+| G | Documentation | 5 |
+| H | Dependencies | 4 |
+| I | WAF & Detection | 5 |
+| J | Remaining | 7 |
 
 ## Subagent Execution Best Practices
 
@@ -333,24 +342,18 @@ When upgrading tonic from 0.12 to 0.14:
 
 ## Known Code Quality Context
 
+### Compile Blocker
+
+**⚠️ CRITICAL**: The codebase currently fails to compile due to a syntax error in `src/fastcgi/mod.rs:333`. This MUST be fixed before any other work can proceed.
+
+```
+error: unexpected closing delimiter: `}`
+   --> src/fastcgi/mod.rs:333:5
+```
+
 ### Clippy and Dead Code Suppressions
 
-Crate-level suppressions in `src/lib.rs`:
-- `elided_lifetimes_in_paths` — compiler style preference
-- `mismatched_lifetime_syntaxes` — compiler style preference
-
-`#[allow(dead_code)]` annotations: ~93 across ~50 files. Notable per-module breakdown:
-- `src/mesh/transport_*.rs` — ~6 items (reserved protocol handlers)
-- `src/mesh/` — ~14 items
-- `src/dns/server/` — ~4 items
-- `src/waf/` — ~4 items
-- `src/tunnel/` — ~5 items
-- `src/admin/handlers/` — ~6 items
-- `src/overseer/` — ~9 items
-
-Note: Many `#[allow(dead_code)]` annotations are on reserved/future-use code paths within already-shipped modules (e.g., `transport_dns.rs` for future DNS mesh protocol). These are intentional design patterns for future extensibility. All intentional suppressions documented with `// SAFETY_REASON: ...` comments.
-
-`cargo clippy -- -D warnings` passes clean.
+`cargo clippy -- -D warnings` passes clean when the codebase compiles.
 
 ### Build Configuration
 
@@ -844,3 +847,23 @@ Covers ThreatIntel indicators, YARA rules, DHT-based distribution, and signature
 3. **Async tests** - Use `#[tokio::test]` for async code
 4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
 5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
+
+### Startup Validation Patterns
+
+The codebase uses placeholder values that should trigger warnings at startup:
+
+| Placeholder | Location | Expected Fix |
+|-----------|----------|-----------|
+| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:27` | Add startup warning |
+| `TOKEN_PLACEHOLDER` | `src/master/commands.rs:254` | Add startup warning |
+
+These placeholders indicate the value was not configured and may indicate a security issue. Future implementations should add startup validation to warn operators.
+
+### Stub Functions to Complete
+
+Several functions return stub values and should be implemented:
+
+| Function | Location | Status |
+|----------|----------|--------|
+| `resolve_txt_record()` | `src/mesh/transport_dns.rs:1183` | Stub - returns empty Vec |
+| `is_global_node_ip_string()` | `src/mesh/threat_intel.rs:358` | Stub - always returns false |
