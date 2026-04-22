@@ -694,11 +694,11 @@ impl DhtBootstrapper {
         }
 
         if seed_nodes.len() < 3 {
-            tracing::warn!(
-                "DHT bootstrap with only {} seed node(s) - vulnerable to eclipse attack. \
-                Configure at least 3 independent seed nodes for production deployments.",
+            return Err(format!(
+                "DHT bootstrap requires at least 3 independent seed nodes for security (only {} provided). \
+                This prevents eclipse attacks and ensures network resilience.",
                 seed_nodes.len()
-            );
+            ));
         }
 
         for seed in seed_nodes {

@@ -1309,6 +1309,22 @@ impl ThreatIntelligenceManager {
                             );
                             continue;
                         }
+
+                        if let Some(ref transport) = *self.transport.read() {
+                            if let Some(topology) = transport.get_topology() {
+                                if let Ok(global_nodes) = tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
+                                }) {
+                                    if !global_nodes.contains(&indicator.source_node_id) {
+                                        tracing::warn!(
+                                            "Threat intel DHT sync: indicator from non-global node {} rejected",
+                                            indicator.source_node_id
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         tracing::warn!(
                             "Threat intel DHT sync: missing signature or signer pk for {}",

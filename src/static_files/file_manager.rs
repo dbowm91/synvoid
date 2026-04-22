@@ -258,6 +258,12 @@ impl FileManager {
         }
     }
 
+    pub fn new_with_periodic_refresh(config: FileManagerConfig, interval_secs: u64) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
+        let file_manager = Arc::new(Self::new(config));
+        let handle = Self::start_periodic_yara_refresh(file_manager.clone(), interval_secs);
+        (file_manager, handle)
+    }
+
     fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
         if let Some(yara_scanner) = self.malware_scanner.get_yara_scanner() {
             if let Some(yara_rules) = crate::waf::get_yara_rules() {
@@ -283,6 +289,18 @@ impl FileManager {
             }
         }
         Ok(())
+    }
+
+    pub fn start_periodic_yara_refresh(file_manager: Arc<Self>, interval_secs: u64) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+            loop {
+                interval.tick().await;
+                if let Err(e) = file_manager.reload_yara_rules_if_needed() {
+                    tracing::debug!("Periodic YARA rule refresh failed (will retry): {}", e);
+                }
+            }
+        })
     }
 
     pub fn config(&self) -> &FileManagerConfig {

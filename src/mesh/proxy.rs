@@ -584,18 +584,14 @@ impl MeshProxy {
         match transport.send_route_query(upstream_id).await {
             Ok(result) => {
                 let providers = self.filter_failed_providers(&result.providers);
-                let providers_with_capability: Vec<_> = providers
-                    .into_iter()
-                    .filter(|p| {
-                        if let Some(peer) =
-                            futures::executor::block_on(self.topology.get_peer(&p.node_id))
-                        {
-                            peer.capabilities.can_proxy
-                        } else {
-                            false
+                let mut providers_with_capability = Vec::new();
+                for p in providers {
+                    if let Some(peer) = self.topology.get_peer(&p.node_id).await {
+                        if peer.capabilities.can_proxy {
+                            providers_with_capability.push(p);
                         }
-                    })
-                    .collect();
+                    }
+                }
                 if providers_with_capability.is_empty() {
                     return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
                 }

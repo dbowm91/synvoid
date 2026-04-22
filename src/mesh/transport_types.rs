@@ -62,4 +62,5 @@ pub struct MeshPeerConnection {
     pub role: crate::mesh::config::MeshNodeRole,
     pub upstreams: Vec<String>,
     pub is_trusted: bool,
+    pub replay_protection: Arc<tokio::sync::RwLock<crate::mesh::protocol::ReplayProtection>>,
 }

@@ -1163,7 +1163,7 @@ impl MeshTransport {
                             let verified_upstream = crate::mesh::dht::VerifiedUpstream {
                                 upstream_id: upstream_id_str.clone(),
                                 origin_node_id,
-                                upstream_url: String::new(),
+                                upstream_url: upstream_id_str.clone(),
                                 org_id: None,
                                 global_node_id: peer_id.to_string(),
                                 global_node_signature: signature.clone(),

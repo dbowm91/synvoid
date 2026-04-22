@@ -686,7 +686,7 @@ impl MeshTransport {
         functions
     }
 
-    pub fn attest_capability(
+    pub async fn attest_capability(
         &self,
         node_id: &str,
         capability: &str,
@@ -696,7 +696,7 @@ impl MeshTransport {
             return None;
         }
 
-        let peer_state = futures::executor::block_on(self.topology.get_peer(node_id));
+        let peer_state = self.topology.get_peer(node_id).await;
 
         let peer_state = match peer_state {
             Some(p) => p,
@@ -759,7 +759,20 @@ impl MeshTransport {
         capability: &str,
     ) -> bool {
         match capability {
-            "dns_server" => peer_state.capabilities.can_serve_dns,
+            "dns_server" => {
+                if peer_state.capabilities.can_serve_dns {
+                    if !peer_state.is_global {
+                        tracing::warn!(
+                            "Node {} claims dns_server capability but is not a global node - rejecting",
+                            peer_state.node_id
+                        );
+                        return false;
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
             "waf" => peer_state.capabilities.waf_enabled,
             "edge_proxy" => peer_state.capabilities.can_proxy,
             "origin" => !peer_state.upstreams.is_empty(),
@@ -786,13 +799,13 @@ impl MeshTransport {
         None
     }
 
-    pub fn verify_capability_attestation(
+    pub async fn verify_capability_attestation(
         &self,
         attestation: &crate::mesh::dht::CapabilityAttestation,
     ) -> bool {
         let global_node_id = &attestation.attested_by_global_node;
 
-        let peer_state = futures::executor::block_on(self.topology.get_peer(global_node_id));
+        let peer_state = self.topology.get_peer(global_node_id).await;
 
         let Some(peer_state) = peer_state else {
             tracing::warn!(
@@ -1742,6 +1755,9 @@ impl MeshTransport {
             role: peer_role,
             upstreams: peer_upstreams.keys().cloned().collect(),
             is_trusted: trusted_status,
+            replay_protection: Arc::new(tokio::sync::RwLock::new(
+                crate::mesh::protocol::ReplayProtection::new(),
+            )),
         };
 
         self.topology
@@ -2200,6 +2216,9 @@ impl MeshTransport {
                     role,
                     upstreams: upstreams.clone(),
                     is_trusted: trusted_status,
+                    replay_protection: Arc::new(tokio::sync::RwLock::new(
+                        crate::mesh::protocol::ReplayProtection::new(),
+                    )),
                 };
 
                 self.topology

@@ -4,10 +4,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use dashmap::DashMap;
 use http::{HeaderMap, StatusCode};
 use moka::sync::Cache;
 use parking_lot::RwLock;
 use thiserror::Error;
+use tokio::sync::oneshot;
 
 use crate::utils::collections::AHashMap;
 
@@ -147,6 +149,7 @@ pub struct ProxyCache {
     current_memory_size: AtomicU64,
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
     host_index: RwLock<AHashMap<String, Vec<CacheKey>>>,
+    inflight_requests: Arc<DashMap<CacheKey, Vec<oneshot::Sender<Option<Arc<ProxyCacheEntry>>>>>>,
 }
 
 impl Clone for ProxyCache {
@@ -160,6 +163,7 @@ impl Clone for ProxyCache {
             current_memory_size: AtomicU64::new(self.current_memory_size.load(Ordering::Relaxed)),
             cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
             host_index: RwLock::new(AHashMap::default()),
+            inflight_requests: self.inflight_requests.clone(),
         }
     }
 }
@@ -196,6 +200,7 @@ impl ProxyCache {
             current_memory_size: AtomicU64::new(0),
             cleanup_shutdown_tx: Arc::new(shutdown_tx),
             host_index: RwLock::new(AHashMap::default()),
+            inflight_requests: Arc::new(DashMap::new()),
         }
     }
 
@@ -260,6 +265,7 @@ impl ProxyCache {
     #[inline]
     pub async fn get(&self, key: &CacheKey) -> Option<Arc<ProxyCacheEntry>> {
         if !self.settings.read().enabled {
+            self.cache_misses.fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
@@ -272,6 +278,7 @@ impl ProxyCache {
 
         if inner.entry.is_expired() {
             if inner.entry.is_stale_while_revalidate() {
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 let mut entry = (*inner.entry).clone();
                 entry.is_fresh = false;
                 entry.update_access();
@@ -291,6 +298,7 @@ impl ProxyCache {
                 );
             }
             if inner.entry.is_stale_if_error() {
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 let mut entry = (*inner.entry).clone();
                 entry.is_fresh = false;
                 entry.update_access();
@@ -311,9 +319,11 @@ impl ProxyCache {
             }
             drop(inner);
             self.entries.invalidate(key);
+            self.cache_misses.fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
         Some(inner.entry)
     }
 
@@ -334,9 +344,11 @@ impl ProxyCache {
         if checksum != CacheEntryInner::compute_checksum(&content) {
             tracing::warn!("Cache entry checksum mismatch, removing corrupted entry");
             self.invalidate(key);
+            self.cache_misses.fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
         let mut entry = entry;
         entry.content = Bytes::from(content);
         entry.update_access();
@@ -383,15 +395,40 @@ impl ProxyCache {
             return Some(entry);
         }
 
-        let (content, status, headers, max_age) = fetch().await?;
+        let key_clone = key.clone();
+        let inflight_requests = self.inflight_requests.clone();
 
-        if self
-            .insert(key.clone(), content, status.as_u16(), headers, max_age)
-            .is_ok()
+        let (tx, rx) = oneshot::channel();
+
         {
-            self.get(key).await
-        } else {
-            None
+            let mut entry = inflight_requests.entry(key_clone.clone()).or_insert_with(Vec::new);
+            if entry.is_empty() {
+                entry.push(tx);
+                drop(entry);
+
+                let (content, status, headers, max_age) = fetch().await?;
+
+                let result = if self
+                    .insert(key_clone.clone(), content, status.as_u16(), headers, max_age)
+                    .is_ok()
+                {
+                    self.get(&key_clone).await
+                } else {
+                    None
+                };
+
+                if let Some((_, mut senders)) = inflflight_requests.remove(&key_clone) {
+                    for sender in senders {
+                        let _ = sender.send(result.clone());
+                    }
+                }
+
+                result
+            } else {
+                entry.push(tx);
+                drop(entry);
+                rx.await.ok().flatten()
+            }
         }
     }
 
@@ -587,21 +624,16 @@ impl ProxyCache {
     pub fn stats(&self) -> CacheStats {
         self.entries.run_pending_tasks();
 
-        let hit_count = self
-            .entries
-            .iter()
-            .filter(|(_, entry)| entry.entry.is_fresh)
-            .count() as u64;
-
+        let hits = self.cache_hits.load(Ordering::Relaxed);
+        let misses = self.cache_misses.load(Ordering::Relaxed);
         let total = self.entries.entry_count();
-        let miss_count = total.saturating_sub(hit_count);
 
         CacheStats {
             entries: total as usize,
             memory_size: self.current_memory_size.load(Ordering::Relaxed) as usize,
             disk_size: self.calculate_disk_size(),
-            hits: hit_count,
-            misses: miss_count,
+            hits,
+            misses,
         }
     }
 

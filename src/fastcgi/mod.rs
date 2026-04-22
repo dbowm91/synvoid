@@ -172,9 +172,8 @@ impl FastCgiClient {
     fn parse_status(header_bytes: &[u8]) -> StatusCode {
         if let Ok(header_str) = String::from_utf8(header_bytes.to_vec()) {
             for line in header_str.lines() {
-                let line_lower = line.to_lowercase();
-                if line_lower.starts_with("status:") {
-                    let status_str = line_lower.trim_start_matches("status:").trim();
+                if line.to_ascii_lowercase().starts_with("status:") {
+                    let status_str = line["status:".len()..].trim();
                     if let Some(code) = status_str.split_whitespace().next() {
                         if let Ok(code) = code.parse::<u16>() {
                             return StatusCode::from_u16(code).unwrap_or(StatusCode::OK);
@@ -192,7 +191,7 @@ impl FastCgiClient {
         if let Ok(header_str) = String::from_utf8(header_bytes.to_vec()) {
             for line in header_str.lines() {
                 if let Some(colon_pos) = line.find(':') {
-                    let name = line[..colon_pos].trim().to_lowercase();
+                    let name = line[..colon_pos].trim().to_ascii_lowercase();
                     let value = line[colon_pos + 1..].trim().to_string();
 
                     if !name.is_empty() && name != "status" {
@@ -301,10 +300,21 @@ impl FastCgiResponse {
         let mut builder = http::Response::builder().status(self.status);
 
         for (name, value) in self.headers {
-            let name_lower = name.to_lowercase();
+            let name_lower = name.to_ascii_lowercase();
             if FORBIDDEN_RESPONSE_HEADERS.contains(&name_lower.as_str()) {
                 continue;
             }
+
+            if let (Ok(name), Ok(value)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_str(&value),
+            ) {
+                builder = builder.header(name, value);
+            }
+        }
+
+        builder.body(self.body).unwrap_or_else(|_| http::Response::new(self.body))
+    }
 
             if let (Ok(name), Ok(value)) = (
                 HeaderName::from_bytes(name.as_bytes()),

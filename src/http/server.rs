@@ -2001,7 +2001,7 @@ impl HttpServer {
 
                                 let mut builder = http::Response::builder().status(response.status);
                                 for (name, value) in response.headers {
-                                    let name_lower = name.to_lowercase();
+                                    let name_lower = name.to_ascii_lowercase();
                                     if FORBIDDEN_RESPONSE_HEADERS.contains(&name_lower.as_str()) {
                                         continue;
                                     }
@@ -2755,7 +2755,7 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| k.to_lowercase() != "content-encoding");
+                                    headers.retain(|(k, _)| k.to_ascii_lowercase() != "content-encoding");
                                     headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }
@@ -2828,7 +2828,7 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| k.to_lowercase() != "content-encoding");
+                                    headers.retain(|(k, _)| k.to_ascii_lowercase() != "content-encoding");
                                     headers.push(("Content-Encoding".to_string(), enc));
                                 }
                             }
