@@ -222,6 +222,7 @@ impl From<YaraRulesManagerConfig> for YaraRulesMeshConfig {
             require_signature: true,
             trusted_signers: Vec::new(),
             max_rules_size_kb: 1024,
+            hub_only_mode: false,
         }
     }
 }
@@ -413,6 +414,11 @@ impl YaraRulesManager {
 
         if !self.is_global() {
             tracing::debug!("Skipping DHT publish for non-global node");
+            return;
+        }
+
+        if self.config.hub_only_mode {
+            tracing::debug!("Skipping DHT publish: hub_only_mode enabled");
             return;
         }
 
@@ -642,6 +648,7 @@ impl YaraRulesManager {
         content_hash: &str,
         chunk_count: usize,
         record_store: &Arc<crate::mesh::dht::RecordStoreManager>,
+        signer_pk: &str,
     ) -> Option<(String, String, u64)> {
         let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(chunk_count);
         let mut version_str = None;
@@ -674,6 +681,45 @@ impl YaraRulesManager {
             let ts: u64 = ts_str.parse().unwrap_or(0);
             if ts > timestamp {
                 timestamp = ts;
+            }
+
+            let chunk_signature = value.get("signature").and_then(|v| v.as_str()).unwrap_or("");
+            if !chunk_signature.is_empty() && !signer_pk.is_empty() {
+                let sig_bytes = match base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    chunk_signature,
+                ) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        tracing::warn!("YARA sync: invalid chunk signature base64 for chunk {}", i);
+                        return None;
+                    }
+                };
+                let pk_bytes = match base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    signer_pk,
+                ) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::warn!("YARA sync: invalid chunk signer pk base64 for chunk {}", i);
+                        return None;
+                    }
+                };
+                let signer = crate::mesh::protocol::MeshMessageSigner::new(
+                    pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
+                );
+                let sig_content = format!(
+                    "{}:{}:{}:{}:{}",
+                    content_hash, i, compressed_data.len(), self.node_id, ts
+                );
+                if !signer.verify(&sig_content, &sig_bytes, &pk_bytes) {
+                    tracing::warn!(
+                        "YARA sync: chunk signature verification failed for chunk {} of hash {}",
+                        i,
+                        content_hash
+                    );
+                    return None;
+                }
             }
 
             chunks.push(compressed_data);
@@ -843,7 +889,7 @@ impl YaraRulesManager {
                     }
 
                     let rules_str = if is_chunked {
-                        self.fetch_chunks_from_dht(peer_hash, chunk_count, &record_store)
+                        self.fetch_chunks_from_dht(peer_hash, chunk_count, &record_store, manifest_signer_pk)
                     } else {
                         self.fetch_rules_from_dht(peer_hash, &record_store)
                     };
@@ -853,6 +899,17 @@ impl YaraRulesManager {
                     };
 
                     if rules_string.is_empty() {
+                        continue;
+                    }
+
+                    let computed_hash = self.compute_rules_hash(&rules_string);
+                    if computed_hash != peer_hash {
+                        tracing::warn!(
+                            "YARA DHT sync: content hash mismatch for record from {} - computed {} vs manifest {}",
+                            manifest_node_id,
+                            computed_hash,
+                            peer_hash
+                        );
                         continue;
                     }
 

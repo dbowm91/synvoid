@@ -138,6 +138,8 @@ pub struct YaraRulesMeshConfig {
     pub trusted_signers: Vec<String>,
     #[serde(default = "default_yara_mesh_max_rules_size")]
     pub max_rules_size_kb: u32,
+    #[serde(default)]
+    pub hub_only_mode: bool,
 }
 
 fn default_allow_edge_submissions() -> bool {
@@ -175,6 +177,7 @@ impl Default for YaraRulesMeshConfig {
             require_signature: true,
             trusted_signers: Vec::new(),
             max_rules_size_kb: 1024,
+            hub_only_mode: false,
         }
     }
 }
