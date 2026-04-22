@@ -443,6 +443,10 @@ fn build_router_from_state(
             post(handlers::system::restart_worker),
         )
         .route("/system/overseer", get(handlers::system::get_overseer))
+        .route(
+            "/system/app-servers/{site_id}/logs",
+            get(handlers::system::get_granian_logs),
+        )
         .route("/system/php-pools", get(handlers::php::list_php_pools))
         .route(
             "/system/php-pools/reload",

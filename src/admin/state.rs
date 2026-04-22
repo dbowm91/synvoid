@@ -497,7 +497,7 @@ impl AdminState {
         let config_write_lock = self.metrics.config_write_lock.clone();
 
         tokio::spawn(async move {
-            while let Some((site_id, config_json, _proxy_cache_preferences)) = rx.recv().await {
+            while let Some((site_id, config_json, proxy_cache_preferences)) = rx.recv().await {
                 tracing::info!("Received site config sync for site: {}", site_id);
 
                 let config_path = {
@@ -506,9 +506,22 @@ impl AdminState {
                         .join(format!("{}.toml", site_id.replace('.', "_")))
                 };
 
+                let final_config_json = if let Some(prefs) = proxy_cache_preferences {
+                    match serde_json::from_str::<serde_json::Value>(&config_json) {
+                        Ok(mut config) => {
+                            let prefs_obj = serde_json::to_value(&prefs).unwrap_or_default();
+                            config["proxy_cache_preferences"] = prefs_obj;
+                            serde_json::to_string(&config).unwrap_or(config_json.clone())
+                        }
+                        Err(_) => config_json.clone(),
+                    }
+                } else {
+                    config_json.clone()
+                };
+
                 {
                     let _guard = config_write_lock.write().await;
-                    if let Err(e) = tokio::fs::write(&config_path, &config_json).await {
+                    if let Err(e) = tokio::fs::write(&config_path, &final_config_json).await {
                         tracing::error!(
                             "Failed to write synced site config for {}: {}",
                             site_id,

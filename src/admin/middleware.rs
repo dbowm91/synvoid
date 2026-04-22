@@ -59,6 +59,10 @@ pub async fn auth_middleware_with_state(
         return next.run(request).await;
     }
 
+    if request.uri().path().starts_with("/ws/") {
+        return next.run(request).await;
+    }
+
     let client_ip = request
         .extensions()
         .get::<ClientIp>()

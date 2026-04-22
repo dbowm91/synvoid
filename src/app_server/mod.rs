@@ -1,12 +1,41 @@
 pub mod granian;
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use granian::{
     GranianConfig, GranianInterface, GranianLogFormat, GranianLogLevel, GranianSupervisor,
 };
+
+static GRANIAN_SUPERVISORS: std::sync::LazyLock<RwLock<HashMap<String, Arc<GranianSupervisor>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub fn register_granian_supervisor(site_id: &str, supervisor: Arc<GranianSupervisor>) {
+    GRANIAN_SUPERVISORS.write().insert(site_id.to_string(), supervisor);
+}
+
+pub fn unregister_granian_supervisor(site_id: &str) {
+    GRANIAN_SUPERVISORS.write().remove(site_id);
+}
+
+pub fn get_granian_supervisor(site_id: &str) -> Option<Arc<GranianSupervisor>> {
+    GRANIAN_SUPERVISORS.read().get(site_id).cloned()
+}
+
+pub fn get_all_granian_supervisors() -> Vec<(String, Arc<GranianSupervisor>)> {
+    GRANIAN_SUPERVISORS
+        .read()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+pub fn get_granian_logs(site_id: &str) -> Option<Vec<String>> {
+    GRANIAN_SUPERVISORS.read().get(site_id).map(|s| s.clone().get_logs())
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppServerConfig {

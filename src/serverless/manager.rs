@@ -39,6 +39,15 @@ pub struct ServerlessFunction {
     pub runtime: Option<Arc<crate::plugin::wasm_runtime::WasmRuntime>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ServerlessResponse {
+    pub status_code: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Bytes,
+    pub function_name: String,
+    pub execution_time_ms: u64,
+}
+
 pub struct ServerlessManager {
     functions: RwLock<HashMap<String, ServerlessFunction>>,
     pools: RwLock<HashMap<String, Arc<InstancePool>>>,
@@ -521,6 +530,129 @@ impl ServerlessManager {
         }
         self.pools.write().clear();
         tracing::info!("ServerlessManager shutdown complete");
+    }
+
+    pub async fn invoke_for_mesh(
+        &self,
+        function_name: &str,
+        method: &str,
+        path: &str,
+        headers: &HeaderMap,
+        body: Option<Bytes>,
+    ) -> Result<ServerlessResponse, ServerlessError> {
+        let function = self.functions.read().get(function_name).cloned()
+            .ok_or_else(|| ServerlessError::FunctionNotFound(function_name.to_string()))?;
+
+        get_global_serverless_registry().record_invocation(function_name);
+
+        tracing::debug!(
+            "Mesh invoking function '{}' for {} {}",
+            function_name,
+            method,
+            path
+        );
+
+        let pool = self.pools.read().get(function_name).cloned();
+
+        if let Some(pool) = pool {
+            let instance = pool.get_instance().await.map_err(|e| {
+                get_global_serverless_registry().record_error(function_name);
+                ServerlessError::WasmError(format!("Failed to get instance from pool: {}", e))
+            })?;
+
+            let start = Instant::now();
+            let uri = path.to_string();
+            let method_str = method.to_string();
+
+            let headers_map: std::collections::HashMap<String, String> = headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect();
+
+            let headers_json = serde_json::to_string(&headers_map).map_err(|e| {
+                get_global_serverless_registry().record_error(function_name);
+                ServerlessError::ExecutionError(e.to_string())
+            })?;
+
+            let body_vec = body.map(|b| b.to_vec()).unwrap_or_default();
+            let env = function.definition.env.clone();
+
+            let result = instance
+                .instance
+                .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
+                .map_err(|e| {
+                    get_global_serverless_registry().record_error(function_name);
+                    ServerlessError::ExecutionError(e.to_string())
+                });
+
+            let duration_ms = start.elapsed().as_millis() as u64;
+            instance.record_request(duration_ms);
+            pool.return_instance(&instance.id);
+
+            return result.map(|response| {
+                let status_code = response.status().as_u16();
+                let mut resp_headers = HashMap::new();
+                for (k, v) in response.headers().iter() {
+                    if let Ok(val) = v.to_str() {
+                        resp_headers.insert(k.to_string(), val.to_string());
+                    }
+                }
+                ServerlessResponse {
+                    status_code,
+                    headers: resp_headers,
+                    body: response.into_body(),
+                    function_name: function_name.to_string(),
+                    execution_time_ms: duration_ms,
+                }
+            });
+        }
+
+        let Some(runtime) = function.runtime else {
+            get_global_serverless_registry().record_error(function_name);
+            return Err(ServerlessError::WasmError(
+                "No WASM runtime available".to_string(),
+            ));
+        };
+
+        let start = Instant::now();
+        let uri = path.to_string();
+        let method_str = method.to_string();
+
+        let headers_map: std::collections::HashMap<String, String> = headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        let headers_json = serde_json::to_string(&headers_map).map_err(|e| {
+            get_global_serverless_registry().record_error(function_name);
+            ServerlessError::ExecutionError(e.to_string())
+        })?;
+
+        let body_vec = body.map(|b| b.to_vec()).unwrap_or_default();
+        let env = function.definition.env.clone();
+
+        runtime.invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
+            .map(|response| {
+                let status_code = response.status().as_u16();
+                let mut resp_headers = HashMap::new();
+                for (k, v) in response.headers().iter() {
+                    if let Ok(val) = v.to_str() {
+                        resp_headers.insert(k.to_string(), val.to_string());
+                    }
+                }
+                let execution_time_ms = start.elapsed().as_millis() as u64;
+                ServerlessResponse {
+                    status_code,
+                    headers: resp_headers,
+                    body: response.into_body(),
+                    function_name: function_name.to_string(),
+                    execution_time_ms,
+                }
+            })
+            .map_err(|e| {
+                get_global_serverless_registry().record_error(function_name);
+                ServerlessError::ExecutionError(e.to_string())
+            })
     }
 }
 

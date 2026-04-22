@@ -193,6 +193,140 @@ environment=RUST_LOG="info"
 
 The overseer creates a lock file at `~/.maluwaf/overseer.lock` containing its PID. This prevents multiple overseer instances and allows the watchdog to detect running instances.
 
+## IPC Session Key Architecture
+
+The IPC session key secures communication between the master and worker processes. It is passed via a temporary file rather than an environment variable for security.
+
+### Key Transfer Flow
+
+```
+1. Overseer spawns Master process
+   └── Creates temp file with session key (mode 0600)
+
+2. Master reads IPC key from temp file
+   └── Deletes temp file immediately after reading
+
+3. Master spawns Worker processes
+   └── Passes IPC key via temp file (same pattern)
+
+4. Worker reads IPC key from temp file
+   └── Deletes temp file immediately after reading
+```
+
+### Security Properties
+
+- **File permissions 0600**: Only the owner can read/write the key file
+- **Immediate deletion**: Temp file is deleted after reading, leaving no trace
+- **No env var exposure**: Keys don't appear in process environment (viewable via `/proc/PID/environ`)
+- **Fallback**: Falls back to `MALUWAF_IPC_KEY` env var only if `allow_insecure_ipc_key = true` (default: fail-hard)
+
+### Configuration
+
+```toml
+[process]
+allow_insecure_ipc_key = false  # Default: false (fail if temp file unavailable)
+```
+
+### Troubleshooting
+
+```bash
+# Check if temp file exists during startup (race condition indicator)
+ls -la /tmp/maluwaf-ipc-key-* 2>/dev/null || echo "Temp file cleaned up (good)"
+
+# Verify key file permissions if startup fails
+strace -e trace=file maluwaf 2>&1 | grep MALUWAF_IPC_KEY
+```
+
+## State Machine
+
+The overseer maintains a state machine to coordinate upgrades, handle failures, and ensure reliability.
+
+### State Diagram
+
+```
+                         ┌──────────────────┐
+                         │     STARTING     │
+                         │  (Initial state) │
+                         └────────┬─────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │   SINGLE_MASTER_ACTIVE  │
+                    │  (Normal operation)     │
+                    └────────┬────────────────┘
+                             │
+          ┌──────────────────┼──────────────────┐
+          │                  │                  │
+          ▼                  ▼                  ▼
+┌─────────────────┐ ┌──────────────────┐ ┌─────────────────┐
+│ UPGRADE_STAGING │ │ DUAL_MASTER_ACTIVE│ │   RECOVERING   │
+│ (Binary staged) │ │ (New master up)  │ │ (From crash)   │
+└────────┬────────┘ └────────┬─────────┘ └─────────────────┘
+         │                   │                     │
+         │                   │                     ▼
+         │                   │           ┌─────────────────┐
+         │                   │           │ SINGLE_MASTER_  │
+         │                   │           │ ACTIVE          │
+         │                   │           └─────────────────┘
+         │                   │
+         │                   ▼
+         │         ┌──────────────────┐
+         │         │ DRAINING_OLD_MASTER│
+         │         │ (Graceful shutdown)│
+         │         └────────┬───────────┘
+         │                  │
+         │                  ▼
+         │        ┌─────────────────┐
+         │        │ PROMOTING_NEW_MASTER│
+         └───────►│ (Switchover)     │
+                  └─────────────────┘
+```
+
+### State Descriptions
+
+| State | Description |
+|-------|-------------|
+| `STARTING` | Overseer initializing, spawning initial master |
+| `SINGLE_MASTER_ACTIVE` | Normal operation with one master process |
+| `UPGRADE_STAGING` | New binary staged, awaiting activation |
+| `DUAL_MASTER_ACTIVE` | Both old and new masters running during upgrade |
+| `DRAINING_OLD_MASTER` | Old master gracefully shutting down connections |
+| `PROMOTING_NEW_MASTER` | Switching control to new master |
+| `RECOVERING` | Attempting to restore from partial failure state |
+
+### Upgrade Flow (Normal)
+
+1. **STAGING**: New binary placed, overseer validates it starts
+2. **DUAL_MASTER_ACTIVE**: Old master continues serving, new master starts
+3. **DRAINING_OLD_MASTER**: Old master stops accepting new connections
+4. **PROMOTING_NEW_MASTER**: New master takes over
+5. **SINGLE_MASTER_ACTIVE**: Old master exits, normal operation resumes
+
+### Recovery Flow (From Failure)
+
+1. Overseer reads `overseer-state.json` on startup
+2. If state indicates incomplete upgrade:
+   - Checks if new master is alive → promotes it
+   - Checks if old master is alive → restores it
+   - If neither alive → starts fresh
+3. State is persisted every 15 seconds during normal operation
+
+### State Persistence
+
+The overseer persists state to `~/.maluwaf/overseer-state.json`:
+
+```json
+{
+  "state": "SINGLE_MASTER_ACTIVE",
+  "master_pid": 12345,
+  "upgraded_from": "1.2.3",
+  "upgraded_to": "1.2.4",
+  "last_update": "2024-01-15T10:30:00Z"
+}
+```
+
+This enables recovery after crashes or power failures.
+
 ## Health Checks
 
 ### Command Line

@@ -58,6 +58,7 @@ pub enum SignedRecordType {
     UpstreamImageProtection,
     UpstreamMinification,
     UpstreamCompression,
+    UpstreamProxyCachePreferences,
     SiteImagePoisonConfig,
 }
 
@@ -94,6 +95,7 @@ impl SignedRecordType {
                 | SignedRecordType::UpstreamImageProtection
                 | SignedRecordType::UpstreamMinification
                 | SignedRecordType::UpstreamCompression
+                | SignedRecordType::UpstreamProxyCachePreferences
                 | SignedRecordType::SiteImagePoisonConfig
         )
     }
@@ -132,6 +134,7 @@ impl SignedRecordType {
             SignedRecordType::UpstreamImageProtection => Some(Duration::from_secs(3600)),
             SignedRecordType::UpstreamMinification => Some(Duration::from_secs(3600)),
             SignedRecordType::UpstreamCompression => Some(Duration::from_secs(3600)),
+            SignedRecordType::UpstreamProxyCachePreferences => Some(Duration::from_secs(3600)),
             SignedRecordType::SiteImagePoisonConfig => Some(Duration::from_secs(3600)),
         }
     }
@@ -371,6 +374,7 @@ pub struct TtlManager {
     upstream_image_protection_ttl: Duration,
     upstream_minification_ttl: Duration,
     upstream_compression_ttl: Duration,
+    upstream_proxy_cache_preferences_ttl: Duration,
     site_image_poison_config_ttl: Duration,
 }
 
@@ -393,6 +397,7 @@ impl Default for TtlManager {
             upstream_image_protection_ttl: Duration::from_secs(3600),
             upstream_minification_ttl: Duration::from_secs(3600),
             upstream_compression_ttl: Duration::from_secs(3600),
+            upstream_proxy_cache_preferences_ttl: Duration::from_secs(3600),
             site_image_poison_config_ttl: Duration::from_secs(3600),
         }
     }
@@ -442,6 +447,7 @@ impl TtlManager {
             SignedRecordType::UpstreamImageProtection => self.upstream_image_protection_ttl,
             SignedRecordType::UpstreamMinification => self.upstream_minification_ttl,
             SignedRecordType::UpstreamCompression => self.upstream_compression_ttl,
+            SignedRecordType::UpstreamProxyCachePreferences => self.upstream_proxy_cache_preferences_ttl,
             SignedRecordType::SiteImagePoisonConfig => self.site_image_poison_config_ttl,
         }
     }

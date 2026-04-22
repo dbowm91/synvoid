@@ -37,6 +37,12 @@ host_v6 = "::"           # Optional: IPv6 bind address
 trusted_proxies = ["127.0.0.1", "::1"]
 ```
 
+**Why these defaults:**
+- `0.0.0.0` binds to all interfaces, allowing external connections (change to `127.0.0.1` for localhost-only)
+- Port 8080 avoids requiring root privileges while remaining a common HTTP port
+- IPv6 `::` binds to all IPv6 addresses for dual-stack support
+- `trusted_proxies` defaults to localhost only—extending this to include public load balancers is required for proper client IP detection via X-Forwarded-For
+
 ### Admin API
 
 ```toml
@@ -45,6 +51,12 @@ enabled = true
 port = 8081
 token = "your-secure-random-token-here"
 ```
+
+**Why these defaults:**
+- Admin API is enabled by default because it's essential for operational management
+- Port 8081 is used (instead of 8080) to separate it from traffic serving and reduce attack surface
+- No default token—operators must set a secure token to prevent unauthorized admin access
+- Always use `token_env_var` or a secure token in production; short or default tokens expose the admin API
 
 ### Logging
 
@@ -57,6 +69,12 @@ access_log_format = "json"
 retention_days = 5
 ```
 
+**Why these defaults:**
+- `info` level provides operational visibility without overwhelming debug noise; `debug` impacts performance
+- Access logging is enabled by default because it's critical for audit trails and attack analysis
+- JSON format is the default for machine parsing; operators can switch to `text` for human readability
+- 5-day retention balances storage costs with the ability to investigate incidents that span several days
+
 ### Metrics
 
 ```toml
@@ -64,6 +82,11 @@ retention_days = 5
 enabled = true
 port = 9090
 ```
+
+**Why these defaults:**
+- Metrics are enabled by default to support observability and alerting in production environments
+- Port 9090 follows Prometheus conventions, making it easy to integrate with standard monitoring stacks
+- Disable if you don't have a metrics collector (increases attack surface slightly)
 
 ### MIME Types
 
@@ -120,6 +143,16 @@ max_request_size = 1048576
 pipeline_limit = 32
 ```
 
+**Why these defaults:**
+- `header_read_timeout_secs = 10` prevents slow-client attacks while allowing legitimate slow connections
+- `keep_alive_timeout_secs = 60` balances connection reuse (reduces handshakes) with socket resource usage
+- `max_headers = 128` accommodates most applications; very complex apps may need more but risk memory pressure
+- `max_request_line_size = 8192` handles long URLs (especially with many query params) without blocking legitimate requests
+- `max_header_size_ingress = 4096` limits header storage in bytes—ingress headers are typically smaller than egress
+- `max_header_size_egress = 16384` allows larger response headers (set-cookies, tokens, etc.)
+- `max_request_size = 1048576` (1MB) suits most web applications; file uploads should use dedicated upload handlers
+- `pipeline_limit = 32` limits concurrent pipelined requests per connection to prevent resource exhaustion
+
 ### Fallback Mode
 
 ```toml
@@ -134,72 +167,12 @@ mode = "return_404"  # or "proxy" with upstream setting
 enabled = true
 paranoia_level = 2  # 1=low, 2=medium, 3=high
 action = "stall"    # "stall", "block", or "log"
-
-# SQL Injection
-[defaults.attack_detection.sqli]
-enabled = true
-
-# Cross-Site Scripting
-[defaults.attack_detection.xss]
-enabled = true
-
-# Path Traversal
-[defaults.attack_detection.path_traversal]
-enabled = true
-custom_patterns = []
-
-# Remote File Inclusion
-[defaults.attack_detection.rfi]
-enabled = true
-custom_patterns = []
-
-# Server-Side Request Forgery
-[defaults.attack_detection.ssrf]
-enabled = true
-block_private_ips = true
-allowed_domains = []
-
-# Command Injection
-[defaults.attack_detection.cmd_injection]
-enabled = true
-custom_patterns = []
-
-# JWT Validation
-[defaults.attack_detection.jwt]
-enabled = true
-allow_alg_none = false
-
-# LDAP Injection
-[defaults.attack_detection.ldap_injection]
-enabled = true
-
-# Open Redirect
-[defaults.attack_detection.open_redirect]
-enabled = true
-allowed_domains = []
-
-# Server-Side Template Injection
-[defaults.attack_detection.ssti]
-enabled = true
-custom_patterns = []
-
-# XML External Entity
-[defaults.attack_detection.xxe]
-enabled = true
-
-# XPath Injection
-[defaults.attack_detection.xpath_injection]
-enabled = true
-
-# Request Smuggling
-[defaults.attack_detection.request_smuggling]
-enabled = true
-
-# Header Validation
-[defaults.attack_detection.header_validation]
-enabled = true
-max_header_length = 8192
 ```
+
+**Why these defaults:**
+- Attack detection is enabled by default because it's the core WAF function—disabling it defeats the purpose of running a WAF
+- `paranoia_level = 2` (medium) catches common attacks without excessive false positives; level 3 is aggressive and may affect legitimate traffic
+- `action = "stall"` stalls suspicious requests instead of blocking—reduces false positives by forcing attackers to wait while allowing legitimate users with edge-case patterns through
 
 ## Flood Protection Configuration
 
@@ -217,29 +190,25 @@ blackhole_threshold = 0.9       # Enter blackhole at 90% capacity
 blackhole_duration_secs = 60   # Blackhole duration
 ```
 
+**Why these defaults:**
+- Per-IP limits (50 SYN/sec, 100 connections/sec) allow legitimate traffic bursts while blocking abuse scripts
+- Global limits (10000 SYN/sec, 20000 connections/sec) protect the system from distributed floods
+- `half_open_max = 1000` limits incomplete connection state to prevent memory exhaustion; SYN cookies help, but state still matters
+- `blackhole_threshold = 0.9` (90%) triggers blackholing before exhaustion—gives headroom for legitimate traffic during attacks
+- `blackhole_duration_secs = 60` is long enough to disrupt attackers but short enough to recover quickly if misconfigured
+
 ## Rate Limiting Configuration
 
 ```toml
 [defaults.ratelimit]
 mode = "shared"  # "shared" or "isolated" per site
-
-[defaults.ratelimit.ip]
-per_second = 10
-per_minute = 60
-per_5min = 200
-per_hour = 500
-per_day = 1000
-burst = 20
-
-[defaults.ratelimit.global]
-per_second = 500
-per_minute = 5000
-max_connections = 10000
-
-[defaults.rate_limit_memory]
-max_ips = 1000000
-cleanup_interval_secs = 60
 ```
+
+**Why these defaults:**
+- `mode = "shared"` uses a global rate limit pool, protecting the system as a whole rather than per-site; use `isolated` when you want each site to have its own independent limit bucket
+- Default limits (10/sec, 60/min) are conservative for most applications—legitimate users won't notice, but automated scanners will be throttled
+- `burst = 20` allows brief traffic spikes without blocking, while sustained abuse triggers limits
+- Global limits (500/sec, 5000/min) protect the WAF itself from being overwhelmed
 
 ## Bot Protection Configuration
 
@@ -249,26 +218,13 @@ block_ai_crawlers = true
 enable_css_honeypot = true
 enable_js_challenge = false
 js_difficulty = 3
-
-known_bots_allow = [
-    "googlebot",
-    "bingbot", 
-    "yandex",
-    "duckduckbot",
-]
-
-ai_crawlers_block = [
-    "GPTBot",
-    "ChatGPT-User",
-    "ClaudeBot",
-    "CCBot",
-    "Google-Extended",
-    "Amazonbot",
-]
-
-[defaults.honeypot]
-endpoints_file = "config/honeypot_endpoints.txt"
 ```
+
+**Why these defaults:**
+- `block_ai_crawlers = true` blocks AI training crawlers (GPTBot, ClaudeBot, etc.) by default—these are increasingly used without compensation to scrape content
+- `enable_css_honeypot = true` adds invisible honeypot links that catch bots but not humans; no impact on legitimate traffic
+- `enable_js_challenge = false` is conservative—JS challenges may affect crawlers and some legitimate users; enable when dealing with sophisticated bots
+- `js_difficulty = 3` (medium) provides reasonable protection without excessive CPU usage on the WAF
 
 ## Site Configuration (`config/sites/example.com.toml`)
 
@@ -338,11 +294,10 @@ MaluWAF supports hybrid post-quantum TLS key exchange for long-term security aga
 prefer_post_quantum = true  # Use hybrid PQ KEX (default: true)
 ```
 
-When enabled, MaluWAF negotiates TLS connections using hybrid key exchange that combines:
-- Classical X25519 or ECDH
-- ML-KEM (post-quantum KEM)
-
-This provides security against both classical and quantum adversaries.
+**Why these defaults:**
+- `prefer_post_quantum = true` protects against future quantum computers that could break classical key exchange; there is no performance penalty when clients also support PQ
+- PQ is disabled by default in other WAFs due to compatibility concerns, but MaluWAF's implementation gracefully falls back if clients don't support it
+- Only disable if you encounter interoperability issues with legacy clients that don't support hybrid PQ key exchange
 
 ### 0-RTT (Early Data)
 
@@ -413,6 +368,12 @@ max_rate_mbps = 1000
 burst_mbps = 1500
 ```
 
+**Why these defaults:**
+- Traffic shaping is enabled by default to prevent any single site or client from consuming all bandwidth
+- `max_rate_mbps = 1000` (1 Gbps) suits most deployments; adjust based on your network capacity
+- `burst_mbps = 1500` allows brief bursts above the limit to handle transient traffic spikes
+- Per-site overrides allow differential treatment (e.g., premium vs. standard tier)
+
 Per-site:
 ```toml
 [site.traffic_shaping]
@@ -435,6 +396,12 @@ enabled = true
 headers = ["Accept-Encoding", "Accept-Language"]
 ```
 
+**Why these defaults:**
+- Proxy cache is enabled by default to reduce upstream load and improve response times for repeated requests
+- `max_entries = 10000` and `max_size_mb = 512` balance memory usage with cache hit rates—tune based on your workload
+- `ttl_secs = 300` (5 minutes) provides reasonable freshness for most content while reducing upstream requests
+- Vary headers enabled for Accept-Encoding and Accept-Language ensure different renditions aren't served to wrong clients
+
 ## Upload Validation
 
 ```toml
@@ -451,6 +418,12 @@ enabled = true
 rules_dir = "rules/"
 quarantine_dir = "/var/lib/maluwaf/quarantine"
 ```
+
+**Why these defaults:**
+- Upload validation is enabled by default because file uploads are a common attack vector (malware, webshells)
+- `max_size_mb = 10` suits most image/document uploads; larger files should use dedicated upload services with their own scanning
+- Whitelist mode ensures only expected file types are accepted—more secure than blacklist mode
+- YARA scanning is enabled by default to detect malware in uploaded files
 
 ## FastCGI Configuration
 
@@ -547,26 +520,14 @@ cooldown_secs = 60
 persist_interval_normal_secs = 60
 persist_interval_attack_secs = 15
 auto_deescalate_timeout_mins = 15
-
-[threat_level.global_limits]
-level_1 = 1.0
-level_2 = 0.75
-level_3 = 0.5
-level_4 = 0.25
-level_5 = 0.1
-
-[threat_level.ban_durations]
-level_1_base = "1h"
-level_2_base = "4h"
-level_3_base = "24h"
-level_4_base = "7d"
-level_5_base = "permanent"
-
-[threat_level.escalation]
-enabled = true
-violations_before_block = 3
-violation_window_secs = 300
 ```
+
+**Why these defaults:**
+- `initial = 1` starts at minimum threat level, avoiding false positives on startup
+- Auto-scaling is enabled so the system responds to attack intensity automatically
+- `scale_up_attacks_per_min = 50` triggers escalation when attack rate exceeds 50/min (1 per second)—prevents triggering on normal traffic spikes
+- `scale_down_attacks_per_min = 10` only deescalates when attacks drop to near-zero, preventing oscillation
+- `auto_deescalate_timeout_mins = 15` returns to normal after 15 minutes of low attack activity
 
 ## Common Configurations
 

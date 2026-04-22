@@ -39,6 +39,9 @@ pub struct InstanceMetrics {
     pub total_duration_ms: u64,
     pub last_used: Instant,
     pub is_idle: bool,
+    pub cold_starts: u64,
+    pub last_cold_start_time: Option<Instant>,
+    pub last_cold_start_duration_ms: u64,
 }
 
 impl InstanceMetrics {
@@ -48,6 +51,9 @@ impl InstanceMetrics {
             total_duration_ms: 0,
             last_used: Instant::now(),
             is_idle: true,
+            cold_starts: 0,
+            last_cold_start_time: None,
+            last_cold_start_duration_ms: 0,
         }
     }
 }
@@ -128,6 +134,13 @@ impl ServerlessInstance {
         metrics.is_idle = false;
     }
 
+    pub fn record_cold_start(&self, duration_ms: u64) {
+        let mut metrics = self.metrics.write();
+        metrics.cold_starts += 1;
+        metrics.last_cold_start_time = Some(Instant::now());
+        metrics.last_cold_start_duration_ms = duration_ms;
+    }
+
     pub fn is_idle(&self) -> bool {
         self.metrics.read().is_idle
     }
@@ -196,12 +209,14 @@ impl InstancePool {
     }
 
     fn spawn_instance(&self, id: String) -> Result<Arc<ServerlessInstance>, InstancePoolError> {
+        let start = Instant::now();
         let instance = Arc::new(ServerlessInstance::new(
             id,
             self.function_definition.name.clone(),
             self.runtime.clone(),
         ));
-
+        let duration_ms = start.elapsed().as_millis() as u64;
+        instance.record_cold_start(duration_ms);
         Ok(instance)
     }
 
@@ -474,7 +489,7 @@ impl InstancePool {
         }
     }
 
-    pub fn get_metrics(&self) -> PoolMetrics {
+    pub fn get_metrics(&self) -> InstancePoolMetrics {
         let instances = self.instances.read();
         let total_requests: u64 = instances
             .iter()
@@ -485,7 +500,35 @@ impl InstancePool {
             .map(|i| i.metrics.read().total_duration_ms)
             .sum();
 
-        PoolMetrics {
+        let total_cold_starts: u64 = instances
+            .iter()
+            .map(|i| i.metrics.read().cold_starts)
+            .sum();
+
+        let mut last_cold_start_time: Option<Instant> = None;
+        let mut last_cold_start_duration_ms: u64 = 0;
+        let mut cold_start_sum: u64 = 0;
+        let mut cold_start_count: u64 = 0;
+
+        for instance in instances.iter() {
+            let metrics = instance.metrics.read();
+            if let Some(time) = metrics.last_cold_start_time {
+                if last_cold_start_time.map_or(true, |t| time > t) {
+                    last_cold_start_time = Some(time);
+                    last_cold_start_duration_ms = metrics.last_cold_start_duration_ms;
+                }
+            }
+            cold_start_sum += metrics.last_cold_start_duration_ms;
+            cold_start_count += if metrics.cold_starts > 0 { 1 } else { 0 };
+        }
+
+        let avg_cold_start_duration_ms = if cold_start_count > 0 {
+            cold_start_sum as f64 / cold_start_count as f64
+        } else {
+            0.0
+        };
+
+        let pool_metrics = PoolMetrics {
             total_instances: instances.len(),
             idle_instances: self.idle_instances.read().len(),
             active_instances: self.active_instances.read().len(),
@@ -494,6 +537,14 @@ impl InstancePool {
             utilization: self.get_utilization(),
             mode: self.get_mode(),
             last_mode_used: self.get_last_mode_used(),
+            total_cold_starts,
+            last_cold_start_time,
+            last_cold_start_duration_ms,
+        };
+
+        InstancePoolMetrics {
+            pool_metrics,
+            avg_cold_start_duration_ms,
         }
     }
 
@@ -558,6 +609,15 @@ pub struct PoolMetrics {
     pub utilization: f64,
     pub mode: InstancePoolMode,
     pub last_mode_used: InstancePoolMode,
+    pub total_cold_starts: u64,
+    pub last_cold_start_time: Option<Instant>,
+    pub last_cold_start_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InstancePoolMetrics {
+    pub pool_metrics: PoolMetrics,
+    pub avg_cold_start_duration_ms: f64,
 }
 
 #[derive(Debug, thiserror::Error)]

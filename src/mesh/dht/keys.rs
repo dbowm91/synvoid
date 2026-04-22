@@ -37,6 +37,7 @@ pub enum DhtKey {
     UpstreamImageProtection(String),
     UpstreamMinification(String),
     UpstreamCompression(String),
+    UpstreamProxyCachePreferences(String),
     SiteImagePoisonConfig(String),
     SiteContentVersion(String),
     TransformedContent {
@@ -175,6 +176,10 @@ impl DhtKey {
         DhtKey::UpstreamCompression(site_id.to_string())
     }
 
+    pub fn upstream_proxy_cache_preferences(site_id: &str) -> Self {
+        DhtKey::UpstreamProxyCachePreferences(site_id.to_string())
+    }
+
     pub fn site_image_poison_config(site_id: &str) -> Self {
         DhtKey::SiteImagePoisonConfig(site_id.to_string())
     }
@@ -303,6 +308,9 @@ impl DhtKey {
             }
             DhtKey::UpstreamCompression(site_id) => {
                 format!("upstream_compression:{}", site_id)
+            }
+            DhtKey::UpstreamProxyCachePreferences(site_id) => {
+                format!("upstream_proxy_cache_preferences:{}", site_id)
             }
             DhtKey::SiteImagePoisonConfig(site_id) => {
                 format!("site_image_poison_config:{}", site_id)
@@ -438,6 +446,9 @@ impl DhtKey {
             "upstream_compression" if parts.len() >= 2 => {
                 DhtKey::UpstreamCompression(parts[1..].join(":"))
             }
+            "upstream_proxy_cache_preferences" if parts.len() >= 2 => {
+                DhtKey::UpstreamProxyCachePreferences(parts[1..].join(":"))
+            }
             "site_image_poison_config" if parts.len() >= 2 => {
                 DhtKey::SiteImagePoisonConfig(parts[1..].join(":"))
             }
@@ -543,6 +554,7 @@ impl DhtKey {
                 | DhtKey::GenesisKeyTransition { .. }
                 | DhtKey::RevokedGlobalNode { .. }
                 | DhtKey::ServerlessFunction { .. }
+                | DhtKey::UpstreamProxyCachePreferences(_)
         )
     }
 
@@ -589,6 +601,7 @@ impl DhtKey {
             DhtKey::UpstreamImageProtection(_) => "upstream_image_protection",
             DhtKey::UpstreamMinification(_) => "upstream_minification",
             DhtKey::UpstreamCompression(_) => "upstream_compression",
+            DhtKey::UpstreamProxyCachePreferences(_) => "upstream_proxy_cache_preferences",
             DhtKey::SiteImagePoisonConfig(_) => "site_image_poison_config",
             DhtKey::SiteContentVersion(_) => "site_content_version",
             DhtKey::TransformedContent { .. } => "transformed_content",
@@ -631,6 +644,7 @@ impl DhtKey {
             DhtKey::UpstreamImageProtection(_) => Some(SignedRecordType::UpstreamImageProtection),
             DhtKey::UpstreamMinification(_) => Some(SignedRecordType::UpstreamMinification),
             DhtKey::UpstreamCompression(_) => Some(SignedRecordType::UpstreamCompression),
+            DhtKey::UpstreamProxyCachePreferences(_) => Some(SignedRecordType::UpstreamProxyCachePreferences),
             DhtKey::SiteImagePoisonConfig(_) => Some(SignedRecordType::SiteImagePoisonConfig),
             DhtKey::SiteContentVersion(_) => None,
             DhtKey::TransformedContent { .. } => None,
@@ -675,6 +689,7 @@ impl DhtKey {
             DhtKey::UpstreamImageProtection(id) => Some(id.clone()),
             DhtKey::UpstreamMinification(id) => Some(id.clone()),
             DhtKey::UpstreamCompression(id) => Some(id.clone()),
+            DhtKey::UpstreamProxyCachePreferences(id) => Some(id.clone()),
             DhtKey::SiteImagePoisonConfig(id) => Some(id.clone()),
             DhtKey::TransformedContent { site_id, .. } => Some(site_id.clone()),
             DhtKey::PoisonedImage { site_id, .. } => Some(site_id.clone()),

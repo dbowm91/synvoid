@@ -355,6 +355,10 @@ impl ThreatIntelligenceManager {
         global_ips.values().any(|&global_ip| global_ip == ip)
     }
 
+    fn is_global_node_ip_string(&self, _value: &str) -> bool {
+        false
+    }
+
     pub fn announce_local_block(
         &self,
         ip: IpAddr,
@@ -869,14 +873,83 @@ impl ThreatIntelligenceManager {
                     crate::metrics::record_attack_type("AsnScraping");
                 }
             }
-            ThreatType::IpThrottle
-            | ThreatType::DomainBlock
-            | ThreatType::UrlBlock
-            | ThreatType::CertBlock => {
-                tracing::debug!(
-                    "Received {} threat type from {}, not yet implemented for local application",
-                    format!("{:?}", indicator.threat_type).to_lowercase(),
-                    from_node
+            ThreatType::IpThrottle => {
+                if let Ok(ip) = indicator.indicator_value.parse::<IpAddr>() {
+                    if self.is_global_node_ip(ip) {
+                        tracing::warn!(
+                            "Ignored IP throttle for global node IP {} from {}",
+                            ip,
+                            from_node
+                        );
+                        return false;
+                    }
+                    let reqs = indicator.rate_limit_requests.unwrap_or(50);
+                    let window = indicator.rate_limit_window_secs.unwrap_or(60);
+                    self.block_store.block_ip(
+                        ip,
+                        &format!("mesh:{}:ip_throttle:{}r/{}s", from_node, reqs, window),
+                        indicator.ttl_seconds,
+                        &indicator.site_scope,
+                    );
+                    tracing::info!(
+                        "Applied mesh IP throttle from {}: {} ({} reqs/{}s, TTL: {}s)",
+                        from_node,
+                        ip,
+                        reqs,
+                        window,
+                        indicator.ttl_seconds
+                    );
+                }
+            }
+            ThreatType::DomainBlock => {
+                if self.is_global_node_ip_string(&indicator.indicator_value) {
+                    tracing::warn!(
+                        "Ignored domain block for global node domain {} from {}",
+                        indicator.indicator_value,
+                        from_node
+                    );
+                    return false;
+                }
+                tracing::info!(
+                    "Received domain block from {}: {} (reason: {}, TTL: {}s) - requires DNS-layer integration",
+                    from_node,
+                    indicator.indicator_value,
+                    indicator.reason,
+                    indicator.ttl_seconds
+                );
+            }
+            ThreatType::UrlBlock => {
+                if self.is_global_node_ip_string(&indicator.indicator_value) {
+                    tracing::warn!(
+                        "Ignored URL block for global node URL {} from {}",
+                        indicator.indicator_value,
+                        from_node
+                    );
+                    return false;
+                }
+                tracing::info!(
+                    "Received URL block from {}: {} (reason: {}, TTL: {}s) - requires URL-filter integration",
+                    from_node,
+                    indicator.indicator_value,
+                    indicator.reason,
+                    indicator.ttl_seconds
+                );
+            }
+            ThreatType::CertBlock => {
+                if self.is_global_node_ip_string(&indicator.indicator_value) {
+                    tracing::warn!(
+                        "Ignored cert block for global node cert {} from {}",
+                        indicator.indicator_value,
+                        from_node
+                    );
+                    return false;
+                }
+                tracing::info!(
+                    "Received certificate block from {}: {} (reason: {}, TTL: {}s) - requires TLS-layer integration",
+                    from_node,
+                    indicator.indicator_value,
+                    indicator.reason,
+                    indicator.ttl_seconds
                 );
             }
             ThreatType::Unspecified => {

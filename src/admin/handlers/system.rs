@@ -375,3 +375,34 @@ pub async fn get_overseer(
         drain_status: "Idle".to_string(),
     }))
 }
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GranianLogsResponse {
+    pub site_id: String,
+    pub logs: Vec<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/system/app-servers/{site_id}/logs",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    responses(
+        (status = 200, description = "Granian app server logs", body = GranianLogsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App server not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
+pub async fn get_granian_logs(
+    State(_state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(site_id): Path<String>,
+) -> Result<Json<GranianLogsResponse>, StatusCode> {
+    match crate::app_server::get_granian_logs(&site_id) {
+        Some(logs) => Ok(Json(GranianLogsResponse { site_id, logs })),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}

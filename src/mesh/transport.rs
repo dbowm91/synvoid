@@ -880,6 +880,14 @@ impl MeshTransport {
             record_store.store_and_announce(compression_key, bytes, 3600);
         }
 
+        if let Some(ref cache_config) = site_config.proxy.cache {
+            let proxy_cache_prefs = crate::mesh::protocol::ProxyCachePreferences::from(cache_config);
+            if let Ok(bytes) = serde_json::to_vec(&proxy_cache_prefs) {
+                let key = format!("upstream_proxy_cache_preferences:{}", site_id);
+                record_store.store_and_announce(key, bytes, 3600);
+            }
+        }
+
         tracing::debug!("Published transform config for site {} to DHT", site_id);
     }
 

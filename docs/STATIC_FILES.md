@@ -115,6 +115,56 @@ directory_template_path = "/etc/maluwaf/templates/directory.html"
 - `{{site_name}}` - site name (RustWAF)
 - `{{title}}` - page title ("Index of {url_path}")
 
+## Minification
+
+### Worker Architecture
+
+MaluWAF uses a dedicated worker process for static file minification to avoid impacting request-handling performance:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    UNIFIED WORKER (HTTP/HTTPS)                    │
+│  - Handles incoming requests                                      │
+│  - Serves minified files from cache                              │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ IPC (Unix socket)
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    STATIC FILE WORKER                            │
+│  - Runs minification in separate process                         │
+│  - Offloads CPU-intensive work from main worker                 │
+│  - Results cached in shared memory                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why separate workers:**
+- Minification (HTML, CSS, JS) is CPU-intensive and would block the main event loop
+- Running in a separate worker allows the main HTTP worker to remain responsive
+- Shared memory cache avoids copying minified content between processes
+
+### How It Works
+
+1. When a static file is first requested, the unified worker checks if minification is enabled
+2. If enabled and the file type matches (`text/html`, `text/css`, `application/javascript`), the worker:
+   - Sends the file content to the static file worker via IPC
+   - The static file worker minifies the content and caches it
+   - Returns the minified content through the shared cache
+3. Subsequent requests serve directly from cache (no IPC round-trip)
+
+### Cache Behavior
+
+- Minified content is cached per-file based on file path + modification time
+- If the source file changes, the cache is invalidated automatically
+- Cache TTL matches the static file cache TTL (`cache_ttl_seconds`)
+
+### Performance Notes
+
+- **First request**: Slight delay (one IPC round-trip) for minification
+- **Subsequent requests**: No overhead (served from cache)
+- **File changes**: Next request triggers re-minification, then cached again
+- For highest traffic files, consider pre-minifying at build time instead
+
 ## Compression
 
 ### Pre-Compressed Files

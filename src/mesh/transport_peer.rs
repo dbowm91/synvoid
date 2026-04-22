@@ -2602,6 +2602,60 @@ impl MeshTransport {
         None
     }
 
+    fn extract_path_from_http(&self, http_data: &[u8]) -> String {
+        let header_str = match String::from_utf8(http_data.to_vec()) {
+            Ok(s) => s,
+            Err(_) => return "/".to_string(),
+        };
+
+        for line in header_str.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("GET ")
+                || trimmed.starts_with("POST ")
+                || trimmed.starts_with("PUT ")
+                || trimmed.starts_with("PATCH ")
+                || trimmed.starts_with("DELETE ")
+                || trimmed.starts_with("OPTIONS ")
+                || trimmed.starts_with("HEAD ")
+                || trimmed.starts_with("TRACE ")
+                || trimmed.starts_with("CONNECT ")
+            {
+                if let Some(second_space) = trimmed.find(' ') {
+                    if let Some(third_space) = trimmed[second_space + 1..].find(' ') {
+                        return trimmed[second_space + 1..second_space + 1 + third_space].to_string();
+                    }
+                }
+            }
+        }
+        "/".to_string()
+    }
+
+    fn extract_method_from_http(&self, http_data: &[u8]) -> Option<String> {
+        let header_str = match String::from_utf8(http_data.to_vec()) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        for line in header_str.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("GET ")
+                || trimmed.starts_with("POST ")
+                || trimmed.starts_with("PUT ")
+                || trimmed.starts_with("PATCH ")
+                || trimmed.starts_with("DELETE ")
+                || trimmed.starts_with("OPTIONS ")
+                || trimmed.starts_with("HEAD ")
+                || trimmed.starts_with("TRACE ")
+                || trimmed.starts_with("CONNECT ")
+            {
+                if let Some(space) = trimmed.find(' ') {
+                    return Some(trimmed[..space].to_string());
+                }
+            }
+        }
+        None
+    }
+
     async fn apply_response_transforms(
         &self,
         response: &[u8],

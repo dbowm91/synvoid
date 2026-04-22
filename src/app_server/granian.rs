@@ -3,11 +3,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const MAX_LOG_BUFFER_LINES: usize = 1000;
+
 use bytes::Bytes;
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, RwLock as TokioRwLock};
 use tokio::time::interval;
 
 use crate::app_server::AppServerConfig;
@@ -293,7 +296,7 @@ impl GranianConfig {
 #[derive(Clone)]
 pub struct GranianSupervisor {
     config: Arc<GranianConfig>,
-    child: Arc<RwLock<Option<tokio::process::Child>>>,
+    child: Arc<TokioRwLock<Option<tokio::process::Child>>>,
     healthy: RunningFlag,
     restart_count: Arc<AtomicU32>,
     consecutive_failures: Arc<AtomicU32>,
@@ -301,6 +304,7 @@ pub struct GranianSupervisor {
     shutdown_tx: broadcast::Sender<()>,
     running: RunningFlag,
     pid: Arc<AtomicU32>,
+    log_buffer: Arc<RwLock<Vec<String>>>,
 }
 
 impl GranianSupervisor {
@@ -309,7 +313,7 @@ impl GranianSupervisor {
 
         Self {
             config: Arc::new(config),
-            child: Arc::new(RwLock::new(None)),
+            child: Arc::new(TokioRwLock::new(None)),
             healthy: RunningFlag::new(),
             restart_count: Arc::new(AtomicU32::new(0)),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
@@ -317,6 +321,7 @@ impl GranianSupervisor {
             shutdown_tx,
             running: RunningFlag::new(),
             pid: Arc::new(AtomicU32::new(0)),
+            log_buffer: Arc::new(RwLock::new(Vec::with_capacity(MAX_LOG_BUFFER_LINES))),
         }
     }
 
@@ -620,6 +625,8 @@ impl GranianSupervisor {
 
         let site_id = self.config.site_id.clone();
         let worker_id = self.config.worker_id;
+        let log_buffer_out = self.log_buffer.clone();
+        let log_buffer_err = self.log_buffer.clone();
 
         let stdout = child.stdout.take();
         if let Some(stdout) = stdout {
@@ -632,12 +639,18 @@ impl GranianSupervisor {
                     if n == 0 {
                         break;
                     }
+                    let trimmed = line.trim();
                     tracing::debug!(
                         "[granian {} worker {} stdout] {}",
                         site_id_out,
                         worker_id_out,
-                        line.trim()
+                        trimmed
                     );
+                    let mut buffer = log_buffer_out.write();
+                    if buffer.len() >= MAX_LOG_BUFFER_LINES {
+                        buffer.remove(0);
+                    }
+                    buffer.push(format!("[{}] stdout: {}", crate::utils::current_timestamp(), trimmed));
                     line.clear();
                 }
             });
@@ -654,12 +667,18 @@ impl GranianSupervisor {
                     if n == 0 {
                         break;
                     }
+                    let trimmed = line.trim();
                     tracing::warn!(
                         "[granian {} worker {} stderr] {}",
                         site_id_err,
                         worker_id_err,
-                        line.trim()
+                        trimmed
                     );
+                    let mut buffer = log_buffer_err.write();
+                    if buffer.len() >= MAX_LOG_BUFFER_LINES {
+                        buffer.remove(0);
+                    }
+                    buffer.push(format!("[{}] stderr: {}", crate::utils::current_timestamp(), trimmed));
                     line.clear();
                 }
             });
@@ -760,55 +779,40 @@ impl GranianSupervisor {
     }
 
     async fn check_health(config: &GranianConfig) -> bool {
-        let timeout = Duration::from_secs(config.health_check_timeout_secs);
-        let path = &config.health_check_path;
+        let socket_path = config.socket_path.as_ref();
 
         #[cfg(unix)]
-        let url = if let Some(ref socket) = config.socket_path {
-            let socket_display = socket.display().to_string();
-            let socket_str = socket_display.trim_start_matches('/');
-            format!("http://unix/{}:{}", socket_str, path)
+        let is_healthy = if let Some(ref socket) = socket_path {
+            let timeout = Duration::from_secs(config.health_check_timeout_secs);
+            let connect_future = tokio::net::UnixStream::connect(socket);
+            match tokio::time::timeout(timeout, connect_future).await {
+                Ok(Ok(_)) => true,
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        "Granian socket connection failed for site {} worker {}: {}",
+                        config.site_id,
+                        config.worker_id,
+                        e
+                    );
+                    false
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Granian socket connection timed out for site {} worker {}",
+                        config.site_id,
+                        config.worker_id
+                    );
+                    false
+                }
+            }
         } else {
-            let host = config.host.as_deref().unwrap_or("127.0.0.1");
-            let port = config.port.unwrap_or(8000);
-            format!("http://{}:{}{}", host, port, path)
+            true
         };
 
         #[cfg(not(unix))]
-        let url = {
-            let host = config.host.as_deref().unwrap_or("127.0.0.1");
-            let port = config.port.unwrap_or(8000);
-            format!("http://{}:{}{}", host, port, path)
-        };
+        let is_healthy = true;
 
-        let client = crate::http_client::create_http_client_with_config(
-            timeout,
-            10,
-            Duration::from_secs(30),
-        );
-
-        match crate::http_client::send_request_with_timeout(
-            &client,
-            http::Method::HEAD,
-            &url,
-            Some(timeout),
-        )
-        .await
-        {
-            Ok(resp) => {
-                let status = resp.status_code();
-                (200..400).contains(&status)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Granian health check failed for site {} worker {}: {}",
-                    config.site_id,
-                    config.worker_id,
-                    e
-                );
-                false
-            }
-        }
+        is_healthy
     }
 
     pub async fn restart(&self) -> Result<(), String> {
@@ -837,6 +841,17 @@ impl GranianSupervisor {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         self.start().await
+    }
+
+    pub async fn cleanup(&self) {
+        if let Some(ref socket) = self.config.socket_path {
+            if socket.exists() {
+                let socket = socket.clone();
+                if let Err(e) = tokio::fs::remove_file(&socket).await {
+                    tracing::debug!("Failed to remove socket file: {}", e);
+                }
+            }
+        }
     }
 
     pub async fn stop(&self) {
@@ -918,11 +933,7 @@ impl GranianSupervisor {
             }
         }
 
-        if let Some(ref socket) = self.config.socket_path {
-            if socket.exists() {
-                let _ = std::fs::remove_file(socket);
-            }
-        }
+        self.cleanup().await;
 
         self.healthy.set(false);
         self.pid.store(0, Ordering::SeqCst);
@@ -953,6 +964,14 @@ impl GranianSupervisor {
             let port = self.config.port.unwrap_or(8000);
             format!("http://{}:{}", host, port)
         }
+    }
+
+    pub fn site_id(&self) -> &str {
+        &self.config.site_id
+    }
+
+    pub fn get_logs(&self) -> Vec<String> {
+        self.log_buffer.read().clone()
     }
 
     pub async fn forward_request(
@@ -1007,12 +1026,6 @@ impl Drop for GranianSupervisor {
     fn drop(&mut self) {
         self.running.set(false);
         let _ = self.shutdown_tx.send(());
-
-        let socket_path = self.config.resolve_socket_path();
-        if socket_path.exists() {
-            if let Err(e) = std::fs::remove_file(&socket_path) {
-                tracing::debug!("Failed to remove socket file on drop: {}", e);
-            }
-        }
     }
 }
+

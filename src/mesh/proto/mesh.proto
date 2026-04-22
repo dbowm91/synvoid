@@ -275,6 +275,7 @@ message MeshMessage {
         SiteTlsCertRequest site_tls_cert_request = 138;
         SiteTlsCertResponse site_tls_cert_response = 139;
         ServerlessInvokeRequest serverless_invoke_request = 150;
+        ServerlessInvokeResponse serverless_invoke_response = 151;
     }
 }
 
@@ -1464,4 +1465,15 @@ message ServerlessInvokeRequest {
     uint64 timestamp = 3;
     bytes call_signature = 4;
     optional ServerlessPermissionClaim permission_claim = 5;
+}
+
+message ServerlessInvokeResponse {
+    string function_name = 1;
+    string caller_node_id = 2;
+    uint64 timestamp = 3;
+    bytes response_data = 4;
+    bool success = 5;
+    string error_message = 6;
+    uint64 execution_time_ms = 7;
+    bytes response_signature = 8;
 }

@@ -435,7 +435,8 @@ pub async fn run_unified_server_worker(
             app_servers_for_init
                 .write()
                 .await
-                .insert(site_id.clone(), supervisor);
+                .insert(site_id.clone(), supervisor.clone());
+            crate::app_server::register_granian_supervisor(site_id, supervisor);
         }
     });
 

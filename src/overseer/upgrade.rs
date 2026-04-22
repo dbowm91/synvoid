@@ -1347,4 +1347,409 @@ mod tests {
         assert!(state.current_version.is_none());
         assert!(state.worker_ports.is_none());
     }
+
+    // ── Phase L.4: Upgrade State Machine Tests ──────────────────────
+
+    #[test]
+    fn test_upgrade_state_is_terminal() {
+        use super::super::state::UpgradeState;
+
+        assert!(UpgradeState::Idle.is_terminal());
+        assert!(UpgradeState::Committed.is_terminal());
+        assert!(UpgradeState::Failed.is_terminal());
+
+        assert!(!UpgradeState::Staging.is_terminal());
+        assert!(!UpgradeState::Spawning.is_terminal());
+        assert!(!UpgradeState::Validating.is_terminal());
+        assert!(!UpgradeState::Draining.is_terminal());
+        assert!(!UpgradeState::RollingBack.is_terminal());
+        assert!(!UpgradeState::RecoveryNeeded.is_terminal());
+        assert!(!UpgradeState::DualMasterActive.is_terminal());
+        assert!(!UpgradeState::DrainingOldMaster.is_terminal());
+    }
+
+    #[test]
+    fn test_upgrade_state_is_transition() {
+        use super::super::state::UpgradeState;
+
+        assert!(!UpgradeState::Idle.is_transition());
+        assert!(!UpgradeState::Committed.is_transition());
+        assert!(!UpgradeState::Failed.is_transition());
+
+        assert!(UpgradeState::Staging.is_transition());
+        assert!(UpgradeState::Spawning.is_transition());
+        assert!(UpgradeState::Validating.is_transition());
+        assert!(UpgradeState::Draining.is_transition());
+        assert!(UpgradeState::RollingBack.is_transition());
+        assert!(UpgradeState::RecoveryNeeded.is_transition());
+        assert!(UpgradeState::DualMasterActive.is_transition());
+        assert!(UpgradeState::DrainingOldMaster.is_transition());
+    }
+
+    #[test]
+    fn test_upgrade_state_display() {
+        use super::super::state::UpgradeState;
+
+        assert_eq!(format!("{}", UpgradeState::Idle), "IDLE");
+        assert_eq!(format!("{}", UpgradeState::Staging), "STAGING");
+        assert_eq!(format!("{}", UpgradeState::Spawning), "SPAWNING");
+        assert_eq!(format!("{}", UpgradeState::Validating), "VALIDATING");
+        assert_eq!(format!("{}", UpgradeState::Draining), "DRAINING");
+        assert_eq!(format!("{}", UpgradeState::Committed), "COMMITTED");
+        assert_eq!(format!("{}", UpgradeState::RollingBack), "ROLLING_BACK");
+        assert_eq!(format!("{}", UpgradeState::Failed), "FAILED");
+        assert_eq!(format!("{}", UpgradeState::RecoveryNeeded), "RECOVERY_NEEDED");
+        assert_eq!(format!("{}", UpgradeState::DualMasterActive), "DUAL_MASTER_ACTIVE");
+        assert_eq!(format!("{}", UpgradeState::DrainingOldMaster), "DRAINING_OLD_MASTER");
+    }
+
+    #[test]
+    fn test_upgrade_state_max_duration() {
+        use super::super::state::UpgradeState;
+
+        assert_eq!(UpgradeState::Staging.max_duration_secs(), Some(300));
+        assert_eq!(UpgradeState::Spawning.max_duration_secs(), Some(120));
+        assert_eq!(UpgradeState::Validating.max_duration_secs(), Some(300));
+        assert_eq!(UpgradeState::Draining.max_duration_secs(), Some(600));
+        assert_eq!(UpgradeState::RollingBack.max_duration_secs(), Some(300));
+        assert_eq!(UpgradeState::DualMasterActive.max_duration_secs(), Some(600));
+        assert_eq!(UpgradeState::DrainingOldMaster.max_duration_secs(), Some(600));
+
+        assert!(UpgradeState::Idle.max_duration_secs().is_none());
+        assert!(UpgradeState::Committed.max_duration_secs().is_none());
+        assert!(UpgradeState::Failed.max_duration_secs().is_none());
+        assert!(UpgradeState::RecoveryNeeded.max_duration_secs().is_none());
+    }
+
+    #[test]
+    fn test_overseer_state_new() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert_eq!(state.state, super::super::state::UpgradeState::Idle);
+        assert!(state.current_version.is_none());
+        assert!(state.staged_version.is_none());
+        assert!(state.staged_binary_path.is_none());
+        assert!(state.staged_config_path.is_none());
+        assert!(state.upgrade_mode.is_none());
+        assert!(state.last_upgrade_timestamp.is_none());
+        assert!(state.last_rollback_timestamp.is_none());
+        assert!(state.last_error.is_none());
+        assert!(state.worker_count.is_none());
+        assert!(state.worker_ports.is_none());
+        assert_eq!(state.validation_retries, 0);
+    }
+
+    #[test]
+    fn test_overseer_state_can_stage_idle() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let state = OverseerState::new();
+        assert!(state.can_stage());
+
+        let mut staging = OverseerState::new();
+        staging.state = UpgradeState::Staging;
+        assert!(!staging.can_stage());
+
+        let mut spawning = OverseerState::new();
+        spawning.state = UpgradeState::Spawning;
+        assert!(!spawning.can_stage());
+
+        let mut validating = OverseerState::new();
+        validating.state = UpgradeState::Validating;
+        assert!(!validating.can_stage());
+
+        let mut draining = OverseerState::new();
+        draining.state = UpgradeState::Draining;
+        assert!(!draining.can_stage());
+    }
+
+    #[test]
+    fn test_overseer_state_can_stage_committed() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        state.state = UpgradeState::Committed;
+        assert!(state.can_stage());
+    }
+
+    #[test]
+    fn test_overseer_state_can_stage_failed() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        state.state = UpgradeState::Failed;
+        assert!(state.can_stage());
+    }
+
+    #[test]
+    fn test_overseer_state_can_stage_recovery_needed() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        state.state = UpgradeState::RecoveryNeeded;
+        assert!(state.can_stage());
+    }
+
+    #[test]
+    fn test_overseer_state_cannot_stage_transient_states() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        for state_enum in [
+            UpgradeState::Staging,
+            UpgradeState::Spawning,
+            UpgradeState::Validating,
+            UpgradeState::Draining,
+            UpgradeState::DualMasterActive,
+            UpgradeState::DrainingOldMaster,
+        ] {
+            let mut state = OverseerState::new();
+            state.state = state_enum;
+            assert!(
+                !state.can_stage(),
+                "Should not be able to stage from {:?}",
+                state_enum
+            );
+        }
+    }
+
+    #[test]
+    fn test_overseer_state_can_apply_only_staging() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut staging_state = OverseerState::new();
+        staging_state.state = UpgradeState::Staging;
+        assert!(staging_state.can_apply());
+
+        let idle_state = OverseerState::new();
+        assert!(!idle_state.can_apply());
+
+        let mut spawning = OverseerState::new();
+        spawning.state = UpgradeState::Spawning;
+        assert!(!spawning.can_apply());
+
+        let mut committed = OverseerState::new();
+        committed.state = UpgradeState::Committed;
+        assert!(!committed.can_apply());
+    }
+
+    #[test]
+    fn test_overseer_state_can_rollback_from_validating() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut validating = OverseerState::new();
+        validating.state = UpgradeState::Validating;
+        assert!(validating.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_can_rollback_from_failed() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut failed = OverseerState::new();
+        failed.state = UpgradeState::Failed;
+        assert!(failed.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_can_rollback_from_recovery_needed() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut recovery = OverseerState::new();
+        recovery.state = UpgradeState::RecoveryNeeded;
+        assert!(recovery.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_cannot_rollback_from_idle() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(!state.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_cannot_rollback_from_committed() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut committed = OverseerState::new();
+        committed.state = UpgradeState::Committed;
+        assert!(!committed.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_cannot_rollback_from_staging() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut staging = OverseerState::new();
+        staging.state = UpgradeState::Staging;
+        assert!(!staging.can_rollback());
+    }
+
+    #[test]
+    fn test_overseer_state_needs_recovery_states() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut recovery_needed = OverseerState::new();
+        recovery_needed.state = UpgradeState::RecoveryNeeded;
+        assert!(recovery_needed.needs_recovery());
+
+        let mut dual_master = OverseerState::new();
+        dual_master.state = UpgradeState::DualMasterActive;
+        assert!(dual_master.needs_recovery());
+
+        let mut draining_old = OverseerState::new();
+        draining_old.state = UpgradeState::DrainingOldMaster;
+        assert!(draining_old.needs_recovery());
+
+        let mut rolling_back = OverseerState::new();
+        rolling_back.state = UpgradeState::RollingBack;
+        assert!(rolling_back.needs_recovery());
+    }
+
+    #[test]
+    fn test_overseer_state_idle_does_not_need_recovery() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(!state.needs_recovery());
+    }
+
+    #[test]
+    fn test_overseer_state_is_dual_master_state() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut dual_master_active = OverseerState::new();
+        dual_master_active.state = UpgradeState::DualMasterActive;
+        assert!(dual_master_active.is_dual_master_state());
+
+        let mut draining_old = OverseerState::new();
+        draining_old.state = UpgradeState::DrainingOldMaster;
+        assert!(draining_old.is_dual_master_state());
+    }
+
+    #[test]
+    fn test_overseer_state_not_dual_master_when_idle() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(!state.is_dual_master_state());
+    }
+
+    #[test]
+    fn test_overseer_state_can_abort_upgrade() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut staging = OverseerState::new();
+        staging.state = UpgradeState::Staging;
+        assert!(staging.can_abort_upgrade());
+
+        let mut spawning = OverseerState::new();
+        spawning.state = UpgradeState::Spawning;
+        assert!(spawning.can_abort_upgrade());
+
+        let mut dual_master = OverseerState::new();
+        dual_master.state = UpgradeState::DualMasterActive;
+        assert!(dual_master.can_abort_upgrade());
+
+        let mut draining_old = OverseerState::new();
+        draining_old.state = UpgradeState::DrainingOldMaster;
+        assert!(draining_old.can_abort_upgrade());
+    }
+
+    #[test]
+    fn test_overseer_state_cannot_abort_from_idle() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(!state.can_abort_upgrade());
+    }
+
+    #[test]
+    fn test_overseer_state_cannot_abort_from_validating() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut validating = OverseerState::new();
+        validating.state = UpgradeState::Validating;
+        assert!(!validating.can_abort_upgrade());
+    }
+
+    #[test]
+    fn test_overseer_state_enter_state() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        assert!(state.state_entered_at.is_none());
+
+        state.enter_state(UpgradeState::Staging);
+        assert_eq!(state.state, UpgradeState::Staging);
+        assert!(state.state_entered_at.is_some());
+
+        state.enter_state(UpgradeState::Spawning);
+        assert_eq!(state.state, UpgradeState::Spawning);
+    }
+
+    #[test]
+    fn test_overseer_state_time_in_current_state() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        state.enter_state(UpgradeState::Staging);
+
+        let time_in_state = state.time_in_current_state();
+        assert!(time_in_state.is_some());
+        assert_eq!(time_in_state.unwrap().as_secs(), 0);
+    }
+
+    #[test]
+    fn test_overseer_state_time_in_current_state_none_when_not_entered() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(state.time_in_current_state().is_none());
+    }
+
+    #[test]
+    fn test_overseer_state_is_state_timed_out() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        state.enter_state(UpgradeState::Staging);
+        assert!(!state.is_state_timed_out());
+    }
+
+    #[test]
+    fn test_overseer_state_remaining_state_time() {
+        use super::super::state::{OverseerState, UpgradeState};
+
+        let mut state = OverseerState::new();
+        state.enter_state(UpgradeState::Staging);
+
+        let remaining = state.remaining_state_time();
+        assert!(remaining.is_some());
+        assert!(remaining.unwrap().as_secs() > 0);
+    }
+
+    #[test]
+    fn test_overseer_state_remaining_state_time_none_for_terminal() {
+        use super::super::state::OverseerState;
+
+        let state = OverseerState::new();
+        assert!(state.remaining_state_time().is_none());
+    }
+
+    #[test]
+    fn test_upgrade_mode_payload_serde() {
+        use crate::process::ipc::UpgradeModePayload;
+
+        let reuse = UpgradeModePayload::ReusePort;
+        let json = serde_json::to_string(&reuse).unwrap();
+        let decoded: UpgradeModePayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(reuse, decoded);
+
+        let port_swap = UpgradeModePayload::PortSwap { temp_port_offset: 1000 };
+        let json = serde_json::to_string(&port_swap).unwrap();
+        let decoded: UpgradeModePayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(port_swap, decoded);
+    }
 }

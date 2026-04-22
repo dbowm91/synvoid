@@ -987,6 +987,7 @@ pub enum MeshMessage {
     },
     ServerlessFunctionAnnounce(ServerlessFunctionAnnounce),
     ServerlessInvokeRequest(ServerlessInvokeRequest),
+    ServerlessInvokeResponse(ServerlessInvokeResponse),
     GenesisKeyTransition {
         sequence: u32,
         new_key_fingerprint: ArcStr,
@@ -1507,6 +1508,33 @@ impl ServerlessInvokeRequest {
             timestamp: crate::utils::safe_unix_timestamp(),
             call_signature: Vec::new(),
             permission_claim: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServerlessInvokeResponse {
+    pub function_name: String,
+    pub caller_node_id: String,
+    pub timestamp: u64,
+    pub response_data: Vec<u8>,
+    pub success: bool,
+    pub error_message: String,
+    pub execution_time_ms: u64,
+    pub response_signature: Vec<u8>,
+}
+
+impl ServerlessInvokeResponse {
+    pub fn new(function_name: String, caller_node_id: String) -> Self {
+        Self {
+            function_name,
+            caller_node_id,
+            timestamp: crate::utils::safe_unix_timestamp(),
+            response_data: Vec::new(),
+            success: true,
+            error_message: String::new(),
+            execution_time_ms: 0,
+            response_signature: Vec::new(),
         }
     }
 }

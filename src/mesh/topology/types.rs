@@ -835,3 +835,70 @@ pub enum Priority {
     UpstreamProvider(f64),
     Edge(f64),
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerlessRouteInfo {
+    pub function_name: String,
+    pub routes: Vec<String>,
+    pub allowed_methods: Vec<String>,
+    pub checksum: String,
+    pub version: u64,
+    pub memory_mb: Option<usize>,
+    pub timeout_seconds: Option<u64>,
+    pub priority: u32,
+    pub provider_node_id: String,
+    pub registered_at: i64,
+}
+
+impl ServerlessRouteInfo {
+    pub fn new(
+        function_name: String,
+        routes: Vec<String>,
+        allowed_methods: Vec<String>,
+        checksum: String,
+        version: u64,
+        provider_node_id: String,
+    ) -> Self {
+        Self {
+            function_name,
+            routes,
+            allowed_methods,
+            checksum,
+            version,
+            memory_mb: None,
+            timeout_seconds: None,
+            priority: 100,
+            provider_node_id,
+            registered_at: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    pub fn matches_path(&self, path: &str) -> bool {
+        for route in &self.routes {
+            if route == "/" {
+                return true;
+            }
+            if path == route {
+                return true;
+            }
+            if route.ends_with("/*") {
+                let prefix = &route[..route.len() - 2];
+                if path.starts_with(prefix) {
+                    return true;
+                }
+            } else if route.ends_with('/') {
+                if path.starts_with(route) || path == &route[..route.len() - 1] {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn matches_method(&self, method: &str) -> bool {
+        if self.allowed_methods.is_empty() {
+            return true;
+        }
+        self.allowed_methods.iter().any(|m| m.eq_ignore_ascii_case(method))
+    }
+}

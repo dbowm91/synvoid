@@ -89,11 +89,14 @@ pub struct MeshTransportManager {
         Arc<RwLock<LruCache<String, (crate::mesh::config::MeshMinificationConfig, Instant)>>>,
     image_poison_cache:
         Arc<RwLock<LruCache<String, (crate::config::site::SiteImagePoisonConfig, Instant)>>>,
+    proxy_cache_preferences_cache:
+        Arc<RwLock<LruCache<String, (crate::mesh::protocol::ProxyCachePreferences, Instant)>>>,
     // Inflight tracking for stampede prevention
     image_protection_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     compression_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     minification_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     image_poison_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    proxy_cache_preferences_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     // Metrics counters
     image_protection_cache_hits: AtomicU64,
     image_protection_cache_misses: AtomicU64,
@@ -103,6 +106,8 @@ pub struct MeshTransportManager {
     minification_cache_misses: AtomicU64,
     image_poison_cache_hits: AtomicU64,
     image_poison_cache_misses: AtomicU64,
+    proxy_cache_preferences_cache_hits: AtomicU64,
+    proxy_cache_preferences_cache_misses: AtomicU64,
 }
 
 impl MeshTransportManager {
@@ -118,6 +123,8 @@ impl MeshTransportManager {
         let minification_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
         let image_poison_cache =
+            LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
+        let proxy_cache_preferences_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
 
         let node_id = config
@@ -141,10 +148,12 @@ impl MeshTransportManager {
             compression_cache: Arc::new(RwLock::new(compression_cache)),
             minification_cache: Arc::new(RwLock::new(minification_cache)),
             image_poison_cache: Arc::new(RwLock::new(image_poison_cache)),
+            proxy_cache_preferences_cache: Arc::new(RwLock::new(proxy_cache_preferences_cache)),
             image_protection_inflight: Arc::new(Mutex::new(HashMap::new())),
             compression_inflight: Arc::new(Mutex::new(HashMap::new())),
             minification_inflight: Arc::new(Mutex::new(HashMap::new())),
             image_poison_inflight: Arc::new(Mutex::new(HashMap::new())),
+            proxy_cache_preferences_inflight: Arc::new(Mutex::new(HashMap::new())),
             image_protection_cache_hits: AtomicU64::new(0),
             image_protection_cache_misses: AtomicU64::new(0),
             compression_cache_hits: AtomicU64::new(0),
@@ -153,6 +162,8 @@ impl MeshTransportManager {
             minification_cache_misses: AtomicU64::new(0),
             image_poison_cache_hits: AtomicU64::new(0),
             image_poison_cache_misses: AtomicU64::new(0),
+            proxy_cache_preferences_cache_hits: AtomicU64::new(0),
+            proxy_cache_preferences_cache_misses: AtomicU64::new(0),
         }
     }
 
@@ -1088,6 +1099,65 @@ impl MeshTransportManager {
         .await
     }
 
+    pub async fn get_proxy_cache_preferences_for_site(
+        &self,
+        upstream_id: &str,
+    ) -> Option<crate::mesh::protocol::ProxyCachePreferences> {
+        self.fetch_cached_config(
+            upstream_id,
+            "upstream_proxy_cache_preferences:",
+            |parsed| {
+                Some(crate::mesh::protocol::ProxyCachePreferences {
+                    enable: parsed.get("enable").and_then(|v| v.as_bool()).unwrap_or(false),
+                    inactive: parsed.get("inactive").and_then(|v| v.as_u64()).unwrap_or(0),
+                    valid_status: parsed
+                        .get("valid_status")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_u64())
+                                .map(|v| v as u32)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    methods: parsed
+                        .get("methods")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    use_stale: parsed
+                        .get("use_stale")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    min_uses: parsed.get("min_uses").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                    stale_while_revalidate: parsed
+                        .get("stale_while_revalidate")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    stale_if_error: parsed
+                        .get("stale_if_error")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                })
+            },
+            &self.proxy_cache_preferences_cache,
+            &self.proxy_cache_preferences_inflight,
+            &self.proxy_cache_preferences_cache_hits,
+            &self.proxy_cache_preferences_cache_misses,
+            "proxy_cache_preferences",
+        )
+        .await
+    }
+
     pub fn get_cache_metrics(&self) -> serde_json::Value {
         serde_json::json!({
             "image_protection": {
@@ -1101,6 +1171,10 @@ impl MeshTransportManager {
             "minification": {
                 "hits": self.minification_cache_hits.load(Ordering::Relaxed),
                 "misses": self.minification_cache_misses.load(Ordering::Relaxed),
+            },
+            "proxy_cache_preferences": {
+                "hits": self.proxy_cache_preferences_cache_hits.load(Ordering::Relaxed),
+                "misses": self.proxy_cache_preferences_cache_misses.load(Ordering::Relaxed),
             },
         })
     }
@@ -1229,6 +1303,14 @@ impl MeshTransportManager {
         let compression_key = format!("upstream_compression:{}", site_id);
         if let Ok(bytes) = serde_json::to_vec(&compression_json) {
             record_store.store_and_announce(compression_key, bytes, 3600);
+        }
+
+        if let Some(ref cache_config) = site_config.proxy.cache {
+            let proxy_cache_prefs = crate::mesh::protocol::ProxyCachePreferences::from(cache_config);
+            if let Ok(bytes) = serde_json::to_vec(&proxy_cache_prefs) {
+                let key = format!("upstream_proxy_cache_preferences:{}", site_id);
+                record_store.store_and_announce(key, bytes, 3600);
+            }
         }
 
         tracing::debug!("Published transform config for site {} to DHT", site_id);

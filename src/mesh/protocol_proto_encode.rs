@@ -2199,6 +2199,23 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     )),
                 }
             }
+            MeshMessage::ServerlessInvokeResponse(msg) => {
+                proto::MeshMessage {
+                    message_type: 151,
+                    payload: Some(proto::mesh_message::Payload::ServerlessInvokeResponse(
+                        proto::ServerlessInvokeResponse {
+                            function_name: msg.function_name.clone(),
+                            caller_node_id: msg.caller_node_id.clone(),
+                            timestamp: msg.timestamp,
+                            response_data: msg.response_data.clone(),
+                            success: msg.success,
+                            error_message: msg.error_message.clone(),
+                            execution_time_ms: msg.execution_time_ms,
+                            response_signature: msg.response_signature.clone(),
+                        },
+                    )),
+                }
+            }
             MeshMessage::UpstreamOwnershipChallenge {
                 request_id,
                 upstream_id,

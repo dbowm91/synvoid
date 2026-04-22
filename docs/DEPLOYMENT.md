@@ -283,6 +283,87 @@ output.elasticsearch:
 
 *Estimates based on simple requests with attack detection enabled*
 
+### Capacity Calculations
+
+#### Memory Requirements
+
+```
+Rate Limiting Memory:
+  Per IP tracking: ~100 bytes
+  Formula: max_ips × 100 bytes = memory for rate limiting
+
+  Example: 1,000,000 IPs × 100 bytes = 100 MB
+
+Proxy Cache Memory:
+  Formula: max_size_mb × 1.2 (overhead) = actual memory usage
+
+  Example: 512 MB × 1.2 = ~615 MB
+
+Static File Cache Memory:
+  Formula: cache_max_entries × avg_file_size = memory usage
+
+  Example: 10,000 entries × ~50KB avg = 500 MB (if files cached)
+```
+
+#### Connection Limits
+
+```
+Maximum Connections = (Available file descriptors) / safety margin
+
+  Typical safety margin: 0.8-0.9
+  Example: 65535 fds × 0.8 = ~52,000 max connections
+
+Half-Open Connections (SYN flood protection):
+  half_open_max should be 1-2% of max connections
+  Example: 50,000 max × 0.02 = 1,000 half-open
+
+Rate Limit Buckets:
+  Each unique IP consumes ~100 bytes
+  1M tracked IPs = 100 MB per rate limit mode (isolated)
+```
+
+#### Throughput Scaling
+
+```
+Baseline (per 2 vCPU):
+  Simple requests: ~10,000 req/sec
+  With attack detection: ~8,000 req/sec (-15-20%)
+
+Scaling factors:
+  +1 vCPU ≈ +40-50% throughput (diminishing returns after 8 cores)
+  +1 GB RAM ≈ +20% connection capacity
+  Enable caching: +100-300% effective throughput for cached content
+
+Real-world example:
+  Hardware: 8 vCPU, 8 GB RAM
+  Expected: 50,000 req/sec simple, 40,000 req/sec with WAF
+  Peak memory: ~4 GB (leaving headroom)
+  Connection limit: ~52,000 (with 65K fds)
+```
+
+#### Estimating Requirements
+
+```
+Step 1: Determine peak requests per second
+  Example: 25,000 req/sec expected
+
+Step 2: Calculate required cores
+  With WAF overhead: 25,000 / 8,000 per core = ~3.2 cores
+  Safety factor 1.5×: 3.2 × 1.5 = ~5 cores → use 8 vCPU
+
+Step 3: Calculate memory needs
+  Rate limit (1M IPs): 100 MB
+  Proxy cache (512 MB): 615 MB actual
+  Static cache: 500 MB
+  OS + buffer: 1 GB
+  Total: ~2.2 GB minimum → use 4-8 GB
+
+Step 4: Configure limits
+  [defaults.ratelimit.global]
+  per_second = 25000  # Handle expected peak × 1.5
+  max_connections = 50000  # Based on file descriptor limit
+```
+
 ### Scaling Guidelines
 
 1. **CPU-bound**: Add more cores or instances

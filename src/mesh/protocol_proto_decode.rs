@@ -1390,6 +1390,20 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     },
                 ))
             }
+            proto::mesh_message::Payload::ServerlessInvokeResponse(r) => {
+                Ok(MeshMessage::ServerlessInvokeResponse(
+                    crate::mesh::protocol::ServerlessInvokeResponse {
+                        function_name: r.function_name.clone(),
+                        caller_node_id: r.caller_node_id.clone(),
+                        timestamp: r.timestamp,
+                        response_data: r.response_data.clone(),
+                        success: r.success,
+                        error_message: r.error_message.clone(),
+                        execution_time_ms: r.execution_time_ms,
+                        response_signature: r.response_signature.clone(),
+                    },
+                ))
+            }
             proto::mesh_message::Payload::UpstreamOwnershipChallenge(r) => {
                 let challenge_type = match r.challenge_type {
                     Some(ct) => match ct.challenge {

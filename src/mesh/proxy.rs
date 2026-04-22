@@ -1121,6 +1121,15 @@ impl MeshProxy {
         let compression = tm.get_compression_for_site(upstream_id).await;
         let minification = tm.get_minification_for_site(upstream_id).await;
 
+        if let Some(ref record_store) = tm.get_record_store() {
+            let prefs_key = crate::mesh::dht::keys::DhtKey::upstream_proxy_cache_preferences(upstream_id);
+            if let Some(record) = record_store.get_record(&prefs_key.as_str()) {
+                if let Ok(prefs) = serde_json::from_slice::<crate::mesh::protocol::ProxyCachePreferences>(&record.value) {
+                    self.set_proxy_cache_preferences(&prefs);
+                }
+            }
+        }
+
         {
             let mut rs = self.record_store.write();
             if rs.is_none() {

@@ -1087,8 +1087,8 @@ pub async fn run_key_exchange_server(
         "http"
     };
 
-    tracing::info!(
-        "Key exchange server starting on {}://{} (TLS not yet implemented - use https proxy)",
+    tracing::warn!(
+        "Key exchange server starting on {}://{} (HTTPS proxy required for TLS - direct TLS not yet implemented)",
         scheme,
         addr
     );

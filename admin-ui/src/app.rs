@@ -5,9 +5,9 @@ use crate::components::layout::Sidebar;
 use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
-    Alerts, Dashboard, Dns, Honeypot, Icmp, Logs, Mesh, Probes, ProcessManagement, RequestLogs,
-    Settings, SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel, TierKeys,
-    Upstreams, Workers,
+    Alerts, Dashboard, Dns, Honeypot, Icmp, Login, Logs, Mesh, Probes, ProcessManagement,
+    RequestLogs, Settings, SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel,
+    TierKeys, TrafficShaping, Upstreams, Workers,
 };
 use crate::types::UpdateThemeRequest;
 
@@ -15,6 +15,8 @@ use crate::types::UpdateThemeRequest;
 pub enum Route {
     #[at("/")]
     Home,
+    #[at("/login")]
+    Login,
     #[at("/dashboard")]
     Dashboard,
     #[at("/logs")]
@@ -55,6 +57,8 @@ pub enum Route {
     Honeypot,
     #[at("/icmp")]
     Icmp,
+    #[at("/traffic-shaping")]
+    TrafficShaping,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -104,6 +108,7 @@ pub fn App() -> Html {
 fn switch(route: Route) -> Html {
     match route {
         Route::Home | Route::Dashboard => html! { <Dashboard /> },
+        Route::Login => html! { <Login /> },
         Route::Logs => html! { <Logs /> },
         Route::RequestLogs => html! { <RequestLogs /> },
         Route::Upstreams => html! { <Upstreams /> },
@@ -123,6 +128,7 @@ fn switch(route: Route) -> Html {
         Route::ThreatLevel => html! { <ThreatLevel /> },
         Route::Honeypot => html! { <Honeypot /> },
         Route::Icmp => html! { <Icmp /> },
+        Route::TrafficShaping => html! { <TrafficShaping /> },
         Route::NotFound => html! { <div class="text-center py-20">
             <h1 class="text-4xl font-bold mb-4">{ "404" }</h1>
             <p class="text-secondary">{ "Page not found" }</p>
