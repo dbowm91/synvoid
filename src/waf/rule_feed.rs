@@ -319,8 +319,8 @@ impl RuleFeedManager {
 
     fn parse_embedded_key(key_str: &str) -> VerifyingKey {
         if key_str == PLACEHOLDER_KEY {
-            panic!(
-                "FATAL: Rule feed public key is still set to the placeholder value. \
+            tracing::warn!(
+                "Rule feed public key is still set to the placeholder value. \
                  Set [waf.rule_feed.public_key] in the TOML config to a valid \
                  base64-encoded 32-byte Ed25519 verifying key. \
                  Signature verification will fail until a real key is configured."

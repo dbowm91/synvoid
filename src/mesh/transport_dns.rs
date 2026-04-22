@@ -1180,8 +1180,23 @@ impl MeshTransport {
         false
     }
 
-    async fn resolve_txt_record(&self, _name: &str) -> Vec<String> {
-        Vec::new()
+    async fn resolve_txt_record(&self, name: &str) -> Vec<String> {
+        match &self.dns_resolver {
+            Some(resolver) => match resolver.lookup_txt(name).await {
+                Ok(txt_record) => txt_record.values,
+                Err(e) => {
+                    tracing::warn!("TXT lookup failed for {}: {}", name, e);
+                    Vec::new()
+                }
+            },
+            None => {
+                tracing::warn!(
+                    "DNS resolver not available - cannot resolve TXT record for {}",
+                    name
+                );
+                Vec::new()
+            }
+        }
     }
 
     pub(crate) async fn verify_signed_challenge(

@@ -356,8 +356,12 @@ impl ThreatIntelligenceManager {
         global_ips.values().any(|&global_ip| global_ip == ip)
     }
 
-    fn is_global_node_ip_string(&self, _value: &str) -> bool {
-        false
+    fn is_global_node_ip_string(&self, value: &str) -> bool {
+        if let Ok(ip) = value.parse::<IpAddr>() {
+            self.is_global_node_ip(ip)
+        } else {
+            false
+        }
     }
 
     pub fn announce_local_block(
