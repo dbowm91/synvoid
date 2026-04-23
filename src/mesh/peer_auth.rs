@@ -1,3 +1,4 @@
+use base64::Engine;
 use dashmap::DashMap;
 use ed25519_dalek::{Signer, Verifier};
 use std::sync::Arc;
@@ -167,6 +168,70 @@ fn validate_edge_node(
 
     let challenge = format!("edge:{}:{}", peer_node_id, timestamp);
     verify_signature(pubkey, &challenge, signature, peer_node_id, "Edge node")
+}
+
+pub fn validate_edge_node_with_attestation(
+    peer_node_id: &str,
+    record_store: &parking_lot::RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
+    authorized_global_pubkeys: &[String],
+) -> Result<(), String> {
+    let edge_key = format!("edge_attestation:{}", peer_node_id);
+    let guard = record_store.read();
+    let store = guard.as_ref().ok_or("Record store not initialized")?;
+    let record = store.get_record(&edge_key).ok_or_else(|| {
+        format!(
+            "Edge node {} has no attestation - must be attested by a global node first",
+            peer_node_id
+        )
+    })?;
+
+    let attestation = crate::mesh::dht::edge_attestation::EdgeAttestation::deserialize(&record.value)
+        .ok_or_else(|| format!("Edge node {} has invalid attestation format", peer_node_id))?;
+
+    if attestation.is_expired() {
+        return Err(format!(
+            "Edge node {} attestation expired at {}",
+            peer_node_id, attestation.expires_at
+        ));
+    }
+
+    let signable_content = attestation.signable_content();
+    let attestation_pubkey_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&attestation.signer_public_key)
+        .map_err(|e| format!("Invalid attestation signer public key: {}", e))?;
+
+    let signature_valid = crate::mesh::cert::verify_ed25519(
+        &signable_content,
+        &attestation.signature,
+        &attestation_pubkey_bytes,
+    );
+
+    if !signature_valid {
+        return Err(format!(
+            "Edge node {} has invalid attestation signature",
+            peer_node_id
+        ));
+    }
+
+    let mut key_verified = false;
+    for global_pubkey in authorized_global_pubkeys {
+        if let Ok(pk_bytes) = base64::engine::general_purpose::STANDARD.decode(global_pubkey) {
+            if pk_bytes == attestation_pubkey_bytes {
+                key_verified = true;
+                break;
+            }
+        }
+    }
+
+    if !key_verified {
+        return Err(format!(
+            "Edge node {} attestation signed by unknown global node",
+            peer_node_id
+        ));
+    }
+
+    tracing::debug!("Edge node {} attestation validated successfully", peer_node_id);
+    Ok(())
 }
 
 pub fn validate_edge_node_pow(

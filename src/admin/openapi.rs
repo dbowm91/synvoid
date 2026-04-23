@@ -1,4 +1,4 @@
-use axum::{routing::get, Json, Router};
+use axum::{response::Html, routing::get, Json, Router};
 use std::sync::Arc;
 use utoipa::openapi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -363,11 +363,45 @@ impl MaluWafOpenApi {
     pub fn router(state: Arc<AdminState>) -> Router {
         Router::new()
             .route("/openapi.json", get(Self::get_openapi))
+            .route("/docs", get(Self::get_docs))
             .with_state(state)
     }
 
     async fn get_openapi() -> Json<openapi::OpenApi> {
         Self::openapi_json()
+    }
+
+    async fn get_docs() -> Html<String> {
+        Html(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MaluWAF API Documentation</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        h1 { color: #333; }
+        .link-card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .link-card a { color: #0066cc; font-size: 18px; }
+        .link-card p { color: #666; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>MaluWAF API Documentation</h1>
+    <div class="link-card">
+        <a href="/api/openapi.json" target="_blank">OpenAPI JSON Specification</a>
+        <p>Raw OpenAPI 3.0 JSON that can be imported into external tools.</p>
+    </div>
+    <div class="link-card">
+        <a href="https://petstore.swagger.io/?url=/api/openapi.json" target="_blank">Swagger UI (External)</a>
+        <p>Use the official Swagger UI to visualize and interact with the API. Paste the URL above or browse directly.</p>
+    </div>
+    <div class="link-card">
+        <a href="https://redocly.com/docs/react-doc-viewer/" target="_blank">Redoc (External)</a>
+        <p>Alternative API documentation viewer. Load the OpenAPI JSON URL above.</p>
+    </div>
+</body>
+</html>"#.to_string())
     }
 }
 
