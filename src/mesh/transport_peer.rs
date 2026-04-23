@@ -740,10 +740,8 @@ impl MeshTransport {
                 timestamp,
                 signature: _,
             } => {
-                let domains_vec: Vec<std::sync::Arc<str>> = domains
-                    .iter()
-                    .map(|d| d.as_arc())
-                    .collect();
+                let domains_vec: Vec<std::sync::Arc<str>> =
+                    domains.iter().map(|d| d.as_arc()).collect();
                 self.handle_node_shutdown(
                     peer_id,
                     &node_id,
@@ -1172,7 +1170,9 @@ impl MeshTransport {
                                 origin_signature: origin_signature.clone(),
                                 origin_pubkey: {
                                     use base64::{engine::general_purpose::STANDARD, Engine};
-                                    hex::decode(&origin_pk_str).ok().map(|bytes| STANDARD.encode(&bytes))
+                                    hex::decode(&origin_pk_str)
+                                        .ok()
+                                        .map(|bytes| STANDARD.encode(&bytes))
                                 },
                                 registered_at: crate::mesh::safe_unix_timestamp(),
                                 expires_at: crate::mesh::safe_unix_timestamp() + 300,

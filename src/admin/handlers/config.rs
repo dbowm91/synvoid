@@ -38,12 +38,14 @@ pub async fn get_main_config(
 ) -> Result<Json<MainConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
 
-    let mut config_value = serde_json::to_value(&config.main)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut config_value =
+        serde_json::to_value(&config.main).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     redact_admin_token(&mut config_value);
 
-    Ok(Json(MainConfigResponse { config: config_value }))
+    Ok(Json(MainConfigResponse {
+        config: config_value,
+    }))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

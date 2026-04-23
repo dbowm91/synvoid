@@ -1,9 +1,33 @@
 use axum::{routing::get, Json, Router};
 use std::sync::Arc;
 use utoipa::openapi;
-use utoipa::OpenApi;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi};
 
 use crate::admin::state::AdminState;
+
+struct AddBearerAuth;
+
+impl Modify for AddBearerAuth {
+    fn modify(&self, openapi: &mut openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearer_auth",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("Token")
+                        .description(Some("Bearer authentication using API token. Include token in Authorization header: Bearer <token>".to_string()))
+                        .build(),
+                ),
+            );
+        }
+        openapi.security = Some(vec![openapi::security::SecurityRequirement::new(
+            "bearer_auth",
+            std::iter::empty::<&str>(),
+        )]);
+    }
+}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -23,6 +47,7 @@ use crate::admin::state::AdminState;
     components(
         schemas()
     ),
+    modifiers(&AddBearerAuth),
     paths(
         crate::admin::handlers::stats::get_summary,
         crate::admin::handlers::stats::get_sites_stats,
@@ -557,6 +582,31 @@ mod tests {
             schema_count >= 50,
             "Should have at least 50 schemas defined, found {}",
             schema_count
+        );
+    }
+
+    #[test]
+    fn test_openapi_security_scheme() {
+        let openapi = MaluWafOpenApi::openapi();
+
+        assert!(
+            openapi.components.is_some(),
+            "OpenAPI should have components"
+        );
+        let components = openapi.components.unwrap();
+        assert!(
+            !components.security_schemes.is_empty(),
+            "OpenAPI should have security schemes"
+        );
+        assert!(
+            components.security_schemes.contains_key("bearer_auth"),
+            "OpenAPI should have bearer_auth security scheme. Found: {:?}",
+            components.security_schemes.keys().collect::<Vec<_>>()
+        );
+
+        assert!(
+            openapi.security.is_some(),
+            "OpenAPI should have security requirements"
         );
     }
 }

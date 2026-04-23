@@ -433,8 +433,7 @@ impl SsrfDetector {
             });
         }
 
-        if self.block_private_ips && Self::contains_private_ip_or_localhost(decoded_lower.clone())
-        {
+        if self.block_private_ips && Self::contains_private_ip_or_localhost(decoded_lower.clone()) {
             tracing::warn!(
                 attack_type = "ssrf",
                 location = %location,

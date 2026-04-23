@@ -81,6 +81,10 @@ pub fn get_master_socket_path() -> PathBuf {
     get_secure_socket_path("master.sock")
 }
 
+pub fn get_static_worker_socket_path() -> PathBuf {
+    get_secure_socket_path("static-worker.sock")
+}
+
 pub fn get_versioned_master_socket_path(generation: u32) -> PathBuf {
     get_secure_socket_path(&format!("master-{}.sock", generation))
 }

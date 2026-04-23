@@ -21,8 +21,10 @@ use super::ipc::{
     WorkerMetricsPayload, WorkerStatus,
 };
 
-pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 use super::ipc_rate_limit::IpcRateLimiter;
+use super::ipc_signed::IpcSigner;
+
+pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -98,6 +100,7 @@ pub struct ProcessManager {
     unified_server_port: Arc<PLRwLock<Option<u16>>>,
     block_store: Option<Arc<crate::block_store::BlockStore>>,
     ipc_rate_limiter: IpcRateLimiter,
+    ipc_signer: Option<Arc<IpcSigner>>,
     static_worker_cache_hits: Arc<AtomicU64>,
     static_worker_cache_misses: Arc<AtomicU64>,
     request_logs: Arc<PLRwLock<VecDeque<RequestLogPayload>>>,
@@ -149,6 +152,10 @@ impl ProcessManager {
             config.ipc_rate_limit.max_burst,
         );
 
+        let ipc_signer = config
+            .ipc_session_key
+            .map(|key| Arc::new(IpcSigner::new(&key)));
+
         let dynamic_config = crate::config::ProcessManagerConfig {
             min_workers: config.min_workers,
             max_workers: config.max_workers,
@@ -180,6 +187,7 @@ impl ProcessManager {
                 unified_server_port: Arc::new(PLRwLock::new(None)),
                 block_store,
                 ipc_rate_limiter,
+                ipc_signer,
                 static_worker_cache_hits: Arc::new(AtomicU64::new(0)),
                 static_worker_cache_misses: Arc::new(AtomicU64::new(0)),
                 request_logs: Arc::new(PLRwLock::new(VecDeque::with_capacity(10000))),
@@ -879,7 +887,12 @@ impl ProcessManager {
         let mut static_worker = self.static_worker.write();
         if let Some(worker) = static_worker.as_mut() {
             *worker.status_mut() = WorkerStatus::Ready;
-            tracing::info!("Static worker {} is ready", worker_id);
+
+            if self.ipc_signer.is_some() {
+                tracing::info!("Static worker {} is ready (signing enabled)", worker_id);
+            } else {
+                tracing::info!("Static worker {} is ready (signing disabled)", worker_id);
+            }
         }
     }
 

@@ -57,9 +57,9 @@ pub use socket_fd::{
 };
 pub use socket_path::{
     cleanup_old_master_sockets, find_active_master_socket, get_current_master_generation,
-    get_master_socket_path, get_secure_socket_path, get_versioned_master_socket_path,
-    next_master_generation, resolve_master_socket_for_upgrade, set_master_generation,
-    set_socket_permissions,
+    get_master_socket_path, get_secure_socket_path, get_static_worker_socket_path,
+    get_versioned_master_socket_path, next_master_generation, resolve_master_socket_for_upgrade,
+    set_master_generation, set_socket_permissions,
 };
 pub use worker::{
     BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,

@@ -360,8 +360,8 @@ impl YaraRulesManager {
             None
         };
 
-        let rules_content = std::fs::read_to_string(&rules_path)
-            .map_err(YaraRulesError::IoError)?;
+        let rules_content =
+            std::fs::read_to_string(&rules_path).map_err(YaraRulesError::IoError)?;
 
         if rules_content.is_empty() {
             return Ok(());
@@ -383,7 +383,7 @@ impl YaraRulesManager {
         Ok(())
     }
 
-fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
+    fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         let Some(dir) = self.rules_dir() else {
             return Ok(());
         };
@@ -395,17 +395,14 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
 
         let version = self.current_version.read().clone();
 
-        std::fs::create_dir_all(&dir)
-            .map_err(YaraRulesError::IoError)?;
+        std::fs::create_dir_all(&dir).map_err(YaraRulesError::IoError)?;
 
         let rules_path = dir.join("current_rules.yar");
-        std::fs::write(&rules_path, &rules)
-            .map_err(YaraRulesError::IoError)?;
+        std::fs::write(&rules_path, &rules).map_err(YaraRulesError::IoError)?;
 
         if let Some(v) = version {
             let version_path = dir.join("version.txt");
-            std::fs::write(&version_path, &v)
-                .map_err(YaraRulesError::IoError)?;
+            std::fs::write(&version_path, &v).map_err(YaraRulesError::IoError)?;
         }
 
         tracing::debug!("Saved YARA rules to disk");
@@ -1073,7 +1070,8 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
 
     pub fn apply_rules_from_feed(&self) -> Result<String, YaraRulesError> {
         if let Some(ref feed_manager) = self.feed_manager {
-            let version = feed_manager.apply_rules()
+            let version = feed_manager
+                .apply_rules()
                 .map_err(|_| YaraRulesError::NoFeedManager)?;
             if let Some(rules) = feed_manager.get_rules_for_scanner() {
                 *self.local_rules.write() = Some(rules.clone());
@@ -1453,7 +1451,11 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         self.submissions.read().get(submission_id).cloned()
     }
 
-    pub fn apply_rules_direct(&self, rules: String, version: String) -> Result<String, YaraRulesError> {
+    pub fn apply_rules_direct(
+        &self,
+        rules: String,
+        version: String,
+    ) -> Result<String, YaraRulesError> {
         if !self.is_global() {
             return Err(YaraRulesError::NotGlobalNodeForDirectApply);
         }
@@ -1483,7 +1485,11 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
     pub fn broadcast_approved_rules(&self, version: &str) -> Result<(), YaraRulesError> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
-            let rules = self.local_rules.read().clone().ok_or(YaraRulesError::NoLocalRules)?;
+            let rules = self
+                .local_rules
+                .read()
+                .clone()
+                .ok_or(YaraRulesError::NoLocalRules)?;
 
             let signer_public_key = self
                 .signer
@@ -1591,18 +1597,19 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         self.data_dir.as_ref().map(|d| d.join("yara_submissions"))
     }
 
-    fn save_submission_to_disk(&self, submission: &YaraRuleSubmission) -> Result<(), YaraRulesError> {
+    fn save_submission_to_disk(
+        &self,
+        submission: &YaraRuleSubmission,
+    ) -> Result<(), YaraRulesError> {
         let Some(dir) = self.submissions_dir() else {
             return Ok(());
         };
 
         let path = dir.join(format!("{}.json", submission.submission_id));
 
-        let json = serde_json::to_string_pretty(submission)
-            .map_err(YaraRulesError::JsonError)?;
+        let json = serde_json::to_string_pretty(submission).map_err(YaraRulesError::JsonError)?;
 
-        std::fs::create_dir_all(&dir)
-            .map_err(YaraRulesError::IoError)?;
+        std::fs::create_dir_all(&dir).map_err(YaraRulesError::IoError)?;
 
         std::fs::write(&path, json).map_err(YaraRulesError::IoError)?;
 
@@ -1619,8 +1626,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
             return Ok(());
         }
 
-        let entries = std::fs::read_dir(&dir)
-            .map_err(YaraRulesError::IoError)?;
+        let entries = std::fs::read_dir(&dir).map_err(YaraRulesError::IoError)?;
 
         let mut loaded = 0;
         for entry in entries.flatten() {
@@ -1662,8 +1668,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         let path = dir.join(format!("{}.json", submission_id));
 
         if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(YaraRulesError::IoError)?;
+            std::fs::remove_file(&path).map_err(YaraRulesError::IoError)?;
             tracing::debug!("Deleted submission {} from disk", submission_id);
         }
 

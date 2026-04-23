@@ -202,7 +202,6 @@ impl RecordStoreManager {
                                 &signed_record.signature,
                                 &pk_bytes,
                             )
-
                         })
                         .unwrap_or(false)
                 } else {
@@ -488,7 +487,6 @@ impl RecordStoreManager {
                                 &signed_record.signature,
                                 &pk_bytes,
                             )
-
                         })
                         .unwrap_or(false)
                 } else {
@@ -571,7 +569,6 @@ impl RecordStoreManager {
                                 &signed_record.signature,
                                 &pk_bytes,
                             )
-
                         })
                         .unwrap_or(false)
                 } else {

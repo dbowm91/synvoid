@@ -1,6 +1,9 @@
 use std::io::{self, Read, Write};
 use std::sync::{Arc, LazyLock, Mutex};
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use hmac::{Hmac, Mac};
 use sha3::Sha3_256;
 
@@ -107,8 +110,53 @@ impl IpcSigner {
     }
 
     pub fn try_from_env() -> Option<Self> {
-        let key = if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
-            let key_hex = std::fs::read_to_string(&key_file).ok()?.trim().to_string();
+        #[cfg(unix)]
+        {
+            use libc::O_EXCL;
+            if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+                let file = match std::fs::File::options()
+                    .read(true)
+                    .custom_flags(O_EXCL)
+                    .open(&key_file)
+                {
+                    Ok(f) => f,
+                    Err(_) => return None,
+                };
+                let mut key_hex = String::new();
+                std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex)
+                    .ok()?;
+                let _ = file;
+                std::fs::remove_file(&key_file).ok();
+                let key_hex = key_hex.trim();
+                if key_hex.len() != 64 {
+                    return None;
+                }
+                let mut key = [0u8; 32];
+                let mut valid = true;
+                for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+                    if chunk.len() != 2 {
+                        valid = false;
+                        break;
+                    }
+                    let Ok(s) = std::str::from_utf8(chunk) else {
+                        valid = false;
+                        break;
+                    };
+                    match u8::from_str_radix(s, 16) {
+                        Ok(b) => key[i] = b,
+                        Err(_) => {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                if !valid {
+                    return None;
+                }
+                return Some(Self { key });
+            }
+        }
+        if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
             if key_hex.len() != 64 {
                 return None;
             }
@@ -134,39 +182,9 @@ impl IpcSigner {
             if !valid {
                 return None;
             }
-            let _ = std::fs::remove_file(&key_file);
-            key
-        } else if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
-            if key_hex.len() != 64 {
-                return None;
-            }
-            let mut key = [0u8; 32];
-            let mut valid = true;
-            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-                if chunk.len() != 2 {
-                    valid = false;
-                    break;
-                }
-                let Ok(s) = std::str::from_utf8(chunk) else {
-                    valid = false;
-                    break;
-                };
-                match u8::from_str_radix(s, 16) {
-                    Ok(b) => key[i] = b,
-                    Err(_) => {
-                        valid = false;
-                        break;
-                    }
-                }
-            }
-            if !valid {
-                return None;
-            }
-            key
-        } else {
-            return None;
-        };
-        Some(Self { key })
+            return Some(Self { key });
+        }
+        None
     }
 
     pub fn sign(&self, data: &[u8]) -> [u8; HMAC_SIZE] {
@@ -541,8 +559,8 @@ pub fn generate_session_key() -> [u8; 32] {
 #[cfg(unix)]
 fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
     use std::fs::OpenOptions;
-    use std::os::unix::fs::OpenOptionsExt;
     use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
 
     let file = OpenOptions::new()
         .read(true)

@@ -135,10 +135,7 @@ impl MeshMessageSigner {
 
         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
             Ok(pk) => pk
-                .verify(
-                    content,
-                    &ed25519_dalek::Signature::from_bytes(&sig_array),
-                )
+                .verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array))
                 .is_ok(),
             Err(_) => false,
         }
@@ -1063,7 +1060,16 @@ impl From<&crate::config::site::ProxyCacheConfig> for ProxyCachePreferences {
     }
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub struct MeshCapabilities {
     pub can_route: bool,
     pub can_proxy: bool,
@@ -1280,7 +1286,18 @@ pub enum HealthStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum ThreatType {
     Unspecified,
     IpBlock,
@@ -1293,7 +1310,18 @@ pub enum ThreatType {
     CertBlock,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum ThreatSeverity {
     Unspecified,
     Low,
@@ -1302,7 +1330,9 @@ pub enum ThreatSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+)]
 pub struct ThreatIndicator {
     pub threat_type: ThreatType,
     pub indicator_value: String,
@@ -1319,7 +1349,9 @@ pub struct ThreatIndicator {
     pub signer_public_key: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+)]
 pub struct DhtRecord {
     pub key: String,
     pub value: Vec<u8>,

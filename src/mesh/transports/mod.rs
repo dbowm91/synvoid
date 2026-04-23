@@ -13,7 +13,18 @@ pub mod stack;
 
 pub use crate::mesh::transport_core::MeshTransportError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum MeshTransportType {

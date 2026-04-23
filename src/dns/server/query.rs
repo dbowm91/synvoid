@@ -1005,9 +1005,10 @@ impl DnsServer {
 
             // NXDOMAIN NSEC/NSEC3 proof
             // Use suffix index for O(k) lookup instead of O(n) full scan
-            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&qname, |zone| {
-                zone.nsec_enabled || zone.nsec3_enabled
-            }) {
+            if let Some(zone) = ctx
+                .zones
+                .find_by_suffix_with_filter(&qname, |zone| zone.nsec_enabled || zone.nsec3_enabled)
+            {
                 let origin = zone.origin.clone();
                 if zone.nsec_enabled {
                     let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);

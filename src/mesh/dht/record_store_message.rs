@@ -105,11 +105,12 @@ impl RecordStoreManager {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
-                            .decode(signer_public_key)
-                            .unwrap_or_default()
-                            };
-                            if !signer.verify(content.as_bytes(), signature, &pk_bytes) {
-                            tracing::warn!(                                "DhtRecordAnnounce signature verification failed from {}",
+                                .decode(signer_public_key)
+                                .unwrap_or_default()
+                        };
+                        if !signer.verify(content.as_bytes(), signature, &pk_bytes) {
+                            tracing::warn!(
+                                "DhtRecordAnnounce signature verification failed from {}",
                                 from_node
                             );
                             return None;

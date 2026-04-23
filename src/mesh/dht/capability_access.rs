@@ -41,11 +41,7 @@ impl CapabilityAccessVerifier {
         }
     }
 
-    pub fn verify_capability_for_key(
-        &self,
-        node_id: &str,
-        key: &str,
-    ) -> bool {
+    pub fn verify_capability_for_key(&self, node_id: &str, key: &str) -> bool {
         let Some((required_capability, _)) = Self::key_requires_capability(key) else {
             return true;
         };
@@ -83,11 +79,7 @@ impl CapabilityAccessVerifier {
         }
     }
 
-    pub fn verify_node_has_capability(
-        &self,
-        node_id: &str,
-        capability: &str,
-    ) -> bool {
+    pub fn verify_node_has_capability(&self, node_id: &str, capability: &str) -> bool {
         let attestation = (self.verify_fn)(node_id, capability);
 
         match attestation {
@@ -111,18 +103,23 @@ mod tests {
 
     #[test]
     fn test_key_requires_capability_yara() {
-        let (cap, name) = CapabilityAccessVerifier::key_requires_capability("yara_rules_manifest:node123").unwrap();
+        let (cap, name) =
+            CapabilityAccessVerifier::key_requires_capability("yara_rules_manifest:node123")
+                .unwrap();
         assert_eq!(cap, "waf");
         assert_eq!(name, "YaraRulesManifest");
 
-        let (cap, name) = CapabilityAccessVerifier::key_requires_capability("yara_rule:abc123").unwrap();
+        let (cap, name) =
+            CapabilityAccessVerifier::key_requires_capability("yara_rule:abc123").unwrap();
         assert_eq!(cap, "waf");
         assert_eq!(name, "YaraRuleContent");
     }
 
     #[test]
     fn test_key_requires_capability_threat() {
-        let (cap, name) = CapabilityAccessVerifier::key_requires_capability("threat_indicator:1.2.3.4:IpBlock").unwrap();
+        let (cap, name) =
+            CapabilityAccessVerifier::key_requires_capability("threat_indicator:1.2.3.4:IpBlock")
+                .unwrap();
         assert_eq!(cap, "threat_intel");
         assert_eq!(name, "ThreatIndicator");
     }

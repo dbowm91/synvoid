@@ -180,7 +180,10 @@ fn main() {
     if args.export_api_spec {
         use maluwaf::admin::openapi::MaluWafOpenApi;
         let spec = MaluWafOpenApi::openapi_json();
-        println!("{}", serde_json::to_string_pretty(&spec.0).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&spec.0).unwrap_or_default()
+        );
         std::process::exit(0);
     }
 
@@ -396,6 +399,7 @@ fn main() {
             args.config_path,
             args.master_socket,
             args.log_level,
+            None,
         );
 
         let rt = tokio::runtime::Builder::new_multi_thread()

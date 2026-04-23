@@ -90,6 +90,9 @@ pub enum DhtKey {
         node_id: String,
         capability: String,
     },
+    EdgeAttestation {
+        node_id: String,
+    },
     ServerlessFunction {
         function_name: String,
     },
@@ -281,6 +284,12 @@ impl DhtKey {
         }
     }
 
+    pub fn edge_attestation(node_id: &str) -> Self {
+        DhtKey::EdgeAttestation {
+            node_id: node_id.to_string(),
+        }
+    }
+
     pub fn serverless_function(function_name: &str) -> Self {
         DhtKey::ServerlessFunction {
             function_name: function_name.to_string(),
@@ -407,6 +416,9 @@ impl DhtKey {
             } => {
                 format!("capability_attestation:{}:{}", node_id, capability)
             }
+            DhtKey::EdgeAttestation { node_id } => {
+                format!("edge_attestation:{}", node_id)
+            }
             DhtKey::ServerlessFunction { function_name } => {
                 format!("serverless_function:{}", function_name)
             }
@@ -524,6 +536,9 @@ impl DhtKey {
                 node_id: parts[1].to_string(),
                 capability: parts[2].to_string(),
             },
+            "edge_attestation" if parts.len() >= 2 => DhtKey::EdgeAttestation {
+                node_id: parts[1].to_string(),
+            },
             "serverless_function" if parts.len() >= 2 => DhtKey::ServerlessFunction {
                 function_name: parts[1..].join(":"),
             },
@@ -570,6 +585,7 @@ impl DhtKey {
                 | DhtKey::YaraChunk { .. }
                 | DhtKey::NodeCapability { .. }
                 | DhtKey::CapabilityAttestation { .. }
+                | DhtKey::EdgeAttestation { .. }
                 | DhtKey::OriginReachability { .. }
                 | DhtKey::OriginPenalty { .. }
                 | DhtKey::UpstreamOwnershipChallenge(_)
@@ -633,6 +649,7 @@ impl DhtKey {
             DhtKey::YaraChunk { .. } => "yara_chunk",
             DhtKey::NodeCapability { .. } => "node_capability",
             DhtKey::CapabilityAttestation { .. } => "capability_attestation",
+            DhtKey::EdgeAttestation { .. } => "edge_attestation",
             DhtKey::OriginReachability { .. } => "origin_reachability",
             DhtKey::VerificationTask { .. } => "verification_task",
             DhtKey::OriginPenalty { .. } => "origin_penalty",
@@ -679,6 +696,7 @@ impl DhtKey {
             DhtKey::YaraChunk { .. } => None,
             DhtKey::NodeCapability { .. } => None,
             DhtKey::CapabilityAttestation { .. } => None,
+            DhtKey::EdgeAttestation { .. } => None,
             DhtKey::OriginReachability { .. } => None,
             DhtKey::VerificationTask { .. } => None,
             DhtKey::OriginPenalty { .. } => None,

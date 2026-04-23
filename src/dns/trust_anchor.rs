@@ -486,7 +486,8 @@ impl TrustAnchorManager {
                     );
                     return Rfc5011Event::KeyIgnored {
                         key_tag,
-                        reason: "missing key was never valid, requires digest verification".to_string(),
+                        reason: "missing key was never valid, requires digest verification"
+                            .to_string(),
                     };
                 }
                 anchor.state = TrustAnchorState::Pending;
@@ -633,7 +634,8 @@ impl TrustAnchorManager {
                         );
                         return Rfc5011Event::KeyIgnored {
                             key_tag,
-                            reason: "missing key was never valid, requires digest verification".to_string(),
+                            reason: "missing key was never valid, requires digest verification"
+                                .to_string(),
                         };
                     }
                     let computed_digest = match crate::dns::dnssec::compute_ds_digest(
@@ -1457,7 +1459,10 @@ mod tests {
 
         let event = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         match event {
-            Rfc5011Event::KeyIgnored { key_tag: kt, reason } => {
+            Rfc5011Event::KeyIgnored {
+                key_tag: kt,
+                reason,
+            } => {
                 assert_eq!(kt, key_tag);
                 assert!(reason.contains("never valid"));
             }
@@ -1481,17 +1486,19 @@ mod tests {
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
         let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
-        manager.add_anchor(
-            format!("{}-8", key_tag),
-            key_tag,
-            8,
-            public_key.clone(),
-        ).expect("add_anchor should succeed");
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .expect("add_anchor should succeed");
 
         let anchors = manager.anchors.read();
-        let anchor = anchors.get(&format!("{}-8", key_tag)).expect("anchor should exist");
+        let anchor = anchors
+            .get(&format!("{}-8", key_tag))
+            .expect("anchor should exist");
         assert_eq!(anchor.state, TrustAnchorState::Valid);
-        assert!(anchor.trust_point > 0, "trust_point should be set for Valid anchor");
+        assert!(
+            anchor.trust_point > 0,
+            "trust_point should be set for Valid anchor"
+        );
         drop(anchors);
 
         let mut anchors = manager.anchors.write();

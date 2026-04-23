@@ -9,14 +9,46 @@ use tokio::time::timeout;
 
 use crate::config::ConnectionLimitsConfig;
 
+const NUM_SHARDS: usize = 64;
+
+#[inline]
+fn ip_shard_index(ip: &IpAddr) -> usize {
+    let hash = match ip {
+        IpAddr::V4(v4) => {
+            let mut h: u64 = 5381;
+            for &byte in &v4.octets() {
+                h = h.wrapping_mul(33).wrapping_add(byte as u64);
+            }
+            h
+        }
+        IpAddr::V6(v6) => {
+            let mut h: u64 = 5381;
+            for &byte in &v6.octets() {
+                h = h.wrapping_mul(33).wrapping_add(byte as u64);
+            }
+            h
+        }
+    };
+    (hash as usize) % NUM_SHARDS
+}
+
+#[inline]
+fn site_shard_index(site_id: &str) -> usize {
+    let mut hash: u64 = 5381;
+    for byte in site_id.as_bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(*byte as u64);
+    }
+    (hash as usize) % NUM_SHARDS
+}
+
 pub struct ConnectionLimiter {
     config: ConnectionLimitsConfig,
     total_connections: AtomicU32,
     connection_queue: RwLock<Vec<mpsc::Sender<ConnectionToken>>>,
-    ip_connections: RwLock<HashMap<IpAddr, AtomicU32>>,
-    ip_burst_tokens: RwLock<HashMap<IpAddr, AtomicU32>>,
-    site_connections: RwLock<HashMap<String, HashMap<IpAddr, AtomicU32>>>,
-    site_total_connections: RwLock<HashMap<String, AtomicU32>>,
+    ip_connections: Vec<RwLock<HashMap<IpAddr, AtomicU32>>>,
+    ip_burst_tokens: Vec<RwLock<HashMap<IpAddr, AtomicU32>>>,
+    site_connections: Vec<RwLock<HashMap<String, HashMap<IpAddr, AtomicU32>>>>,
+    site_total_connections: Vec<RwLock<HashMap<String, AtomicU32>>>,
 }
 
 #[derive(Debug)]
@@ -28,14 +60,24 @@ pub struct ConnectionToken {
 
 impl ConnectionLimiter {
     pub fn new(config: ConnectionLimitsConfig) -> Arc<Self> {
+        let mut ip_connections = Vec::with_capacity(NUM_SHARDS);
+        let mut ip_burst_tokens = Vec::with_capacity(NUM_SHARDS);
+        let mut site_connections = Vec::with_capacity(NUM_SHARDS);
+        let mut site_total_connections = Vec::with_capacity(NUM_SHARDS);
+        for _ in 0..NUM_SHARDS {
+            ip_connections.push(RwLock::new(HashMap::new()));
+            ip_burst_tokens.push(RwLock::new(HashMap::new()));
+            site_connections.push(RwLock::new(HashMap::new()));
+            site_total_connections.push(RwLock::new(HashMap::new()));
+        }
         Arc::new(Self {
             config,
             total_connections: AtomicU32::new(0),
             connection_queue: RwLock::new(Vec::new()),
-            ip_connections: RwLock::new(HashMap::new()),
-            ip_burst_tokens: RwLock::new(HashMap::new()),
-            site_connections: RwLock::new(HashMap::new()),
-            site_total_connections: RwLock::new(HashMap::new()),
+            ip_connections,
+            ip_burst_tokens,
+            site_connections,
+            site_total_connections,
         })
     }
 
@@ -64,7 +106,8 @@ impl ConnectionLimiter {
 
         let effective_max_per_site = max_per_site.unwrap_or(10000);
         let site_count = if max_per_site.is_some() {
-            let sites = self.site_total_connections.read();
+            let idx = site_shard_index(site_id);
+            let sites = self.site_total_connections[idx].read();
             sites
                 .get(site_id)
                 .map(|c| c.load(Ordering::Acquire))
@@ -78,8 +121,9 @@ impl ConnectionLimiter {
         }
 
         let effective_max_per_ip = max_per_ip.unwrap_or(config.max_connections_per_ip);
+        let ip_idx = ip_shard_index(&client_ip);
         let ip_count = {
-            let ips = self.ip_connections.read();
+            let ips = self.ip_connections[ip_idx].read();
             ips.get(&client_ip)
                 .map(|c| c.load(Ordering::Acquire))
                 .unwrap_or(0)
@@ -90,7 +134,7 @@ impl ConnectionLimiter {
         }
 
         let can_burst = {
-            let burst_tokens = self.ip_burst_tokens.read();
+            let burst_tokens = self.ip_burst_tokens[ip_idx].read();
             burst_tokens
                 .get(&client_ip)
                 .map(|t| t.load(Ordering::Acquire))
@@ -104,7 +148,8 @@ impl ConnectionLimiter {
         self.total_connections.fetch_add(1, Ordering::Release);
 
         if max_per_site.is_some() {
-            let mut site_totals = self.site_total_connections.write();
+            let site_idx = site_shard_index(site_id);
+            let mut site_totals = self.site_total_connections[site_idx].write();
             let counter = site_totals
                 .entry(site_id.to_string())
                 .or_insert_with(|| AtomicU32::new(0));
@@ -112,13 +157,14 @@ impl ConnectionLimiter {
         }
 
         {
-            let mut ips = self.ip_connections.write();
+            let mut ips = self.ip_connections[ip_idx].write();
             let counter = ips.entry(client_ip).or_insert_with(|| AtomicU32::new(0));
             counter.fetch_add(1, Ordering::Release);
         }
 
         if max_per_site.is_some() {
-            let mut sites = self.site_connections.write();
+            let site_idx = site_shard_index(site_id);
+            let mut sites = self.site_connections[site_idx].write();
             let site_ips = sites
                 .entry(site_id.to_string())
                 .or_insert_with(HashMap::new);
@@ -129,7 +175,7 @@ impl ConnectionLimiter {
         }
 
         if can_burst > 0 {
-            let burst_tokens = self.ip_burst_tokens.write();
+            let burst_tokens = self.ip_burst_tokens[ip_idx].write();
             if let Some(tokens) = burst_tokens.get(&client_ip) {
                 let _ =
                     tokens.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
@@ -149,8 +195,9 @@ impl ConnectionLimiter {
         max_per_site: Option<u32>,
     ) -> Result<(), ConnectionLimitError> {
         let effective_max_per_site = max_per_site.unwrap_or(10000);
+        let idx = site_shard_index(site_id);
         let site_count = {
-            let sites = self.site_total_connections.read();
+            let sites = self.site_total_connections[idx].read();
             sites
                 .get(site_id)
                 .map(|c| c.load(Ordering::Acquire))
@@ -207,42 +254,50 @@ impl ConnectionLimiter {
             .total_connections
             .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
 
-        let mut site_totals = self.site_total_connections.write();
-        if let Some(counter) = site_totals.get(&token.site_id) {
-            let prev =
-                counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
-            if prev == Ok(1) {
-                site_totals.remove(&token.site_id);
-            }
-        }
-        drop(site_totals);
+        let site_idx = site_shard_index(&token.site_id);
+        let ip_idx = ip_shard_index(&token.client_ip);
 
-        let mut ips = self.ip_connections.write();
-        if let Some(counter) = ips.get(&token.client_ip) {
-            let prev =
-                counter.fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
-            if prev == Ok(1) {
-                ips.remove(&token.client_ip);
-                let mut burst_tokens = self.ip_burst_tokens.write();
-                burst_tokens.insert(
-                    token.client_ip,
-                    AtomicU32::new(self.config.connection_burst),
-                );
-            }
-        }
-        drop(ips);
-
-        let mut sites = self.site_connections.write();
-        if let Some(site_ips) = sites.get_mut(&token.site_id) {
-            if let Some(counter) = site_ips.get(&token.client_ip) {
+        {
+            let mut site_totals = self.site_total_connections[site_idx].write();
+            if let Some(counter) = site_totals.get(&token.site_id) {
                 let prev = counter
                     .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
                 if prev == Ok(1) {
-                    site_ips.remove(&token.client_ip);
+                    site_totals.remove(&token.site_id);
                 }
             }
-            if site_ips.is_empty() {
-                sites.remove(&token.site_id);
+        }
+
+        {
+            let mut ips = self.ip_connections[ip_idx].write();
+            if let Some(counter) = ips.get(&token.client_ip) {
+                let prev = counter
+                    .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+                if prev == Ok(1) {
+                    ips.remove(&token.client_ip);
+                    drop(ips);
+                    let mut burst_tokens = self.ip_burst_tokens[ip_idx].write();
+                    burst_tokens.insert(
+                        token.client_ip,
+                        AtomicU32::new(self.config.connection_burst),
+                    );
+                }
+            }
+        }
+
+        {
+            let mut sites = self.site_connections[site_idx].write();
+            if let Some(site_ips) = sites.get_mut(&token.site_id) {
+                if let Some(counter) = site_ips.get(&token.client_ip) {
+                    let prev = counter
+                        .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+                    if prev == Ok(1) {
+                        site_ips.remove(&token.client_ip);
+                    }
+                }
+                if site_ips.is_empty() {
+                    sites.remove(&token.site_id);
+                }
             }
         }
     }
@@ -252,7 +307,8 @@ impl ConnectionLimiter {
     }
 
     pub fn active_connections_for_ip(&self, ip: IpAddr) -> u32 {
-        let ips = self.ip_connections.read();
+        let idx = ip_shard_index(&ip);
+        let ips = self.ip_connections[idx].read();
         ips.get(&ip).map(|c| c.load(Ordering::Acquire)).unwrap_or(0)
     }
 

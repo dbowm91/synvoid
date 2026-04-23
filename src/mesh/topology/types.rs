@@ -381,7 +381,18 @@ impl ShardedPeerStore {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
 pub enum PeerStatus {
     Connecting,
     Handshake,
@@ -458,7 +469,6 @@ impl PeerState {
     pub fn idle_secs(&self) -> u64 {
         crate::mesh::safe_unix_timestamp().saturating_sub(self.last_seen)
     }
-
 }
 
 #[derive(Debug, Clone)]

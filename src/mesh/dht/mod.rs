@@ -628,7 +628,6 @@ pub struct PeerPersistenceData {
     pub saved_at: u64,
 }
 
-
 #[derive(Debug, Clone)]
 pub enum DhtEvent {
     PeerDiscovered(String),

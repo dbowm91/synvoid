@@ -315,7 +315,11 @@ impl YaraRuleFeedManager {
         self.add_to_history(version, rules, source_enum);
     }
 
-    pub fn apply_rules_from_mesh(&self, version: String, rules: String) -> Result<String, YaraFeedError> {
+    pub fn apply_rules_from_mesh(
+        &self,
+        version: String,
+        rules: String,
+    ) -> Result<String, YaraFeedError> {
         *self.current_rules.write() = Some(rules.clone());
         self.add_to_history(version.clone(), rules, YaraRuleSource::MeshApproved);
         *self.current_version.write() = Some(version.clone());
@@ -356,7 +360,9 @@ impl YaraRuleFeedManager {
             history.len() - 2
         };
 
-        let target = history.get(target_idx).ok_or(YaraFeedError::InvalidHistoryIndex)?;
+        let target = history
+            .get(target_idx)
+            .ok_or(YaraFeedError::InvalidHistoryIndex)?;
 
         let target_version_str = target.version.clone();
         let target_rules_str = target.rules.clone();

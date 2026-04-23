@@ -35,8 +35,7 @@ use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
 use crate::proxy::{
-    build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
-    ProxyServer,
+    build_forward_headers, build_headers_to_filter, filter_response_headers_buf, ProxyServer,
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
@@ -717,7 +716,14 @@ impl HttpsServer {
 
         let body_bytes = if let Some(cl) = content_length {
             if cl > CHUNK_WAF_THRESHOLD {
-                Self::collect_body_with_chunk_waf(body, &waf, client_ip, content_length, http_config.max_streaming_body_size).await
+                Self::collect_body_with_chunk_waf(
+                    body,
+                    &waf,
+                    client_ip,
+                    content_length,
+                    http_config.max_streaming_body_size,
+                )
+                .await
             } else {
                 match body.collect().await {
                     Ok(collected) => collected.to_bytes(),
@@ -1751,9 +1757,16 @@ impl HttpsServer {
         B::Error: std::fmt::Debug,
     {
         use crate::http::shared_handler::BodyCollectionProtocol;
-        collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Https, content_length, max_body_size)
-            .await
-            .unwrap_or_else(|_| Bytes::from_static(&[]))
+        collect_body_with_chunk_waf_impl(
+            body,
+            waf,
+            client_ip,
+            BodyCollectionProtocol::Https,
+            content_length,
+            max_body_size,
+        )
+        .await
+        .unwrap_or_else(|_| Bytes::from_static(&[]))
     }
 }
 

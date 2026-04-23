@@ -3390,6 +3390,60 @@ impl HttpServer {
                     }
                 };
 
+                let (method, body_vec) = match &msg {
+                    WsMessage::Text(t) => ("TEXT-RESPONSE", t.as_bytes().to_vec()),
+                    WsMessage::Binary(b) => ("BINARY-RESPONSE", b.to_vec()),
+                    WsMessage::Close(_) => {
+                        let _ = client_tx.send(msg).await;
+                        break;
+                    }
+                    WsMessage::Ping(data) => {
+                        let _ = client_tx.send(WsMessage::Pong(data.clone())).await;
+                        continue;
+                    }
+                    WsMessage::Pong(_) => continue,
+                    WsMessage::Frame(_) => continue,
+                };
+
+                let mut proto_request = ProtocolRequest {
+                    client_ip: SocketAddr::from((client_ip, 0)),
+                    method: method.to_string(),
+                    path: "/upstream-response".to_string(),
+                    headers: HashMap::new(),
+                    body: body_vec,
+                    protocol: ProtocolType::WebSocket,
+                    metadata: HashMap::new(),
+                };
+
+                let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+                match action {
+                    WafAction::Block => {
+                        tracing::warn!(
+                            client_ip = %client_ip,
+                            "WebSocket upstream response blocked by WAF"
+                        );
+                        counter!("maluwaf.websocket.blocked").increment(1);
+                        let _ = client_tx.close().await;
+                        should_close.stop();
+                        break;
+                    }
+                    WafAction::LogOnly => {
+                        tracing::debug!(
+                            client_ip = %client_ip,
+                            "WebSocket upstream response logged by WAF"
+                        );
+                        counter!("maluwaf.websocket.logged").increment(1);
+                    }
+                    WafAction::Allow => {}
+                    WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
+                        tracing::debug!(
+                            client_ip = %client_ip,
+                            "WebSocket upstream response WAF action {:?} treated as allow",
+                            action
+                        );
+                    }
+                }
+
                 if let Err(e) = client_tx.send(msg).await {
                     tracing::debug!("Client WebSocket send error: {}", e);
                     break;
@@ -3545,6 +3599,60 @@ impl HttpServer {
                         break;
                     }
                 };
+
+                let (method, body_vec) = match &msg {
+                    WsMessage::Text(t) => ("TEXT-RESPONSE", t.as_bytes().to_vec()),
+                    WsMessage::Binary(b) => ("BINARY-RESPONSE", b.to_vec()),
+                    WsMessage::Close(_) => {
+                        let _ = client_tx.send(msg).await;
+                        break;
+                    }
+                    WsMessage::Ping(data) => {
+                        let _ = client_tx.send(WsMessage::Pong(data.clone())).await;
+                        continue;
+                    }
+                    WsMessage::Pong(_) => continue,
+                    WsMessage::Frame(_) => continue,
+                };
+
+                let mut proto_request = ProtocolRequest {
+                    client_ip: SocketAddr::from((client_ip, 0)),
+                    method: method.to_string(),
+                    path: "/appserver-response".to_string(),
+                    headers: HashMap::new(),
+                    body: body_vec,
+                    protocol: ProtocolType::WebSocket,
+                    metadata: HashMap::new(),
+                };
+
+                let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+                match action {
+                    WafAction::Block => {
+                        tracing::warn!(
+                            client_ip = %client_ip,
+                            "WebSocket appserver response blocked by WAF"
+                        );
+                        counter!("maluwaf.websocket.blocked").increment(1);
+                        let _ = client_tx.close().await;
+                        should_close.stop();
+                        break;
+                    }
+                    WafAction::LogOnly => {
+                        tracing::debug!(
+                            client_ip = %client_ip,
+                            "WebSocket appserver response logged by WAF"
+                        );
+                        counter!("maluwaf.websocket.logged").increment(1);
+                    }
+                    WafAction::Allow => {}
+                    WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
+                        tracing::debug!(
+                            client_ip = %client_ip,
+                            "WebSocket appserver response WAF action {:?} treated as allow",
+                            action
+                        );
+                    }
+                }
 
                 if let Err(e) = client_tx.send(msg).await {
                     tracing::debug!("Client WebSocket send error: {}", e);
@@ -3865,9 +3973,15 @@ impl HttpServer {
         B::Error: std::fmt::Debug,
     {
         use crate::http::shared_handler::BodyCollectionProtocol;
-        let result =
-            collect_body_with_chunk_waf_impl(body, waf, client_ip, BodyCollectionProtocol::Http, content_length, max_body_size)
-                .await;
+        let result = collect_body_with_chunk_waf_impl(
+            body,
+            waf,
+            client_ip,
+            BodyCollectionProtocol::Http,
+            content_length,
+            max_body_size,
+        )
+        .await;
         match &result {
             Ok(body) => {
                 *request_body_size = body.len() as u64;

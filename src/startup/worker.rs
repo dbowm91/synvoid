@@ -8,15 +8,18 @@ pub fn build_static_worker_args(
     config_path: Option<PathBuf>,
     master_socket: Option<PathBuf>,
     log_level: Option<String>,
+    ipc_session_key: Option<[u8; 32]>,
 ) -> StaticWorkerArgs {
     let paths = PlatformPaths::new();
+    let ipc_key_hex =
+        ipc_session_key.map(|key| key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
     StaticWorkerArgs {
         worker_id: static_worker_id.unwrap_or(0),
         config_path: config_path.unwrap_or_else(|| PathBuf::from("config")),
         master_socket: master_socket.unwrap_or_else(|| paths.master_socket_path()),
         static_worker_socket: paths.static_worker_socket_path(),
         log_level,
-        ipc_key: None,
+        ipc_key: ipc_key_hex,
     }
 }
 

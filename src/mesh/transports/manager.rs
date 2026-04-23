@@ -513,18 +513,29 @@ impl MeshTransportManager {
         function_name: &str,
         peer_node_id: &str,
         request: http::Request<B>,
-    ) -> Result<http::Response<http_body_util::combinators::BoxBody<bytes::Bytes, std::convert::Infallible>>, String>
+    ) -> Result<
+        http::Response<
+            http_body_util::combinators::BoxBody<bytes::Bytes, std::convert::Infallible>,
+        >,
+        String,
+    >
     where
         B: http_body::Body + Send + 'static,
         B::Data: Send,
         B::Error: std::fmt::Debug + Send,
     {
-        let quic = self.quic_transport.read().clone().ok_or_else(|| {
-            "No QUIC transport available for serverless proxy".to_string()
-        })?;
+        let quic = self
+            .quic_transport
+            .read()
+            .clone()
+            .ok_or_else(|| "No QUIC transport available for serverless proxy".to_string())?;
         let transport = quic.get_inner();
         transport
-            .proxy_http_request(peer_node_id, &format!("serverless:{}", function_name), request)
+            .proxy_http_request(
+                peer_node_id,
+                &format!("serverless:{}", function_name),
+                request,
+            )
             .await
             .map_err(|e| e.to_string())
     }

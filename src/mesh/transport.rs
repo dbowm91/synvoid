@@ -1115,7 +1115,10 @@ impl MeshTransport {
                         config_json.len(),
                         timestamp
                     );
-                    (signer.sign(msg.as_bytes()), Some(signer.get_public_key().into()))
+                    (
+                        signer.sign(msg.as_bytes()),
+                        Some(signer.get_public_key().into()),
+                    )
                 } else {
                     (Vec::new(), None)
                 };
