@@ -603,6 +603,31 @@ body {{
             .to_string()
     }
 
+    pub fn generate_file_type_icon_svg(&self, filename: &str) -> String {
+        let ext = filename.split('.').next_back().map(|e| e.to_lowercase());
+        match ext.as_deref() {
+            Some("js") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9v6M15 9v6M9 15h6"/></svg>"#.to_string(),
+            Some("ts") | Some("tsx") | Some("jsx") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9v6M15 9v6M9 15h6"/></svg>"#.to_string(),
+            Some("py") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>"#.to_string(),
+            Some("rs") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>"#.to_string(),
+            Some("html") | Some("htm") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/></svg>"#.to_string(),
+            Some("css") | Some("scss") | Some("sass") | Some("less") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>"#.to_string(),
+            Some("json") | Some("yaml") | Some("yml") | Some("toml") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/></svg>"#.to_string(),
+            Some("md") | Some("txt") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>"#.to_string(),
+            Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("svg") | Some("webp") | Some("ico") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>"#.to_string(),
+            Some("pdf") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><path d="M9 15v-2h2a1 1 0 010 2H9zM9 11h2"/></svg>"#.to_string(),
+            Some("zip") | Some("tar") | Some("gz") | Some("bz2") | Some("xz") | Some("7z") | Some("rar") => r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><path d="M12 11v6M9 14h6"/></svg>"#.to_string(),
+            _ => self.generate_file_icon_svg(),
+        }
+    }
+
+    pub fn generate_parent_dir_icon_svg(&self) -> String {
+        r#"<svg class="waf-dir-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M15 18l-6-6 6-6"/>
+</svg>"#
+            .to_string()
+    }
+
     pub fn generate_directory_listing_css(&self) -> String {
         let s = &self.config.spacing;
 

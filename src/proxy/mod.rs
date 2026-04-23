@@ -857,7 +857,7 @@ impl ProxyServer {
                     let status = response.status().as_u16();
 
                     if let Some(config) = retry_config {
-                        if is_retryable_status_impl(status, config) && attempt <= max_retries {
+                        if is_retryable_status_impl(status, config) && attempt < max_retries {
                             if let Some(ref be) = current_backend {
                                 pool.mark_failed(&be.url);
                             }
@@ -883,7 +883,7 @@ impl ProxyServer {
                         let should_retry = (config.retry_on_error && is_connection_error_impl(&*e))
                             || (config.retry_on_timeout && is_timeout_error_impl(&*e));
 
-                        if should_retry && attempt <= max_retries {
+                        if should_retry && attempt < max_retries {
                             if let Some(ref be) = current_backend {
                                 pool.mark_failed(&be.url);
                             }
@@ -903,7 +903,7 @@ impl ProxyServer {
                         pool.mark_failed(&be.url);
                     }
 
-                    if attempt <= max_retries {
+                    if attempt < max_retries {
                         continue;
                     }
 

@@ -261,11 +261,12 @@ impl SsrfDetector {
         input.contains('%')
     }
 
-    fn contains_private_ip_or_localhost(input: &str) -> bool {
-        let input_lower: Cow<str> = if input.bytes().any(|b| b.is_ascii_uppercase()) {
-            Cow::Owned(input.to_lowercase())
-        } else {
-            Cow::Borrowed(input)
+    fn contains_private_ip_or_localhost(input: Cow<str>) -> bool {
+        let input_lower: Cow<str> = match &input {
+            Cow::Borrowed(s) if s.bytes().any(|b| b.is_ascii_uppercase()) => {
+                Cow::Owned(s.to_lowercase())
+            }
+            _ => input,
         };
 
         if Self::has_ipv6_zone_id(&input_lower) {
@@ -432,7 +433,7 @@ impl SsrfDetector {
             });
         }
 
-        if self.block_private_ips && Self::contains_private_ip_or_localhost(decoded_lower.as_ref())
+        if self.block_private_ips && Self::contains_private_ip_or_localhost(decoded_lower.clone())
         {
             tracing::warn!(
                 attack_type = "ssrf",

@@ -143,6 +143,16 @@ impl ShardedZoneStore {
     /// Find a zone by suffix match (qname ends with origin) using suffix index.
     /// This is O(k) where k is the number of labels in qname, not O(n) zones.
     pub fn find_by_suffix(&self, qname: &str) -> Option<Zone> {
+        self.find_by_suffix_with_filter(qname, |_| true)
+    }
+
+    /// Find a zone by suffix match with an optional filter predicate.
+    /// First does O(k) suffix lookup via index, then applies the filter.
+    pub fn find_by_suffix_with_filter<P: Fn(&Zone) -> bool>(
+        &self,
+        qname: &str,
+        filter: P,
+    ) -> Option<Zone> {
         let qname_lower = qname.trim_end_matches('.').to_lowercase();
         let qname_lower = qname_lower.as_str();
 
@@ -150,7 +160,11 @@ impl ShardedZoneStore {
         for i in 0..labels.len() {
             let suffix = labels[i..].join(".");
             if let Some(origin_key) = self.suffix_index.read().get(&suffix) {
-                return self.get(origin_key);
+                if let Some(zone) = self.get(origin_key) {
+                    if filter(&zone) {
+                        return Some(zone);
+                    }
+                }
             }
         }
         None

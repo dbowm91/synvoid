@@ -55,6 +55,10 @@ pub enum DhtKey {
     YaraRulesManifest {
         node_id: String,
     },
+    YaraChunk {
+        content_hash: String,
+        index: u32,
+    },
     NodeCapability {
         node_id: String,
         capability: String,
@@ -215,6 +219,13 @@ impl DhtKey {
         }
     }
 
+    pub fn yara_chunk(content_hash: impl AsRef<str>, index: u32) -> Self {
+        DhtKey::YaraChunk {
+            content_hash: content_hash.as_ref().to_string(),
+            index,
+        }
+    }
+
     pub fn node_capability(node_id: &str, capability: &str) -> Self {
         DhtKey::NodeCapability {
             node_id: node_id.to_string(),
@@ -339,6 +350,12 @@ impl DhtKey {
             }
             DhtKey::YaraRulesManifest { node_id } => {
                 format!("yara_rules_manifest:{}", node_id)
+            }
+            DhtKey::YaraChunk {
+                content_hash,
+                index,
+            } => {
+                format!("yara_chunk:{}:{}", content_hash, index)
             }
             DhtKey::NodeCapability {
                 node_id,
@@ -470,6 +487,10 @@ impl DhtKey {
             "yara_rules_manifest" if parts.len() >= 2 => DhtKey::YaraRulesManifest {
                 node_id: parts[1].to_string(),
             },
+            "yara_chunk" if parts.len() >= 3 => DhtKey::YaraChunk {
+                content_hash: parts[1].to_string(),
+                index: parts[2].parse().unwrap_or(0),
+            },
             "node_capability" if parts.len() >= 3 => DhtKey::NodeCapability {
                 node_id: parts[1].to_string(),
                 capability: parts[2].to_string(),
@@ -546,6 +567,7 @@ impl DhtKey {
                 | DhtKey::SiteContentVersion(_)
                 | DhtKey::YaraRuleContent { .. }
                 | DhtKey::YaraRulesManifest { .. }
+                | DhtKey::YaraChunk { .. }
                 | DhtKey::NodeCapability { .. }
                 | DhtKey::CapabilityAttestation { .. }
                 | DhtKey::OriginReachability { .. }
@@ -608,6 +630,7 @@ impl DhtKey {
             DhtKey::PoisonedImage { .. } => "poisoned_image",
             DhtKey::YaraRuleContent { .. } => "yara_rule_content",
             DhtKey::YaraRulesManifest { .. } => "yara_rules_manifest",
+            DhtKey::YaraChunk { .. } => "yara_chunk",
             DhtKey::NodeCapability { .. } => "node_capability",
             DhtKey::CapabilityAttestation { .. } => "capability_attestation",
             DhtKey::OriginReachability { .. } => "origin_reachability",
@@ -653,6 +676,7 @@ impl DhtKey {
             DhtKey::PoisonedImage { .. } => None,
             DhtKey::YaraRuleContent { .. } => None,
             DhtKey::YaraRulesManifest { .. } => None,
+            DhtKey::YaraChunk { .. } => None,
             DhtKey::NodeCapability { .. } => None,
             DhtKey::CapabilityAttestation { .. } => None,
             DhtKey::OriginReachability { .. } => None,

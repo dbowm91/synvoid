@@ -34,6 +34,7 @@ pub enum ChallengeType {
 }
 
 pub struct MeshSecurityChallengeManager {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     active_challenges: Arc<RwLock<HashMap<String, MeshSecurityChallenge>>>,
@@ -260,6 +261,7 @@ impl MeshSecurityChallengeManager {
 
 #[derive(Debug, Clone)]
 pub struct MeshAttackDetector {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     suspicious_patterns: Arc<RwLock<Vec<SuspiciousPattern>>>,

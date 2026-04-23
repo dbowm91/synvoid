@@ -491,8 +491,9 @@ impl DirectoryListingTemplate {
                 format!("{}{}/", parent, "")
             };
             format!(
-                r#"<tr><td colspan="3"><a href="{href}">..</a></td></tr>"#,
-                href = parent_href.trim_end_matches('/')
+                r#"<tr><td colspan="3"><a href="{href}">{icon}..</a></td></tr>"#,
+                href = parent_href.trim_end_matches('/'),
+                icon = self.renderer.generate_parent_dir_icon_svg()
             )
         } else {
             String::new()
@@ -503,7 +504,7 @@ impl DirectoryListingTemplate {
             let icon = if entry.is_dir {
                 self.renderer.generate_folder_icon_svg()
             } else {
-                self.renderer.generate_file_icon_svg()
+                self.renderer.generate_file_type_icon_svg(&entry.name)
             };
             rows.push_str(&format!(
                 r#"<tr>

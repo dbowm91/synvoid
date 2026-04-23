@@ -2,11 +2,16 @@
 
 A high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. MaluWAF provides comprehensive protection for multiple websites with advanced attack detection, flood mitigation, and bot blocking capabilities. For certain tech stacks MaluWAF provides a full rust alternative to traditional methods from application to client. It also provides for an experimental P2P CDN architecture using a mesh network.
 
-## Worker Design
+## Worker Architecture
 
-The goal is to separate processes in case of a crash, making sure the master worker is rock solid (which is in turn watched by the overseer process) and allows for zero-downtime updates.
+MaluWAF uses an overseer → master → worker model:
+- **Overseer**: Monitors master process health and handles zero-downtime updates
+- **Master**: Spawns and manages the worker, handles IPC
+- **Worker**: Single `UnifiedServer` with one Tokio runtime handles all request processing
 
-It uses an overseer --> master --> worker model. The overseer is a process thats primary purpose is to make sure the master process is working and to handle updates without stopping. The master process spawns the worker, which handles all request processing. Since tokio runtime can scale vertically very well, utilizing all cores if allowed, all requests are handled in a single unified worker. The one downside to this approach is that we can't so easily adjust the number of threads without restarting the loop, so for now this requires restarting that worker. This is different than how NGINX does this, but effectively tokio is doing a similar thing.
+The unified worker uses a single Tokio async event loop which is far more efficient than spawning multiple worker processes. A single event loop handles thousands of sites concurrently via cooperative scheduling. Internal parallelism is achieved using `tokio::spawn()` and async concurrency primitives (semaphores, channels) within the worker.
+
+The worker uses a `TcpListenerPool` for accepting connections, auto-tuned via `std::thread::available_parallelism()` (default: CPU cores, fallback: 4). For scaling, tune `tcp.worker_pool_size` or use async primitives within the existing event loop. **Do NOT increase `unified_server_workers` for scaling purposes** — this only affects how many Tokio runtime threads are used at startup, not request throughput.
 
 ## Better results on linux
 

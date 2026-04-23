@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use http::{Response, StatusCode};
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
@@ -338,7 +338,7 @@ where
     const CHUNK_SIZE: usize = 64 * 1024;
     const MAX_ACCUMULATED_WAF: usize = 512 * 1024;
 
-    let mut accumulated = Vec::new();
+    let mut accumulated = BytesMut::new();
     if let Some(cl) = content_length {
         accumulated.reserve(cl);
     }
@@ -380,7 +380,7 @@ where
                             "Request body exceeded max streaming body size limit"
                         );
                         metrics::counter!(protocol.counter_too_large()).increment(1);
-                        return Ok(Bytes::from(accumulated));
+                        return Ok(accumulated.freeze());
                     }
                 }
             }
@@ -391,5 +391,5 @@ where
         }
     }
 
-    Ok(Bytes::from(accumulated))
+    Ok(accumulated.freeze())
 }

@@ -960,19 +960,12 @@ impl DnsServer {
 
         if dnssec_ok {
             // Check for NODATA: name exists but requested type does not
-            if let Some((origin, zone)) = ctx
-                .zones
-                .find(|origin, zone| {
-                    let origin_lower = origin.to_lowercase();
-                    (qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower)
-                        && (zone.nsec_enabled || zone.nsec3_enabled)
-                        && Self::is_nodata(zone, &qname, record_type)
-                })
-                .map(|zone| {
-                    let origin = zone.origin.clone();
-                    (origin, zone)
-                })
-            {
+            // Use suffix index for O(k) lookup instead of O(n) full scan
+            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&qname, |zone| {
+                (zone.nsec_enabled || zone.nsec3_enabled)
+                    && Self::is_nodata(zone, &qname, record_type)
+            }) {
+                let origin = zone.origin.clone();
                 let soa_record = zone
                     .records
                     .get(&("@".to_string(), RecordType::SOA))
@@ -1011,18 +1004,11 @@ impl DnsServer {
             }
 
             // NXDOMAIN NSEC/NSEC3 proof
-            if let Some((origin, zone)) = ctx
-                .zones
-                .find(|origin, zone| {
-                    let origin_lower = origin.to_lowercase();
-                    (qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower)
-                        && (zone.nsec_enabled || zone.nsec3_enabled)
-                })
-                .map(|zone| {
-                    let origin = zone.origin.clone();
-                    (origin, zone)
-                })
-            {
+            // Use suffix index for O(k) lookup instead of O(n) full scan
+            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&qname, |zone| {
+                zone.nsec_enabled || zone.nsec3_enabled
+            }) {
+                let origin = zone.origin.clone();
                 if zone.nsec_enabled {
                     let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);
                     if !nsec_records.is_empty() {

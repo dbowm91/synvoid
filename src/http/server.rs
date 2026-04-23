@@ -995,9 +995,26 @@ impl HttpServer {
                 }
             }
         } else {
-            match body.collect().await {
-                Ok(collected) => collected.to_bytes(),
-                Err(_) => Bytes::from_static(&[]),
+            match Self::collect_body_with_chunk_waf(
+                body,
+                &waf,
+                client_ip,
+                &mut request_body_size,
+                content_length,
+                http_config.max_streaming_body_size,
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(()) => {
+                    return Ok(Self::build_response_with_alt_svc(
+                        413,
+                        "Request body too large".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
             }
         };
         request_body_size = full_body.len() as u64;

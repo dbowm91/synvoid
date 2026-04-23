@@ -31,6 +31,8 @@ pub enum YaraRulesError {
     NotEdgeNode,
     #[error("Rules size exceeds limit: {size}KB > {limit}KB max")]
     RulesSizeExceedsLimit { size: usize, limit: usize },
+    #[error("Rule count exceeds limit: {count} > 100 max")]
+    RuleCountExceedsLimit { count: usize },
     #[error("Rules must contain at least one 'rule' declaration")]
     MissingRuleDeclaration,
     #[error("Invalid YARA syntax: {0}")]
@@ -569,7 +571,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
 
         if is_chunked {
             for (i, chunk) in chunks.iter().enumerate() {
-                let chunk_key = format!("yara_chunk:{}:{}", content_hash, i);
+                let chunk_key = DhtKey::yara_chunk(&content_hash, i as u32).as_str();
                 let chunk_signature = if let Some(ref signer) = self.signer {
                     let content = format!(
                         "{}:{}:{}:{}:{}",
@@ -711,7 +713,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         let mut timestamp: u64 = 0;
 
         for i in 0..chunk_count {
-            let chunk_key = format!("yara_chunk:{}:{}", content_hash, i);
+            let chunk_key = DhtKey::yara_chunk(content_hash, i as u32).as_str();
             let Some(chunk_record) = record_store.get(&chunk_key) else {
                 tracing::warn!("YARA sync: missing chunk {} for hash {}", i, content_hash);
                 return None;
@@ -1234,10 +1236,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
 
         let rule_count = rules.matches("rule ").count();
         if rule_count > 100 {
-            tracing::warn!(
-                "Submission contains {} rules, which is unusually high",
-                rule_count
-            );
+            return Err(YaraRulesError::RuleCountExceedsLimit { count: rule_count });
         }
 
         Ok(())

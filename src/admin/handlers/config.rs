@@ -14,6 +14,14 @@ pub struct MainConfigResponse {
     pub config: serde_json::Value,
 }
 
+fn redact_admin_token(config: &mut serde_json::Value) {
+    if let serde_json::Value::Object(ref mut map) = config {
+        if let Some(serde_json::Value::Object(ref mut admin)) = map.get_mut("admin") {
+            admin.remove("token");
+        }
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/config/main",
@@ -30,10 +38,12 @@ pub async fn get_main_config(
 ) -> Result<Json<MainConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
 
-    Ok(Json(MainConfigResponse {
-        config: serde_json::to_value(&config.main)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-    }))
+    let mut config_value = serde_json::to_value(&config.main)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    redact_admin_token(&mut config_value);
+
+    Ok(Json(MainConfigResponse { config: config_value }))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

@@ -30,6 +30,7 @@ pub struct EncryptedConfig {
 }
 
 pub struct SecureConfigManager {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     encryption_key: Arc<RwLock<Option<[u8; CONFIG_ENCRYPTION_KEY_SIZE]>>>,
@@ -312,6 +313,7 @@ pub enum SecureConfigError {
 }
 
 pub struct SecurityEventLogger {
+    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     config: Arc<MeshConfig>,
     event_buffer: Arc<RwLock<Vec<SecurityEvent>>>,

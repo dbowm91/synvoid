@@ -35,7 +35,8 @@ use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
 use crate::proxy::{
-    build_forward_headers, build_headers_to_filter, filter_response_headers, ProxyServer,
+    build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
+    ProxyServer,
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
@@ -1402,11 +1403,15 @@ impl HttpsServer {
                                             .cloned()
                                             .collect::<Vec<_>>(),
                                     );
-                                    let filtered_headers =
-                                        filter_response_headers(&parts.headers, &headers_to_filter);
+                                    let mut filtered_headers_buf = Vec::new();
+                                    filter_response_headers_buf(
+                                        &parts.headers,
+                                        &headers_to_filter,
+                                        &mut filtered_headers_buf,
+                                    );
 
                                     let mut builder = Response::builder().status(status);
-                                    for (key, value) in filtered_headers {
+                                    for (key, value) in filtered_headers_buf {
                                         builder = builder.header(&key, &value);
                                     }
 
@@ -1548,11 +1553,15 @@ impl HttpsServer {
                             bw.record_site_egress(&site_id, body_len);
                         }
 
-                        let headers =
-                            filter_response_headers(&resp_parts.headers, &headers_to_filter);
+                        let mut filtered_headers_buf = Vec::new();
+                        filter_response_headers_buf(
+                            &resp_parts.headers,
+                            &headers_to_filter,
+                            &mut filtered_headers_buf,
+                        );
 
                         let mut builder = Response::builder().status(status);
-                        for (key, value) in headers {
+                        for (key, value) in filtered_headers_buf {
                             builder = builder.header(&key, &value);
                         }
 

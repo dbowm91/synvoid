@@ -1732,7 +1732,9 @@ impl ThreatIntelligenceManager {
                 if sync_enabled && last_sync.elapsed().as_secs() > initial_interval {
                     tracing::debug!("Threat sync interval reached, syncing from DHT");
 
-                    if let Err(e) = threat_intel.sync_from_dht() {
+                    if threat_intel.config.hub_only_mode && !threat_intel.node_role.is_global() {
+                        tracing::debug!("Skipping DHT sync in hub_only_mode for non-global node");
+                    } else if let Err(e) = threat_intel.sync_from_dht() {
                         tracing::debug!("DHT sync failed: {}", e);
                     } else {
                         threat_intel.record_sync();
@@ -1771,7 +1773,11 @@ impl ThreatIntelligenceManager {
             return;
         }
 
-        if self.config.hub_only_mode && !self.node_role.is_global() {
+        if !self.node_role.is_global() {
+            return;
+        }
+
+        if self.config.hub_only_mode {
             return;
         }
 
