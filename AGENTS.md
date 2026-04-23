@@ -511,7 +511,14 @@ Use `crate::mesh::peer_auth::validate_peer_role()` for centralized global node a
 
 ### TOFU Certificate Pinning
 
-Seed node certificate fingerprints are managed by `MeshCertManager` in `src/mesh/cert.rs`. On first connection, fingerprints are pinned automatically (Trust On First Use). On subsequent connections, fingerprints are verified in `connect_to_peer()` via `verify_seed_fingerprint()`. Pre-configured fingerprints can be set in TOML config via `pinned_cert_fingerprint` on seed nodes.
+Seed node certificate fingerprints are managed by `MeshCertManager` in `src/mesh/cert.rs`. On first connection, fingerprints are pinned automatically (Trust On First Use) unless `require_explicit_fingerprint = true` in `[mesh.seed_tofu]` config. On subsequent connections, fingerprints are verified in `connect_to_peer()` via `verify_seed_fingerprint()`. Pre-configured fingerprints can be set in TOML config via `pinned_cert_fingerprint` on seed nodes.
+
+**Config options:**
+```toml
+[mesh.seed_tofu]
+enabled = true  # Enable TOFU (default: true)
+require_explicit_fingerprint = false  # Reject first connection without explicit fingerprint (default: false)
+```
 
 ### Auth Store Merge Pattern
 
@@ -565,6 +572,27 @@ Key API:
 When modifying zone access code, prefer single-shard operations (`get`, `insert`, `update_zone`) over full-shard iteration (`for_each`, `keys`). The `Arc<ShardedZoneStore>` replaces the former `Arc<RwLock<HashMap<String, Zone>>>` pattern.
 
 **Performance note**: For DNSSEC validation, use `find_by_suffix_with_filter()` instead of `find()` to get O(k) suffix lookup followed by filter, instead of O(n) iteration over all zones.
+
+### DHT Capability-Based Write Authorization
+
+The DHT implements capability-based authorization via `CapabilityAccessVerifier` (`src/mesh/dht/capability_access.rs`). This ensures nodes can only store records for capabilities they possess.
+
+**Key types:**
+- `CapabilityAttestation` - Attests that a node has a specific capability (e.g., "waf", "threat_intel"), signed by a global node
+- `CapabilityAccessVerifier` - Verifies attestations for DHT write operations
+
+**Verification flow:**
+1. `RecordStoreManager` has a `capability_verifier: Option<Arc<CapabilityAccessVerifier>>` field
+2. Before storing a record, `store_record()` in `record_store_crud.rs` calls `verify_capability_for_key()`
+3. `verify_capability_for_key()` checks if the key requires a capability (via `key_requires_capability()`)
+4. If required, the node must have a valid `CapabilityAttestation` from a global node
+
+**Keys that require capability:**
+- `yara_rules_manifest:{node_id}` — requires "waf" capability
+- `yara_rule:{content_hash}` — requires "waf" capability
+- `threat_indicator:{ip}:{threat_type}` — requires "threat_intel" capability
+
+**Configuration:** Use `record_store.set_capability_verifier(Some(verifier))` to enable capability verification.
 
 ## Moka Cache Migration
 
