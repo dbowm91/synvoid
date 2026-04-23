@@ -306,7 +306,7 @@ Keys transition through these states:
 
 ## Implementation Reference
 
-**Consolidated Plan**: See `plans/plan.md` for the current implementation status. This file (`AGENTS.md`) serves as the developer guide; `plans/plan.md` is the source of truth for implementation priorities and status.
+**Consolidated Plan**: See `plans/plan.md` for the current implementation plan. This file (`AGENTS.md`) serves as the developer guide; `plans/plan.md` is the source of truth for implementation priorities, organized into parallelizable waves.
 
 ### Subagent Execution Best Practices
 
@@ -340,18 +340,9 @@ When upgrading tonic from 0.12 to 0.14:
 
 ## Known Code Quality Context
 
-### Compile Blocker
+### Compilation Status
 
-**⚠️ CRITICAL**: The codebase currently fails to compile due to a syntax error in `src/fastcgi/mod.rs:333`. This MUST be fixed before any other work can proceed.
-
-```
-error: unexpected closing delimiter: `}`
-   --> src/fastcgi/mod.rs:333:5
-```
-
-### Clippy and Dead Code Suppressions
-
-`cargo clippy -- -D warnings` passes clean when the codebase compiles.
+The codebase compiles cleanly. `cargo check` and `cargo clippy -- -D warnings` pass without errors.
 
 ### Build Configuration
 
@@ -878,6 +869,39 @@ Covers ThreatIntel indicators, YARA rules, DHT-based distribution, and signature
 - `skills/security_patterns.md` - Security implementation patterns
 - `skills/static_files.md` - Static files and directory listing
 - `skills/waf_bot_detection.md` - WAF and bot detection architecture
+
+## Known Gaps and Unwired Features
+
+These features exist as code but are not fully functional:
+
+| Feature | Location | Issue |
+|---------|----------|-------|
+| `verify_caller_permission()` | `src/serverless/manager.rs:190-282` | Defined but never called; all serverless permission checks bypassed |
+| `CapabilityAccessVerifier` | `src/mesh/backend.rs:55-62` | Created with `None`; `set_capability_verifier()` never called |
+| `broadcast_pending_records()` | `src/mesh/dht/record_store_sync.rs:618` | Defined but never called; DHT records never broadcast |
+| `WasmDistManager` | `src/mesh/wasm_dist.rs:8-11` | Never initialized; dead code. Decision needed: remove or complete |
+| `discover_serverless_functions()` | `src/mesh/transport.rs:637-684` | Defined but never called from mesh connection flow |
+| `is_rate_limited()` | `src/mesh/dht/record_store.rs:371-377` | Exists but not called from `store_record()` |
+
+## Verification Pitfalls
+
+When verifying code claims against the codebase:
+
+1. **Line numbers shift** — Always verify exact line numbers; they may have changed since the plan was written
+2. **`rand::rng()` is a CSPRNG** — In `rand` 0.9+, `rand::rng()` uses `OsRng` as entropy source. It is NOT insecure. However, for defense-in-depth, prefer `OsRng` directly for cryptographic key material
+3. **File paths can be wrong** — The normalizer is at `src/waf/attack_detection/normalizer.rs`, NOT `src/waf/probe_tracker/normalizer.rs`
+4. **Check actual callers** — A function being defined doesn't mean it's called. Use `rg` to verify call sites before claiming something is "unreachable" or "dead code"
+5. **`moka::sync::Cache` API** — Use `entry_count()` not `len()` for getting cache size. The current code already uses the correct API
+
+## Implementation Plan Workflow
+
+When working on items from `plans/plan.md`:
+
+1. **Each wave is independent** — Items within a wave can be assigned to different sub-agents
+2. **Read the source file first** — Understand context before making changes
+3. **Run verification after each item**: `cargo check && cargo clippy --lib -- -D warnings && cargo fmt`
+4. **Report deviations** — If the plan's description doesn't match the code, note it and adapt
+5. **Use `git diff HEAD -- <file>`** to verify sub-agent changes were actually applied
 
 ## Important Notes
 
