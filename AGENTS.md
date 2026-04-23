@@ -102,6 +102,17 @@ cargo test --lib --no-run
 - `src/supervisor/` - Worker supervision
 - `tests/` - Integration and benchmark tests
 
+### Admin API Documentation
+
+The Admin API provides OpenAPI 3.0 documentation at these endpoints:
+
+| Endpoint | Description |
+|---------|-------------|
+| `/api/openapi.json` | Raw OpenAPI 3.0 JSON spec |
+| `/api/docs` | HTML page with links to external Swagger UI |
+
+The API uses Bearer token authentication (add `Authorization: Bearer <token>` header).
+
 ### Architecture Pattern
 
 The overseer/master/worker architecture uses:
@@ -510,6 +521,11 @@ The IPC session key is passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead o
 Use `crate::mesh::peer_auth::validate_peer_role()` for centralized global node authentication. This function validates that peers claiming a global role provide the correct `global_node_key`. Used by both Discovery and WireGuard transports.
 
 **Edge Node PoW Requirement**: Edge nodes MUST provide both `pow_nonce` and `pow_public_key` during authentication. PoW is not optional — if either is missing, authentication fails with error "Edge node X did not provide PoW nonce and public key - PoW is required".
+
+**Edge Node Attestation (Optional)**: Edge nodes can optionally be attested by global nodes. Use `validate_edge_node_with_attestation()` from `src/mesh/peer_auth.rs` to verify an edge node has been attested. This requires:
+- A valid `EdgeAttestation` record in DHT at `edge_attestation:{node_id}`
+- Attestation signed by an authorized global node's public key
+- Non-expired attestation timestamp
 
 ### TOFU Certificate Pinning
 
