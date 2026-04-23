@@ -295,35 +295,10 @@ Keys transition through these states:
 
 ## Planning and Implementation Patterns
 
-The implementation plan was consolidated in `plans/plan.md`. This document contains all implementation items organized into waves for parallel sub-agent execution.
-
-**Current Status** (as of 2026-04-23):
-- ~60+ implementable items across 10 waves
-- **100% COMPLETE** (60/60 items completed, 0 deferred)
-- All security fixes implemented
-- All performance hot-path optimizations implemented
-
 When undertaking new features:
 1. **Research First**: Read relevant `skills/` files and `AGENTS.md` sections.
 2. **Avoid Complex Rewrites**: Maintain the existing architecture unless explicitly authorized to rewrite.
 3. **Follow Existing Patterns**: The codebase has established patterns for common operations (see sections below).
-
-### Wave Structure for Parallel Execution
-
-Each wave can be approached with parallel sub-agents (except Wave A - compile blocker):
-
-| Wave | Focus | Items |
-|------|-------|-------|
-| A | Critical Bug Fixes | 1 (compile blocker) |
-| B | Security Critical | 7 |
-| C | Performance Hot Paths | 8 |
-| D | Mesh & DHT | 10 |
-| E | Stub & Incomplete | 4 |
-| F | OpenAPI & Admin | 6 |
-| G | Documentation | 5 |
-| H | Dependencies | 4 |
-| I | WAF & Detection | 5 |
-| J | Remaining | 7 |
 
 ## Subagent Execution Best Practices
 
@@ -533,6 +508,8 @@ The IPC session key is passed via a temp file (`MALUWAF_IPC_KEY_FILE`) instead o
 ### Peer Role Validation
 
 Use `crate::mesh::peer_auth::validate_peer_role()` for centralized global node authentication. This function validates that peers claiming a global role provide the correct `global_node_key`. Used by both Discovery and WireGuard transports.
+
+**Edge Node PoW Requirement**: Edge nodes MUST provide both `pow_nonce` and `pow_public_key` during authentication. PoW is not optional — if either is missing, authentication fails with error "Edge node X did not provide PoW nonce and public key - PoW is required".
 
 ### TOFU Certificate Pinning
 

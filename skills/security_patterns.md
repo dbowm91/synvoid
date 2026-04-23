@@ -77,11 +77,13 @@ if self.signer.is_none() {
 
 ### Edge Node PoW Revocation Check Order
 
-**Location**: `src/mesh/peer_auth.rs:120-131`
+**Location**: `src/mesh/peer_auth.rs:120-150`
 
-**Issue**: When PoW was provided for edge node authentication, the revocation check was bypassed.
+**Issue**: Edge nodes could bypass PoW requirement by not providing credentials.
 
-**Pattern**: Revocation check must happen BEFORE authentication method dispatch:
+**Pattern**: PoW is REQUIRED for edge nodes - all-or-nothing validation:
+- Edge nodes must provide BOTH `pow_nonce` AND `pow_public_key`
+- If either is missing, authentication fails with error "Edge node X did not provide PoW nonce and public key - PoW is required"
 
 ```rust
 fn validate_edge_node(...) -> Result<(), String> {
@@ -90,15 +92,25 @@ fn validate_edge_node(...) -> Result<(), String> {
         if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
             return Err(format!(
                 "Edge node {} has been revoked: {} (at {})",
-                peer_node_id, revocation_info.reason, revocation_info.revoked_at
+                peer_node_id, revocation_info.reason, revoked_info.revoked_at
             ));
         }
     }
 
-    // Then dispatch to appropriate auth method
-    if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
-        return validate_edge_node_pow(...);
-    }
+    // PoW is REQUIRED - all-or-nothing
+    let (nonce, pow_key) = match (pow_nonce, pow_public_key) {
+        (Some(nonce), Some(pk)) => (nonce, pk),
+        (None, None) => {
+            return Err(format!(
+                "Edge node {} did not provide PoW nonce and public key - PoW is required",
+                peer_node_id
+            ))
+        }
+        // Handle partial submissions with specific errors
+        (None, Some(_)) => return Err(format!("... provided PoW public key but not nonce")),
+        (Some(_), None) => return Err(format!("... provided PoW nonce but not public key")),
+    };
+    validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pow_key))?;
     // ...
 }
 ```
