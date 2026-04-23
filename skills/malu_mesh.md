@@ -270,6 +270,14 @@ Edge connects → Ed25519 signature validation → PoW validation (BOTH required
 
 **Note**: Edge nodes must provide BOTH `pow_nonce` AND `pow_public_key`. If either is missing, authentication fails.
 
+### Optional: Edge Node Attestation
+
+Edge nodes can optionally be attested by global nodes for enhanced trust:
+
+1. Global node creates `EdgeAttestation` record in DHT at `edge_attestation:{node_id}`
+2. Attestation signed by global node's Ed25519 key over `edge:{node_id}:{global_node_id}:{attested_at}`
+3. Other nodes verify via `validate_edge_node_with_attestation()` in `src/mesh/peer_auth.rs`
+
 ### PoW Validation
 
 ```rust
