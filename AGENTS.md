@@ -304,17 +304,14 @@ Keys transition through these states:
 
 **Missing→Pending restoration**: Only keys that were previously Valid (trust_point != 0) can auto-restore via `observe_dnskey_at_root()`. Keys that were never Valid must go through digest verification via `trust_anchor_check()` first.
 
-## Planning and Implementation Patterns
+## Implementation Reference
 
-When undertaking new features:
-1. **Research First**: Read relevant `skills/` files and `AGENTS.md` sections.
-2. **Avoid Complex Rewrites**: Maintain the existing architecture unless explicitly authorized to rewrite.
-3. **Follow Existing Patterns**: The codebase has established patterns for common operations (see sections below).
+**Consolidated Plan**: See `plans/plan.md` for the current implementation status. This file (`AGENTS.md`) serves as the developer guide; `plans/plan.md` is the source of truth for implementation priorities and status.
 
-## Subagent Execution Best Practices
+### Subagent Execution Best Practices
 
 When using subagents to make code changes:
-1. **Always verify the actual code** — subagents may claim a fix was applied but the code still shows the old version. Always read the file directly to confirm.
+1. **Always verify the actual code** — read the file directly to confirm changes were applied
 2. **Run compilation checks** — `cargo clippy --lib -- -D warnings` to catch type errors
 3. **Run tests** — `cargo test --test integration_test` to verify runtime behavior
 4. **Run format check** — `cargo fmt` then `cargo fmt --check` to catch drift
@@ -326,17 +323,6 @@ git diff HEAD -- <file>
 # Or grep for the expected fix
 rg "expected_pattern" <file>
 ```
-
-Common failure mode: subagent reports success but code wasn't actually modified, or was modified incorrectly. This is especially common with:
-- Complex refactoring requiring multi-file changes
-- Architectural changes requiring wiring new components
-- Proto file changes requiring code generation
-- Cases where fix requires understanding existing code patterns
-- Documentation changes (harder to verify than code)
-
-For complex changes, prefer direct implementation or verify each step incrementally.
-
-**Verification for documentation tasks**: When verifying docs changes, use `grep` to search for expected content patterns rather than just reading the file. Subagents may claim docs were updated but the content may be incomplete or incorrect.
 
 ### Module Splitting Decisions
 

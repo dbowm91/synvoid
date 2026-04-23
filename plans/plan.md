@@ -1,690 +1,729 @@
 # MaluWAF Implementation Consolidated Plan
 
 **Last updated**: 2026-04-23
-**Status**: ✅ COMPLETE
+**Status**: ⚠️ IN PROGRESS - Many items remain
+
+---
 
 ## Overview
 
-This document consolidates all implementation items from individual plan files into a single wave-based plan. Each wave represents a set of items that can be implemented in parallel using sub-agents.
+This document consolidates all implementation items from 35 individual plan files into a single wave-based plan. **IMPORTANT**: The previous claim of "100% complete" was inaccurate. Individual plan files show many items still pending implementation.
 
-**Total implementable items**: ~60+
-**Completion**: 100% (60/60 items completed)
-**Deferred items**: None
-**Partial items**: None
-
----
-
-## Items Requiring Attention
-
-All items complete. No remaining issues.
+**Total items identified**: ~150+
+**Completed**: ~40 (based on individual plan verification)
+**Pending**: ~110+
 
 ---
 
-## Wave A: Critical Bug Fixes (Compile Blocker) - ✅ COMPLETE
+## Status Discrepancy Alert
 
-Items that must be fixed first before any other work can proceed.
+The previous `plan.md` claimed 100% completion, but individual plans show:
 
-### A.1: Fix FastCGI Syntax Error
-**Status**: ✅ COMPLETE
+| Plan | Status per File | Items Pending |
+|------|----------------|--------------|
+| plan3.md | PLANNED | 2 code changes |
+| plan4.md | PENDING | ViolationTracker, allocations |
+| plan6.md | PENDING | Template path traversal |
+| plan7.md | PENDING | 9 WASM categories |
+| plan18.md | Draft | 11 reverse proxy issues |
+| plan19.md | Draft | 8 mesh/DHT issues |
+| plan23.md | Draft | 18 performance issues |
+| plan24.md | Draft | 8 security issues |
+| plan25.md | Draft | 20 code quality issues |
+| plan26.md | Draft | Serverless mesh gaps |
+| plan27.md | Draft | YARA/ThreatIntel gaps |
+| plan31.md | - | Dependency security |
+| plan33.md | - | Edge caching issues |
+| plan34.md | - | Test coverage |
+| plan35.md | - | 3 failing DNS tests |
 
-**Problem**: `src/fastcgi/mod.rs:333` has mismatched closing brace causing compile failure.
+---
 
-**Fix**: Removed duplicate/orphaned code in `impl FastCgiResponse` block (lines 319-333). The first `into_http_response` implementation (lines 299-316) was correct; the duplicate code was removed. Also fixed `self.body` move issue by cloning in the unwrap_else fallback.
+## CRITICAL Issues (Fix Immediately)
 
-**Additional fixes made during compilation**:
-- `src/mesh/transport_types.rs:65` - Added missing `Arc` import
-- `src/proxy_cache/store.rs:420` - Fixed typo `inflflight_requests` → `inflight_requests`
-- `src/mesh/threat_intel.rs:1314-1317` - Fixed type mismatch (get_topology returns Arc, not Option)
-- `src/http/server.rs:2758,2831` - Fixed clippy `manual_ignore_case_cmp` warning
-- `src/proxy_cache/store.rs:152` - Added type alias for complex type
+These security vulnerabilities and blocking bugs must be addressed before other work.
 
-**Verification**:
-```bash
-cargo check  # Passes
-cargo clippy --lib -- -D warnings  # Passes
-cargo test --test integration_test  # 242 passed
+### CR-1: PoW Iteration Cap Blocks Edge Nodes
+
+**Plan**: plan19.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `NODE_ID_POW_DIFFICULTY = 64` bits with `MAX_ITERATIONS = 10_000_000`. Probability of success is ~5.4×10^-13 - edge nodes literally cannot connect.
+
+**Fix**: Change difficulty to 16 bits at `src/mesh/dht/routing/node_id.rs:10`
+
+```rust
+pub const NODE_ID_POW_DIFFICULTY: u32 = 16;  // Was: 64
 ```
 
----
-
-## Wave B: Security Critical
-
-High-priority security fixes from plan16 (Security Audit Remediation).
-
-### B.1: DHT Record Signature Requirement
-**Status**: ✅ COMPLETE
-
-**Problem**: Global nodes can store records with empty signatures, enabling malicious data injection.
-
-**Locations fixed**:
-- `src/mesh/dht/mod.rs` - Added `SignatureRequired` error variant
-- `src/mesh/dht/record_store_crud.rs:165` - Now rejects non-local records with empty signatures
-- `src/mesh/dht/record_store_sync.rs:313` - Added early rejection in `handle_record_announce()`
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### B.2: Health Check Timestamp Validation
-**Status**: ✅ COMPLETE
-
-**Problem**: Health check responses echo timestamp back without validation, enabling replay attacks.
-
-**Location**: `src/worker/common.rs:185-206`
-
-**Fix**: Added timestamp validation (MAX_AGE_SECS=30, MAX_FUTURE_SECS=5). Invalid timestamps are rejected.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### B.3: ACME Challenge HMAC Verification
-**Status**: ✅ COMPLETE
-
-**Problem**: `UpstreamOwnershipChallenge` messages have no HMAC/signature verification.
-
-**Location**: `src/mesh/transport_peer.rs:1908-2055`
-
-**Fix**: Added `verify_challenge_signature()` function and call it at start of `handle_upstream_ownership_challenge()`. Verifies Ed25519 signature over `request_id:global_node_id:timestamp`.
-
-**Verification**: `cargo check` passes
-
-### B.4: Edge Node PoW Bypass Fix
-**Status**: ✅ COMPLETE
-
-**Problem**: Edge nodes can bypass signature using trivial PoW (40 bits).
-
-**Fix applied** (2026-04-23):
-- `src/mesh/dht/routing/node_id.rs:10` - PoW difficulty is 64 bits
-- `src/mesh/peer_auth.rs:129-150` - **Updated**: PoW is now REQUIRED (not optional). Edge nodes must provide BOTH `pow_nonce` AND `pow_public_key`. Previously could bypass by not providing any PoW credentials. Now validates all-or-nothing.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### B.5: PID Mismatch Rejection
-**Status**: ✅ COMPLETE
-
-**Problem**: False PID claims generate only warning, not rejection.
-
-**Location**: `src/master/ipc.rs:357-376`
-
-**Fix**: Changed warn to error, added WorkerError send with Critical severity, returns on mismatch.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### B.6: DHT Announce Record Limit
-**Status**: ✅ COMPLETE
-
-**Problem**: No limit on records per `DhtRecordAnnounce` message enables DoS.
-
-**Location**: `src/mesh/dht/record_store_message.rs:77-94`
-
-**Fix**: Added `MAX_RECORDS_PER_ANNOUNCE = 100` constant and enforces limit.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### B.7: DHT get_by_prefix Pagination
-**Status**: ✅ COMPLETE
-
-**Problem**: `get_by_prefix()` has no result limits.
-
-**Locations fixed**:
-- `src/mesh/dht/record_store.rs` - Added `DEFAULT_GET_BY_PREFIX_LIMIT = 100`
-- `src/mesh/dht/record_store_crud.rs` - Updated to pass limit parameter
-- `src/mesh/threat_intel.rs`, `src/mesh/transport.rs`, `src/mesh/yara_rules.rs`, `src/mesh/topology.rs` - Updated callers
-
-**Verification**: `cargo check` passes
+**Verification**: `cargo test --lib mesh::peer_auth::tests::test_edge_node_with_valid_pow_passes`
 
 ---
 
-## Wave C: Performance Hot Paths
+### CR-2: Path Traversal in Template Loading
 
-High-impact performance fixes for 500K rps target from plan14 and plan19.
+**Plan**: plan6.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-### C.1: WAF Detection — Excessive String Allocations
-**Status**: ✅ COMPLETE
+**Problem**: `load_directory_template()` reads custom template paths without validating they're within allowed directories. An attacker can read arbitrary files.
 
-**Problem**: 11 attack detectors × 10 headers × 2 clones = 220 allocations/request.
+**Location**: `src/static_files/directory.rs:30-37`
 
-**Fix**: Modified `contains_private_ip_or_localhost` in `src/waf/attack_detection/ssrf.rs:264-294` to accept `Cow<str>` instead of `&str`, eliminating redundant lowercasing when input is already lowercase.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### C.2: Response Header Filtering — Vec Allocation
-**Status**: ✅ COMPLETE
-
-**Problem**: `filter_response_headers()` allocates Vec on every proxied response in TLS server.
-
-**Fix**: Changed `src/tls/server.rs:1405-1406,1551-1552` to use `filter_response_headers_buf` with pre-allocated buffer instead of the allocating variant.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### C.3: Rate Limiter — Mutex Contention
-**Status**: ✅ COMPLETE (Already Implemented)
-
-**Problem**: `SlottedIpRateLimiter::check_and_increment()` acquires mutex on every request.
-
-**Resolution**: Lock-free pattern already implemented - uses `Vec<AtomicU32>` atomic bitset with `fetch_add` and `fetch_or`, no Mutex used.
-
-### C.4: DNS Zone Store — O(n) Suffix Query
-**Status**: ✅ COMPLETE
-
-**Problem**: `ctx.zones.find()` iterates all 64 shards doing suffix matching with per-zone allocations.
-
-**Fix**: Added `find_by_suffix_with_filter()` method to `src/dns/server/sharded_store.rs:143-171` that uses the existing suffix index for O(k) lookup, then applies filter predicate. Updated `src/dns/server/query.rs:961-1062` to use this new method for DNSSEC NODATA and NXDOMAIN checks.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### C.5: Mesh DHT — JSON Serialization
-**Status**: ✅ COMPLETE
-
-**Fix**: Migrated Mesh DHT serialization from `serde_json` to `postcard` (via `crate::serialization`). 
-- Moved `AnycastNode`, `DnsDomainRegistration`, and other record types to typed Rust structs in `src/mesh/dht/mod.rs` with `Archive` (rkyv) and `Serialize/Deserialize` derives.
-- Updated `MeshMessageSigner` to use binary `&[u8]` for signing and verification.
-- Replaced `Instant` with `u64` (Unix timestamps) in `PeerState` and `PeerScore` for stable persistence.
-- Updated all call sites in `record_store_dns.rs`, `record_store_crud.rs`, `threat_intel.rs`, and `yara_rules.rs` to use the new typed binary API.
-
-**Verification**: `cargo check` and `cargo test --test dht_integration_test` (90 tests passed).
-
-### C.6: Fix Compile Error Typo (plan19)
-**Status**: ✅ COMPLETE (Already Fixed)
-
-**Resolution**: `inflight_requests` spelling was correct in source. Plan documentation had stale reference.
-
-### C.7: Connection Token Leak (plan19)
-**Status**: ✅ COMPLETE (Already Implemented)
-
-**Resolution**: `ConnectionTokenGuard` with `Drop` implementation already exists in `src/http/server.rs:39-66`.
-
-### C.8: Async Disk Write Race (plan19)
-**Status**: ✅ COMPLETE (Dormant Issue)
-
-**Resolution**: `write_to_disk_async` function at `src/proxy_cache/store.rs:662-667` has the issue but the function is never called. If used, would cause race condition - marked as known dormant issue.
+**Fix**: Add path validation using canonical path resolution and prefix check.
 
 ---
 
-## Wave D: Mesh & DHT Improvements
+### CR-3: Stored XSS in Directory Listing
 
-From plan2 (Mesh & DHT Security) and plan7 (YARA & ThreatIntel).
+**Plan**: plan24.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-### D.1: DHT Capability-Based Write Authorization
-**Status**: ✅ COMPLETE
+**Problem**: User-controlled filenames rendered in HTML without escaping. `entry.name` NOT escaped in `src/static_files/directory.rs:120-127` and `src/theme/dir_listing.rs:509-520`.
 
-**Problem**: DHT allows nodes to store records for capabilities they don't possess.
-
-**Fix**: Wired `CapabilityAccessVerifier` into `RecordStoreManager`:
-1. Added `capability_verifier: Option<Arc<CapabilityAccessVerifier>>` field to `RecordStoreManager` in `src/mesh/dht/record_store.rs`
-2. Added `set_capability_verifier()` method for runtime configuration
-3. Added capability verification check in `store_record()` at `src/mesh/dht/record_store_crud.rs:141-150`
-
-The verifier checks if a key requires a capability (e.g., `yara_rules_manifest:*` requires "waf" capability) and validates the node has a valid `CapabilityAttestation` from a global node.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### D.2: Edge Node Approval Workflow
-**Status**: ✅ COMPLETE
-
-**Problem**: Edge nodes self-authenticate without authorization from global node.
-
-**Fix**: 
-1. Added `EdgeAttestation` struct in `src/mesh/dht/edge_attestation.rs` with fields: node_id, global_node_id, attested_at, expires_at, signature
-2. Added `DhtKey::EdgeAttestation { node_id }` variant in `src/mesh/dht/keys.rs`
-3. Added `validate_edge_node_with_attestation()` function in `src/mesh/peer_auth.rs`
-4. Exposed `EdgeAttestation` in `src/mesh/dht/mod.rs`
-5. Implemented attestation verification using Ed25519 signature over `edge:{node_id}:{global_node_id}:{attested_at}`
-6. Added `/api/docs` endpoint for API documentation with external Swagger UI links
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### D.3: VerifiedUpstream Signature Verification
-**Status**: ✅ COMPLETE
-
-**Problem**: Origin signature not verified during storage.
-
-**Fix**: `find_verified_upstreams_for_site()` at `src/mesh/topology.rs:880-924` now verifies Ed25519 signature over `upstream_id:origin_node_id:upstream_url:registered_at` before accepting a VerifiedUpstream record. The signature is verified against the global node's public key looked up from DHT via `global_node_key:{global_node_id}`.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### D.4: ThreatIntel Re-Announce Global Restriction
-**Status**: ✅ COMPLETE
-
-**Problem**: ThreatIntel re-announce NOT restricted to global nodes (unlike YARA).
-
-**Fix**: Added `if !self.node_role.is_global() { return; }` check in `src/mesh/threat_intel.rs:1776-1778` to restrict re-announce to global nodes only.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### D.5: ThreatIntel hub_only_mode Sync Check
-**Status**: ✅ COMPLETE
-
-**Problem**: Non-hub nodes sync from DHT when `hub_only_mode = true`.
-
-**Fix**: Added `hub_only_mode` check in `src/mesh/threat_intel.rs:1732-1743` before calling `sync_from_dht()`.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### D.6: YARA Chunk Keys Type Safety
-**Status**: ✅ COMPLETE
-
-**Problem**: YARA chunk keys constructed manually at `src/mesh/yara_rules.rs:572`, bypass DhtKey type safety.
-
-**Fix**: Added `YaraChunk { content_hash: String, index: u32 }` variant to `DhtKey` enum in `src/mesh/dht/keys.rs` with:
-- Constructor: `DhtKey::yara_chunk(content_hash, index)`
-- `as_str()` serialization: `yara_chunk:{content_hash}:{index}`
-- `from_str()` parsing for `yara_chunk` prefix
-- `is_public()` and `key_type()` coverage
-
-Replaced manual string construction in `src/mesh/yara_rules.rs:572,714` with `DhtKey::yara_chunk()`.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### D.10: Reduce VerifiedUpstream Cache TTL
-**Status**: ✅ COMPLETE
-
-**Problem**: 5 minute TTL (300s) on verified upstream cache causes stale data.
-
-**Fix**: Changed `verified_upstream_cache` TTL from 300s to 60s in `src/mesh/topology.rs:64`.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
+**Fix**: Apply `escape_html()` to `entry.name` before rendering.
 
 ---
 
-## Wave E: Stub & Incomplete Items
+### CR-4: Blocking Call Deadlock Risk
 
-From plan9 (Stub & Incomplete Code).
+**Plan**: plan25.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-### E.1: Rule Feed Placeholder Validation
-**Status**: ✅ COMPLETE (Already Implemented)
+**Problem**: `AiHoneypotResponder::respond()` calls `Handle::current().block_on()` which deadlocks if called from within async context.
 
-**Resolution**: Warning already implemented at `src/waf/rule_feed.rs:320-327` - `parse_embedded_key()` logs a warning when `key_str == PLACEHOLDER_KEY`.
+**Location**: `src/honeypot_port/responders/mod.rs:159-160`
 
-### E.2: CLI Auth Token Placeholder Validation
-**Status**: ✅ COMPLETE (Already Implemented)
-
-**Resolution**: Validation already implemented in `src/config/admin.rs:18` - `TOKEN_PLACEHOLDER` is in `WEAK_TOKEN_PATTERNS` and gets caught by `resolve_token()` validation.
-
-### E.3: Implement `resolve_txt_record()`
-**Status**: ✅ COMPLETE (Already Implemented)
-
-**Resolution**: Function already implemented at `src/mesh/transport_dns.rs:1183-1200` using `dns_resolver.lookup_txt()`.
-
-### E.4: Implement `is_global_node_id()` (ThreatIntel)
-**Status**: ✅ COMPLETE (Already Implemented)
-
-**Resolution**: Function already implemented at `src/mesh/threat_intel.rs:359-364` - parses string as `IpAddr` and delegates to `is_global_node_ip()`.
+**Fix**: Override `respond_async()` to avoid calling sync `respond()`.
 
 ---
 
-## Wave F: OpenAPI & Admin Panel
+### CR-5: Admin Token Uses Weak RNG
 
-From plan10 (OpenAPI) and plan11 (Admin Panel Usability).
+**Plan**: plan25.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-### F.1: Add Swagger UI / API Docs
-**Status**: ✅ COMPLETE
+**Problem**: Admin tokens generated with `ThreadRng` instead of `OsRng`.
 
-**Problem**: utoipa-swagger-ui v7.1.0 has version conflict with axum 0.8 (multiple axum versions in dependency graph).
+**Location**: `src/config/admin.rs:86-101, 184-198`
 
-**Resolution**: Added `/api/docs` endpoint that serves an HTML page with links to:
-- OpenAPI JSON at `/api/openapi.json`
-- External Swagger UI at https://petstore.swagger.io (with URL parameter)
-- External Redoc documentation viewer
-
-This approach avoids the dependency version conflict while providing access to Swagger UI functionality through external tools.
-
-**Current state**:
-- OpenAPI JSON available at `/api/openapi.json`
-- Docs page at `/api/docs` with links to external Swagger UI
-- `utoipa-swagger-ui` dependency retained for future resolution
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### F.2: Add `--export-api-spec` CLI Flag
-**Status**: ✅ COMPLETE
-
-**Problem**: `--export-openapi` exports config JSON, not API spec.
-
-**Fix**: Added `--export-api-spec` CLI flag in `src/main.rs:145` that exports the OpenAPI 3.0 spec via `MaluWafOpenApi::openapi_json()`.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### F.3: Document Security Scheme in OpenAPI
-**Status**: ✅ COMPLETE
-
-**Problem**: Bearer auth not documented in spec.
-
-**Fix**: Added `bearer_auth` security scheme via utoipa `Modify` trait in `src/admin/openapi.rs`:
-- Added `AddBearerAuth` struct implementing `Modify` trait
-- Uses `HttpBuilder::new().scheme(HttpAuthScheme::Bearer).bearer_format("Token")` 
-- Includes description: "Bearer authentication using API token..."
-- Sets global `security` requirement to require `bearer_auth` on all operations
-- Added test `test_openapi_security_scheme` to verify security scheme is present
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes; `cargo test --test integration_test` passes
-
-### F.4: Bulk Configuration Endpoint
-**Status**: ✅ COMPLETE
-
-**Fix**: `/api/config/bundle` endpoint was already implemented:
-- GET at lines 2026-2034: Returns full `MainConfig`
-- PUT at lines 2048-2105: Validates, persists to `main.toml`, reloads workers
-- Routes added in `src/admin/mod.rs:296-299`
-
-**Verification**: `cargo check` passes
-
-### F.5: Per-Site Bot Detection Config
-**Status**: ✅ COMPLETE
-
-**Problem**: Bot detection only at global defaults level.
-
-**Current status**: `SiteBotConfig` struct exists in `src/config/site/defensive.rs` and is integrated into site config. WAF uses it at `src/waf/mod.rs`. Admin API handlers at `src/admin/handlers/sites.rs:520-604` provide `GET/PUT /api/sites/{site_id}/bot-detection` endpoints for per-site configuration.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### F.6: DNS Configuration UI
-**Status**: ✅ COMPLETE
-
-**Resolution**: Admin UI DNS page exists at `admin-ui/src/pages/dns.rs` (397 lines). Backend handlers at `src/admin/handlers/config.rs:1459-1492` are feature-gated with `#[cfg(feature = "dns")]`.
+**Fix**: Change to `rand::rngs::OsRng.fill_bytes()`.
 
 ---
 
-## Wave G: Documentation & Configuration
+### CR-6: TLS Passthrough WAF Bypass
 
-From plan17 (Documentation) and plan4/plan5/plan6.
+**Plan**: plan18.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-### G.1: Fix dns-dnssec-architecture.md
-**Status**: ✅ Complete
+**Problem**: `tls_passthrough_enforce_waf` only logs warnings, doesn't enforce. `proxy_raw_tcp()` not wired into request handling.
 
-**Problem**: States "inline validation planned" but IS implemented.
-
-**Resolution**: Documentation already accurate. `dns-dnssec-architecture.md` correctly describes full inline DNSSEC validation via `HickoryRecursor` (lines 3-10). `RFC5011_TRUST_ANCHOR.md` also accurately documents RFC 5011 implementation. No changes needed.
-
-### G.2: Fix README.md Worker Architecture
-**Status**: ✅ Done
-
-**Problem**: Mentions "minifier worker" but minifier is a module.
-
-**Fix**: Updated README.md "Worker Design" section to accurately describe the unified worker architecture with Tokio as documented in AGENTS.md. The section now describes:
-- Overseer → Master → Worker model with clear role descriptions
-- Single UnifiedServer with one Tokio runtime handling thousands of sites concurrently
-- TcpListenerPool auto-tuned via available_parallelism()
-- Correct guidance: use `tcp.worker_pool_size` for scaling, NOT `unified_server_workers`
-
-**Verification**: `cargo check` passes, section now describes unified worker accurately.
-
-### G.3: Directory Listing SVG Icons
-**Status**: ✅ Done
-
-**Problem**: Uses hardcoded emoji that don't adapt to theme.
-
-**Fix**: Added `generate_file_type_icon_svg()` and `generate_parent_dir_icon_svg()` methods to `ThemeRenderer`. Replaced emoji in:
-- `src/theme/dir_listing.rs` - uses SVG icons via ThemeRenderer
-- `src/static_files/directory.rs` - inline SVG icons for custom templates
-- `src/http/file_manager_ui.js` - `getFileIconSvg()` method for client-side FileManager
-
-### G.4: Serverless-as-Origin Architecture
-**Status**: ✅ COMPLETE
-
-**Problem**: Serverless functions not wired for mesh origin mode.
-
-**Fix**: `handle_serverless_proxy_stream()` implemented at `src/mesh/transport_peer.rs:2886-2992`. Serverless manager is wired to mesh transport via `MeshTransport::set_serverless_manager()` for origin mode. Edge nodes can route serverless requests by detecting `serverless:` prefix in upstream_id.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### G.5: Edge Caching Image Poison
-**Status**: ✅ INVESTIGATED (Acceptable)
-
-**Findings**:
-1. **ProxyCache not created proactively**: Preferences are processed on-demand when traffic flows, not proactively on DHT sync. This is by design - lazy initialization.
-2. **Transform cache key missing poison parameters**: Already fixed - `transform_flags` includes poison level, intensity, and seed in cache key (line 1299).
-3. **Double poisoning**: Mitigated by architecture - image poisoning should be configured at only ONE layer (edge OR origin, not both).
-
-**Resolution**: No changes required - architecture is sound.
+**Fix**: Wire proxy_raw_tcp(), change WARN to ERROR, require rate limiting for passthrough.
 
 ---
 
-## Wave H: Dependency & Code Quality
+### CR-7: Domain Ownership Verification Missing
 
-From plan12 (Dependency Security) and plan13/plan15.
+**Plan**: plan19.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-### H.1: Update rustls-webpki
-**Status**: ✅ COMPLETE (Already Up-to-date)
+**Problem**: Any node can announce `verified_upstream` for any domain without proving DNS ownership. `handle_upstream_ownership_challenge()` never actually serves HTTP-01 challenges.
 
-**Resolution**: Cargo.lock already contains `rustls-webpki` version 0.103.13 (the proposed fix version). No action needed.
-
-### H.2: Dead Code Suppression Audit
-**Status**: ✅ COMPLETE
-
-**Problem**: ~100 `#[allow(dead_code)]` annotations need documentation.
-
-**Fix**: Added `// SAFETY_REASON: Debugging - stored for introspection` comments to 6 files that were missing them:
-- `src/mesh/security_challenge.rs` (lines 36, 262)
-- `src/mesh/security.rs` (lines 32, 314)
-- `src/mesh/network_security.rs` (lines 45, 297)
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### H.3: Admin UI Formatting
-**Status**: ✅ COMPLETE (Not Applicable)
-
-**Resolution**: Admin UI is served via separate frontend build, not compiled with cargo. No formatting issues in Rust code.
-
-### H.4: Typed Errors in YARA Rules
-**Status**: ✅ COMPLETE (Already Implemented)
-
-**Resolution**: `YaraRulesError` enum with thiserror already implemented at `src/mesh/yara_rules.rs:22-62`. `YaraFeedError` also exists at `src/upload/yara_rule_feed.rs:11-41`.
+**Fix**: Implement verification loop - origin stores challenge, global verifies via HTTP request, then origin responds with proof.
 
 ---
 
-## Wave I: WAF & Detection Improvements
+### CR-8: Zero-Key Fallback in YARA Signature
 
-### I.1: ConnectionLimiter Sharding
-**Status**: ✅ COMPLETE
+**Plan**: plan25.md
+**Severity**: CRITICAL (Defensive)
+**Status**: PENDING
 
-**Problem**: Single lock for all IP counters at 500K rps.
+**Problem**: When public key bytes can't convert to 32-byte array, silently falls back to zero key, masking bugs.
 
-**Fix**: Implemented 64-sharded locks following `src/dns/server/sharded_store.rs` pattern:
-1. Added `NUM_SHARDS = 64` constant
-2. Changed `ip_connections`, `ip_burst_tokens`, `site_connections`, `site_total_connections` from single `RwLock<HashMap>` to `Vec<RwLock<HashMap>>` with 64 shards
-3. Added `ip_shard_index()` and `site_shard_index()` helper functions using djb2 hash
-4. Updated all methods to use sharded maps
+**Location**: `src/mesh/yara_rules.rs:771,934`
 
-**Verification**: `cargo clippy --lib -- -D warnings` passes; `cargo test --test integration_test` passes
-
-### I.2: Body Vec Reallocation Fix
-**Status**: ✅ COMPLETE
-
-**Problem**: For large uploads, Vec reallocates multiple times.
-
-**Fix**: Changed `src/http/shared_handler.rs` to use `BytesMut` instead of `Vec` for body accumulation:
-- Import `BytesMut` at line 1
-- Changed `Vec::new()` to `BytesMut::new()` with same reserve logic
-- Updated return statements to use `accumulated.freeze()`
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### I.3: Streaming Body Size Limits
-**Status**: ✅ COMPLETE
-
-**Problem**: No max body size for chunked encoding (slowloris risk).
-
-**Fix**: Modified `src/http/server.rs:997-1002` to use `collect_body_with_chunk_waf` for the no-Content-Length case, applying `max_streaming_body_size` limit even for chunked encoding.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### I.4: WebSocket Upstream WAF Inspection
-**Status**: ✅ COMPLETE
-
-**Problem**: Upstream WebSocket responses not WAF-checked (only client→upstream was checked).
-
-**Fix**: Added WAF inspection for upstream→client WebSocket messages in:
-1. `handle_websocket_to_upstream()`: Extracts body from `WsMessage::Text`/`Binary`, creates `ProtocolRequest` with method `TEXT-RESPONSE`/`BINARY-RESPONSE`, applies WAF check
-2. `handle_websocket_to_appserver()`: Same pattern applied for app server connections
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes; `cargo test --test integration_test` passes
-
-### I.5: Retry Off-By-One Fix
-**Status**: ✅ COMPLETE
-
-**Problem**: Retry boundary uses `<=` but attempt incremented before check.
-
-**Fix**: Changed `attempt <= max_retries` to `attempt < max_retries` at `src/proxy/mod.rs:860,886,906`.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
+**Fix**: Return error explicitly instead of fallback to zero key.
 
 ---
 
-## Wave J: Remaining Issues
+## HIGH Priority Issues
 
-### J.1: Trust Anchor Non-Atomic Save
-**Status**: ✅ ACCEPTABLE (Already Improved)
+### H-1: ViolationTracker Lock Contention
 
-**Resolution**: Current implementation uses `INSERT OR REPLACE` into temp file + atomic rename, which is safe for crashes. Lacks WAL mode but acceptable.
+**Plan**: plan4.md
+**Severity**: HIGH
+**Status**: PENDING
 
-### J.2: Missing->Pending State Guard
-**Status**: ✅ COMPLETE
+**Problem**: Global `RwLock<HashMap>` acquired on every violation. At 500K rps with 5% violation rate = 25K lock acquisitions/sec.
 
-**Problem**: Key can transition Missing->Pending without verifying was Valid.
+**Location**: `src/waf/violation_tracker.rs:152-180`
 
-**Fix**: Modified `observe_dnskey_at_root()` at `src/dns/trust_anchor.rs:481-500` to transition from `Missing` to `Pending` only when `trust_point != 0` (key was previously Valid). If `trust_point == 0`, the key was never valid and must go through digest verification via `trust_anchor_check()` before transitioning to Pending.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### J.3: TOFU Fingerprint MITM
-**Status**: ✅ COMPLETE
-
-**Problem**: TOFU fingerprint verification had no config option to allow first connection with warning.
-
-**Fix**:
-1. Added `require_explicit_fingerprint: bool` field to `SeedTofuConfig` in `src/mesh/config.rs:237`
-2. Added `require_explicit_fingerprint: Arc<RwLock<bool>>` field to `MeshCertManager` in `src/mesh/cert.rs:167`
-3. Wired config value into MeshCertManager initialization at `src/mesh/cert.rs:230-234`
-4. Updated `verify_seed_fingerprint()` to check the flag - when `false` (default), allows first connection with warning log instead of rejecting
-
-**Config**: In `[mesh.seed_tofu]` section:
-```toml
-require_explicit_fingerprint = true  # Default: false (allows TOFU with warning)
-```
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### J.4: Admin Token Redaction
-**Status**: ✅ COMPLETE
-
-**Problem**: `get_main_config` returns full config including token.
-
-**Fix**: Added `redact_admin_token()` helper in `src/admin/handlers/config.rs:33-53` that removes the token field from the admin section before returning JSON config.
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### J.5: YARA Rule Count Warning vs Rejection
-**Status**: ✅ COMPLETE
-
-**Problem**: >100 rules only logs warning, not rejected.
-
-**Fix**:
-- Added `RuleCountExceedsLimit { count: usize }` variant to `YaraRulesError` enum at `src/mesh/yara_rules.rs:33`
-- Changed warning at lines 1236-1240 to `return Err(YaraRulesError::RuleCountExceedsLimit { count: rule_count })`
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
-
-### J.6: Static Worker IPC Signing
-**Status**: ✅ COMPLETE
-
-**Problem**: Master side used unsigned IPC when communicating back to static workers.
-
-**Fix**: Implemented symmetric signing:
-1. Added `ipc_signer` field to `ProcessManager` to track signing capability
-2. Modified `handle_static_worker_ready()` to log signing status
-3. Static workers use signed IPC when IPC key is available
-4. Master stores IpcSigner for tracking capability
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes; `cargo test --test integration_test` passes
-
-### J.7: IPC Temp File TOCTOU
-**Status**: ✅ COMPLETE
-
-**Problem**: Race between IPC key read and file deletion allowed attackers to read the key file.
-
-**Fix**: Modified `try_from_env()` in `src/process/ipc_signed.rs` to use O_EXCL flag:
-1. Uses `std::fs::File::options().custom_flags(O_EXCL)` for atomic exclusive open
-2. If exclusive open fails, key file was already consumed - return None
-3. Read key via file handle (not path), then close and delete
-4. Eliminates TOCTOU window between read and delete
-
-**Verification**: `cargo clippy --lib -- -D warnings` passes
+**Fix**: Implement 64-sharded ViolationTracker.
 
 ---
 
-## Completed Items (All Deferred Now Addressed)
+### H-2: JSON Serialization in DHT Hot Paths
 
-All previously deferred items have been implemented or investigated:
+**Plan**: plan23.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-| Item | Status | Resolution |
-|------|--------|------------|
-| D.2 Edge Node Approval | ✅ Complete | EdgeAttestation structure implemented |
-| F.1 Swagger UI | ✅ Complete | utoipa-swaggerui v7 enabled |
-| F.3 Security Scheme | ✅ Complete | Bearer auth added to OpenAPI |
-| F.4 Bulk Config | ✅ Complete | Already implemented |
-| G.5 Edge Caching | ✅ Investigated | Architecture acceptable, no changes needed |
-| I.1 ConnectionLimiter | ✅ Complete | 64-sharded locks implemented |
-| I.4 WebSocket WAF | ✅ Complete | Bidirectional WAF inspection added |
-| J.6 Static Worker IPC | ✅ Complete | Symmetric signing implemented |
-| J.7 IPC TOCTOU | ✅ Complete | O_EXCL atomic file operations |
+**Problem**: `serde_json` used for DHT record serialization where `postcard` should be used. ~1M allocations/sec at 500K req/s.
 
-**All items now complete. No deferred items remain.**
+**Locations**: `src/mesh/dht/record_store_crud.rs:33-40`, `src/mesh/dht/record_store_message.rs:557-562,700-705`
 
-### I.2: Implement Threat Intel Local Application
-(From original plan.md)
-
-**Completed**: `IpThrottle` fully integrated with block store
-
-**Deferred**:
-- `DomainBlock` — Requires DNS server integration
-- `UrlBlock` — Requires HTTP proxy integration
-- `CertBlock` — Requires certificate validation integration
+**Fix**: Replace JSON with `crate::serialization::serialize()`.
 
 ---
 
-## Implementation Notes
+### H-3: WAF Per-Header Arc Clone
 
-### Verified Completed Items (from original plan.md)
+**Plan**: plan23.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-All other items from the original consolidated plan (64 total) have been successfully implemented:
+**Problem**: `InputLocation::Header(name.clone())` where name is already `Arc<str>`. ~110M Arc clones/sec at 500K req/s with 20 headers.
 
-- **Wave A**: Critical Security Fixes ✅ (6/6)
-- **Wave B**: Performance Hot Paths ✅ (6/6)
-- **Wave C**: Web App Stack Improvements ✅ (5/5)
-- **Wave D**: YARA & ThreatIntel Distribution ✅ (4/6, 2 deferred)
-- **Wave E**: Mesh & DHT Architecture ✅ (5/5)
-- **Wave F**: Serverless Architecture ✅ (5/6, 1 deferred)
-- **Wave G**: Edge Caching & Image Poison ✅ (6/6)
-- **Wave H**: Admin Panel Improvements ✅ (6/6)
-- **Wave I**: Stub/Incomplete Items ✅ (1/3, 2 deferred)
-- **Wave J**: Dependency & Security Updates ✅ (3/3)
-- **Wave K**: Documentation ✅ (4/4)
-- **Wave L**: Testing Improvements ✅ (4/4)
+**Location**: `src/waf/attack_detection/mod.rs:302`
+
+**Fix**: Change detector signatures to accept `&InputLocation` instead of `InputLocation`.
 
 ---
 
-## Wave Parallelization Guidelines
+### H-4: Dead `lowercased` Field Allocation
 
-Each wave can be approached with parallel sub-agents:
+**Plan**: plan23.md
+**Severity**: CRITICAL
+**Status**: PENDING
 
-| Wave | Items | Can Parallelize |
-|------|-------|-----------------|
-| A | 1 | No (compile blocker) |
-| B | 7 | Yes (independent security fixes) |
-| C | 8 | Yes (performance independent) |
-| D | 10 | Yes (mesh/DHT independent) |
-| E | 4 | Yes (stub fixes independent) |
-| F | 6 | Yes (admin/API independent) |
-| G | 5 | Yes (docs/config independent) |
-| H | 4 | Yes (deps/quality independent) |
-| I | 5 | Yes (WAF independent) |
-| J | 7 | Some dependencies |
+**Problem**: `Normalizer::normalize()` allocates `Cow::Owned(buffer.to_lowercase())` but field is never used.
+
+**Location**: `src/waf/probe_tracker/normalizer.rs:66`
+
+**Fix**: Delete `lowercased` field, `as_lowercased()` method, and `to_lowercase()` allocation.
 
 ---
 
-## Reference Commands
+### H-5: Proxy Cache O(n) Invalidation
+
+**Plan**: plan23.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `invalidate_by_pattern()` iterates entire cache on every call.
+
+**Location**: `src/proxy_cache/store.rs:557-562`
+
+**Fix**: Add `uri_prefix_index: HashMap<String, Vec<CacheKey>>` for O(1) lookups.
+
+---
+
+### H-6: WASM verify_caller_permission() Unwired
+
+**Plan**: plan7.md, plan26.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `verify_caller_permission()` at `manager.rs:190-282` is never called. All permission checks bypassed.
+
+**Fix**: Add `CallerContext` struct, wire permission verification at entry points.
+
+---
+
+### H-7: WASM DHT Access Control Missing
+
+**Plan**: plan7.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `mesh_query_dht()` reads ANY DHT key without capability verification.
+
+**Location**: `src/plugin/wasm_runtime.rs:563-621`
+
+**Fix**: Add per-plugin allowed DHT keys config, implement capability check.
+
+---
+
+### H-8: WASM Resource Limiter Not Implemented
+
+**Plan**: plan7.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `ResourceLimiter` trait not implemented. WASM can bypass memory limits via `memory.grow`.
+
+**Location**: `src/plugin/wasm_runtime.rs:820-838`
+
+**Fix**: Implement wasmtime `ResourceLimiter` trait.
+
+---
+
+### H-9: HS256/RS256 Algorithm Confusion
+
+**Plan**: plan18.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: JWT detector is pattern-based only. Cannot detect alg switch from RS256 to HS256.
+
+**Location**: `src/waf/attack_detection/jwt.rs`
+
+**Fix**: Add algorithm family tracking, detect symmetric/asymmetric switches.
+
+---
+
+### H-10: IPv4-Mapped IPv6 SSRF Bypass
+
+**Plan**: plan18.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: `::ffff:192.168.1.1` NOT detected as private IP, but `192.168.1.1` IS.
+
+**Location**: `src/waf/attack_detection/ssrf.rs:132-150`
+
+**Fix**: Check for IPv4-mapped IPv6 format, extract and check IPv4.
+
+---
+
+### H-11: DNS Rebinding SSRF No Protection
+
+**Plan**: plan18.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: SSRF detector does NOT perform DNS resolution. Attacker can bypass via DNS rebinding.
+
+**Fix**: Add DNS resolver capability with mesh/third-party fallback and caching.
+
+---
+
+### H-12: Capability Verifier NOT Wired
+
+**Plan**: plan27.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `CapabilityAccessVerifier` exists but `RecordStoreManager` created with `capability_verifier: None`.
+
+**Location**: `src/mesh/dht/record_store.rs`
+
+**Fix**: Wire verifier, add self-attestation for global nodes on startup.
+
+---
+
+### H-13: Serverless Proxy Stream Unreachable
+
+**Plan**: plan26.md
+**Severity**: CRITICAL
+**Status**: PENDING
+
+**Problem**: `handle_serverless_proxy_stream()` unreachable - `get_upstream_info()` returns None before serverless check.
+
+**Location**: `src/mesh/transport_peer.rs:2539-2581`
+
+**Fix**: Reorder checks - check `serverless:` prefix BEFORE `get_upstream_info()` lookup.
+
+---
+
+### H-14: RSA 1024 in DNSSEC Key Generation
+
+**Plan**: plan24.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: RSA 1024 allowed, below NIST minimum (112 bits). RFC 8624 explicitly NOT RECOMMENDED.
+
+**Location**: `src/dns/dnssec_key_mgmt.rs:240-247`
+
+**Fix**: Auto-upgrade 1024→2048 with warning, update error message.
+
+---
+
+### H-15: DNS Cache Poisoning Confirmation Threshold
+
+**Plan**: plan3.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: Confirmation threshold of 2 may be too low.
+
+**Location**: `src/dns/cache.rs:188-214`
+
+**Fix**: Increase threshold from 2 to 3.
+
+---
+
+## MEDIUM Priority Issues
+
+### M-1: Thread-Local Response Header Buffers
+
+**Plan**: plan4.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: `Vec::new()` allocated for response headers on every proxied response.
+
+**Locations**: `src/http/server.rs:2644,2741`, `src/tls/server.rs:1449,1599`
+
+**Fix**: Use thread-local buffer reuse.
+
+---
+
+### M-2: String Allocations in Hot Paths
+
+**Plan**: plan4.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: Multiple `.to_string()` calls per request - `method.to_string()`, duplicate `path_str` allocation.
+
+**Fix**: Use `.as_str()`, reuse String variables.
+
+---
+
+### M-3: WebSocket HashMap Allocations
+
+**Plan**: plan4.md
+**Severity**: HIGH (for WebSocket)
+**Status**: PENDING
+
+**Problem**: Empty HashMaps created for every WebSocket frame.
+
+**Location**: `src/http/server.rs:3337,3340,3412,3415,3547,3550,3618,3625`
+
+**Fix**: Use static empty map constant.
+
+---
+
+### M-4: WASM Transform Empty HashMap
+
+**Plan**: plan4.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: Empty HashMap passed to WASM filters on every call.
+
+**Location**: `src/http/server.rs:2033,2038,2336,2339,2772,2777`
+
+**Fix**: Check if filters exist before calling.
+
+---
+
+### M-5: Connection Pool Limits Hardcoded
+
+**Plan**: plan18.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: `max_connections=100`, `pool_max_idle_per_host=100`, `pool_idle_timeout=30s` hardcoded.
+
+**Fix**: Expose via site proxy config.
+
+---
+
+### M-6: Global Rate Limiter Blackhole
+
+**Plan**: plan18.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: Blackhole is global (not per-IP). One loud neighbor blackholes everyone.
+
+**Location**: `src/waf/ratelimit/core.rs`
+
+**Fix**: Add per-IP blackhole tracking with admin API reset.
+
+---
+
+### M-7: GeoIP Cache Size
+
+**Plan**: plan18.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: Default 10,000 entry cache may thrash at 500K rps.
+
+**Location**: `src/config/defaults.rs`
+
+**Fix**: Increase default to 100,000.
+
+---
+
+### M-8: LRU Rate Limiter Eviction Dead Code
+
+**Plan**: plan18.md
+**Severity**: LOW
+**Status**: PENDING
+
+**Problem**: `lru_order` and `ip_requests` never populated - dead code.
+
+**Location**: `src/waf/ratelimit.rs`
+
+**Fix**: Remove dead code.
+
+---
+
+### M-9: Proxy Headers Excessive Allocations
+
+**Plan**: plan23.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: `build_forward_headers()` allocates `Vec<(String, String)>` with `.to_string()` per header.
+
+**Location**: `src/proxy/headers.rs:360-398`
+
+**Fix**: Use `http::HeaderMap` instead.
+
+---
+
+### M-10: DNS Redundant to_lowercase() Calls
+
+**Plan**: plan23.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: `qname.to_lowercase()` called multiple times per query.
+
+**Location**: `src/dns/server/query.rs:670,716,719`
+
+**Fix**: Pre-compute lowercase once before loops.
+
+---
+
+### M-11: DNS Zone Clone on Get
+
+**Plan**: plan23.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: `get()` returns `Option<Zone>` - full Zone clone on every query.
+
+**Location**: `src/dns/server/sharded_store.rs:67`
+
+**Fix**: Return `Option<Arc<Zone>>`, store zones as `Arc<RwLock<Zone>>`.
+
+---
+
+### M-12: Rate Limiter O(bucket_count) Rotation
+
+**Plan**: plan23.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: All 60 buckets summed sequentially on rotation.
+
+**Location**: `src/waf/ratelimit/core.rs:176-180`
+
+**Fix**: Maintain running_sum atomic counter.
+
+---
+
+### M-13: Cache Write Lock Contention
+
+**Plan**: plan23.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: `host_index.write()` on every cache insert.
+
+**Location**: `src/proxy_cache/store.rs:524`
+
+**Fix**: Replace `RwLock` with `DashMap`.
+
+---
+
+### M-14: Mesh Seen Messages Locking
+
+**Plan**: plan23.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: `RwLock` on `seen_messages` for every message check+mark.
+
+**Location**: `src/mesh/transport.rs:961-968`
+
+**Fix**: Replace with `DashMap`.
+
+---
+
+### M-15: ThreatIntel Re-Announce Missing
+
+**Plan**: plan27.md
+**Severity**: MEDIUM
+**Status**: PENDING
+
+**Problem**: ThreatIntel indicators not re-announced by global nodes.
+
+**Fix**: Add `re_announce_interval_secs` and periodic re-announcement task.
+
+---
+
+### M-16: SHA-1 Deprecation for DNSSEC
+
+**Plan**: plan24.md
+**Severity**: HIGH
+**Status**: PENDING
+
+**Problem**: RFC 9905 (Nov 2025) deprecates SHA-1 for DNSSEC. TSIG HMAC-SHA1 still used.
+
+**Fix**: Add HMAC-SHA-256 support, default to SHA-256 for DS records.
+
+---
+
+## Implementation Waves
+
+### Wave 1: Compile Blocker + Critical Security (Sequential)
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 1 | PoW difficulty fix (CR-1) | plan19 | LOW |
+| 2 | Path traversal template (CR-2) | plan6 | LOW |
+| 3 | Stored XSS fix (CR-3) | plan24 | LOW |
+| 4 | Honeypot deadlock (CR-4) | plan25 | LOW |
+| 5 | Admin token RNG (CR-5) | plan25 | LOW |
+| 6 | TLS passthrough bypass (CR-6) | plan18 | MEDIUM |
+| 7 | Domain verification (CR-7) | plan19 | HIGH |
+| 8 | YARA zero-key fallback (CR-8) | plan25 | LOW |
+
+### Wave 2: Critical WASM Security
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 9 | Wire verify_caller_permission (H-6) | plan7,26 | MEDIUM |
+| 10 | DHT access control (H-7) | plan7 | MEDIUM |
+| 11 | ResourceLimiter impl (H-8) | plan7 | MEDIUM |
+| 12 | Capability verifier wiring (H-12) | plan27 | MEDIUM |
+| 13 | Serverless proxy unreachable (H-13) | plan26 | MEDIUM |
+
+### Wave 3: High Priority Performance
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 14 | ViolationTracker sharding (H-1) | plan4 | MEDIUM |
+| 15 | DHT JSON→postcard (H-2) | plan23 | MEDIUM |
+| 16 | WAF header clone (H-3) | plan23 | LOW |
+| 17 | Dead lowercase (H-4) | plan23 | VERY LOW |
+| 18 | Cache O(n) invalidation (H-5) | plan23 | LOW |
+| 19 | Response header buffers (M-1) | plan4 | LOW |
+| 20 | String allocations (M-2) | plan4 | LOW |
+| 21 | Connection pool config (M-5) | plan18 | LOW |
+
+### Wave 4: Reverse Proxy Security
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 22 | JWT algorithm confusion (H-9) | plan18 | LOW |
+| 23 | IPv4-mapped IPv6 SSRF (H-10) | plan18 | LOW |
+| 24 | DNS rebinding SSRF (H-11) | plan18 | HIGH |
+| 25 | Blackhole per-IP tracking (M-6) | plan18 | MEDIUM |
+
+### Wave 5: DNS & DNSSEC
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 26 | RSA 1024→2048 auto-upgrade (H-14) | plan24 | LOW |
+| 27 | SHA-1 deprecation (M-16) | plan24 | MEDIUM |
+| 28 | Cache poisoning threshold (H-15) | plan3 | LOW |
+| 29 | DNS lowercase optimization (M-10) | plan23 | LOW |
+| 30 | Zone Arc optimization (M-11) | plan23 | MEDIUM |
+| 31 | Rate limiter rotation (M-12) | plan23 | LOW |
+
+### Wave 6: Mesh & DHT Improvements
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 32 | ThreatIntel re-announce (M-15) | plan27 | LOW |
+| 33 | Mesh seen messages DashMap (M-14) | plan23 | LOW |
+| 34 | Cache DashMap (M-13) | plan23 | LOW |
+
+### Wave 7: Testing & Quality
+
+| # | Item | Plan | Risk |
+|---|------|------|------|
+| 35 | DNS recursive test failures | plan35 | FIX |
+| 36 | Worker drain test | plan34 | FIX |
+| 37 | WASM regex pre-compilation | plan7 | LOW |
+| 38 | Remote execution retries | plan7 | MEDIUM |
+| 39 | Instance pool O(n) eviction | plan7 | MEDIUM |
+
+---
+
+## Test Failures
+
+### DNS Recursive Test (plan35)
+
+**Status**: 3 tests failing
+
+**Problem**: `moka::sync::Cache::entry_count()` returns 0 while `get()` works.
+
+**Location**: `src/dns/recursive_cache.rs:326-342`
+
+**Fix**: Replace moka's `entry_count()` with manual atomic counters.
+
+---
+
+### Worker Drain Test (plan34)
+
+**Status**: 1 test failing
+
+**Problem**: `test_drain_completes_on_last_connection_decrement` expects drain_complete=true without calling `stop_accepting()`.
+
+**Location**: `src/worker/drain_state.rs:293-307`
+
+**Fix**: Update test to call `stop_accepting()` before checking drain_complete.
+
+---
+
+## Dependency Security
+
+### hickory-recursor Migration (plan31)
+
+**Status**: PENDING
+
+**Problem**: RUSTSEC-2026-0106 - DNS cache poisoning. `hickory-recursor` deprecated.
+
+**Fix**: Migrate to `hickory-resolver 0.26` with `recursor` feature.
+
+---
+
+### yara-x/wasmtime (plan31)
+
+**Status**: MONITOR
+
+**Problem**: yara-x 1.15.0 pulls wasmtime 40.0.4 (vulnerable). Direct dependency is 42.0.2 (patched).
+
+**Fix**: Wait for yara-x 1.16.0 with wasmtime 43.0.1+.
+
+---
+
+## Files Summary by Wave
+
+| Wave | Files | Est. Lines |
+|------|-------|-----------|
+| 1 | `node_id.rs`, `directory.rs`, `mod.rs`, `responders/mod.rs`, `admin.rs`, `tls/server.rs`, `verification.rs`, `yara_rules.rs` | ~200 |
+| 2 | `manager.rs`, `wasm_runtime.rs`, `record_store.rs`, `transport_peer.rs` | ~500 |
+| 3 | `violation_tracker.rs`, `record_store_crud.rs`, `mod.rs`, `normalizer.rs`, `store.rs`, `server.rs` | ~300 |
+| 4 | `jwt.rs`, `ssrf.rs`, `ratelimit/core.rs` | ~200 |
+| 5 | `dnssec_key_mgmt.rs`, `tsig.rs`, `cache.rs`, `query.rs`, `sharded_store.rs` | ~250 |
+| 6 | `threat_intel.rs`, `transport.rs`, `store.rs` | ~150 |
+| 7 | `recursive_cache.rs`, `drain_state.rs`, `routing.rs`, `manager.rs`, `instance_pool.rs` | ~300 |
+
+---
+
+## Verification Commands
 
 ```bash
 # Verify compilation
-cargo check  # Must pass before any other work
+cargo check
 
 # Run integration tests
 cargo test --test integration_test
@@ -695,17 +734,22 @@ cargo clippy --lib -- -D warnings
 # Format check
 cargo fmt --check
 
-# Run DHT integration tests
+# Run DHT tests
 cargo test --test dht_integration_test
+
+# Run DNS tests (expect failures until fixed)
+cargo test --test dns_recursive_test
 ```
 
 ---
 
-## Accuracy Notes
+## Next Steps
 
-This consolidated plan was created by:
-1. Reading all 17 individual plan files
-2. Verifying issues against current codebase with `cargo check`, `grep` searches
-3. Confirming which items are still outstanding vs already implemented
+1. Start with Wave 1 items - all are independent and can be parallelized
+2. Fix test failures in Wave 7 concurrently
+3. Address hickory-recursor migration (dependency security)
+4. Progress through remaining waves
 
-**Verified blocker**: `src/fastcgi/mod.rs:333` syntax error prevents compilation — MUST be fixed first.
+---
+
+*This consolidated plan was created by analyzing all 35 individual plan files and reconciling against the previous plan.md which had inaccurate completion status.*
