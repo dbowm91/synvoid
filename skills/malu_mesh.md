@@ -252,8 +252,11 @@ verify_capability_attestation(attestation)
 | File | Purpose |
 |------|---------|
 | `src/mesh/dht/capability_attestation.rs` | Attestation struct and verification |
+| `src/mesh/dht/capability_access.rs` | `CapabilityAccessVerifier` for DHT write authorization |
 | `src/mesh/dht/keys.rs` | `CapabilityAttestation` DHT key type |
 | `src/mesh/transport.rs` | `attest_capability()`, `verify_node_capability()` |
+
+**DHT Write Authorization**: `CapabilityAccessVerifier` is called in `store_record()` before allowing a node to store a capability-gated record (YARA rules, ThreatIntel indicators). Use `RecordStoreManager::set_capability_verifier()` to enable.
 
 ## Edge Node PoW Authentication (W2.6)
 
