@@ -260,14 +260,15 @@ verify_capability_attestation(attestation)
 
 ## Edge Node PoW Authentication (W2.6)
 
-Edge nodes can authenticate via Ed25519 signature OR Proof-of-Work.
+Edge nodes authenticate with BOTH Ed25519 signature AND Proof-of-Work. PoW is **required**, not optional.
 
 ### Authentication Flow
 
 ```
-Edge connects → (If pow_nonce + pow_public_key provided) → PoW validation → Authenticated
-              → (Otherwise) → Ed25519 signature validation → Authenticated
+Edge connects → Ed25519 signature validation → PoW validation (BOTH required) → Authenticated
 ```
+
+**Note**: Edge nodes must provide BOTH `pow_nonce` AND `pow_public_key`. If either is missing, authentication fails.
 
 ### PoW Validation
 
@@ -283,8 +284,8 @@ validate_edge_node_pow(pow_public_key, pow_nonce) {
 
 ### Parameters
 
-- `pow_public_key`: 32-byte Ed25519 public key
-- `pow_nonce`: Nonce that makes the PoW solution valid
+- `pow_public_key`: 32-byte Ed25519 public key (required)
+- `pow_nonce`: Nonce that makes the PoW solution valid (required)
 
 ### Implementation Files
 
