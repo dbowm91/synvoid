@@ -838,3 +838,112 @@ impl InstancePool {
     }
 }
 ```
+
+---
+
+## DNS Zone Store O(k) Suffix Lookup
+
+**Location**: `src/dns/server/sharded_store.rs`, `src/dns/server/query.rs`
+
+**Issue**: DNSSEC NODATA/NXDOMAIN checks used O(n) `find()` iterating all 64 shards.
+
+**Pattern**: Use suffix index for O(k) lookup + filter:
+```rust
+// Instead of O(n) full scan:
+ctx.zones.find(|origin, zone| {
+    let origin_lower = origin.to_lowercase();  // Allocation per zone!
+    (qname_lower.ends_with(&origin_lower) || qname_lower == origin_lower)
+        && (zone.nsec_enabled || zone.nsec3_enabled)
+        && Self::is_nodata(zone, &qname, record_type)
+})
+
+// Use O(k) suffix index + inline filter:
+ctx.zones.find_by_suffix_with_filter(&qname, |zone| {
+    (zone.nsec_enabled || zone.nsec3_enabled)
+        && Self::is_nodata(zone, &qname, record_type)
+})
+```
+
+**New API**:
+```rust
+pub fn find_by_suffix(&self, qname: &str) -> Option<Zone>
+pub fn find_by_suffix_with_filter<P: Fn(&Zone) -> bool>(
+    &self,
+    qname: &str,
+    filter: P,
+) -> Option<Zone>
+```
+
+The suffix index is pre-built at `rebuild_suffix_index()` during zone insert/remove. For DNSSEC validation where you need longest-match suffix plus zone flags, `find_by_suffix_with_filter` provides O(k) instead of O(n) lookup.
+
+---
+
+## TLS Response Header Filtering
+
+**Location**: `src/tls/server.rs:1405-1406,1551-1552`
+
+**Issue**: `filter_response_headers()` allocates a new `Vec` on every proxied HTTPS response.
+
+**Pattern**: Use `filter_response_headers_buf` with pre-allocated buffer:
+```rust
+// BEFORE: allocates Vec on every response
+let filtered_headers = filter_response_headers(&parts.headers, &headers_to_filter);
+
+// AFTER: reuses pre-allocated buffer
+let mut filtered_headers_buf = Vec::new();
+filter_response_headers_buf(&parts.headers, &headers_to_filter, &mut filtered_headers_buf);
+for (key, value) in filtered_headers_buf.drain(..) {
+    builder = builder.header(&key, &value);
+}
+```
+
+The buffer is cleared and reused on each call, avoiding per-response heap allocation in the hot path.
+
+---
+
+## Async Retry with Correct Boundary
+
+**Location**: `src/proxy/mod.rs:860,886,906`
+
+**Issue**: Retry loop used `attempt <= max_retries` but incremented attempt before check, causing max_retries+1 attempts.
+
+**Pattern**: Use `<` not `<=`:
+```rust
+// BEFORE (off-by-one): runs max_retries+1 times
+while attempt <= max_retries {
+    attempt += 1;
+    // ...
+}
+
+// AFTER (correct): runs exactly max_retries times
+while attempt < max_retries {
+    attempt += 1;
+    // ...
+}
+```
+
+---
+
+## BytesMut for Body Collection
+
+**Location**: `src/http/shared_handler.rs`
+
+**Issue**: Using `Vec<u8>` for body accumulation causes reallocations for large uploads.
+
+**Pattern**: Use `BytesMut` which has better growth strategy:
+```rust
+use bytes::BytesMut;
+
+// Before
+let mut accumulated = Vec::new();
+accumulated.reserve(content_length.unwrap_or(0));
+// ... extend from slices
+
+// After
+let mut accumulated = BytesMut::new();
+if let Some(cl) = content_length {
+    accumulated.reserve(cl);
+}
+// ... extend works the same
+Bytes::from(accumulated.freeze())  // O(1) conversion
+```
