@@ -89,6 +89,18 @@ static IMAGE_POISON_CACHE: LazyLock<Cache<String, Vec<u8>>> = LazyLock::new(|| {
         .build()
 });
 
+pub fn invalidate_image_poison_cache_for_site(site_id: &str) {
+    let prefix = format!("{}:", site_id);
+    let keys_to_remove: Vec<String> = IMAGE_POISON_CACHE
+        .iter()
+        .filter(|(k, _)| k.starts_with(&prefix))
+        .map(|(k, _)| k.to_string())
+        .collect();
+    for key in keys_to_remove {
+        IMAGE_POISON_CACHE.invalidate(&key);
+    }
+}
+
 const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["server", "x-powered-by", "connection", "keep-alive"];
 
 use crate::challenge::HONEYPOT_PREFIX;
@@ -3785,7 +3797,18 @@ impl HttpServer {
             hex::encode(hasher.finalize())
         };
 
-        let cache_key = format!("{}:{}", site_id, original_hash);
+        let cache_key = {
+            let poison_fingerprint = match poison_config {
+                Some(cfg) => format!(
+                    ":{}:{}:{}",
+                    cfg.level.as_deref().unwrap_or("standard"),
+                    cfg.intensity.map(|f| f.to_bits()).unwrap_or(0),
+                    cfg.seed.unwrap_or(0)
+                ),
+                None => String::new(),
+            };
+            format!("{}:{}{}", site_id, original_hash, poison_fingerprint)
+        };
 
         if let Some(cached) = IMAGE_POISON_CACHE.get(&cache_key) {
             tracing::debug!("Image poison cache hit for {}", cache_key);
