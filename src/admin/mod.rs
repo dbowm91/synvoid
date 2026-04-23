@@ -12,6 +12,7 @@ mod handlers;
 mod metrics;
 mod middleware;
 pub mod openapi;
+pub use openapi::MaluWafOpenApi;
 mod rate_limit;
 mod state;
 mod ws;

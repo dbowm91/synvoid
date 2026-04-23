@@ -126,9 +126,28 @@ fn validate_edge_node(
         }
     }
 
-    if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
-        validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pk))?;
-    }
+    let (nonce, pow_key) = match (pow_nonce, pow_public_key) {
+        (Some(nonce), Some(pk)) => (nonce, pk),
+        (None, None) => {
+            return Err(format!(
+                "Edge node {} did not provide PoW nonce and public key - PoW is required",
+                peer_node_id
+            ))
+        }
+        (None, Some(_)) => {
+            return Err(format!(
+                "Edge node {} provided PoW public key but not nonce",
+                peer_node_id
+            ))
+        }
+        (Some(_), None) => {
+            return Err(format!(
+                "Edge node {} provided PoW nonce but not public key",
+                peer_node_id
+            ))
+        }
+    };
+    validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pow_key))?;
 
     let pubkey = peer_public_key.ok_or_else(|| {
         format!(
