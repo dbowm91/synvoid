@@ -1,19 +1,55 @@
 # MaluWAF Implementation Consolidated Plan
 
 **Last updated**: 2026-04-23
-**Status**: ✅ 100% COMPLETE
+**Status**: ⚠️ IN PROGRESS (96% complete - 2 items need attention)
 
 ## Overview
 
 This document consolidates all implementation items from individual plan files into a single wave-based plan. Each wave represents a set of items that can be implemented in parallel using sub-agents.
 
 **Total implementable items**: ~60+
-**Completion**: 100% (60/60 items completed, 0 deferred)
-**Deferred items**: None
+**Completion**: 96% (58/60 items completed, 1 deferred, 1 partial)
+**Deferred items**: F.1 (Swagger UI - version conflict with axum 0.8)
+**Partial items**: D.2 (validate_edge_node_with_attestation not implemented)
 
 ---
 
-## Wave A: Critical Bug Fixes (Compile Blocker)
+## Items Requiring Attention
+
+### D.2: Edge Node Approval Workflow (PARTIAL)
+**Status**: ⚠️ PARTIAL
+
+**Problem**: Edge nodes self-authenticate without authorization from global node.
+
+**Completed components**:
+1. ✅ `EdgeAttestation` struct exists in `src/mesh/dht/edge_attestation.rs`
+2. ✅ `DhtKey::EdgeAttestation { node_id }` variant in `src/mesh/dht/keys.rs`
+3. ❌ `validate_edge_node_with_attestation()` function NOT implemented in `src/mesh/peer_auth.rs`
+
+**What needs to be done**:
+- Implement `validate_edge_node_with_attestation()` function that:
+  - Looks up EdgeAttestation record from DHT by node_id
+  - Verifies attestation signature using global node's public key
+  - Checks attestation is not expired
+  - Returns error if attestation is invalid or missing
+
+### F.1: Add Swagger UI (DEFERRED)
+**Status**: ⏸️ DEFERRED
+
+**Problem**: utoipa-swagger-ui v7.1.0 has version conflict with axum 0.8 (multiple axum versions in dependency graph).
+
+**Current state**:
+- `utoipa-swagger-ui` dependency exists in `Cargo.toml:205`
+- Swagger UI NOT wired into admin router
+- OpenAPI JSON available at `/api/openapi.json`
+
+**What needs to be done**:
+- Resolve axum version conflict between utoipa-swagger-ui and main codebase
+- Or use redirect endpoint to serve Swagger UI from a separate static files location
+
+---
+
+## Wave A: Critical Bug Fixes (Compile Blocker) - ✅ COMPLETE
 
 Items that must be fixed first before any other work can proceed.
 
@@ -83,9 +119,9 @@ High-priority security fixes from plan16 (Security Audit Remediation).
 
 **Problem**: Edge nodes can bypass signature using trivial PoW (40 bits).
 
-**Locations fixed**:
-- `src/mesh/dht/routing/node_id.rs:10` - Increased PoW difficulty from 40 to 64 bits
-- `src/mesh/peer_auth.rs:129-131` - Now requires BOTH PoW AND signature
+**Fix applied** (2026-04-23):
+- `src/mesh/dht/routing/node_id.rs:10` - PoW difficulty is 64 bits
+- `src/mesh/peer_auth.rs:129-150` - **Updated**: PoW is now REQUIRED (not optional). Edge nodes must provide BOTH `pow_nonce` AND `pow_public_key`. Previously could bypass by not providing any PoW credentials. Now validates all-or-nothing.
 
 **Verification**: `cargo clippy --lib -- -D warnings` passes
 
@@ -306,13 +342,17 @@ From plan9 (Stub & Incomplete Code).
 From plan10 (OpenAPI) and plan11 (Admin Panel Usability).
 
 ### F.1: Add Swagger UI
-**Status**: ✅ COMPLETE
+**Status**: ⏸️ DEFERRED (version conflict with axum 0.8)
 
-**Fix**: Enabled Swagger UI using utoipa-swaggerui v7 which is compatible with utoipa 4 + axum 0.8:
-1. Added `utoipa-swaggerui = { version = "7", features = ["axum"] }` dependency
-2. Wired Swagger UI into admin router at `/swagger-ui` with OpenAPI JSON at `/api/openapi.json`
+**Problem**: utoipa-swagger-ui v7.1.0 has version conflict with axum 0.8 (multiple axum versions in dependency graph).
 
-**Verification**: `cargo check` passes
+**Fix attempted** (2026-04-23): Tried to wire Swagger UI into admin router but utoipa-swagger-ui v7 depends on axum 0.7 while main codebase uses axum 0.8. Attempted upgrade to v9 but `utoipa::OpenApi` trait conflict prevents integration.
+
+**Current state**:
+- OpenAPI JSON available at `/api/openapi.json`
+- Swagger UI NOT wired into admin router
+
+**What needs to be done**: Resolve axum version conflict or use alternative approach (e.g., redirect to external Swagger UI server)
 
 ### F.2: Add `--export-api-spec` CLI Flag
 **Status**: ✅ COMPLETE
