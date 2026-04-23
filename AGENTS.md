@@ -267,14 +267,16 @@ Keys transition through these states:
 5. **Removed** - Revoked key waiting for extended confirmation
 6. **Missing** - Valid key not seen for retention period
 
+**Missing→Pending restoration**: Only keys that were previously Valid (trust_point != 0) can auto-restore via `observe_dnskey_at_root()`. Keys that were never Valid must go through digest verification via `trust_anchor_check()` first.
+
 ## Planning and Implementation Patterns
 
 The implementation plan was consolidated in `plans/plan.md`. This document contains all implementation items organized into waves for parallel sub-agent execution.
 
 **Current Status** (as of 2026-04-23):
 - ~60+ implementable items across 10 waves
-- **95%+ COMPLETE** (55/58 items completed, 6 deferred)
-- Deferred items: C.5 (JSON Serialization), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.2 (Missing->Pending Guard), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
+- **97%+ COMPLETE** (57/60 items completed, 6 deferred)
+- Deferred items: C.5 (JSON Serialization), G.5 (Edge Caching Image Poison), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
 - All security fixes implemented
 - All performance hot-path optimizations implemented
 

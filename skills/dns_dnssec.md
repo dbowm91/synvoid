@@ -219,6 +219,25 @@ let event = manager.trust_anchor_check(key_tag, algorithm, digest_type, &digest)
 let events = manager.process_rfc5011_updates();
 ```
 
+### Missing→Pending Restoration
+
+Per RFC 5011 Section 3.3, only keys that were previously Valid can auto-restore:
+
+```rust
+// In observe_dnskey_at_root():
+TrustAnchorState::Missing => {
+    if anchor.trust_point == 0 {
+        // Never valid - require DS digest verification via trust_anchor_check()
+        return Rfc5011Event::KeyIgnored { key_tag, reason: "..." };
+    }
+    // Was previously Valid - transition to Pending
+    anchor.state = TrustAnchorState::Pending;
+    Rfc5011Event::KeyPending { key_tag }
+}
+```
+
+Keys with `trust_point == 0` (never valid) must use `trust_anchor_check()` with a DS digest from CDS/CDNSKEY records to transition to Pending.
+
 ## Known Limitations
 
 1. **Forwarder mode ignores `dnssec_validation`** - Google/Cloudflare providers don't validate

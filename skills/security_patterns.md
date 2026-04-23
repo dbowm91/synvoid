@@ -1104,19 +1104,33 @@ if let Some(pubkey) = lookup_global_node_key(&verified.global_node_id) {
 
 ### RFC 5011 Missing→Pending Transition
 
-**Location**: `src/dns/trust_anchor.rs:583-588`
+**Location**: `src/dns/trust_anchor.rs:481-500`
 
-**Issue**: When key in `Missing` state was re-observed, transitioned to `Seen` instead of `Pending`.
+**Issue**: Key in `Missing` state could transition to `Seen` without verifying it was previously Valid.
 
-**Pattern**: Per RFC 5011 Section 3.3, re-observed missing keys should transition to `Pending`:
+**Pattern**: Per RFC 5011 Section 3.3, only keys that were previously Valid (trust_point != 0) can auto-restore to Pending via `observe_dnskey_at_root()`. Keys that were never Valid (trust_point == 0) must go through digest verification via `trust_anchor_check()`:
+
 ```rust
 TrustAnchorState::Missing => {
+    if anchor.trust_point == 0 {
+        // Never valid - require digest verification
+        return Rfc5011Event::KeyIgnored {
+            key_tag,
+            reason: "missing key was never valid, requires digest verification".to_string(),
+        };
+    }
+    // Was previously valid - can transition to Pending
     anchor.state = TrustAnchorState::Pending;
     anchor.pending_since = Some(now);
-    anchor.first_seen_at = Some(now);
     Rfc5011Event::KeyPending { key_tag }
 }
 ```
+
+**Verification flow**:
+1. Key becomes Missing when not seen for `trust_anchor_retention_days`
+2. `observe_dnskey_at_root()` called when key reappears in DNSKEY RRset
+3. If `trust_point == 0` → stay Missing, require `trust_anchor_check()` with DS digest
+4. If `trust_point != 0` → transition to Pending, then to Valid after observation period
 
 ---
 
