@@ -846,7 +846,9 @@ impl HttpServer {
         // ============================================================================
         // SECTION 9: WAF Early Decision Checks
         // ============================================================================
-        let early_decision = waf.check_early(client_ip, &path, cookies);
+        // Note: Site config not available yet at this point (routing happens later).
+        // Site-specific bot config (enable_css_honeypot, etc.) will be used in check_challenge.
+        let early_decision = waf.check_early(client_ip, &path, cookies, None);
         match early_decision {
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.http.early_drop").increment(1);

@@ -1170,6 +1170,10 @@ impl MeshTransport {
                                 global_node_id: peer_id.to_string(),
                                 global_node_signature: signature.clone(),
                                 origin_signature: origin_signature.clone(),
+                                origin_pubkey: {
+                                    use base64::{engine::general_purpose::STANDARD, Engine};
+                                    hex::decode(&origin_pk_str).ok().map(|bytes| STANDARD.encode(&bytes))
+                                },
                                 registered_at: crate::mesh::safe_unix_timestamp(),
                                 expires_at: crate::mesh::safe_unix_timestamp() + 300,
                             };

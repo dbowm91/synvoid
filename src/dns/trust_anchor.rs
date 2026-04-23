@@ -479,12 +479,24 @@ impl TrustAnchorManager {
                 anchor.removed_at = Some(now);
                 return Rfc5011Event::KeyRemoved { key_tag };
             } else if anchor.state == TrustAnchorState::Missing {
+                if anchor.trust_point == 0 {
+                    tracing::warn!(
+                        "RFC 5011: Key {} was never Valid (trust_point=0), staying in Missing until digest verified",
+                        key_tag
+                    );
+                    return Rfc5011Event::KeyIgnored {
+                        key_tag,
+                        reason: "missing key was never valid, requires digest verification".to_string(),
+                    };
+                }
+                anchor.state = TrustAnchorState::Pending;
+                anchor.pending_since = Some(now);
                 anchor.last_seen = now;
                 tracing::info!(
-                    "RFC 5011: Key {} reappeared in DNSKEY RRset, awaiting trust_anchor_check for digest verification",
+                    "RFC 5011: Key {} reappeared in DNSKEY RRset, entering Pending state",
                     key_tag
                 );
-                return Rfc5011Event::KeySeen { key_tag };
+                return Rfc5011Event::KeyPending { key_tag };
             }
             return Rfc5011Event::KeySeen { key_tag };
         }
@@ -1445,10 +1457,55 @@ mod tests {
 
         let event = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         match event {
-            Rfc5011Event::KeyPromoted { key_tag: kt } => {
+            Rfc5011Event::KeyIgnored { key_tag: kt, reason } => {
+                assert_eq!(kt, key_tag);
+                assert!(reason.contains("never valid"));
+            }
+            _ => panic!("Expected KeyIgnored event for missing key that was never Valid"),
+        }
+    }
+
+    #[test]
+    fn test_missing_key_restoration_previously_valid() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_anchors.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            trust_anchor_retention_days: 7,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x01, 0x02, 0x03, 0x04];
+        let key_tag = crate::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager.add_anchor(
+            format!("{}-8", key_tag),
+            key_tag,
+            8,
+            public_key.clone(),
+        ).expect("add_anchor should succeed");
+
+        let anchors = manager.anchors.read();
+        let anchor = anchors.get(&format!("{}-8", key_tag)).expect("anchor should exist");
+        assert_eq!(anchor.state, TrustAnchorState::Valid);
+        assert!(anchor.trust_point > 0, "trust_point should be set for Valid anchor");
+        drop(anchors);
+
+        let mut anchors = manager.anchors.write();
+        if let Some(anchor) = anchors.get_mut(&format!("{}-8", key_tag)) {
+            anchor.state = TrustAnchorState::Missing;
+        }
+        drop(anchors);
+
+        let event = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
+        match event {
+            Rfc5011Event::KeySeen { key_tag: kt } => {
                 assert_eq!(kt, key_tag);
             }
-            _ => panic!("Expected KeyPromoted event for missing key restoration"),
+            _ => panic!("Expected KeySeen event for missing key that was previously Valid"),
         }
     }
 

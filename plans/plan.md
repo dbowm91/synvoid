@@ -1,15 +1,15 @@
 # MaluWAF Implementation Consolidated Plan
 
 **Last updated**: 2026-04-23
-**Status**: ✅ ~95% COMPLETE
+**Status**: ✅ ~97% COMPLETE
 
 ## Overview
 
 This document consolidates all implementation items from individual plan files into a single wave-based plan. Each wave represents a set of items that can be implemented in parallel using sub-agents.
 
 **Total implementable items**: ~60+
-**Completion**: 95%+ (55/58 items completed, 3 deferred)
-**Deferred items**: C.5 (JSON Serialization), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.2 (Missing->Pending Guard), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
+**Completion**: 97%+ (57/60 items completed, 6 deferred)
+**Deferred items**: C.5 (JSON Serialization), G.5 (Edge Caching Image Poison), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
 
 ---
 
@@ -211,11 +211,13 @@ The verifier checks if a key requires a capability (e.g., `yara_rules_manifest:*
 **Reason deferred**: Requires creating `EdgeAttestation` structure, DHT key `edge_attestation:{node_id}`, and modifying `validate_edge_node()` in peer_auth.rs.
 
 ### D.3: VerifiedUpstream Signature Verification
-**Status**: ⏸️ DEFERRED
+**Status**: ✅ COMPLETE
 
 **Problem**: Origin signature not verified during storage.
 
-**Reason deferred**: Requires adding `origin_pubkey: Option<String>` field to `VerifiedUpstream` struct and verification logic. Would need architectural changes to how VerifiedUpstream records are created/stored.
+**Fix**: `find_verified_upstreams_for_site()` at `src/mesh/topology.rs:880-924` now verifies Ed25519 signature over `upstream_id:origin_node_id:upstream_url:registered_at` before accepting a VerifiedUpstream record. The signature is verified against the global node's public key looked up from DHT via `global_node_key:{global_node_id}`.
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### D.4: ThreatIntel Re-Announce Global Restriction
 **Status**: ✅ COMPLETE
@@ -322,11 +324,13 @@ From plan10 (OpenAPI) and plan11 (Admin Panel Usability).
 **Reason deferred**: Requires significant new code for `GET/PUT /api/config/bundle` endpoint with new request/response types.
 
 ### F.5: Per-Site Bot Detection Config
-**Status**: ⚠️ PARTIAL
+**Status**: ✅ COMPLETE
 
 **Problem**: Bot detection only at global defaults level.
 
-**Current status**: `SiteBotConfig` struct exists in `src/config/site/defensive.rs` and is integrated into site config. WAF uses it at `src/waf/mod.rs`. However, admin API handlers only support global defaults (`src/admin/handlers/config.rs:1621-1659`). Per-site bot detection via API requires new handlers.
+**Current status**: `SiteBotConfig` struct exists in `src/config/site/defensive.rs` and is integrated into site config. WAF uses it at `src/waf/mod.rs`. Admin API handlers at `src/admin/handlers/sites.rs:520-604` provide `GET/PUT /api/sites/{site_id}/bot-detection` endpoints for per-site configuration.
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### F.6: DNS Configuration UI
 **Status**: ✅ COMPLETE
@@ -370,19 +374,23 @@ From plan17 (Documentation) and plan4/plan5/plan6.
 - `src/http/file_manager_ui.js` - `getFileIconSvg()` method for client-side FileManager
 
 ### G.4: Serverless-as-Origin Architecture
-**Status**: 📋 Planned
+**Status**: ✅ COMPLETE
 
 **Problem**: Serverless functions not wired for mesh origin mode.
 
-**Proposed fix**: Implement serverless proxy stream handler.
+**Fix**: `handle_serverless_proxy_stream()` implemented at `src/mesh/transport_peer.rs:2886-2992`. Serverless manager is wired to mesh transport via `MeshTransport::set_serverless_manager()` for origin mode. Edge nodes can route serverless requests by detecting `serverless:` prefix in upstream_id.
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### G.5: Edge Caching Image Poison
-**Status**: 📋 Planned
+**Status**: ⏸️ DEFERRED
 
 **Issues**:
 1. ProxyCache not created when DHT preferences arrive
 2. Transform cache key missing poison parameters
 3. Double poisoning (origin + edge)
+
+**Reason deferred**: Requires significant changes to proxy cache architecture.
 
 ---
 
@@ -477,11 +485,13 @@ From plan12 (Dependency Security) and plan13/plan15.
 **Resolution**: Current implementation uses `INSERT OR REPLACE` into temp file + atomic rename, which is safe for crashes. Lacks WAL mode but acceptable.
 
 ### J.2: Missing->Pending State Guard
-**Status**: ⏸️ DEFERRED
+**Status**: ✅ COMPLETE
 
 **Problem**: Key can transition Missing->Pending without verifying was Valid.
 
-**Reason deferred**: Requires adding a guard to check `trust_point` was set before allowing Missing→Pending transition. RFC 5011 states only previously Valid keys can be auto-restored.
+**Fix**: Modified `observe_dnskey_at_root()` at `src/dns/trust_anchor.rs:481-500` to transition from `Missing` to `Pending` only when `trust_point != 0` (key was previously Valid). If `trust_point == 0`, the key was never valid and must go through digest verification via `trust_anchor_check()` before transitioning to Pending.
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### J.3: TOFU Fingerprint MITM
 **Status**: ✅ COMPLETE

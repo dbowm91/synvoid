@@ -615,7 +615,9 @@ impl HttpsServer {
 
         let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
 
-        let early_decision = waf.check_early(client_ip, &path, cookies);
+        // Note: Site config not available yet at this point (routing happens later).
+        // Site-specific bot config (enable_css_honeypot, etc.) will be used in check_challenge.
+        let early_decision = waf.check_early(client_ip, &path, cookies, None);
         match early_decision {
             crate::proxy::WafDecision::Drop => {
                 counter!("maluwaf.https.early_drop").increment(1);

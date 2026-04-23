@@ -784,7 +784,12 @@ impl WafCore {
         client_ip: std::net::IpAddr,
         path: &str,
         cookies: Option<&str>,
+        site_bot_config: Option<&crate::config::site::SiteBotConfig>,
     ) -> WafDecision {
+        let enable_css_honeypot = site_bot_config
+            .and_then(|c| c.enable_css_honeypot)
+            .unwrap_or(self.config.enable_css_honeypot);
+
         if self.whitelist.contains(&client_ip) {
             return WafDecision::Pass;
         }
@@ -796,7 +801,7 @@ impl WafCore {
             }
         }
 
-        if self.config.enable_css_honeypot
+        if enable_css_honeypot
             && !self
                 .config
                 .css_exempt_paths
@@ -975,7 +980,7 @@ impl WafCore {
             return decision;
         }
 
-        if let Some(decision) = self.check_challenge(client_ip, path) {
+        if let Some(decision) = self.check_challenge(client_ip, path, site_bot_config) {
             return decision;
         }
 
@@ -1349,8 +1354,17 @@ impl WafCore {
         None
     }
 
-    fn check_challenge(&self, client_ip: IpAddr, path: &str) -> Option<WafDecision> {
-        if (self.config.enable_pow_challenge || self.config.enable_css_honeypot)
+    fn check_challenge(
+        &self,
+        client_ip: IpAddr,
+        path: &str,
+        site_bot_config: Option<&crate::config::site::SiteBotConfig>,
+    ) -> Option<WafDecision> {
+        let enable_css_honeypot = site_bot_config
+            .and_then(|c| c.enable_css_honeypot)
+            .unwrap_or(self.config.enable_css_honeypot);
+
+        if (self.config.enable_pow_challenge || enable_css_honeypot)
             && !self
                 .config
                 .css_exempt_paths
