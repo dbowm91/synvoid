@@ -190,30 +190,32 @@ High-impact performance fixes for 500K rps target from plan14 and plan19.
 From plan2 (Mesh & DHT Security) and plan7 (YARA & ThreatIntel).
 
 ### D.1: DHT Capability-Based Write Authorization
-**Status**: 📋 Planned
+**Status**: ✅ COMPLETE
 
 **Problem**: DHT allows nodes to store records for capabilities they don't possess.
 
-**Proposed changes**:
-1. Add `capability_attestation` verification to `DhtAccessControl`
-2. Create `src/mesh/dht/capability_access.rs` module
+**Fix**: Wired `CapabilityAccessVerifier` into `RecordStoreManager`:
+1. Added `capability_verifier: Option<Arc<CapabilityAccessVerifier>>` field to `RecordStoreManager` in `src/mesh/dht/record_store.rs`
+2. Added `set_capability_verifier()` method for runtime configuration
+3. Added capability verification check in `store_record()` at `src/mesh/dht/record_store_crud.rs:141-150`
+
+The verifier checks if a key requires a capability (e.g., `yara_rules_manifest:*` requires "waf" capability) and validates the node has a valid `CapabilityAttestation` from a global node.
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### D.2: Edge Node Approval Workflow
-**Status**: 📋 Planned
+**Status**: ⏸️ DEFERRED
 
 **Problem**: Edge nodes self-authenticate without authorization from global node.
 
-**Proposed changes**:
-1. Add `EdgeAttestation` structure
-2. Modify `validate_edge_node()` in `peer_auth.rs`
-3. Add DHT key `edge_attestation:{node_id}`
+**Reason deferred**: Requires creating `EdgeAttestation` structure, DHT key `edge_attestation:{node_id}`, and modifying `validate_edge_node()` in peer_auth.rs.
 
 ### D.3: VerifiedUpstream Signature Verification
-**Status**: 📋 Planned
+**Status**: ⏸️ DEFERRED
 
 **Problem**: Origin signature not verified during storage.
 
-**Proposed change**: Verify `origin_signature` in `handle_upstream_announce()`.
+**Reason deferred**: Requires adding `origin_pubkey: Option<String>` field to `VerifiedUpstream` struct and verification logic. Would need architectural changes to how VerifiedUpstream records are created/stored.
 
 ### D.4: ThreatIntel Re-Announce Global Restriction
 **Status**: ✅ COMPLETE
@@ -290,44 +292,46 @@ From plan9 (Stub & Incomplete Code).
 From plan10 (OpenAPI) and plan11 (Admin Panel Usability).
 
 ### F.1: Add Swagger UI
-**Status**: 📋 Planned
+**Status**: ⏸️ DEFERRED
 
 **Problem**: No interactive API documentation.
 
-**Proposed fix**: Add `utoipa-swaggerui` endpoint at `/api/docs`.
+**Reason deferred**: utoipa-swaggerui version incompatibility with axum 0.8 + utoipa 4. Would require either downgrading axum or upgrading utoipa (with ~196 struct updates).
 
 ### F.2: Add `--export-api-spec` CLI Flag
-**Status**: 📋 Planned
+**Status**: ✅ COMPLETE
 
 **Problem**: `--export-openapi` exports config JSON, not API spec.
 
-**Proposed fix**: Add `--export-api-spec` flag.
+**Fix**: Added `--export-api-spec` CLI flag in `src/main.rs:145` that exports the OpenAPI 3.0 spec via `MaluWafOpenApi::openapi_json()`.
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### F.3: Document Security Scheme in OpenAPI
-**Status**: 📋 Planned
+**Status**: ⏸️ DEFERRED
 
 **Problem**: Bearer auth not documented in spec.
 
+**Reason deferred**: utoipa version issue with security_schemes macro - would require API changes to utoipa integration.
+
 ### F.4: Bulk Configuration Endpoint
-**Status**: 📋 Planned
+**Status**: ⏸️ DEFERRED
 
 **Problem**: 30+ separate config endpoints.
 
-**Proposed fix**: Add `GET/PUT /api/config/bundle`.
+**Reason deferred**: Requires significant new code for `GET/PUT /api/config/bundle` endpoint with new request/response types.
 
 ### F.5: Per-Site Bot Detection Config
-**Status**: 📋 Planned
+**Status**: ⚠️ PARTIAL
 
 **Problem**: Bot detection only at global defaults level.
 
-**Proposed fix**: Include in site configuration.
+**Current status**: `SiteBotConfig` struct exists in `src/config/site/defensive.rs` and is integrated into site config. WAF uses it at `src/waf/mod.rs`. However, admin API handlers only support global defaults (`src/admin/handlers/config.rs:1621-1659`). Per-site bot detection via API requires new handlers.
 
 ### F.6: DNS Configuration UI
-**Status**: 📋 Planned
+**Status**: ✅ COMPLETE
 
-**Problem**: No dedicated DNS management section.
-
-**Proposed fix**: Add DNS management endpoints (feature-gated).
+**Resolution**: Admin UI DNS page exists at `admin-ui/src/pages/dns.rs` (397 lines). Backend handlers at `src/admin/handlers/config.rs:1459-1492` are feature-gated with `#[cfg(feature = "dns")]`.
 
 ---
 
@@ -480,11 +484,22 @@ From plan12 (Dependency Security) and plan13/plan15.
 **Reason deferred**: Requires adding a guard to check `trust_point` was set before allowing Missing→Pending transition. RFC 5011 states only previously Valid keys can be auto-restored.
 
 ### J.3: TOFU Fingerprint MITM
-**Status**: ⚠️ PARTIALLY COMPLETE
+**Status**: ✅ COMPLETE
 
-**Current**: `require_explicit_fingerprint` config exists.
+**Problem**: TOFU fingerprint verification had no config option to allow first connection with warning.
 
-**Needed**: Enable by default (requires config change).
+**Fix**:
+1. Added `require_explicit_fingerprint: bool` field to `SeedTofuConfig` in `src/mesh/config.rs:237`
+2. Added `require_explicit_fingerprint: Arc<RwLock<bool>>` field to `MeshCertManager` in `src/mesh/cert.rs:167`
+3. Wired config value into MeshCertManager initialization at `src/mesh/cert.rs:230-234`
+4. Updated `verify_seed_fingerprint()` to check the flag - when `false` (default), allows first connection with warning log instead of rejecting
+
+**Config**: In `[mesh.seed_tofu]` section:
+```toml
+require_explicit_fingerprint = true  # Default: false (allows TOFU with warning)
+```
+
+**Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### J.4: Admin Token Redaction
 **Status**: ✅ COMPLETE

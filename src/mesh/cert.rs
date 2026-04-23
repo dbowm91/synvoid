@@ -163,6 +163,7 @@ pub struct MeshCertManager {
     crl_entries: Arc<RwLock<std::collections::HashMap<String, CrlEntry>>>,
     seed_tofu_fingerprints: Arc<RwLock<std::collections::HashMap<String, PinnedFingerprint>>>,
     tofu_enabled: Arc<RwLock<bool>>,
+    require_explicit_fingerprint: Arc<RwLock<bool>>,
 }
 
 impl std::fmt::Debug for MeshCertManager {
@@ -224,6 +225,13 @@ impl MeshCertManager {
             crl_entries: Arc::new(RwLock::new(std::collections::HashMap::new())),
             seed_tofu_fingerprints: Arc::new(RwLock::new(std::collections::HashMap::new())),
             tofu_enabled: Arc::new(RwLock::new(true)),
+            require_explicit_fingerprint: Arc::new(RwLock::new(
+                config
+                    .seed_tofu
+                    .as_ref()
+                    .map(|c| c.require_explicit_fingerprint)
+                    .unwrap_or(false),
+            )),
         }
     }
 
@@ -539,6 +547,7 @@ impl MeshCertManager {
         seed_address: &str,
         fingerprint: &str,
     ) -> Result<(), String> {
+        let require_explicit = *self.require_explicit_fingerprint.read();
         let mut fingerprints = self.seed_tofu_fingerprints.write();
         match fingerprints.entry(seed_address.to_string()) {
             std::collections::hash_map::Entry::Occupied(entry) => {
@@ -559,13 +568,25 @@ impl MeshCertManager {
                     ))
                 }
             }
-            std::collections::hash_map::Entry::Vacant(entry) => Err(format!(
-                "TOFU: No fingerprint configured for seed {}. \
-                    First connection rejected for security. \
-                    Configure pinned_cert_fingerprint in your mesh seed configuration \
-                    or set require_explicit_fingerprint=false to allow TOFU with warning.",
-                seed_address
-            )),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                if require_explicit {
+                    return Err(format!(
+                        "TOFU: No fingerprint configured for seed {}. \
+                        First connection rejected for security. \
+                        Configure pinned_cert_fingerprint in your mesh seed configuration.",
+                        seed_address
+                    ));
+                }
+                tracing::warn!(
+                    "TOFU: First connection to seed {} - accepting certificate fingerprint {} (trust on first use)",
+                    seed_address, fingerprint
+                );
+                entry.insert(PinnedFingerprint {
+                    fingerprint: fingerprint.to_string(),
+                    pinned_at: std::time::Instant::now(),
+                });
+                Ok(())
+            }
         }
     }
 

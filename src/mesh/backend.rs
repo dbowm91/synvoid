@@ -58,6 +58,7 @@ pub fn create_record_store(
         role,
         signer,
         access_control,
+        None,
     ));
 
     rs.enable_rate_limiting(

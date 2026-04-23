@@ -64,6 +64,7 @@ impl Default for MeshConfig {
             capabilities_enabled: true,
             require_tier_claim: false,
             stake: None,
+            seed_tofu: None,
             cached_pow: Arc::new(RwLock::new(None)),
             mlkem: Some(MeshMlKemConfig::default()),
         }

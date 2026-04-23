@@ -142,6 +142,9 @@ struct Args {
     #[arg(long, help = "Export OpenAPI spec as JSON and exit")]
     export_openapi: bool,
 
+    #[arg(long, help = "Export API specification (OpenAPI 3.0) as JSON and exit")]
+    export_api_spec: bool,
+
     #[arg(long, help = "Generate a new genesis key for first global node setup")]
     genesis: bool,
 
@@ -171,6 +174,13 @@ fn main() {
             "{}",
             serde_json::to_string_pretty(&schema).unwrap_or_default()
         );
+        std::process::exit(0);
+    }
+
+    if args.export_api_spec {
+        use maluwaf::admin::openapi::MaluWafOpenApi;
+        let spec = MaluWafOpenApi::openapi_json();
+        println!("{}", serde_json::to_string_pretty(&spec.0).unwrap_or_default());
         std::process::exit(0);
     }
 

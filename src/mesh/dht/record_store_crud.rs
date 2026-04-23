@@ -139,6 +139,17 @@ impl RecordStoreManager {
             return false;
         }
 
+        if let Some(ref verifier) = self.capability_verifier {
+            if !verifier.verify_capability_for_key(&record.source_node_id, &record.key) {
+                tracing::warn!(
+                    "Record store: capability verification failed for node {} on key {}",
+                    record.source_node_id,
+                    record.key
+                );
+                return false;
+            }
+        }
+
         if self.can_cache_on_edge(&record.key) {
             return self.store_record_edge_cache(record);
         }

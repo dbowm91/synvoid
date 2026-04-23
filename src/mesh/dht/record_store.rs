@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
 use crate::mesh::config::MeshNodeRole;
+use crate::mesh::dht::capability_access::CapabilityAccessVerifier;
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::merkle::MerkleTree;
 use crate::mesh::dht::{validate_message_timestamp, DhtAccessControl};
@@ -253,6 +254,7 @@ pub struct RecordStoreManager {
     node_id: String,
     node_role: MeshNodeRole,
     access_control: Arc<DhtAccessControl>,
+    capability_verifier: Option<Arc<CapabilityAccessVerifier>>,
     convergence_threshold: usize,
     pub record_state: RwLock<RecordStoreState>,
     pub routing_state: RwLock<RoutingState>,
@@ -283,6 +285,7 @@ impl RecordStoreManager {
         node_role: MeshNodeRole,
         mesh_signer: Option<crate::mesh::protocol::MeshMessageSigner>,
         access_control: DhtAccessControl,
+        capability_verifier: Option<Arc<CapabilityAccessVerifier>>,
     ) -> Self {
         let initial_interval = config.initial_sync_interval_secs;
         let convergence_threshold = config.convergence_threshold;
@@ -293,6 +296,7 @@ impl RecordStoreManager {
             node_id,
             node_role,
             access_control: Arc::new(access_control),
+            capability_verifier,
             convergence_threshold,
             record_state: RwLock::new(RecordStoreState {
                 mesh_signer,
@@ -350,6 +354,10 @@ impl RecordStoreManager {
     pub fn get_record_verifier(&self) -> Option<crate::mesh::dht::RecordSigner> {
         let state = self.record_state.read();
         state.record_signer.clone()
+    }
+
+    pub fn set_capability_verifier(&mut self, verifier: Option<Arc<CapabilityAccessVerifier>>) {
+        self.capability_verifier = verifier;
     }
 
     pub fn enable_rate_limiting(&self, max_requests: u32, window_secs: u64) {
@@ -479,6 +487,7 @@ impl Clone for RecordStoreManager {
             node_id: self.node_id.clone(),
             node_role: self.node_role,
             access_control: self.access_control.clone(),
+            capability_verifier: self.capability_verifier.clone(),
             convergence_threshold: self.convergence_threshold,
             record_state: RwLock::new(record_state),
             routing_state: RwLock::new(routing_state),

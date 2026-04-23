@@ -1,3 +1,4 @@
+pub mod capability_access;
 pub mod capability_attestation;
 pub mod keys;
 pub mod merkle;

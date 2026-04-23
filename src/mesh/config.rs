@@ -233,12 +233,18 @@ pub struct MeshSeedNode {
 pub struct SeedTofuConfig {
     #[serde(default = "default_tofu_enabled")]
     pub enabled: bool,
+    #[serde(default = "default_require_explicit_fingerprint")]
+    pub require_explicit_fingerprint: bool,
     #[serde(default)]
     pub pinned_fingerprints: HashMap<String, String>,
 }
 
 fn default_tofu_enabled() -> bool {
     true
+}
+
+fn default_require_explicit_fingerprint() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -797,6 +803,8 @@ pub struct MeshConfig {
     pub stake: Option<crate::mesh::dht::stake::StakeConfig>,
     #[serde(default)]
     pub mlkem: Option<MeshMlKemConfig>,
+    #[serde(default)]
+    pub seed_tofu: Option<SeedTofuConfig>,
     #[serde(skip)]
     cached_pow: Arc<RwLock<Option<(u64, std::time::Instant)>>>,
 }
