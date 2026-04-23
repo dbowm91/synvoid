@@ -168,6 +168,11 @@ fn build_router_from_state(
             get(handlers::sites::get_site_theme).put(handlers::sites::update_site_theme),
         )
         .route(
+            "/sites/{site_id}/bot-detection",
+            get(handlers::sites::get_site_bot_detection)
+                .put(handlers::sites::update_site_bot_detection),
+        )
+        .route(
             "/sites/{site_id}/error-pages",
             get(handlers::sites::get_site_error_pages)
                 .put(handlers::sites::update_site_error_pages),

@@ -480,6 +480,149 @@ pub async fn update_site_theme(
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct SiteBotDetectionResponse {
+    pub site_id: String,
+    pub inherit: Option<bool>,
+    pub block_ai_crawlers: Option<bool>,
+    pub enable_css_honeypot: Option<bool>,
+    pub enable_js_challenge: Option<bool>,
+    pub challenge_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateSiteBotDetectionRequest {
+    #[serde(default)]
+    pub inherit: Option<bool>,
+    #[serde(default)]
+    pub block_ai_crawlers: Option<bool>,
+    #[serde(default)]
+    pub enable_css_honeypot: Option<bool>,
+    #[serde(default)]
+    pub enable_js_challenge: Option<bool>,
+    #[serde(default)]
+    pub challenge_type: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/sites/{site_id}/bot-detection",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    responses(
+        (status = 200, description = "Site bot detection config", body = SiteBotDetectionResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
+pub async fn get_site_bot_detection(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(site_id): Path<String>,
+) -> Result<Json<SiteBotDetectionResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+
+    let site = config.sites.get(&site_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    let bot = &site.bot;
+
+    Ok(Json(SiteBotDetectionResponse {
+        site_id,
+        inherit: bot.inherit,
+        block_ai_crawlers: bot.block_ai_crawlers,
+        enable_css_honeypot: bot.enable_css_honeypot,
+        enable_js_challenge: bot.enable_js_challenge,
+        challenge_type: bot.challenge_type.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/sites/{site_id}/bot-detection",
+    params(
+        ("site_id" = String, Path, description = "Site ID")
+    ),
+    request_body = UpdateSiteBotDetectionRequest,
+    responses(
+        (status = 200, description = "Site bot detection config updated", body = SiteBotDetectionResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Site not found"),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "sites"
+)]
+pub async fn update_site_bot_detection(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(site_id): Path<String>,
+    Json(req): Json<UpdateSiteBotDetectionRequest>,
+) -> Result<Json<SiteBotDetectionResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    let mut config = state.process.config.write().await;
+
+    let site = config
+        .sites
+        .get_mut(&site_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if req.inherit.is_some()
+        || req.block_ai_crawlers.is_some()
+        || req.enable_css_honeypot.is_some()
+        || req.enable_js_challenge.is_some()
+        || req.challenge_type.is_some()
+    {
+        if let Some(v) = req.inherit {
+            site.bot.inherit = Some(v);
+        }
+        if let Some(v) = req.block_ai_crawlers {
+            site.bot.block_ai_crawlers = Some(v);
+        }
+        if let Some(v) = req.enable_css_honeypot {
+            site.bot.enable_css_honeypot = Some(v);
+        }
+        if let Some(v) = req.enable_js_challenge {
+            site.bot.enable_js_challenge = Some(v);
+        }
+        if let Some(v) = req.challenge_type {
+            site.bot.challenge_type = Some(v);
+        }
+    }
+
+    let response = SiteBotDetectionResponse {
+        site_id: site_id.clone(),
+        inherit: site.bot.inherit,
+        block_ai_crawlers: site.bot.block_ai_crawlers,
+        enable_css_honeypot: site.bot.enable_css_honeypot,
+        enable_js_challenge: site.bot.enable_js_challenge,
+        challenge_type: site.bot.challenge_type.clone(),
+    };
+
+    let site_config = site.clone();
+    drop(config);
+
+    let config_path = {
+        let cfg = state.process.config.read().await;
+        config_path(&cfg.sites_dir, &site_id)
+    };
+    let toml_content = toml::to_string_pretty(&site_config).map_err(|e| {
+        tracing::error!("Failed to serialize site config: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    tokio::fs::write(&config_path, toml_content)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to write site config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(response))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SiteErrorPagesResponse {
     pub site_id: String,
     pub inherit: Option<bool>,
