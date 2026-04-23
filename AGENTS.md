@@ -271,10 +271,10 @@ Keys transition through these states:
 
 The implementation plan was consolidated in `plans/plan.md`. This document contains all implementation items organized into waves for parallel sub-agent execution.
 
-**Current Status** (as of 2026-04-22):
+**Current Status** (as of 2026-04-23):
 - ~60+ implementable items across 10 waves
-- **95%+ COMPLETE** (55/58 items completed, 3 deferred)
-- Deferred items: C.5 (Mesh DHT JSON Serialization), F.1 (Swagger UI), G.4 (Serverless-as-Origin partial)
+- **95%+ COMPLETE** (55/58 items completed, 6 deferred)
+- Deferred items: C.5 (JSON Serialization), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.2 (Missing->Pending Guard), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
 - All security fixes implemented
 - All performance hot-path optimizations implemented
 
@@ -416,9 +416,11 @@ Agents modifying these areas should be aware of performance characteristics:
 | Input normalization | Pre-computed lowercased words at init | `src/waf/probe_tracker.rs:475` |
 | Rate limiting | Lock-free atomic bitset for slot tracking | `src/waf/ratelimit/core.rs` |
 | HTTP path sanitization | Not called in request path | `src/proxy.rs:139` |
-| Response header filtering | Vec allocation on every proxied response | `src/proxy.rs:244-256` |
+| Response header filtering | Pre-allocated buffer via `filter_response_headers_buf` | `src/tls/server.rs:1405-1406,1551-1552` |
 | SSRF detection | `Cow<str>` optimization to avoid repeated lowercasing | `src/waf/attack_detection/ssrf.rs` |
-| DNS zone store | 64-sharded `RwLock`; prefer single-shard ops over full iteration | `src/dns/server/sharded_store.rs` |
+| DNS zone store | 64-sharded `RwLock`; suffix index for O(k) lookups | `src/dns/server/sharded_store.rs` |
+| Body buffering | Uses `BytesMut` to avoid reallocations | `src/http/shared_handler.rs` |
+| Retry logic | Uses `<` not `<=` to prevent off-by-one | `src/proxy/mod.rs:860,886,906` |
 
 ## Module Size Guide
 
@@ -554,11 +556,15 @@ Key API:
 - `insert(String, Zone)` — single-shard write
 - `for_each(FnMut(&String, &Zone))` — iterates all shards (read locks)
 - `for_each_mut(FnMut(&mut Zone))` — iterates all shards (write locks)
-- `find(Fn(&str, &Zone) -> bool) -> Option<Zone>` — search all shards
+- `find_by_suffix(&str) -> Option<Zone>` — O(k) suffix match via index
+- `find_by_suffix_with_filter(&str, Fn(&Zone) -> bool) -> Option<Zone>` — O(k) suffix + filter
+- `find(Fn(&str, &Zone) -> bool) -> Option<Zone>` — search all shards (avoid in hot path)
 - `get_or_create_and_update(&str, FnOnce(&mut Zone))` — entry-or-insert on one shard
 - `keys() -> Vec<String>` — collect all zone names (all shards)
 
 When modifying zone access code, prefer single-shard operations (`get`, `insert`, `update_zone`) over full-shard iteration (`for_each`, `keys`). The `Arc<ShardedZoneStore>` replaces the former `Arc<RwLock<HashMap<String, Zone>>>` pattern.
+
+**Performance note**: For DNSSEC validation, use `find_by_suffix_with_filter()` instead of `find()` to get O(k) suffix lookup followed by filter, instead of O(n) iteration over all zones.
 
 ## Moka Cache Migration
 
