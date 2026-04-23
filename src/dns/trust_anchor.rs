@@ -479,14 +479,12 @@ impl TrustAnchorManager {
                 anchor.removed_at = Some(now);
                 return Rfc5011Event::KeyRemoved { key_tag };
             } else if anchor.state == TrustAnchorState::Missing {
-                anchor.state = TrustAnchorState::Pending;
-                anchor.pending_since = Some(now);
-                anchor.first_seen_at = Some(now);
+                anchor.last_seen = now;
                 tracing::info!(
-                    "RFC 5011: Key {} reappeared, entering Pending state",
+                    "RFC 5011: Key {} reappeared in DNSKEY RRset, awaiting trust_anchor_check for digest verification",
                     key_tag
                 );
-                return Rfc5011Event::KeyPending { key_tag };
+                return Rfc5011Event::KeySeen { key_tag };
             }
             return Rfc5011Event::KeySeen { key_tag };
         }
@@ -616,9 +614,53 @@ impl TrustAnchorManager {
                 TrustAnchorState::Revoked => Rfc5011Event::KeyRevoked { key_tag },
                 TrustAnchorState::Removed => Rfc5011Event::KeyRemoved { key_tag },
                 TrustAnchorState::Missing => {
+                    if anchor.trust_point == 0 {
+                        tracing::warn!(
+                            "RFC 5011: Key {} in Missing state was never Valid, staying in Missing until digest verified",
+                            key_tag
+                        );
+                        return Rfc5011Event::KeyIgnored {
+                            key_tag,
+                            reason: "missing key was never valid, requires digest verification".to_string(),
+                        };
+                    }
+                    let computed_digest = match crate::dns::dnssec::compute_ds_digest(
+                        digest_type,
+                        257,
+                        3,
+                        algorithm,
+                        &anchor.public_key,
+                    ) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::warn!(
+                                "RFC 5011: Failed to compute digest for missing key {}: {}",
+                                key_tag,
+                                e
+                            );
+                            return Rfc5011Event::KeyIgnored {
+                                key_tag,
+                                reason: format!("digest computation failed: {}", e),
+                            };
+                        }
+                    };
+                    if computed_digest != digest {
+                        tracing::warn!(
+                            "RFC 5011: Digest mismatch for missing key {} (re-appearance not verified)",
+                            key_tag
+                        );
+                        return Rfc5011Event::KeyIgnored {
+                            key_tag,
+                            reason: "digest mismatch on missing key re-appearance".to_string(),
+                        };
+                    }
                     anchor.state = TrustAnchorState::Pending;
                     anchor.pending_since = Some(now);
                     anchor.first_seen_at = Some(now);
+                    tracing::info!(
+                        "RFC 5011: Previously valid key {} re-verified via digest, entering Pending state",
+                        key_tag
+                    );
                     Rfc5011Event::KeyPending { key_tag }
                 }
             }
