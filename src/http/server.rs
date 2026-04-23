@@ -1867,6 +1867,41 @@ impl HttpServer {
                                     .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
                             }
                             Err(e) => {
+                                if let crate::serverless::manager::ServerlessError::RemoteExecutionRequired(ref upstream_id) = e {
+                                    let function_name = upstream_id.strip_prefix("serverless:").unwrap_or(upstream_id);
+                                    if let Some(ref mt) = mesh_transport {
+                                        let body_bytes_retry: Bytes = full_body_arc.as_ref().clone();
+                                        let mut proxy_req = http::Request::builder()
+                                            .method(parts.method.clone())
+                                            .uri(parts.uri.clone());
+                                        for (name, value) in parts.headers.iter() {
+                                            proxy_req = proxy_req.header(name.as_str(), value.to_str().unwrap_or(""));
+                                        }
+                                        let proxy_req = proxy_req.body(http_body_util::Full::new(body_bytes_retry)).unwrap_or_else(|_| {
+                                            http::Request::new(http_body_util::Full::new(Bytes::new()))
+                                        });
+
+                                        let record_store = mt.get_record_store();
+                                        let peer_node_id = record_store.as_ref().and_then(|rs| {
+                                            rs.get_record(&format!("serverless:{}", function_name))
+                                                .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.value).ok())
+                                                .and_then(|v| v.get("node_id").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                        });
+
+                                        if let Some(node_id) = peer_node_id {
+                                            match mt.proxy_serverless_request(function_name, &node_id, proxy_req).await {
+                                                Ok(proxy_resp) => {
+                                                    return Ok(proxy_resp);
+                                                }
+                                                Err(proxy_err) => {
+                                                    tracing::warn!("Serverless mesh proxy failed for {}: {}", function_name, proxy_err);
+                                                }
+                                            }
+                                        } else {
+                                            tracing::warn!("No provider node found in DHT for serverless function: {}", function_name);
+                                        }
+                                    }
+                                }
                                 tracing::warn!("Serverless function error for {}: {}", path, e);
                                 return Ok(Self::build_response_with_alt_svc(
                                     502,
