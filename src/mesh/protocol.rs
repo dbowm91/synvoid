@@ -4,26 +4,27 @@ use ed25519_dalek::SigningKey;
 use ed25519_dalek::Verifier;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use prost::Message;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ArcStr(Arc<str>);
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Archive, RkyvDeserialize, RkyvSerialize)]
+pub struct ArcStr(String);
 
 impl ArcStr {
     pub fn new(s: impl Into<String>) -> Self {
-        Self(Arc::from(s.into()))
+        Self(s.into())
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    pub fn as_arc(&self) -> &Arc<str> {
-        &self.0
+    pub fn as_arc(&self) -> Arc<str> {
+        Arc::from(self.0.clone())
     }
 }
 
@@ -35,13 +36,13 @@ impl std::fmt::Display for ArcStr {
 
 impl From<String> for ArcStr {
     fn from(s: String) -> Self {
-        Self(Arc::from(s))
+        Self(s)
     }
 }
 
 impl From<&str> for ArcStr {
     fn from(s: &str) -> Self {
-        Self(Arc::from(s))
+        Self(s.to_string())
     }
 }
 
@@ -67,7 +68,7 @@ impl<'de> Deserialize<'de> for ArcStr {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Ok(Self(Arc::from(s)))
+        Ok(Self(s))
     }
 }
 
@@ -116,12 +117,12 @@ impl MeshMessageSigner {
         key
     }
 
-    pub fn sign(&self, content: &str) -> Vec<u8> {
-        let signature = self.signing_key.sign(content.as_bytes());
+    pub fn sign(&self, content: &[u8]) -> Vec<u8> {
+        let signature = self.signing_key.sign(content);
         signature.to_bytes().to_vec()
     }
 
-    pub fn verify(&self, content: &str, signature: &[u8], public_key: &[u8]) -> bool {
+    pub fn verify(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
         if signature.len() != 64 || public_key.len() != 32 {
             return false;
         }
@@ -135,7 +136,7 @@ impl MeshMessageSigner {
         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
             Ok(pk) => pk
                 .verify(
-                    content.as_bytes(),
+                    content,
                     &ed25519_dalek::Signature::from_bytes(&sig_array),
                 )
                 .is_ok(),
@@ -1062,7 +1063,7 @@ impl From<&crate::config::site::ProxyCacheConfig> for ProxyCachePreferences {
     }
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct MeshCapabilities {
     pub can_route: bool,
     pub can_proxy: bool,
@@ -1279,7 +1280,7 @@ pub enum HealthStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum ThreatType {
     Unspecified,
     IpBlock,
@@ -1292,7 +1293,7 @@ pub enum ThreatType {
     CertBlock,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum ThreatSeverity {
     Unspecified,
     Low,
@@ -1301,7 +1302,7 @@ pub enum ThreatSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct ThreatIndicator {
     pub threat_type: ThreatType,
     pub indicator_value: String,
@@ -1318,7 +1319,7 @@ pub struct ThreatIndicator {
     pub signer_public_key: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct DhtRecord {
     pub key: String,
     pub value: Vec<u8>,

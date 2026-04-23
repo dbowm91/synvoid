@@ -33,7 +33,7 @@ impl RecordStoreManager {
                 records.len(),
                 timestamp
             );
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = signer.get_public_key();
         }
 
@@ -61,7 +61,7 @@ impl RecordStoreManager {
 
         if let Some(ref signer) = rs.mesh_signer {
             let content = format!("{},{},{}", request_id, self.node_id, from_version);
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = signer.get_public_key();
         }
 
@@ -106,7 +106,7 @@ impl RecordStoreManager {
                 records.len(),
                 timestamp
             );
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = signer.get_public_key();
         }
 
@@ -198,10 +198,11 @@ impl RecordStoreManager {
                         .as_ref()
                         .map(|s| {
                             s.verify(
-                                signed_record.get_signable_content().as_str(),
+                                &signed_record.get_signable_content(),
                                 &signed_record.signature,
                                 &pk_bytes,
                             )
+
                         })
                         .unwrap_or(false)
                 } else {
@@ -398,7 +399,7 @@ impl RecordStoreManager {
                     "{},{},{},{},{}",
                     request_id, key, rec.timestamp, self.node_id, timestamp
                 );
-                signature = signer.sign(&content);
+                signature = signer.sign(content.as_bytes());
                 signer_public_key = signer.get_public_key();
             }
         }
@@ -483,10 +484,11 @@ impl RecordStoreManager {
                         .as_ref()
                         .map(|s| {
                             s.verify(
-                                signed_record.get_signable_content().as_str(),
+                                &signed_record.get_signable_content(),
                                 &signed_record.signature,
                                 &pk_bytes,
                             )
+
                         })
                         .unwrap_or(false)
                 } else {
@@ -565,10 +567,11 @@ impl RecordStoreManager {
                         .as_ref()
                         .map(|s| {
                             s.verify(
-                                signed_record.get_signable_content().as_str(),
+                                &signed_record.get_signable_content(),
                                 &signed_record.signature,
                                 &pk_bytes,
                             )
+
                         })
                         .unwrap_or(false)
                 } else {
@@ -732,7 +735,7 @@ impl RecordStoreManager {
                         self.node_role.bits(),
                         timestamp
                     );
-                    (signer.sign(&content), signer.get_public_key())
+                    (signer.sign(content.as_bytes()), signer.get_public_key())
                 }
                 None => (Vec::new(), String::new()),
             }

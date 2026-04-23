@@ -93,36 +93,17 @@ impl MeshDnsRegistry {
             let nodes = dht_store.get_anycast_nodes_for_zone(zone);
             nodes
                 .into_iter()
-                .filter_map(|value| {
-                    let node_id = value.get("node_id")?.as_str()?;
-                    let anycast_ips: Vec<String> = value
-                        .get("anycast_ips")?
-                        .as_array()?
-                        .iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect();
-                    let geo = value.get("geo").and_then(|v| v.as_str()).map(String::from);
-                    let capacity = value.get("capacity")?.as_u64()? as u32;
-                    let healthy = value.get("healthy")?.as_bool()?;
-                    let dns_zones: Vec<String> = value
-                        .get("dns_zones")?
-                        .as_array()?
-                        .iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect();
-
-                    Some(RegisteredAnycastNode {
-                        node_id: node_id.to_string(),
-                        anycast_ips,
-                        geo,
-                        healthy,
-                        capacity,
-                        latency_ms: None,
-                        load_percent: None,
-                        last_update: current_timestamp(),
-                        authenticated: false,
-                        dns_zones,
-                    })
+                .map(|value| RegisteredAnycastNode {
+                    node_id: value.node_id,
+                    anycast_ips: value.anycast_ips,
+                    geo: value.geo,
+                    healthy: value.healthy,
+                    capacity: value.capacity,
+                    latency_ms: None,
+                    load_percent: None,
+                    last_update: value.registered_at,
+                    authenticated: true,
+                    dns_zones: value.dns_zones,
                 })
                 .filter(|n| n.healthy)
                 .collect()

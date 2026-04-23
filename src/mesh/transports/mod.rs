@@ -1,3 +1,4 @@
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -12,7 +13,7 @@ pub mod stack;
 
 pub use crate::mesh::transport_core::MeshTransportError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum MeshTransportType {

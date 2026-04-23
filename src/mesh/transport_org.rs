@@ -222,7 +222,7 @@ impl MeshTransport {
         );
 
         let signature = if let Some(ref signer) = self.mesh_signer {
-            signer.sign(&sign_data).to_vec()
+            signer.sign(sign_data.as_bytes()).to_vec()
         } else {
             tracing::warn!("No mesh signer available for org registration response");
             Vec::new()
@@ -526,7 +526,7 @@ impl MeshTransport {
             .collect::<Vec<_>>()
             .join(":");
         let signature = if let Some(ref signer) = self.mesh_signer {
-            signer.sign(&sign_data).to_vec()
+            signer.sign(sign_data.as_bytes()).to_vec()
         } else {
             tracing::warn!("No mesh signer available for tier key announce");
             Vec::new()

@@ -258,30 +258,40 @@ impl SignedDhtRecord {
     }
 
     pub fn serialize_value<T: Serialize>(value: &T) -> Vec<u8> {
-        serde_json::to_vec(value).unwrap_or_default()
+        crate::serialization::serialize(value).unwrap_or_default()
     }
 
-    pub fn serialize_json(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
+    pub fn serialize_postcard(&self) -> Vec<u8> {
+        crate::serialization::serialize(self).unwrap_or_default()
     }
 
-    pub fn deserialize_json(data: &[u8]) -> Option<Self> {
-        serde_json::from_slice(data).ok()
+    pub fn deserialize_postcard(data: &[u8]) -> Option<Self> {
+        crate::serialization::deserialize(data).ok()
     }
 
     /// Get signable content for signature verification
-    /// Uses canonical JSON with sorted keys
-    pub fn get_signable_content(&self) -> String {
-        let value_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&self.value);
-        serde_json::to_string(&serde_json::json!({
-            "created_at": self.created_at,
-            "key": self.key,
-            "publisher_id": self.publisher_id,
-            "sequence_number": self.sequence_number,
-            "source_node_id": self.source_node_id,
-            "value": value_b64,
-        }))
-        .unwrap_or_default()
+    /// Uses postcard for stable binary serialization
+    pub fn get_signable_content(&self) -> Vec<u8> {
+        #[derive(Serialize)]
+        struct SignableContent<'a> {
+            key: &'a str,
+            value: &'a [u8],
+            publisher_id: &'a str,
+            created_at: u64,
+            sequence_number: u64,
+            source_node_id: &'a str,
+        }
+
+        let content = SignableContent {
+            key: &self.key,
+            value: &self.value,
+            publisher_id: &self.publisher_id,
+            created_at: self.created_at,
+            sequence_number: self.sequence_number,
+            source_node_id: &self.source_node_id,
+        };
+
+        crate::serialization::serialize(&content).unwrap_or_default()
     }
 }
 
@@ -311,7 +321,7 @@ impl RecordSigner {
         };
 
         let content = record.get_signable_content();
-        let signature = signer.sign(&content);
+        let signature = signer.sign_bytes(&content);
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&signature)
             .ok()
@@ -340,7 +350,7 @@ impl RecordSigner {
         let signature_b64 =
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
 
-        verifier.verify(&content, &signature_b64)
+        verifier.verify_bytes(&content, &signature_b64)
     }
 
     pub fn get_verifying_key(&self) -> Option<String> {

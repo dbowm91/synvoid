@@ -529,7 +529,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                 "{}:{}:{}:{}:{}:{}",
                 version, content_hash, self.node_id, timestamp, chunk_count, is_chunked
             );
-            let sig = signer.sign(&content);
+            let sig = signer.sign(content.as_bytes());
             let pk = base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
                 signer.get_public_key_bytes(),
@@ -581,7 +581,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                         self.node_id,
                         timestamp
                     );
-                    signer.sign(&content)
+                    signer.sign(content.as_bytes())
                 } else {
                     Vec::new()
                 };
@@ -621,7 +621,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                     "{}:{}:{}:{}:{}",
                     version, rules, content_hash, self.node_id, timestamp
                 );
-                let sig = signer.sign(&content);
+                let sig = signer.sign(content.as_bytes());
                 let pk = base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
                     signer.get_public_key_bytes(),
@@ -781,7 +781,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                     self.node_id,
                     ts
                 );
-                if !signer.verify(&sig_content, &sig_bytes, &pk_bytes) {
+                if !signer.verify(sig_content.as_bytes(), &sig_bytes, &pk_bytes) {
                     tracing::warn!(
                         "YARA sync: chunk signature verification failed for chunk {} of hash {}",
                         i,
@@ -936,7 +936,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                         let signer = crate::mesh::protocol::MeshMessageSigner::new(
                             pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
                         );
-                        if !signer.verify(&signature_content, &sig_bytes, &pk_bytes) {
+                        if !signer.verify(signature_content.as_bytes(), &sig_bytes, &pk_bytes) {
                             tracing::warn!(
                                 "YARA DHT sync: manifest signature verification failed for record from {}",
                                 manifest_node_id
@@ -1175,7 +1175,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
         let mut signature = Vec::new();
         if let Some(ref signer) = self.signer {
             let content = format!("{}:{}:{}:{}", submission_id, rules.len(), self.node_id, now);
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
         }
 
         let submission = YaraRuleSubmission {
@@ -1493,7 +1493,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
 
             let signature = if let Some(ref signer) = self.signer {
                 let sign_content = format!("{}:{}", version, rules);
-                signer.sign(&sign_content)
+                signer.sign(sign_content.as_bytes())
             } else {
                 Vec::new()
             };
@@ -1761,7 +1761,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                         let pk_bytes = base64::engine::general_purpose::STANDARD
                             .decode(signer_public_key)
                             .unwrap_or_default();
-                        if !signer.verify(&sign_content, signature, &pk_bytes) {
+                        if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(
                                 "YARA rule signature verification failed from {}, rejecting rules",
                                 from_node
@@ -1850,7 +1850,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                     let signature = if let Some(ref signer) = self.signer {
                         let ver_for_sign = ver.clone().unwrap_or_default();
                         let sign_content = format!("{}:{}", ver_for_sign, rules);
-                        signer.sign(&sign_content)
+                        signer.sign(sign_content.as_bytes())
                     } else {
                         Vec::new()
                     };
@@ -1890,7 +1890,7 @@ fn save_rules_to_disk(&self) -> Result<(), YaraRulesError> {
                             let pk_bytes = base64::engine::general_purpose::STANDARD
                                 .decode(signer_public_key)
                                 .unwrap_or_default();
-                            if !signer.verify(&sign_content, signature, &pk_bytes) {
+                            if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                                 tracing::warn!(
                                     "YARA rule sync response signature verification failed from {}, rejecting rules",
                                     from_node

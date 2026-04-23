@@ -734,7 +734,7 @@ impl MeshTransport {
             timestamp,
         );
 
-        let signature = signer.sign(&temp_attestation.signable_content());
+        let signature = signer.sign(temp_attestation.signable_content().as_bytes());
 
         let signer_public_key = signer.get_public_key();
 
@@ -1115,7 +1115,7 @@ impl MeshTransport {
                         config_json.len(),
                         timestamp
                     );
-                    (signer.sign(&msg), Some(signer.get_public_key().into()))
+                    (signer.sign(msg.as_bytes()), Some(signer.get_public_key().into()))
                 } else {
                     (Vec::new(), None)
                 };
@@ -2558,7 +2558,7 @@ impl MeshTransport {
 
                 let signature = if let Some(ref signer) = self.mesh_signer {
                     let content = format!("{}:{:?}", upstream_id_for_sig, action);
-                    signer.sign(&content)
+                    signer.sign(content.as_bytes())
                 } else {
                     Vec::new()
                 };

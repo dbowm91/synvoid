@@ -58,8 +58,12 @@ impl Ed25519Signer {
     }
 
     pub fn sign(&self, message: &str) -> String {
+        self.sign_bytes(message.as_bytes())
+    }
+
+    pub fn sign_bytes(&self, message: &[u8]) -> String {
         let signing_key = SigningKey::from_bytes(&self.key_bytes.0);
-        let signature = signing_key.sign(message.as_bytes());
+        let signature = signing_key.sign(message);
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     }
 
@@ -91,6 +95,10 @@ impl Ed25519Verifier {
     }
 
     pub fn verify(&self, message: &str, signature: &str) -> bool {
+        self.verify_bytes(message.as_bytes(), signature)
+    }
+
+    pub fn verify_bytes(&self, message: &[u8], signature: &str) -> bool {
         let sig_bytes = match URL_SAFE_NO_PAD.decode(signature) {
             Ok(bytes) if bytes.len() == 64 => bytes,
             _ => return false,
@@ -98,9 +106,7 @@ impl Ed25519Verifier {
         let mut sig_array = [0u8; 64];
         sig_array.copy_from_slice(&sig_bytes);
         let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
-        self.verifying_key
-            .verify(message.as_bytes(), &signature)
-            .is_ok()
+        self.verifying_key.verify(message, &signature).is_ok()
     }
 }
 

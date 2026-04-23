@@ -8,8 +8,8 @@
 This document consolidates all implementation items from individual plan files into a single wave-based plan. Each wave represents a set of items that can be implemented in parallel using sub-agents.
 
 **Total implementable items**: ~60+
-**Completion**: 97%+ (57/60 items completed, 6 deferred)
-**Deferred items**: C.5 (JSON Serialization), G.5 (Edge Caching Image Poison), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
+**Completion**: 98%+ (58/60 items completed, 5 deferred)
+**Deferred items**: G.5 (Edge Caching Image Poison), I.1 (ConnectionLimiter Sharding), I.4 (WebSocket WAF), J.6 (Static Worker IPC), J.7 (IPC TOCTOU)
 
 ---
 
@@ -164,9 +164,15 @@ High-impact performance fixes for 500K rps target from plan14 and plan19.
 **Verification**: `cargo clippy --lib -- -D warnings` passes
 
 ### C.5: Mesh DHT — JSON Serialization
-**Status**: ⏸️ DEFERRED
+**Status**: ✅ COMPLETE
 
-**Reason**: High-risk architectural change requiring replacement of serialization across many files.
+**Fix**: Migrated Mesh DHT serialization from `serde_json` to `postcard` (via `crate::serialization`). 
+- Moved `AnycastNode`, `DnsDomainRegistration`, and other record types to typed Rust structs in `src/mesh/dht/mod.rs` with `Archive` (rkyv) and `Serialize/Deserialize` derives.
+- Updated `MeshMessageSigner` to use binary `&[u8]` for signing and verification.
+- Replaced `Instant` with `u64` (Unix timestamps) in `PeerState` and `PeerScore` for stable persistence.
+- Updated all call sites in `record_store_dns.rs`, `record_store_crud.rs`, `threat_intel.rs`, and `yara_rules.rs` to use the new typed binary API.
+
+**Verification**: `cargo check` and `cargo test --test dht_integration_test` (90 tests passed).
 
 ### C.6: Fix Compile Error Typo (plan19)
 **Status**: ✅ COMPLETE (Already Fixed)

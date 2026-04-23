@@ -563,8 +563,8 @@ impl MeshTopology {
             capabilities: peer_info.capabilities,
             upstreams: peer_info.upstreams.into_iter().collect(),
             latency_ms: peer_info.latency_ms,
-            first_seen: existing_first_seen.unwrap_or_else(Instant::now),
-            last_seen: Instant::now(),
+            first_seen: existing_first_seen.unwrap_or_else(crate::mesh::safe_unix_timestamp),
+            last_seen: crate::mesh::safe_unix_timestamp(),
             is_global: peer_info.is_global,
             is_trusted: peer_info.is_trusted || existing_trusted,
             connection_handle: None,
@@ -1646,13 +1646,12 @@ impl MeshTopology {
     }
 
     pub async fn prune_stale_peers(&self, stale_threshold_secs: u64) -> usize {
-        let now = Instant::now();
-        let threshold = Duration::from_secs(stale_threshold_secs);
+        let now = crate::mesh::safe_unix_timestamp();
 
         let stale_peers: Vec<String> = {
             let mut result = Vec::new();
             self.peer_store.for_each_peer(|id, state| {
-                if now.duration_since(state.last_seen) > threshold {
+                if now.saturating_sub(state.last_seen) > stale_threshold_secs {
                     result.push(id.clone());
                 }
             });

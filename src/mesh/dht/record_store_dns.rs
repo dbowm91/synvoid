@@ -1,4 +1,5 @@
 use super::*;
+use crate::mesh::dht::{AnycastNode, DnsDomainRegistration};
 
 impl RecordStoreManager {
     pub fn store_dns_domain_registration(
@@ -15,14 +16,14 @@ impl RecordStoreManager {
 
         let now = crate::mesh::safe_unix_timestamp();
 
-        let value = serde_json::json!({
-            "domain": domain,
-            "origin_node_id": origin_node_id,
-            "ip_addresses": ip_addresses,
-            "registered_at": now,
-        });
+        let value_struct = DnsDomainRegistration {
+            domain: domain.clone(),
+            origin_node_id: origin_node_id.clone(),
+            ip_addresses: ip_addresses.clone(),
+            registered_at: now,
+        };
 
-        let value = match serde_json::to_vec(&value) {
+        let value = match crate::serialization::serialize(&value_struct) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to serialize DNS domain registration: {}", e);
@@ -77,7 +78,7 @@ impl RecordStoreManager {
         stored
     }
 
-    pub fn get_dns_domain_registration(&self, domain: &str) -> Option<serde_json::Value> {
+    pub fn get_dns_domain_registration(&self, domain: &str) -> Option<DnsDomainRegistration> {
         if !self.config.enabled || !self.is_global_node() {
             return None;
         }
@@ -85,7 +86,7 @@ impl RecordStoreManager {
         let key = DhtKey::dns_domain_registration(domain).as_str();
         let record = self.get_record(&key)?;
 
-        serde_json::from_slice(&record.value).ok()
+        crate::serialization::deserialize::<DnsDomainRegistration>(&record.value).ok()
     }
 
     pub fn get_all_dns_domain_registrations(&self) -> Vec<(String, String, Vec<String>)> {
@@ -98,28 +99,10 @@ impl RecordStoreManager {
 
         for (key, entry) in rs.records.iter() {
             if key.starts_with("dns_domain_reg:") {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
+                if let Ok(value) =
+                    crate::serialization::deserialize::<DnsDomainRegistration>(&entry.record.value)
                 {
-                    let domain = value
-                        .get("domain")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let origin_id = value
-                        .get("origin_node_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let ips: Vec<String> = value
-                        .get("ip_addresses")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    registrations.push((domain, origin_id, ips));
+                    registrations.push((value.domain, value.origin_node_id, value.ip_addresses));
                 }
             }
         }
@@ -153,17 +136,17 @@ impl RecordStoreManager {
 
         let now = crate::mesh::safe_unix_timestamp();
 
-        let value = serde_json::json!({
-            "node_id": node_id,
-            "anycast_ips": anycast_ips,
-            "geo": geo,
-            "capacity": capacity,
-            "healthy": healthy,
-            "dns_zones": dns_zones,
-            "registered_at": now,
-        });
+        let value_struct = AnycastNode {
+            node_id: node_id.clone(),
+            anycast_ips,
+            geo,
+            capacity,
+            healthy,
+            dns_zones,
+            registered_at: now,
+        };
 
-        let value = match serde_json::to_vec(&value) {
+        let value = match crate::serialization::serialize(&value_struct) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to serialize anycast node: {}", e);
@@ -218,7 +201,7 @@ impl RecordStoreManager {
     }
 
     #[cfg(feature = "dns")]
-    pub fn get_anycast_node(&self, node_id: &str) -> Option<serde_json::Value> {
+    pub fn get_anycast_node(&self, node_id: &str) -> Option<AnycastNode> {
         if !self.config.enabled {
             return None;
         }
@@ -226,11 +209,11 @@ impl RecordStoreManager {
         let key = DhtKey::anycast_node(node_id).as_str();
         let record = self.get_record(&key)?;
 
-        serde_json::from_slice(&record.value).ok()
+        crate::serialization::deserialize::<AnycastNode>(&record.value).ok()
     }
 
     #[cfg(feature = "dns")]
-    pub fn get_anycast_nodes_for_zone(&self, zone: &str) -> Vec<serde_json::Value> {
+    pub fn get_anycast_nodes_for_zone(&self, zone: &str) -> Vec<AnycastNode> {
         if !self.config.enabled {
             return Vec::new();
         }
@@ -240,20 +223,11 @@ impl RecordStoreManager {
 
         for (key, entry) in rs.records.iter() {
             if key.starts_with("anycast_node:") {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
+                if let Ok(value) =
+                    crate::serialization::deserialize::<AnycastNode>(&entry.record.value)
                 {
-                    let zones: Vec<String> = value
-                        .get("dns_zones")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    if zones.contains(&zone.to_string()) {
-                        nodes.push(value.clone());
+                    if value.dns_zones.contains(&zone.to_string()) {
+                        nodes.push(value);
                     }
                 }
             }
@@ -263,7 +237,7 @@ impl RecordStoreManager {
     }
 
     #[cfg(feature = "dns")]
-    pub fn get_all_anycast_nodes(&self) -> Vec<serde_json::Value> {
+    pub fn get_all_anycast_nodes(&self) -> Vec<AnycastNode> {
         if !self.config.enabled {
             return Vec::new();
         }
@@ -273,9 +247,10 @@ impl RecordStoreManager {
 
         for (key, entry) in rs.records.iter() {
             if key.starts_with("anycast_node:") {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&entry.record.value)
+                if let Ok(value) =
+                    crate::serialization::deserialize::<AnycastNode>(&entry.record.value)
                 {
-                    nodes.push(value.clone());
+                    nodes.push(value);
                 }
             }
         }

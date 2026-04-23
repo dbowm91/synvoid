@@ -63,7 +63,7 @@ impl PendingAuthChallenge {
     pub fn verify_response(&self, response: &str, signer: &MeshMessageSigner) -> bool {
         let expected = format!("{}:{}", self.challenge, self.expected_signer);
         let pk = signer.get_public_key_bytes();
-        signer.verify(&expected, response.as_bytes(), &pk)
+        signer.verify(expected.as_bytes(), response.as_bytes(), &pk)
     }
 }
 

@@ -105,12 +105,11 @@ impl RecordStoreManager {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .decode(signer_public_key)
-                                .unwrap_or_default()
-                        };
-                        if !signer.verify(&content, signature, &pk_bytes) {
-                            tracing::warn!(
-                                "DhtRecordAnnounce signature verification failed from {}",
+                            .decode(signer_public_key)
+                            .unwrap_or_default()
+                            };
+                            if !signer.verify(content.as_bytes(), signature, &pk_bytes) {
+                            tracing::warn!(                                "DhtRecordAnnounce signature verification failed from {}",
                                 from_node
                             );
                             return None;
@@ -385,7 +384,7 @@ impl RecordStoreManager {
                     self.node_role.bits(),
                     timestamp
                 );
-                signature = signer.sign(&content);
+                signature = signer.sign(content.as_bytes());
                 signer_public_key = signer.get_public_key();
             }
         }
@@ -561,7 +560,7 @@ impl RecordStoreManager {
                 }))
                 .unwrap_or_default();
 
-                let signature = signer.sign(&signed_content);
+                let signature = signer.sign(signed_content.as_bytes());
                 let pk = signer.get_public_key();
                 (signature, pk)
             } else {
@@ -704,7 +703,7 @@ impl RecordStoreManager {
                 }))
                 .unwrap_or_default();
 
-                let sig = signer.sign(&signed_content);
+                let sig = signer.sign(signed_content.as_bytes());
                 let pk = signer.get_public_key();
                 (sig, pk)
             } else {

@@ -437,7 +437,7 @@ impl ThreatIntelligenceManager {
                 "{}:{}:{}:{}:{}",
                 ip, threat_type as u8, severity as u8, now, self.node_id
             );
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = Some(signer.get_public_key());
         }
 
@@ -690,7 +690,7 @@ impl ThreatIntelligenceManager {
                 indicator.timestamp,
                 indicator.source_node_id
             );
-            let sig = signer.sign(&content);
+            let sig = signer.sign(content.as_bytes());
             let pk = signer.get_public_key();
             (sig, Some(pk))
         } else {
@@ -765,7 +765,7 @@ impl ThreatIntelligenceManager {
                     let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .decode(pk)
                         .unwrap_or_default();
-                    if !signer.verify(&content, &indicator.signature, &pk_bytes) {
+                    if !signer.verify(content.as_bytes(), &indicator.signature, &pk_bytes) {
                         tracing::warn!(
                             "Signature verification failed for threat from {}",
                             from_node
@@ -1308,7 +1308,7 @@ impl ThreatIntelligenceManager {
                         let signer = crate::mesh::protocol::MeshMessageSigner::new(
                             pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
                         );
-                        if !signer.verify(&content, &sig_bytes, &pk_bytes) {
+                        if !signer.verify(content.as_bytes(), &sig_bytes, &pk_bytes) {
                             tracing::warn!(
                                 "Threat intel DHT sync: signature verification failed for {}",
                                 key
@@ -1450,7 +1450,7 @@ impl ThreatIntelligenceManager {
                 self.node_role.bits(),
                 timestamp
             );
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = signer.get_public_key();
         }
 
@@ -1494,7 +1494,7 @@ impl ThreatIntelligenceManager {
                 indicators.len(),
                 timestamp
             );
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = signer.get_public_key();
         }
 
@@ -1621,7 +1621,7 @@ impl ThreatIntelligenceManager {
                                 .decode(signer_public_key)
                                 .unwrap_or_default()
                         };
-                        if !signer.verify(&content, signature, &pk_bytes) {
+                        if !signer.verify(content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(
                                 "ThreatAnnounce signature verification failed from {}",
                                 from_node

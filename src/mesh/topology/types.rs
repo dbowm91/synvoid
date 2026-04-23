@@ -2,28 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock as ParkingLotRwLock;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
-
-pub(crate) mod serde_secs {
-    use serde::{Deserializer, Serializer};
-    use std::time::Instant;
-
-    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let secs = instant.elapsed().as_secs();
-        serializer.serialize_u64(secs)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let secs = serde::Deserialize::deserialize(deserializer)?;
-        Ok(Instant::now() - std::time::Duration::from_secs(secs))
-    }
-}
 
 pub const NUM_SHARDS: usize = 64;
 
@@ -121,7 +101,7 @@ impl ShardedPeerStore {
         let mut shard = self.shard(node_id).write();
         if let Some(peer) = shard.peers.get_mut(node_id) {
             peer.status = status;
-            peer.last_seen = Instant::now();
+            peer.last_seen = crate::mesh::safe_unix_timestamp();
         }
     }
 
@@ -401,7 +381,7 @@ impl ShardedPeerStore {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum PeerStatus {
     Connecting,
     Handshake,
@@ -410,7 +390,7 @@ pub enum PeerStatus {
     Disconnected,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct PeerState {
     pub node_id: String,
     pub address: String,
@@ -419,10 +399,8 @@ pub struct PeerState {
     pub capabilities: crate::mesh::protocol::MeshCapabilities,
     pub upstreams: HashSet<String>,
     pub latency_ms: Option<u32>,
-    #[serde(with = "serde_secs")]
-    pub first_seen: Instant,
-    #[serde(with = "serde_secs")]
-    pub last_seen: Instant,
+    pub first_seen: u64,
+    pub last_seen: u64,
     pub is_global: bool,
     pub is_trusted: bool,
     #[serde(skip)]
@@ -477,9 +455,10 @@ impl PeerState {
         }
     }
 
-    pub fn time_away(&self) -> u64 {
-        Instant::now().duration_since(self.last_seen).as_secs()
+    pub fn idle_secs(&self) -> u64 {
+        crate::mesh::safe_unix_timestamp().saturating_sub(self.last_seen)
     }
+
 }
 
 #[derive(Debug, Clone)]
@@ -614,7 +593,7 @@ pub struct RouteStability {
     pub stability: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct PeerScore {
     pub node_id: String,
     pub latency_score: f64,
@@ -623,8 +602,7 @@ pub struct PeerScore {
     pub traffic_score: f64,
     pub upstream_score: f64,
     pub total_score: f64,
-    #[serde(with = "serde_secs")]
-    pub last_updated: Instant,
+    pub last_updated: u64,
 }
 
 impl Default for PeerScore {
@@ -637,7 +615,7 @@ impl Default for PeerScore {
             traffic_score: 0.0,
             upstream_score: 0.0,
             total_score: 0.5,
-            last_updated: Instant::now(),
+            last_updated: crate::mesh::safe_unix_timestamp(),
         }
     }
 }
@@ -650,7 +628,7 @@ impl PeerScore {
             + self.traffic_score * weights.traffic
             + self.upstream_score * weights.upstream)
             .clamp(0.0, 1.0);
-        self.last_updated = Instant::now();
+        self.last_updated = crate::mesh::safe_unix_timestamp();
     }
 }
 

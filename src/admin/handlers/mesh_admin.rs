@@ -234,7 +234,7 @@ pub async fn list_mesh_nodes(
 
     if let Some(topology) = topology_opt {
         let peers = topology.get_all_peers().await;
-        let now = std::time::Instant::now();
+        let now_unix = crate::utils::current_timestamp();
 
         for peer in peers {
             let is_connected = peer.status == crate::mesh::topology::PeerStatus::Healthy;
@@ -247,7 +247,7 @@ pub async fn list_mesh_nodes(
                 connected_count += 1;
             }
 
-            let last_seen_secs_ago = now.duration_since(peer.last_seen).as_secs();
+            let last_seen_secs_ago = now_unix.saturating_sub(peer.last_seen);
             let ip_address = extract_ip_from_address(&peer.address);
 
             all_nodes.push(MeshNodeInfo {
@@ -320,8 +320,8 @@ pub async fn get_mesh_node(
             let is_connected = peer.status == crate::mesh::topology::PeerStatus::Healthy;
             let role_str = role_to_string(peer.role);
 
-            let now = std::time::Instant::now();
-            let last_seen_secs_ago = now.duration_since(peer.last_seen).as_secs();
+            let now_unix = crate::utils::current_timestamp();
+            let last_seen_secs_ago = now_unix.saturating_sub(peer.last_seen);
 
             let address = peer.address.clone();
             let ip_address = extract_ip_from_address(&address);

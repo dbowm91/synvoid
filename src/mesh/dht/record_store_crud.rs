@@ -697,7 +697,7 @@ impl RecordStoreManager {
                 self.node_role.bits(),
                 timestamp
             );
-            signature = signer.sign(&content);
+            signature = signer.sign(content.as_bytes());
             signer_public_key = signer.get_public_key();
         }
 

@@ -24,7 +24,7 @@ impl MeshTransport {
             query_id, upstream_id, provider_node_id, hops, timestamp
         );
         if let Some(ref signer) = self.mesh_signer {
-            signer.sign(&sign_data).to_vec()
+            signer.sign(sign_data.as_bytes()).to_vec()
         } else {
             Vec::new()
         }
@@ -295,8 +295,7 @@ impl MeshTransport {
             let cert_manager = self.cert_manager.read();
             if let Some(pubkey) = cert_manager.get_global_node_key(provider_node_id) {
                 if let Some(ref signer) = self.mesh_signer {
-                    if !signer.verify(&sign_data, &signature, &pubkey) {
-                        tracing::warn!(
+                    if !signer.verify(sign_data.as_bytes(), &signature, &pubkey) {                        tracing::warn!(
                             "Route response signature verification failed for {} from provider {}",
                             upstream_id,
                             provider_node_id

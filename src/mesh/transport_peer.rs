@@ -742,7 +742,7 @@ impl MeshTransport {
             } => {
                 let domains_vec: Vec<std::sync::Arc<str>> = domains
                     .iter()
-                    .map(|d| std::sync::Arc::clone(d.as_arc()))
+                    .map(|d| d.as_arc())
                     .collect();
                 self.handle_node_shutdown(
                     peer_id,
@@ -1659,7 +1659,7 @@ impl MeshTransport {
         let mut scores = self.topology.peer_scores().write().await;
         if let Some(score) = scores.get_mut(node_id) {
             score.load_score = 1.0 - load_score;
-            score.last_updated = Instant::now();
+            score.last_updated = crate::mesh::safe_unix_timestamp();
         } else {
             scores.insert(
                 node_id.to_string(),
@@ -1671,7 +1671,7 @@ impl MeshTransport {
                     traffic_score: 0.0,
                     upstream_score: 0.0,
                     total_score: 0.5,
-                    last_updated: Instant::now(),
+                    last_updated: crate::mesh::safe_unix_timestamp(),
                 },
             );
         }
@@ -1687,7 +1687,7 @@ impl MeshTransport {
         let mut scores = self.topology.peer_scores().write().await;
         if let Some(score) = scores.get_mut(node_id) {
             score.load_score = 1.0 - load_score;
-            score.last_updated = Instant::now();
+            score.last_updated = crate::mesh::safe_unix_timestamp();
         }
     }
 
@@ -1839,7 +1839,7 @@ impl MeshTransport {
         let global_node_signature = self
             .mesh_signer
             .as_ref()
-            .map(|signer| signer.sign(&signable_content));
+            .map(|signer| signer.sign(signable_content.as_bytes()));
 
         let response = MeshMessage::UpstreamVerificationResponse {
             request_id: request_id.into(),

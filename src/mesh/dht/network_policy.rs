@@ -33,7 +33,7 @@ impl NetworkPolicy {
 
     pub fn sign(&mut self, signer: &crate::mesh::protocol::MeshMessageSigner) {
         let content = self.get_signable_content();
-        self.signature = signer.sign(&content);
+        self.signature = signer.sign(content.as_bytes());
     }
 
     pub fn get_signable_content(&self) -> String {
@@ -155,7 +155,7 @@ impl GlobalNodeBlocklist {
 
     pub fn sign(&mut self, signer: &crate::mesh::protocol::MeshMessageSigner) {
         let content = self.get_signable_content();
-        self.signature = signer.sign(&content);
+        self.signature = signer.sign(content.as_bytes());
     }
 
     pub fn get_signable_content(&self) -> String {
@@ -251,7 +251,7 @@ impl GlobalAiBotList {
 
     pub fn sign(&mut self, signer: &crate::mesh::protocol::MeshMessageSigner) {
         let content = self.get_signable_content();
-        self.signature = signer.sign(&content);
+        self.signature = signer.sign(content.as_bytes());
     }
 
     pub fn get_signable_content(&self) -> String {

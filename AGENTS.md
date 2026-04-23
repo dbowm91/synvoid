@@ -28,6 +28,30 @@ When modifying hot path code, consider the multiplicative effect at scale:
 // - Each extra CPU cycle × 500K = significant overhead
 ```
 
+### Serialization and Timestamp Patterns
+
+For distributed state (DHT, Mesh messages, Persistence), follow these standards:
+
+1. **Prefer Postcard over JSON**: Use `crate::serialization::serialize/deserialize` (Postcard) for binary stability and performance. Avoid `serde_json` in high-performance or distributed paths.
+2. **Use Typed Structs**: Do not use `serde_json::Value` (maps) for records. Define explicit Rust structs with `Archive`, `RkyvSerialize`, `RkyvDeserialize`, `Serialize`, and `Deserialize` derives.
+3. **Unix Timestamps (u64)**: Use `u64` for all timestamps that need to be persisted or sent over the network. `Instant` is monotonic and local to a single process; it cannot be serialized or compared across reloads. 
+   - Use `crate::mesh::safe_unix_timestamp()` or `crate::utils::current_timestamp()` to get the current time.
+   - Use `.saturating_sub()` for duration calculations.
+4. **Binary Signatures**: Cryptographic signatures (Ed25519) should operate on `&[u8]`. Use `MeshMessageSigner::sign/verify` with binary data. Use `postcard` to generate stable signable bytes for structs.
+
+Example of stable signable content:
+```rust
+pub fn get_signable_content(&self) -> Vec<u8> {
+    #[derive(Serialize)]
+    struct Signable<'a> {
+        key: &'a str,
+        value: &'a [u8],
+        timestamp: u64,
+    }
+    crate::serialization::serialize(&Signable { ... }).unwrap()
+}
+```
+
 ## Running Tests
 
 ### Quick Test Commands

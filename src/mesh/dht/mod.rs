@@ -414,7 +414,7 @@ impl NodeLoad {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct GlobalNodeHeartbeat {
     pub node_id: String,
     pub timestamp: u64,
@@ -431,7 +431,7 @@ impl GlobalNodeHeartbeat {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct GlobalNodeEntry {
     pub node_id: String,
     pub address: String,
@@ -539,7 +539,26 @@ pub enum VerificationStatus {
     Expired,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct DnsDomainRegistration {
+    pub domain: String,
+    pub origin_node_id: String,
+    pub ip_addresses: Vec<String>,
+    pub registered_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct AnycastNode {
+    pub node_id: String,
+    pub anycast_ips: Vec<String>,
+    pub geo: Option<String>,
+    pub capacity: u32,
+    pub healthy: bool,
+    pub dns_zones: Vec<String>,
+    pub registered_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct OriginPenalty {
     pub upstream_id: String,
     pub provider_node_id: String,
@@ -549,6 +568,66 @@ pub struct OriginPenalty {
     pub expires_at: u64,
     pub applied_by: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct YaraRulesManifest {
+    pub version: String,
+    pub content_hash: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: Option<String>,
+    pub is_chunked: bool,
+    pub chunk_count: usize,
+    pub uncompressed_size: usize,
+    pub compressed_size: usize,
+    pub chunk_hashes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct YaraRuleChunkRecord {
+    pub chunk_index: usize,
+    pub total_chunks: usize,
+    pub content_hash: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub compressed_data: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct YaraRuleContentRecord {
+    pub version: String,
+    pub rules: String,
+    pub content_hash: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: Option<String>,
+    pub is_chunked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct GlobalNodeKeyRecord {
+    pub public_key: String,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct QuorumSignableContent {
+    pub key: String,
+    pub value: Vec<u8>,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct PeerPersistenceData {
+    pub version: u32,
+    pub peers: Vec<crate::mesh::topology::PeerState>,
+    pub peer_scores: HashMap<String, crate::mesh::topology::PeerScore>,
+    pub saved_at: u64,
+}
+
 
 #[derive(Debug, Clone)]
 pub enum DhtEvent {

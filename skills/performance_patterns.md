@@ -92,6 +92,59 @@ pending_announces.push_back(record);
 
 ---
 
+### Postcard over JSON Serialization
+
+**Before**: JSON serialization for distributed state
+```rust
+let value = serde_json::json!({ "id": 1, "data": "foo" });
+let bytes = serde_json::to_vec(&value)?; // High overhead
+```
+
+**After**: Postcard with typed structs
+```rust
+#[derive(Serialize, Archive, RkyvSerialize, RkyvDeserialize)]
+struct MyRecord { id: u32, data: String }
+let bytes = crate::serialization::serialize(&MyRecord { id: 1, data: "foo".into() })?; // Stable, efficient
+```
+
+**Benefits**:
+- **30-50% smaller payloads** (important for DHT/Mesh)
+- **Faster serialization/deserialization** (postcard vs string-based JSON)
+- **Zero-copy support** via `rkyv` for read-only access in high-performance paths
+
+**Location**: `src/mesh/dht/record_store_dns.rs`, `src/mesh/dht/record_store_crud.rs`
+
+---
+
+### u64 Unix Timestamps over Instant
+
+**Before**: `Instant` for persisted state
+```rust
+struct PeerState {
+    last_seen: Instant, // Cannot be serialized or compared across reloads
+}
+```
+
+**After**: `u64` Unix timestamps
+```rust
+struct PeerState {
+    last_seen: u64, // Stable, serializable, comparable across processes
+}
+
+// In code:
+let now = crate::mesh::safe_unix_timestamp();
+let idle_secs = now.saturating_sub(state.last_seen);
+```
+
+**Benefits**:
+- **Serializable**: `Instant` has no stable binary format across reloads/reboots
+- **Consistent**: Comparisons are reliable across different processes via safe_unix_timestamp()
+- **Memory**: `u64` is smaller and faster to compare than `Instant` wrapper
+
+**Location**: `src/mesh/topology/types.rs`, `src/mesh/dht/mod.rs`
+
+---
+
 ### Lock-Free Rate Limiting
 
 **Before**: Mutex-protected HashSet with retain
