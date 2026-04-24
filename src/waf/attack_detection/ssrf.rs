@@ -134,17 +134,26 @@ impl SsrfDetector {
             IpAddr::V4(v4) => {
                 let octets = v4.octets();
                 octets[0] == 10
-                    || (octets[0] == 172 && (octets[1] & 0xF0) == 16)
+                    || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
                     || (octets[0] == 192 && octets[1] == 168)
                     || (octets[0] == 169 && octets[1] == 254)
                     || octets[0] == 127
             }
             IpAddr::V6(v6) => {
-                let segments = v6.segments();
-                segments[0] == 0xFE80
-                    || (segments[0] & 0xFE80) == 0xFC00
-                    || segments[0] == 0xFF00
-                    || segments == [0, 0, 0, 0, 0, 0, 0, 1]
+                if let Some(ipv4) = v6.to_ipv4_mapped() {
+                    let octets = ipv4.octets();
+                    octets[0] == 10
+                        || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                        || (octets[0] == 192 && octets[1] == 168)
+                        || (octets[0] == 169 && octets[1] == 254)
+                        || octets[0] == 127
+                } else {
+                    let segments = v6.segments();
+                    segments[0] == 0xFE80
+                        || (segments[0] & 0xFE80) == 0xFC00
+                        || segments[0] == 0xFF00
+                        || segments == [0, 0, 0, 0, 0, 0, 0, 1]
+                }
             }
         })
     }

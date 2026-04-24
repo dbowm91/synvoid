@@ -67,7 +67,7 @@ pub struct MeshProxy {
     failed_providers: Cache<String, Instant>,
     provider_stats: Arc<RwLock<HashMap<String, ProviderStats>>>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
-    transform_cache: Arc<Cache<String, TransformCacheEntry>>,
+    transform_cache: TieredTransformCache,
     proxy_cache: Arc<RwLock<Option<ProxyCache>>>,
 }
 
@@ -248,8 +248,67 @@ impl DhtTransformEntry {
     }
 }
 
-const DEFAULT_TRANSFORM_CACHE_TTL_SECS: u64 = 300;
-const DEFAULT_TRANSFORM_CACHE_SIZE: usize = 1000;
+const L1_CACHE_SIZE: usize = 500;
+const L2_CACHE_SIZE: usize = 2000;
+const L2_CACHE_TTL_SECS: u64 = 600;
+
+static TRANSFORM_CACHE_L1_HITS: LazyLock<std::sync::atomic::AtomicU64> =
+    LazyLock::new(|| std::sync::atomic::AtomicU64::new(0));
+static TRANSFORM_CACHE_L2_HITS: LazyLock<std::sync::atomic::AtomicU64> =
+    LazyLock::new(|| std::sync::atomic::AtomicU64::new(0));
+static TRANSFORM_CACHE_MISSES: LazyLock<std::sync::atomic::AtomicU64> =
+    LazyLock::new(|| std::sync::atomic::AtomicU64::new(0));
+
+#[derive(Clone)]
+struct TieredTransformCache {
+    l1: DashMap<String, TransformCacheEntry>,
+    l2: Cache<String, TransformCacheEntry>,
+}
+
+impl TieredTransformCache {
+    fn new() -> Self {
+        let l2 = Cache::builder()
+            .max_capacity(L2_CACHE_SIZE as u64)
+            .weigher(|_key: &String, value: &TransformCacheEntry| {
+                u32::try_from(value.body.len()).unwrap_or(u32::MAX)
+            })
+            .time_to_live(Duration::from_secs(L2_CACHE_TTL_SECS))
+            .build();
+        Self {
+            l1: DashMap::with_capacity(L1_CACHE_SIZE),
+            l2,
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<TransformCacheEntry> {
+        if let Some(entry) = self.l1.get(key) {
+            TRANSFORM_CACHE_L1_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Some(entry.clone());
+        }
+        if let Some(entry) = self.l2.get(key) {
+            TRANSFORM_CACHE_L2_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.l1.insert(key.to_string(), entry.clone());
+            return Some(entry);
+        }
+        TRANSFORM_CACHE_MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        None
+    }
+
+    fn insert(&self, key: String, value: TransformCacheEntry) {
+        self.l2.insert(key.clone(), value.clone());
+        self.l1.insert(key, value);
+    }
+
+    #[allow(dead_code)]
+    fn l1_len(&self) -> usize {
+        self.l1.len()
+    }
+
+    #[allow(dead_code)]
+    fn l2_len(&self) -> usize {
+        self.l2.entry_count() as usize
+    }
+}
 
 impl MeshProxy {
     pub fn new(
@@ -268,13 +327,7 @@ impl MeshProxy {
             .build();
         let provider_stats = Arc::new(RwLock::new(HashMap::new()));
 
-        let transform_cache = Cache::builder()
-            .max_capacity(DEFAULT_TRANSFORM_CACHE_SIZE as u64)
-            .weigher(|_key: &String, value: &TransformCacheEntry| {
-                u32::try_from(value.body.len()).unwrap_or(u32::MAX)
-            })
-            .time_to_live(Duration::from_secs(DEFAULT_TRANSFORM_CACHE_TTL_SECS))
-            .build();
+        let transform_cache = TieredTransformCache::new();
 
         let proxy_cache = cache_config.map(ProxyCache::new);
 
@@ -289,7 +342,7 @@ impl MeshProxy {
             failed_providers,
             provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
-            transform_cache: Arc::new(transform_cache),
+            transform_cache,
             proxy_cache: Arc::new(RwLock::new(proxy_cache)),
         }
     }
