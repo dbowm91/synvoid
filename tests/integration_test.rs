@@ -332,7 +332,6 @@ mod tests {
         assert!(tracker.get_active_count() >= 1);
 
         tracker.decrement_active();
-        assert!(tracker.get_active_count() >= 0);
 
         tracker.update_worker_connections(WorkerId(1), 5, 3);
         let count = tracker.get_active_count();
@@ -424,6 +423,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         mod waf_body_inspection_tests {
             use maluwaf::proxy::{
                 build_headers_to_filter, sanitize_request_path, MAX_XFF_CHAIN_LENGTH,
@@ -474,6 +474,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         mod dnssec_validation_tests {
             use maluwaf::dns::dnssec_validation::{
                 calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
@@ -638,6 +639,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         mod upload_scanning_tests {
             use maluwaf::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
 
@@ -658,8 +660,9 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         mod mesh_threat_propagation_tests {
-            use maluwaf::mesh::protocol::{ThreatSeverity, ThreatType};
+            use maluwaf::mesh::protocol::ThreatSeverity;
             use maluwaf::mesh::threat_intel::ThreatIntelligenceConfig;
 
             #[test]
@@ -703,6 +706,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         mod honeypot_mesh_flow_tests {
             use maluwaf::mesh::config::MeshNodeRole;
 
@@ -724,11 +728,11 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         mod yara_mesh_distribution_tests {
             use maluwaf::mesh::yara_rules::{
                 BroadcastAckStatus, BroadcastAckTracker, RuleChangeTracker,
             };
-            use std::time::Instant;
 
             #[test]
             fn test_broadcast_ack_tracker_new() {
@@ -992,7 +996,6 @@ mod rate_limit_tests {
 
         let stats = stats.unwrap();
         assert_eq!(stats.limit, 10);
-        assert!(stats.remaining >= 0);
     }
 
     #[test]
@@ -2045,7 +2048,6 @@ mod signature_verification_tests {
 #[cfg(test)]
 mod xff_validation_tests {
     use maluwaf::proxy::{validate_and_truncate_xff, MAX_XFF_CHAIN_LENGTH};
-    use std::net::IpAddr;
 
     #[test]
     fn test_validate_and_truncate_xff_empty() {
@@ -2149,7 +2151,6 @@ mod xff_validation_tests {
 #[cfg(test)]
 mod whitelist_semantics_tests {
     use maluwaf::waf::WhitelistConfig;
-    use std::net::IpAddr;
 
     fn create_whitelist_config(paths: Vec<String>, ips: Vec<String>) -> WhitelistConfig {
         WhitelistConfig {
@@ -2267,9 +2268,8 @@ mod hub_only_mode_tests {
 mod yara_manager_lifecycle_tests {
     use maluwaf::mesh::config::MeshNodeRole;
     use maluwaf::mesh::yara_rules::{
-        YaraRuleSubmission, YaraRuleSubmissionStatus, YaraRulesManager, YaraRulesManagerConfig,
+        YaraRuleSubmissionStatus, YaraRulesManager, YaraRulesManagerConfig,
     };
-    use std::sync::Arc;
 
     fn create_test_manager(role: MeshNodeRole) -> YaraRulesManager {
         let config = YaraRulesManagerConfig {
@@ -2948,7 +2948,7 @@ mod http_server_handler_tests {
 
 #[cfg(test)]
 mod early_http_parser_tests {
-    use maluwaf::http::early_parse::{EarlyHttpParser, EarlyHttpRequest};
+    use maluwaf::http::early_parse::EarlyHttpParser;
 
     #[test]
     fn test_parse_get_root() {
@@ -3173,9 +3173,7 @@ mod response_builder_tests {
 
 #[cfg(test)]
 mod http_security_header_tests {
-    use bytes::Bytes;
-    use http::{Response, StatusCode};
-    use http_body_util::Full;
+    use http::Response;
     use maluwaf::config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
     use maluwaf::http::headers::{
         compute_websocket_accept_key, inject_cors_headers, inject_security_headers,

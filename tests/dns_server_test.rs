@@ -473,7 +473,7 @@ mod firewall_tests {
         use maluwaf::dns::{DnsFirewall, DnsFirewallAction};
         use std::net::IpAddr;
 
-        let mut fw = DnsFirewall::new();
+        let fw = DnsFirewall::new();
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
         let query = vec![

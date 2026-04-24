@@ -75,7 +75,10 @@ mod socket_handoff_tests {
 
         assert!(matches!(
             decoded,
-            Message::SocketHandoffComplete { success: true, fd_count: 2 }
+            Message::SocketHandoffComplete {
+                success: true,
+                fd_count: 2
+            }
         ));
     }
 
@@ -105,7 +108,9 @@ mod socket_handoff_tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
 
-        assert!(matches!(decoded, Message::SocketHandoffReady { ports } if ports == vec![8080, 8443]));
+        assert!(
+            matches!(decoded, Message::SocketHandoffReady { ports } if ports == vec![8080, 8443])
+        );
     }
 
     #[tokio::test]
@@ -119,7 +124,9 @@ mod socket_handoff_tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
 
-        assert!(matches!(decoded, Message::SocketHandoffFailed { error } if error == "Test failure"));
+        assert!(
+            matches!(decoded, Message::SocketHandoffFailed { error } if error == "Test failure")
+        );
     }
 
     #[tokio::test]
@@ -207,7 +214,10 @@ mod socket_handoff_tests {
 
     #[test]
     fn test_socket_handoff_not_supported() {
-        assert!(true, "Socket handoff tests require socket-handoff feature on Unix");
+        assert!(
+            true,
+            "Socket handoff tests require socket-handoff feature on Unix"
+        );
     }
 
     #[test]

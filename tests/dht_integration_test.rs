@@ -7,9 +7,7 @@ use maluwaf::mesh::dht::routing::{
     GeoInfo, GeoRoutingConfig, KBucket, NodeId, PeerContact, PersistedContact,
     PersistedRoutingTable, RegionalHub, RegionalHubConfig, RoutingTable, K_SIZE,
 };
-use maluwaf::mesh::dht::signed::{
-    validate_message_timestamp, RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager,
-};
+use maluwaf::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager};
 use maluwaf::mesh::dht::stake::{SlashReason, StakeConfig, StakeLevel, StakeManager};
 use maluwaf::mesh::dht::store::{DhtRecord, DhtRecordStore, RecordMetadata};
 use maluwaf::mesh::dht::DhtRateLimiter;
