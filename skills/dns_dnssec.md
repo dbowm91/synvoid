@@ -156,6 +156,26 @@ Keys transition through states:
 6. **Missing** → Valid key not seen for retention period
 7. **Purged** → Removed from storage
 
+## Recursive DNS Cache Implementation
+
+**Location**: `src/dns/recursive_cache.rs`
+
+The `RecursiveDnsCache` uses Moka with weighted entries (via `weigher` callback) AND time-to-live expiration. When using these together:
+
+- `entry_count()` may return 0 even when entries exist
+- Use `iter().count()` instead for accurate count of entries
+- Use `len()`, `positive_len()`, `negative_len()` methods which correctly use `iter().count()`
+
+**Example from** `src/dns/recursive_cache.rs:326-342`:
+```rust
+pub fn len(&self) -> usize {
+    let inner = &self.inner;
+    inner.positive_cache.iter().count() + inner.negative_cache.iter().count()
+}
+```
+
+---
+
 ## Authoritative DNSSEC Signing
 
 ### Zone Signing Flow

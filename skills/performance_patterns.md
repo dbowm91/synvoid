@@ -180,6 +180,8 @@ let client_cache = Arc::new(moka::sync::Cache::new(moka::sync::Cache::builder()
 
 **Location**: `src/http_client/mod.rs:34-41`
 
+**Important**: When using Moka with weighted entries (via `weigher` callback) AND time-to-live expiration, `entry_count()` may return 0 even when entries exist. Use `iter().count()` instead for accurate count, or `weighted_size()` for the total weight.
+
 ---
 
 ### Direct Entry Return for SWR Cache
