@@ -1,8 +1,21 @@
 # MaluWAF Implementation Consolidated Plan
 
-**Last updated**: 2026-04-23
-**Status**: IN PROGRESS
+**Last updated**: 2026-04-24
+**Status**: PARTIALLY COMPLETED
 **Source**: Consolidation of 35 individual plan files (plan3.md through plan35.md, fix_c5.md)
+
+---
+
+## Completed Waves
+
+| Wave | Items | Status | Commit |
+|------|-------|--------|--------|
+| Wave 1 | W1-1 through W1-8 (8 items) | ✅ COMPLETE | 7e71d44 |
+| Wave 2 | W2-1 through W2-7 (7 items) | ✅ COMPLETE | 7e71d44 |
+| W3-1 | ViolationTracker sharding | ✅ COMPLETE | 85dbf04 |
+| W3-13 | WASM VecDeque pool | ✅ COMPLETE | 85dbf04 |
+
+**Remaining**: Waves 3 (partial), 4-13 (not started)
 
 ---
 
