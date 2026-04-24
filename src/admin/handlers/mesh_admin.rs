@@ -893,7 +893,12 @@ pub async fn attest_capability(
     Json(payload): Json<AttestCapabilityRequest>,
 ) -> Result<Json<AttestCapabilityResponse>, StatusCode> {
     let config = state.process.config.read().await;
-    let is_global = config.main.mesh.as_ref().map(|m| m.role.is_global()).unwrap_or(false);
+    let is_global = config
+        .main
+        .mesh
+        .as_ref()
+        .map(|m| m.role.is_global())
+        .unwrap_or(false);
     if !is_global {
         return Ok(Json(AttestCapabilityResponse {
             success: false,
@@ -902,7 +907,10 @@ pub async fn attest_capability(
     }
 
     if let Some(transport) = &state.mesh.mesh_transport {
-        match transport.attest_capability(&payload.node_id, &payload.capability).await {
+        match transport
+            .attest_capability(&payload.node_id, &payload.capability)
+            .await
+        {
             Some(_) => Ok(Json(AttestCapabilityResponse {
                 success: true,
                 error: None,

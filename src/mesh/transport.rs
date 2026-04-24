@@ -1420,16 +1420,22 @@ impl MeshTransport {
             let transport_for_attest = Arc::new(self.clone_for_maintenance());
             tokio::spawn(async move {
                 let node_id = transport_for_attest.config.node_id().to_string();
-                
+
                 // Allow some time for DHT to initialize before self-attesting
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                
-                transport_for_attest.attest_capability(&node_id, "waf").await;
-                transport_for_attest.attest_capability(&node_id, "threat_intel").await;
-                
+
+                transport_for_attest
+                    .attest_capability(&node_id, "waf")
+                    .await;
+                transport_for_attest
+                    .attest_capability(&node_id, "threat_intel")
+                    .await;
+
                 // For simplicity, we just self-attest DNS as well since global nodes act as DNS root
-                transport_for_attest.attest_capability(&node_id, "dns").await;
-                
+                transport_for_attest
+                    .attest_capability(&node_id, "dns")
+                    .await;
+
                 tracing::info!("Global node '{}' self-attested capabilities", node_id);
             });
         }

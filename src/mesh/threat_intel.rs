@@ -1229,59 +1229,59 @@ impl ThreatIntelligenceManager {
                     );
                     let sig_bytes = signature.clone();
                     let pk_bytes = match base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
-                            signer_pk,
-                        ) {
-                            Ok(p) => p,
-                            Err(_) => {
-                                tracing::warn!(
-                                    "Threat intel DHT sync: invalid signer pk base64 for {}",
-                                    key
-                                );
-                                continue;
-                            }
-                        };
-
-                        let signer = crate::mesh::protocol::MeshMessageSigner::new(
-                            pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
-                        );
-                        if !signer.verify(content.as_bytes(), &sig_bytes, &pk_bytes) {
+                        &base64::engine::general_purpose::STANDARD,
+                        signer_pk,
+                    ) {
+                        Ok(p) => p,
+                        Err(_) => {
                             tracing::warn!(
-                                "Threat intel DHT sync: signature verification failed for {}",
+                                "Threat intel DHT sync: invalid signer pk base64 for {}",
                                 key
                             );
                             continue;
                         }
+                    };
 
-                        if !self.is_global_node() {
-                            let trusted =
-                                self.check_trusted_signer(&indicator.source_node_id, signer_pk);
-                            if !trusted {
-                                tracing::warn!(
-                                    "Threat intel DHT sync: indicator from untrusted node {} rejected",
-                                    indicator.source_node_id
-                                );
-                                continue;
-                            }
-                        }
-                    } else {
+                    let signer = crate::mesh::protocol::MeshMessageSigner::new(
+                        pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
+                    );
+                    if !signer.verify(content.as_bytes(), &sig_bytes, &pk_bytes) {
                         tracing::warn!(
-                            "Threat intel DHT sync: missing signature or signer pk for {}",
+                            "Threat intel DHT sync: signature verification failed for {}",
                             key
                         );
                         continue;
                     }
 
-                    local_indicators.insert(
-                        key.to_string(),
-                        ThreatIndicatorEntry {
-                            indicator,
-                            received_from: Some("dht_sync".to_string()),
-                            local_origin: false,
-                            version: record.timestamp,
-                        },
+                    if !self.is_global_node() {
+                        let trusted =
+                            self.check_trusted_signer(&indicator.source_node_id, signer_pk);
+                        if !trusted {
+                            tracing::warn!(
+                                "Threat intel DHT sync: indicator from untrusted node {} rejected",
+                                indicator.source_node_id
+                            );
+                            continue;
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "Threat intel DHT sync: missing signature or signer pk for {}",
+                        key
                     );
-                    added += 1;
+                    continue;
+                }
+
+                local_indicators.insert(
+                    key.to_string(),
+                    ThreatIndicatorEntry {
+                        indicator,
+                        received_from: Some("dht_sync".to_string()),
+                        local_origin: false,
+                        version: record.timestamp,
+                    },
+                );
+                added += 1;
             }
         }
 

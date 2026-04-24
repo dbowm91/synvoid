@@ -624,10 +624,14 @@ impl WasmRuntime {
                         "dns_record:",
                         "dns_domain_reg:",
                     ];
-                    
+
                     let is_sensitive = sensitive_prefixes.iter().any(|p| key.starts_with(p));
-                    let is_explicitly_allowed = caller.data().allowed_dht_prefixes.iter().any(|p| key.starts_with(p));
-                    
+                    let is_explicitly_allowed = caller
+                        .data()
+                        .allowed_dht_prefixes
+                        .iter()
+                        .any(|p| key.starts_with(p));
+
                     if is_sensitive && !is_explicitly_allowed {
                         tracing::warn!(
                             "WASM plugin attempted unauthorized DHT query: key='{}'",
