@@ -1439,6 +1439,9 @@ fn default_min_tls_version() -> String {
 }
 
 fn default_quic_enable_0rtt() -> bool {
+    // Disable 0-RTT by default due to replay attack concerns in RFC 9000.
+    // 0-RTT data can be replayed by an attacker, so it should only be enabled
+    // when the security implications are understood and the network path is trusted.
     false
 }
 

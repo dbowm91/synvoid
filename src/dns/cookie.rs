@@ -44,6 +44,9 @@ impl DnsCookieServer {
     pub fn generate_server_cookie(&self, client_ip: IpAddr, client_cookie: &[u8]) -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(client_cookie);
+        // RFC 7873 Section 5.4: Server cookie construction uses a truncated 16-byte secret.
+        // This is intentional per RFC 7873 - using only 16 bytes of the 32-byte key for cookie
+        // generation provides sufficient entropy while limiting exposure if the cookie is compromised.
         data.extend_from_slice(&self.inner.secret_key[..16]);
 
         let ip_bytes = match client_ip {

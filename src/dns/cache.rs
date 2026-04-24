@@ -54,6 +54,7 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
+    confirmation_threshold: usize,
 }
 
 impl DnsCache {
@@ -80,6 +81,7 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled: false,
                 serve_stale_max_stale: Duration::from_secs(86400),
+                confirmation_threshold: 3,
             }),
         }
     }
@@ -114,6 +116,7 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled: false,
                 serve_stale_max_stale: Duration::from_secs(86400),
+                confirmation_threshold: 3,
             }),
         }
     }
@@ -147,6 +150,7 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled,
                 serve_stale_max_stale: Duration::from_secs(serve_stale_max_stale_secs),
+                confirmation_threshold: 3,
             }),
         }
     }
@@ -190,7 +194,7 @@ impl DnsCache {
                         .iter()
                         .filter(|(fp, _)| *fp == first_fingerprint)
                         .count();
-                    if confirmations < 2 {
+                    if confirmations < inner.confirmation_threshold {
                         tracing::warn!(
                             "Cache poisoning detected for {} (unconfirmed fingerprint: {}) - blocking response",
                             qname,
