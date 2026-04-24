@@ -554,11 +554,13 @@ impl WafCore {
             store.block_ip(client_ip, reason, duration, scope);
         }
         if let Some(ref threat_intel) = get_threat_intel() {
-            threat_intel.announce_local_block(
+            threat_intel.announce_honeypot_indicator(
                 client_ip,
+                ThreatType::SuspiciousActivity,
+                ThreatSeverity::High,
                 reason.to_string(),
-                duration,
-                scope.to_string(),
+                Some(duration),
+                scope,
             );
         }
     }

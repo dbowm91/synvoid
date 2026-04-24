@@ -44,6 +44,8 @@ pub struct WasmPluginInstanceConfig {
     pub priority: Option<i32>,
     #[serde(default)]
     pub on_error: Option<super::site::WasmOnError>,
+    #[serde(default)]
+    pub allowed_dht_prefixes: Vec<String>,
 }
 
 fn default_max_memory_mb() -> usize {

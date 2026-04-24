@@ -185,8 +185,9 @@ pub fn validate_edge_node_with_attestation(
         )
     })?;
 
-    let attestation = crate::mesh::dht::edge_attestation::EdgeAttestation::deserialize(&record.value)
-        .ok_or_else(|| format!("Edge node {} has invalid attestation format", peer_node_id))?;
+    let attestation =
+        crate::mesh::dht::edge_attestation::EdgeAttestation::deserialize(&record.value)
+            .ok_or_else(|| format!("Edge node {} has invalid attestation format", peer_node_id))?;
 
     if attestation.is_expired() {
         return Err(format!(
@@ -230,7 +231,10 @@ pub fn validate_edge_node_with_attestation(
         ));
     }
 
-    tracing::debug!("Edge node {} attestation validated successfully", peer_node_id);
+    tracing::debug!(
+        "Edge node {} attestation validated successfully",
+        peer_node_id
+    );
     Ok(())
 }
 

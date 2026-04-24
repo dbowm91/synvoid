@@ -2103,6 +2103,7 @@ impl MeshTransport {
         topology: Arc<MeshTopology>,
     ) {
         let topology_for_loop = topology.clone();
+        let peer_node_id_for_loop = peer_node_id.clone();
         loop {
             tokio::select! {
                 result = connection.accept_bi() => {
@@ -2110,8 +2111,9 @@ impl MeshTransport {
                         Ok((mut send_stream, mut recv_stream)) => {
                             let topo = topology_for_loop.clone();
                             let transport = self.clone();
+                            let peer_id = peer_node_id_for_loop.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = transport.handle_peer_message(&mut send_stream, &mut recv_stream, &topo).await {
+                                if let Err(e) = transport.handle_peer_message(&mut send_stream, &mut recv_stream, &topo, peer_id).await {
                                     tracing::debug!("Peer message error: {}", e);
                                 }
                             });
@@ -2142,6 +2144,7 @@ impl MeshTransport {
         send_stream: &mut SendStream,
         recv_stream: &mut RecvStream,
         topology: &MeshTopology,
+        peer_node_id: String,
     ) -> Result<(), MeshTransportError> {
         let mut first_byte = [0u8; 1];
         recv_stream
@@ -2175,7 +2178,13 @@ impl MeshTransport {
             let header_str = String::from_utf8_lossy(&total_header_buf);
 
             return self
-                .handle_http_proxy_stream(&header_str, http_data, send_stream, topology)
+                .handle_http_proxy_stream(
+                    &header_str,
+                    http_data,
+                    send_stream,
+                    topology,
+                    peer_node_id,
+                )
                 .await;
         }
 
@@ -2525,6 +2534,7 @@ impl MeshTransport {
         http_data: Vec<u8>,
         send_stream: &mut SendStream,
         topology: &MeshTopology,
+        peer_node_id: String,
     ) -> Result<(), MeshTransportError> {
         let host = self.extract_host_from_http(&http_data);
         let upstream_id = match host {
@@ -2576,7 +2586,7 @@ impl MeshTransport {
 
         if upstream_id.starts_with("serverless:") {
             return self
-                .handle_serverless_proxy_stream(&upstream_id, &http_data, send_stream)
+                .handle_serverless_proxy_stream(&upstream_id, &http_data, send_stream, peer_node_id)
                 .await;
         }
 
@@ -2888,6 +2898,7 @@ impl MeshTransport {
         upstream_id: &str,
         http_data: &[u8],
         send_stream: &mut SendStream,
+        peer_node_id: String,
     ) -> Result<(), MeshTransportError> {
         let function_name = upstream_id
             .strip_prefix("serverless:")
@@ -2908,6 +2919,15 @@ impl MeshTransport {
             let _ = send_stream.finish();
             return Ok(());
         };
+
+        let peer_role = self
+            .topology
+            .get_peer(&peer_node_id)
+            .await
+            .map(|p| p.role)
+            .unwrap_or(crate::mesh::config::MeshNodeRole::EDGE);
+
+        let caller = crate::serverless::manager::CallerContext::mesh(peer_node_id, peer_role);
 
         let method = self.extract_method_from_http(http_data);
         let path = self.extract_path_from_http(http_data);
@@ -2951,7 +2971,7 @@ impl MeshTransport {
         };
 
         match serverless_manager
-            .invoke_for_mesh(function_name, &method, &path, &headers, body)
+            .invoke_for_mesh(function_name, &method, &path, &headers, body, caller)
             .await
         {
             Ok(response) => {

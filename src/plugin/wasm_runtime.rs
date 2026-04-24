@@ -584,6 +584,21 @@ impl WasmRuntime {
 
                     let key = String::from_utf8_lossy(&mem_data[key_start..key_end]).to_string();
 
+                    let sensitive_prefixes = [
+                        "threat_indicator:",
+                        "yara_rule:",
+                        "yara_rules_manifest:",
+                        "edge_attestation:",
+                    ];
+                    let key_allowed = sensitive_prefixes.iter().any(|p| !key.starts_with(p));
+                    if !key_allowed {
+                        tracing::warn!(
+                            "WASM plugin attempted unauthorized DHT query: key='{}'",
+                            key
+                        );
+                        return -2;
+                    }
+
                     let result = if let Some(rs) = crate::mesh::get_global_record_store() {
                         if let Some(record) = rs.get_record(&key) {
                             let value = &record.value;

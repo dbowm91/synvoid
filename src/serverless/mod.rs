@@ -8,7 +8,8 @@ pub use instance_pool::{
     PoolHealth, PoolMetrics, ServerlessInstance,
 };
 pub use manager::{
-    handle_serverless_function, ServerlessError, ServerlessFunction, ServerlessManager,
+    handle_serverless_function, CallerContext, ServerlessError, ServerlessFunction,
+    ServerlessManager,
 };
 pub use registry::{
     get_global_serverless_registry, FunctionMetadata, FunctionStats, ServerlessRegistry,

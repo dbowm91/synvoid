@@ -1080,6 +1080,7 @@ impl HttpsServer {
                             &path,
                             &parts.headers,
                             Some(body_bytes_for_serverless),
+                            crate::serverless::manager::CallerContext::local(),
                         )
                         .await
                         {

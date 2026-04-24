@@ -1017,10 +1017,12 @@ impl ThreatIntelligenceManager {
         metrics::record_threat_intel_dht_lookup_hit();
 
         let threat_type = match value.get("threat_type")?.as_u64()? {
-            0 => ThreatType::IpBlock,
-            1 => ThreatType::RateLimitViolation,
-            2 => ThreatType::SuspiciousActivity,
-            3 => ThreatType::AsnBlock,
+            0 => ThreatType::Unspecified,
+            1 => ThreatType::IpBlock,
+            2 => ThreatType::IpThrottle,
+            3 => ThreatType::RateLimitViolation,
+            4 => ThreatType::SuspiciousActivity,
+            5 => ThreatType::AsnBlock,
             _ => ThreatType::Unspecified,
         };
 
@@ -1381,10 +1383,12 @@ impl ThreatIntelligenceManager {
 
     fn parse_dht_record_value(&self, value: &serde_json::Value) -> Option<ThreatIndicator> {
         let threat_type = match value.get("threat_type")?.as_u64()? {
-            0 => ThreatType::IpBlock,
-            1 => ThreatType::RateLimitViolation,
-            2 => ThreatType::SuspiciousActivity,
-            3 => ThreatType::AsnBlock,
+            0 => ThreatType::Unspecified,
+            1 => ThreatType::IpBlock,
+            2 => ThreatType::IpThrottle,
+            3 => ThreatType::RateLimitViolation,
+            4 => ThreatType::SuspiciousActivity,
+            5 => ThreatType::AsnBlock,
             _ => ThreatType::Unspecified,
         };
 

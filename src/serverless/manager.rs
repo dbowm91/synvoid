@@ -8,10 +8,42 @@ use parking_lot::RwLock;
 use thiserror::Error;
 
 use crate::config::serverless::{FunctionDefinition, ServerlessConfig};
+use crate::mesh::config::MeshNodeRole;
 use crate::plugin::{WasmPluginManager, WasmResourceLimits};
 use crate::serverless::instance_pool::{InstancePool, InstancePoolConfig};
 use crate::serverless::registry::get_global_serverless_registry;
 use crate::serverless::routing::{parse_routes, MethodMatch, RouteMatch, ServerlessRoute};
+
+#[derive(Debug, Clone)]
+pub struct CallerContext {
+    pub node_id: String,
+    pub role: MeshNodeRole,
+    pub org_id: Option<String>,
+    pub tier: Option<u32>,
+    pub is_local: bool,
+}
+
+impl CallerContext {
+    pub fn local() -> Self {
+        Self {
+            node_id: "local".to_string(),
+            role: MeshNodeRole::SERVERLESS_ORIGIN,
+            org_id: None,
+            tier: None,
+            is_local: true,
+        }
+    }
+
+    pub fn mesh(node_id: String, role: MeshNodeRole) -> Self {
+        Self {
+            node_id,
+            role,
+            org_id: None,
+            tier: None,
+            is_local: false,
+        }
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum ServerlessError {
@@ -564,6 +596,7 @@ impl ServerlessManager {
         path: &str,
         headers: &HeaderMap,
         body: Option<Bytes>,
+        caller: CallerContext,
     ) -> Result<ServerlessResponse, ServerlessError> {
         let function = self
             .functions
@@ -571,6 +604,16 @@ impl ServerlessManager {
             .get(function_name)
             .cloned()
             .ok_or_else(|| ServerlessError::FunctionNotFound(function_name.to_string()))?;
+
+        if !function.definition.public_function.unwrap_or(false) {
+            self.verify_caller_permission(
+                function_name,
+                &caller.node_id,
+                caller.role,
+                caller.org_id.as_deref(),
+                caller.tier,
+            )?;
+        }
 
         get_global_serverless_registry().record_invocation(function_name);
 
@@ -698,6 +741,7 @@ pub async fn handle_serverless_function(
     path: &str,
     headers: &HeaderMap,
     body: Option<Bytes>,
+    caller: CallerContext,
 ) -> Result<Response<Bytes>, ServerlessError> {
     let (function, route) = manager
         .find_matching_route(path, method)
@@ -705,6 +749,16 @@ pub async fn handle_serverless_function(
 
     let function_name = function.definition.name.clone();
     get_global_serverless_registry().record_invocation(&function_name);
+
+    if !function.definition.public_function.unwrap_or(false) {
+        manager.verify_caller_permission(
+            &function_name,
+            &caller.node_id,
+            caller.role,
+            caller.org_id.as_deref(),
+            caller.tier,
+        )?;
+    }
 
     tracing::debug!(
         "Routing {} {} to function '{}' via route (priority: {})",

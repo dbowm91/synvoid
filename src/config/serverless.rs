@@ -65,6 +65,8 @@ pub struct FunctionDefinition {
     pub require_trusted_caller: bool,
     #[serde(default)]
     pub min_tier_level: Option<u32>,
+    #[serde(default)]
+    pub public_function: Option<bool>,
 }
 
 fn default_handler_name() -> String {
