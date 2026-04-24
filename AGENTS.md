@@ -878,12 +878,14 @@ These features exist as code but are not fully functional:
 
 | Feature | Location | Issue |
 |---------|----------|-------|
-| `broadcast_pending_records()` | `src/mesh/dht/record_store_sync.rs:618` | Defined but never called; DHT records never broadcast |
-| `WasmDistManager` | `src/mesh/wasm_dist.rs:8-11` | Never initialized; dead code. Decision needed: remove or complete |
-| `discover_serverless_functions()` | `src/mesh/transport.rs:637-684` | Defined but never called from mesh connection flow |
-| `is_rate_limited()` | `src/mesh/dht/record_store.rs:371-377` | Exists but not called from `store_record()` |
+| `broadcast_pending_records()` | `src/mesh/dht/record_store_sync.rs:618` | Now wired via `start_broadcast_timer()` ✅ Fixed in Wave 4 |
+| `WasmDistManager` | `src/mesh/wasm_dist.rs:8-11` | Removed dead code ✅ Fixed in Wave 4 |
+| `discover_serverless_functions()` | `src/mesh/transport.rs:637-684` | Now wired into mesh connection lifecycle ✅ Fixed in Wave 4 |
+| `is_rate_limited()` | `src/mesh/dht/record_store.rs:371-377` | Now called from `store_record()` ✅ Fixed in Wave 4 |
+| `HTTP/3 backend routing` | `src/http3/server.rs` | Placeholder exists - full backend routing deferred |
+| `backend_plugin` config | `src/plugin/mod.rs` | Now implemented per-location routing ✅ Fixed in Wave 8 |
 
-**Note**: `verify_caller_permission()` and `CapabilityAccessVerifier` were wired in Wave 2 (W2-1, W2-4).
+**Note**: All previously listed gaps have been addressed in Waves 3-13.
 
 ## Verification Pitfalls
 
