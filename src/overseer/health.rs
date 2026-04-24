@@ -775,6 +775,33 @@ pub struct ValidationMetrics {
     pub success_rate: f64,
 }
 
+impl Default for ValidationMetrics {
+    fn default() -> Self {
+        Self {
+            total_checks: 0,
+            successful_checks: 0,
+            success_rate: 0.0,
+        }
+    }
+}
+
+impl ValidationMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_successful(&mut self) {
+        self.total_checks += 1;
+        self.successful_checks += 1;
+        self.success_rate = self.successful_checks as f64 / self.total_checks as f64;
+    }
+
+    pub fn record_failed(&mut self) {
+        self.total_checks += 1;
+        self.success_rate = self.successful_checks as f64 / self.total_checks as f64;
+    }
+}
+
 impl std::fmt::Display for HealthStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

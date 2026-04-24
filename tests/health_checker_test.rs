@@ -27,7 +27,7 @@ mod health_checker_tests {
         use maluwaf::overseer::health::EnhancedHealthConfig;
 
         let config = EnhancedHealthConfig::default();
-        assert!(config.timeout_secs > 0);
+        assert!(config.latency_threshold_ms > 0);
     }
 
     #[tokio::test]

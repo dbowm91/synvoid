@@ -6,6 +6,26 @@
 
 ---
 
+## 2026-04-25 Additional Fixes
+
+**Test compilation errors fixed** (post-plan):
+
+1. **socket_handoff_test.rs**: Fixed Message API mismatch - tests were using incorrect field names (`worker_id`, `reason`) that don't exist on the actual Message enum variants. Updated tests to use correct fields (`socket_path`, `ports`, `success`, `fd_count`, `error`).
+
+2. **health_checker_test.rs**: Fixed `timeout_secs` field reference - changed to use `latency_threshold_ms` which is the actual field name in `EnhancedHealthConfig`.
+
+3. **overseer_health_check_test.rs**: 
+   - Added missing `Default` impl for `ValidationMetrics` struct
+   - Added missing `record_successful()` and `record_failed()` methods to `ValidationMetrics`
+   - Fixed non-existent field references (`timeout_secs`, `health_check_path`, `health_path()` method)
+   - Simplified tests to work with actual API
+
+4. **socket_handoff_test.rs (Unix)**: Fixed feature gating - added proper `#[cfg(all(unix, feature = "socket-handoff"))]` guards to tests that use Unix-specific socket handoff functionality. Tests without this feature now run port acquisition test only.
+
+5. **ValidationMetrics struct update**: Added `Default` impl and mutation methods for test compatibility.
+
+---
+
 ## Summary
 
 All implementation waves have been completed. This document is preserved for historical reference and future maintenance.
