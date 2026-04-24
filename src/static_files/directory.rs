@@ -27,8 +27,50 @@ fn percent_decode(s: &str) -> String {
     result
 }
 
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 pub fn load_directory_template(template_path: &str) -> Result<String, super::StaticError> {
-    fs::read_to_string(template_path).map_err(|e| {
+    let path = Path::new(template_path);
+
+    if path.is_absolute() {
+        return Err(super::StaticError::Internal(format!(
+            "Absolute template paths are not allowed: {}",
+            template_path
+        )));
+    }
+
+    let path_str = template_path.replace('\\', "/");
+    if path_str.contains("..") {
+        return Err(super::StaticError::Internal(format!(
+            "Template path traversal attempt detected: {}",
+            template_path
+        )));
+    }
+
+    let canonical = fs::canonicalize(path).map_err(|e| {
+        super::StaticError::Internal(format!(
+            "Failed to resolve template path {}: {}",
+            template_path, e
+        ))
+    })?;
+
+    if !canonical.starts_with(std::path::PathBuf::from("/etc/maluwaf/").as_path())
+        && !canonical.starts_with(std::path::PathBuf::from("/var/lib/maluwaf/").as_path())
+        && !canonical.starts_with(std::path::PathBuf::from("/var/www/").as_path())
+    {
+        return Err(super::StaticError::Internal(format!(
+            "Template path must be within allowed directories (/etc/maluwaf, /var/lib/maluwaf, /var/www): {}",
+            template_path
+        )));
+    }
+
+    fs::read_to_string(&canonical).map_err(|e| {
         super::StaticError::Internal(format!(
             "Failed to load directory template from {}: {}",
             template_path, e
@@ -117,13 +159,14 @@ pub fn render_custom_template(
             } else {
                 get_file_type_icon(&entry.name)
             };
+            let escaped_name = escape_html(&entry.name);
             format!(
                 r#"<tr>
                     <td><a href="{}">{} {}</a></td>
                     <td>{}</td>
                     <td class="size">{}</td>
                 </tr>"#,
-                entry.href, icon, entry.name, entry.modified, entry.size
+                entry.href, icon, escaped_name, entry.modified, entry.size
             )
         })
         .collect();

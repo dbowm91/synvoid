@@ -6,7 +6,92 @@ This skill documents the security patterns implemented for the MaluWAF codebase.
 
 ## Critical Security
 
-## Critical Security
+### Path Traversal Prevention in Template Loading
+
+**Location**: `src/static_files/directory.rs:30-74`
+
+**Fix**: Ensure template paths can't escape allowed directories:
+
+```rust
+pub fn load_directory_template(template_path: &str) -> Result<String, StaticError> {
+    let path = Path::new(template_path);
+
+    // 1. Reject absolute paths
+    if path.is_absolute() {
+        return Err(StaticError::Internal(format!(
+            "Absolute template paths are not allowed: {}",
+            template_path
+        )));
+    }
+
+    // 2. Reject path traversal attempts
+    let path_str = template_path.replace('\\', "/");
+    if path_str.contains("..") {
+        return Err(StaticError::Internal(format!(
+            "Template path traversal attempt detected: {}",
+            template_path
+        )));
+    }
+
+    // 3. Canonicalize and verify within allowed directories
+    let canonical = fs::canonicalize(path)?;
+    if !canonical.starts_with(Path::new("/etc/maluwaf/").as_path())
+        && !canonical.starts_with(Path::new("/var/lib/maluwaf/").as_path())
+        && !canonical.starts_with(Path::new("/var/www/").as_path())
+    {
+        return Err(StaticError::Internal(
+            "Template path must be within allowed directories".into(),
+        ));
+    }
+
+    fs::read_to_string(&canonical).map_err(|e| ...)
+}
+```
+
+### XSS Prevention in Directory Listing
+
+**Location**: `src/static_files/directory.rs`, `src/theme/dir_listing.rs`
+
+**Fix**: Always escape user-controlled data in HTML:
+
+```rust
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+// Use in directory entry rendering
+let escaped_name = escape_html(&entry.name);
+format!(r#"<td><a href="{}">{} {}</a></td>"#, entry.href, icon, escaped_name)
+```
+
+### RSA 1024 Auto-Upgrade in DNSSEC
+
+**Location**: `src/dns/dnssec_key_mgmt.rs:232-254`
+
+**Fix**: Auto-upgrade RSA 1024 to 2048:
+
+```rust
+let bits = if _rsa_key_size == 0 {
+    2048_usize
+} else {
+    let requested_bits = _rsa_key_size as usize;
+    if requested_bits == 1024 {
+        tracing::warn!("RSA 1024 is insecure, auto-upgrading to 2048");
+        2048
+    } else {
+        requested_bits
+    }
+};
+if !matches!(bits, 2048 | 4096) {
+    return Err(format!("Unsupported RSA key size {}. Use 2048 or 4096.", bits));
+}
+```
+
+---
 
 ### ML-KEM/ML-DSA Key Pair Derivation from Loaded Secrets
 

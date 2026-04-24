@@ -1814,9 +1814,6 @@ impl ThreatIntelligenceManager {
         let now = crate::mesh::safe_unix_timestamp();
 
         for (_key, entry) in indicators.iter() {
-            if !entry.local_origin {
-                continue;
-            }
             let expires_at = entry.indicator.timestamp + entry.indicator.ttl_seconds;
             if now > expires_at {
                 continue;

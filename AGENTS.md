@@ -897,6 +897,63 @@ When verifying code claims against the codebase:
 4. **Check actual callers** — A function being defined doesn't mean it's called. Use `rg` to verify call sites before claiming something is "unreachable" or "dead code"
 5. **`moka::sync::Cache` API** — Use `entry_count()` not `len()` for getting cache size. The current code already uses the correct API
 
+## Security Patterns
+
+### Path Traversal Prevention
+
+When loading user-specified template or configuration paths, always validate:
+
+```rust
+// 1. Reject absolute paths
+if path.is_absolute() {
+    return Err("Absolute paths not allowed".into());
+}
+
+// 2. Reject path traversal attempts
+let normalized = template_path.replace('\\', "/");
+if normalized.contains("..") {
+    return Err("Path traversal attempt detected".into());
+}
+
+// 3. Canonicalize and verify within allowed directories
+let canonical = fs::canonicalize(path)?;
+if !canonical.starts_with(allowed_base_dir.as_path()) {
+    return Err("Path outside allowed directory".into());
+}
+```
+
+### XSS Prevention in HTML Rendering
+
+Always escape user-controlled data before rendering in HTML:
+
+```rust
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+// Use in template rendering
+html = html.replace("{{user_data}}", &escape_html(&user_data));
+```
+
+### RSA Key Size Validation
+
+For DNSSEC key generation, reject or auto-upgrade insecure key sizes:
+
+```rust
+let effective_bits = match bits {
+    1024 => {
+        tracing::warn!("RSA 1024 is insecure, auto-upgrading to 2048");
+        2048
+    }
+    2048 | 4096 => bits,
+    _ => return Err("Unsupported key size".into()),
+};
+```
+
 ## Implementation Plan Workflow
 
 When working on items from `plans/plan.md`:

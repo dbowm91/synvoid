@@ -20,6 +20,14 @@ fn percent_encode(s: &str) -> String {
     result
 }
 
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 #[derive(Debug, Clone)]
 pub struct DirectoryEntry {
     pub name: String,
@@ -506,6 +514,7 @@ impl DirectoryListingTemplate {
             } else {
                 self.renderer.generate_file_type_icon_svg(&entry.name)
             };
+            let escaped_name = escape_html(&entry.name);
             rows.push_str(&format!(
                 r#"<tr>
                     <td><a href="{href}">{icon}{name}</a></td>
@@ -514,7 +523,7 @@ impl DirectoryListingTemplate {
                 </tr>"#,
                 href = entry.href,
                 icon = icon,
-                name = entry.name,
+                name = escaped_name,
                 modified = entry.modified,
                 size = entry.size
             ));

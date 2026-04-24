@@ -235,11 +235,17 @@ impl DnsSecKeyManager {
                 let bits = if _rsa_key_size == 0 {
                     2048_usize
                 } else {
-                    _rsa_key_size as usize
+                    let requested_bits = _rsa_key_size as usize;
+                    if requested_bits == 1024 {
+                        tracing::warn!("RSA 1024 is insecure, auto-upgrading to 2048");
+                        2048
+                    } else {
+                        requested_bits
+                    }
                 };
-                if !matches!(bits, 1024 | 2048 | 4096) {
+                if !matches!(bits, 2048 | 4096) {
                     return Err(format!(
-                        "Unsupported RSA key size {}. Use 1024, 2048, or 4096.",
+                        "Unsupported RSA key size {}. Use 2048 or 4096.",
                         bits
                     ));
                 }
