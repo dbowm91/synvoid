@@ -767,9 +767,18 @@ impl YaraRulesManager {
                         return None;
                     }
                 };
-                let signer = crate::mesh::protocol::MeshMessageSigner::new(
-                    pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
-                );
+                let pk_bytes: [u8; 32] = match pk_bytes.clone().try_into() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::warn!(
+                            "YARA sync: invalid signer pk length for chunk {} (expected 32 bytes, got {})",
+                            i,
+                            pk_bytes.len()
+                        );
+                        return None;
+                    }
+                };
+                let signer = crate::mesh::protocol::MeshMessageSigner::new(pk_bytes);
                 let sig_content = format!(
                     "{}:{}:{}:{}:{}",
                     content_hash,
@@ -930,9 +939,19 @@ impl YaraRulesManager {
                             }
                         };
 
-                        let signer = crate::mesh::protocol::MeshMessageSigner::new(
-                            pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
-                        );
+                        let pk_bytes: [u8; 32] = match pk_bytes.clone().try_into() {
+                            Ok(p) => p,
+                            Err(_) => {
+                                tracing::warn!(
+                                    "YARA DHT sync: invalid manifest signer pk length from {} (expected 32 bytes, got {})",
+                                    manifest_node_id,
+                                    pk_bytes.len()
+                                );
+                                continue;
+                            }
+                        };
+
+                        let signer = crate::mesh::protocol::MeshMessageSigner::new(pk_bytes);
                         if !signer.verify(signature_content.as_bytes(), &sig_bytes, &pk_bytes) {
                             tracing::warn!(
                                 "YARA DHT sync: manifest signature verification failed for record from {}",

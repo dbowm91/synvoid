@@ -1,25 +1,31 @@
 use http::Method;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum RouteMatch {
     Exact(String),
     Prefix(String),
     Suffix(String),
-    Regex(String),
+    Regex {
+        pattern: String,
+        compiled: Option<Arc<regex::Regex>>,
+    },
     Glob(String),
 }
 
 impl RouteMatch {
     pub fn matches(&self, path: &str) -> bool {
         match self {
-            RouteMatch::Exact(pattern) => path == pattern,
+            RouteMatch::Exact(pattern) => path == *pattern,
             RouteMatch::Prefix(prefix) => {
                 path == *prefix || path.starts_with(&format!("{}/", prefix))
             }
             RouteMatch::Suffix(suffix) => path.ends_with(suffix),
-            RouteMatch::Regex(pattern) => {
-                if let Ok(re) = regex::Regex::new(pattern) {
+            RouteMatch::Regex { pattern, compiled } => {
+                if let Some(ref re) = compiled {
+                    re.is_match(path)
+                } else if let Ok(re) = regex::Regex::new(pattern) {
                     re.is_match(path)
                 } else {
                     false
@@ -165,7 +171,11 @@ fn parse_path_match(path: &str) -> RouteMatch {
     }
 
     if let Some(pattern) = path.strip_prefix("regex:") {
-        return RouteMatch::Regex(pattern.to_string());
+        let compiled = regex::Regex::new(pattern).ok().map(Arc::new);
+        return RouteMatch::Regex {
+            pattern: pattern.to_string(),
+            compiled,
+        };
     }
 
     if let Some(prefix) = path.strip_suffix('*') {
@@ -297,5 +307,32 @@ mod tests {
         let (method, matcher) = parse_route_string("ANY /api/*").unwrap();
         assert!(matches!(method, MethodMatch::Any));
         assert!(matches!(matcher, RouteMatch::Prefix(_)));
+    }
+
+    #[test]
+    fn test_parse_route_string_regex() {
+        let (method, matcher) = parse_route_string("GET regex:^/api/v\\d+/users").unwrap();
+        assert!(matches!(method, MethodMatch::Specific(Method::GET)));
+        assert!(matches!(matcher, RouteMatch::Regex { .. }));
+        if let RouteMatch::Regex { ref pattern, .. } = matcher {
+            assert_eq!(pattern, "^/api/v\\d+/users");
+        }
+    }
+
+    #[test]
+    fn test_regex_route_match() {
+        let route = ServerlessRoute {
+            matcher: RouteMatch::Regex {
+                pattern: "^/api/v[0-9]+/.*".to_string(),
+                compiled: Some(Arc::new(regex::Regex::new("^/api/v[0-9]+/.*").unwrap())),
+            },
+            method: MethodMatch::Any,
+            priority: 0,
+            function_name: "test".to_string(),
+        };
+        assert!(route.matches("/api/v1/users", &Method::GET));
+        assert!(route.matches("/api/v123/items", &Method::POST));
+        assert!(!route.matches("/api/users", &Method::GET));
+        assert!(!route.matches("/api/v/users", &Method::GET));
     }
 }

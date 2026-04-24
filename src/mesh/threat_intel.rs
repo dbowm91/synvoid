@@ -1242,9 +1242,19 @@ impl ThreatIntelligenceManager {
                         }
                     };
 
-                    let signer = crate::mesh::protocol::MeshMessageSigner::new(
-                        pk_bytes.clone().try_into().unwrap_or([0u8; 32]),
-                    );
+                    let pk_bytes: [u8; 32] = match pk_bytes.clone().try_into() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            tracing::warn!(
+                                "Threat intel DHT sync: invalid signer pk length for {} (expected 32 bytes, got {})",
+                                key,
+                                pk_bytes.len()
+                            );
+                            continue;
+                        }
+                    };
+
+                    let signer = crate::mesh::protocol::MeshMessageSigner::new(pk_bytes);
                     if !signer.verify(content.as_bytes(), &sig_bytes, &pk_bytes) {
                         tracing::warn!(
                             "Threat intel DHT sync: signature verification failed for {}",
