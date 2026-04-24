@@ -160,9 +160,9 @@ cargo clippy --lib -- -D warnings
 | ConnectionMeta trait | ✅ Complete |
 | TlsContext struct | ✅ Complete |
 | JA4 accessible via trait | ✅ Complete |
-| Migrate request processing | 🔄 Pending |
-| Remove duplicate code | 🔄 Pending |
-| Wire JA4 to WAF | 🔄 Pending |
+| Migrate request processing | ✅ Complete |
+| Remove duplicate code | ✅ Complete |
+| Wire JA4 to WAF | ✅ Complete |
 
 ## Adding New Connection Types
 
