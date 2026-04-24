@@ -384,9 +384,16 @@ impl ServerlessManager {
             let record_store = self.record_store.read().clone();
             if let Some(rs) = record_store {
                 let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_def.name);
+                let node_id = self
+                    .transport
+                    .read()
+                    .as_ref()
+                    .map(|t| t.config.node_id().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
                 let value = serde_json::json!({
                     "function_name": func_def.name,
                     "version": 1,
+                    "node_id": node_id,
                     "routes": func_def.routes,
                     "allowed_methods": func_def.allowed_methods,
                     "memory_mb": func_def.memory_mb,
@@ -402,7 +409,7 @@ impl ServerlessManager {
 
             let routing_manager = self.routing_manager.read().clone();
             if let Some(routing) = routing_manager {
-                let upstream_id = format!("serverless:{}", func_def.name);
+                let upstream_id = format!("serverless_function:{}", func_def.name);
                 let routing_clone = routing.clone();
                 let func_name = func_def.name.clone();
                 tokio::spawn(async move {
@@ -412,6 +419,10 @@ impl ServerlessManager {
                         func_name
                     );
                 });
+            }
+
+            if let Some(ref transport) = *self.transport.read() {
+                transport.announce_serverless();
             }
         }
 
@@ -426,9 +437,16 @@ impl ServerlessManager {
         let store = self.record_store.read().clone();
         if let Some(rs) = store {
             let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_def.name);
+            let node_id = self
+                .transport
+                .read()
+                .as_ref()
+                .map(|t| t.config.node_id().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             let value = serde_json::json!({
                 "function_name": func_def.name,
                 "version": 1,
+                "node_id": node_id,
                 "routes": func_def.routes,
                 "allowed_methods": func_def.allowed_methods,
                 "memory_mb": func_def.memory_mb,
@@ -440,19 +458,6 @@ impl ServerlessManager {
                 rs.store_and_announce(key.as_str().to_string(), bytes, 3600);
                 tracing::debug!("Registered serverless function {} in DHT", func_def.name);
             }
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn register_function_routing(&self, func_def: &FunctionDefinition) {
-        let rm = self.routing_manager.read().clone();
-        if let Some(routing) = rm {
-            let upstream_id = format!("serverless:{}", func_def.name);
-            routing.register_local_upstream(&upstream_id).await;
-            tracing::debug!(
-                "Registered serverless function {} in hierarchical routing",
-                func_def.name
-            );
         }
     }
 
@@ -525,6 +530,10 @@ impl ServerlessManager {
 
     pub fn get_function(&self, name: &str) -> Option<ServerlessFunction> {
         self.functions.read().get(name).cloned()
+    }
+
+    pub fn get_all_functions(&self) -> HashMap<String, ServerlessFunction> {
+        self.functions.read().clone()
     }
 
     pub fn has_function(&self, name: &str) -> bool {
@@ -774,7 +783,7 @@ pub async fn handle_serverless_function(
 
     // If no local runtime, try to find a provider via DHT
     if !has_local_runtime {
-        let upstream_id = format!("serverless:{}", function_name);
+        let upstream_id = format!("serverless_function:{}", function_name);
         if let Some(rs) = manager.record_store.read().as_ref() {
             if rs.get_record(&upstream_id).is_some() {
                 tracing::debug!(

@@ -78,6 +78,7 @@ static DHT_ANNOUNCE_QUEUE_DEPTH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU6
 
 static DHT_STORE_OPERATIONS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_STORE_FAILURES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static DHT_RATE_LIMITED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_GET_OPERATIONS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_GET_NOT_FOUND: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_ANNOUNCE_SENT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
@@ -461,6 +462,10 @@ pub fn record_dht_store_operation(success: bool) {
     if !success {
         DHT_STORE_FAILURES.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+pub fn record_dht_store_rate_limited() {
+    DHT_RATE_LIMITED.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn get_dht_store_operations() -> u64 {

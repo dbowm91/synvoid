@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use axum::Router;
 use libloading::{Library, Symbol};
@@ -6,11 +7,6 @@ use libloading::{Library, Symbol};
 use super::AxumPluginError;
 
 const AXUM_ABI_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Function pointer type for plugin factory, returning a raw pointer to a Router.
-/// # Safety
-/// The returned pointer must live for the duration of use and be valid.
-pub type AxumFactory = unsafe extern "C" fn() -> *mut Router<()>;
 
 fn validate_plugin_path(path: &Path) -> Result<(), AxumPluginError> {
     if let Ok(metadata) = std::fs::symlink_metadata(path) {
@@ -27,7 +23,7 @@ fn validate_plugin_path(path: &Path) -> Result<(), AxumPluginError> {
 
     if let Ok(metadata) = std::fs::metadata(&canonical_path) {
         let file_size = metadata.len();
-        let max_plugin_size = 50 * 1024 * 1024; // 50MB limit
+        let max_plugin_size = 50 * 1024 * 1024;
         if file_size > max_plugin_size {
             return Err(AxumPluginError::LoadFailed(format!(
                 "Plugin file too large: {} bytes (max {})",
@@ -101,10 +97,9 @@ fn validate_plugin_path(path: &Path) -> Result<(), AxumPluginError> {
     Ok(())
 }
 
-pub fn load_plugin(path: &Path) -> Result<(axum::Router<()>, String), AxumPluginError> {
+pub fn load_plugin(path: &Path) -> Result<(Arc<Router<()>>, String), AxumPluginError> {
     validate_plugin_path(path)?;
 
-    // SAFETY: Loading a plugin shared library is unsafe; we validate the path and check errors.
     unsafe {
         let lib = Library::new(path).map_err(|e| AxumPluginError::LoadFailed(e.to_string()))?;
 
@@ -128,7 +123,7 @@ pub fn load_plugin(path: &Path) -> Result<(axum::Router<()>, String), AxumPlugin
             });
         }
 
-        let factory: Symbol<AxumFactory> = lib
+        let factory: Symbol<unsafe extern "C" fn() -> *mut Router<()>> = lib
             .get(b"create_router")
             .map_err(|e| AxumPluginError::SymbolNotFound(e.to_string()))?;
 
@@ -147,7 +142,7 @@ pub fn load_plugin(path: &Path) -> Result<(axum::Router<()>, String), AxumPlugin
             .unwrap_or("unknown")
             .to_string();
 
-        Ok((*router, name))
+        Ok((Arc::new(*router), name))
     }
 }
 

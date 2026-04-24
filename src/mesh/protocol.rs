@@ -1465,6 +1465,7 @@ pub struct WasmModuleInfo {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServerlessFunctionAnnounce {
     pub function_name: String,
+    pub node_id: Option<String>,
     pub version: u64,
     pub checksum: String,
     pub routes: Vec<String>,

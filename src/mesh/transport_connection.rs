@@ -243,6 +243,12 @@ impl MeshTransport {
                 }
             }
         }
+
+        self.discover_serverless_functions();
+
+        if self.serverless_manager.read().is_some() {
+            self.announce_serverless();
+        }
     }
 
     pub(crate) async fn request_seed_list(

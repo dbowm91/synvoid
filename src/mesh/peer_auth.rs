@@ -1,23 +1,42 @@
 use base64::Engine;
 use dashmap::DashMap;
 use ed25519_dalek::{Signer, Verifier};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RevocationInfo {
     pub revoked_at: u64,
     pub reason: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PersistedRevocationList {
+    pub version: u32,
+    pub revoked_nodes: std::collections::HashMap<String, RevocationInfo>,
+    pub saved_at: u64,
+}
+
 pub struct GlobalNodeRevocationList {
     revoked_nodes: Arc<DashMap<String, RevocationInfo>>,
+    persistence_path: Option<PathBuf>,
 }
 
 impl GlobalNodeRevocationList {
     pub fn new() -> Self {
         Self {
             revoked_nodes: Arc::new(DashMap::new()),
+            persistence_path: None,
         }
+    }
+
+    pub fn new_with_persistence(persistence_path: PathBuf) -> Self {
+        let list = Self {
+            revoked_nodes: Arc::new(DashMap::new()),
+            persistence_path: Some(persistence_path),
+        };
+        list.load();
+        list
     }
 
     pub fn add_revoked_node(&self, node_id: &str, reason: &str) {
@@ -26,6 +45,7 @@ impl GlobalNodeRevocationList {
             reason: reason.to_string(),
         };
         self.revoked_nodes.insert(node_id.to_string(), info);
+        self.save();
     }
 
     pub fn is_node_revoked(&self, node_id: &str) -> Option<RevocationInfo> {
@@ -36,6 +56,7 @@ impl GlobalNodeRevocationList {
 
     pub fn remove_revoked_node(&self, node_id: &str) {
         self.revoked_nodes.remove(node_id);
+        self.save();
     }
 
     pub fn get_all_revoked(&self) -> Vec<(String, RevocationInfo)> {
@@ -43,6 +64,52 @@ impl GlobalNodeRevocationList {
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect()
+    }
+
+    fn save(&self) {
+        let Some(ref path) = self.persistence_path else {
+            return;
+        };
+
+        let data: std::collections::HashMap<String, RevocationInfo> = self
+            .revoked_nodes
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+
+        let persisted = PersistedRevocationList {
+            version: 1,
+            revoked_nodes: data,
+            saved_at: crate::utils::current_timestamp(),
+        };
+
+        if let Ok(bytes) = crate::serialization::serialize(&persisted) {
+            let _ = std::fs::write(path, bytes);
+        }
+    }
+
+    fn load(&self) {
+        let Some(ref path) = self.persistence_path else {
+            return;
+        };
+
+        if !path.exists() {
+            return;
+        }
+
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(persisted) =
+                crate::serialization::deserialize::<PersistedRevocationList>(&bytes)
+            {
+                for (node_id, info) in persisted.revoked_nodes {
+                    self.revoked_nodes.insert(node_id, info);
+                }
+                tracing::info!(
+                    "Loaded {} revoked nodes from persistence",
+                    self.revoked_nodes.len()
+                );
+            }
+        }
     }
 }
 

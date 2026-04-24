@@ -84,16 +84,15 @@ impl PluginManager {
     pub fn load_axum_plugin(&self, path: &Path) -> Result<Arc<Router>, AxumPluginError> {
         let (router, wrapper_name) = axum_loader::load_plugin(path)?;
 
-        let shared_router = Arc::new(router);
         let wrapper = AxumPluginWrapper {
-            router: shared_router.clone(),
+            router: router.clone(),
             name: wrapper_name.clone(),
         };
 
         self.axum_plugins.write().push(Arc::new(wrapper));
         tracing::info!("Loaded Axum plugin: {}", wrapper_name);
 
-        Ok(shared_router)
+        Ok(router)
     }
 
     /// Get the first loaded Axum plugin router, if any

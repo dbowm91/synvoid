@@ -57,12 +57,12 @@ impl MeshTopology {
 
         let route_cache = MokaCache::builder()
             .time_to_live(Duration::from_secs(3600))
-            .max_capacity(10000)
+            .max_capacity(100000)
             .build();
 
         let verified_upstream_cache = MokaCache::builder()
             .time_to_live(Duration::from_secs(60))
-            .max_capacity(1000)
+            .max_capacity(50000)
             .build();
 
         let local_upstreams: HashMap<String, UpstreamInfoInternal> = config

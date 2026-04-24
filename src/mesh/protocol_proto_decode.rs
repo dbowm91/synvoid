@@ -1351,6 +1351,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 Ok(MeshMessage::ServerlessFunctionAnnounce(
                     crate::mesh::protocol::ServerlessFunctionAnnounce {
                         function_name: r.function_name.clone(),
+                        node_id: None,
                         version: r.version,
                         checksum: r.checksum.clone(),
                         routes: r.routes.clone(),

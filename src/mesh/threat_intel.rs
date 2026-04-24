@@ -53,6 +53,8 @@ pub struct ThreatIntelligenceConfig {
     pub fanout_factor: f64,
     #[serde(default = "default_re_announce_interval")]
     pub re_announce_interval_secs: u64,
+    #[serde(default)]
+    pub trusted_signers: Vec<String>,
 }
 
 fn default_fanout_factor() -> f64 {
@@ -106,6 +108,7 @@ impl ThreatIntelligenceConfig {
             reputation_config: self.reputation_config.clone(),
             fanout_factor: self.fanout_factor,
             re_announce_interval_secs: self.re_announce_interval_secs,
+            trusted_signers: self.trusted_signers.clone(),
         }
     }
 }
@@ -124,6 +127,7 @@ pub struct ThreatIntelligenceConfigInternal {
     pub reputation_config: ReputationConfig,
     pub fanout_factor: f64,
     pub re_announce_interval_secs: u64,
+    pub trusted_signers: Vec<String>,
 }
 
 impl Default for ThreatIntelligenceConfig {
@@ -141,6 +145,7 @@ impl Default for ThreatIntelligenceConfig {
             reputation_config: ReputationConfig::default(),
             fanout_factor: 0.5,
             re_announce_interval_secs: DEFAULT_RE_ANNOUNCE_INTERVAL_SECS,
+            trusted_signers: Vec::new(),
         }
     }
 }
@@ -1318,15 +1323,12 @@ impl ThreatIntelligenceManager {
                             continue;
                         }
 
-                        if let Some(ref transport) = *self.transport.read() {
-                            let topology = transport.get_topology();
-                            let global_nodes = tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current()
-                                    .block_on(topology.get_global_nodes())
-                            });
-                            if !global_nodes.contains(&indicator.source_node_id) {
+                        if !self.is_global_node() {
+                            let trusted =
+                                self.check_trusted_signer(&indicator.source_node_id, signer_pk);
+                            if !trusted {
                                 tracing::warn!(
-                                    "Threat intel DHT sync: indicator from non-global node {} rejected",
+                                    "Threat intel DHT sync: indicator from untrusted node {} rejected",
                                     indicator.source_node_id
                                 );
                                 continue;
@@ -1379,6 +1381,30 @@ impl ThreatIntelligenceManager {
         );
 
         Ok(())
+    }
+
+    fn check_trusted_signer(&self, source_node_id: &str, signer_pk: &str) -> bool {
+        if self.node_role.is_global() {
+            return true;
+        }
+
+        if self.config.trusted_signers.is_empty() {
+            let transport = self.transport.read();
+            if let Some(ref t) = *transport {
+                let topology = t.get_topology();
+                return tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
+                })
+                .contains(&source_node_id.to_string());
+            }
+            return false;
+        }
+
+        self.config.trusted_signers.contains(&signer_pk.to_string())
+    }
+
+    fn is_global_node(&self) -> bool {
+        self.node_role.is_global()
     }
 
     fn parse_dht_record_value(&self, value: &serde_json::Value) -> Option<ThreatIndicator> {

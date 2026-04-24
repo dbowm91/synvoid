@@ -376,6 +376,22 @@ impl RecordStoreManager {
         }
     }
 
+    pub fn start_broadcast_timer(&self, interval_secs: u64) {
+        if !self.config.enabled || !self.is_global_node() {
+            return;
+        }
+
+        let store = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+            loop {
+                interval.tick().await;
+                store.broadcast_pending_records().await;
+            }
+        });
+        tracing::info!("DHT broadcast timer started (interval: {}s)", interval_secs);
+    }
+
     pub fn set_mesh_sender(&self, sender: mpsc::Sender<MeshMessage>) {
         self.routing_state.write().mesh_sender = Some(sender);
     }

@@ -641,6 +641,10 @@ impl MeshTransport {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let node_id = value
+                    .get("node_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
                 let checksum = value
                     .get("checksum")
@@ -674,6 +678,7 @@ impl MeshTransport {
 
                 functions.push(crate::mesh::protocol::ServerlessFunctionAnnounce {
                     function_name,
+                    node_id,
                     version,
                     checksum,
                     routes,
@@ -690,6 +695,51 @@ impl MeshTransport {
             functions.len()
         );
         functions
+    }
+
+    pub fn announce_serverless(&self) {
+        let Some(record_store) = self.record_store.clone() else {
+            tracing::warn!("No record store available for serverless announcement");
+            return;
+        };
+
+        let serverless_manager = self.serverless_manager.read().clone();
+        let Some(manager) = serverless_manager else {
+            tracing::debug!("No serverless manager configured, skipping announcement");
+            return;
+        };
+
+        if !manager.is_enabled() {
+            tracing::debug!("Serverless not enabled, skipping announcement");
+            return;
+        }
+
+        let functions = manager.get_all_functions();
+        if functions.is_empty() {
+            tracing::debug!("No serverless functions configured, skipping announcement");
+            return;
+        }
+
+        let node_id = self.config.node_id().to_string();
+
+        for (func_name, function) in functions {
+            let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_name);
+            let value = serde_json::json!({
+                "function_name": func_name,
+                "version": 1,
+                "node_id": node_id,
+                "routes": function.definition.routes,
+                "allowed_methods": function.definition.allowed_methods,
+                "memory_mb": function.definition.memory_mb,
+                "timeout_seconds": function.definition.timeout_seconds,
+                "priority": 100,
+                "announced_at": chrono::Utc::now().timestamp(),
+            });
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                record_store.store_and_announce(key.as_str().to_string(), bytes, 3600);
+                tracing::debug!("Announced serverless function {} to DHT", func_name);
+            }
+        }
     }
 
     pub async fn attest_capability(

@@ -1374,7 +1374,7 @@ pub struct MeshPersistenceConfig {
 }
 
 fn default_policy_cache_size() -> usize {
-    10000
+    100000
 }
 
 fn default_persist_interval_secs() -> u64 {
@@ -1387,7 +1387,7 @@ impl Default for MeshPersistenceConfig {
             enabled: false,
             peer_cache_path: None,
             persist_interval_secs: 300,
-            policy_cache_size: 10000,
+            policy_cache_size: 100000,
         }
     }
 }

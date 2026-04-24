@@ -2584,7 +2584,7 @@ impl MeshTransport {
             }
         }
 
-        if upstream_id.starts_with("serverless:") {
+        if upstream_id.starts_with("serverless_function:") {
             return self
                 .handle_serverless_proxy_stream(&upstream_id, &http_data, send_stream, peer_node_id)
                 .await;
@@ -2901,7 +2901,7 @@ impl MeshTransport {
         peer_node_id: String,
     ) -> Result<(), MeshTransportError> {
         let function_name = upstream_id
-            .strip_prefix("serverless:")
+            .strip_prefix("serverless_function:")
             .unwrap_or(upstream_id);
 
         let serverless_manager_opt = {

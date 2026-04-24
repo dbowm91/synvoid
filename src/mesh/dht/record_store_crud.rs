@@ -15,6 +15,16 @@ impl RecordStoreManager {
             return false;
         }
 
+        if self.is_rate_limited(&record.source_node_id) {
+            tracing::warn!(
+                "Record store: node {} is rate limited, cannot store record for key {}",
+                record.source_node_id,
+                record.key
+            );
+            crate::metrics::record_dht_store_rate_limited();
+            return false;
+        }
+
         let is_global = self.is_global_node();
 
         if !is_global && record.signature.is_empty() {

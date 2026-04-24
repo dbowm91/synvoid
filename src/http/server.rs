@@ -1898,7 +1898,7 @@ impl HttpServer {
 
                                         let record_store = mt.get_record_store();
                                         let peer_node_id = record_store.as_ref().and_then(|rs| {
-                                            rs.get_record(&format!("serverless:{}", function_name))
+                                            rs.get_record(&format!("serverless_function:{}", function_name))
                                                 .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.value).ok())
                                                 .and_then(|v| v.get("node_id").and_then(|n| n.as_str()).map(|s| s.to_string()))
                                         });
@@ -3719,9 +3719,8 @@ impl HttpServer {
         use http_body_util::BodyExt;
         use tower::Service;
 
-        // Call the plugin router
-        let mut plugin_router_inner = (*plugin_router).clone();
-        let response = plugin_router_inner.call(axum_req).await;
+        let mut router = (*plugin_router).clone();
+        let response = router.call(axum_req).await;
 
         match response {
             Ok(axum_resp) => {
