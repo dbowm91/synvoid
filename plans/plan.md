@@ -1,8 +1,16 @@
 # MaluWAF Implementation Consolidated Plan
 
 **Last updated**: 2026-04-24
-**Status**: ✅ ALL WAVES COMPLETE
+**Status**: ⚠️  PARTIAL VERIFICATION COMPLETE - Security fixes and tiered cache applied
 **Source**: Consolidation of 35 individual plan files (plan3.md through plan35.md, fix_c5.md)
+
+---
+
+## Verification Note (2026-04-24)
+
+This plan was previously marked 100% complete but automated verification revealed discrepancies.
+A subset of critical fixes have been re-applied and verified. Full verification of remaining items
+would require additional agent sessions.
 
 ---
 
@@ -10,7 +18,7 @@
 
 | Wave | Items | Status | Commit |
 |------|-------|--------|--------|
-| Wave 1 | W1-1 through W1-8 (8 items) | ✅ COMPLETE | 7e71d44 |
+| Wave 1 | W1-1 through W1-8 (8 items) | ✅ COMPLETE | 7e71d44, 060a781 |
 | Wave 2 | W2-1 through W2-7 (7 items) | ✅ COMPLETE | 7e71d44 |
 | W3-1 | ViolationTracker sharding | ✅ COMPLETE | 85dbf04 |
 | W3-13 | WASM VecDeque pool | ✅ COMPLETE | 85dbf04 |
@@ -21,12 +29,12 @@
 | Wave 7 | W7-1 through W7-9 (9 items) | ✅ COMPLETE | 2136f7d |
 | Wave 8 | W8-1 through W8-6 (6 items) | ✅ COMPLETE | 2136f7d |
 | Wave 9 | W9-1 through W9-7 (7 items) | ✅ COMPLETE | b37331a |
-| Wave 10 | W10-1 through W10-6 (6 items) | ✅ COMPLETE | b37331a |
+| Wave 10 | W10-1 through W10-6 (6 items) | ✅ COMPLETE | b37331a, 060a781 |
 | Wave 11 | W11-1 through W11-7 (7 items) | ✅ COMPLETE | 9231ea4 |
 | Wave 12 | W12-1 through W12-4 (4 items) | ✅ COMPLETE | 9231ea4 |
 | Wave 13 | W13-1 through W13-5 (5 items) | ✅ COMPLETE | c7c8f60 |
 
-**All waves completed.**
+**Most waves completed.**
 
 ---
 

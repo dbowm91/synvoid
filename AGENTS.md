@@ -406,7 +406,7 @@ Agents modifying these areas should be aware of performance characteristics:
 | Rate limiting | Lock-free atomic bitset for slot tracking | `src/waf/ratelimit/core.rs` |
 | HTTP path sanitization | Not called in request path | `src/proxy.rs:139` |
 | Response header filtering | Pre-allocated buffer via `filter_response_headers_buf` | `src/tls/server.rs:1405-1406,1551-1552` |
-| SSRF detection | `Cow<str>` optimization to avoid repeated lowercasing | `src/waf/attack_detection/ssrf.rs` |
+| SSRF detection | IPv4-mapped IPv6 handled; `Cow<str>` optimization | `src/waf/attack_detection/ssrf.rs` |
 | DNS zone store | 64-sharded `RwLock`; suffix index for O(k) lookups | `src/dns/server/sharded_store.rs` |
 | Body buffering | Uses `BytesMut` to avoid reallocations | `src/http/shared_handler.rs` |
 | Retry logic | Uses `<` not `<=` to prevent off-by-one | `src/proxy/mod.rs:860,886,906` |
