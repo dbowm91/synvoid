@@ -2577,26 +2577,26 @@ mod proxy_pipeline_tests {
     }
 
     #[test]
-    fn test_filter_response_headers_buf_clears_on_reuse() {
-        let mut buf = Vec::new();
+    fn test_filter_response_headers_buf_returns_map() {
+        use ahash::AHashSet;
 
         let mut headers1 = http::HeaderMap::new();
         headers1.insert("content-type", "text/html".parse().unwrap());
         headers1.insert("x-secret", "hidden".parse().unwrap());
 
         let mut filter_set = AHashSet::new();
-        filter_set.insert("x-secret".to_string());
+        filter_set.insert("x-secret".parse::<http::header::HeaderName>().unwrap());
 
-        filter_response_headers_buf(&headers1, &filter_set, &mut buf);
-        assert_eq!(buf.len(), 1);
-        assert_eq!(buf[0].0, "content-type");
+        let result = filter_response_headers_buf(&headers1, &filter_set);
+        assert_eq!(result.len(), 1);
+        assert!(result.get("content-type").is_some());
 
         let mut headers2 = http::HeaderMap::new();
         headers2.insert("x-another", "value".parse().unwrap());
 
-        filter_response_headers_buf(&headers2, &AHashSet::new(), &mut buf);
-        assert_eq!(buf.len(), 1);
-        assert_eq!(buf[0].0, "x-another");
+        let result2 = filter_response_headers_buf(&headers2, &AHashSet::new());
+        assert_eq!(result2.len(), 1);
+        assert!(result2.get("x-another").is_some());
     }
 
     #[tokio::test]

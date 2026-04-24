@@ -1447,16 +1447,16 @@ impl HttpsServer {
                                             .cloned()
                                             .collect::<Vec<_>>(),
                                     );
-                                    let mut filtered_headers_buf = Vec::new();
-                                    filter_response_headers_buf(
+                                    let filtered_headers = filter_response_headers_buf(
                                         &parts.headers,
                                         &headers_to_filter,
-                                        &mut filtered_headers_buf,
                                     );
 
                                     let mut builder = Response::builder().status(status);
-                                    for (key, value) in filtered_headers_buf {
-                                        builder = builder.header(&key, &value);
+                                    for (key, value) in filtered_headers.iter() {
+                                        if let Ok(v) = value.to_str() {
+                                            builder = builder.header(key.as_str(), v);
+                                        }
                                     }
 
                                     if target.site_config.security_headers.enabled.unwrap_or(false)
@@ -1554,22 +1554,12 @@ impl HttpsServer {
                     true,
                 );
 
-                let mut forward_header_map = http::HeaderMap::new();
-                for (key, value) in &forward_headers {
-                    if let (Ok(name), Ok(val)) = (
-                        key.parse::<http::HeaderName>(),
-                        value.parse::<http::HeaderValue>(),
-                    ) {
-                        forward_header_map.insert(name, val);
-                    }
-                }
-
                 let resp = send_request_streaming(
                     &client,
                     method.clone(),
                     &target_url,
                     Some(body_bytes.clone()),
-                    forward_header_map,
+                    forward_headers,
                     Some(std::time::Duration::from_secs(30)),
                 )
                 .await;
@@ -1597,16 +1587,14 @@ impl HttpsServer {
                             bw.record_site_egress(&site_id, body_len);
                         }
 
-                        let mut filtered_headers_buf = Vec::new();
-                        filter_response_headers_buf(
-                            &resp_parts.headers,
-                            &headers_to_filter,
-                            &mut filtered_headers_buf,
-                        );
+                        let filtered_headers =
+                            filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
 
                         let mut builder = Response::builder().status(status);
-                        for (key, value) in filtered_headers_buf {
-                            builder = builder.header(&key, &value);
+                        for (key, value) in filtered_headers.iter() {
+                            if let Ok(v) = value.to_str() {
+                                builder = builder.header(key.as_str(), v);
+                            }
                         }
 
                         if target.site_config.security_headers.enabled.unwrap_or(false)

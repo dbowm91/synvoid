@@ -126,7 +126,7 @@ pub struct AtomicSlidingWindow {
     bucket_count: u64,
     bucket_duration_ms: u64,
     last_rotate_ms: AtomicU64,
-    total_count: AtomicU64,
+    running_sum: AtomicU64,
 }
 
 impl AtomicSlidingWindow {
@@ -139,7 +139,7 @@ impl AtomicSlidingWindow {
             bucket_count,
             bucket_duration_ms,
             last_rotate_ms: AtomicU64::new(0),
-            total_count: AtomicU64::new(0),
+            running_sum: AtomicU64::new(0),
         }
     }
 
@@ -148,12 +148,12 @@ impl AtomicSlidingWindow {
 
         let bucket_idx = ((now_ms / self.bucket_duration_ms) % self.bucket_count) as usize;
         let _count = self.buckets[bucket_idx].fetch_add(1, Ordering::AcqRel) + 1;
-        self.total_count.fetch_add(1, Ordering::AcqRel) + 1
+        self.running_sum.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     pub fn get_count(&self, now_ms: u64) -> u64 {
         self.rotate_buckets(now_ms);
-        self.total_count.load(Ordering::Acquire)
+        self.running_sum.load(Ordering::Acquire)
     }
 
     fn rotate_buckets(&self, now_ms: u64) {
@@ -173,30 +173,30 @@ impl AtomicSlidingWindow {
         {
             let buckets_to_clear = std::cmp::min(current_bucket - last_rotate, self.bucket_count);
 
-            let mut total = 0u64;
-            for i in 0..self.bucket_count {
-                let idx = (current_bucket.wrapping_sub(i) % self.bucket_count) as usize;
-                total += self.buckets[idx].load(Ordering::Acquire);
-            }
-
             for i in 0..buckets_to_clear {
                 let idx = (current_bucket
                     .wrapping_sub(self.bucket_count)
                     .wrapping_add(i)
                     % self.bucket_count) as usize;
                 let cleared = self.buckets[idx].swap(0, Ordering::AcqRel);
-                total = total.saturating_sub(cleared);
+                let _ = self
+                    .running_sum
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                        v.saturating_sub(cleared).into()
+                    });
             }
-
-            self.total_count.store(total, Ordering::Release);
         }
+    }
+
+    fn get_count_unrotated(&self) -> u64 {
+        self.running_sum.load(Ordering::Relaxed)
     }
 
     pub fn reset(&self) {
         for bucket in self.buckets.iter() {
             bucket.store(0, Ordering::Relaxed);
         }
-        self.total_count.store(0, Ordering::Relaxed);
+        self.running_sum.store(0, Ordering::Relaxed);
     }
 }
 
@@ -281,7 +281,7 @@ impl GlobalRateLimiter {
 
     fn handle_blackhole_mode(&self, current_rate: u64) -> RateLimitDecision {
         let sample_rate = self.sample_rate.load(Ordering::Relaxed);
-        let sample_counter = self.second_window.total_count.load(Ordering::Relaxed);
+        let sample_counter = self.second_window.get_count_unrotated();
 
         if sample_counter.is_multiple_of(sample_rate as u64) {
             let exit_threshold =

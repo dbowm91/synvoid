@@ -30,15 +30,24 @@ impl RecordStoreManager {
                 if let Ok(pk_bytes) =
                     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_pk)
                 {
-                    let value_json = serde_json::to_string(&record.value).unwrap_or_default();
-                    let signable = serde_json::to_string(&serde_json::json!({
-                        "key": record.key,
-                        "source_node_id": record.source_node_id,
-                        "timestamp": record.timestamp,
-                        "value": record.value,
-                    }))
+                    #[derive(serde::Serialize)]
+                    struct Signable<'a> {
+                        key: &'a str,
+                        source_node_id: &'a str,
+                        timestamp: u64,
+                    }
+                    let signable = crate::serialization::serialize(&Signable {
+                        key: &record.key,
+                        source_node_id: &record.source_node_id,
+                        timestamp: record.timestamp,
+                    })
                     .unwrap_or_default();
-                    if !crate::mesh::cert::verify_ed25519(&signable, &record.signature, &pk_bytes) {
+                    let signable_str = std::str::from_utf8(&signable).unwrap_or_default();
+                    if !crate::mesh::cert::verify_ed25519(
+                        signable_str,
+                        &record.signature,
+                        &pk_bytes,
+                    ) {
                         tracing::warn!(
                             "Record store: invalid signature for key {} from node {}",
                             record.key,

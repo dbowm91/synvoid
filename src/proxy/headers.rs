@@ -120,26 +120,22 @@ pub fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
 pub fn build_headers_to_filter(
     global_headers: &[String],
     site_headers: &[String],
-) -> AHashSet<String> {
-    let static_headers: AHashSet<String> = STATIC_HEADERS_TO_FILTER
+) -> AHashSet<http::header::HeaderName> {
+    let mut to_filter: AHashSet<http::header::HeaderName> = STATIC_HEADERS_TO_FILTER
         .iter()
-        .map(|s| s.to_string())
+        .filter_map(|s| s.parse().ok())
         .collect();
 
-    if global_headers.is_empty() && site_headers.is_empty() {
-        return static_headers;
-    }
-
-    let mut to_filter = static_headers;
-
     for header in global_headers {
-        let lower = header.to_lowercase();
-        to_filter.insert(lower);
+        if let Ok(name) = header.parse() {
+            to_filter.insert(name);
+        }
     }
 
     for header in site_headers {
-        let lower = header.to_lowercase();
-        to_filter.insert(lower);
+        if let Ok(name) = header.parse() {
+            to_filter.insert(name);
+        }
     }
 
     to_filter
@@ -267,19 +263,16 @@ pub fn filter_response_headers(
 #[inline]
 pub fn filter_response_headers_buf(
     headers: &http::HeaderMap,
-    headers_to_filter: &AHashSet<String>,
-    buf: &mut Vec<(String, String)>,
-) {
-    buf.clear();
+    headers_to_filter: &AHashSet<http::header::HeaderName>,
+) -> http::HeaderMap {
+    let mut result = http::HeaderMap::new();
     for (k, v) in headers.iter() {
-        let name_str = k.as_str();
-        if HOP_BY_HOP_HEADERS_SET.contains(name_str) || headers_to_filter.contains(name_str) {
+        if HOP_BY_HOP_HEADER_NAMES.contains(k) || headers_to_filter.contains(k) {
             continue;
         }
-        if let Ok(vv) = v.to_str() {
-            buf.push((k.to_string(), vv.to_string()));
-        }
+        result.insert(k, v.clone());
     }
+    result
 }
 
 pub fn apply_response_header_transforms(
@@ -345,8 +338,8 @@ pub fn build_forward_headers(
     original_headers: &http::HeaderMap,
     config: &ProxyHeadersConfig,
     is_tls: bool,
-) -> Vec<(String, String)> {
-    let mut forward_headers = Vec::with_capacity(8);
+) -> http::HeaderMap {
+    let mut forward_headers = http::HeaderMap::new();
 
     let headers_to_forward: Vec<&str> = if config.forward.is_empty() {
         vec!["X-Real-IP", "X-Forwarded-For", "X-Forwarded-Proto", "Host"]
@@ -357,7 +350,10 @@ pub fn build_forward_headers(
     for header_name in headers_to_forward {
         match header_name {
             "X-Real-IP" => {
-                forward_headers.push(("X-Real-IP".to_string(), client_ip.to_string()));
+                if let Ok(value) = client_ip.to_string().parse::<http::HeaderValue>() {
+                    let name = http::header::HeaderName::from_static("x-real-ip");
+                    forward_headers.insert(name, value);
+                }
             }
             "X-Forwarded-For" => {
                 let existing = original_headers
@@ -365,31 +361,42 @@ pub fn build_forward_headers(
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
                 let new_value = validate_and_truncate_xff(existing, &client_ip.to_string());
-                forward_headers.push(("X-Forwarded-For".to_string(), new_value));
+                if let Ok(value) = new_value.parse::<http::HeaderValue>() {
+                    let name = http::header::HeaderName::from_static("x-forwarded-for");
+                    forward_headers.insert(name, value);
+                }
             }
             "X-Forwarded-Proto" => {
                 let proto = if is_tls { "https" } else { "http" };
-                forward_headers.push(("X-Forwarded-Proto".to_string(), proto.to_string()));
+                if let Ok(value) = proto.parse::<http::HeaderValue>() {
+                    let name = http::header::HeaderName::from_static("x-forwarded-proto");
+                    forward_headers.insert(name, value);
+                }
             }
             "X-Forwarded-Host" => {
                 if let Some(host) = original_headers.get("host") {
                     if let Ok(host_str) = host.to_str() {
-                        forward_headers
-                            .push(("X-Forwarded-Host".to_string(), host_str.to_string()));
+                        if let Ok(value) = host_str.parse::<http::HeaderValue>() {
+                            let name = http::header::HeaderName::from_static("x-forwarded-host");
+                            forward_headers.insert(name, value);
+                        }
                     }
                 }
             }
             "Host" | "host" => {
                 if let Some(host) = original_headers.get("host") {
                     if let Ok(host_str) = host.to_str() {
-                        forward_headers.push(("Host".to_string(), host_str.to_string()));
+                        if let Ok(value) = host_str.parse::<http::HeaderValue>() {
+                            let name = http::header::HeaderName::from_static("host");
+                            forward_headers.insert(name, value);
+                        }
                     }
                 }
             }
             _ => {
                 if let Some(value) = original_headers.get(header_name) {
-                    if let Ok(value_str) = value.to_str() {
-                        forward_headers.push((header_name.to_string(), value_str.to_string()));
+                    if let Ok(name) = header_name.parse::<http::header::HeaderName>() {
+                        forward_headers.insert(name, value.clone());
                     }
                 }
             }
@@ -536,57 +543,54 @@ mod tests {
     #[test]
     fn build_filter_global_headers_lowercase() {
         let filter = build_headers_to_filter(&["X-Custom-Header".to_string()], &[]);
-        assert!(filter.contains("x-custom-header"));
+        assert!(filter.get("x-custom-header").is_some());
     }
 
     #[test]
     fn build_filter_site_headers_lowercase() {
         let filter = build_headers_to_filter(&[], &["X-Site-Secret".to_string()]);
-        assert!(filter.contains("x-site-secret"));
+        assert!(filter.get("x-site-secret").is_some());
     }
 
     #[test]
     fn build_filter_combines_global_and_site() {
         let filter = build_headers_to_filter(&["X-Global".to_string()], &["X-Site".to_string()]);
-        assert!(filter.contains("x-global"));
-        assert!(filter.contains("x-site"));
+        assert!(filter.get("x-global").is_some());
+        assert!(filter.get("x-site").is_some());
     }
 
     #[test]
     fn build_filter_deduplicates() {
         let filter = build_headers_to_filter(&["x-dup".to_string()], &["x-dup".to_string()]);
-        assert!(filter.contains("x-dup"));
-        let count = filter.iter().filter(|h| *h == "x-dup").count();
+        assert!(filter.get("x-dup").is_some());
+        let count = filter.iter().count();
         assert_eq!(count, 1);
     }
 
     #[test]
-    fn filter_headers_buf_reuses_buffer() {
-        let mut buf = Vec::new();
-
+    fn filter_headers_buf_returns_headers() {
         let mut headers1 = http::HeaderMap::new();
         headers1.insert("content-type", "text/html".parse().unwrap());
         headers1.insert("x-secret", "hidden".parse().unwrap());
 
         let mut filter_set = AHashSet::new();
-        filter_set.insert("x-secret".to_string());
+        filter_set.insert("x-secret".parse().unwrap());
 
-        filter_response_headers_buf(&headers1, &filter_set, &mut buf);
-        assert_eq!(buf.len(), 1);
-        assert_eq!(buf[0].0, "content-type");
+        let result = filter_response_headers_buf(&headers1, &filter_set);
+        assert_eq!(result.len(), 1);
+        assert!(result.get("content-type").is_some());
 
         let mut headers2 = http::HeaderMap::new();
         headers2.insert("x-custom", "value".parse().unwrap());
 
-        filter_response_headers_buf(&headers2, &AHashSet::new(), &mut buf);
-        assert_eq!(buf.len(), 1);
-        assert_eq!(buf[0].0, "x-custom");
+        let result2 = filter_response_headers_buf(&headers2, &AHashSet::new());
+        assert_eq!(result2.len(), 1);
+        assert!(result2.get("x-custom").is_some());
     }
 
     #[test]
     fn filter_headers_buf_empty_headers() {
-        let mut buf = Vec::new();
-        filter_response_headers_buf(&http::HeaderMap::new(), &AHashSet::new(), &mut buf);
-        assert!(buf.is_empty());
+        let result = filter_response_headers_buf(&http::HeaderMap::new(), &AHashSet::new());
+        assert!(result.is_empty());
     }
 }

@@ -299,7 +299,7 @@ impl AttackDetector {
 
         for (name, value) in &inputs.headers {
             if let Some(result) =
-                SqliDetector::detect(value.as_bytes(), InputLocation::Header(name.clone()), None)
+                SqliDetector::detect(value.as_bytes(), InputLocation::header(name), None)
             {
                 return Some(result);
             }
@@ -333,7 +333,7 @@ impl AttackDetector {
 
         for (name, value) in &inputs.headers {
             if let Some(result) =
-                XssDetector::detect(value.as_bytes(), InputLocation::Header(name.clone()), None)
+                XssDetector::detect(value.as_bytes(), InputLocation::header(name), None)
             {
                 return Some(result);
             }
@@ -372,7 +372,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .ssti_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -412,7 +412,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .cmd_injection_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -452,7 +452,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .path_traversal_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -483,7 +483,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .rfi_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -514,7 +514,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .ssrf_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -545,7 +545,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .xxe_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -809,7 +809,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .ldap_injection_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -849,7 +849,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .xpath_injection_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -889,7 +889,7 @@ impl AttackDetector {
         for (name, value) in &inputs.headers {
             if let Some(result) = self
                 .open_redirect_detector
-                .detect(value.as_str(), InputLocation::Header(name.clone()))
+                .detect(value.as_str(), InputLocation::header(name))
             {
                 return Some(result);
             }

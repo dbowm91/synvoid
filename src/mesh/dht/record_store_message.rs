@@ -554,14 +554,20 @@ impl RecordStoreManager {
         let (origin_signature, signer_public_key) = {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.mesh_signer {
-                let signed_content = serde_json::to_string(&serde_json::json!({
-                    "key": key,
-                    "value": value,
-                    "timestamp": crate::mesh::safe_unix_timestamp(),
-                }))
+                #[derive(serde::Serialize)]
+                struct Signable<'a> {
+                    key: &'a str,
+                    value: &'a [u8],
+                    timestamp: u64,
+                }
+                let signed_content = crate::serialization::serialize(&Signable {
+                    key: &key,
+                    value: &value,
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                })
                 .unwrap_or_default();
 
-                let signature = signer.sign(signed_content.as_bytes());
+                let signature = signer.sign(&signed_content);
                 let pk = signer.get_public_key();
                 (signature, pk)
             } else {
@@ -697,14 +703,20 @@ impl RecordStoreManager {
         let (signature, signer_public_key) = {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.mesh_signer {
-                let signed_content = serde_json::to_string(&serde_json::json!({
-                    "key": record.key,
-                    "value": record.value,
-                    "timestamp": crate::mesh::safe_unix_timestamp(),
-                }))
+                #[derive(serde::Serialize)]
+                struct Signable<'a> {
+                    key: &'a str,
+                    value: &'a [u8],
+                    timestamp: u64,
+                }
+                let signed_content = crate::serialization::serialize(&Signable {
+                    key: &record.key,
+                    value: record.value.as_slice(),
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                })
                 .unwrap_or_default();
 
-                let sig = signer.sign(signed_content.as_bytes());
+                let sig = signer.sign(&signed_content);
                 let pk = signer.get_public_key();
                 (sig, pk)
             } else {

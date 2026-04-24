@@ -2579,8 +2579,7 @@ impl HttpServer {
 
                 if !needs_body_transform && !crate::http_client::is_quictunnel_url(&target.upstream)
                 {
-                    let mut forward_header_map = http::HeaderMap::new();
-                    for (key, value) in &build_forward_headers(
+                    let forward_header_map = build_forward_headers(
                         client_ip,
                         &parts.headers,
                         target
@@ -2590,14 +2589,7 @@ impl HttpServer {
                             .as_ref()
                             .unwrap_or(&ProxyHeadersConfig::default()),
                         true,
-                    ) {
-                        if let (Ok(name), Ok(val)) = (
-                            key.parse::<http::HeaderName>(),
-                            value.parse::<http::HeaderValue>(),
-                        ) {
-                            forward_header_map.insert(name, val);
-                        }
-                    }
+                    );
 
                     match send_request_streaming(
                         forwarding_client,
@@ -2642,16 +2634,16 @@ impl HttpServer {
                                 m.bandwidth.record_site_egress(&site_id, body_len);
                             }
 
-                            let mut filtered_headers_buf = Vec::new();
-                            filter_response_headers_buf(
+                            let filtered_headers = filter_response_headers_buf(
                                 &resp_parts.headers,
                                 &headers_to_filter,
-                                &mut filtered_headers_buf,
                             );
 
                             let mut builder = Response::builder().status(status);
-                            for (key, value) in filtered_headers_buf {
-                                builder = builder.header(&key, &value);
+                            for (key, value) in filtered_headers.iter() {
+                                if let Ok(v) = value.to_str() {
+                                    builder = builder.header(key.as_str(), v);
+                                }
                             }
 
                             if let Some(ref alt_svc) = alt_svc {
@@ -2739,12 +2731,10 @@ impl HttpServer {
                             .and_then(|v| v.to_str().ok())
                             .map(|s| s.to_string());
 
-                        let mut headers = Vec::new();
-                        filter_response_headers_buf(
-                            &resp.headers,
-                            &headers_to_filter,
-                            &mut headers,
-                        );
+                        let filtered_headers =
+                            filter_response_headers_buf(&resp.headers, &headers_to_filter);
+
+                        let mut headers: http::HeaderMap = filtered_headers;
 
                         let mut body = resp.body;
                         let mut body_len = body.len() as u64;
@@ -2869,10 +2859,14 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| {
-                                        !k.eq_ignore_ascii_case("content-encoding")
-                                    });
-                                    headers.push(("Content-Encoding".to_string(), enc));
+                                    headers.remove("content-encoding");
+                                    if let Ok(name) =
+                                        "content-encoding".parse::<http::header::HeaderName>()
+                                    {
+                                        if let Ok(val) = enc.parse::<http::HeaderValue>() {
+                                            headers.insert(name, val);
+                                        }
+                                    }
                                 }
                             }
                         } else {
@@ -2944,10 +2938,14 @@ impl HttpServer {
                                 if let Some(enc) = encoding {
                                     body = compressed_body;
                                     body_len = body.len() as u64;
-                                    headers.retain(|(k, _)| {
-                                        !k.eq_ignore_ascii_case("content-encoding")
-                                    });
-                                    headers.push(("Content-Encoding".to_string(), enc));
+                                    headers.remove("content-encoding");
+                                    if let Ok(name) =
+                                        "content-encoding".parse::<http::header::HeaderName>()
+                                    {
+                                        if let Ok(val) = enc.parse::<http::HeaderValue>() {
+                                            headers.insert(name, val);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2969,8 +2967,13 @@ impl HttpServer {
                         }
 
                         let mut builder = Response::builder().status(status);
-                        for (key, value) in headers {
-                            builder = builder.header(&key, &value);
+                        for (key, value) in headers.iter() {
+                            if let (Ok(k), Ok(v)) = (
+                                http::header::HeaderName::from_bytes(key.as_str().as_bytes()),
+                                http::HeaderValue::from_bytes(value.as_bytes()),
+                            ) {
+                                builder = builder.header(k, v);
+                            }
                         }
 
                         if let Some(ref alt_svc) = alt_svc {

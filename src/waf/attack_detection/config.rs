@@ -221,6 +221,7 @@ impl std::fmt::Display for AttackType {
     }
 }
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -230,6 +231,33 @@ pub enum InputLocation {
     Header(Arc<str>),
     Path,
     Cookie(Arc<str>),
+}
+
+impl InputLocation {
+    pub fn as_str(&self) -> Cow<str> {
+        match self {
+            InputLocation::QueryString => Cow::Borrowed("query_string"),
+            InputLocation::PostBody => Cow::Borrowed("post_body"),
+            InputLocation::Header(name) => Cow::Borrowed(name.as_ref()),
+            InputLocation::Path => Cow::Borrowed("path"),
+            InputLocation::Cookie(name) => Cow::Borrowed(name.as_ref()),
+        }
+    }
+
+    pub fn header(name: &Arc<str>) -> Self {
+        InputLocation::Header(name.clone())
+    }
+
+    pub fn cookie(name: &Arc<str>) -> Self {
+        InputLocation::Cookie(name.clone())
+    }
+
+    pub fn header_name(&self) -> Option<&Arc<str>> {
+        match self {
+            InputLocation::Header(name) => Some(name),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for InputLocation {
