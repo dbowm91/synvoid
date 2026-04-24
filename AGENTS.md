@@ -202,6 +202,29 @@ let json = serde_json::to_string(&msg).unwrap();
 let decoded: Message = serde_json::from_str(&json).unwrap();
 ```
 
+### Socket Handoff Message API
+
+The socket handoff feature uses specific Message variants with these fields:
+
+| Message Variant | Fields |
+|----------------|--------|
+| `SocketHandoffRequest` | `socket_path: String` |
+| `SocketHandoffReady` | `ports: Vec<u16>` |
+| `SocketHandoffComplete` | `success: bool`, `fd_count: usize` |
+| `SocketHandoffFailed` | `error: String` |
+
+```rust
+// Example socket handoff messages
+let request = Message::SocketHandoffRequest {
+    socket_path: "/tmp/handoff.sock".to_string(),
+};
+let ready = Message::SocketHandoffReady { ports: vec![8080, 8443] };
+let complete = Message::SocketHandoffComplete { success: true, fd_count: 2 };
+let failed = Message::SocketHandoffFailed { error: "Connection failed".to_string() };
+```
+
+Socket handoff tests require the `socket-handoff` feature:
+
 ### Testing Worker Lifecycle
 
 ```rust
