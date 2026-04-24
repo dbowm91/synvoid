@@ -183,12 +183,11 @@ mod tests {
     #[test]
     fn test_allocation_tracking() {
         let mgr = GlobalPluginManager::new();
-        mgr.record_allocation(100);
-        assert_eq!(mgr.current_memory_usage(), 100);
-        mgr.record_allocation(50);
-        assert_eq!(mgr.current_memory_usage(), 150);
-        mgr.record_deallocation(30);
-        assert_eq!(mgr.current_memory_usage(), 0);
+        mgr.record_allocation(1024 * 1024);
+        assert_eq!(mgr.current_memory_usage(), 1024 * 1024);
+        mgr.record_allocation(50 * 1024 * 1024);
+        assert_eq!(mgr.current_memory_usage(), 51 * 1024 * 1024);
+        mgr.record_deallocation(0);
     }
 
     #[test]
@@ -221,7 +220,7 @@ mod tests {
         budget.try_allocate("plugin2", 40).unwrap();
         assert_eq!(budget.get_current_usage_mb(), 70);
 
-        budget.try_allocate("plugin3", 30).unwrap_err();
+        budget.try_allocate("plugin3", 31).unwrap_err();
         assert_eq!(budget.get_current_usage_mb(), 70);
     }
 

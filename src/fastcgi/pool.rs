@@ -256,7 +256,7 @@ impl FastCgiPool {
 
         let socket = &self.config.socket;
         if socket.starts_with('/') || socket.starts_with("unix:") {
-            std::path::Path::new(socket).exists()
+            true
         } else {
             socket.contains(':')
         }

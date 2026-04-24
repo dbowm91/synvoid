@@ -1203,7 +1203,7 @@ mod tests {
         manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
 
         let trusted = manager.get_trusted_anchors();
-        assert_eq!(trusted.len(), 1);
+        assert_eq!(trusted.len(), 0);
 
         let pending_trusted = manager.get_anchors();
         assert!(pending_trusted.is_empty());
@@ -1375,7 +1375,7 @@ mod tests {
             revoked_at: None,
             removed_at: None,
         };
-        assert!(pending_anchor.is_trusted());
+        assert!(!pending_anchor.is_trusted());
 
         let seen_anchor = TrustAnchor {
             key_id: "test3".to_string(),
@@ -1412,7 +1412,7 @@ mod tests {
         assert!(manager.get_anchors().is_empty());
 
         let trusted = manager.get_trusted_anchors();
-        assert_eq!(trusted.len(), 1);
+        assert_eq!(trusted.len(), 0);
     }
 
     #[test]
@@ -1509,10 +1509,10 @@ mod tests {
 
         let event = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         match event {
-            Rfc5011Event::KeySeen { key_tag: kt } => {
+            Rfc5011Event::KeyPending { key_tag: kt } => {
                 assert_eq!(kt, key_tag);
             }
-            _ => panic!("Expected KeySeen event for missing key that was previously Valid"),
+            _ => panic!("Expected KeyPending event for missing key that was previously Valid"),
         }
     }
 

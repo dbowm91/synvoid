@@ -2426,8 +2426,8 @@ mod proxy_pipeline_tests {
 
     #[test]
     fn test_sanitize_request_path_directory_traversal() {
-        assert_eq!(sanitize_request_path("/a/b/../c"), "/c");
-        assert_eq!(sanitize_request_path("/../a"), "a");
+        assert_eq!(sanitize_request_path("/a/b/../c"), "/a/c");
+        assert_eq!(sanitize_request_path("/../a"), "/a");
     }
 
     #[test]
@@ -2448,7 +2448,7 @@ mod proxy_pipeline_tests {
 
     #[test]
     fn test_sanitize_request_path_dot_segments_preserved() {
-        assert_eq!(sanitize_request_path("/a/./b"), "/a/./b");
+        assert_eq!(sanitize_request_path("/a/./b"), "/a/b");
     }
 
     #[test]

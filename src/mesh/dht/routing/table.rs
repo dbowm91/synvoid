@@ -614,6 +614,7 @@ mod tests {
             "127.0.0.1".to_string(),
             443,
         )
+        .with_global(true)
     }
 
     #[test]

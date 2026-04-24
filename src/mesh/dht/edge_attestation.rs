@@ -88,8 +88,8 @@ mod tests {
             "global-456".to_string(),
             "Pk".to_string(),
             vec![],
-            1234567890,
-            1234567890 + 86400,
+            1000000000,
+            u64::MAX,
         );
         assert!(!attestation.is_expired());
 

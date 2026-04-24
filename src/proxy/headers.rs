@@ -127,13 +127,13 @@ pub fn build_headers_to_filter(
         .collect();
 
     for header in global_headers {
-        if let Ok(name) = header.parse() {
+        if let Ok(name) = header.to_lowercase().parse() {
             to_filter.insert(name);
         }
     }
 
     for header in site_headers {
-        if let Ok(name) = header.parse() {
+        if let Ok(name) = header.to_lowercase().parse() {
             to_filter.insert(name);
         }
     }
@@ -211,17 +211,14 @@ pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
     }
 
     for segment in segments.iter() {
-        if segment.len() == 2 && segment.iter().all(|&b| b == b'.') {
+        if segment.len() == 2 && segment[0] == b'.' && segment[1] == b'.' {
             if let Some(pos) = result.iter().rposition(|&b| b == b'/') {
-                let before_slash = result[..pos]
-                    .iter()
-                    .rposition(|&b| b == b'/')
-                    .map(|p| p + 1)
-                    .unwrap_or(0);
-                result.drain(before_slash..);
+                result.drain(pos..);
             }
+        } else if segment.len() == 1 && segment[0] == b'.' {
+            continue;
         } else if !segment.is_empty() {
-            if !result.is_empty() && result.last() != Some(&b'/') {
+            if result.is_empty() || result.last() != Some(&b'/') {
                 result.push(b'/');
             }
             result.extend_from_slice(segment);
@@ -536,34 +533,34 @@ mod tests {
     fn build_filter_empty_lists() {
         let filter = build_headers_to_filter(&[], &[]);
         assert!(!filter.is_empty());
-        assert!(filter.contains("server"));
-        assert!(filter.contains("x-powered-by"));
+        assert!(filter.contains(&http::header::HeaderName::from_static("server")));
+        assert!(filter.contains(&http::header::HeaderName::from_static("x-powered-by")));
     }
 
     #[test]
     fn build_filter_global_headers_lowercase() {
         let filter = build_headers_to_filter(&["X-Custom-Header".to_string()], &[]);
-        assert!(filter.get("x-custom-header").is_some());
+        assert!(filter.contains(&http::header::HeaderName::from_static("x-custom-header")));
     }
 
     #[test]
     fn build_filter_site_headers_lowercase() {
         let filter = build_headers_to_filter(&[], &["X-Site-Secret".to_string()]);
-        assert!(filter.get("x-site-secret").is_some());
+        assert!(filter.contains(&http::header::HeaderName::from_static("x-site-secret")));
     }
 
     #[test]
     fn build_filter_combines_global_and_site() {
         let filter = build_headers_to_filter(&["X-Global".to_string()], &["X-Site".to_string()]);
-        assert!(filter.get("x-global").is_some());
-        assert!(filter.get("x-site").is_some());
+        assert!(filter.contains(&http::header::HeaderName::from_static("x-global")));
+        assert!(filter.contains(&http::header::HeaderName::from_static("x-site")));
     }
 
     #[test]
     fn build_filter_deduplicates() {
         let filter = build_headers_to_filter(&["x-dup".to_string()], &["x-dup".to_string()]);
-        assert!(filter.get("x-dup").is_some());
-        let count = filter.iter().count();
+        assert!(filter.contains(&http::header::HeaderName::from_static("x-dup")));
+        let count = filter.iter().filter(|h| h.as_str() == "x-dup").count();
         assert_eq!(count, 1);
     }
 

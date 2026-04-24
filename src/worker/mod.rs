@@ -840,7 +840,7 @@ mod tests {
     #[test]
     fn test_minifier_config_respects_disabled_flags() {
         let site_config = SiteStaticConfig {
-            enabled: Some(false),
+            enable_minification: Some(false),
             enable_html_minification: Some(false),
             enable_css_minification: Some(false),
             enable_js_minification: Some(false),
@@ -1237,7 +1237,7 @@ mod tests {
         assert!(result.is_ok());
 
         let minified = result.unwrap();
-        assert!(minified.contains("function"));
+        assert!(minified.contains("hello"));
         assert!(!minified.contains("\n"));
     }
 

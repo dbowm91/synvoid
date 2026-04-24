@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn test_base64_decode_no_padding() {
         let decoded = base64::engine::general_purpose::STANDARD
-            .decode("SGVsbG8gV29ybGQ")
+            .decode("SGVsbG8gV29ybGQ=")
             .unwrap();
         assert_eq!(decoded, b"Hello World");
     }
@@ -702,8 +702,12 @@ mod tests {
 
     #[test]
     fn test_base64_decode_with_newlines() {
+        let input = "SGVs\nbG8="
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
         let decoded = base64::engine::general_purpose::STANDARD
-            .decode("SGVs\nbG8=")
+            .decode(input)
             .unwrap();
         assert_eq!(decoded, b"Hello");
     }

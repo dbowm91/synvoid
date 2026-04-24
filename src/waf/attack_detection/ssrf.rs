@@ -68,6 +68,8 @@ impl SsrfDetector {
                     return Some(result);
                 }
             }
+        } else if s.chars().all(|c| c.is_ascii_digit()) {
+            return Self::parse_ipv4_decimal(s);
         }
 
         if let Ok(ip) = s.parse::<IpAddr>() {
@@ -263,7 +265,8 @@ impl SsrfDetector {
         };
         let is_ipv4 = s.contains('.') && s.chars().all(|c| c.is_ascii_digit() || c == '.');
         let is_ipv6 = s.contains(':') && s.chars().all(|c| c.is_ascii_hexdigit() || c == ':');
-        is_ipv4 || is_ipv6
+        let is_decimal_ip = s.chars().all(|c| c.is_ascii_digit());
+        is_ipv4 || is_ipv6 || is_decimal_ip
     }
 
     fn has_ipv6_zone_id(input: &str) -> bool {
@@ -285,6 +288,7 @@ impl SsrfDetector {
         if Self::has_word_boundary(&input_lower, ".localhost")
             || Self::has_word_boundary(&input_lower, "localhost.")
             || Self::has_word_boundary(&input_lower, ".local")
+            || Self::has_local_domain_suffix(&input_lower)
         {
             return true;
         }
@@ -352,6 +356,10 @@ impl SsrfDetector {
         } else {
             false
         }
+    }
+
+    fn has_local_domain_suffix(input: &str) -> bool {
+        input.contains(".local")
     }
 
     fn normalize_ip_for_parse(s: &str) -> String {

@@ -771,9 +771,9 @@ impl AttackDetector {
             return Some(result);
         }
 
-        if let Some(result) = self
-            .request_smuggling_detector
-            .check_http2_smuggling(headers, body)
+        if let Some(result) =
+            self.request_smuggling_detector
+                .check_http2_smuggling(headers, &[], body)
         {
             return Some(result);
         }

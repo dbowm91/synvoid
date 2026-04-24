@@ -82,12 +82,18 @@ impl HoneypotTracker {
 
         let paths: Vec<String> = traps.iter().map(|t| t.trap_path.clone()).collect();
 
-        let entry = HoneypotEntry {
-            traps,
-            created_at: now,
-        };
+        let mut entries = self.entries.write();
+        if let Some(existing) = entries.get_mut(ip) {
+            existing.traps.extend(traps);
+        } else {
+            let entry = HoneypotEntry {
+                traps,
+                created_at: now,
+            };
+            entries.insert(*ip, entry);
+        }
+        drop(entries);
 
-        self.entries.write().insert(*ip, entry);
         paths
     }
 

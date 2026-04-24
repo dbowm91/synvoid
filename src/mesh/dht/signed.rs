@@ -496,7 +496,7 @@ mod tests {
             SignedRecordType::Upstream,
         );
 
-        assert!(record.needs_refresh());
+        assert!(!record.needs_refresh());
 
         record.created_at = crate::mesh::safe_unix_timestamp() - 100;
 

@@ -280,7 +280,19 @@ impl<R: Read> SignedReader<R> {
 
     fn read_message(&mut self) -> io::Result<()> {
         let mut len_buf = [0u8; 4];
-        self.inner.read_exact(&mut len_buf)?;
+        let n = self.inner.read(&mut len_buf)?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "EOF reading len",
+            ));
+        }
+        if n < 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "short read for len",
+            ));
+        }
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -292,7 +304,13 @@ impl<R: Read> SignedReader<R> {
         }
 
         let mut raw = vec![0u8; total_len];
-        self.inner.read_exact(&mut raw)?;
+        let n = self.inner.read(&mut raw)?;
+        if n < total_len {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "short read for raw",
+            ));
+        }
 
         let timestamp = u64::from_be_bytes(
             raw[0..TIMESTAMP_SIZE]
@@ -346,7 +364,11 @@ impl<R: Read> SignedReader<R> {
 impl<R: Read> Read for SignedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.payload_pos >= self.payload_buffer.len() {
-            self.read_message()?;
+            match self.read_message() {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(0),
+                Err(e) => return Err(e),
+            }
         }
 
         let available = &self.payload_buffer[self.payload_pos..];
@@ -689,6 +711,7 @@ mod tests {
         writer.flush().unwrap();
 
         let raw = writer.into_inner();
+
         let mut reader = SignedReader::new(raw.as_slice(), signer);
 
         let mut out = Vec::new();

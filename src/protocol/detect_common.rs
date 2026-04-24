@@ -33,6 +33,11 @@ pub fn extract_first_line(data: &[u8]) -> String {
         return String::new();
     }
 
+    let mut end = end;
+    if end > start && data[end - 1] == b'\r' {
+        end -= 1;
+    }
+
     let slice = &data[start..end];
     String::from_utf8_lossy(slice).into_owned()
 }

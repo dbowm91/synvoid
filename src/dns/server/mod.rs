@@ -367,16 +367,17 @@ mod nxdomain_tests {
         assert_eq!(ancount, 0, "ANCOUNT should be 0");
 
         let nscount = u16::from_be_bytes([response[8], response[9]]);
-        assert_eq!(nscount, 0, "NSCOUNT should be 0");
+        assert_eq!(
+            nscount, 1,
+            "NSCOUNT should be 1 (SOA in authority per RFC 2308)"
+        );
 
         let arcount = u16::from_be_bytes([response[10], response[11]]);
         assert_eq!(arcount, 0, "ARCOUNT should be 0");
 
-        let qtype =
-            u16::from_be_bytes([response[response.len() - 4], response[response.len() - 3]]);
+        let qtype = u16::from_be_bytes([response[25], response[26]]);
         assert_eq!(qtype, 1, "QTYPE should be A (1)");
-        let qclass =
-            u16::from_be_bytes([response[response.len() - 2], response[response.len() - 1]]);
+        let qclass = u16::from_be_bytes([response[27], response[28]]);
         assert_eq!(qclass, 1, "QCLASS should be IN (1)");
     }
 

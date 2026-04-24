@@ -23,7 +23,8 @@ impl OrgKey {
         rand::rngs::OsRng
             .try_fill_bytes(&mut private_key)
             .expect("RNG failure");
-        let public_key = derive_org_public_key(&private_key);
+        let public_key = crate::mesh::cert::get_ed25519_public_key(&private_key)
+            .expect("failed to derive Ed25519 public key");
 
         Self {
             key_id: Uuid::new_v4().to_string(),
@@ -45,14 +46,6 @@ impl OrgKey {
     pub fn public_key_hex(&self) -> String {
         hex::encode(&self.public_key)
     }
-}
-
-fn derive_org_public_key(private_key: &[u8]) -> Vec<u8> {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(b"org-key-v1:");
-    hasher.update(private_key);
-    hasher.finalize().to_vec()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1180,7 +1173,7 @@ mod tests {
 
     #[test]
     fn test_tier_claim_signing() {
-        let key = b"secret_signing_key";
+        let key = b"01234567890123456789012345678901"; // exactly 32 bytes for Ed25519
         let mut claim = TierClaim::new(
             1,
             "key_id".to_string(),
@@ -1431,9 +1424,9 @@ mod tests {
         // Issue tier key to org first
         let tier_key = TierKey::new(
             1,
-            b"tier_1_key".to_vec(),
-            now - 100, // valid from: 100 seconds ago
-            future,    // valid until: 1 year from now
+            b"tier_1_key_123456789012345678901".to_vec(), // exactly 32 bytes for Ed25519
+            now - 100,                                    // valid from: 100 seconds ago
+            future,                                       // valid until: 1 year from now
             "global_node".to_string(),
         );
         let tier_key_id = tier_key.key_id.clone();

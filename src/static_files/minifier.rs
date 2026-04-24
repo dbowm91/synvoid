@@ -57,6 +57,8 @@ impl ContentType {
             ContentType::Css
         } else if mime.contains("javascript") || mime.contains("js") {
             ContentType::Js
+        } else if mime.contains("svg") {
+            ContentType::Svg
         } else {
             ContentType::Other
         }

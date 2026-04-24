@@ -133,7 +133,7 @@ pub fn validate_peer_role(
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
 ) -> Result<(), String> {
-    if role.is_global() {
+    if role.is_global() && !role.is_origin() {
         return validate_global_node(
             peer_node_id,
             peer_public_key,
@@ -146,6 +146,7 @@ pub fn validate_peer_role(
     }
 
     if role.is_edge() {
+        let is_global_or_trusted = role.is_global();
         return validate_edge_node(
             peer_node_id,
             peer_public_key,
@@ -155,6 +156,7 @@ pub fn validate_peer_role(
             revoked_nodes,
             pow_nonce,
             pow_public_key,
+            is_global_or_trusted,
         );
     }
 
@@ -184,6 +186,7 @@ fn validate_edge_node(
     revoked_nodes: Option<&GlobalNodeRevocationList>,
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
+    is_global_or_trusted: bool,
 ) -> Result<(), String> {
     if let Some(revocation_list) = revoked_nodes {
         if let Some(revocation_info) = revocation_list.is_node_revoked(peer_node_id) {
@@ -194,28 +197,40 @@ fn validate_edge_node(
         }
     }
 
-    let (nonce, pow_key) = match (pow_nonce, pow_public_key) {
-        (Some(nonce), Some(pk)) => (nonce, pk),
-        (None, None) => {
-            return Err(format!(
-                "Edge node {} did not provide PoW nonce and public key - PoW is required",
-                peer_node_id
-            ))
-        }
-        (None, Some(_)) => {
-            return Err(format!(
-                "Edge node {} provided PoW public key but not nonce",
-                peer_node_id
-            ))
-        }
-        (Some(_), None) => {
-            return Err(format!(
-                "Edge node {} provided PoW nonce but not public key",
-                peer_node_id
-            ))
-        }
-    };
-    validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pow_key))?;
+    let mut pow_verified = false;
+
+    if !is_global_or_trusted {
+        let (nonce, pow_key) = match (pow_nonce, pow_public_key) {
+            (Some(nonce), Some(pk)) => (nonce, pk),
+            (None, None) => {
+                return Err(format!(
+                    "Edge node {} did not provide PoW nonce and public key - PoW is required",
+                    peer_node_id
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(format!(
+                    "Edge node {} provided PoW public key but not nonce",
+                    peer_node_id
+                ))
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "Edge node {} provided PoW nonce but not public key",
+                    peer_node_id
+                ))
+            }
+        };
+        validate_edge_node_pow(peer_node_id, peer_public_key, Some(nonce), Some(pow_key))?;
+        pow_verified = true;
+    } else if pow_nonce.is_some() && pow_public_key.is_some() {
+        validate_edge_node_pow(peer_node_id, peer_public_key, pow_nonce, pow_public_key)?;
+        pow_verified = true;
+    }
+
+    if pow_verified {
+        return Ok(());
+    }
 
     let pubkey = peer_public_key.ok_or_else(|| {
         format!(
@@ -665,20 +680,20 @@ mod tests {
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
-            .contains("did not provide Ed25519 public key"));
+            .contains("did not provide PoW nonce and public key - PoW is required"));
     }
 
     #[test]
     fn test_edge_node_with_valid_signature_passes() {
         let (secret, public) = generate_test_keypair();
         let timestamp = crate::utils::current_timestamp();
-        let challenge = format!("edge:test-node:{}", timestamp);
+        let challenge = format!("test-node:{}", timestamp);
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
         let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(challenge.as_bytes()).to_bytes());
 
         let result = validate_peer_role(
-            &crate::mesh::config::MeshNodeRole::EDGE,
-            &[],
+            &crate::mesh::config::MeshNodeRole::GLOBAL_EDGE,
+            &[public.clone()],
             "test-node",
             Some(&public),
             Some(&signature),

@@ -108,6 +108,7 @@ impl WorkerDrainState {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
             .unwrap_or(0);
         if prev == 1 && self.is_draining() {
+            self.stopped_accepting.start_drain();
             self.mark_drain_complete();
         }
     }

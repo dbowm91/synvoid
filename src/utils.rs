@@ -290,9 +290,13 @@ impl Default for DrainFlag {
 const DURATION_SUFFIXES: &[(&str, &str, u64)] = &[
     ("milliseconds", "ms", 1),
     ("seconds", "s", 1),
+    ("sec", "s", 1),
     ("minutes", "m", 60),
+    ("min", "m", 60),
     ("hours", "h", 3600),
+    ("hr", "h", 3600),
     ("days", "d", 86400),
+    ("day", "d", 86400),
 ];
 
 const DURATION_SUFFIX_SHORT: &[(char, u64)] = &[('s', 1), ('m', 60), ('h', 3600), ('d', 86400)];

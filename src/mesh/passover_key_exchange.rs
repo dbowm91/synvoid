@@ -1371,8 +1371,8 @@ mod tests {
         let message = "GET|/index.html|host:example.com";
         let client_signature = client_signing_key.sign(message.as_bytes());
 
-        // Server verifies client signature
-        assert!(server_verifying_key
+        // Server verifies client signature using client's verifying key
+        assert!(client_verifying_key
             .verify(message.as_bytes(), &client_signature)
             .is_ok());
 
@@ -1380,13 +1380,13 @@ mod tests {
         let response_message = "200|host:example.com|content-length:123";
         let server_signature = server_signing_key.sign(response_message.as_bytes());
 
-        // Client verifies server signature
-        assert!(client_verifying_key
+        // Client verifies server signature using server's verifying key
+        assert!(server_verifying_key
             .verify(response_message.as_bytes(), &server_signature)
             .is_ok());
 
         // Wrong message should fail
-        assert!(!client_verifying_key
+        assert!(!server_verifying_key
             .verify("wrong message".as_bytes(), &server_signature)
             .is_ok());
     }

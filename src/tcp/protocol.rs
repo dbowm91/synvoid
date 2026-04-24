@@ -291,6 +291,19 @@ impl ProtocolDetector {
         let first_line = extract_first_line(data);
         let upper_line = first_line.to_uppercase();
 
+        if first_line.starts_with("OPTIONS ") && upper_line.contains("RTSP/") {
+            return Protocol::Rtsp;
+        }
+        if first_line.starts_with("DESCRIBE ")
+            || first_line.starts_with("SETUP ")
+            || first_line.starts_with("PLAY ")
+            || first_line.starts_with("PAUSE ")
+            || first_line.starts_with("TEARDOWN ")
+            || first_line.starts_with("RTSP/")
+        {
+            return Protocol::Rtsp;
+        }
+
         if first_line.starts_with("GET")
             || first_line.starts_with("POST")
             || first_line.starts_with("HEAD")
@@ -323,19 +336,6 @@ impl ProtocolDetector {
             || first_line.starts_with("NOOP")
         {
             return Protocol::Smtp;
-        }
-
-        if first_line.starts_with("OPTIONS ") && upper_line.contains("RTSP/") {
-            return Protocol::Rtsp;
-        }
-        if first_line.starts_with("DESCRIBE ")
-            || first_line.starts_with("SETUP ")
-            || first_line.starts_with("PLAY ")
-            || first_line.starts_with("PAUSE ")
-            || first_line.starts_with("TEARDOWN ")
-            || first_line.starts_with("RTSP/")
-        {
-            return Protocol::Rtsp;
         }
 
         if first_line.starts_with("A")
@@ -939,7 +939,23 @@ mod tests {
 
     #[test]
     fn test_rtsp_detection() {
+        use crate::protocol::detect_common::extract_first_line;
         let detector = ProtocolDetector::new();
+
+        let data = b"OPTIONS rtsp://example.com RTSP/1.0\r\n";
+        let first_line = extract_first_line(data);
+        let upper_line = first_line.to_uppercase();
+        eprintln!("first_line: {:?}", first_line);
+        eprintln!("upper_line: {:?}", upper_line);
+        eprintln!(
+            "starts_with OPTIONS: {}",
+            first_line.starts_with("OPTIONS ")
+        );
+        eprintln!(
+            "upper_line.contains RTSP/: {}",
+            upper_line.contains("RTSP/")
+        );
+
         assert_eq!(
             detector.detect_from_bytes(b"OPTIONS rtsp://example.com RTSP/1.0\r\n"),
             Protocol::Rtsp

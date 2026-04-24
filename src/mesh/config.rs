@@ -1584,11 +1584,11 @@ mod tests {
 
         let encrypted = config.encrypt_key(plaintext, Some(passphrase)).unwrap();
 
-        // Should be: 12 byte nonce + 32 byte ciphertext + 16 byte tag
+        // Should be: 12 byte nonce + 16 byte salt + 48 byte ciphertext (32 + 16 tag)
         assert_eq!(
             encrypted.len(),
-            12 + 32 + 16,
-            "Encrypted format should be nonce + ciphertext + tag"
+            12 + 16 + 48,
+            "Encrypted format should be nonce + salt + ciphertext + tag"
         );
     }
 

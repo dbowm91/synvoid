@@ -167,9 +167,10 @@ impl RequestSmugglingDetector {
     pub fn check_http2_smuggling(
         &self,
         headers: &http::HeaderMap,
+        pseudo_headers: &[(&str, &str)],
         body: Option<&[u8]>,
     ) -> Option<AttackDetectionResult> {
-        if let Some(result) = self.check_pseudo_header_manipulation(headers) {
+        if let Some(result) = self.check_pseudo_header_manipulation(pseudo_headers) {
             return Some(result);
         }
 
@@ -190,15 +191,14 @@ impl RequestSmugglingDetector {
 
     fn check_pseudo_header_manipulation(
         &self,
-        headers: &http::HeaderMap,
+        pseudo_headers: &[(&str, &str)],
     ) -> Option<AttackDetectionResult> {
-        let pseudo_headers = [":method", ":path", ":authority", ":scheme", ":protocol"];
+        let pseudo_header_names = [":method", ":path", ":authority", ":scheme", ":protocol"];
         let mut pseudo_header_counts = std::collections::HashMap::new();
 
-        for (name, _) in headers.iter() {
-            let name_str = name.as_str();
-            if pseudo_headers.contains(&name_str) {
-                *pseudo_header_counts.entry(name_str).or_insert(0) += 1;
+        for (name, _) in pseudo_headers {
+            if pseudo_header_names.contains(name) {
+                *pseudo_header_counts.entry(*name).or_insert(0) += 1;
             }
         }
 
@@ -220,56 +220,53 @@ impl RequestSmugglingDetector {
             }
         }
 
-        for (name, value) in headers.iter() {
-            let name_str = name.as_str();
-            if pseudo_headers.contains(&name_str) {
-                if let Ok(val_str) = value.to_str() {
-                    if val_str.is_empty() {
-                        tracing::warn!(
-                            attack_type = "request_smuggling",
-                            "HTTP/2 Request Smuggling: Empty pseudo-header {}",
-                            name_str
-                        );
+        for (name, value) in pseudo_headers {
+            if pseudo_header_names.contains(name) {
+                if value.is_empty() {
+                    tracing::warn!(
+                        attack_type = "request_smuggling",
+                        "HTTP/2 Request Smuggling: Empty pseudo-header {}",
+                        name
+                    );
 
-                        return Some(AttackDetectionResult {
-                            attack_type: AttackType::RequestSmuggling,
-                            fingerprint: Some("empty_pseudo_header".to_string()),
-                            matched_pattern: Some(format!("Empty {}", name_str)),
-                            input_location: InputLocation::Header(name_str.to_string().into()),
-                        });
-                    }
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::RequestSmuggling,
+                        fingerprint: Some("empty_pseudo_header".to_string()),
+                        matched_pattern: Some(format!("Empty {}", name)),
+                        input_location: InputLocation::Header(name.to_string().into()),
+                    });
+                }
 
-                    if name_str == ":path" && (val_str.contains('\r') || val_str.contains('\n')) {
-                        tracing::warn!(
-                            attack_type = "request_smuggling",
-                            "HTTP/2 Request Smuggling: CRLF in :path pseudo-header"
-                        );
+                if *name == ":path" && (value.contains('\r') || value.contains('\n')) {
+                    tracing::warn!(
+                        attack_type = "request_smuggling",
+                        "HTTP/2 Request Smuggling: CRLF in :path pseudo-header"
+                    );
 
-                        return Some(AttackDetectionResult {
-                            attack_type: AttackType::RequestSmuggling,
-                            fingerprint: Some("crlf_in_pseudo_header".to_string()),
-                            matched_pattern: Some(":path contains CRLF".to_string()),
-                            input_location: InputLocation::Header(":path".into()),
-                        });
-                    }
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::RequestSmuggling,
+                        fingerprint: Some("crlf_in_pseudo_header".to_string()),
+                        matched_pattern: Some(":path contains CRLF".to_string()),
+                        input_location: InputLocation::Header(":path".into()),
+                    });
+                }
 
-                    if name_str == ":authority" && val_str.contains(':') {
-                        let parts: Vec<&str> = val_str.splitn(2, ':').collect();
-                        if parts.len() == 2 {
-                            if let Ok(port) = parts[1].parse::<u16>() {
-                                if port == 0 {
-                                    tracing::warn!(
-                                        attack_type = "request_smuggling",
-                                        "HTTP/2 Request Smuggling: Port 0 in :authority"
-                                    );
+                if *name == ":authority" && value.contains(':') {
+                    let parts: Vec<&str> = value.splitn(2, ':').collect();
+                    if parts.len() == 2 {
+                        if let Ok(port) = parts[1].parse::<u16>() {
+                            if port == 0 {
+                                tracing::warn!(
+                                    attack_type = "request_smuggling",
+                                    "HTTP/2 Request Smuggling: Port 0 in :authority"
+                                );
 
-                                    return Some(AttackDetectionResult {
-                                        attack_type: AttackType::RequestSmuggling,
-                                        fingerprint: Some("zero_port_authority".to_string()),
-                                        matched_pattern: Some(":authority with port 0".to_string()),
-                                        input_location: InputLocation::Header(":authority".into()),
-                                    });
-                                }
+                                return Some(AttackDetectionResult {
+                                    attack_type: AttackType::RequestSmuggling,
+                                    fingerprint: Some("zero_port_authority".to_string()),
+                                    matched_pattern: Some(":authority with port 0".to_string()),
+                                    input_location: InputLocation::Header(":authority".into()),
+                                });
                             }
                         }
                     }
@@ -277,6 +274,61 @@ impl RequestSmugglingDetector {
             }
         }
 
+        None
+    }
+
+    fn check_header_value_splitting(
+        &self,
+        name_str: &str,
+        val_str: &str,
+    ) -> Option<AttackDetectionResult> {
+        if val_str.contains('\n') || val_str.contains('\r') {
+            tracing::warn!(
+                attack_type = "request_smuggling",
+                "HTTP/2 Request Smuggling: Header value splitting detected in {}",
+                name_str
+            );
+
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::RequestSmuggling,
+                fingerprint: Some("header_value_splitting".to_string()),
+                matched_pattern: Some(format!("{} contains line breaks", name_str)),
+                input_location: InputLocation::Header(name_str.into()),
+            });
+        }
+        None
+    }
+
+    fn check_header_field_splitting(
+        &self,
+        name_str: &str,
+        val_str: &str,
+    ) -> Option<AttackDetectionResult> {
+        let values: Vec<&str> = val_str.split(',').map(|v| v.trim()).collect();
+        if values.len() > 1 {
+            for v in &values {
+                if v.starts_with("chunked")
+                    || v.contains("transfer-encoding")
+                    || v.contains("content-length")
+                {
+                    tracing::warn!(
+                        attack_type = "request_smuggling",
+                        "HTTP/2 Request Smuggling: Header field splitting in {} with smuggling indicator",
+                        name_str
+                    );
+
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::RequestSmuggling,
+                        fingerprint: Some("header_field_splitting".to_string()),
+                        matched_pattern: Some(format!(
+                            "{} split with value containing: {}",
+                            name_str, v
+                        )),
+                        input_location: InputLocation::Header(name_str.into()),
+                    });
+                }
+            }
+        }
         None
     }
 
@@ -296,45 +348,12 @@ impl RequestSmugglingDetector {
             let name_str = name.as_str().to_lowercase();
             if smuggling_indicators.contains(&name_str.as_str()) {
                 if let Ok(val_str) = value.to_str() {
-                    if val_str.contains('\n') || val_str.contains('\r') {
-                        tracing::warn!(
-                            attack_type = "request_smuggling",
-                            "HTTP/2 Request Smuggling: Header value splitting detected in {}",
-                            name_str
-                        );
-
-                        return Some(AttackDetectionResult {
-                            attack_type: AttackType::RequestSmuggling,
-                            fingerprint: Some("header_value_splitting".to_string()),
-                            matched_pattern: Some(format!("{} contains line breaks", name_str)),
-                            input_location: InputLocation::Header(name_str.into()),
-                        });
+                    if let Some(result) = self.check_header_value_splitting(&name_str, val_str) {
+                        return Some(result);
                     }
 
-                    let values: Vec<&str> = val_str.split(',').map(|v| v.trim()).collect();
-                    if values.len() > 1 {
-                        for v in &values {
-                            if v.starts_with("chunked")
-                                || v.contains("transfer-encoding")
-                                || v.contains("content-length")
-                            {
-                                tracing::warn!(
-                                    attack_type = "request_smuggling",
-                                    "HTTP/2 Request Smuggling: Header field splitting in {} with smuggling indicator",
-                                    name_str
-                                );
-
-                                return Some(AttackDetectionResult {
-                                    attack_type: AttackType::RequestSmuggling,
-                                    fingerprint: Some("header_field_splitting".to_string()),
-                                    matched_pattern: Some(format!(
-                                        "{} split with value containing: {}",
-                                        name_str, v
-                                    )),
-                                    input_location: InputLocation::Header(name_str.into()),
-                                });
-                            }
-                        }
+                    if let Some(result) = self.check_header_field_splitting(&name_str, val_str) {
+                        return Some(result);
                     }
                 }
             }
@@ -567,11 +586,10 @@ mod tests {
     #[test]
     fn test_h2_duplicate_pseudo_header() {
         let detector = RequestSmugglingDetector::new();
-        let mut headers = HeaderMap::new();
-        headers.insert(":path", "/test".parse().unwrap());
-        headers.append(":path", "/admin".parse().unwrap());
+        let headers = HeaderMap::new();
+        let pseudo_headers = &[(":path", "/test"), (":path", "/admin")];
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, pseudo_headers, None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
@@ -583,10 +601,10 @@ mod tests {
     #[test]
     fn test_h2_empty_pseudo_header() {
         let detector = RequestSmugglingDetector::new();
-        let mut headers = HeaderMap::new();
-        headers.insert(":path", "".parse().unwrap());
+        let headers = HeaderMap::new();
+        let pseudo_headers = &[(":path", "")];
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, pseudo_headers, None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.fingerprint, Some("empty_pseudo_header".to_string()));
@@ -595,10 +613,10 @@ mod tests {
     #[test]
     fn test_h2_crlf_in_path() {
         let detector = RequestSmugglingDetector::new();
-        let mut headers = HeaderMap::new();
-        headers.insert(":path", "/test\r\nX-Injected: header".parse().unwrap());
+        let headers = HeaderMap::new();
+        let pseudo_headers = &[(":path", "/test\r\nX-Injected: header")];
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, pseudo_headers, None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
@@ -610,10 +628,10 @@ mod tests {
     #[test]
     fn test_h2_zero_port_authority() {
         let detector = RequestSmugglingDetector::new();
-        let mut headers = HeaderMap::new();
-        headers.insert(":authority", "evil.com:0".parse().unwrap());
+        let headers = HeaderMap::new();
+        let pseudo_headers = &[(":authority", "evil.com:0")];
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, pseudo_headers, None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.fingerprint, Some("zero_port_authority".to_string()));
@@ -622,10 +640,12 @@ mod tests {
     #[test]
     fn test_h2_header_value_splitting() {
         let detector = RequestSmugglingDetector::new();
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "1.2.3.4\n5.6.7.8".parse().unwrap());
+        let headers = HeaderMap::new();
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, &[], None);
+        assert!(result.is_none());
+
+        let result = detector.check_header_value_splitting("x-forwarded-for", "1.2.3.4\n5.6.7.8");
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
@@ -640,7 +660,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-host", "example.com, chunked".parse().unwrap());
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, &[], None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
@@ -656,7 +676,7 @@ mod tests {
         headers.insert("upgrade", "h2c".parse().unwrap());
         headers.insert("connection", "upgrade".parse().unwrap());
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, &[], None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.fingerprint, Some("h2c_upgrade".to_string()));
@@ -673,7 +693,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, &[], None);
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(
@@ -685,13 +705,15 @@ mod tests {
     #[test]
     fn test_h2_benign_request() {
         let detector = RequestSmugglingDetector::new();
-        let mut headers = HeaderMap::new();
-        headers.insert(":method", "GET".parse().unwrap());
-        headers.insert(":path", "/api/users".parse().unwrap());
-        headers.insert(":authority", "example.com".parse().unwrap());
-        headers.insert(":scheme", "https".parse().unwrap());
+        let headers = HeaderMap::new();
+        let pseudo_headers = &[
+            (":method", "GET"),
+            (":path", "/api/users"),
+            (":authority", "example.com"),
+            (":scheme", "https"),
+        ];
 
-        let result = detector.check_http2_smuggling(&headers, None);
+        let result = detector.check_http2_smuggling(&headers, pseudo_headers, None);
         assert!(result.is_none());
     }
 }
