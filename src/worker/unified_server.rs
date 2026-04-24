@@ -276,11 +276,26 @@ pub async fn run_unified_server_worker(
                 .cloned()
                 .collect();
             if !bypass_sites.is_empty() {
-                tracing::warn!(
+                tracing::error!(
                     "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked. Set tls_passthrough_enforce_waf = true to enable WAF inspection for passthrough traffic.",
                     bypass_sites
                 );
                 crate::metrics::record_tls_passthrough_waf_bypassed();
+            }
+            let rate_limited_sites: Vec<_> = bypass_sites
+                .iter()
+                .filter(|s| {
+                    let site_config = config.sites.get(*s);
+                    let rl = site_config.map(|s| &s.ratelimit);
+                    rl.is_none()
+                })
+                .cloned()
+                .collect();
+            if !rate_limited_sites.is_empty() {
+                tracing::error!(
+                    "TLS passthrough sites {:?} do not have rate limiting configured. Rate limiting is required for passthrough sites to prevent abuse.",
+                    rate_limited_sites
+                );
             }
         }
     }

@@ -62,6 +62,10 @@ pub struct ProxyServer {
     skip_verify: bool,
     cache_purge_token: Option<String>,
     cache_purge_allowed_ips: Arc<HashSet<std::net::IpAddr>>,
+    #[allow(dead_code)]
+    pool_max_idle_per_host: usize,
+    #[allow(dead_code)]
+    pool_idle_timeout: Duration,
 }
 
 impl ProxyServer {
@@ -72,13 +76,15 @@ impl ProxyServer {
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
     ) -> Self {
-        Self::new_with_tls(
+        Self::new_with_pool_config(
             upstream_url,
             waf,
             max_response_size,
             upstream_error_tracker,
             site_id,
             None,
+            100,
+            Duration::from_secs(30),
         )
     }
 
@@ -90,32 +96,54 @@ impl ProxyServer {
         site_id: String,
         tls_config: Option<&UpstreamTlsConfig>,
     ) -> Self {
+        Self::new_with_pool_config(
+            upstream_url,
+            waf,
+            max_response_size,
+            upstream_error_tracker,
+            site_id,
+            tls_config,
+            100,
+            Duration::from_secs(30),
+        )
+    }
+
+    pub fn new_with_pool_config(
+        upstream_url: String,
+        waf: Arc<WafCore>,
+        max_response_size: usize,
+        upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
+        site_id: String,
+        tls_config: Option<&UpstreamTlsConfig>,
+        pool_max_idle_per_host: usize,
+        pool_idle_timeout: Duration,
+    ) -> Self {
         let (client, revalidation_client) = if let Some(tls) = tls_config {
             (
                 create_upstream_client(
-                    std::time::Duration::from_secs(5),
-                    100,
-                    std::time::Duration::from_secs(30),
+                    Duration::from_secs(5),
+                    pool_max_idle_per_host,
+                    pool_idle_timeout,
                     tls,
                 ),
                 create_upstream_client(
-                    std::time::Duration::from_secs(5),
-                    50,
-                    std::time::Duration::from_secs(15),
+                    Duration::from_secs(5),
+                    pool_max_idle_per_host,
+                    pool_idle_timeout,
                     tls,
                 ),
             )
         } else {
             (
                 create_http_client_with_config(
-                    std::time::Duration::from_secs(5),
-                    100,
-                    std::time::Duration::from_secs(30),
+                    Duration::from_secs(5),
+                    pool_max_idle_per_host,
+                    pool_idle_timeout,
                 ),
                 create_http_client_with_config(
-                    std::time::Duration::from_secs(5),
-                    50,
-                    std::time::Duration::from_secs(15),
+                    Duration::from_secs(5),
+                    pool_max_idle_per_host,
+                    pool_idle_timeout,
                 ),
             )
         };
@@ -138,6 +166,8 @@ impl ProxyServer {
             skip_verify,
             cache_purge_token: None,
             cache_purge_allowed_ips: Arc::new(HashSet::new()),
+            pool_max_idle_per_host,
+            pool_idle_timeout,
         }
     }
 
@@ -173,35 +203,22 @@ impl ProxyServer {
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
         tls_config: Option<&UpstreamTlsConfig>,
+        pool_max_idle_per_host: Option<usize>,
+        pool_idle_timeout_secs: Option<u64>,
     ) -> Self {
+        let pool_max_idle = pool_max_idle_per_host.unwrap_or(100);
+        let pool_idle = Duration::from_secs(pool_idle_timeout_secs.unwrap_or(30));
+
         let (client, revalidation_client, skip_verify) = if let Some(tls) = tls_config {
             (
-                create_upstream_client(
-                    std::time::Duration::from_secs(5),
-                    100,
-                    std::time::Duration::from_secs(30),
-                    tls,
-                ),
-                create_upstream_client(
-                    std::time::Duration::from_secs(5),
-                    50,
-                    std::time::Duration::from_secs(15),
-                    tls,
-                ),
+                create_upstream_client(Duration::from_secs(5), pool_max_idle, pool_idle, tls),
+                create_upstream_client(Duration::from_secs(5), pool_max_idle, pool_idle, tls),
                 tls.skip_verify,
             )
         } else {
             (
-                create_http_client_with_config(
-                    std::time::Duration::from_secs(5),
-                    100,
-                    std::time::Duration::from_secs(30),
-                ),
-                create_http_client_with_config(
-                    std::time::Duration::from_secs(5),
-                    50,
-                    std::time::Duration::from_secs(15),
-                ),
+                create_http_client_with_config(Duration::from_secs(5), pool_max_idle, pool_idle),
+                create_http_client_with_config(Duration::from_secs(5), pool_max_idle, pool_idle),
                 false,
             )
         };
@@ -261,6 +278,8 @@ impl ProxyServer {
             skip_verify,
             cache_purge_token: None,
             cache_purge_allowed_ips: Arc::new(HashSet::new()),
+            pool_max_idle_per_host: pool_max_idle,
+            pool_idle_timeout: pool_idle,
         }
     }
 
