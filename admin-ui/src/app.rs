@@ -6,8 +6,8 @@ use crate::components::ToastContainer;
 use crate::hooks::use_theme::*;
 use crate::pages::{
     Alerts, Dashboard, Dns, Honeypot, Icmp, Login, Logs, Mesh, Probes, ProcessManagement,
-    RequestLogs, Settings, SiteDetail, SiteEditor, Sites, SystemStatus, TcpUdp, ThreatLevel,
-    TierKeys, TrafficShaping, Upstreams, Workers,
+    RequestLogs, Settings, SiteDetail, SiteEditor, Sites, SystemStatus, ThreatLevel, TierKeys,
+    TrafficShaping, Upstreams, Workers,
 };
 use crate::types::UpdateThemeRequest;
 
@@ -31,8 +31,6 @@ pub enum Route {
     SiteEditor { id: String },
     #[at("/sites/:id/stats")]
     SiteDetail { id: String },
-    #[at("/tcp-udp")]
-    TcpUdp,
     #[at("/probes")]
     Probes,
     #[at("/dns")]
@@ -115,7 +113,6 @@ fn switch(route: Route) -> Html {
         Route::Sites => html! { <Sites /> },
         Route::SiteEditor { id } => html! { <SiteEditor id={id} /> },
         Route::SiteDetail { id } => html! { <SiteDetail id={id} /> },
-        Route::TcpUdp => html! { <TcpUdp /> },
         Route::Probes => html! { <Probes /> },
         Route::Dns => html! { <Dns /> },
         Route::Settings => html! { <Settings /> },

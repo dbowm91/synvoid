@@ -27,6 +27,8 @@ pub struct TierKeys {
     loading: bool,
     error: Option<String>,
     show_issue_modal: bool,
+    issue_org_id: String,
+    issue_tier: u32,
 }
 
 pub enum Msg {
@@ -34,7 +36,9 @@ pub enum Msg {
     TierKeysLoaded(Vec<TierKeyInfo>),
     LoadError(String),
     ToggleIssueModal,
-    IssueKey(String, u32),
+    SetOrgId(String),
+    SetTier(u32),
+    IssueKey,
     RevokeKey(String, String),
     UnbindKey(String, String),
 }
@@ -53,6 +57,8 @@ impl Component for TierKeys {
             loading: false,
             error: None,
             show_issue_modal: false,
+            issue_org_id: String::new(),
+            issue_tier: 1,
         }
     }
 
@@ -86,14 +92,31 @@ impl Component for TierKeys {
             }
             Msg::ToggleIssueModal => {
                 self.show_issue_modal = !self.show_issue_modal;
+                if self.show_issue_modal {
+                    self.issue_org_id.clear();
+                    self.issue_tier = 1;
+                }
                 true
             }
-            Msg::IssueKey(org_id, tier) => {
-                let api = ApiService::new();
-                let body = serde_json::json!({ "org_id": org_id, "tier": tier });
-                spawn_local(async move {
-                    let _: Result<serde_json::Value, _> = api.post("/tier-keys/issue", &body).await;
-                });
+            Msg::SetOrgId(org_id) => {
+                self.issue_org_id = org_id;
+                true
+            }
+            Msg::SetTier(tier) => {
+                self.issue_tier = tier;
+                true
+            }
+            Msg::IssueKey => {
+                let org_id = self.issue_org_id.clone();
+                let tier = self.issue_tier;
+                if !org_id.is_empty() {
+                    let api = ApiService::new();
+                    let body = serde_json::json!({ "org_id": org_id, "tier": tier });
+                    spawn_local(async move {
+                        let _: Result<serde_json::Value, _> =
+                            api.post("/tier-keys/issue", &body).await;
+                    });
+                }
                 self.show_issue_modal = false;
                 true
             }
@@ -136,11 +159,20 @@ impl Component for TierKeys {
                                         type="text"
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
                                         placeholder="org_xxx"
+                                        value={self.issue_org_id.clone()}
+                                        oninput={ctx.link().callback(|e| Msg::SetOrgId(e.target().unwrap().value()))}
                                     />
                                 </div>
                                 <div class="mb-4">
                                     <label class="block text-sm font-medium mb-2">{ "Tier Level" }</label>
-                                    <select class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg">
+                                    <select
+                                        class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
+                                        value={self.issue_tier}
+                                        onchange={ctx.link().callback(|e| {
+                                            let val = e.target().unwrap().value();
+                                            Msg::SetTier(val.parse().unwrap_or(1))
+                                        })}
+                                    >
                                         <option value="1">{ "Tier 1 - Basic" }</option>
                                         <option value="2">{ "Tier 2 - Standard" }</option>
                                         <option value="3">{ "Tier 3 - Premium" }</option>
@@ -150,7 +182,10 @@ impl Component for TierKeys {
                                     <button onclick={on_close} class="px-4 py-2 bg-tertiary rounded-lg">
                                         { "Cancel" }
                                     </button>
-                                    <button class="px-4 py-2 bg-accent text-white rounded-lg">
+                                    <button
+                                        onclick={ctx.link().callback(|_| Msg::IssueKey)}
+                                        class="px-4 py-2 bg-accent text-white rounded-lg"
+                                    >
                                         { "Issue Key" }
                                     </button>
                                 </div>

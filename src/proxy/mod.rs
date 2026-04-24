@@ -526,87 +526,89 @@ impl ProxyServer {
                 .map_err(|e| e.to_string());
         }
 
-        if let (Some(cache), Some(key_builder)) = (&self.cache, &self.cache_key_builder) {
-            if cache.is_enabled() {
-                if self.should_bypass_cache(headers) {
-                    tracing::debug!("Cache bypass requested for {}", path);
-                } else {
-                    let uri =
-                        http::Uri::try_from(path).unwrap_or_else(|_| http::Uri::from_static("/"));
-                    let cache_key =
-                        key_builder.build(scheme, &method, host, &uri, headers, &self.site_id);
+        if let Some(cache) = &self.cache {
+            if let Some(key_builder) = &self.cache_key_builder {
+                if cache.is_enabled() {
+                    if self.should_bypass_cache(headers) {
+                        tracing::debug!("Cache bypass requested for {}", path);
+                    } else {
+                        let uri = http::Uri::try_from(path)
+                            .unwrap_or_else(|_| http::Uri::from_static("/"));
+                        let cache_key =
+                            key_builder.build(scheme, &method, host, &uri, headers, &self.site_id);
 
-                    let hit_status = cache.get_hit_status(&cache_key);
+                        let hit_status = cache.get_hit_status(&cache_key);
 
-                    if let Some(cached) = cache.get(&cache_key).await {
-                        tracing::debug!("Cache HIT for {}", path);
-                        counter!("maluwaf.proxy.cache.hit").increment(1);
-                        cache.record_cache_hit();
-                        record_proxy_cache_hit();
+                        if let Some(cached) = cache.get(&cache_key).await {
+                            tracing::debug!("Cache HIT for {}", path);
+                            counter!("maluwaf.proxy.cache.hit").increment(1);
+                            cache.record_cache_hit();
+                            record_proxy_cache_hit();
 
-                        let is_swr = matches!(hit_status, Some(CacheHit::StaleWhileRevalidate));
+                            let is_swr = matches!(hit_status, Some(CacheHit::StaleWhileRevalidate));
 
-                        if is_swr {
-                            let cache_clone = cache.clone();
-                            let key_clone = cache_key.clone();
-                            let path_owned = path.to_string();
-                            let method_clone = method.clone();
-                            let scheme_owned = scheme.to_string();
-                            let host_owned = host.to_string();
-                            let reval_client = self.revalidation_client.clone();
+                            if is_swr {
+                                let cache_clone = cache.clone();
+                                let key_clone = cache_key.clone();
+                                let path_owned = path.to_string();
+                                let method_clone = method.clone();
+                                let scheme_owned = scheme.to_string();
+                                let host_owned = host.to_string();
+                                let reval_client = self.revalidation_client.clone();
 
-                            tokio::spawn(async move {
-                                tracing::debug!(
-                                    "Triggering background revalidation for {}",
-                                    path_owned
-                                );
-                                let _ = Self::revalidate_cache_entry(
-                                    &reval_client,
-                                    cache_clone,
-                                    key_clone,
-                                    method_clone,
-                                    path_owned,
-                                    scheme_owned,
-                                    host_owned,
-                                )
-                                .await;
-                            });
+                                tokio::spawn(async move {
+                                    tracing::debug!(
+                                        "Triggering background revalidation for {}",
+                                        path_owned
+                                    );
+                                    let _ = Self::revalidate_cache_entry(
+                                        &reval_client,
+                                        cache_clone,
+                                        key_clone,
+                                        method_clone,
+                                        path_owned,
+                                        scheme_owned,
+                                        host_owned,
+                                    )
+                                    .await;
+                                });
 
-                            counter!("maluwaf.proxy.cache.stale_while_revalidate").increment(1);
-                        }
-
-                        let response = self.build_cached_response(&cached);
-                        return Ok(response);
-                    }
-
-                    tracing::debug!("Cache MISS for {}", path);
-                    counter!("maluwaf.proxy.cache.miss").increment(1);
-                    cache.record_cache_miss();
-                    record_proxy_cache_miss();
-
-                    let result = self
-                        .forward_request(method.clone(), path, body.clone())
-                        .await;
-
-                    match result {
-                        Ok(response) => {
-                            self.process_cache_invalidate_header(response.headers());
-
-                            if self.is_response_cacheable(&response, headers) {
-                                let status = response.status().as_u16();
-                                let body = response.body().clone();
-                                let headers = filter_sensitive_headers_impl(response.headers());
-                                let max_age = self.get_cache_max_age(&headers);
-
-                                if let Err(e) =
-                                    cache.insert(cache_key, body, status, headers, max_age)
-                                {
-                                    tracing::warn!("Failed to cache response: {}", e);
-                                }
+                                counter!("maluwaf.proxy.cache.stale_while_revalidate").increment(1);
                             }
+
+                            let response = self.build_cached_response(&cached);
                             return Ok(response);
                         }
-                        Err(e) => return Err(e.to_string()),
+
+                        tracing::debug!("Cache MISS for {}", path);
+                        counter!("maluwaf.proxy.cache.miss").increment(1);
+                        cache.record_cache_miss();
+                        record_proxy_cache_miss();
+
+                        let result = self
+                            .forward_request(method.clone(), path, body.clone())
+                            .await;
+
+                        match result {
+                            Ok(response) => {
+                                self.process_cache_invalidate_header(response.headers());
+
+                                if self.is_response_cacheable(&response, headers) {
+                                    let status = response.status().as_u16();
+                                    let body = response.body().clone();
+                                    let headers = filter_sensitive_headers_impl(response.headers());
+                                    let max_age = self.get_cache_max_age(&headers);
+
+                                    if let Err(e) =
+                                        cache.insert(cache_key, body, status, headers, max_age)
+                                    {
+                                        tracing::warn!("Failed to cache response: {}", e);
+                                    }
+                                }
+                                return Ok(response);
+                            }
+                            Err(e) => return Err(e.to_string()),
+                        }
                     }
                 }
             }
@@ -732,7 +734,7 @@ impl ProxyServer {
                 .settings()
                 .methods
                 .iter()
-                .any(|m| m.eq_ignore_ascii_case(method.as_str()))
+                .any(|m| m.as_str().eq_ignore_ascii_case(method.as_str()))
         } else {
             false
         }

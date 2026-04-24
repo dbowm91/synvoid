@@ -669,6 +669,7 @@ impl UnifiedServer {
             geoip: None,
             data_dir,
             test_mode: crate::waf::TestModeConfig::default(),
+            tarpit_defaults: Some(main_config.tarpit.clone()),
         })
     }
 

@@ -918,6 +918,7 @@ impl MeshTransport {
             "seed": image_poison_config.seed,
             "max_dimension": image_poison_config.max_dimension,
             "jpeg_quality": image_poison_config.jpeg_quality,
+            "edge_only": image_poison_config.edge_only,
         });
         let site_image_poison_key = format!("site_image_poison_config:{}", site_id);
         if let Ok(bytes) = serde_json::to_vec(&site_image_poison_json) {

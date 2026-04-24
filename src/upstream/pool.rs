@@ -1,8 +1,12 @@
+use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::RunningFlag;
+
+static GLOBAL_POOL_REGISTRY: LazyLock<DashMap<String, Arc<UpstreamPool>>> =
+    LazyLock::new(DashMap::new);
 
 const ALLOWED_SCHEMES: &[&str] = &["http", "https", "ws", "wss", "grpc", "grpcs"];
 
@@ -612,6 +616,39 @@ pub struct UpstreamMetrics {
     pub unhealthy_backends: usize,
     pub total_connections: usize,
     pub average_load: f64,
+}
+
+pub fn get_global_pool(backend_url: &str) -> Option<Arc<UpstreamPool>> {
+    GLOBAL_POOL_REGISTRY
+        .get(backend_url)
+        .map(|e| e.value().clone())
+}
+
+pub fn get_or_create_global_pool(
+    backend_url: &str,
+    algorithm: LoadBalanceAlgorithm,
+) -> Arc<UpstreamPool> {
+    if let Some(pool) = GLOBAL_POOL_REGISTRY.get(backend_url) {
+        return pool.value().clone();
+    }
+
+    let pool = Arc::new(UpstreamPool::new(vec![backend_url.to_string()], algorithm));
+
+    GLOBAL_POOL_REGISTRY.insert(backend_url.to_string(), pool.clone());
+
+    pool
+}
+
+pub fn remove_global_pool(backend_url: &str) {
+    GLOBAL_POOL_REGISTRY.remove(backend_url);
+}
+
+pub fn clear_global_pools() {
+    GLOBAL_POOL_REGISTRY.clear();
+}
+
+pub fn get_global_pool_count() -> usize {
+    GLOBAL_POOL_REGISTRY.len()
 }
 
 #[cfg(test)]

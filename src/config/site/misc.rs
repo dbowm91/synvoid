@@ -33,6 +33,8 @@ pub struct SiteImagePoisonConfig {
     pub jpeg_quality: Option<u8>,
     #[serde(default)]
     pub whitelist_patterns: Option<Vec<String>>,
+    #[serde(default)]
+    pub edge_only: Option<bool>,
 }
 
 fn default_poison_level() -> Option<String> {

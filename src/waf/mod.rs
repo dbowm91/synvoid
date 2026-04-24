@@ -175,6 +175,7 @@ pub struct WafCore {
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
     tarpit_generator: Arc<crate::tarpit::generator::MarkovChain>,
+    tarpit_defaults: crate::config::TarpitDefaults,
     pub threat_level: Option<Arc<ThreatLevelManager>>,
     pub violation_tracker: Option<Arc<ViolationTracker>>,
     pub ip_feed: Option<Arc<IpFeedManager>>,
@@ -307,6 +308,7 @@ pub struct WafCoreConfig {
     pub geoip: Option<Arc<crate::geoip::GeoIpManager>>,
     pub data_dir: Option<std::path::PathBuf>,
     pub test_mode: TestModeConfig,
+    pub tarpit_defaults: Option<crate::config::TarpitDefaults>,
 }
 
 impl WafCore {
@@ -331,6 +333,7 @@ impl WafCore {
             geoip,
             data_dir,
             test_mode,
+            tarpit_defaults,
         } = config;
         let rate_limiter = RateLimiterManager::new(
             rate_config.ip,
@@ -516,6 +519,7 @@ impl WafCore {
             config: waf_config,
             whitelist: Arc::new(whitelist_set),
             tarpit_generator: Arc::new(crate::tarpit::generator::MarkovChain::new()),
+            tarpit_defaults: tarpit_defaults.unwrap_or_default(),
             threat_level,
             violation_tracker,
             ip_feed,
@@ -1406,8 +1410,8 @@ impl WafCore {
 
     pub fn generate_tarpit_response(&self, path: &str) -> String {
         let mut rng = rand::rng();
-        let max_depth = 10;
-        let links_per_page = 50;
+        let max_depth = self.tarpit_defaults.max_depth;
+        let links_per_page = self.tarpit_defaults.links_per_page;
 
         self.tarpit_generator.generate_html_page(
             rng.random_range(0..max_depth),

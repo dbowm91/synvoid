@@ -148,6 +148,7 @@ pub struct TcpListenerConfig {
     pub filter_enabled: bool,
     pub strict_mode: bool,
     pub socket_options: TcpSocketOptions,
+    pub tcp_backlog: Option<u32>,
 }
 
 impl Default for TcpListenerConfig {
@@ -162,6 +163,7 @@ impl Default for TcpListenerConfig {
             filter_enabled: true,
             strict_mode: true,
             socket_options: TcpSocketOptions::default(),
+            tcp_backlog: None,
         }
     }
 }
@@ -354,8 +356,8 @@ impl TcpListenerPool {
                 return;
             }
 
-            let backlog = 1024;
-            if let Err(e) = socket.listen(backlog) {
+            let backlog = config.tcp_backlog.unwrap_or(4096);
+            if let Err(e) = socket.listen(backlog as i32) {
                 tracing::error!("Failed to listen on {}: {}", bind_addr, e);
                 return;
             }

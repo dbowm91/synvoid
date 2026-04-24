@@ -1053,6 +1053,7 @@ impl MeshTransportManager {
                                 .filter_map(|v| v.as_str().map(String::from))
                                 .collect()
                         }),
+                    edge_only: parsed.get("edge_only").and_then(|v| v.as_bool()),
                 })
             },
             &self.image_poison_cache,

@@ -118,6 +118,7 @@ pub(super) fn create_waf(main_config: &crate::config::MainConfig) -> Arc<crate::
         geoip: None,
         data_dir,
         test_mode: crate::waf::TestModeConfig::default(),
+        tarpit_defaults: Some(main_config.tarpit.clone()),
     });
 
     Arc::new(waf)

@@ -52,7 +52,6 @@ impl Component for Sidebar {
                         <NavItem to={Route::Upstreams} icon="server" label="Upstreams" />
                         <NavItem to={Route::Sites} icon="globe" label="Sites" />
                         <NavItem to={Route::Mesh} icon="mesh" label="Mesh" />
-                        <NavItem to={Route::TcpUdp} icon="network" label="TCP/UDP" />
                         <NavItem to={Route::TierKeys} icon="key" label="Tier Keys" />
                     </NavSection>
 
