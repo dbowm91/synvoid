@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,7 +9,7 @@ use crate::plugin::pool::{PooledInstance, WasmPool};
 use crate::plugin::wasm_runtime::{GuestExports, RequestContext};
 
 pub struct WasmInstancePool {
-    pool: Arc<Mutex<Vec<WasmPooledInstance>>>,
+    pool: Arc<Mutex<VecDeque<WasmPooledInstance>>>,
     engine: Arc<Engine>,
     max_size: usize,
 }
@@ -23,25 +24,21 @@ pub(crate) struct WasmPooledInstance {
 impl WasmInstancePool {
     pub fn new(engine: Arc<Engine>, max_size: usize) -> Self {
         Self {
-            pool: Arc::new(Mutex::new(Vec::new())),
+            pool: Arc::new(Mutex::new(VecDeque::new())),
             engine,
             max_size,
         }
     }
 
-    pub(crate) fn get(&self, filter_name: &str) -> Option<WasmPooledInstance> {
+    pub(crate) fn get(&self, _filter_name: &str) -> Option<WasmPooledInstance> {
         let mut pool = self.pool.lock();
-        let pos = pool
-            .iter()
-            .position(|inst| inst.filter_name == filter_name)?;
-        let inst = pool.remove(pos);
-        Some(inst)
+        pool.pop_back()
     }
 
     pub(crate) fn return_instance(&self, instance: WasmPooledInstance) {
         let mut pool = self.pool.lock();
         if pool.len() < self.max_size {
-            pool.push(instance);
+            pool.push_back(instance);
         }
     }
 
@@ -79,7 +76,7 @@ impl WasmInstancePool {
     }
 
     pub async fn warmup(&self, modules: &[(String, Module)]) {
-        let mut warm_instances = Vec::new();
+        let mut warm_instances = VecDeque::new();
 
         for (filter_name, module) in modules {
             let mut store = Store::new(
@@ -115,7 +112,7 @@ impl WasmInstancePool {
 
             match linker.instantiate(&mut store, module) {
                 Ok(instance) => {
-                    warm_instances.push(WasmPooledInstance {
+                    warm_instances.push_back(WasmPooledInstance {
                         instance,
                         store,
                         filter_name: filter_name.clone(),

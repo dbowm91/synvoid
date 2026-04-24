@@ -9,6 +9,16 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 
+const SHARD_COUNT: usize = 64;
+
+fn djb2_hash(s: &str) -> usize {
+    let mut hash: u64 = 5381;
+    for c in s.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(c as u64);
+    }
+    (hash % SHARD_COUNT as u64) as usize
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViolationEntry {
     pub ip: String,
@@ -55,7 +65,7 @@ impl ViolationEntry {
 }
 
 pub struct ViolationTracker {
-    store: Arc<RwLock<HashMap<String, ViolationEntry>>>,
+    shards: Arc<Vec<RwLock<HashMap<String, ViolationEntry>>>>,
     config: ThreatLevelEscalation,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     is_attack_mode: Arc<RwLock<bool>>,
@@ -81,35 +91,34 @@ impl ViolationTracker {
                 .as_ref()
                 .and_then(|p| if p.exists() { Some(p.clone()) } else { None });
 
-        let store: HashMap<String, ViolationEntry> = if let Some(path) = path_for_load {
-            match std::fs::read_to_string(&path) {
-                Ok(content) => match serde_json::from_str::<Vec<ViolationEntry>>(&content) {
+        let shards: Vec<RwLock<HashMap<String, ViolationEntry>>> = (0..SHARD_COUNT)
+            .map(|_| RwLock::new(HashMap::new()))
+            .collect();
+
+        if let Some(path) = path_for_load {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                match serde_json::from_str::<Vec<ViolationEntry>>(&content) {
                     Ok(entries) => {
-                        let validated: HashMap<String, ViolationEntry> = entries
-                            .into_iter()
-                            .filter(|e| !e.is_expired())
-                            .map(|e| {
-                                let ip: IpAddr =
-                                    e.ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().unwrap());
-                                (ViolationEntry::key(&ip), e)
-                            })
-                            .collect();
-                        tracing::info!("Loaded {} valid violation entries", validated.len());
-                        validated
+                        for entry in entries.into_iter().filter(|e| !e.is_expired()) {
+                            let ip: IpAddr = entry
+                                .ip
+                                .parse()
+                                .unwrap_or_else(|_| "0.0.0.0".parse().unwrap());
+                            let key = ViolationEntry::key(&ip);
+                            let shard_idx = djb2_hash(&key);
+                            shards[shard_idx].write().insert(key, entry);
+                        }
+                        tracing::info!("Loaded violation entries from disk");
                     }
                     Err(e) => {
                         tracing::warn!("Failed to parse violations.json: {}", e);
-                        HashMap::new()
                     }
-                },
-                Err(_) => HashMap::new(),
+                }
             }
-        } else {
-            HashMap::new()
-        };
+        }
 
-        let store = Arc::new(RwLock::new(store));
-        let store_clone = store.clone();
+        let shards = Arc::new(shards);
+        let shards_for_persist = shards.clone();
         let is_attack_mode_clone = is_attack_mode.clone();
 
         let persist_tx = persist_path.as_ref().map(|path| {
@@ -125,9 +134,13 @@ impl ViolationTracker {
                             let is_attack = *is_attack_mode_clone.read();
                             current_interval_secs = if is_attack { attack_interval_secs } else { normal_interval_secs };
 
-                            let entries = store_clone.read().clone();
-                            if !entries.is_empty() {
-                                Self::persist_to_disk(&path, entries).await;
+                            let mut all_entries: HashMap<String, ViolationEntry> = HashMap::new();
+                            for shard in shards_for_persist.iter() {
+                                let mut guard = shard.write();
+                                all_entries.extend(std::mem::take(&mut *guard));
+                            }
+                            if !all_entries.is_empty() {
+                                Self::persist_to_disk(&path, all_entries).await;
                             }
                         }
                         Some(req) = rx.recv() => {
@@ -142,7 +155,7 @@ impl ViolationTracker {
         });
 
         Arc::new(Self {
-            store,
+            shards,
             config,
             persist_tx,
             is_attack_mode,
@@ -155,10 +168,11 @@ impl ViolationTracker {
         }
 
         let key = ViolationEntry::key(&ip);
+        let shard_idx = djb2_hash(&key);
         let count = {
-            let mut store = self.store.write();
+            let mut shard = self.shards[shard_idx].write();
 
-            if let Some(entry) = store.get_mut(&key) {
+            if let Some(entry) = shard.get_mut(&key) {
                 entry.increment(threat_level, self.config.violation_window_secs as u64);
                 entry.violations_count
             } else {
@@ -169,7 +183,7 @@ impl ViolationTracker {
                     self.config.violation_window_secs as u64,
                 );
                 let count = entry.violations_count;
-                store.insert(key, entry);
+                shard.insert(key, entry);
                 count
             }
         };
@@ -185,11 +199,12 @@ impl ViolationTracker {
         }
 
         let key = ViolationEntry::key(&ip);
-        let mut store = self.store.write();
+        let shard_idx = djb2_hash(&key);
+        let mut shard = self.shards[shard_idx].write();
 
-        if let Some(entry) = store.get_mut(&key) {
+        if let Some(entry) = shard.get_mut(&key) {
             if entry.is_expired() {
-                store.remove(&key);
+                shard.remove(&key);
                 return 0;
             }
             entry.violations_count
@@ -209,7 +224,8 @@ impl ViolationTracker {
 
     pub fn clear_violations(&self, ip: IpAddr) {
         let key = ViolationEntry::key(&ip);
-        self.store.write().remove(&key);
+        let shard_idx = djb2_hash(&key);
+        self.shards[shard_idx].write().remove(&key);
         self.schedule_persist();
     }
 
@@ -224,10 +240,10 @@ impl ViolationTracker {
 
     fn schedule_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
-            let entries = {
-                let mut store = self.store.write();
-                std::mem::take(&mut *store)
-            };
+            let mut entries = HashMap::new();
+            for shard in self.shards.iter() {
+                entries.extend(shard.write().drain());
+            }
             if let Err(e) = tx.try_send(PersistRequest { entries }) {
                 if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
                     tracing::warn!("Violation tracker persist channel closed");
@@ -252,9 +268,13 @@ impl ViolationTracker {
     }
 
     pub fn get_stats(&self) -> ViolationStats {
-        let store = self.store.read();
-        let total = store.len();
-        let expired = store.values().filter(|e| e.is_expired()).count();
+        let mut total = 0;
+        let mut expired = 0;
+        for shard in self.shards.iter() {
+            let store = shard.read();
+            total += store.len();
+            expired += store.values().filter(|e| e.is_expired()).count();
+        }
 
         ViolationStats {
             total,
@@ -339,7 +359,8 @@ mod tests {
         entry.expires_at = 0;
 
         let key = ViolationEntry::key(&ip);
-        tracker.store.write().insert(key, entry);
+        let shard_idx = djb2_hash(&key);
+        tracker.shards[shard_idx].write().insert(key, entry);
 
         let violations = tracker.check_violations(ip);
         assert_eq!(violations, 0);
