@@ -1011,70 +1011,19 @@ impl ThreatIntelligenceManager {
             }
         };
 
-        let value: serde_json::Value = match serde_json::from_slice(&record.value) {
+        let indicator: ThreatIndicator = match serde_json::from_slice(&record.value) {
             Ok(v) => v,
-            Err(_) => {
-                metrics::record_threat_intel_dht_lookup_miss();
-                return None;
-            }
+            Err(_) => match crate::serialization::deserialize(&record.value) {
+                Ok(v) => v,
+                Err(_) => {
+                    metrics::record_threat_intel_dht_lookup_miss();
+                    return None;
+                }
+            },
         };
 
         metrics::record_threat_intel_dht_lookup_hit();
-
-        let threat_type = match value.get("threat_type")?.as_u64()? {
-            0 => ThreatType::Unspecified,
-            1 => ThreatType::IpBlock,
-            2 => ThreatType::IpThrottle,
-            3 => ThreatType::RateLimitViolation,
-            4 => ThreatType::SuspiciousActivity,
-            5 => ThreatType::AsnBlock,
-            _ => ThreatType::Unspecified,
-        };
-
-        let severity = match value.get("severity")?.as_u64()? {
-            0 => ThreatSeverity::Unspecified,
-            1 => ThreatSeverity::Low,
-            2 => ThreatSeverity::Medium,
-            3 => ThreatSeverity::High,
-            4 => ThreatSeverity::Critical,
-            _ => ThreatSeverity::Unspecified,
-        };
-
-        let signature = value
-            .get("signature")
-            .and_then(|v| {
-                v.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|b| b.as_u64())
-                        .map(|n| n as u8)
-                        .collect()
-                })
-            })
-            .unwrap_or_default();
-
-        let signer_public_key = value
-            .get("signer_public_key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        Some(ThreatIndicator {
-            threat_type,
-            indicator_value: value.get("indicator_value")?.as_str()?.to_string(),
-            severity,
-            reason: value.get("reason")?.as_str()?.to_string(),
-            ttl_seconds: value.get("ttl_seconds")?.as_u64().unwrap_or(300),
-            source_node_id: value.get("source_node_id")?.as_str()?.to_string(),
-            timestamp: value.get("timestamp")?.as_u64().unwrap_or(0),
-            site_scope: value.get("site_scope")?.as_str()?.to_string(),
-            rate_limit_requests: value.get("rate_limit_requests").and_then(|v| v.as_u64()),
-            rate_limit_window_secs: value.get("rate_limit_window_secs").and_then(|v| v.as_u64()),
-            suspicious_pattern: value
-                .get("suspicious_pattern")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            signature,
-            signer_public_key,
-        })
+        Some(indicator)
     }
 
     pub fn lookup_local_indicator(
@@ -1261,44 +1210,25 @@ impl ThreatIntelligenceManager {
             };
 
             if should_update {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    let indicator = match self.parse_dht_record_value(&value) {
-                        Some(i) => i,
-                        None => continue,
-                    };
+                let indicator = match self.parse_dht_record_value(&record.value) {
+                    Some(i) => i,
+                    None => continue,
+                };
 
-                    let signature = value
-                        .get("signature")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let signer_pk = value
-                        .get("signer_public_key")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                let signature = &indicator.signature;
+                let signer_pk = indicator.signer_public_key.as_deref().unwrap_or("");
 
-                    if !signature.is_empty() && !signer_pk.is_empty() {
-                        let content = format!(
-                            "{}:{}:{}:{}:{}",
-                            indicator.indicator_value,
-                            indicator.threat_type as u8,
-                            indicator.severity as u8,
-                            indicator.timestamp,
-                            indicator.source_node_id
-                        );
-                        let sig_bytes = match base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
-                            signature,
-                        ) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                tracing::warn!(
-                                    "Threat intel DHT sync: invalid signature base64 for {}",
-                                    key
-                                );
-                                continue;
-                            }
-                        };
-                        let pk_bytes = match base64::Engine::decode(
+                if !signature.is_empty() && !signer_pk.is_empty() {
+                    let content = format!(
+                        "{}:{}:{}:{}:{}",
+                        indicator.indicator_value,
+                        indicator.threat_type as u8,
+                        indicator.severity as u8,
+                        indicator.timestamp,
+                        indicator.source_node_id
+                    );
+                    let sig_bytes = signature.clone();
+                    let pk_bytes = match base64::Engine::decode(
                             &base64::engine::general_purpose::STANDARD,
                             signer_pk,
                         ) {
@@ -1352,7 +1282,6 @@ impl ThreatIntelligenceManager {
                         },
                     );
                     added += 1;
-                }
             }
         }
 
@@ -1406,44 +1335,14 @@ impl ThreatIntelligenceManager {
         self.node_role.is_global()
     }
 
-    fn parse_dht_record_value(&self, value: &serde_json::Value) -> Option<ThreatIndicator> {
-        let threat_type = match value.get("threat_type")?.as_u64()? {
-            0 => ThreatType::Unspecified,
-            1 => ThreatType::IpBlock,
-            2 => ThreatType::IpThrottle,
-            3 => ThreatType::RateLimitViolation,
-            4 => ThreatType::SuspiciousActivity,
-            5 => ThreatType::AsnBlock,
-            _ => ThreatType::Unspecified,
-        };
-
-        let severity = match value.get("severity")?.as_u64()? {
-            0 => ThreatSeverity::Unspecified,
-            1 => ThreatSeverity::Low,
-            2 => ThreatSeverity::Medium,
-            3 => ThreatSeverity::High,
-            4 => ThreatSeverity::Critical,
-            _ => ThreatSeverity::Unspecified,
-        };
-
-        Some(ThreatIndicator {
-            threat_type,
-            indicator_value: value.get("indicator_value")?.as_str()?.to_string(),
-            severity,
-            reason: value.get("reason")?.as_str()?.to_string(),
-            ttl_seconds: value.get("ttl_seconds")?.as_u64().unwrap_or(300),
-            source_node_id: value.get("source_node_id")?.as_str()?.to_string(),
-            timestamp: value.get("timestamp")?.as_u64().unwrap_or(0),
-            site_scope: value.get("site_scope")?.as_str()?.to_string(),
-            rate_limit_requests: value.get("rate_limit_requests").and_then(|v| v.as_u64()),
-            rate_limit_window_secs: value.get("rate_limit_window_secs").and_then(|v| v.as_u64()),
-            suspicious_pattern: value
-                .get("suspicious_pattern")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            signature: Vec::new(),
-            signer_public_key: None,
-        })
+    fn parse_dht_record_value(&self, record_value: &[u8]) -> Option<ThreatIndicator> {
+        if let Ok(indicator) = serde_json::from_slice(record_value) {
+            return Some(indicator);
+        }
+        if let Ok(indicator) = crate::serialization::deserialize(record_value) {
+            return Some(indicator);
+        }
+        None
     }
 
     pub fn create_threat_announce(&self) -> Option<MeshMessage> {

@@ -752,7 +752,41 @@ impl MeshTransport {
             return None;
         }
 
-        let peer_state = self.topology.get_peer(node_id).await;
+        let peer_state = if node_id == self.config.node_id() {
+            Some(crate::mesh::topology::PeerState {
+                node_id: node_id.to_string(),
+                address: String::new(),
+                role: self.config.role,
+                status: crate::mesh::topology::PeerStatus::Healthy,
+                capabilities: crate::mesh::protocol::MeshCapabilities {
+                    can_route: true,
+                    can_proxy: true,
+                    can_serve_dns: true,
+                    is_global: self.config.role.is_global(),
+                    waf_enabled: true,
+                    max_hops: 10,
+                    supported_services: vec![],
+                    preferred_transport: None,
+                    supported_protocols: vec![],
+                },
+                upstreams: std::collections::HashSet::new(),
+                latency_ms: Some(0),
+                first_seen: crate::utils::current_timestamp(),
+                last_seen: crate::utils::current_timestamp(),
+                is_global: self.config.role.is_global(),
+                is_trusted: true,
+                connection_handle: None,
+                geo: None,
+                audit_successes: 0,
+                audit_failures: 0,
+                quic_port: None,
+                wireguard_port: None,
+                advertised_port: None,
+                previous_reputation: None,
+            })
+        } else {
+            self.topology.get_peer(node_id).await
+        };
 
         let peer_state = match peer_state {
             Some(p) => p,
@@ -815,12 +849,13 @@ impl MeshTransport {
         capability: &str,
     ) -> bool {
         match capability {
-            "dns_server" => {
+            "dns_server" | "dns" => {
                 if peer_state.capabilities.can_serve_dns {
                     if !peer_state.is_global {
                         tracing::warn!(
-                            "Node {} claims dns_server capability but is not a global node - rejecting",
-                            peer_state.node_id
+                            "Node {} claims {} capability but is not a global node - rejecting",
+                            peer_state.node_id,
+                            capability
                         );
                         return false;
                     }
@@ -829,7 +864,7 @@ impl MeshTransport {
                     false
                 }
             }
-            "waf" => peer_state.capabilities.waf_enabled,
+            "waf" | "threat_intel" => peer_state.capabilities.waf_enabled,
             "edge_proxy" => peer_state.capabilities.can_proxy,
             "origin" => !peer_state.upstreams.is_empty(),
             _ => {
@@ -1379,6 +1414,24 @@ impl MeshTransport {
         {
             let mut tx = self.shutdown_tx.write();
             *tx = Some(shutdown_tx.clone());
+        }
+
+        if self.config.role.is_global() {
+            let transport_for_attest = Arc::new(self.clone_for_maintenance());
+            tokio::spawn(async move {
+                let node_id = transport_for_attest.config.node_id().to_string();
+                
+                // Allow some time for DHT to initialize before self-attesting
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                
+                transport_for_attest.attest_capability(&node_id, "waf").await;
+                transport_for_attest.attest_capability(&node_id, "threat_intel").await;
+                
+                // For simplicity, we just self-attest DNS as well since global nodes act as DNS root
+                transport_for_attest.attest_capability(&node_id, "dns").await;
+                
+                tracing::info!("Global node '{}' self-attested capabilities", node_id);
+            });
         }
 
         // PoW refresh: periodically refresh the cached PoW nonce before TTL expires

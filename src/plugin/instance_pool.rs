@@ -85,6 +85,8 @@ impl WasmInstancePool {
                     start: Instant::now(),
                     timeout: Duration::from_secs(30),
                     env: std::collections::HashMap::new(),
+                    allowed_dht_prefixes: Vec::new(),
+                    max_memory: 64 * 1024 * 1024,
                 },
             );
 

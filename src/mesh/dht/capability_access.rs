@@ -37,6 +37,9 @@ impl CapabilityAccessVerifier {
             DhtKey::YaraRulesManifest { .. } => Some(("waf", "YaraRulesManifest")),
             DhtKey::YaraRuleContent { .. } => Some(("waf", "YaraRuleContent")),
             DhtKey::ThreatIndicator(_, _) => Some(("threat_intel", "ThreatIndicator")),
+            DhtKey::DnsZone(_) => Some(("dns", "DnsZone")),
+            DhtKey::DnsRecord(_, _) => Some(("dns", "DnsRecord")),
+            DhtKey::DnsDomainRegistration(_) => Some(("dns", "DnsDomainReg")),
             _ => None,
         }
     }

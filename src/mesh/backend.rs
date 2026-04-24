@@ -52,13 +52,22 @@ pub fn create_record_store(
 
     let signer = None;
 
+    let verifier = crate::mesh::dht::capability_access::CapabilityAccessVerifier::new(|node_id, capability| {
+        let key = format!("capability_attestation:{}:{}", node_id, capability);
+        crate::mesh::get_global_record_store().and_then(|rs| {
+            rs.get_record(&key).and_then(|r| {
+                crate::serialization::deserialize::<crate::mesh::dht::capability_attestation::CapabilityAttestation>(&r.value).ok()
+            })
+        })
+    });
+
     let rs = Arc::new(RecordStoreManager::new(
         store_config,
         node_id,
         role,
         signer,
         access_control,
-        None,
+        Some(Arc::new(verifier)),
     ));
 
     rs.enable_rate_limiting(

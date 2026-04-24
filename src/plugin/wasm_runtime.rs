@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response, StatusCode};
 use parking_lot::RwLock;
-use wasmtime::{Config, Engine, Instance, Linker, Memory, Module, OptLevel, Store, TypedFunc};
+use wasmtime::{
+    Config, Engine, Instance, Linker, Memory, Module, OptLevel, ResourceLimiter, Store, TypedFunc,
+};
 
 use crate::plugin::instance_pool::WasmInstancePool;
 use crate::plugin::wasm_metrics::{
@@ -50,6 +52,7 @@ pub struct WasmResourceLimits {
     pub max_instances: usize,
     pub memory_budget_mb: Option<usize>,
     pub wasi_enabled: bool,
+    pub allowed_dht_prefixes: Vec<String>,
 }
 
 impl Default for WasmResourceLimits {
@@ -61,6 +64,7 @@ impl Default for WasmResourceLimits {
             max_instances: 1,
             memory_budget_mb: None,
             wasi_enabled: false,
+            allowed_dht_prefixes: Vec::new(),
         }
     }
 }
@@ -298,6 +302,28 @@ pub(crate) struct RequestContext {
     pub(crate) start: Instant,
     pub(crate) timeout: Duration,
     pub(crate) env: std::collections::HashMap<String, String>,
+    pub(crate) allowed_dht_prefixes: Vec<String>,
+    pub(crate) max_memory: usize,
+}
+
+impl ResourceLimiter for RequestContext {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> std::result::Result<bool, wasmtime::Error> {
+        Ok(desired <= self.max_memory)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> std::result::Result<bool, wasmtime::Error> {
+        Ok(true)
+    }
 }
 
 impl WasmRuntime {
@@ -445,14 +471,19 @@ impl WasmRuntime {
         env: std::collections::HashMap<String, String>,
     ) -> Store<RequestContext> {
         let timeout = Duration::from_secs(self.limits.timeout_seconds);
+        let max_memory = self.limits.max_memory_mb * 1024 * 1024;
         let mut store = Store::new(
             &self.engine,
             RequestContext {
                 start: Instant::now(),
                 timeout,
                 env,
+                allowed_dht_prefixes: self.limits.allowed_dht_prefixes.clone(),
+                max_memory,
             },
         );
+
+        store.limiter(|state| state);
 
         if self.limits.max_cpu_fuel > 0 {
             store.set_fuel(self.limits.max_cpu_fuel).ok();
@@ -589,9 +620,15 @@ impl WasmRuntime {
                         "yara_rule:",
                         "yara_rules_manifest:",
                         "edge_attestation:",
+                        "dns_zone:",
+                        "dns_record:",
+                        "dns_domain_reg:",
                     ];
-                    let key_allowed = sensitive_prefixes.iter().any(|p| !key.starts_with(p));
-                    if !key_allowed {
+                    
+                    let is_sensitive = sensitive_prefixes.iter().any(|p| key.starts_with(p));
+                    let is_explicitly_allowed = caller.data().allowed_dht_prefixes.iter().any(|p| key.starts_with(p));
+                    
+                    if is_sensitive && !is_explicitly_allowed {
                         tracing::warn!(
                             "WASM plugin attempted unauthorized DHT query: key='{}'",
                             key

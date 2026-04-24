@@ -860,3 +860,62 @@ pub async fn report_signature_failure(
         action_taken: Some("logged".to_string()),
     }))
 }
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct AttestCapabilityRequest {
+    pub node_id: String,
+    pub capability: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AttestCapabilityResponse {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/mesh/attest-capability",
+    request_body = AttestCapabilityRequest,
+    responses(
+        (status = 200, description = "Capability attested successfully", body = AttestCapabilityResponse),
+        (status = 400, description = "Failed to attest capability", body = AttestCapabilityResponse),
+        (status = 500, description = "Internal error")
+    ),
+    tag = "mesh",
+    security(
+        ("bearerAuth" = [])
+    )
+)]
+pub async fn attest_capability(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(payload): Json<AttestCapabilityRequest>,
+) -> Result<Json<AttestCapabilityResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    let is_global = config.main.mesh.as_ref().map(|m| m.role.is_global()).unwrap_or(false);
+    if !is_global {
+        return Ok(Json(AttestCapabilityResponse {
+            success: false,
+            error: Some("Only global nodes can attest capabilities".to_string()),
+        }));
+    }
+
+    if let Some(transport) = &state.mesh.mesh_transport {
+        match transport.attest_capability(&payload.node_id, &payload.capability).await {
+            Some(_) => Ok(Json(AttestCapabilityResponse {
+                success: true,
+                error: None,
+            })),
+            None => Ok(Json(AttestCapabilityResponse {
+                success: false,
+                error: Some("Attestation failed (check logs for reason)".to_string()),
+            })),
+        }
+    } else {
+        Ok(Json(AttestCapabilityResponse {
+            success: false,
+            error: Some("Mesh transport not initialized".to_string()),
+        }))
+    }
+}

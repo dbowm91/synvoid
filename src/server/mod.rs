@@ -818,6 +818,7 @@ impl UnifiedServer {
                         timeout_seconds: plugin_cfg
                             .timeout_seconds
                             .unwrap_or(main_config.plugins.wasm.timeout_seconds),
+                        allowed_dht_prefixes: plugin_cfg.allowed_dht_prefixes.clone(),
                         ..Default::default()
                     };
                     let path = std::path::Path::new(&plugin_cfg.path);

@@ -472,6 +472,10 @@ fn build_router_from_state(
         )
         .route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
         .route(
+            "/mesh/attest-capability",
+            post(handlers::mesh_admin::attest_capability),
+        )
+        .route(
             "/mesh/derive-signing-key",
             post(handlers::mesh_admin::derive_signing_key),
         )

@@ -483,6 +483,7 @@ impl ServerlessManager {
                     max_instances: 1,
                     memory_budget_mb: None,
                     wasi_enabled: false,
+                    allowed_dht_prefixes: Vec::new(),
                 };
                 return self
                     .runtime
@@ -509,6 +510,7 @@ impl ServerlessManager {
             max_instances: 1,
             memory_budget_mb: None,
             wasi_enabled: false,
+            allowed_dht_prefixes: Vec::new(),
         };
 
         self.runtime
