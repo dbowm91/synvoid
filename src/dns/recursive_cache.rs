@@ -325,20 +325,20 @@ impl RecursiveDnsCache {
 
     pub fn len(&self) -> usize {
         let inner = &self.inner;
-        inner.positive_cache.entry_count() as usize + inner.negative_cache.entry_count() as usize
+        inner.positive_cache.iter().count() + inner.negative_cache.iter().count()
     }
 
     pub fn is_empty(&self) -> bool {
         let inner = &self.inner;
-        inner.positive_cache.entry_count() == 0 && inner.negative_cache.entry_count() == 0
+        inner.positive_cache.iter().count() == 0 && inner.negative_cache.iter().count() == 0
     }
 
     pub fn positive_len(&self) -> usize {
-        self.inner.positive_cache.entry_count() as usize
+        self.inner.positive_cache.iter().count()
     }
 
     pub fn negative_len(&self) -> usize {
-        self.inner.negative_cache.entry_count() as usize
+        self.inner.negative_cache.iter().count()
     }
 }
 

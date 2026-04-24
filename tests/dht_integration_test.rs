@@ -1392,6 +1392,7 @@ mod threat_intel_tests {
             },
             fanout_factor: 0.5,
             re_announce_interval_secs: 300,
+            trusted_signers: Vec::new(),
         };
         let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
             true,
@@ -1462,6 +1463,7 @@ mod threat_intel_tests {
             reputation_config: Default::default(),
             fanout_factor: 0.8,
             re_announce_interval_secs: 600,
+            trusted_signers: Vec::new(),
         };
 
         let internal = config.to_internal();
@@ -1815,6 +1817,7 @@ mod threat_intel_tests {
             },
             fanout_factor: 0.5,
             re_announce_interval_secs: 300,
+            trusted_signers: Vec::new(),
         };
 
         let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
