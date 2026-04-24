@@ -358,3 +358,10 @@ The following functions were stubbed but have been implemented:
 |----------|----------|----------------|
 | `resolve_txt_record()` | `src/mesh/transport_dns.rs:1183` | ✅ Uses dns_resolver.lookup_txt() |
 | `is_global_node_ip_string()` | `src/mesh/threat_intel.rs:358` | ✅ Delegates to is_global_node_ip() |
+
+### Moka Cache with Weigher + TTL
+
+When using Moka with weighted entries (via `weigher` callback) AND time-to-live expiration:
+- `entry_count()` may return 0 even when entries exist
+- Use `len()`, `positive_len()`, `negative_len()` methods which correctly use `iter().count()`
+- The `RecursiveDnsCache` in `src/dns/recursive_cache.rs` handles this correctly
