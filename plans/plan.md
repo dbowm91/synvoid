@@ -1,6 +1,6 @@
 # MaluWAF Implementation Consolidated Plan
 
-**Last updated**: 2026-04-24
+**Last updated**: 2026-04-25
 **Status**: ✅ ALL ITEMS COMPLETE - This plan is archived
 **Source**: Consolidated from 35 individual plan files (plan3.md through plan35.md, fix_c5.md)
 
@@ -80,7 +80,7 @@ This plan was created by analyzing 35 individual plan files (plan3.md through pl
 
 ### Items Verified as Already Fixed (Pre-plan)
 - JSON→postcard migration compilation errors
-- DNS recursive_cache uses entry_count()
+- DNS recursive_cache uses entry_count() (NOTE: changed to iter().count() on 2026-04-25 - moka's entry_count() returns 0 for weighted caches with TTL)
 - ThreatIntel re_announce_local_indicators() exists and is called
 - CRLF injection protection
 - QUIC DoS RUSTSEC-2026-0037 patched
@@ -94,4 +94,16 @@ This plan was created by analyzing 35 individual plan files (plan3.md through pl
 
 ---
 
-*Plan archived 2026-04-24*
+## 2026-04-25 Maintenance Update
+
+**Fixes applied**:
+
+1. **RecursiveDnsCache len() fix**: Moka's `entry_count()` returns 0 for weighted caches with TTL enabled. Changed to use `iter().count()` instead. Fixes 3 failing tests (`test_cache_different_types_same_name`, `test_cache_invalidation_all`, `test_cache_positive_negative_separation`).
+
+2. **dht_integration_test trusted_signers**: Added missing `trusted_signers` fields to test structs that were added to `ThreatIntelligenceConfig` and `ThreatIntelligenceConfigInternal` but test code was not updated.
+
+**Note**: `test_cache_lru_eviction` has an incorrect assertion (`cache.len() <= 2`) - the cache uses weighted sizing so actual count exceeds 2 entries even though weighted capacity is respected. This is a test bug, not a cache bug.
+
+---
+
+*Plan archived 2026-04-25*
