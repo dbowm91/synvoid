@@ -946,47 +946,99 @@ impl WafCore {
 
         if !self.test_mode.enabled || !self.test_mode.asn_off {
             if let Some(ref tracker) = self.asn_tracker {
+                let check_start = std::time::Instant::now();
                 if let Some(decision) = tracker.check_request(client_ip) {
+                    crate::metrics::record_waf_check_timing(
+                        "asn",
+                        check_start.elapsed().as_millis() as u64,
+                    );
                     return decision;
                 }
+                crate::metrics::record_waf_check_timing(
+                    "asn",
+                    check_start.elapsed().as_millis() as u64,
+                );
             }
         }
 
+        let rate_start = std::time::Instant::now();
         if let Some(decision) = self.check_rate_limit(client_ip, path).await {
+            crate::metrics::record_waf_check_timing(
+                "ratelimit",
+                rate_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
+        if !self.test_mode.enabled || !self.test_mode.ratelimit_off {
+            crate::metrics::record_waf_check_timing(
+                "ratelimit",
+                rate_start.elapsed().as_millis() as u64,
+            );
+        }
 
+        let ipfeed_start = std::time::Instant::now();
         if let Some(decision) = self.check_ip_feed(client_ip) {
+            crate::metrics::record_waf_check_timing(
+                "ipfeed",
+                ipfeed_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
 
+        let dht_start = std::time::Instant::now();
         if let Some(decision) = self.check_dht_threat_lookup(client_ip) {
+            crate::metrics::record_waf_check_timing(
+                "dht_threat",
+                dht_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
 
+        let endpoint_start = std::time::Instant::now();
         if let Some(decision) = self.check_endpoint_block(path, method) {
+            crate::metrics::record_waf_check_timing(
+                "endpoint",
+                endpoint_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
 
         self.record_suspicious_words(client_ip, path, query_string, user_agent);
 
+        let honeypot_start = std::time::Instant::now();
         if let Some(decision) = self.check_honeypot(client_ip, path, method, user_agent) {
+            crate::metrics::record_waf_check_timing(
+                "honeypot",
+                honeypot_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
 
+        let bot_start = std::time::Instant::now();
         if let Some(decision) =
             self.check_bot_protection(client_ip, path, user_agent, ja4_hash, site_bot_config)
         {
+            crate::metrics::record_waf_check_timing("bot", bot_start.elapsed().as_millis() as u64);
             return decision;
         }
 
+        let attack_start = std::time::Instant::now();
         if let Some(decision) =
             self.check_attack_patterns(client_ip, method, path, query_string, headers, body)
         {
+            crate::metrics::record_waf_check_timing(
+                "attack",
+                attack_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
 
+        let challenge_start = std::time::Instant::now();
         if let Some(decision) = self.check_challenge(client_ip, path, site_bot_config) {
+            crate::metrics::record_waf_check_timing(
+                "challenge",
+                challenge_start.elapsed().as_millis() as u64,
+            );
             return decision;
         }
 

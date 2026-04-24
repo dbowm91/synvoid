@@ -70,6 +70,9 @@ static DHT_QUERY_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
 static HTTP_REQUEST_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
 
+static WAF_CHECK_TIMINGS: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+
 static DHT_BUCKET_PEER_COUNTS: LazyLock<DashMap<usize, AtomicU64>> = LazyLock::new(DashMap::new);
 
 static DHT_RECORDS_BY_TYPE: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
@@ -380,6 +383,30 @@ pub fn record_http_request_latency(latency_ms: u64) {
 
 pub fn get_http_request_latencies() -> Vec<u64> {
     HTTP_REQUEST_LATENCIES.lock().iter().copied().collect()
+}
+
+pub fn record_waf_check_timing(check_type: &str, latency_ms: u64) {
+    let mut timings = WAF_CHECK_TIMINGS.lock();
+    if timings.len() >= LATENCY_SAMPLE_SIZE {
+        timings.pop_front();
+    }
+    timings.push_back(latency_ms);
+    match check_type {
+        "ratelimit" => metrics::counter!("maluwaf.waf_check_ratelimit_ms").increment(latency_ms),
+        "ipfeed" => metrics::counter!("maluwaf.waf_check_ipfeed_ms").increment(latency_ms),
+        "dht_threat" => metrics::counter!("maluwaf.waf_check_dht_threat_ms").increment(latency_ms),
+        "endpoint" => metrics::counter!("maluwaf.waf_check_endpoint_ms").increment(latency_ms),
+        "honeypot" => metrics::counter!("maluwaf.waf_check_honeypot_ms").increment(latency_ms),
+        "bot" => metrics::counter!("maluwaf.waf_check_bot_ms").increment(latency_ms),
+        "attack" => metrics::counter!("maluwaf.waf_check_attack_ms").increment(latency_ms),
+        "challenge" => metrics::counter!("maluwaf.waf_check_challenge_ms").increment(latency_ms),
+        "asn" => metrics::counter!("maluwaf.waf_check_asn_ms").increment(latency_ms),
+        _ => {}
+    }
+}
+
+pub fn get_waf_check_timings() -> Vec<u64> {
+    WAF_CHECK_TIMINGS.lock().iter().copied().collect()
 }
 
 pub fn record_dht_record_count(count: u64) {

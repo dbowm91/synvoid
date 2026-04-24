@@ -151,6 +151,7 @@ pub struct ProxyCache {
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
     host_index: DashMap<String, Vec<CacheKey>>,
     inflight_requests: InflightRequestsMap,
+    site_memory_usage: DashMap<String, AtomicU64>,
 }
 
 impl Clone for ProxyCache {
@@ -165,6 +166,7 @@ impl Clone for ProxyCache {
             cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
             host_index: DashMap::new(),
             inflight_requests: self.inflight_requests.clone(),
+            site_memory_usage: DashMap::new(),
         }
     }
 }
@@ -202,6 +204,7 @@ impl ProxyCache {
             cleanup_shutdown_tx: Arc::new(shutdown_tx),
             host_index: DashMap::new(),
             inflight_requests: Arc::new(DashMap::new()),
+            site_memory_usage: DashMap::new(),
         }
     }
 
@@ -518,6 +521,14 @@ impl ProxyCache {
 
         self.entries.insert(key.clone(), entry_inner);
 
+        // Update global memory size and per-site tracking
+        if !should_store_disk {
+            self.site_memory_usage
+                .entry(key.host.clone())
+                .or_insert_with(|| AtomicU64::new(0))
+                .fetch_add(size as u64, Ordering::Relaxed);
+        }
+
         self.host_index
             .entry(key.host.clone())
             .or_insert_with(Vec::new)
@@ -527,6 +538,7 @@ impl ProxyCache {
     }
 
     pub fn invalidate(&self, key: &CacheKey) {
+        let host = key.host.clone();
         if let Some(entry) = self.entries.get(key) {
             if entry.on_disk {
                 if let Some(path) = &entry.disk_path {
@@ -539,6 +551,11 @@ impl ProxyCache {
                         v.checked_sub(entry.size as u64)
                     })
                     .ok();
+                self.site_memory_usage.get(&host).map(|counter| {
+                    counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        v.checked_sub(entry.size as u64)
+                    })
+                });
             }
             self.entries.invalidate(key);
         }
@@ -622,6 +639,7 @@ impl ProxyCache {
         self.entries.invalidate_all();
         self.current_memory_size.store(0, Ordering::Relaxed);
         self.host_index.clear();
+        self.site_memory_usage.clear();
     }
 
     pub fn stats(&self) -> CacheStats {
@@ -631,13 +649,27 @@ impl ProxyCache {
         let misses = self.cache_misses.load(Ordering::Relaxed);
         let total = self.entries.entry_count();
 
+        let site_usage: std::collections::HashMap<String, usize> = self
+            .site_memory_usage
+            .iter()
+            .map(|r| (r.key().clone(), r.value().load(Ordering::Relaxed) as usize))
+            .collect();
+
         CacheStats {
             entries: total as usize,
             memory_size: self.current_memory_size.load(Ordering::Relaxed) as usize,
             disk_size: self.calculate_disk_size(),
             hits,
             misses,
+            site_memory_usage: site_usage,
         }
+    }
+
+    pub fn get_site_memory_usage(&self, host: &str) -> usize {
+        self.site_memory_usage
+            .get(host)
+            .map(|c| c.load(Ordering::Relaxed) as usize)
+            .unwrap_or(0)
     }
 
     pub fn is_status_cacheable(&self, status: u16) -> bool {
@@ -759,6 +791,7 @@ pub struct CacheStats {
     pub disk_size: usize,
     pub hits: u64,
     pub misses: u64,
+    pub site_memory_usage: std::collections::HashMap<String, usize>,
 }
 
 #[cfg(test)]
