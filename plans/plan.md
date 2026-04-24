@@ -18,6 +18,15 @@ All critical Wave 1 security items have been verified and implemented:
 - W1-7: RSA 1024 auto-upgrade ✅ (d2fe3912)
 - W1-8: ThreatIntel re-announcement ✅ (d2fe3912)
 
+Wave 2 items have been verified and implemented:
+- W2-1: Wire verify_caller_permission() ✅ (pre-existing)
+- W2-2: WASM DHT Access Control ✅ (e1d7e76)
+- W2-3: Implement WASM ResourceLimiter ✅ (e1d7e76)
+- W2-4: Capability Verifier NOT Wired ✅ (e1d7e76)
+- W2-5: DNS DHT Records Need Capability Protection ✅ (e1d7e76)
+- W2-6: ThreatIntel Threat Type Parsing Bug ✅ (e1d7e76)
+- W2-7: Honeypot Announcement Inconsistency ✅ (pre-existing)
+
 ---
 
 ## Completed Waves
