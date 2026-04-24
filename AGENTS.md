@@ -99,8 +99,7 @@ cargo test --lib --no-run
 - `src/overseer/` - Master process orchestration
 - `src/master/` - Parent process implementation
 - `src/worker/` - Worker process implementation
-- `src/supervisor/` - Worker supervision
-- `tests/` - Integration and benchmark tests
+- `tests/` - Integration tests
 
 ### Admin API Documentation
 
@@ -327,10 +326,6 @@ Keys transition through these states:
 
 **Missing→Pending restoration**: Only keys that were previously Valid (trust_point != 0) can auto-restore via `observe_dnskey_at_root()`. Keys that were never Valid must go through digest verification via `trust_anchor_check()` first.
 
-## Implementation Reference
-
-All implementation items from `plans/plan.md` have been completed. The plan file is preserved for historical reference.
-
 ## Important Notes
 
 1. **Never commit secrets** - Use `.gitignore` for credentials
@@ -343,21 +338,12 @@ All implementation items from `plans/plan.md` have been completed. The plan file
 
 The codebase uses placeholder values that should trigger warnings at startup:
 
-| Placeholder | Location | Status |
-|-----------|----------|--------|
-| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:321` | ✅ Fixed - logs warning |
-| `TOKEN_PLACEHOLDER` | `src/config/admin.rs` | ✅ Fixed - added to WEAK_TOKEN_PATTERNS |
+| Placeholder | Location | Behavior |
+|-----------|----------|----------|
+| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:321` | Logs warning on startup |
+| `TOKEN_PLACEHOLDER` | `src/config/admin.rs` | Detected as weak token |
 
 These placeholders indicate the value was not configured and may indicate a security issue.
-
-### Implemented Stub Functions
-
-The following functions were stubbed but have been implemented:
-
-| Function | Location | Implementation |
-|----------|----------|----------------|
-| `resolve_txt_record()` | `src/mesh/transport_dns.rs:1183` | ✅ Uses dns_resolver.lookup_txt() |
-| `is_global_node_ip_string()` | `src/mesh/threat_intel.rs:358` | ✅ Delegates to is_global_node_ip() |
 
 ### Moka Cache with Weigher + TTL
 
