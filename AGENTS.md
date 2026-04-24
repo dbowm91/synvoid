@@ -400,6 +400,7 @@ Agents modifying these areas should be aware of performance characteristics:
 | Area | Concern | Location |
 |------|---------|----------|
 | WAF detection | Runs ~20+ checks per request, lock acquisition per request | `src/waf/mod.rs:660-700` |
+| Violation tracking | 64-sharded `RwLock` for O(1) shard lookup | `src/waf/violation_tracker.rs` |
 | Cache lookups | O(1) via `moka::Cache`; eviction-based cleanup | `src/proxy_cache/store.rs` |
 | Input normalization | Pre-computed lowercased words at init | `src/waf/probe_tracker.rs:475` |
 | Rate limiting | Lock-free atomic bitset for slot tracking | `src/waf/ratelimit/core.rs` |
@@ -409,6 +410,7 @@ Agents modifying these areas should be aware of performance characteristics:
 | DNS zone store | 64-sharded `RwLock`; suffix index for O(k) lookups | `src/dns/server/sharded_store.rs` |
 | Body buffering | Uses `BytesMut` to avoid reallocations | `src/http/shared_handler.rs` |
 | Retry logic | Uses `<` not `<=` to prevent off-by-one | `src/proxy/mod.rs:860,886,906` |
+| WASM instance pool | VecDeque with pop_back() for O(1) get | `src/plugin/instance_pool.rs` |
 
 ## Module Size Guide
 
@@ -876,12 +878,12 @@ These features exist as code but are not fully functional:
 
 | Feature | Location | Issue |
 |---------|----------|-------|
-| `verify_caller_permission()` | `src/serverless/manager.rs:190-282` | Defined but never called; all serverless permission checks bypassed |
-| `CapabilityAccessVerifier` | `src/mesh/backend.rs:55-62` | Created with `None`; `set_capability_verifier()` never called |
 | `broadcast_pending_records()` | `src/mesh/dht/record_store_sync.rs:618` | Defined but never called; DHT records never broadcast |
 | `WasmDistManager` | `src/mesh/wasm_dist.rs:8-11` | Never initialized; dead code. Decision needed: remove or complete |
 | `discover_serverless_functions()` | `src/mesh/transport.rs:637-684` | Defined but never called from mesh connection flow |
 | `is_rate_limited()` | `src/mesh/dht/record_store.rs:371-377` | Exists but not called from `store_record()` |
+
+**Note**: `verify_caller_permission()` and `CapabilityAccessVerifier` were wired in Wave 2 (W2-1, W2-4).
 
 ## Verification Pitfalls
 
