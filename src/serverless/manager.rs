@@ -358,6 +358,7 @@ impl ServerlessManager {
                     scale_up_cooldown_seconds: 30,
                     scale_down_cooldown_seconds: 60,
                     pre_warm_instances: func_def.pre_warm_instances.unwrap_or(2),
+                    max_scale_up_per_tick: 5,
                 };
 
                 let pool = Arc::new(InstancePool::new(pool_config, func_def.clone()));

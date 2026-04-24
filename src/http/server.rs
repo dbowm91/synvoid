@@ -1702,7 +1702,13 @@ impl HttpServer {
                 // Check for AxumDynamic plugin backend
                 if matches!(target.backend_type, crate::router::BackendType::AxumDynamic) {
                     if let Some(pm) = router.plugin_manager() {
-                        if let Some(plugin_router) = pm.get_axum_router() {
+                        let plugin_router = if let Some(ref plugin_name) = target.backend_plugin {
+                            pm.get_axum_router_by_name(plugin_name)
+                        } else {
+                            pm.get_axum_router()
+                        };
+
+                        if let Some(plugin_router) = plugin_router {
                             tracing::debug!(
                                 "Routing to AxumDynamic plugin for site {} path {}",
                                 site_id,

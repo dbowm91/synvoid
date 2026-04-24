@@ -100,6 +100,15 @@ impl PluginManager {
         self.axum_plugins.read().first().map(|w| w.router.clone())
     }
 
+    /// Get an Axum plugin router by name
+    pub fn get_axum_router_by_name(&self, name: &str) -> Option<Arc<Router>> {
+        self.axum_plugins
+            .read()
+            .iter()
+            .find(|w| w.name == name)
+            .map(|w| w.router.clone())
+    }
+
     /// Get all loaded Axum plugin routers
     pub fn get_axum_routers(&self) -> Vec<Arc<Router>> {
         self.axum_plugins

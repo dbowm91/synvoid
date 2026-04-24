@@ -1392,10 +1392,9 @@ impl ThreatIntelligenceManager {
             let transport = self.transport.read();
             if let Some(ref t) = *transport {
                 let topology = t.get_topology();
-                return tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(topology.get_global_nodes())
-                })
-                .contains(&source_node_id.to_string());
+                return tokio::runtime::Handle::current()
+                    .block_on(topology.get_global_nodes())
+                    .contains(&source_node_id.to_string());
             }
             return false;
         }

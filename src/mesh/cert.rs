@@ -652,11 +652,15 @@ impl MeshCertManager {
 
         if let Some(ref old_cert) = self.cert_path {
             let rotated = old_cert.with_extension("rotated");
-            std::fs::rename(old_cert, &rotated).ok();
+            if let Err(e) = std::fs::rename(old_cert, &rotated) {
+                tracing::warn!("Failed to rotate old certificate: {}", e);
+            }
         }
         if let Some(ref old_key) = self.key_path {
             let rotated = old_key.with_extension("rotated");
-            std::fs::rename(old_key, &rotated).ok();
+            if let Err(e) = std::fs::rename(old_key, &rotated) {
+                tracing::warn!("Failed to rotate old private key: {}", e);
+            }
         }
 
         self.cert_path = Some(cert_path);
@@ -1029,10 +1033,15 @@ impl MeshCertManager {
         let mut count = 0;
 
         for entry_value in entries_value {
-            if let Ok(entry) = serde_json::from_value::<CrlEntry>(entry_value.clone()) {
-                crl.insert(entry.serial_number.clone());
-                crl_entries.insert(entry.serial_number.clone(), entry);
-                count += 1;
+            match serde_json::from_value::<CrlEntry>(entry_value.clone()) {
+                Ok(entry) => {
+                    crl.insert(entry.serial_number.clone());
+                    crl_entries.insert(entry.serial_number.clone(), entry);
+                    count += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse CRL entry: {}", e);
+                }
             }
         }
 

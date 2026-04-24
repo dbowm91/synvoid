@@ -16,6 +16,7 @@ pub struct InstancePoolConfig {
     pub scale_up_cooldown_seconds: u64,
     pub scale_down_cooldown_seconds: u64,
     pub pre_warm_instances: usize,
+    pub max_scale_up_per_tick: usize,
 }
 
 impl Default for InstancePoolConfig {
@@ -29,6 +30,7 @@ impl Default for InstancePoolConfig {
             scale_up_cooldown_seconds: 30,
             scale_down_cooldown_seconds: 60,
             pre_warm_instances: 2,
+            max_scale_up_per_tick: 5,
         }
     }
 }
@@ -408,7 +410,10 @@ impl InstancePool {
                     if utilization >= self.config.scale_up_threshold {
                         let current = self.instances.read().len();
                         if current < self.config.max_instances {
-                            let to_add = ((current as f64 * 0.5) as usize).max(1);
+                            let scale_up_budget = self.config.max_scale_up_per_tick.min(5);
+                            let to_add = ((current as f64 * 0.5) as usize)
+                                .max(1)
+                                .min(scale_up_budget);
                             if let Err(e) = self.scale_up(to_add).await {
                                 tracing::warn!("Autoscaler scale up failed: {}", e);
                             }

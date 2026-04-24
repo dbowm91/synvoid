@@ -21,14 +21,24 @@ pub struct SiteUpstreamConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteUpstreamTlsConfig {
+    /// If false, disables TLS certificate verification. WARNING: This disables
+    /// hostname verification but certificate chain validation still occurs. Use only for
+    /// development or with explicit trust. Always set skip_verify_reason when enabling.
     #[serde(default = "default_tls_verify")]
     pub verify: Option<bool>,
+    /// Base64-encoded CA certificate(s) to trust for upstream connections.
     #[serde(default)]
     pub ca_cert: Option<String>,
+    /// Override the server name (SNI) for upstream TLS connections.
     #[serde(default)]
     pub server_name: Option<String>,
+    /// SKIP TLS VERIFICATION - WARNING: Disables hostname verification.
+    /// Only use for local development or trusted internal services.
+    /// Chain validation still occurs; this only bypasses hostname check.
     #[serde(default)]
     pub skip_verify: Option<bool>,
+    /// REQUIRED when skip_verify is true: Document why verification is bypassed.
+    /// Example: "Local development with self-signed cert"
     #[serde(default)]
     pub skip_verify_reason: Option<String>,
 }

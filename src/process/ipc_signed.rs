@@ -64,9 +64,7 @@ const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 
 fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
-    let mut cache = NONCE_CACHE
-        .lock()
-        .expect("NONCE_CACHE lock poisoned - previous holder panicked");
+    let mut cache = NONCE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
 
     if cache.contains(nonce) {
         return false;
@@ -78,6 +76,7 @@ fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
 }
 
 fn generate_nonce() -> [u8; 16] {
+    // rand::rng() in rand 0.9+ uses OsRng internally - acceptable for nonce generation
     use rand::RngCore;
     let mut nonce = [0u8; 16];
     rand::rng().fill_bytes(&mut nonce);
@@ -550,6 +549,7 @@ impl SignedIpcMessage {
 }
 
 pub fn generate_session_key() -> [u8; 32] {
+    // rand::rng() in rand 0.9+ uses OsRng internally - acceptable for key generation
     use rand::RngCore;
     let mut key = [0u8; 32];
     rand::rng().fill_bytes(&mut key);

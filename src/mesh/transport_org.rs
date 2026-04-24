@@ -130,6 +130,7 @@ impl MeshTransport {
         let mut initial_tier_key = None;
 
         if org_config.default_tier_on_approve > 0 {
+            // rand::rng() uses OsRng internally in rand 0.9+
             use rand::RngCore;
             let mut key_bytes = vec![0u8; 32];
             rand::rng().fill_bytes(&mut key_bytes);

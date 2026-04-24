@@ -110,7 +110,8 @@ async fn list_handler(
         .list_directory(&path)
         .await
         .map_err(|e| {
-            http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+            http::StatusCode::from_u16(e.status_code())
+                .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
         })?;
 
     Ok(Json(ApiResponse::success(result)))
@@ -125,7 +126,8 @@ async fn read_handler(
 
     let path = format!("/{}", path);
     let data = state.file_manager.read_file(&path).await.map_err(|e| {
-        http::StatusCode::from_u16(e.status_code()).expect("valid HTTP status code")
+        http::StatusCode::from_u16(e.status_code())
+            .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR)
     })?;
 
     let ext = std::path::Path::new(&path)

@@ -50,6 +50,7 @@ impl NodeId {
     }
 
     pub fn random() -> Self {
+        // rand::rng() uses OsRng internally in rand 0.9+ - acceptable for node ID
         let mut id = [0u8; NODE_ID_LEN];
         use rand::RngCore;
         rand::rng().fill_bytes(&mut id);
@@ -166,7 +167,8 @@ impl NodeId {
         }
 
         use rand::RngCore;
-        rand::rng().fill_bytes(&mut id);
+        let mut rng = rand::rng();
+        rng.fill_bytes(&mut id);
 
         NodeId(id)
     }

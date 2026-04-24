@@ -424,7 +424,6 @@ mod tests {
             }
         }
 
-        #[cfg(test)]
         mod waf_body_inspection_tests {
             use maluwaf::proxy::{
                 build_headers_to_filter, sanitize_request_path, MAX_XFF_CHAIN_LENGTH,
@@ -475,7 +474,6 @@ mod tests {
             }
         }
 
-        #[cfg(test)]
         mod dnssec_validation_tests {
             use maluwaf::dns::dnssec_validation::{
                 calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
@@ -640,7 +638,6 @@ mod tests {
             }
         }
 
-        #[cfg(test)]
         mod upload_scanning_tests {
             use maluwaf::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
 
@@ -661,7 +658,6 @@ mod tests {
             }
         }
 
-        #[cfg(test)]
         mod mesh_threat_propagation_tests {
             use maluwaf::mesh::protocol::{ThreatSeverity, ThreatType};
             use maluwaf::mesh::threat_intel::ThreatIntelligenceConfig;
@@ -707,7 +703,6 @@ mod tests {
             }
         }
 
-        #[cfg(test)]
         mod honeypot_mesh_flow_tests {
             use maluwaf::mesh::config::MeshNodeRole;
 
@@ -729,7 +724,6 @@ mod tests {
             }
         }
 
-        #[cfg(test)]
         mod yara_mesh_distribution_tests {
             use maluwaf::mesh::yara_rules::{
                 BroadcastAckStatus, BroadcastAckTracker, RuleChangeTracker,
