@@ -410,6 +410,7 @@ impl UnifiedServer {
             tunnel_config,
             drain_state: None,
             mesh_transport,
+            mesh_backend_pool: None,
             metrics: None,
             ipc: None,
             worker_id: None,

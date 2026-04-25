@@ -537,14 +537,18 @@ impl DnsServer {
     async fn start_standard_mode(&mut self) -> Result<(), String> {
         // C3: Check dns_mesh_mode_only enforcement
         // If dns_mesh_mode_only is set and this node is not global, skip DNS binding
-        let mesh_config = self.mesh_transport.as_ref().map(|t| {
-            let cfg = t.get_config();
-            (cfg.dns_mesh_mode_only, cfg.role.is_global())
-        });
+        let should_skip_binding = if let Some(ref transport) = self.mesh_transport {
+            let cfg = transport.get_mesh_config();
+            if let Some(ref dht_cfg) = cfg.dht {
+                dht_cfg.dns_mesh_mode_only && !cfg.role.is_global()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
-        let (dns_mesh_mode_only, is_global) = mesh_config.unwrap_or((false, false));
-
-        if dns_mesh_mode_only && !is_global {
+        if should_skip_binding {
             tracing::info!(
                 "Skipping DNS socket binding: dns_mesh_mode_only=true and node is not global"
             );
