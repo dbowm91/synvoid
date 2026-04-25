@@ -356,6 +356,71 @@ The codebase uses placeholder values that should trigger warnings at startup:
 
 These placeholders indicate the value was not configured and may indicate a security issue.
 
+### Critical Security Patterns (Wave 0)
+
+The following security patterns were implemented in the 2026-04-25 wave:
+
+**Trusted Signer Verification for ThreatAnnounce**
+```rust
+// In threat_intel.rs: After signature verification, check trusted_signers
+if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+    if !self.check_trusted_signer(source_node_id, signer_public_key) {
+        return Some(MeshMessage::ThreatAcknowledgement { accepted: false, ... });
+    }
+}
+```
+
+**Composite Role Validation (EDGE_ORIGIN, GLOBAL_EDGE)**
+```rust
+// In peer_auth.rs: Check composite roles BEFORE single-role checks
+if role.is_edge() && role.is_origin() {
+    // Require BOTH edge AND origin validation
+    let edge_result = validate_edge_node(...);
+    let origin_result = validate_origin_node(...);
+}
+```
+
+**DNS Mesh Mode Enforcement**
+```rust
+// In dns/server/startup.rs: Skip DNS binding for non-global when enforced
+if let Some(ref transport) = self.mesh_transport {
+    let cfg = transport.get_mesh_config();
+    if let Some(ref dht_cfg) = cfg.dht {
+        if dht_cfg.dns_mesh_mode_only && !cfg.role.is_global() {
+            return Ok(()); // Skip binding
+        }
+    }
+}
+```
+
+**DHT Quorum Authorization**
+```rust
+// In record_store_message.rs: Verify signer is authorized global node
+let authorized = cert_mgr.read().is_global_node_authorized(signer_pk);
+if !authorized {
+    return false; // Reject quorum contribution
+}
+```
+
+### Mesh Configuration Patterns
+
+**Mesh Routing Configuration**
+```toml
+[mesh]
+enabled = true
+
+[mesh.proxy]
+request_timeout_secs = 30
+stale_cache_ttl_secs = 60
+```
+
+**Mesh Backend Pool Wiring**
+- `BackendType::Mesh` variant added to router enum
+- `mesh_backend_pool: Option<Arc<MeshBackendPool>>` field in UnifiedServer
+- Use `site_config.mesh_routing` to enable mesh routing for a site
+
+### utoipa 4→5 Upgraded
+
 ### Moka Cache with Weigher + TTL
 
 When using Moka with weighted entries (via `weigher` callback) AND time-to-live expiration:
