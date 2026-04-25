@@ -501,6 +501,17 @@ impl MeshCertManager {
         keys.get(node_id).cloned()
     }
 
+    pub fn get_global_node_keys(&self) -> Vec<(String, Vec<u8>)> {
+        let keys = self.global_node_public_keys.read();
+        keys.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
+    pub fn is_global_node_authorized(&self, signer_public_key: &str) -> bool {
+        let keys = self.global_node_public_keys.read();
+        keys.values()
+            .any(|pk| pk.as_slice() == signer_public_key.as_bytes())
+    }
+
     pub fn add_seed_public_key(&self, node_id: &str, public_key: Option<String>) {
         if let Some(key) = public_key {
             if let Ok(key_bytes) = base64::engine::general_purpose::STANDARD.decode(&key) {

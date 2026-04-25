@@ -700,6 +700,55 @@ impl RecordStoreManager {
             return false;
         }
 
+        let signer_public_key = record.signer_public_key.as_ref();
+        let is_authorized = if let Some(signer_pk) = signer_public_key {
+            let cert_manager = {
+                let routing = self.routing_state.read();
+                routing.transport.as_ref().map(|t| t.cert_manager.clone())
+            };
+            if let Some(cert_mgr) = cert_manager {
+                let authorized = cert_mgr.read().is_global_node_authorized(signer_pk);
+                if !authorized {
+                    tracing::warn!(
+                        "Rejecting quorum store request from {} - signer not in authorized global node list",
+                        from_node_id
+                    );
+                    let rejection = MeshMessage::QuorumRejectionResponse {
+                        request_id: request_id.into(),
+                        key: record.key.clone().into(),
+                        reason: "unauthorized".into(),
+                        evidence: Some(format!("signer_public_key: {}", signer_pk).into_bytes()),
+                    };
+                    let _ = transport
+                        .send_datagram_to_peer(from_node_id, &rejection)
+                        .await;
+                }
+                authorized
+            } else {
+                tracing::warn!("No cert manager available for authorization check");
+                false
+            }
+        } else {
+            tracing::warn!(
+                "Rejecting quorum store request from {} - no signer public key",
+                from_node_id
+            );
+            let rejection = MeshMessage::QuorumRejectionResponse {
+                request_id: request_id.into(),
+                key: record.key.clone().into(),
+                reason: "unauthorized".into(),
+                evidence: None,
+            };
+            let _ = transport
+                .send_datagram_to_peer(from_node_id, &rejection)
+                .await;
+            false
+        };
+
+        if !is_authorized {
+            return false;
+        }
+
         let (signature, signer_public_key) = {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.mesh_signer {
