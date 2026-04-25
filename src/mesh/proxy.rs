@@ -63,7 +63,7 @@ pub struct MeshProxy {
     transport_manager:
         Arc<RwLock<Option<Arc<crate::mesh::transports::manager::MeshTransportManager>>>>,
     record_store: Arc<RwLock<Option<Arc<RecordStoreManager>>>>,
-    active_connections: Arc<RwLock<HashMap<String, MeshConnection>>>,
+    active_connections: Arc<DashMap<String, MeshConnection>>,
     policy_cache: Cache<String, CachedPolicy>,
     failed_providers: Cache<String, Instant>,
     provider_stats: Arc<RwLock<HashMap<String, ProviderStats>>>,
@@ -338,7 +338,7 @@ impl MeshProxy {
             transport: Arc::new(RwLock::new(None)),
             transport_manager: Arc::new(RwLock::new(None)),
             record_store: Arc::new(RwLock::new(None)),
-            active_connections: Arc::new(RwLock::new(HashMap::new())),
+            active_connections: Arc::new(DashMap::new()),
             policy_cache,
             failed_providers,
             provider_stats,
@@ -1210,17 +1210,14 @@ impl MeshProxy {
         };
 
         let request_id = uuid::Uuid::new_v4().to_string();
-        {
-            let mut connections = self.active_connections.write();
-            connections.insert(
-                request_id.clone(),
-                MeshConnection {
-                    peer_node_id: peer_node_id.to_string(),
-                    request_id: request_id.clone(),
-                    started_at: std::time::Instant::now(),
-                },
-            );
-        }
+        self.active_connections.insert(
+            request_id.clone(),
+            MeshConnection {
+                peer_node_id: peer_node_id.to_string(),
+                request_id: request_id.clone(),
+                started_at: std::time::Instant::now(),
+            },
+        );
 
         let uri = req.uri().to_string();
         let method = req.method().clone();
@@ -1246,10 +1243,7 @@ impl MeshProxy {
             .await
             .map_err(|e| MeshProxyError::ConnectionFailed(e.to_string()))?;
 
-        {
-            let mut connections = self.active_connections.write();
-            connections.remove(&request_id);
-        }
+        self.active_connections.remove(&request_id);
 
         let response = self.transform_response(response, upstream_id, &uri).await;
 
@@ -1660,13 +1654,12 @@ impl MeshProxy {
     }
 
     pub fn get_connection_stats(&self) -> MeshProxyStats {
-        let connections = self.active_connections.read();
         let now = std::time::Instant::now();
 
         let mut active: usize = 0;
         let mut avg_duration = std::time::Duration::ZERO;
 
-        for conn in connections.values() {
+        for conn in self.active_connections.iter() {
             active += 1;
             avg_duration += now.duration_since(conn.started_at);
         }
