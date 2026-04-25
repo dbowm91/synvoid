@@ -1570,6 +1570,23 @@ impl ThreatIntelligenceManager {
                                 timestamp: MeshMessage::generate_timestamp(),
                             });
                         }
+
+                        // C7: Check trusted signers for non-global nodes
+                        if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+                            if !self.check_trusted_signer(source_node_id, signer_public_key) {
+                                tracing::warn!(
+                                    "ThreatAnnounce rejected: signer {} not in trusted_signers list",
+                                    signer_public_key
+                                );
+                                return Some(MeshMessage::ThreatAcknowledgement {
+                                    original_request_id: request_id.clone(),
+                                    node_id: self.node_id.clone().into(),
+                                    accepted: false,
+                                    reason: "Signer not in trusted_signers list".into(),
+                                    timestamp: MeshMessage::generate_timestamp(),
+                                });
+                            }
+                        }
                     }
                 }
 
