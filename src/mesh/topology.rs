@@ -58,6 +58,9 @@ impl MeshTopology {
         let route_cache = MokaCache::builder()
             .time_to_live(Duration::from_secs(3600))
             .max_capacity(100000)
+            .weigher(|k: &String, v: &CachedRoute| {
+                (k.len() + v.provider_node_id.len()) as u32
+            })
             .build();
 
         let verified_upstream_cache = MokaCache::builder()

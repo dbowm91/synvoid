@@ -455,7 +455,7 @@ impl DnsCache {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.cache.entry_count() as usize
+        self.inner.cache.iter().count()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -471,7 +471,7 @@ impl DnsCache {
         let fingerprints = inner.cache_fingerprints.read();
 
         CacheStats {
-            entries: inner.cache.entry_count() as usize,
+            entries: inner.cache.iter().count(),
             fingerprints_tracked: fingerprints.len(),
             max_entries: inner.max_capacity,
             enable_source_validation: inner.enable_source_validation,
