@@ -351,3 +351,47 @@ When using Moka with weighted entries (via `weigher` callback) AND time-to-live 
 - `entry_count()` may return 0 even when entries exist
 - Use `len()`, `positive_len()`, `negative_len()` methods which correctly use `iter().count()`
 - The `RecursiveDnsCache` in `src/dns/recursive_cache.rs` handles this correctly
+
+## Implementation Planning
+
+### Consolidated Plan Location
+
+The consolidated implementation plan is located at `plans/plan.md` (not root `plan.md`). This plan organizes all implementation items into 7 waves based on dependencies and parallelization opportunities:
+
+| Wave | Focus |
+|------|-------|
+| Critical | Must-fix items before any wave |
+| Wave 1 | Critical Security & Stability (~14 items) |
+| Wave 2 | Performance Hot Path (~12 items) |
+| Wave 3 | Mesh & Serverless Core (~18 items) |
+| Wave 4 | Web Stack & Plugins (~20 items) |
+| Wave 5 | Admin & API (~17 items) |
+| Wave 6 | Integration & Testing (~12 items) |
+| Wave 7 | Cross-Platform & Advanced (~14 items) |
+
+### Key Implementation Patterns Discovered
+
+1. **Serverless Pre-Warming**: `InstancePool::initialize()` method exists at `src/serverless/manager.rs:316` but is NOT called during pool creation (line 364-368). Must add `.initialize().await?` after pool creation.
+
+2. **Base64 Encoding Inconsistency**: `threat_intel.rs` uses mixed `STANDARD` and `URL_SAFE_NO_PAD` encodings. `get_public_key()` returns `URL_SAFE_NO_PAD` but `sync_from_dht()` at line 1231 uses `STANDARD` decoder.
+
+3. **Role Validation Composite Roles**: `src/mesh/peer_auth.rs:136-178` - composite roles like `GLOBAL_EDGE` and `EDGE_ORIGIN` may bypass security checks if not handled in correct order.
+
+4. **Ignored Tests Pattern**: Several tests are ignored with notes explaining why:
+   - `src/waf/ratelimit/sliding.rs` - DashMap deadlock (lines 356, 371, 387)
+   - `src/streaming/bidirectional.rs` - copy_bidirectional deadlock (lines 337, 365)
+
+### Verification Commands for Implementation
+
+When implementing plan items, verify with these approaches:
+```bash
+# Verify tests compile (not just cargo check)
+cargo test --lib --no-run
+
+# Run targeted tests
+cargo test --lib <test_name>
+cargo test --test integration_test
+
+# Check specific modules compile
+cargo check --lib -p maluwaf --features <feature>
+```
