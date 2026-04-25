@@ -28,6 +28,15 @@ When modifying hot path code, consider the multiplicative effect at scale:
 // - Each extra CPU cycle × 500K = significant overhead
 ```
 
+### Hot Path Locations
+
+The following code paths execute on every request and must be optimized:
+- `src/waf/attack_detection/` — WAF rule matching (runs per-request on all inputs)
+- `src/mesh/proxy.rs` — Mesh proxy routing, caching, provider selection
+- `src/http/server.rs` — HTTP request handling and dispatch
+- `src/proxy/mod.rs` — Upstream proxy, cookie/cache key construction
+- `src/plugin/wasm_runtime.rs` — WASM plugin filter/transform per request
+
 ### Serialization and Timestamp Patterns
 
 For distributed state (DHT, Mesh messages, Persistence), follow these standards:
@@ -38,6 +47,7 @@ For distributed state (DHT, Mesh messages, Persistence), follow these standards:
    - Use `crate::mesh::safe_unix_timestamp()` or `crate::utils::current_timestamp()` to get the current time.
    - Use `.saturating_sub()` for duration calculations.
 4. **Binary Signatures**: Cryptographic signatures (Ed25519) should operate on `&[u8]`. Use `MeshMessageSigner::sign/verify` with binary data. Use `postcard` to generate stable signable bytes for structs.
+5. **Base64 Encoding**: Always use `URL_SAFE_NO_PAD` for mesh/DHT data. `get_public_key()` at `src/mesh/protocol.rs:145` returns `URL_SAFE_NO_PAD`. Never use `STANDARD` decoder for keys synced via DHT.
 
 Example of stable signable content:
 ```rust
@@ -91,6 +101,12 @@ cargo test --lib --no-run
 
 **`cargo check` vs test compilation**: `cargo check` does NOT compile `#[cfg(test)]` code. Always run `cargo test --lib --no-run` to verify test code compiles. Visibility errors in cross-module test access (e.g., sibling modules calling private methods) will only surface during test compilation.
 
+**Ignored tests**: Several tests are marked `#[ignore]` with explanations:
+- `src/waf/ratelimit/sliding.rs:356,372,388` — DashMap initialization hang in test context
+- `src/streaming/bidirectional.rs:337,365` — copy_bidirectional ring buffer deadlock
+- `src/waf/traffic_shaper/bucket.rs:~150` — Flaky timing-dependent test
+- `src/process/socket_fd.rs:626,648` — Require cross-process FD transfer (SCM_RIGHTS)
+
 ## Codebase Structure
 
 ### Key Modules
@@ -99,6 +115,12 @@ cargo test --lib --no-run
 - `src/overseer/` - Master process orchestration
 - `src/master/` - Parent process implementation
 - `src/worker/` - Worker process implementation
+- `src/mesh/` - Mesh networking (proxy, transport, DHT, threat intel, YARA)
+- `src/mesh/backend.rs` - `MeshBackend`/`MeshBackendPool` (health checking, pool selection)
+- `src/waf/` - WAF engine (attack detection, rate limiting, bot protection)
+- `src/plugin/` - WASM plugin runtime and instance pooling
+- `src/serverless/` - Serverless function management
+- `src/admin/` - Admin API (handlers, WebSocket, OpenAPI)
 - `tests/` - Integration tests
 
 ### Admin API Documentation
@@ -119,6 +141,15 @@ The overseer/master/worker architecture uses:
 - `Message` enum in `src/process/ipc.rs` (re-exported via `src/process/mod.rs`) for communication
 - `ProcessManager` for worker lifecycle
 - Health checks via IPC heartbeat messages
+
+### Key Mesh Components
+
+- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. **Note**: These types exist but are NOT yet wired into HTTP request handling (see plan item C1).
+- `MeshProxy` at `src/mesh/proxy.rs` — request routing, caching, provider selection
+- `MeshTransport` at `src/mesh/transport.rs` — peer communication, transport initialization
+- `DHT` at `src/mesh/dht/` — distributed hash table for state sync
+- Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN)
+- `ReplayProtection` at `src/mesh/protocol.rs:153-196` — exists but is dead code (`check_and_add()` never called)
 
 ## Adding Tests
 
@@ -186,7 +217,7 @@ Key features that affect testing:
 - `post-quantum` - Post-quantum cryptography
 - Serverless functions use WASM (wasmtime), not Deno
 
-**Note**: WireGuard transport has been removed from the codebase.
+**Note**: WireGuard transport is deprecated and non-functional — the system falls back to QUIC transport with a warning. Code still exists at `src/mesh/wireguard_mesh.rs`.
 
 ## Common Patterns
 
@@ -212,17 +243,7 @@ The socket handoff feature uses specific Message variants with these fields:
 | `SocketHandoffComplete` | `success: bool`, `fd_count: usize` |
 | `SocketHandoffFailed` | `error: String` |
 
-```rust
-// Example socket handoff messages
-let request = Message::SocketHandoffRequest {
-    socket_path: "/tmp/handoff.sock".to_string(),
-};
-let ready = Message::SocketHandoffReady { ports: vec![8080, 8443] };
-let complete = Message::SocketHandoffComplete { success: true, fd_count: 2 };
-let failed = Message::SocketHandoffFailed { error: "Connection failed".to_string() };
-```
-
-Socket handoff tests require the `socket-handoff` feature:
+Socket handoff tests require the `socket-handoff` feature.
 
 ### Testing Worker Lifecycle
 
@@ -248,7 +269,6 @@ assert!(config.auto_restart);
 ```rust
 use maluwaf::dns::trust_anchor::{TrustAnchorManager, TrustAnchorConfig, Rfc5011Event};
 
-// Create manager with custom timeouts
 let config = TrustAnchorConfig {
     pending_observation_days: 30,
     revocation_grace_days: 30,
@@ -258,16 +278,8 @@ let config = TrustAnchorConfig {
 };
 let manager = TrustAnchorManager::new(config);
 
-// Observe a new key
 let event = manager.observe_dnskey_at_root(key_tag, algorithm, &public_key, false);
 assert!(matches!(event, Rfc5011Event::NewKeySeen { .. }));
-
-// Check trust anchor with CDS digest
-let event = manager.trust_anchor_check(key_tag, algorithm, digest_type, &digest);
-assert!(matches!(event, Rfc5011Event::KeyPending { .. }));
-
-// Process RFC 5011 updates
-let events = manager.process_rfc5011_updates();
 ```
 
 ### Dropped Event Metrics
@@ -295,6 +307,12 @@ if sender.send(event).is_err() {
 
 Query via `get_dropped_event_counts() -> DroppedEventCounts` (per-category breakdown + total).
 
+### Concurrency Patterns
+
+- **DashMap** (170+ uses in codebase): Preferred over `RwLock<HashMap>` for hot paths. Use for any map accessed on every request.
+- **Atomic types** (`AtomicU64`, `AtomicU32`, etc.): Use for scalar counters and state flags instead of `RwLock<T>` where T is a simple type.
+- **Moka Cache**: Use for bounded caches with TTL. Configure both `max_capacity` and `time_to_live`.
+
 ## File Naming Conventions
 
 - Source files: `snake_case.rs`
@@ -305,26 +323,18 @@ Query via `get_dropped_event_counts() -> DroppedEventCounts` (per-category break
 
 ### Trust Anchor Configuration
 
-The `TrustAnchorConfig` struct supports separate timeout configuration for RFC 5011 state transitions:
-
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `pending_observation_days` | 30 | Time a new key spends in Pending state before becoming Valid (RFC 5011 Section 3.2) |
-| `revocation_grace_days` | 30 | Time a revoked key spends before being Removed (RFC 5011 Section 4) |
-| `extended_removal_days` | 60 | Time a removed key spends before being Purged from storage |
-| `trust_anchor_retention_days` | 7 | Time a Valid key can be absent before being marked Missing |
+| `pending_observation_days` | 30 | Time in Pending before Valid (RFC 5011 Section 3.2) |
+| `revocation_grace_days` | 30 | Time before Removed (RFC 5011 Section 4) |
+| `extended_removal_days` | 60 | Time before Purged from storage |
+| `trust_anchor_retention_days` | 7 | Time Valid key absent before Missing |
 
 ### RFC 5011 State Machine
 
-Keys transition through these states:
-1. **Seen** - Key observed in DNSKEY RRset but not validated
-2. **Pending** - Key validated via CDS/CDNSKEY digest, awaiting observation period
-3. **Valid** - Key is trusted for DNSSEC validation
-4. **Revoked** - Key has REVOKE bit set
-5. **Removed** - Revoked key waiting for extended confirmation
-6. **Missing** - Valid key not seen for retention period
+Keys transition: **Seen** → **Pending** → **Valid** → **Revoked** → **Removed** → **Missing**
 
-**Missing→Pending restoration**: Only keys that were previously Valid (trust_point != 0) can auto-restore via `observe_dnskey_at_root()`. Keys that were never Valid must go through digest verification via `trust_anchor_check()` first.
+**Missing→Pending restoration**: Only keys previously Valid (trust_point != 0) can auto-restore via `observe_dnskey_at_root()`. Others must go through `trust_anchor_check()` first.
 
 ## Important Notes
 
@@ -333,6 +343,7 @@ Keys transition through these states:
 3. **Async tests** - Use `#[tokio::test]` for async code
 4. **Platform-specific tests** - Use `#[cfg(unix)]` or `#[cfg(windows)]`
 5. **Key tag calculation** - Use `crate::dns::dnssec::calculate_key_tag` for RFC 4034 compliant key tags
+6. **Base64 consistency** - Always `URL_SAFE_NO_PAD` for mesh/DHT, never `STANDARD`
 
 ### Startup Validation Patterns
 
@@ -354,36 +365,10 @@ When using Moka with weighted entries (via `weigher` callback) AND time-to-live 
 
 ## Implementation Planning
 
-### Consolidated Plan Location
+The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all implementation items into 7 waves (plus a Critical pre-wave) with dependency tracking and sub-agent execution guidance.
 
-The consolidated implementation plan is located at `plans/plan.md` (not root `plan.md`). This plan organizes all implementation items into 7 waves based on dependencies and parallelization opportunities:
+### Verification Commands
 
-| Wave | Focus |
-|------|-------|
-| Critical | Must-fix items before any wave |
-| Wave 1 | Critical Security & Stability (~14 items) |
-| Wave 2 | Performance Hot Path (~12 items) |
-| Wave 3 | Mesh & Serverless Core (~18 items) |
-| Wave 4 | Web Stack & Plugins (~20 items) |
-| Wave 5 | Admin & API (~17 items) |
-| Wave 6 | Integration & Testing (~12 items) |
-| Wave 7 | Cross-Platform & Advanced (~14 items) |
-
-### Key Implementation Patterns Discovered
-
-1. **Serverless Pre-Warming**: `InstancePool::initialize()` method exists at `src/serverless/manager.rs:316` but is NOT called during pool creation (line 364-368). Must add `.initialize().await?` after pool creation.
-
-2. **Base64 Encoding Inconsistency**: `threat_intel.rs` uses mixed `STANDARD` and `URL_SAFE_NO_PAD` encodings. `get_public_key()` returns `URL_SAFE_NO_PAD` but `sync_from_dht()` at line 1231 uses `STANDARD` decoder.
-
-3. **Role Validation Composite Roles**: `src/mesh/peer_auth.rs:136-178` - composite roles like `GLOBAL_EDGE` and `EDGE_ORIGIN` may bypass security checks if not handled in correct order.
-
-4. **Ignored Tests Pattern**: Several tests are ignored with notes explaining why:
-   - `src/waf/ratelimit/sliding.rs` - DashMap deadlock (lines 356, 371, 387)
-   - `src/streaming/bidirectional.rs` - copy_bidirectional deadlock (lines 337, 365)
-
-### Verification Commands for Implementation
-
-When implementing plan items, verify with these approaches:
 ```bash
 # Verify tests compile (not just cargo check)
 cargo test --lib --no-run
@@ -394,4 +379,8 @@ cargo test --test integration_test
 
 # Check specific modules compile
 cargo check --lib -p maluwaf --features <feature>
+
+# Format and lint
+cargo fmt
+cargo clippy -- -D warnings
 ```
