@@ -340,6 +340,16 @@ where
 
     let mut accumulated = BytesMut::new();
     if let Some(cl) = content_length {
+        if cl > max_body_size {
+            tracing::warn!(
+                client_ip = %client_ip,
+                content_length = cl,
+                limit = max_body_size,
+                "Content-Length exceeds max streaming body size limit"
+            );
+            metrics::counter!(protocol.counter_too_large()).increment(1);
+            return Err(());
+        }
         accumulated.reserve(cl);
     }
     let mut waf_checked_up_to: usize = 0;

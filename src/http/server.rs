@@ -452,6 +452,7 @@ impl HttpServer {
         let drain_state = self.drain_state.clone();
         let mesh_config = self.mesh_config.clone();
         let mesh_transport = self.mesh_transport.clone();
+        let mesh_backend_pool = self.mesh_backend_pool.clone();
         let metrics = self.metrics.clone();
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();

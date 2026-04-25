@@ -1008,24 +1008,32 @@ impl UnifiedServer {
         #[cfg(feature = "dns")]
         let dns_jh: Option<tokio::task::JoinHandle<()>> = {
             match &self.dns_server {
-                Some(dns_server)
-                    if self
-                        .mesh_transport
-                        .as_ref()
-                        .map(|mt| mt.is_global_node())
-                        .unwrap_or(true) =>
-                {
-                    let dns_server = dns_server.clone();
-                    Some(tokio::spawn(async move {
-                        let mut server = (*dns_server).clone();
-                        if let Err(e) = server.start().await {
-                            tracing::error!("DNS server error: {}", e);
+                Some(dns_server) => {
+                    let can_start = if let (Some(mt), Some(cfg)) = (
+                        self.mesh_transport.as_ref(),
+                        cfg.main.mesh.as_ref(),
+                    ) {
+                        if cfg.dns_mesh_mode_only {
+                            mt.is_global_node()
+                        } else {
+                            true
                         }
-                    }))
-                }
-                Some(_) => {
-                    tracing::warn!("DNS server requires global mesh role; skipping start");
-                    None
+                    } else {
+                        true
+                    };
+
+                    if can_start {
+                        let dns_server = dns_server.clone();
+                        Some(tokio::spawn(async move {
+                            let mut server = (*dns_server).clone();
+                            if let Err(e) = server.start().await {
+                                tracing::error!("DNS server error: {}", e);
+                            }
+                        }))
+                    } else {
+                        tracing::info!("Skipping DNS server: dns_mesh_mode_only=true and node is not global");
+                        None
+                    }
                 }
                 None => None,
             }
