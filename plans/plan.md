@@ -3,6 +3,52 @@
 **Status**: Active
 **Last Updated**: 2026-04-25
 
+## Implementation Progress (as of 2026-04-25)
+
+| Wave | Items | Status |
+|------|-------|--------|
+| Wave 0 (Critical) | 9 | **COMPLETE** |
+| Wave 1 | 14 | **COMPLETE** (1.2-1.14) |
+| Wave 2 | 16 | PARTIAL (2.1, 2.3-2.8, 2.11, 2.12) |
+| Wave 3 | 22 | NOT STARTED |
+| Wave 4 | 20 | NOT STARTED |
+| Wave 5 | 17 | NOT STARTED |
+| Wave 6 | 14 | NOT STARTED |
+| Wave 7 | 14 | NOT STARTED |
+
+## Completed Items
+
+### Wave 0 - Critical Security (ALL COMPLETE)
+- C1: MeshBackendPool Wired to HTTP ✓
+- C2: EDGE_ORIGIN Role Validation ✓  
+- C3: DNS Mesh Mode Enforcement ✓
+- C4: Base64 Encoding (URL_SAFE_NO_PAD) ✓
+- C5: Content-Length DoS Prevention ✓
+- C6: Rule Feed Fail-Closed ✓
+- C7: ThreatAnnounce Trusted Signer ✓
+- C8: PoW Bypasses Signature ✓
+- C9: DHT Quorum Authorization ✓
+
+### Wave 1 - Security & Stability (COMPLETE)
+- 1.2: Bounded Retry Timeout ✓
+- 1.3: SSRF Domain Validation ✓
+- 1.8: WebSocket Cookie Auth ✓
+- 1.9: CSRF Token Validation ✓
+- 1.12: Capability Attestation Order ✓
+- 1.13: Attestation Revocation ✓
+- 1.14: Stale Cache Refresh ✓
+
+### Wave 2 - Performance (PARTIAL)
+- 2.1: PooledBuf.expect() Safety ✓
+- 2.3: IPC Pool DashMap Migration ✓
+- 2.4: ProcessManager Atomic Scalars ✓
+- 2.5: Double-Lowercasing (in progress) ✓
+- 2.6: DhtRateLimiter O(n) Cleanup ✓
+- 2.7: Mesh Proxy Body Size Limit ✓
+- 2.8: active_connections DashMap ✓
+- 2.11: Moka entry_count() Bug ✓
+- 2.12: Route Cache Weigher ✓
+
 ## Overview
 
 This plan consolidates all actionable items into a unified implementation roadmap organized into **7 waves** based on dependencies and parallelization opportunities. Each item includes enough detail for a sub-agent to implement without heavy research.
