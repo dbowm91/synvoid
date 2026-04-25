@@ -535,6 +535,22 @@ impl DnsServer {
     }
 
     async fn start_standard_mode(&mut self) -> Result<(), String> {
+        // C3: Check dns_mesh_mode_only enforcement
+        // If dns_mesh_mode_only is set and this node is not global, skip DNS binding
+        let mesh_config = self.mesh_transport.as_ref().map(|t| {
+            let cfg = t.get_config();
+            (cfg.dns_mesh_mode_only, cfg.role.is_global())
+        });
+
+        let (dns_mesh_mode_only, is_global) = mesh_config.unwrap_or((false, false));
+
+        if dns_mesh_mode_only && !is_global {
+            tracing::info!(
+                "Skipping DNS socket binding: dns_mesh_mode_only=true and node is not global"
+            );
+            return Ok(());
+        }
+
         let bind_addr = SocketAddr::from(([0, 0, 0, 0], self.config.port));
 
         let socket = UdpSocket::bind(bind_addr)

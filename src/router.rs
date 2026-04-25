@@ -62,6 +62,7 @@ pub enum BackendType {
     Static,
     QuicTunnel,
     Serverless,
+    Mesh,
 }
 
 #[derive(Clone)]

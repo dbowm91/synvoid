@@ -63,6 +63,7 @@ pub struct UnifiedServer {
     tunnel_config: Option<TunnelConfig>,
     drain_state: Option<Arc<WorkerDrainState>>,
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+    mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
@@ -453,6 +454,15 @@ impl UnifiedServer {
     ) -> Self {
         self.serverless_manager = Some(manager);
         self
+    }
+
+    pub fn with_mesh_backend_pool(mut self, pool: Arc<crate::mesh::MeshBackendPool>) -> Self {
+        self.mesh_backend_pool = Some(pool);
+        self
+    }
+
+    pub fn get_mesh_backend_pool(&self) -> Option<Arc<crate::mesh::MeshBackendPool>> {
+        self.mesh_backend_pool.clone()
     }
 
     pub fn get_serverless_manager(
