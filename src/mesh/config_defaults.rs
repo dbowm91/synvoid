@@ -20,6 +20,10 @@ pub fn default_global_seeds() -> Vec<MeshSeedNode> {
     vec![]
 }
 
+pub fn default_request_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for MeshConfig {
     fn default() -> Self {
         Self {
@@ -63,6 +67,7 @@ impl Default for MeshConfig {
             disable_direct_origin: false,
             capabilities_enabled: true,
             require_tier_claim: false,
+            request_timeout_secs: default_request_timeout_secs(),
             stake: None,
             seed_tofu: None,
             cached_pow: Arc::new(RwLock::new(None)),

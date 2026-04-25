@@ -2621,6 +2621,36 @@ impl MeshTransport {
                 let _ = send_stream.finish();
                 return Ok(());
             }
+        } else {
+            match tokio::net::lookup_host(format!("{}:{}", host_str, port)).await {
+                Ok(ips) => {
+                    for ip in ips {
+                        let ip_addr = ip.ip();
+                        if crate::proxy::headers::is_private_ip(&ip_addr) {
+                            tracing::warn!(
+                                "SSRF prevention: rejecting connection to private IP {} resolved from domain {} via mesh proxy",
+                                ip_addr,
+                                host_str
+                            );
+                            let forbidden =
+                                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                            send_stream
+                                .write_all(forbidden)
+                                .await
+                                .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                            let _ = send_stream.finish();
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to resolve domain {} for SSRF check: {}",
+                        host_str,
+                        e
+                    );
+                }
+            }
         }
 
         let addr = format!("{}:{}", host_str, port);

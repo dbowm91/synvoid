@@ -484,7 +484,7 @@ impl MeshProxy {
                     "Returning stale cached policy for {}, will revalidate in background",
                     upstream_id
                 );
-                self.mark_stale_cache_for_refresh(&upstream_id);
+                self.mark_stale_cache_for_refresh(upstream_id.to_string());
                 return Ok((upstream_id, cached));
             }
 
@@ -788,7 +788,19 @@ impl MeshProxy {
         upstream_id: &str,
         req: Request<Incoming>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError> {
+        let timeout_duration = Duration::from_secs(self.config.request_timeout_secs);
+        let start = Instant::now();
+
         loop {
+            if start.elapsed() > timeout_duration {
+                tracing::warn!(
+                    "Route request to upstream {} exceeded timeout of {}s",
+                    upstream_id,
+                    timeout_duration.as_secs()
+                );
+                return Err(MeshProxyError::RequestTimeout(timeout_duration.as_secs()));
+            }
+
             if self.topology.is_upstream_blocked(upstream_id).await {
                 tracing::warn!("Upstream {} is blocked due to ratelimit", upstream_id);
 
@@ -869,7 +881,7 @@ impl MeshProxy {
             if let Some(ref c) = cached_for_check {
                 let stale_ttl = Duration::from_secs(self.config.stale_cache_ttl_secs);
                 if c.expires_at < Instant::now() - stale_ttl {
-                    self.mark_stale_cache_for_refresh(upstream_id);
+                    self.mark_stale_cache_for_refresh(upstream_id.to_string());
                 }
             }
 
@@ -1084,17 +1096,24 @@ impl MeshProxy {
             .unwrap_or_else(|| MeshProxyError::NoRouteToUpstream(upstream_id.to_string())))
     }
 
-    fn mark_stale_cache_for_refresh(&self, upstream_id: &str) {
-        if let Some(cached) = self.policy_cache.get(upstream_id) {
+    fn mark_stale_cache_for_refresh(&self, upstream_id: String) {
+        if let Some(cached) = self.policy_cache.get(&upstream_id) {
             let refreshed = CachedPolicy {
-                provider_node_id: cached.provider_node_id,
-                upstream_url: cached.upstream_url,
-                waf_policy: cached.waf_policy,
+                provider_node_id: cached.provider_node_id.clone(),
+                upstream_url: cached.upstream_url.clone(),
+                waf_policy: cached.waf_policy.clone(),
                 protocol: cached.protocol,
                 priority_tier: cached.priority_tier,
                 expires_at: Instant::now() + Duration::from_secs(1),
             };
-            self.policy_cache.insert(upstream_id.to_string(), refreshed);
+            self.policy_cache.insert(upstream_id.clone(), refreshed);
+            let upstream = upstream_id;
+            let cache = self.policy_cache.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                cache.remove(&upstream);
+                tracing::debug!("Stale cache invalidated for {}, will re-fetch on next request", upstream);
+            });
         }
     }
 
@@ -1729,6 +1748,8 @@ pub enum MeshProxyError {
     ResponseBuildError(String),
     #[error("Timeout")]
     Timeout,
+    #[error("Request timeout after {0}s")]
+    RequestTimeout(u64),
     #[error("Send failed: {0}")]
     SendFailed(String),
     #[error("Tier threshold not met for upstream: {upstream_id}, alternatives available")]

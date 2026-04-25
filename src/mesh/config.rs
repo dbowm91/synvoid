@@ -799,6 +799,8 @@ pub struct MeshConfig {
     pub capabilities_enabled: bool,
     #[serde(default)]
     pub require_tier_claim: bool,
+    #[serde(default = "config_defaults::default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
     #[serde(default)]
     pub stake: Option<crate::mesh::dht::stake::StakeConfig>,
     #[serde(default)]

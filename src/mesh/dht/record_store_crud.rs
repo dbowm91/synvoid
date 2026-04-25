@@ -108,6 +108,17 @@ impl RecordStoreManager {
         let dht_key = DhtKey::from_str(&record.key);
         let is_self_record = dht_key.is_self_record(&self.node_id);
 
+        if let Some(ref verifier) = self.capability_verifier {
+            if !verifier.verify_capability_for_key(&record.source_node_id, &record.key) {
+                tracing::warn!(
+                    "Record store: capability verification failed for node {} on key {}",
+                    record.source_node_id,
+                    record.key
+                );
+                return false;
+            }
+        }
+
         if dht_key.is_privileged() {
             if let Err(e) = self.access_control.require_global_node() {
                 tracing::warn!(
@@ -156,17 +167,6 @@ impl RecordStoreManager {
                 record.key
             );
             return false;
-        }
-
-        if let Some(ref verifier) = self.capability_verifier {
-            if !verifier.verify_capability_for_key(&record.source_node_id, &record.key) {
-                tracing::warn!(
-                    "Record store: capability verification failed for node {} on key {}",
-                    record.source_node_id,
-                    record.key
-                );
-                return false;
-            }
         }
 
         if self.can_cache_on_edge(&record.key) {

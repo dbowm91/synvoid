@@ -1,6 +1,7 @@
 use base64::Engine;
 use dashmap::DashMap;
 use ed25519_dalek::{Signer, Verifier};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -361,6 +362,7 @@ pub fn validate_edge_node_with_attestation(
     peer_node_id: &str,
     record_store: &parking_lot::RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
     authorized_global_pubkeys: &[String],
+    revoked_nodes: Option<&HashSet<String>>,
 ) -> Result<(), String> {
     let edge_key = format!("edge_attestation:{}", peer_node_id);
     let guard = record_store.read();
@@ -399,6 +401,15 @@ pub fn validate_edge_node_with_attestation(
             "Edge node {} has invalid attestation signature",
             peer_node_id
         ));
+    }
+
+    if let Some(revoked) = revoked_nodes {
+        if revoked.contains(&attestation.signer_public_key) {
+            return Err(format!(
+                "Edge node {} attestation signed by revoked global node",
+                peer_node_id
+            ));
+        }
     }
 
     let mut key_verified = false;
