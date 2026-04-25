@@ -1227,11 +1227,9 @@ impl ThreatIntelligenceManager {
                         indicator.timestamp,
                         indicator.source_node_id
                     );
+                    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
                     let sig_bytes = signature.clone();
-                    let pk_bytes = match base64::Engine::decode(
-                        &base64::engine::general_purpose::STANDARD,
-                        signer_pk,
-                    ) {
+                    let pk_bytes = match URL_SAFE_NO_PAD.decode(signer_pk) {
                         Ok(p) => p,
                         Err(_) => {
                             tracing::warn!(

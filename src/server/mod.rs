@@ -1009,18 +1009,20 @@ impl UnifiedServer {
         let dns_jh: Option<tokio::task::JoinHandle<()>> = {
             match &self.dns_server {
                 Some(dns_server) => {
-                    let can_start = if let (Some(mt), Some(cfg)) = (
-                        self.mesh_transport.as_ref(),
-                        cfg.main.mesh.as_ref(),
-                    ) {
-                        if cfg.dns_mesh_mode_only {
-                            mt.is_global_node()
+                    let is_global = self.mesh_transport.as_ref()
+                        .map(|mt| mt.is_global_node())
+                        .unwrap_or(false);
+                    let dns_mesh_mode_only = {
+                        let topology = self.mesh_transport.as_ref()
+                            .map(|mt| mt.get_topology());
+                        if let Some(ref t) = topology {
+                            let cfg = t.config();
+                            cfg.dht.as_ref().map(|d| d.dns_mesh_mode_only).unwrap_or(true)
                         } else {
                             true
                         }
-                    } else {
-                        true
                     };
+                    let can_start = !dns_mesh_mode_only || is_global;
 
                     if can_start {
                         let dns_server = dns_server.clone();

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use flate2::read::GzDecoder;
 use flate2::{write::GzEncoder, Compression};
 use parking_lot::RwLock;
@@ -527,8 +528,7 @@ impl YaraRulesManager {
                 version, content_hash, self.node_id, timestamp, chunk_count, is_chunked
             );
             let sig = signer.sign(content.as_bytes());
-            let pk = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
+            let pk = URL_SAFE_NO_PAD.encode(
                 signer.get_public_key_bytes(),
             );
             (sig, Some(pk))
@@ -589,8 +589,7 @@ impl YaraRulesManager {
                     "content_hash": content_hash,
                     "node_id": self.node_id,
                     "timestamp": timestamp,
-                    "compressed_data": base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
+                    "compressed_data": URL_SAFE_NO_PAD.encode(
                         chunk
                     ),
                     "signature": chunk_signature,
@@ -619,8 +618,7 @@ impl YaraRulesManager {
                     version, rules, content_hash, self.node_id, timestamp
                 );
                 let sig = signer.sign(content.as_bytes());
-                let pk = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
+                let pk = URL_SAFE_NO_PAD.encode(
                     signer.get_public_key_bytes(),
                 );
                 (sig, Some(pk))
@@ -723,7 +721,7 @@ impl YaraRulesManager {
 
             let compressed_b64 = value.get("compressed_data").and_then(|v| v.as_str())?;
             let compressed_data =
-                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, compressed_b64)
+                URL_SAFE_NO_PAD.decode( compressed_b64)
                     .ok()?;
 
             if version_str.is_none() {
@@ -747,8 +745,7 @@ impl YaraRulesManager {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if !chunk_signature.is_empty() && !signer_pk.is_empty() {
-                let sig_bytes = match base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
+                let sig_bytes = match URL_SAFE_NO_PAD.decode(
                     chunk_signature,
                 ) {
                     Ok(s) => s,
@@ -757,8 +754,7 @@ impl YaraRulesManager {
                         return None;
                     }
                 };
-                let pk_bytes = match base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
+                let pk_bytes = match URL_SAFE_NO_PAD.decode(
                     signer_pk,
                 ) {
                     Ok(p) => p,
@@ -912,8 +908,7 @@ impl YaraRulesManager {
                     };
 
                     if !manifest_signature.is_empty() && !manifest_signer_pk.is_empty() {
-                        let sig_bytes = match base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
+                        let sig_bytes = match URL_SAFE_NO_PAD.decode(
                             manifest_signature,
                         ) {
                             Ok(s) => s,
@@ -925,8 +920,7 @@ impl YaraRulesManager {
                                 continue;
                             }
                         };
-                        let pk_bytes = match base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
+                        let pk_bytes = match URL_SAFE_NO_PAD.decode(
                             manifest_signer_pk,
                         ) {
                             Ok(p) => p,
@@ -1782,8 +1776,7 @@ impl YaraRulesManager {
                 if !signature.is_empty() && !signer_public_key.is_empty() {
                     if let Some(ref signer) = self.signer {
                         let sign_content = format!("{}:{}", version, rules);
-                        let pk_bytes = base64::engine::general_purpose::STANDARD
-                            .decode(signer_public_key)
+                        let pk_bytes = URL_SAFE_NO_PAD.decode(signer_public_key)
                             .unwrap_or_default();
                         if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(

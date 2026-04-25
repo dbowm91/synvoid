@@ -319,11 +319,11 @@ impl RuleFeedManager {
 
     fn parse_embedded_key(key_str: &str) -> VerifyingKey {
         if key_str == PLACEHOLDER_KEY {
-            tracing::warn!(
-                "Rule feed public key is still set to the placeholder value. \
+            panic!(
+                "RULE FEED SECURITY VIOLATION: Public key still set to placeholder value. \
                  Set [waf.rule_feed.public_key] in the TOML config to a valid \
-                 base64-encoded 32-byte Ed25519 verifying key. \
-                 Signature verification will fail until a real key is configured."
+                 base64-encoded 32-byte Ed25519 verifying key. Refusing to start with \
+                 insecure default."
             );
         }
 
@@ -338,18 +338,11 @@ impl RuleFeedManager {
             }
         }
 
-        // No valid key provided — generate a random one at startup.
-        // This means rule signature verification will only work if the feed
-        // server signs with the same key. Log a warning so operators know.
-        tracing::warn!(
-            "No valid embedded Ed25519 public key configured. Set [waf.rule_feed.public_key] \
-             in the TOML config to a base64-encoded 32-byte Ed25519 verifying key. \
-             Generating a random key — rule feed signature verification will fail."
+        panic!(
+            "RULE FEED SECURITY VIOLATION: No valid embedded Ed25519 public key configured. \
+             Set [waf.rule_feed.public_key] in the TOML config to a base64-encoded \
+             32-byte Ed25519 verifying key. Refusing to start."
         );
-        let mut key_bytes = [0u8; 32];
-        rand::Rng::fill(&mut rand::rng(), &mut key_bytes);
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
-        signing_key.verifying_key()
     }
 
     pub fn start_background_fetching(self: &Arc<Self>) {
