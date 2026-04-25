@@ -119,19 +119,31 @@ pub async fn csrf_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    let bearer_token: Option<String> = request
+    let session_id = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|t| t.to_string());
 
-    if let Some(token) = csrf_token {
-        if let Some(session_id) = bearer_token {
-            if state.validate_csrf(&token, &session_id) {
-                return next.run(request).await;
-            }
+    let csrf_token = match csrf_token {
+        Some(token) => token,
+        None => {
+            tracing::warn!("CSRF validation failed for {} {} - missing CSRF token", method, path);
+            return StatusCode::FORBIDDEN.into_response();
         }
+    };
+
+    let session_id = match session_id {
+        Some(id) => id,
+        None => {
+            tracing::warn!("CSRF validation failed for {} {} - missing session", method, path);
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    };
+
+    if state.validate_csrf(&csrf_token, &session_id) {
+        return next.run(request).await;
     }
 
     tracing::warn!("CSRF validation failed for {} {}", method, path);
