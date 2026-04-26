@@ -1,9 +1,9 @@
 #![allow(unused_variables, unused_mut)]
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use base64::Engine;
 
 pub const GENESIS_ORG_ID: &str = "_genesis";
 pub const ADMIN_ORG_ID: &str = "_admin";
@@ -56,7 +56,11 @@ impl OrgPublicKey {
         });
     }
 
-    pub fn verify_quorum(&self, authorized_global_keys: &HashMap<String, String>, total_signers: usize) -> bool {
+    pub fn verify_quorum(
+        &self,
+        authorized_global_keys: &HashMap<String, String>,
+        total_signers: usize,
+    ) -> bool {
         if self.quorum_signatures.is_empty() {
             return false;
         }
@@ -75,8 +79,11 @@ impl OrgPublicKey {
             }
 
             if let Some(pubkey_b64) = authorized_global_keys.get(&sig.signer_node_id) {
-                if let Some(verifier) = crate::integrity::protocol::Ed25519Verifier::from_base64(pubkey_b64) {
-                    let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&sig.signature);
+                if let Some(verifier) =
+                    crate::integrity::protocol::Ed25519Verifier::from_base64(pubkey_b64)
+                {
+                    let sig_b64 =
+                        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&sig.signature);
                     if verifier.verify_bytes(signable.as_bytes(), &sig_b64) {
                         valid_signatures += 1;
                         seen_signers.insert(sig.signer_node_id.clone());

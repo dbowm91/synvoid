@@ -401,7 +401,7 @@ impl MeshTransport {
         Self {
             config: config.clone(),
             topology,
-            cert_manager,
+            cert_manager: cert_manager.clone(),
             runtime: None,
             running: Arc::new(RwLock::new(false)),
             shutdown_tx: Arc::new(RwLock::new(None)),
@@ -433,6 +433,7 @@ impl MeshTransport {
                 if let Some(ref store) = record_store {
                     mgr.set_record_store(store.clone());
                 }
+                mgr.set_cert_manager(Arc::clone(&cert_manager));
                 Arc::new(mgr)
             },
             tier_key_store,

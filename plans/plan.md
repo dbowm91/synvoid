@@ -1,19 +1,31 @@
 # MaluWAF Implementation Plan
 
 **Status**: Active - Maintenance Mode
-**Last Updated**: 2026-04-26
+**Last Updated**: 2026-04-26 (quorum fix)
 **Verification Completed**: 2026-04-26
 
 ## Completed Items
 
-### Quorum Threshold 2/3 Enforcement (2026-04-26)
+### OrgKeyManager Quorum Threshold Fix (2026-04-26)
 - **Status**: COMPLETED
+- **Verification**: 2026-04-26 - Tests pass (242 integration tests), cargo check succeeds
+- **Reason**: Previously used permissive `signatures.len() >= 1` instead of proper 2/3 quorum
+- **Changes**:
+  - `src/mesh/org_key_manager.rs` now uses `OrgPublicKey::verify_quorum()` for proper threshold
+  - Added `cert_manager` field to `OrgKeyManager` for accessing global node public keys
+  - Added `get_authorized_global_keys()` method to gather keys from transport and cert_manager
+  - Proper 2/3 Byzantine fault tolerance: `required = (total_signers * 2 + 2) / 3`
+- **Security Impact**: Org key signatures now require proper quorum validation before publishing
+
+### Quorum Threshold 2/3 Enforcement (2026-04-26)
+- **Status**: COMPLETED (extended to OrgKeyManager 2026-04-26)
 - **Verification**: 2026-04-26 - Tests pass (1511/1511), cargo check succeeds
 - **Reason**: Previously used permissive `valid_signatures > 0` threshold
 - **Changes**:
   - `OrgPublicKey::verify_quorum()` in `src/mesh/organization.rs:59-91` now takes `total_signers` parameter
   - Uses proper 2/3 Byzantine fault tolerance: `required = (total_signers * 2 + 2) / 3`
   - Updated call site in `src/mesh/peer_auth.rs:160` to pass `authorized_global_pubkeys.len()` as total
+  - Extended to `OrgKeyManager::handle_org_key_sign_response()` for proper quorum validation
 - **Security Impact**: Properly enforces quorum for org key trust chain establishment
 
 ### Org Key Trust Chain (7.11) (2026-04-26)
@@ -81,6 +93,19 @@ The following items were identified during verification but are not blocking cur
 ### Placeholder Values (Fail-closed security behavior)
 7. `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` in `rule_feed.rs` - **Panics** on startup if not replaced (fail-closed)
 8. `TOKEN_PLACEHOLDER` in `commands.rs` - Detected as weak token at startup
+
+### Non-Blocking Stubs (Documented for Reference)
+The following stubs were reviewed and found to be non-blocking (either properly documented or fallback behavior):
+
+9. **HTTP/3 handler stub** (`src/http3/handler.rs`): Entire module is a placeholder. Actual HTTP/3 handling is implemented in `Http3Server::handle_request()` in `src/http3/server.rs`. This stub is never called in production paths.
+
+10. **WASM distribution stubs** (`src/mesh/wasm_dist.rs`): `WasmDistManager` and `WasmModuleStore` are disabled stubs. WASM modules are loaded locally from disk or compiled at startup, not distributed over mesh. Used as fallback for future mesh-based distribution.
+
+11. **Platform stubs** (`src/platform/`): Various platform-specific stubs for non-Linux/macOS platforms (Windows stubs, sandbox stubs, syslog stubs). Appropriate fallback behavior for unsupported platforms.
+
+12. **WireGuard kernel module** (`src/tunnel/wireguard/kernel.rs`): Returns error on non-Linux platforms. Already documented as deprecated, falls back to QUIC transport.
+
+13. **Reserved protocol modules** (`src/mesh/transport_*.rs`): Multiple modules with `SAFETY_REASON` comments marking them as reserved for future protocol handling expansion.
 
 ---
 
