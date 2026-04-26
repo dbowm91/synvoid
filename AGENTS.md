@@ -454,6 +454,15 @@ The following Admin API enhancements were implemented in the 2026-04-26 wave:
 - `GET /api/system/overseer` reads from status file for real-time data
 - Falls back to ProcessManager state if status file unavailable
 
+**Serverless Mesh Integration (2026-04-26)**
+
+Wave 3.2 implemented ServerlessInvokeRequest handler:
+- Added `handle_serverless_invoke_request()` in `transport_peer.rs`
+- Handles `MeshMessage::ServerlessInvokeRequest` variants in peer message loop
+- Calls `ServerlessManager.invoke_for_mesh()` with proper `CallerContext`
+- Logs success/failure for observability
+- Note: Remaining Wave 3 items (3.3-3.14) deferred due to dependency on mesh_id field and DHT watcher infrastructure
+
 **Config Versioning and Rollback**
 - `ConfigVersionManager` in `src/admin/audit.rs` tracks config snapshots
 - `GET /config/versions` - lists all saved config versions
