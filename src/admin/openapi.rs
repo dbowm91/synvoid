@@ -374,7 +374,10 @@ mod tests {
         assert!(openapi.info.description.is_some());
         assert!(openapi.info.contact.is_some());
 
-        assert!(matches!(openapi.openapi, openapi::OpenApiVersion::Version31));
+        assert!(matches!(
+            openapi.openapi,
+            openapi::OpenApiVersion::Version31
+        ));
     }
 
     #[test]

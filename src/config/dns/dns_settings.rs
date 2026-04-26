@@ -206,7 +206,9 @@ fn default_padding_mode() -> DnsPaddingMode {
     DnsPaddingMode::Normal
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsPaddingMode {
     #[default]
@@ -239,7 +241,9 @@ fn default_qname_log_level() -> QnameLogLevel {
     QnameLogLevel::Zone
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum QnamePrivacyMode {
     #[default]
@@ -248,7 +252,9 @@ pub enum QnamePrivacyMode {
     Full,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum QnameLogLevel {
     #[default]

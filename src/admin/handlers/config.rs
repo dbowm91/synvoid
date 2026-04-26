@@ -1205,11 +1205,10 @@ pub async fn get_tunnel_config(
 ) -> Result<Json<TunnelConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(TunnelConfigResponse {
-        config: serde_json::to_value(&config.main.tunnel)
-            .map_err(|e| {
-                tracing::error!("Failed to serialize tunnel config: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?,
+        config: serde_json::to_value(&config.main.tunnel).map_err(|e| {
+            tracing::error!("Failed to serialize tunnel config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?,
     }))
 }
 
@@ -1685,11 +1684,10 @@ pub async fn get_dns_config(
 ) -> Result<Json<DnsConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(DnsConfigResponse {
-        config: serde_json::to_value(&config.main.dns)
-            .map_err(|e| {
-                tracing::error!("Failed to serialize DNS config: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?,
+        config: serde_json::to_value(&config.main.dns).map_err(|e| {
+            tracing::error!("Failed to serialize DNS config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?,
     }))
 }
 
@@ -1711,8 +1709,8 @@ pub async fn update_dns_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateDnsConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    let dns_config: crate::config::dns::DnsConfig = serde_json::from_value(req.config)
-        .map_err(|e| {
+    let dns_config: crate::config::dns::DnsConfig =
+        serde_json::from_value(req.config).map_err(|e| {
             tracing::error!("Failed to parse DNS config: {}", e);
             StatusCode::BAD_REQUEST
         })?;
@@ -1894,11 +1892,9 @@ pub async fn get_mesh_config(
     _auth: OptionalAuth,
 ) -> Result<Json<MeshConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
-    let mesh_value = serde_json::to_value(&config.main.mesh)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(MeshConfigResponse {
-        config: mesh_value,
-    }))
+    let mesh_value =
+        serde_json::to_value(&config.main.mesh).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(MeshConfigResponse { config: mesh_value }))
 }
 
 #[utoipa::path(
@@ -1920,8 +1916,8 @@ pub async fn update_mesh_config(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
 
-    let mesh_config: crate::config::mesh::MeshConfig = serde_json::from_value(req.config)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mesh_config: crate::config::mesh::MeshConfig =
+        serde_json::from_value(req.config).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     {
         let mut config = state.process.config.write().await;
@@ -2319,8 +2315,8 @@ pub async fn validate_config(
     _auth: OptionalAuth,
     Json(req): Json<ValidateConfigRequest>,
 ) -> Result<Json<ValidateConfigResponse>, StatusCode> {
-    let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let main_config: crate::config::main::MainConfig =
+        serde_json::from_value(req.config).map_err(|_| StatusCode::BAD_REQUEST)?;
     match main_config.validate() {
         Ok(()) => Ok(Json(ValidateConfigResponse {
             valid: true,
@@ -2361,11 +2357,10 @@ pub async fn get_config_bundle(
 ) -> Result<Json<ConfigBundleResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(ConfigBundleResponse {
-        config: serde_json::to_value(&config.main.clone())
-            .map_err(|e| {
-                tracing::error!("Failed to serialize config: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?,
+        config: serde_json::to_value(config.main.clone()).map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?,
     }))
 }
 
@@ -2390,9 +2385,9 @@ pub async fn update_config_bundle(
 
     let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config.clone())
         .map_err(|e| {
-            tracing::error!("Failed to parse config: {}", e);
-            StatusCode::BAD_REQUEST
-        })?;
+        tracing::error!("Failed to parse config: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
 
     main_config.validate().map_err(|e| {
         tracing::error!("Config validation failed: {}", e);

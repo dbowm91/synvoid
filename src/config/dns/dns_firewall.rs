@@ -65,7 +65,9 @@ fn default_udp_buffer_size() -> usize {
     65535
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum FirewallAction {
     #[default]

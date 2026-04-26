@@ -172,7 +172,9 @@ pub struct AcmeConfig {
     pub terms_of_service_agreed: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum AcmeChallengeType {
     #[default]

@@ -4,7 +4,9 @@ use utoipa::ToSchema;
 
 use super::DnsConfigError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum RecursiveUpstreamProvider {
     #[default]

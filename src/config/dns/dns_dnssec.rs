@@ -156,7 +156,9 @@ pub struct HsmConfig {
     pub pin: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum HsmProvider {
     #[default]
@@ -164,7 +166,9 @@ pub enum HsmProvider {
     Soft,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum TsigAlgorithm {
     #[default]

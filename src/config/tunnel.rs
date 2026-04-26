@@ -214,7 +214,9 @@ fn default_connection_receive_window() -> u64 {
     64 * 1024 * 1024
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema, ToSchema)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema, ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum VpnAccessLevel {
     #[default]
