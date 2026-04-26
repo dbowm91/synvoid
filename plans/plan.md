@@ -149,8 +149,15 @@ The following Phase 2 items are deferred but non-blocking:
   - Updated documentation to reflect that `HickoryRecursor` handles minimization natively.
   - `HickoryResolver` (forwarder) continues to rely on upstream recursive resolvers for minimization.
 
-### Signed Rule Feed Phase 2
- (`docs/SIGNED_RULE_FEED.md:126-129`): Phase 2 of signed rule feed implementation is deferred. Phase 1 (core infrastructure with Ed25519 verification) is complete. Phase 2 includes integration with DefaultPatterns, hot-reload support, and version tracking.
+### Signed Rule Feed Phase 2 (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - `cargo check` succeeds, IPC message handling verified in code
+- **Changes**:
+  - Added `sqli` and `xss` to `DefaultPatterns` and enabled custom patterns for these categories.
+  - Updated `SqliDetector` and `XssDetector` to support both `libinjection` and pattern-based detection.
+  - Implemented hot-reload in `WafCore` and wired `RuleFeedManager` to broadcast updates to all workers via IPC.
+  - Added disk persistence for downloaded rules in `RuleFeedManager` using `storage_dir` config.
+  - Updated `AttackDetector` to be instance-based for better reloadability.
 
 3. **HSM PKCS#11 Key Retrieval** (`src/dns/hsm.rs:66-68`): The `key_id` field is marked as future HSM support. Full PKCS#11 key retrieval is not yet implemented.
 
