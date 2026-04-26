@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use openraft::Config;
 use openraft::Raft;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 // Define NodeId and Node for Raft
 pub type NodeId = u64;
@@ -55,21 +55,26 @@ pub struct ConsensusManager {
 }
 
 impl ConsensusManager {
-    pub async fn new(_node_id: NodeId, _rpc_addr: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(
+        _node_id: NodeId,
+        _rpc_addr: String,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let config = Config {
             cluster_name: "maluwaf-cluster".to_string(),
             ..Default::default()
         };
 
         let _config = Arc::new(config.validate()?);
-        
+
         // This is a stub - real implementation would initialize network and storage
         // let network = RaftNetworkPlaceholder;
         // let storage = RaftStoragePlaceholder;
         // let raft = Raft::new(node_id, config, network, storage).await?;
 
         // For now we return None to keep it as a documented stub but with types ready
-        tracing::warn!("Raft consensus is not fully implemented yet. Network and Storage layers are required.");
+        tracing::warn!(
+            "Raft consensus is not fully implemented yet. Network and Storage layers are required."
+        );
         Ok(Self { raft: None })
     }
 }

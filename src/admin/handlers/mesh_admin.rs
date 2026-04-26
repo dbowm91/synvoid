@@ -968,14 +968,10 @@ pub async fn create_organization(
     _auth: OptionalAuth,
     Json(payload): Json<CreateOrgRequest>,
 ) -> Result<Json<OrgResponse>, (StatusCode, String)> {
-    let mgr = state
-        .mesh
-        .org_key_manager
-        .as_ref()
-        .ok_or((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Org key manager not enabled".to_string(),
-        ))?;
+    let mgr = state.mesh.org_key_manager.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Org key manager not enabled".to_string(),
+    ))?;
 
     let org = mgr
         .create_organization(payload.org_id, payload.name)
@@ -1058,7 +1054,9 @@ pub async fn get_org_public_key(
     // Attempt sync first
     let _ = mgr.sync_from_dht().await;
 
-    let pub_key = mgr.get_org_public_key(&org_id).ok_or(StatusCode::NOT_FOUND)?;
+    let pub_key = mgr
+        .get_org_public_key(&org_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(Json(OrgPublicKeyResponse {
         org_id: pub_key.org_id,

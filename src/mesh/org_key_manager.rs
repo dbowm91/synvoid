@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use parking_lot::RwLock;
-use thiserror::Error;
-use base64::Engine;
-use crate::mesh::organization::{Organization, OrgKey, OrgPublicKey, QuorumSignature};
+use crate::mesh::cert::MeshCertManager;
+use crate::mesh::config::MeshNodeRole;
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::record_store::RecordStoreManager;
-use crate::mesh::config::MeshNodeRole;
-use crate::mesh::cert::MeshCertManager;
+use crate::mesh::organization::{OrgKey, OrgPublicKey, Organization, QuorumSignature};
+use base64::Engine;
+use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum OrgKeyError {
@@ -26,8 +26,8 @@ pub enum OrgKeyError {
 }
 
 use crate::mesh::protocol::{ArcStr, MeshMessage};
-use tokio::sync::mpsc::Sender;
 use crate::mesh::transport::MeshTransport;
+use tokio::sync::mpsc::Sender;
 
 pub struct OrgKeyManager {
     node_id: String,
@@ -72,36 +72,48 @@ impl OrgKeyManager {
         *self.cert_manager.write() = Some(cert_manager);
     }
 
-    pub async fn create_organization(&self, org_id: String, name: Option<String>) -> Result<Organization, OrgKeyError> {
+    pub async fn create_organization(
+        &self,
+        org_id: String,
+        name: Option<String>,
+    ) -> Result<Organization, OrgKeyError> {
         if !self.node_role.is_global() {
-            return Err(OrgKeyError::NotAuthorized("Only global nodes can create organizations".to_string()));
+            return Err(OrgKeyError::NotAuthorized(
+                "Only global nodes can create organizations".to_string(),
+            ));
         }
 
         let mut org = Organization::new(Some(org_id), name);
         let org_key = OrgKey::generate(Some(self.node_id.clone()));
         org.set_org_key(org_key);
-        
-        self.organizations.write().insert(org.org_id.clone(), org.clone());
-        
+
+        self.organizations
+            .write()
+            .insert(org.org_id.clone(), org.clone());
+
         // Initial publication of public part
         self.publish_org_public_key(&org).await?;
-        
+
         Ok(org)
     }
 
     pub async fn publish_org_public_key(&self, org: &Organization) -> Result<(), OrgKeyError> {
         let Some(ref org_key) = org.org_key else {
-             return Err(OrgKeyError::OrgKeyNotFound(org.org_id.clone()));
+            return Err(OrgKeyError::OrgKeyNotFound(org.org_id.clone()));
         };
 
         let pub_key = OrgPublicKey::new(org.org_id.clone(), org_key);
         let dht_key = DhtKey::org_public_key(&org.org_id);
-        
-        let store = self.record_store.read().clone().ok_or(OrgKeyError::RecordStoreNotSet)?;
-        
+
+        let store = self
+            .record_store
+            .read()
+            .clone()
+            .ok_or(OrgKeyError::RecordStoreNotSet)?;
+
         let value = crate::serialization::serialize(&pub_key)
             .map_err(|e| OrgKeyError::SerializationError(e.to_string()))?;
-            
+
         let mut record = crate::mesh::protocol::DhtRecord {
             key: dht_key.as_str(),
             value,
@@ -114,31 +126,35 @@ impl OrgKeyManager {
             content_hash: Vec::new(),
         };
         record.content_hash = record.compute_content_hash();
-        
+
         store.store_record(record, 100);
-        
+
         Ok(())
     }
 
     pub async fn sync_from_dht(&self) -> Result<(), OrgKeyError> {
-        let store = self.record_store.read().clone().ok_or(OrgKeyError::RecordStoreNotSet)?;
-        
+        let store = self
+            .record_store
+            .read()
+            .clone()
+            .ok_or(OrgKeyError::RecordStoreNotSet)?;
+
         let records = store.get_by_prefix("org_pubkey:", 100);
         let mut new_keys = HashMap::new();
-        
+
         for record in records {
             if let Ok(pub_key) = crate::serialization::deserialize::<OrgPublicKey>(&record.value) {
                 new_keys.insert(pub_key.org_id.clone(), pub_key);
             }
         }
-        
+
         if !new_keys.is_empty() {
             let mut keys = self.org_public_keys.write();
             for (id, key) in new_keys {
                 keys.insert(id, key);
             }
         }
-        
+
         Ok(())
     }
 
@@ -306,10 +322,12 @@ impl OrgKeyManager {
                     };
 
                     if let Some(pub_key) = temp_pub_key {
-                        if total_signers > 0 && pub_key.verify_quorum(&authorized_global_keys, total_signers) {
+                        if total_signers > 0
+                            && pub_key.verify_quorum(&authorized_global_keys, total_signers)
+                        {
                             quorum_met_data = pending.remove(request_id.as_str());
                         }
-                    } else if signatures.len() >= 1 {
+                    } else if !signatures.is_empty() {
                         // Fallback for testing without org_key available
                         quorum_met_data = pending.remove(request_id.as_str());
                     }
@@ -337,7 +355,10 @@ impl OrgKeyManager {
         }
     }
 
-    async fn publish_signed_org_public_key(&self, pub_key: OrgPublicKey) -> Result<(), OrgKeyError> {
+    async fn publish_signed_org_public_key(
+        &self,
+        pub_key: OrgPublicKey,
+    ) -> Result<(), OrgKeyError> {
         let dht_key = DhtKey::org_public_key(&pub_key.org_id);
         let store = self
             .record_store

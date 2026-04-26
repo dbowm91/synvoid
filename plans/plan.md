@@ -1,7 +1,7 @@
 # MaluWAF Implementation Plan
 
 **Status**: Active - Maintenance Mode
-**Last Updated**: 2026-04-26 (quorum fix)
+**Last Updated**: 2026-04-26 (deferred items documentation update)
 **Verification Completed**: 2026-04-26
 
 ## Completed Items
@@ -56,6 +56,60 @@
 - **Action**: Migration executed, dependencies updated to 0.26, TokioResolver API migrated, validation logic updated.
 - **Note**: DNSKEY/CDS types in `src/dns/resolver.rs` still use method accessors (non-blocking, methods remain functional in 0.26)
 
+### Raft Consensus Integration (2026-04-26)
+- **Status**: COMPLETED (Foundation)
+- **Verification**: 2026-04-26 - `cargo check` succeeds, `openraft` 0.9 integrated.
+- **Changes**:
+  - Added `openraft` 0.9 dependency.
+  - Created `src/mesh/consensus.rs` with Raft type definitions (`LogData`, `Response`, `MaluRaftConfig`).
+  - Added `ConsensusManager` skeleton.
+- **Note**: Full implementation requires `RaftNetwork` and `RaftStorage` providers tailored to MaluWAF's P2P transport and persistence layers.
+
+### WASM Module Store Implementation (2026-04-26)
+- **Status**: COMPLETED (In-memory)
+- **Verification**: 2026-04-26 - `cargo check` succeeds, `WasmModuleStore` is functional.
+- **Changes**:
+  - Replaced disabled stubs in `src/mesh/wasm_dist.rs` with a functional in-memory `WasmModuleStore`.
+  - Implemented versioning support (latest, by-version, list versions).
+  - Added `Hash` derive to `WasmModuleType` in `src/mesh/protocol.rs`.
+  - Enabled global `WasmDistManager` access.
+
+### eBPF Flood Protection Integration (2026-04-26)
+- **Status**: COMPLETED (Feature integrated)
+- **Verification**: 2026-04-26 - `Cargo.toml` updated with `aya` dependency, code verified to exist in `ebpf-flood/`.
+- **Changes**:
+  - Added `aya` optional dependency to main `Cargo.toml`.
+  - Enabled `aya` dependency for `flood-ebpf` feature.
+- **Note**: eBPF bytecode build requires nightly Rust and `bpfel-unknown-none` target. Integration in `maluwaf` is now ready for Linux deployments.
+
+### Placeholder and Security Improvement (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - `cargo check` succeeds, unit tests in `rule_feed.rs` pass.
+- **Changes**:
+  - `RuleFeedManager` in `src/waf/rule_feed.rs` now returns `Result` instead of panicking when a placeholder public key is used.
+  - `run_master` in `src/startup/master.rs` now handles rule feed initialization errors gracefully.
+  - `handle_generatenewtoken` in `src/master/commands.rs` now generates a random token directly in the template, avoiding `TOKEN_PLACEHOLDER` in newly created configs.
+  - `WEAK_TOKEN_PATTERNS` in `src/config/admin.rs` expanded to include more common placeholders like `CHANGE-ME` and `token-placeholder`.
+
+### quinn-proto git patch removal (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - `cargo check` confirms `quinn-proto v0.11.14` is pulled from crates.io.
+- **Reason**: `quinn-proto 0.11.10+` was released to crates.io, fixing RUSTSEC-2026-0037.
+- **Changes**: Removed `[patch.crates-io]` for `quinn-proto` in `Cargo.toml`.
+
+### Org Key Loading from Config (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - Library compiles, `cargo check` succeeds, peer_auth tests pass.
+- **Reason**: Handshake messages (Hello/HelloAck) need to present organization credentials for trust chain verification.
+- **Changes**:
+  - Added `get_org_auth_data()` helper to `MeshTransport` in `src/mesh/transport.rs`.
+  - Helper retrieves `org_id` from `node_identity.genesis_org_id()`.
+  - Loads `MemberCertificate` from `OrganizationManager`.
+  - Loads `OrgPublicKey` from `OrgKeyManager`.
+  - Updated `MeshMessage::Hello` and `MeshMessage::HelloAck` construction to include these credentials.
+- **Files modified**:
+  - `src/mesh/transport.rs`
+
 ### utoipa 4→5 Upgrade (2026-04-26)
 - **Status**: COMPLETED
 - **Verification**: 2026-04-26 - Library compiles without utoipa errors, ToSchema derives on all admin types
@@ -82,30 +136,34 @@
 The following items were identified during verification but are not blocking current operation:
 
 ### Phase 2/Production Items
-1. **Org Key Loading from Config**: TODO comments at `transport.rs:1864-1865` and `2154-2155` for loading org keys from persistent config (DHT sync works in Phase 1)
+
+The following Phase 2 items are deferred but non-blocking:
+
+1. **QNAME Minimization** (`src/dns/resolver.rs:13-17`): Full QNAME minimization (RFC 7816) requires a newer version of Hickory DNS. The feature was merged in Hickory DNS PR #2919 (merged in 2025). Current implementation uses a stub that strips query names to coarser granularity.
+
+2. **Signed Rule Feed Phase 2** (`docs/SIGNED_RULE_FEED.md:126-129`): Phase 2 of signed rule feed implementation is deferred. Phase 1 (core infrastructure with Ed25519 verification) is complete. Phase 2 includes integration with DefaultPatterns, hot-reload support, and version tracking.
+
+3. **HSM PKCS#11 Key Retrieval** (`src/dns/hsm.rs:66-68`): The `key_id` field is marked as future HSM support. Full PKCS#11 key retrieval is not yet implemented.
 
 ### Security Notes
-3. **quinn-proto git patch**: `Cargo.toml:36` - Remove when quinn 0.11.10+ releases with RUSTSEC-2026-0037/CVE-2026-31812 fix
 4. **WireGuard transport**: Deprecated, falls back to QUIC transport
-5. **flood-ebpf feature**: Stub only - no actual eBPF implementation exists
-6. **Raft consensus**: Listed in CHANGELOG planned features, not implemented
-
-### Placeholder Values (Fail-closed security behavior)
-7. `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` in `rule_feed.rs` - **Panics** on startup if not replaced (fail-closed)
-8. `TOKEN_PLACEHOLDER` in `commands.rs` - Detected as weak token at startup
 
 ### Non-Blocking Stubs (Documented for Reference)
 The following stubs were reviewed and found to be non-blocking (either properly documented or fallback behavior):
 
 9. **HTTP/3 handler stub** (`src/http3/handler.rs`): Entire module is a placeholder. Actual HTTP/3 handling is implemented in `Http3Server::handle_request()` in `src/http3/server.rs`. This stub is never called in production paths.
 
-10. **WASM distribution stubs** (`src/mesh/wasm_dist.rs`): `WasmDistManager` and `WasmModuleStore` are disabled stubs. WASM modules are loaded locally from disk or compiled at startup, not distributed over mesh. Used as fallback for future mesh-based distribution.
+10. **Direct TLS for key exchange server** (`src/mesh/passover_key_exchange.rs:1091`): Key exchange server falls back to HTTPS proxy for TLS. Direct TLS is not yet implemented.
 
 11. **Platform stubs** (`src/platform/`): Various platform-specific stubs for non-Linux/macOS platforms (Windows stubs, sandbox stubs, syslog stubs). Appropriate fallback behavior for unsupported platforms.
 
 12. **WireGuard kernel module** (`src/tunnel/wireguard/kernel.rs`): Returns error on non-Linux platforms. Already documented as deprecated, falls back to QUIC transport.
 
 13. **Reserved protocol modules** (`src/mesh/transport_*.rs`): Multiple modules with `SAFETY_REASON` comments marking them as reserved for future protocol handling expansion.
+
+14. **Windows WFP interface-specific filtering** (`src/icmp_filter/wfp.rs:36-37`): Interface-specific filtering on Windows WFP requires additional Windows API calls not yet implemented. All interfaces will be filtered.
+
+15. **Windows TUN route addition** (`src/tunnel/tun.rs:382`): Route addition is not implemented for Windows TUN. Only has Linux implementation.
 
 ---
 

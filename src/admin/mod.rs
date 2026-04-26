@@ -125,7 +125,7 @@ pub fn create_admin_router(
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
         .with_mesh_transport(mesh_transport.clone())
-        .with_org_key_manager(mesh_transport.and_then(|m| Some(m.org_key_manager.clone())));
+        .with_org_key_manager(mesh_transport.map(|m| m.org_key_manager.clone()));
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -806,7 +806,7 @@ pub async fn start_admin_server(
         .with_process_manager(process_manager.clone())
         .with_plugin_manager(plugin_manager)
         .with_mesh_transport(mesh_transport.clone())
-        .with_org_key_manager(mesh_transport.and_then(|m| Some(m.org_key_manager.clone())))
+        .with_org_key_manager(mesh_transport.map(|m| m.org_key_manager.clone()))
         .with_rate_limiter(rate_limiter)
         .with_yara_rate_limiter(yara_rate_limiter);
 

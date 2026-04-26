@@ -78,6 +78,7 @@ impl std::fmt::Display for WasmStoreError {
 impl std::error::Error for WasmStoreError {}
 
 #[derive(Clone, Default)]
+#[allow(clippy::type_complexity)]
 pub struct WasmModuleStore {
     modules: Arc<RwLock<HashMap<(String, WasmModuleType, u64), WasmModuleInfo>>>,
 }

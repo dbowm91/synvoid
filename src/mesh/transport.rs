@@ -49,9 +49,9 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
-use crate::mesh::organization::{MemberCertificate, OrgPublicKey};
 use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::kem::MlKem768;
+use crate::mesh::organization::{MemberCertificate, OrgPublicKey};
 use crate::mesh::protocol::{
     DhtRecord, MeshMessage, MeshPeerInfo, ProviderInfo, RouteQueryResult, UpstreamInfo,
     MESH_MESSAGE_VERSION,
@@ -441,8 +441,11 @@ impl MeshTransport {
             },
             org_key_manager: {
                 let mgr = crate::mesh::org_key_manager::OrgKeyManager::new(
-                    config.node_id.clone().unwrap_or_else(|| "unknown".to_string()),
-                    config.role.clone(),
+                    config
+                        .node_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    config.role,
                 );
                 if let Some(ref store) = record_store {
                     mgr.set_record_store(store.clone());
@@ -1046,7 +1049,9 @@ impl MeshTransport {
         if let Some(ref ti) = transport_arc.threat_intel {
             ti.set_transport(Arc::clone(&transport_arc));
         }
-        transport_arc.org_key_manager.set_transport(transport_arc.clone());
+        transport_arc
+            .org_key_manager
+            .set_transport(transport_arc.clone());
     }
 
     pub fn check_global_rate_limit(&self) -> bool {
@@ -1754,10 +1759,8 @@ impl MeshTransport {
                 pow_public_key,
                 member_certificate,
                 org_public_key,
-                } => {
-
+            } => {
                 if version != MESH_MESSAGE_VERSION {
-
                     return Err(MeshTransportError::VersionMismatch {
                         expected: MESH_MESSAGE_VERSION,
                         got: version,

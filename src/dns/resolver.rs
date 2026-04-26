@@ -238,18 +238,17 @@ impl HickoryResolver {
             .map(|ip| hickory_resolver::config::NameServerConfig::udp_and_tcp(*ip))
             .collect();
 
-        let config = hickory_resolver::config::ResolverConfig::from_parts(
-            None,
-            vec![],
-            name_servers,
-        );
+        let config =
+            hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
 
         let mut builder = hickory_resolver::TokioResolver::builder_with_config(
             config,
             hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
         );
         *builder.options_mut() = opts.unwrap_or_default();
-        let resolver = builder.build().map_err(|e| ResolverError::QueryFailed(format!("Failed to create resolver: {}", e)))?;
+        let resolver = builder
+            .build()
+            .map_err(|e| ResolverError::QueryFailed(format!("Failed to create resolver: {}", e)))?;
 
         Ok(Self { resolver })
     }
@@ -272,7 +271,7 @@ impl HickoryResolver {
 
         // Privacy-friendly configuration
         // Enable DNSSEC validation when using privacy-conscious resolver
-        // opts.validate = true; // validate field removed in 0.26, use dnssec if needed or it might be default now? 
+        // opts.validate = true; // validate field removed in 0.26, use dnssec if needed or it might be default now?
         // In 0.26, validation is often part of the recursor or specific lookups.
         // For now we'll just leave it out as it's not in ResolverOpts.
 
@@ -296,12 +295,21 @@ impl HickoryResolver {
 
     pub fn with_google() -> Result<Self, ResolverError> {
         let name_servers = vec![
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8))),
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 4, 4))),
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888))),
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844))),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(
+                std::net::Ipv4Addr::new(8, 8, 8, 8),
+            )),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(
+                std::net::Ipv4Addr::new(8, 8, 4, 4),
+            )),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(
+                std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
+            )),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(
+                std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844),
+            )),
         ];
-        let config = hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
+        let config =
+            hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
         let opts = hickory_resolver::config::ResolverOpts::default();
 
         let mut builder = hickory_resolver::TokioResolver::builder_with_config(
@@ -309,19 +317,30 @@ impl HickoryResolver {
             hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
         );
         *builder.options_mut() = opts;
-        let resolver = builder.build().map_err(|e| ResolverError::QueryFailed(format!("Failed to create resolver: {}", e)))?;
+        let resolver = builder
+            .build()
+            .map_err(|e| ResolverError::QueryFailed(format!("Failed to create resolver: {}", e)))?;
 
         Ok(Self { resolver })
     }
 
     pub fn with_cloudflare() -> Result<Self, ResolverError> {
         let name_servers = vec![
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1))),
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 0, 0, 1))),
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111))),
-            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001))),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(
+                std::net::Ipv4Addr::new(1, 1, 1, 1),
+            )),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(
+                std::net::Ipv4Addr::new(1, 0, 0, 1),
+            )),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(
+                std::net::Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111),
+            )),
+            hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V6(
+                std::net::Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1001),
+            )),
         ];
-        let config = hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
+        let config =
+            hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
         let opts = hickory_resolver::config::ResolverOpts::default();
 
         let mut builder = hickory_resolver::TokioResolver::builder_with_config(
@@ -329,7 +348,9 @@ impl HickoryResolver {
             hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
         );
         *builder.options_mut() = opts;
-        let resolver = builder.build().map_err(|e| ResolverError::QueryFailed(format!("Failed to create resolver: {}", e)))?;
+        let resolver = builder
+            .build()
+            .map_err(|e| ResolverError::QueryFailed(format!("Failed to create resolver: {}", e)))?;
 
         Ok(Self { resolver })
     }
@@ -354,7 +375,17 @@ impl DnsResolver for HickoryResolver {
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("TXT lookup failed: {}", e)))?;
 
-        let values: Vec<String> = lookup.answers().iter().filter_map(|r| if let hickory_proto::rr::RData::TXT(txt) = &r.data { Some(txt.to_string()) } else { None }).collect();
+        let values: Vec<String> = lookup
+            .answers()
+            .iter()
+            .filter_map(|r| {
+                if let hickory_proto::rr::RData::TXT(txt) = &r.data {
+                    Some(txt.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         let ttl = Some(60);
         Ok(TxtRecord { values, ttl })
@@ -369,7 +400,17 @@ impl DnsResolver for HickoryResolver {
             .await
             .map_err(|e| ResolverError::QueryFailed(format!("NS lookup failed: {}", e)))?;
 
-        let nameservers: Vec<String> = lookup.answers().iter().filter_map(|r| if let hickory_proto::rr::RData::NS(ns) = &r.data { Some(ns.to_string()) } else { None }).collect();
+        let nameservers: Vec<String> = lookup
+            .answers()
+            .iter()
+            .filter_map(|r| {
+                if let hickory_proto::rr::RData::NS(ns) = &r.data {
+                    Some(ns.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         let ttl = Some(60);
         Ok(NsRecord { nameservers, ttl })
@@ -420,7 +461,8 @@ impl DnsResolver for HickoryResolver {
                         .as_secs() as u32,
                 );
                 let records: Vec<MxRecord> = lookup
-                    .answers().iter()
+                    .answers()
+                    .iter()
                     .filter_map(|record| {
                         if let RData::MX(mx) = &record.data {
                             Some(MxRecord {
@@ -514,7 +556,8 @@ impl DnsResolver for HickoryResolver {
                         .as_secs() as u32,
                 );
                 let records: Vec<SrvRecord> = lookup
-                    .answers().iter()
+                    .answers()
+                    .iter()
                     .filter_map(|record| {
                         if let RData::SRV(srv) = &record.data {
                             Some(SrvRecord {
@@ -581,7 +624,9 @@ struct LookupResult {
 }
 
 pub struct HickoryRecursor {
-    recursor: Arc<hickory_resolver::recursor::Recursor<hickory_resolver::net::runtime::TokioRuntimeProvider>>,
+    recursor: Arc<
+        hickory_resolver::recursor::Recursor<hickory_resolver::net::runtime::TokioRuntimeProvider>,
+    >,
     enable_dnssec: bool,
     trust_anchor_manager: Option<Arc<TrustAnchorManager>>,
     shutdown_tx: tokio::sync::Mutex<Option<tokio::sync::watch::Sender<()>>>,
@@ -669,7 +714,7 @@ impl HickoryRecursor {
             let _trust_anchors =
                 Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
             // In 0.26, SecurityUnaware doesn't take trust_anchor.
-            // If we want to use trust anchors, we might need a different policy or 
+            // If we want to use trust anchors, we might need a different policy or
             // set it elsewhere. For now, following user instruction to just remove the field.
             hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
         } else {
@@ -682,7 +727,8 @@ impl HickoryRecursor {
             None,
             hickory_resolver::recursor::RecursorOptions::default(),
             hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
-        ).map_err(|e| ResolverError::QueryFailed(format!("Failed to build recursor: {}", e)))?;
+        )
+        .map_err(|e| ResolverError::QueryFailed(format!("Failed to build recursor: {}", e)))?;
 
         tracing::info!(
             "Created recursive resolver (DNSSEC: {}, RFC 5011: {})",
@@ -1329,4 +1375,3 @@ impl DnsResolver for HickoryRecursor {
         }
     }
 }
-

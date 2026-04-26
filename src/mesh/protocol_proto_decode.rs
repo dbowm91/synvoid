@@ -46,26 +46,34 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     public_key: h.public_key.map(|s| s.into()),
                     pow_nonce: h.pow_nonce,
                     pow_public_key: h.pow_public_key.map(|s| s.into()),
-                    member_certificate: h.member_certificate.map(|c| crate::mesh::organization::MemberCertificate {
-                        cert_id: c.cert_id,
-                        mesh_id: c.mesh_id,
-                        org_id: c.org_id,
-                        valid_from: c.valid_from,
-                        valid_until: c.valid_until,
-                        org_public_key_id: c.org_public_key_id,
-                        signature: c.signature,
+                    member_certificate: h.member_certificate.map(|c| {
+                        crate::mesh::organization::MemberCertificate {
+                            cert_id: c.cert_id,
+                            mesh_id: c.mesh_id,
+                            org_id: c.org_id,
+                            valid_from: c.valid_from,
+                            valid_until: c.valid_until,
+                            org_public_key_id: c.org_public_key_id,
+                            signature: c.signature,
+                        }
                     }),
-                    org_public_key: h.org_public_key.map(|k| crate::mesh::organization::OrgPublicKey {
-                        org_id: k.org_id,
-                        key_id: k.key_id,
-                        public_key: k.public_key,
-                        created_at: k.created_at,
-                        issued_by: k.issued_by,
-                        quorum_signatures: k.quorum_signatures.into_iter().map(|s| crate::mesh::organization::QuorumSignature {
-                            signer_node_id: s.signer_node_id,
-                            signature: s.signature,
-                            timestamp: s.timestamp,
-                        }).collect(),
+                    org_public_key: h.org_public_key.map(|k| {
+                        crate::mesh::organization::OrgPublicKey {
+                            org_id: k.org_id,
+                            key_id: k.key_id,
+                            public_key: k.public_key,
+                            created_at: k.created_at,
+                            issued_by: k.issued_by,
+                            quorum_signatures: k
+                                .quorum_signatures
+                                .into_iter()
+                                .map(|s| crate::mesh::organization::QuorumSignature {
+                                    signer_node_id: s.signer_node_id,
+                                    signature: s.signature,
+                                    timestamp: s.timestamp,
+                                })
+                                .collect(),
+                        }
                     }),
                 })
             }
@@ -93,31 +101,35 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 quic_port: h.quic_port,
                 wireguard_port: h.wireguard_port,
                 public_key: h.public_key.map(|s| s.into()),
-                member_certificate: h.member_certificate.map(|c| crate::mesh::organization::MemberCertificate {
-                    cert_id: c.cert_id,
-                    mesh_id: c.mesh_id,
-                    org_id: c.org_id,
-                    valid_from: c.valid_from,
-                    valid_until: c.valid_until,
-                    org_public_key_id: c.org_public_key_id,
-                    signature: c.signature,
+                member_certificate: h.member_certificate.map(|c| {
+                    crate::mesh::organization::MemberCertificate {
+                        cert_id: c.cert_id,
+                        mesh_id: c.mesh_id,
+                        org_id: c.org_id,
+                        valid_from: c.valid_from,
+                        valid_until: c.valid_until,
+                        org_public_key_id: c.org_public_key_id,
+                        signature: c.signature,
+                    }
                 }),
-                org_public_key: h.org_public_key.map(|k| crate::mesh::organization::OrgPublicKey {
-                    org_id: k.org_id,
-                    key_id: k.key_id,
-                    public_key: k.public_key,
-                    created_at: k.created_at,
-                    issued_by: k.issued_by,
-                    quorum_signatures: k
-                        .quorum_signatures
-                        .into_iter()
-                        .map(|s| crate::mesh::organization::QuorumSignature {
-                            signer_node_id: s.signer_node_id,
-                            signature: s.signature,
-                            timestamp: s.timestamp,
-                        })
-                        .collect(),
-                }),
+                org_public_key: h
+                    .org_public_key
+                    .map(|k| crate::mesh::organization::OrgPublicKey {
+                        org_id: k.org_id,
+                        key_id: k.key_id,
+                        public_key: k.public_key,
+                        created_at: k.created_at,
+                        issued_by: k.issued_by,
+                        quorum_signatures: k
+                            .quorum_signatures
+                            .into_iter()
+                            .map(|s| crate::mesh::organization::QuorumSignature {
+                                signer_node_id: s.signer_node_id,
+                                signature: s.signature,
+                                timestamp: s.timestamp,
+                            })
+                            .collect(),
+                    }),
             }),
             proto::mesh_message::Payload::SyncRequest(s) => Ok(MeshMessage::SyncRequest {
                 node_id: s.node_id.into(),

@@ -92,7 +92,7 @@ impl OrgPublicKey {
             }
         }
 
-        let required = (total_signers * 2 + 2) / 3;
+        let required = (total_signers * 2).div_ceil(3);
         valid_signatures >= required
     }
 }

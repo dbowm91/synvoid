@@ -59,7 +59,7 @@ impl MasterState {
             yara_rules: trackers.yara_rules,
             block_store,
             mesh_transport: mesh_transport.clone(),
-            org_key_manager: mesh_transport.and_then(|m| Some(m.org_key_manager.clone())),
+            org_key_manager: mesh_transport.map(|m| m.org_key_manager.clone()),
         }
     }
 

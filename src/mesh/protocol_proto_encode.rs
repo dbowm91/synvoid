@@ -44,14 +44,16 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     public_key: public_key.as_ref().map(|s| s.to_string()),
                     pow_nonce: *pow_nonce,
                     pow_public_key: pow_public_key.as_ref().map(|s| s.to_string()),
-                    member_certificate: member_certificate.as_ref().map(|c| proto::MemberCertificate {
-                        cert_id: c.cert_id.clone(),
-                        mesh_id: c.mesh_id.clone(),
-                        org_id: c.org_id.clone(),
-                        valid_from: c.valid_from,
-                        valid_until: c.valid_until,
-                        org_public_key_id: c.org_public_key_id.clone(),
-                        signature: c.signature.clone(),
+                    member_certificate: member_certificate.as_ref().map(|c| {
+                        proto::MemberCertificate {
+                            cert_id: c.cert_id.clone(),
+                            mesh_id: c.mesh_id.clone(),
+                            org_id: c.org_id.clone(),
+                            valid_from: c.valid_from,
+                            valid_until: c.valid_until,
+                            org_public_key_id: c.org_public_key_id.clone(),
+                            signature: c.signature.clone(),
+                        }
                     }),
                     org_public_key: org_public_key.as_ref().map(|k| proto::OrgPublicKey {
                         org_id: k.org_id.clone(),
@@ -110,14 +112,16 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     quic_port: *quic_port,
                     wireguard_port: *wireguard_port,
                     public_key: public_key.as_ref().map(|s| s.to_string()),
-                    member_certificate: member_certificate.as_ref().map(|c| proto::MemberCertificate {
-                        cert_id: c.cert_id.clone(),
-                        mesh_id: c.mesh_id.clone(),
-                        org_id: c.org_id.clone(),
-                        valid_from: c.valid_from,
-                        valid_until: c.valid_until,
-                        org_public_key_id: c.org_public_key_id.clone(),
-                        signature: c.signature.clone(),
+                    member_certificate: member_certificate.as_ref().map(|c| {
+                        proto::MemberCertificate {
+                            cert_id: c.cert_id.clone(),
+                            mesh_id: c.mesh_id.clone(),
+                            org_id: c.org_id.clone(),
+                            valid_from: c.valid_from,
+                            valid_until: c.valid_until,
+                            org_public_key_id: c.org_public_key_id.clone(),
+                            signature: c.signature.clone(),
+                        }
                     }),
                     org_public_key: org_public_key.as_ref().map(|k| proto::OrgPublicKey {
                         org_id: k.org_id.clone(),
