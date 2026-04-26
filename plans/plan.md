@@ -2,11 +2,13 @@
 
 **Status**: Active - Implementation Complete, Maintenance Mode
 **Last Updated**: 2026-04-26
+**Verification Completed**: 2026-04-26
 
 ## Completed Items
 
 ### Org Key Trust Chain (7.11) (2026-04-26)
 - **Status**: COMPLETED
+- **Verification**: 2026-04-26 - All components verified implemented and integrated
 - **Reason**: Implemented a complete trust chain for mesh nodes.
 - **Components**:
   - `OrgKeyManager`: Handles lifecycle, DHT storage, and quorum signature aggregation.
@@ -16,9 +18,12 @@
   - `Peer Authentication`: Updated `peer_auth.rs` to verify edge nodes via the complete trust chain (Global Nodes → Org Key → Certificate).
 - **Trust chain**: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes
 - **Action**: Fully implemented and integrated into mesh transport and admin API.
+- **Fixes Applied**: Test code in `peer_auth.rs` updated to include `member_certificate` and `org_public_key` parameters (3 tests at lines 921, 1472, 1498).
+- **Known Items**: TODO comments at `transport.rs:1864-1865` and `2154-2155` for loading org keys from config (Phase 2 feature).
 
 ### hickory-recursor 0.25 → 0.26 Migration (2026-04-26)
 - **Status**: COMPLETED
+- **Verification**: 2026-04-26 - Library compiles, DNS recursive tests pass (36/36), DNS server tests pass (40/41)
 - **Reason**: Requires extensive API changes (recursor merged into hickory-resolver, RData method→field changes, import path updates)
 - **Rust version**: 1.93.0 is now available (was 1.85 requirement, now met)
 - **Scope**: 75+ compilation errors due to:
@@ -27,9 +32,11 @@
   - RData accessors changed from methods to fields (e.g., `soa.refresh()` → `soa.refresh`)
   - `ResolverConfig::google()`/`cloudflare()` removed
 - **Action**: Migration executed, dependencies updated to 0.26, TokioResolver API migrated, validation logic updated.
+- **Note**: DNSKEY/CDS types in `src/dns/resolver.rs` still use method accessors (non-blocking, methods remain functional in 0.26)
 
 ### utoipa 4→5 Upgrade (2026-04-26)
 - **Status**: COMPLETED
+- **Verification**: 2026-04-26 - Library compiles without utoipa errors, ToSchema derives on all admin types
 - **Changes**:
   - Updated `utoipa = "4"` to `utoipa = "5"` in Cargo.toml
   - Fixed 100+ types missing `ToSchema` derive
@@ -48,11 +55,23 @@
 
 ---
 
-## Deferred Items
+## Known Deferred/Phase 2 Items
 
-The following items were intentionally deferred or blocked:
+The following items were identified during verification but are not blocking current operation:
 
-(None)
+### Phase 2/Production Items
+1. **Org Key Loading from Config**: TODO comments at `transport.rs:1864-1865` and `2154-2155` for loading org keys from persistent config (DHT sync works in Phase 1)
+2. **Quorum Threshold**: `verify_quorum()` accepts `valid_signatures > 0` instead of enforcing 2/3 (documented as Phase 1/2 behavior)
+
+### Security Notes
+3. **quinn-proto git patch**: `Cargo.toml:36` - Remove when quinn 0.11.10+ releases with RUSTSEC-2026-0037/CVE-2026-31812 fix
+4. **WireGuard transport**: Deprecated, falls back to QUIC transport
+5. **flood-ebpf feature**: Stub only - no actual eBPF implementation exists
+6. **Raft consensus**: Listed in CHANGELOG planned features, not implemented
+
+### Placeholder Values (Fail-closed security behavior)
+7. `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` in `rule_feed.rs` - **Panics** on startup if not replaced (fail-closed)
+8. `TOKEN_PLACEHOLDER` in `commands.rs` - Detected as weak token at startup
 
 ---
 

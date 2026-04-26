@@ -931,6 +931,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -1482,6 +1484,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -1504,6 +1508,8 @@ mod tests {
             timestamp,
             300,
             Some(&revocation_list),
+            None,
+            None,
             None,
             None,
             None,
