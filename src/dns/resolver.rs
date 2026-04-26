@@ -10,36 +10,23 @@
 //!
 //! ## Implementation Status
 //!
-//! Full QNAME minimization support requires a newer version of Hickory DNS that includes
-//! this feature. The feature was merged in Hickory DNS PR #2919 (merged in 2025).
+//! Full QNAME minimization support is natively provided by Hickory DNS 0.26's
+//! recursive resolver implementation.
 //!
-//! Current status: The resolver supports configuring resolver options, but full
-//! QNAME minimization is pending hickory-resolver update.
-//!
-//! ## How to Enable (Future)
-//!
-//! Once a compatible Hickory DNS version is available:
-//!
-//! ```rust,ignore
-//! use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-//!
-//! let mut opts = ResolverOpts::default();
-//! opts.qname_minimization = true;  // Enable QNAME minimization
-//!
-//! let config = ResolverConfig::default();
-//! let resolver = TokioAsyncResolver::from_config(config, opts);
-//! ```
+//! Current status: The `HickoryRecursor` performs full QNAME minimization
+//! during iterative resolution. `HickoryResolver` (forwarder mode) relies
+//! on the upstream recursive resolver for QNAME minimization.
 //!
 //! ## Benefits
 //!
 //! - Improved privacy: Upstream resolvers only see minimal domain information
 //! - Reduced query traffic: May result in fewer queries to root/TLD servers
-//! - RFC 7816 compliant: Standardized approach to query privacy
+//! - RFC 7816 / RFC 9156 compliant: Standardized approach to query privacy
 //!
 //! ## References
 //!
-//! - [RFC 7816: DNS Query Name Minimization to Improve Privacy](https://tools.ietf.org/html/rfc7816)
-//! - [Hickory DNS QNAME Minimization PR](https://github.com/hickory-dns/hickory-dns/pull/2919)
+//! - [RFC 9156: DNS Query Name Minimization to Improve Privacy](https://tools.ietf.org/html/rfc9156)
+//! - [Hickory DNS Recursor Implementation](https://github.com/hickory-dns/hickory-dns)
 
 use async_trait::async_trait;
 use std::net::IpAddr;
@@ -260,8 +247,9 @@ impl HickoryResolver {
     /// privacy leakage to upstream resolvers by sending minimal query names
     /// during recursive resolution.
     ///
-    /// Note: QNAME minimization requires hickory-resolver with the feature enabled.
-    /// The current implementation configures privacy-friendly options.
+    /// Note: QNAME minimization is natively performed by HickoryRecursor.
+    /// In forwarder mode (HickoryResolver), privacy-friendly options are configured,
+    /// and QNAME minimization is typically performed by the upstream recursive resolver.
     pub fn with_qname_minimization(upstream_ips: &[IpAddr]) -> Result<Self, ResolverError> {
         let mut opts = hickory_resolver::config::ResolverOpts::default();
 
@@ -270,16 +258,8 @@ impl HickoryResolver {
         opts.attempts = 3;
 
         // Privacy-friendly configuration
-        // Enable DNSSEC validation when using privacy-conscious resolver
-        // opts.validate = true; // validate field removed in 0.26, use dnssec if needed or it might be default now?
-        // In 0.26, validation is often part of the recursor or specific lookups.
-        // For now we'll just leave it out as it's not in ResolverOpts.
-
-        // RFC 7816 QNAME minimization: hickory-resolver 0.25 does not expose a
-        // native qname_minimization option. Full RFC 7816 support depends on
-        // upstream adding this field to ResolverOpts. In the meantime, the
-        // QnameMinimizer struct in qname.rs provides a privacy-reduction stub
-        // that strips query names to coarser granularity.
+        // Case randomization (0x20) helps mitigate spoofing
+        opts.case_randomization = true;
 
         Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
     }
@@ -721,11 +701,15 @@ impl HickoryRecursor {
             hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
         };
 
+        let mut recursor_opts = hickory_resolver::recursor::RecursorOptions::default();
+        // Case randomization (0x20) helps mitigate spoofing
+        recursor_opts.case_randomization = true;
+
         let recursor = hickory_resolver::recursor::Recursor::new(
             &roots.iter().map(|c| c.ip).collect::<Vec<_>>(),
             dnssec_policy,
             None,
-            hickory_resolver::recursor::RecursorOptions::default(),
+            recursor_opts,
             hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
         )
         .map_err(|e| ResolverError::QueryFailed(format!("Failed to build recursor: {}", e)))?;

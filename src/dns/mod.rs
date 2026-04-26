@@ -109,7 +109,7 @@ pub use metrics::{
 };
 pub use notify::{build_notify_response, NotifyConfig, NotifyHandler};
 pub use platform::{create_platform, AnycastSocketPlatform};
-pub use qname::{QnameMinimizer, RebindingChecker};
+pub use qname::RebindingChecker;
 pub use query_coalesce::{CoalesceResult, QueryCoalescer, QueryKey};
 pub use query_validator::{DnsQueryClass, DnsQueryType, DnsQueryValidator};
 pub use recursive::{RecursiveDnsError, RecursiveDnsResult, RecursiveDnsServer};
