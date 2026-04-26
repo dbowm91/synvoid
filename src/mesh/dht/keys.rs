@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 )]
 pub enum DhtKey {
     Organization(String),
+    OrgPublicKey(String),
     TierKey(String, String),
     MemberCertificate(String, String),
     Upstream(String),
@@ -101,6 +102,10 @@ pub enum DhtKey {
 impl DhtKey {
     pub fn organization(org_id: &str) -> Self {
         DhtKey::Organization(org_id.to_string())
+    }
+
+    pub fn org_public_key(org_id: &str) -> Self {
+        DhtKey::OrgPublicKey(org_id.to_string())
     }
 
     pub fn tier_key(org_id: &str, key_id: &str) -> Self {
@@ -299,6 +304,7 @@ impl DhtKey {
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
+            DhtKey::OrgPublicKey(org_id) => format!("org_pubkey:{}", org_id),
             DhtKey::TierKey(org_id, key_id) => format!("tier_key:{}:{}", org_id, key_id),
             DhtKey::MemberCertificate(org_id, cert_id) => {
                 format!("member_cert:{}:{}", org_id, cert_id)
@@ -431,6 +437,7 @@ impl DhtKey {
 
         match parts[0] {
             "org" if parts.len() >= 2 => DhtKey::Organization(parts[1..].join(":")),
+            "org_pubkey" if parts.len() >= 2 => DhtKey::OrgPublicKey(parts[1..].join(":")),
             "tier_key" if parts.len() >= 3 => {
                 DhtKey::TierKey(parts[1].to_string(), parts[2].to_string())
             }
@@ -550,6 +557,7 @@ impl DhtKey {
         matches!(
             self,
             DhtKey::Organization(_)
+                | DhtKey::OrgPublicKey(_)
                 | DhtKey::TierKey(_, _)
                 | DhtKey::MemberCertificate(_, _)
                 | DhtKey::GlobalNodeList
@@ -593,6 +601,7 @@ impl DhtKey {
                 | DhtKey::RevokedGlobalNode { .. }
                 | DhtKey::ServerlessFunction { .. }
                 | DhtKey::UpstreamProxyCachePreferences(_)
+                | DhtKey::OrgPublicKey(_)
         )
     }
 
@@ -601,6 +610,7 @@ impl DhtKey {
             self,
             DhtKey::TierKey(_, _)
                 | DhtKey::Organization(_)
+                | DhtKey::OrgPublicKey(_)
                 | DhtKey::Upstream(_)
                 | DhtKey::OrgNameReservation(_)
         )
@@ -619,13 +629,14 @@ impl DhtKey {
     pub fn key_type(&self) -> &'static str {
         match self {
             DhtKey::Organization(_) => "organization",
+            DhtKey::OrgPublicKey(_) => "org_public_key",
             DhtKey::TierKey(_, _) => "tier_key",
             DhtKey::MemberCertificate(_, _) => "member_certificate",
             DhtKey::Upstream(_) => "upstream",
             DhtKey::NodeInfo(_) => "node_info",
             DhtKey::GlobalNodeList => "global_node_list",
             DhtKey::OrgNameReservation(_) => "org_name_reservation",
-            DhtKey::GlobalNodePublicKey(_) => "global_node_public_key",
+            DhtKey::GlobalNodePublicKey(_) => "global_node_pubkey",
             DhtKey::NodeHealth(_) => "node_health",
             DhtKey::NodeLoad(_) => "node_load",
             DhtKey::GlobalNodeHeartbeat(_) => "global_node_heartbeat",
@@ -664,6 +675,7 @@ impl DhtKey {
         use crate::mesh::dht::signed::SignedRecordType;
         match self {
             DhtKey::Organization(_) => Some(SignedRecordType::Organization),
+            DhtKey::OrgPublicKey(_) => Some(SignedRecordType::OrgPublicKey),
             DhtKey::TierKey(_, _) => Some(SignedRecordType::TierKey),
             DhtKey::MemberCertificate(_, _) => Some(SignedRecordType::MemberCertificate),
             DhtKey::Upstream(_) => Some(SignedRecordType::Upstream),

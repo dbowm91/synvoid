@@ -106,6 +106,7 @@ pub struct MeshTransport {
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) global_rate_limiter: Arc<MeshGlobalRateLimiter>,
     pub(crate) org_manager: Arc<RwLock<crate::mesh::organization::OrganizationManager>>,
+    pub(crate) org_key_manager: Arc<crate::mesh::org_key_manager::OrgKeyManager>,
     pub(crate) tier_key_store: Option<Arc<RwLock<crate::mesh::dht::TierKeyStore>>>,
     pub(crate) tier_key_encryption:
         Option<Arc<crate::mesh::tier_key_encryption::TierKeyEncryption>>,
@@ -225,6 +226,7 @@ impl Clone for MeshTransport {
             snapshot_request_times: self.snapshot_request_times.clone(),
             global_rate_limiter: self.global_rate_limiter.clone(),
             org_manager: self.org_manager.clone(),
+            org_key_manager: self.org_key_manager.clone(),
             tier_key_store: self.tier_key_store.clone(),
             tier_key_encryption: self.tier_key_encryption.clone(),
             origin_ed25519_signer: self.origin_ed25519_signer.clone(),
@@ -397,7 +399,7 @@ impl MeshTransport {
         };
 
         Self {
-            config,
+            config: config.clone(),
             topology,
             cert_manager,
             runtime: None,
@@ -422,6 +424,16 @@ impl MeshTransport {
                     );
                 }
                 Arc::new(RwLock::new(org_mgr))
+            },
+            org_key_manager: {
+                let mgr = crate::mesh::org_key_manager::OrgKeyManager::new(
+                    config.node_id.clone().unwrap_or_else(|| "unknown".to_string()),
+                    config.role.clone(),
+                );
+                if let Some(ref store) = record_store {
+                    mgr.set_record_store(store.clone());
+                }
+                Arc::new(mgr)
             },
             tier_key_store,
             tier_key_encryption,
@@ -1019,6 +1031,7 @@ impl MeshTransport {
         if let Some(ref ti) = transport_arc.threat_intel {
             ti.set_transport(Arc::clone(&transport_arc));
         }
+        transport_arc.org_key_manager.set_transport(transport_arc.clone());
     }
 
     pub fn check_global_rate_limit(&self) -> bool {
@@ -1724,8 +1737,12 @@ impl MeshTransport {
                 public_key,
                 pow_nonce,
                 pow_public_key,
-            } => {
+                member_certificate,
+                org_public_key,
+                } => {
+
                 if version != MESH_MESSAGE_VERSION {
+
                     return Err(MeshTransportError::VersionMismatch {
                         expected: MESH_MESSAGE_VERSION,
                         got: version,
@@ -1791,6 +1808,8 @@ impl MeshTransport {
                     global_node_att_sig,
                     pow_nonce,
                     pow_public_key.as_ref().map(|s| s.as_str()),
+                    member_certificate.as_ref(),
+                    org_public_key.as_ref(),
                 ) {
                     tracing::warn!("Node verification failed for {}: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));
@@ -1842,6 +1861,8 @@ impl MeshTransport {
             quic_port,
             wireguard_port,
             public_key: self.config.signing_public_key().map(|s| s.into()),
+            member_certificate: None, // TODO: Load from config/store
+            org_public_key: None,     // TODO: Load from config/store
         };
 
         let encoded = hello_ack
@@ -2130,6 +2151,8 @@ impl MeshTransport {
             public_key: self.config.signing_public_key().map(|s| s.into()),
             pow_nonce,
             pow_public_key,
+            member_certificate: None, // TODO: Load from config/store
+            org_public_key: None,     // TODO: Load from config/store
         };
 
         let encoded = hello
@@ -2184,6 +2207,8 @@ impl MeshTransport {
                 quic_port: peer_quic_port,
                 wireguard_port: peer_wireguard_port,
                 public_key: peer_public_key,
+                member_certificate,
+                org_public_key,
             } => {
                 if let Some(ref pk) = peer_public_key {
                     use base64::Engine;
@@ -2323,6 +2348,8 @@ impl MeshTransport {
                     global_node_att_sig,
                     None,
                     None,
+                    member_certificate.as_ref(),
+                    org_public_key.as_ref(),
                 ) {
                     tracing::warn!("Node Ed25519 verification failed for {}: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));

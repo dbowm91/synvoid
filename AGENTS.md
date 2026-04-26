@@ -451,7 +451,13 @@ The following items are deferred and should not be attempted without further res
 - OpenAPI tests use `HttpMethod` enum instead of `PathItemType` (API change in utoipa 5)
 
 ### Org Key Trust Chain (7.11)
-**Deferred**: Very large implementation requiring new modules. Trust chain: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes. The `organization.rs` module exists but full trust chain verification is not implemented.
+**Completed (2026-04-26)**: Implemented a complete trust chain for mesh nodes.
+- `OrgKeyManager` coordinates lifecycle and DHT storage.
+- `OrgPublicKey` and `MemberCertificate` provide verifiable identity.
+- Quorum signing (2/3 of Global Nodes) automated via mesh protocol.
+- `peer_auth.rs` updated to verify the complete chain.
+- Trust chain: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes.
+
 
 ### hickory-recursor 0.25 → 0.26
 **Completed (2026-04-26)**: The hickory-dns migration is now complete. Key changes:

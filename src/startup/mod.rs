@@ -26,6 +26,7 @@ pub struct MasterState {
     pub yara_rules: Option<Arc<YaraRulesManager>>,
     pub block_store: Arc<BlockStore>,
     pub mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
+    pub org_key_manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
 }
 
 #[derive(Clone)]
@@ -57,7 +58,8 @@ impl MasterState {
             rule_feed_manager: trackers.rule_feed_manager,
             yara_rules: trackers.yara_rules,
             block_store,
-            mesh_transport,
+            mesh_transport: mesh_transport.clone(),
+            org_key_manager: mesh_transport.and_then(|m| Some(m.org_key_manager.clone())),
         }
     }
 

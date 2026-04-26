@@ -220,6 +220,8 @@ pub enum MeshMessage {
         public_key: Option<ArcStr>,
         pow_nonce: Option<u64>,
         pow_public_key: Option<ArcStr>,
+        member_certificate: Option<crate::mesh::organization::MemberCertificate>,
+        org_public_key: Option<crate::mesh::organization::OrgPublicKey>,
     },
     HelloAck {
         version: u8,
@@ -237,6 +239,8 @@ pub enum MeshMessage {
         quic_port: Option<u32>,
         wireguard_port: Option<u32>,
         public_key: Option<ArcStr>,
+        member_certificate: Option<crate::mesh::organization::MemberCertificate>,
+        org_public_key: Option<crate::mesh::organization::OrgPublicKey>,
     },
     SyncRequest {
         node_id: ArcStr,
@@ -1002,6 +1006,20 @@ pub enum MeshMessage {
     SiteTlsCertSync(SiteTlsCertSync),
     SiteTlsCertRequest(SiteTlsCertRequest),
     SiteTlsCertResponse(SiteTlsCertResponse),
+    OrgKeySignRequest {
+        request_id: ArcStr,
+        org_id: ArcStr,
+        org_public_key: crate::mesh::organization::OrgPublicKey,
+        timestamp: u64,
+        signature: Vec<u8>,
+    },
+    OrgKeySignResponse {
+        request_id: ArcStr,
+        org_id: ArcStr,
+        signature: Vec<u8>,
+        signer_node_id: ArcStr,
+        timestamp: u64,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

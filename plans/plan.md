@@ -5,6 +5,29 @@
 
 ## Completed Items
 
+### Org Key Trust Chain (7.11) (2026-04-26)
+- **Status**: COMPLETED
+- **Reason**: Implemented a complete trust chain for mesh nodes.
+- **Components**:
+  - `OrgKeyManager`: Handles lifecycle, DHT storage, and quorum signature aggregation.
+  - `OrgPublicKey`: Public representation of an organization key with global node signatures.
+  - `MemberCertificate`: Short-lived certificates issued by organizations to edge nodes.
+  - `Quorum Signing`: Integrated into mesh protocol for automated signature collection.
+  - `Peer Authentication`: Updated `peer_auth.rs` to verify edge nodes via the complete trust chain (Global Nodes → Org Key → Certificate).
+- **Trust chain**: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes
+- **Action**: Fully implemented and integrated into mesh transport and admin API.
+
+### hickory-recursor 0.25 → 0.26 Migration (2026-04-26)
+- **Status**: COMPLETED
+- **Reason**: Requires extensive API changes (recursor merged into hickory-resolver, RData method→field changes, import path updates)
+- **Rust version**: 1.93.0 is now available (was 1.85 requirement, now met)
+- **Scope**: 75+ compilation errors due to:
+  - `hickory-recursor` crate merged into `hickory-resolver` (behind `recursor` feature)
+  - Network protocol support moved from `hickory-proto` to new `hickory-net` crate
+  - RData accessors changed from methods to fields (e.g., `soa.refresh()` → `soa.refresh`)
+  - `ResolverConfig::google()`/`cloudflare()` removed
+- **Action**: Migration executed, dependencies updated to 0.26, TokioResolver API migrated, validation logic updated.
+
 ### utoipa 4→5 Upgrade (2026-04-26)
 - **Status**: COMPLETED
 - **Changes**:
@@ -29,23 +52,7 @@
 
 The following items were intentionally deferred or blocked:
 
-### Org Key Trust Chain (7.11)
-- **Status**: PLANNED (4-5 weeks effort)
-- **Reason**: Very large implementation requiring new modules (`organization.rs`, `org_key_manager.rs`, etc.).
-- **Summary**: Implementation will proceed in 4 phases: Storage & Discovery, Quorum Formation, Peer Auth Integration, and Lifecycle Management.
-- **Trust chain**: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes
-- **Action**: Architectural plan finalized and approved on 2026-04-26. Implementation deferred to future cycles.
-
-### hickory-recursor 0.25 → 0.26 Migration (2026-04-26)
-- **Status**: COMPLETED
-- **Reason**: Requires extensive API changes (recursor merged into hickory-resolver, RData method→field changes, import path updates)
-- **Rust version**: 1.93.0 is now available (was 1.85 requirement, now met)
-- **Scope**: 75+ compilation errors due to:
-  - `hickory-recursor` crate merged into `hickory-resolver` (behind `recursor` feature)
-  - Network protocol support moved from `hickory-proto` to new `hickory-net` crate
-  - RData accessors changed from methods to fields (e.g., `soa.refresh()` → `soa.refresh`)
-  - `ResolverConfig::google()`/`cloudflare()` removed
-- **Action**: Migration executed, dependencies updated to 0.26, TokioResolver API migrated, validation logic updated.
+(None)
 
 ---
 

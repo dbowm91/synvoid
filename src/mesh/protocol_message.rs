@@ -86,7 +86,9 @@ impl MeshMessage {
             | Self::RevokeGlobalNode { .. }
             | Self::SiteTlsCertSync { .. }
             | Self::SiteTlsCertRequest { .. }
-            | Self::SiteTlsCertResponse { .. } => MessageCategory::Organization,
+            | Self::SiteTlsCertResponse { .. }
+            | Self::OrgKeySignRequest { .. }
+            | Self::OrgKeySignResponse { .. } => MessageCategory::Organization,
             Self::ThreatAnnounce { .. }
             | Self::ThreatSyncRequest { .. }
             | Self::ThreatSyncResponse { .. }

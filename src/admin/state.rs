@@ -207,6 +207,7 @@ pub struct SecurityState {
 pub struct MeshState {
     pub mesh_transport: Option<Arc<MeshTransport>>,
     pub client_audit_manager: Option<Arc<crate::mesh::client_audit::ClientAuditManager>>,
+    pub org_key_manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
 }
 
 #[derive(Clone)]
@@ -321,6 +322,7 @@ impl AdminState {
             mesh: MeshState {
                 mesh_transport: None,
                 client_audit_manager: None,
+                org_key_manager: None,
             },
             honeypot: HoneypotState {
                 port_honeypot_controller: None,
@@ -408,6 +410,14 @@ impl AdminState {
 
     pub fn with_mesh_transport(mut self, transport: Option<Arc<MeshTransport>>) -> Self {
         self.mesh.mesh_transport = transport;
+        self
+    }
+
+    pub fn with_org_key_manager(
+        mut self,
+        manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
+    ) -> Self {
+        self.mesh.org_key_manager = manager;
         self
     }
 

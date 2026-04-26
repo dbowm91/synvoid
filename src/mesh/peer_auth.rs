@@ -120,6 +120,51 @@ impl Default for GlobalNodeRevocationList {
     }
 }
 
+use crate::mesh::organization::{MemberCertificate, OrgPublicKey};
+use std::collections::HashMap;
+
+pub fn validate_member_certificate(
+    cert: &MemberCertificate,
+    org_pub_key: &OrgPublicKey,
+    authorized_global_pubkeys: &[String],
+    peer_node_id: &str,
+) -> Result<(), String> {
+    // 1. Verify cert belongs to this node
+    if cert.mesh_id != peer_node_id {
+        return Err("Certificate does not belong to this node".to_string());
+    }
+
+    // 2. Verify cert is valid for current time
+    if !cert.is_valid() {
+        return Err("Certificate is expired or not yet valid".to_string());
+    }
+
+    // 3. Verify cert matches org_pub_key
+    if cert.org_id != org_pub_key.org_id || cert.org_public_key_id != org_pub_key.key_id {
+        return Err("Certificate does not match providing organization key".to_string());
+    }
+
+    // 4. Verify cert signature with org_pub_key
+    if !cert.verify_with_public_key(&org_pub_key.public_key) {
+        return Err("Invalid certificate signature".to_string());
+    }
+
+    // 5. Verify org_pub_key quorum signatures
+    // For verification, we treat the authorized_global_pubkeys as node IDs as well in this simplified logic
+    let mut global_keys_map: HashMap<String, String> = HashMap::new();
+    for pubkey in authorized_global_pubkeys {
+        global_keys_map.insert(pubkey.clone(), pubkey.clone());
+    }
+
+    if !org_pub_key.verify_quorum(&global_keys_map) {
+        return Err(
+            "Organization key lacks sufficient quorum signatures from global nodes".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 pub fn validate_peer_role(
     role: &crate::mesh::config::MeshNodeRole,
     authorized_global_pubkeys: &[String],
@@ -133,7 +178,20 @@ pub fn validate_peer_role(
     global_node_attestation_sig: Option<&str>,
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
+    member_certificate: Option<&MemberCertificate>,
+    org_public_key: Option<&OrgPublicKey>,
 ) -> Result<(), String> {
+    // Try Organization Trust Chain first if available for Edge nodes
+    if role.is_edge() {
+        if let (Some(cert), Some(org_key)) = (member_certificate, org_public_key) {
+            if let Ok(()) =
+                validate_member_certificate(cert, org_key, authorized_global_pubkeys, peer_node_id)
+            {
+                return Ok(());
+            }
+        }
+    }
+
     if role.is_global() && role.is_edge() {
         let mut errors = Vec::new();
 
@@ -786,6 +844,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -818,6 +878,8 @@ mod tests {
             None,
             Some(pow_nonce),
             Some(&public),
+            None,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -836,6 +898,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -888,6 +952,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -903,6 +969,8 @@ mod tests {
             None,
             0,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -933,6 +1001,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
     }
@@ -951,6 +1021,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -978,6 +1050,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -999,6 +1073,8 @@ mod tests {
             Some(&corrupted_sig),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -1037,6 +1113,8 @@ mod tests {
             Some(&attestation_signature),
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_ok(), "Origin validation failed: {:?}", result);
     }
@@ -1061,6 +1139,8 @@ mod tests {
             Some(&origin_signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -1103,6 +1183,8 @@ mod tests {
             Some(&attestation_signature),
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -1140,6 +1222,8 @@ mod tests {
             Some(&revocation_list),
             Some(&global_public),
             Some(&attestation_signature),
+            None,
+            None,
             None,
             None,
         );
@@ -1254,6 +1338,8 @@ mod tests {
             None,
             Some(pow_nonce),
             Some(&public),
+            None,
+            None,
         );
         assert!(result.is_ok(), "PoW validation failed: {:?}", result);
     }
@@ -1280,6 +1366,8 @@ mod tests {
             None,
             Some(pow_nonce),
             Some(&public),
+            None,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -1313,6 +1401,8 @@ mod tests {
             Some(&attestation_signature),
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_ok());
     }
@@ -1338,6 +1428,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("future timestamp"));
@@ -1353,6 +1445,8 @@ mod tests {
             Some("some_signature"),
             crate::utils::current_timestamp(),
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -1448,6 +1542,8 @@ mod tests {
             Some(&attestation_signature),
             None,
             None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(result
@@ -1470,6 +1566,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -1521,6 +1619,8 @@ mod tests {
             Some(&attestation_signature),
             Some(pow_nonce),
             Some(&origin_public),
+            None,
+            None,
         );
         assert!(
             result.is_ok(),
@@ -1551,6 +1651,8 @@ mod tests {
             None,
             Some(pow_nonce),
             Some(&public),
+            None,
+            None,
         );
         assert!(result_with_pow_only.is_err(), "Should require signature");
         let err_pow = result_with_pow_only.unwrap_err();
@@ -1568,6 +1670,8 @@ mod tests {
             Some(&signature),
             timestamp,
             300,
+            None,
+            None,
             None,
             None,
             None,
@@ -1595,6 +1699,8 @@ mod tests {
             None,
             Some(pow_nonce),
             Some(&public),
+            None,
+            None,
         );
         assert!(
             result_with_both.is_ok(),

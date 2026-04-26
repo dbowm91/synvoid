@@ -927,3 +927,144 @@ pub async fn attest_capability(
         }))
     }
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateOrgRequest {
+    pub org_id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OrgResponse {
+    pub org_id: String,
+    pub name: Option<String>,
+    pub public_key: String,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OrgPublicKeyResponse {
+    pub org_id: String,
+    pub key_id: String,
+    pub public_key_hex: String,
+    pub created_at: u64,
+    pub quorum_signatures_count: usize,
+}
+
+#[utoipa::path(
+    post,
+    path = "/mesh/organizations",
+    request_body = CreateOrgRequest,
+    responses(
+        (status = 200, description = "Organization created", body = OrgResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal error")
+    ),
+    tag = "mesh",
+    security(("bearerAuth" = []))
+)]
+pub async fn create_organization(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(payload): Json<CreateOrgRequest>,
+) -> Result<Json<OrgResponse>, (StatusCode, String)> {
+    let mgr = state
+        .mesh
+        .org_key_manager
+        .as_ref()
+        .ok_or((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Org key manager not enabled".to_string(),
+        ))?;
+
+    let org = mgr
+        .create_organization(payload.org_id, payload.name)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let pub_key_hex = org
+        .org_key
+        .as_ref()
+        .map(|k| k.public_key_hex())
+        .unwrap_or_default();
+
+    Ok(Json(OrgResponse {
+        org_id: org.org_id,
+        name: org.name,
+        public_key: pub_key_hex,
+        created_at: org.created_at,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/mesh/organizations/{org_id}",
+    responses(
+        (status = 200, description = "Organization details", body = OrgResponse),
+        (status = 404, description = "Organization not found")
+    ),
+    tag = "mesh",
+    security(("bearerAuth" = []))
+)]
+pub async fn get_organization(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(org_id): Path<String>,
+) -> Result<Json<OrgResponse>, StatusCode> {
+    let mgr = state
+        .mesh
+        .org_key_manager
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let org = mgr
+        .get_local_organization(&org_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let pub_key_hex = org
+        .org_key
+        .as_ref()
+        .map(|k| k.public_key_hex())
+        .unwrap_or_default();
+
+    Ok(Json(OrgResponse {
+        org_id: org.org_id,
+        name: org.name,
+        public_key: pub_key_hex,
+        created_at: org.created_at,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/mesh/organizations/{org_id}/public-key",
+    responses(
+        (status = 200, description = "Organization public key from DHT", body = OrgPublicKeyResponse),
+        (status = 404, description = "Key not found")
+    ),
+    tag = "mesh",
+    security(("bearerAuth" = []))
+)]
+pub async fn get_org_public_key(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Path(org_id): Path<String>,
+) -> Result<Json<OrgPublicKeyResponse>, StatusCode> {
+    let mgr = state
+        .mesh
+        .org_key_manager
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Attempt sync first
+    let _ = mgr.sync_from_dht().await;
+
+    let pub_key = mgr.get_org_public_key(&org_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(OrgPublicKeyResponse {
+        org_id: pub_key.org_id,
+        key_id: pub_key.key_id,
+        public_key_hex: hex::encode(&pub_key.public_key),
+        created_at: pub_key.created_at,
+        quorum_signatures_count: pub_key.quorum_signatures.len(),
+    }))
+}

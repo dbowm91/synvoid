@@ -124,7 +124,8 @@ pub fn create_admin_router(
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
-        .with_mesh_transport(mesh_transport);
+        .with_mesh_transport(mesh_transport.clone())
+        .with_org_key_manager(mesh_transport.and_then(|m| Some(m.org_key_manager.clone())));
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -606,6 +607,18 @@ fn build_router_from_state(
             "/mesh/nodes/{node_id}",
             get(handlers::mesh_admin::get_mesh_node),
         )
+        .route(
+            "/mesh/organizations",
+            post(handlers::mesh_admin::create_organization),
+        )
+        .route(
+            "/mesh/organizations/{org_id}",
+            get(handlers::mesh_admin::get_organization),
+        )
+        .route(
+            "/mesh/organizations/{org_id}/public-key",
+            get(handlers::mesh_admin::get_org_public_key),
+        )
         .route("/mesh/ban/ip", post(handlers::mesh_admin::ban_ip))
         .route("/mesh/ban/mesh-id", post(handlers::mesh_admin::ban_mesh_id))
         .route("/mesh/ban", delete(handlers::mesh_admin::unban))
@@ -792,7 +805,8 @@ pub async fn start_admin_server(
         .with_yara_rules(yara_rules)
         .with_process_manager(process_manager.clone())
         .with_plugin_manager(plugin_manager)
-        .with_mesh_transport(mesh_transport)
+        .with_mesh_transport(mesh_transport.clone())
+        .with_org_key_manager(mesh_transport.and_then(|m| Some(m.org_key_manager.clone())))
         .with_rate_limiter(rate_limiter)
         .with_yara_rate_limiter(yara_rate_limiter);
 

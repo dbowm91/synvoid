@@ -37,6 +37,7 @@ pub struct SignedDhtRecord {
 )]
 pub enum SignedRecordType {
     Organization,
+    OrgPublicKey,
     TierKey,
     MemberCertificate,
     Upstream,
@@ -67,6 +68,7 @@ impl SignedRecordType {
         matches!(
             self,
             SignedRecordType::Organization
+                | SignedRecordType::OrgPublicKey
                 | SignedRecordType::TierKey
                 | SignedRecordType::MemberCertificate
                 | SignedRecordType::GlobalNodeList
@@ -97,6 +99,7 @@ impl SignedRecordType {
                 | SignedRecordType::UpstreamCompression
                 | SignedRecordType::UpstreamProxyCachePreferences
                 | SignedRecordType::SiteImagePoisonConfig
+                | SignedRecordType::OrgPublicKey
         )
     }
 
@@ -105,6 +108,7 @@ impl SignedRecordType {
             self,
             SignedRecordType::TierKey
                 | SignedRecordType::Organization
+                | SignedRecordType::OrgPublicKey
                 | SignedRecordType::Upstream
                 | SignedRecordType::OrgNameReservation
         )
@@ -113,6 +117,7 @@ impl SignedRecordType {
     pub fn default_ttl(&self) -> Option<Duration> {
         match self {
             SignedRecordType::Organization => Some(Duration::from_secs(86400 * 7)),
+            SignedRecordType::OrgPublicKey => Some(Duration::from_secs(86400 * 30)),
             SignedRecordType::TierKey => Some(Duration::from_secs(86400 * 30)),
             SignedRecordType::MemberCertificate => Some(Duration::from_secs(86400 * 365)),
             SignedRecordType::Upstream => Some(Duration::from_secs(300)),
@@ -436,6 +441,7 @@ impl TtlManager {
     pub fn ttl_for(&self, record_type: SignedRecordType) -> Duration {
         match record_type {
             SignedRecordType::Organization => self.org_ttl,
+            SignedRecordType::OrgPublicKey => self.org_ttl,
             SignedRecordType::TierKey => self.tier_key_ttl,
             SignedRecordType::MemberCertificate => self.member_cert_ttl,
             SignedRecordType::Upstream => self.upstream_ttl,

@@ -1022,6 +1022,11 @@ impl MeshTransport {
                     );
                 }
             }
+            MeshMessage::OrgKeySignRequest { .. } | MeshMessage::OrgKeySignResponse { .. } => {
+                if let Some(response) = self.org_key_manager.handle_mesh_message(msg).await {
+                    let _ = self.send_datagram_to_peer(peer_id, &response).await;
+                }
+            }
             MeshMessage::QuorumStoreRequest {
                 request_id,
                 key,

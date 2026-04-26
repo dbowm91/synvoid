@@ -274,9 +274,42 @@ message MeshMessage {
         SiteTlsCertSync site_tls_cert_sync = 137;
         SiteTlsCertRequest site_tls_cert_request = 138;
         SiteTlsCertResponse site_tls_cert_response = 139;
+        OrgKeySignRequest org_key_sign_request = 160;
+        OrgKeySignResponse org_key_sign_response = 161;
         ServerlessInvokeRequest serverless_invoke_request = 150;
         ServerlessInvokeResponse serverless_invoke_response = 151;
     }
+}
+
+message OrgKeySignRequest {
+    string request_id = 1;
+    string org_id = 2;
+    OrgPublicKey org_public_key = 3;
+    uint64 timestamp = 4;
+    bytes signature = 5;
+}
+
+message OrgKeySignResponse {
+    string request_id = 1;
+    string org_id = 2;
+    bytes signature = 3;
+    string signer_node_id = 4;
+    uint64 timestamp = 5;
+}
+
+message OrgPublicKey {
+    string org_id = 1;
+    string key_id = 2;
+    bytes public_key = 3;
+    uint64 created_at = 4;
+    optional string issued_by = 5;
+    repeated QuorumSignature quorum_signatures = 6;
+}
+
+message QuorumSignature {
+    string signer_node_id = 1;
+    bytes signature = 2;
+    uint64 timestamp = 3;
 }
 
 message GenesisKeyTransition {
@@ -311,6 +344,8 @@ message Hello {
     optional string public_key = 14;
     optional uint64 pow_nonce = 15;
     optional string pow_public_key = 16;
+    optional MemberCertificate member_certificate = 17;
+    optional OrgPublicKey org_public_key = 18;
 }
 
 message HelloAck {
@@ -329,6 +364,18 @@ message HelloAck {
     optional uint32 quic_port = 10;
     optional uint32 wireguard_port = 11;
     optional string public_key = 14;
+    optional MemberCertificate member_certificate = 16;
+    optional OrgPublicKey org_public_key = 17;
+}
+
+message MemberCertificate {
+    string cert_id = 1;
+    string mesh_id = 2;
+    string org_id = 3;
+    uint64 valid_from = 4;
+    uint64 valid_until = 5;
+    string org_public_key_id = 6;
+    bytes signature = 7;
 }
 
 message SyncRequest {

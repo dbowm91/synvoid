@@ -35,6 +35,7 @@ impl MeshTransport {
             snapshot_request_times: self.snapshot_request_times.clone(),
             global_rate_limiter: self.global_rate_limiter.clone(),
             org_manager: self.org_manager.clone(),
+            org_key_manager: self.org_key_manager.clone(),
             tier_key_store: self.tier_key_store.clone(),
             tier_key_encryption: self.tier_key_encryption.clone(),
             origin_ed25519_signer: self.origin_ed25519_signer.clone(),

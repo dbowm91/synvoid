@@ -20,6 +20,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 public_key,
                 pow_nonce,
                 pow_public_key,
+                member_certificate,
+                org_public_key,
             } => proto::MeshMessage {
                 message_type: 1,
                 payload: Some(proto::mesh_message::Payload::Hello(proto::Hello {
@@ -42,6 +44,31 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     public_key: public_key.as_ref().map(|s| s.to_string()),
                     pow_nonce: *pow_nonce,
                     pow_public_key: pow_public_key.as_ref().map(|s| s.to_string()),
+                    member_certificate: member_certificate.as_ref().map(|c| proto::MemberCertificate {
+                        cert_id: c.cert_id.clone(),
+                        mesh_id: c.mesh_id.clone(),
+                        org_id: c.org_id.clone(),
+                        valid_from: c.valid_from,
+                        valid_until: c.valid_until,
+                        org_public_key_id: c.org_public_key_id.clone(),
+                        signature: c.signature.clone(),
+                    }),
+                    org_public_key: org_public_key.as_ref().map(|k| proto::OrgPublicKey {
+                        org_id: k.org_id.clone(),
+                        key_id: k.key_id.clone(),
+                        public_key: k.public_key.clone(),
+                        created_at: k.created_at,
+                        issued_by: k.issued_by.clone(),
+                        quorum_signatures: k
+                            .quorum_signatures
+                            .iter()
+                            .map(|s| proto::QuorumSignature {
+                                signer_node_id: s.signer_node_id.clone(),
+                                signature: s.signature.clone(),
+                                timestamp: s.timestamp,
+                            })
+                            .collect(),
+                    }),
                 })),
             },
             MeshMessage::HelloAck {
@@ -60,6 +87,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 quic_port,
                 wireguard_port,
                 public_key,
+                member_certificate,
+                org_public_key,
             } => proto::MeshMessage {
                 message_type: 2,
                 payload: Some(proto::mesh_message::Payload::HelloAck(proto::HelloAck {
@@ -81,6 +110,31 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     quic_port: *quic_port,
                     wireguard_port: *wireguard_port,
                     public_key: public_key.as_ref().map(|s| s.to_string()),
+                    member_certificate: member_certificate.as_ref().map(|c| proto::MemberCertificate {
+                        cert_id: c.cert_id.clone(),
+                        mesh_id: c.mesh_id.clone(),
+                        org_id: c.org_id.clone(),
+                        valid_from: c.valid_from,
+                        valid_until: c.valid_until,
+                        org_public_key_id: c.org_public_key_id.clone(),
+                        signature: c.signature.clone(),
+                    }),
+                    org_public_key: org_public_key.as_ref().map(|k| proto::OrgPublicKey {
+                        org_id: k.org_id.clone(),
+                        key_id: k.key_id.clone(),
+                        public_key: k.public_key.clone(),
+                        created_at: k.created_at,
+                        issued_by: k.issued_by.clone(),
+                        quorum_signatures: k
+                            .quorum_signatures
+                            .iter()
+                            .map(|s| proto::QuorumSignature {
+                                signer_node_id: s.signer_node_id.clone(),
+                                signature: s.signature.clone(),
+                                timestamp: s.timestamp,
+                            })
+                            .collect(),
+                    }),
                 })),
             },
             MeshMessage::SyncRequest { node_id } => proto::MeshMessage {
@@ -2389,6 +2443,57 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     )),
                 }
             }
+            MeshMessage::OrgKeySignRequest {
+                request_id,
+                org_id,
+                org_public_key,
+                timestamp,
+                signature,
+            } => proto::MeshMessage {
+                message_type: 160,
+                payload: Some(proto::mesh_message::Payload::OrgKeySignRequest(
+                    proto::OrgKeySignRequest {
+                        request_id: request_id.to_string(),
+                        org_id: org_id.to_string(),
+                        org_public_key: Some(proto::OrgPublicKey {
+                            org_id: org_public_key.org_id.clone(),
+                            key_id: org_public_key.key_id.clone(),
+                            public_key: org_public_key.public_key.clone(),
+                            created_at: org_public_key.created_at,
+                            issued_by: org_public_key.issued_by.clone(),
+                            quorum_signatures: org_public_key
+                                .quorum_signatures
+                                .iter()
+                                .map(|s| proto::QuorumSignature {
+                                    signer_node_id: s.signer_node_id.clone(),
+                                    signature: s.signature.clone(),
+                                    timestamp: s.timestamp,
+                                })
+                                .collect(),
+                        }),
+                        timestamp: *timestamp,
+                        signature: signature.clone(),
+                    },
+                )),
+            },
+            MeshMessage::OrgKeySignResponse {
+                request_id,
+                org_id,
+                signature,
+                signer_node_id,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 161,
+                payload: Some(proto::mesh_message::Payload::OrgKeySignResponse(
+                    proto::OrgKeySignResponse {
+                        request_id: request_id.to_string(),
+                        org_id: org_id.to_string(),
+                        signature: signature.clone(),
+                        signer_node_id: signer_node_id.to_string(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
         }
     }
 }
