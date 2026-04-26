@@ -1289,6 +1289,10 @@ pub struct WorkerMetricsPayload {
     pub static_cache_misses: u64,
     pub bandwidth: crate::metrics::bandwidth::BandwidthPayload,
     pub serverless_metrics: Vec<crate::metrics::ServerlessMetrics>,
+    pub health_score: f64,
+    pub last_request_at: Option<u64>,
+    pub active_connections: u64,
+    pub restart_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1869,6 +1873,10 @@ mod tests {
             static_cache_misses: 50,
             bandwidth: crate::metrics::bandwidth::BandwidthPayload::default(),
             serverless_metrics: Vec::new(),
+            health_score: 100.0,
+            last_request_at: None,
+            active_connections: 10,
+            restart_count: 0,
         };
         let msg = Message::WorkerHeartbeat {
             id: WorkerId(1),

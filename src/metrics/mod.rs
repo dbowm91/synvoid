@@ -1186,6 +1186,10 @@ impl WorkerMetrics {
             static_cache_misses: get_static_cache_misses(),
             bandwidth: self.bandwidth.to_payload(),
             serverless_metrics: get_all_serverless_metrics(),
+            health_score: 100.0,
+            last_request_at: None,
+            active_connections: self.current_concurrent.load(Ordering::Relaxed),
+            restart_count: 0,
         }
     }
 
