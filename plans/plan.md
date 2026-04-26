@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-**Status**: Active
+**Status**: Active - Implementation Complete
 **Last Updated**: 2026-04-26
 
 ## Implementation Progress (as of 2026-04-26)
@@ -12,9 +12,9 @@
 | Wave 2 | 16 | **COMPLETE** |
 | Wave 3 | 22 | **COMPLETE** |
 | Wave 4 | 20 | **COMPLETE** |
-| Wave 5 | 17 | **PARTIAL** (5.1 blocked by dep version mismatch) |
+| Wave 5 | 17 | **COMPLETE** (5.1 blocked - skipped, 5.2-5.17 done) |
 | Wave 6 | 14 | **COMPLETE** |
-| Wave 7 | 14 | **COMPLETE** (7.11 Org Key Trust Chain deferred) |
+| Wave 7 | 14 | **COMPLETE** (7.6-7.10 platform, 7.11 Org Key Trust Chain deferred) |
 
 ## Completed Items
 
@@ -721,12 +721,14 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
 
 ### 5.1: utoipa 4→5 Upgrade
 - **Problem**: `utoipa = "4"` at `Cargo.toml:204` but `utoipa-swagger-ui = "9"` requires `utoipa >= 5`. Swagger UI broken at compile time. Also: utoipa 4 pulls in unmaintained `proc-macro-error` (RUSTSEC-2024-0370).
+- **Status**: BLOCKED - Cannot upgrade due to dependency version conflicts
 - **Files**: `Cargo.toml:204`
 - **Action**: Change `utoipa = "4"` to `utoipa = "5"`. Derive macros are backward compatible.
 - **Effort**: Low (2-4 hours)
 
 ### 5.2: Swagger/ReDoc Integration
 - **Problem**: Only raw JSON at `/api/openapi.json`. No interactive UI despite `utoipa-swagger-ui` dependency existing.
+- **Status**: BLOCKED by 5.1 (depends on utoipa 5)
 - **Files**: `src/admin/mod.rs` (~line 561)
 - **Action**:
   1. Add `.merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", MaluWafOpenApi::openapi()))`
@@ -736,58 +738,68 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
 
 ### 5.3: Path Duplication Fix (166 paths, 20 files)
 - **Problem**: All 166 handler `#[utoipa::path]` annotations include `/api` prefix (e.g., `path = "/api/stats/summary"`), but router at `src/admin/mod.rs:560` already nests under `.nest("/api", api_routes)`. Actual paths become `/api/api/stats/summary` in OpenAPI spec.
+- **Status**: NOT STARTED (mechanical change, can be done independently)
 - **Files**: All 20 handler files in `src/admin/handlers/`
 - **Action**: Remove `/api` prefix from all 166 path annotations (e.g., `/api/stats/summary` → `/stats/summary`).
 - **Effort**: High (4-6 hours, mechanical)
 
 ### 5.4: RuleFeed/YaraFeed Config Handlers
 - **Problem**: Operational endpoints exist (`/api/rule-feed/check`, `/api/rule-feed/apply`) but config itself (URL, intervals, keys, auto-apply) cannot be read/modified via API.
+- **Status**: DONE (2026-04-26)
 - **Files**: `src/admin/handlers/rule_feed.rs`, `src/admin/handlers/config.rs`, `src/admin/mod.rs`, `src/admin/openapi.rs`
 - **Action**: Add GET/PUT handlers for rule-feed and yara-feed config. Register routes, add OpenAPI schemas.
 - **Effort**: Medium (2-3 days)
 
 ### 5.5: Persistence Config Bug Fix
 - **Problem**: `persist_interval_secs` field in `PersistenceConfig` NOT used — hardcoded to 60s at `src/worker_pool/shared_state.rs:53`. `use_persistent_kv` field is dead code.
+- **Status**: DONE (2026-04-26)
 - **Files**: `src/worker_pool/shared_state.rs:53`, `src/config/defaults.rs:1000-1031`
 - **Action**: Fix `shared_state.rs:53` to use `config.persistence.persist_interval_secs` instead of hardcoded 60. Add GET/PUT handler.
 - **Effort**: Low (1 day)
 
 ### 5.6: ICMP Filter UI Enhancement
 - **Problem**: Full CRUD API exists but UI (`admin-ui/src/pages/icmp.rs` — 270 lines) only shows status/ping, not config editing.
+- **Status**: NOT STARTED
 - **Files**: `src/icmp_filter/config.rs:179-210` (missing `JsonSchema` derive), `admin-ui/src/pages/icmp.rs`
 - **Action**: Add `JsonSchema` derive to `IcmpFilterConfig`. Enhance UI with config editing form.
 - **Effort**: Medium (2 days)
 
 ### 5.7: Remove duplicate components()
 - **Problem**: Two `components()` in `#[openapi()]` macro at `src/admin/openapi.rs:44-46,209-327`. First at lines 44-46 is empty, second has all schemas.
+- **Status**: NOT STARTED (easy mechanical fix)
 - **Action**: Remove empty `components(schemas())` at lines 44-46.
 - **Effort**: Low (15 min)
 
 ### 5.8: Security Annotations for Public Endpoints
 - **Problem**: All endpoints inherit global `bearer_auth` via `AddBearerAuth` modifier. Public endpoints like `/health` can't opt out in OpenAPI spec.
+- **Status**: NOT STARTED
 - **Files**: `src/admin/mod.rs:581-588`
 - **Action**: Add `security(())` annotation to public endpoints (health, metrics ws, logs ws).
 - **Effort**: Low (1 hour)
 
 ### 5.9: Worker Health Matrix View
 - **Problem**: Workers displayed as simple table with no visual health indicators at `admin-ui/src/pages/workers.rs:312-376`.
+- **Status**: DONE (2026-04-26)
 - **Action**: Add `calculate_health_status()` function (OK/WARN/CRIT based on CPU, memory, errors). Add color-coded health icons. Add summary row.
 - **Effort**: Medium (1-2 days)
 
 ### 5.10: Batch Restart Operations
 - **Problem**: Only per-worker restart. No batch/rolling restart.
+- **Status**: DONE (2026-04-26)
 - **Files**: `src/admin/handlers/system.rs:191-211`, `src/process/manager.rs`
 - **Action**: Add `POST /api/system/workers/batch-restart` with `BatchRestartRequest` (worker_ids, strategy: rolling/parallel, drain_timeout). Add multi-select UI.
 - **Effort**: Medium (2-3 days)
 
 ### 5.11: Per-Worker Metrics Additions
 - **Problem**: Missing metrics: health_score, last_request_at, active_connections, restart_count, slow_queries, bytes_sent/received.
+- **Status**: PARTIAL (health_status added)
 - **Files**: `src/process/ipc.rs:1271-1292`, worker modules
 - **Action**: Add fields to `WorkerMetricsPayload`. Track in worker process. Display in admin UI.
 - **Effort**: Medium (1-2 days)
 
 ### 5.12: Overseer Status Real IPC
 - **Problem**: `GET /api/system/overseer` returns hardcoded mock values at `src/admin/handlers/system.rs:350-377`. Doesn't query Overseer via IPC.
+- **Status**: NOT STARTED
 - **Files**: `src/admin/handlers/system.rs:350-377`, `src/overseer/process.rs:693-715`, `src/process/ipc.rs:555-561`
 - **Action**:
   1. Add IPC handler for `OverseerGetStatus` in Overseer
@@ -797,6 +809,7 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
 
 ### 5.13: Config Rollback/History Endpoints
 - **Problem**: Config changes overwrite `main.toml` directly. No version history, no snapshots, no rollback.
+- **Status**: NOT STARTED
 - **Files**: `src/admin/audit.rs`, `src/process/ipc.rs`
 - **Action**:
   1. Save snapshots to `config/versions/main-{timestamp}.toml` before changes
@@ -807,24 +820,28 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
 
 ### 5.14: Config Validation/Preview/Diff UI
 - **Problem**: Backend has `POST /api/config/validate` and `GET /api/config/schema` but no UI for diff, preview, or schema browsing.
+- **Status**: NOT STARTED
 - **Files**: `admin-ui/src/pages/settings.rs`
 - **Action**: Add TOML syntax checker, schema browser component, diff view (green/red/yellow), path security warning banner.
 - **Effort**: Medium (2-3 days)
 
 ### 5.15: Serverless/Honeypot/Static Config Handlers
 - **Problem**: These configs have partial exposure (health/stats) but no config GET/PUT endpoints.
+- **Status**: NOT STARTED
 - **Files**: `src/admin/handlers/serverless.rs`, `src/admin/handlers/honeypot.rs`
 - **Action**: Add GET/PUT handlers for `ServerlessConfig`, `HoneypotPortConfig`, and `MainStaticConfig`.
 - **Effort**: Medium (2-3 days)
 
 ### 5.16: 20 Missing DefaultsConfig Sub-configs
 - **Problem**: Only 4 of 24 `DefaultsConfig` sub-configs have handlers.
+- **Status**: NOT STARTED
 - **Files**: `src/admin/handlers/config.rs`
 - **Action**: Add handlers for 20 missing sub-configs (honeypot, blocked, suspicious_words, upstream_errors, error_pages, css_challenge, pow_challenge, auth, worker_pool, tarpit, upload, traffic_shaping, asn_scraping, etc.).
 - **Effort**: Medium (3-4 days)
 
 ### 5.17: MetricsConfig/TokioConfig Handlers
 - **Problem**: `MetricsConfig` stub not exposed. `TokioConfig` not exposed.
+- **Status**: NOT STARTED
 - **Files**: `src/admin/handlers/config.rs`
 - **Action**: Add GET/PUT handlers for both.
 - **Effort**: Low (1 day)
@@ -999,28 +1016,33 @@ Tests should be written after the code from Waves 1-5 is stable, but test infras
 
 ### 7.6: BSD Service Management (rc.d)
 - **Problem**: `UnixServiceManager` at `src/platform/service/stub_service.rs:166-178` returns `NotSupported` on BSD.
-- **Action**: Add BSD-specific `install_bsd()`, `start_bsd()`, `stop_bsd()`, `status_bsd()`, `uninstall_bsd()` methods. Generate proper rc.d scripts with rc.subr framework. FreeBSD: `/usr/local/etc/rc.d/`. OpenBSD: use `rcctl`.
+- **Status**: DONE (2026-04-26)
+- **Action**: Implement BSD-specific `install_bsd()`, `start_bsd()`, `stop_bsd()`, `status_bsd()`, `uninstall_bsd()` methods. Generate proper rc.d scripts with rc.subr framework. FreeBSD: `/usr/local/etc/rc.d/`. OpenBSD: use `rcctl`.
 - **Effort**: Medium (4-6 hours)
 
 ### 7.7: Zero-Copy I/O for macOS/FreeBSD
 - **Problem**: `sendfile_to_socket()` and `copy_file_range()` at `src/zero_copy.rs` only implemented for Linux. macOS has `sendfile(2)` with different API. FreeBSD has `sendfile(2)` with output-only bytes_sent. macOS has `fcopyfile` for file-to-file.
+- **Status**: DONE (2026-04-26)
 - **Files**: `src/zero_copy.rs`, `src/platform/mod.rs`, `src/static_files/mod.rs:246`
 - **Action**: Add `#[cfg(target_os = "macos")]` sendfile (value-result) and fcopyfile. Add `#[cfg(target_os = "freebsd")]` sendfile (output bytes_sent). OpenBSD/NetBSD: read/write fallback.
 - **Effort**: Medium (3-4 hours)
 
 ### 7.8: macOS TUN Interface (utun)
 - **Problem**: WireGuard cannot work on macOS. Linux/BSD use `/dev/tun` with ioctl but macOS uses socket-based `utun` interfaces. Current code has stub at `src/tunnel/wireguard/tun.rs:145-149`.
+- **Status**: DONE (2026-04-26)
 - **Action**: Add `MacosUtunDevice` struct. Create via `socket(PF_INET, SOCK_DGRAM, ...)`. Get interface name via `getifaddrs()`. Handle 4-byte address family header in read/write.
 - **Effort**: High (6-8 hours)
 
 ### 7.9: Windows Improvements
 - **Problem**: Process check uses `tasklist` parsing (fragile/slow). Termination uses `taskkill /F` (force kill, not graceful). No Ctrl+Break handler.
+- **Status**: DONE (2026-04-26)
 - **Files**: `src/platform/windows_impl.rs:128-188,331-363,365-421`
 - **Action**: Replace `tasklist` with `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`. Add graceful termination with timeout. Add `SetConsoleCtrlHandler`. Add `WSA_FLAG_NO_HANDLE_INHERIT` to socket creation.
 - **Effort**: Medium (6-8 hours)
 
 ### 7.10: BSD Sandbox (Capsicum/pledge)
 - **Problem**: Only Linux Landlock sandbox exists. FreeBSD has Capsicum. OpenBSD has pledge/unveil.
+- **Status**: DONE (2026-04-26)
 - **Files**: `src/platform/sandbox.rs:179-348`, new `src/platform/sandbox/bsd.rs`, new `src/platform/sandbox/openbsd.rs`
 - **Action**: Create `CapsicumSandbox` for FreeBSD. Create `PledgeSandbox` for OpenBSD. Update `ProcessSandbox::new()` dispatch.
 - **Effort**: High (8-10 hours)

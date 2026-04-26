@@ -422,6 +422,30 @@ stale_cache_ttl_secs = 60
 
 **Blocked**: utoipa upgrade from 4 to 5 is blocked by version mismatch with transitive dependencies. The `utoipa-swagger-ui` package version being used requires utoipa 5, but other dependencies (notably in admin handlers) are pinned to utoipa 4. Do not change `utoipa = "4"` in Cargo.toml without first resolving the dep graph.
 
+### Wave 7 Platform Implementation (COMPLETE)
+
+The following platform-specific features were implemented in the 2026-04-26 wave:
+
+**BSD Service Management**
+- FreeBSD rc.d scripts at `/usr/local/etc/rc.d/` with rc.subr framework
+- OpenBSD `rcctl` integration
+
+**macOS Support**
+- `sendfile_to_socket()` with value-result API
+- `fcopyfile` for file-to-file operations
+- UTUN interface support for WireGuard
+
+**Windows Improvements**
+- `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` instead of tasklist parsing
+- Graceful termination with timeout
+- `SetConsoleCtrlHandler` for Ctrl+Break
+- `WSA_FLAG_NO_HANDLE_INHERIT` for socket creation
+
+**BSD Sandbox**
+- FreeBSD: Capsicum capability framework
+- OpenBSD: pledge/unveil system calls
+- Implementation in `src/platform/sandbox.rs:359-558`
+
 ### Moka Cache with Weigher + TTL
 
 When using Moka with weighted entries (via `weigher` callback) AND time-to-live expiration:
