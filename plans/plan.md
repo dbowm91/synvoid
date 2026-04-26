@@ -149,15 +149,22 @@ The following Phase 2 items are deferred but non-blocking:
   - Updated documentation to reflect that `HickoryRecursor` handles minimization natively.
   - `HickoryResolver` (forwarder) continues to rely on upstream recursive resolvers for minimization.
 
-### Signed Rule Feed Phase 2 (2026-04-26)
+### HTTP/3 Functional Implementation (2026-04-26)
 - **Status**: COMPLETED
-- **Verification**: 2026-04-26 - `cargo check` succeeds, IPC message handling verified in code
+- **Verification**: 2026-04-26 - `cargo check` succeeds, code implements `send_request_streaming` and body pipe
 - **Changes**:
-  - Added `sqli` and `xss` to `DefaultPatterns` and enabled custom patterns for these categories.
-  - Updated `SqliDetector` and `XssDetector` to support both `libinjection` and pattern-based detection.
-  - Implemented hot-reload in `WafCore` and wired `RuleFeedManager` to broadcast updates to all workers via IPC.
-  - Added disk persistence for downloaded rules in `RuleFeedManager` using `storage_dir` config.
-  - Updated `AttackDetector` to be instance-based for better reloadability.
+  - Removed unused `Http3Handler` stub from `src/http3/handler.rs`.
+  - Implemented actual upstream proxying in `Http3Server::handle_request()` in `src/http3/server.rs`.
+  - Added support for streaming response bodies and correct proxy headers in HTTP/3.
+  - Properly wired metrics, drain state, and flood protector into the HTTP/3 listener.
+
+### Direct TLS for Key Exchange Server (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - `cargo check` succeeds, code uses `TlsAcceptor` and `hyper` 1.0
+- **Changes**:
+  - Implemented direct TLS support in `src/mesh/passover_key_exchange.rs`.
+  - Integrated with `CertResolver` to load and manage certificates.
+  - Key exchange server now supports both HTTP and direct HTTPS depending on configuration.
 
 3. **HSM PKCS#11 Key Retrieval** (`src/dns/hsm.rs:66-68`): The `key_id` field is marked as future HSM support. Full PKCS#11 key retrieval is not yet implemented.
 
@@ -177,13 +184,14 @@ The following stubs were reviewed and found to be non-blocking (either properly 
 
 13. **Reserved protocol modules** (`src/mesh/transport_*.rs`): Multiple modules with `SAFETY_REASON` comments marking them as reserved for future protocol handling expansion.
 
-14. **Windows WFP interface-specific filtering** (`src/icmp_filter/wfp.rs:36-37`): Interface-specific filtering on Windows WFP requires additional Windows API calls not yet implemented. All interfaces will be filtered.
+### Windows Platform Enhancements (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - Code implements `ConditionField::InterfaceIndex` and `netsh` route addition
+- **Changes**:
+  - Implemented interface-specific filtering in `src/icmp_filter/wfp.rs`.
+  - Implemented Windows TUN route addition in `src/tunnel/tun.rs`.
 
-15. **Windows TUN route addition** (`src/tunnel/tun.rs:382`): Route addition is not implemented for Windows TUN. Only has Linux implementation.
-
----
-
-## Configuration Options
+## Wave 5: Final Review and Documentation Update
 
 ### mesh.config
 ```toml

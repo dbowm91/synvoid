@@ -34,6 +34,7 @@ The following code paths execute on every request and must be optimized:
 - `src/waf/attack_detection/` — WAF rule matching (runs per-request on all inputs)
 - `src/mesh/proxy.rs` — Mesh proxy routing, caching, provider selection
 - `src/http/server.rs` — HTTP request handling and dispatch
+- `src/http3/server.rs` — HTTP/3 QUIC request handling and proxying
 - `src/proxy/mod.rs` — Upstream proxy, cookie/cache key construction
 - `src/plugin/wasm_runtime.rs` — WASM plugin filter/transform per request
 
@@ -439,33 +440,29 @@ stale_cache_ttl_secs = 60
 - `mesh_backend_pool: Option<Arc<MeshBackendPool>>` field in UnifiedServer
 - Use `site_config.mesh_routing` to enable mesh routing for a site
 
-## Deferred Items
+## Recently Completed Items
 
-The following items are deferred and should not be attempted without further research:
+### HTTP/3 and QUIC Support (2026-04-26)
+- Implemented full upstream proxying in `src/http3/server.rs`.
+- Removed unused `Http3Handler` stub.
+- Wired HTTP/3 listener into `UnifiedServer` with full WAF support.
 
-### utoipa 4→5 Upgrade
-**Completed (2026-04-26)**: The utoipa upgrade from 4 to 5 is now complete. Key changes:
-- `utoipa = "5"` is now used in Cargo.toml
-- Response/request types for complex config (MainConfig, MeshConfig, DnsConfig, etc.) now use `serde_json::Value`
-- Types with fields like `DateTime<Utc>`, `PathBuf` use manual `ToSchema` impls in `src/admin/schema.rs`
-- OpenAPI tests use `HttpMethod` enum instead of `PathItemType` (API change in utoipa 5)
+### Direct TLS for Mesh Key Exchange (2026-04-26)
+- Added direct HTTPS support to the mesh key exchange server in `src/mesh/passover_key_exchange.rs`.
+- Integrated with `CertResolver` for automated certificate management.
 
-### Org Key Trust Chain (7.11)
-**Completed (2026-04-26)**: Implemented a complete trust chain for mesh nodes.
-- `OrgKeyManager` coordinates lifecycle and DHT storage.
-- `OrgPublicKey` and `MemberCertificate` provide verifiable identity.
-- Quorum signing (2/3 of Global Nodes) automated via mesh protocol.
-- `peer_auth.rs` updated to verify the complete chain.
-- Trust chain: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes.
+### HSM PKCS#11 Enhancements (2026-04-26)
+- Implemented full key retrieval by label and ID in `src/dns/hsm.rs`.
+- Added support for Ed25519 and RSA public key extraction from HSM.
 
+### Signed Rule Feed Phase 2 (2026-04-26)
+- Enabled dynamic pattern updates for all WAF categories (SQLi, XSS, etc.).
+- Implemented hot-reload of attack detectors via IPC.
+- Added disk persistence for downloaded rules.
 
-### hickory-recursor 0.25 → 0.26
-**Completed (2026-04-26)**: The hickory-dns migration is now complete. Key changes:
-- `hickory-proto` and `hickory-resolver` updated to 0.26
-- `Recursor` integration migrated to `hickory-resolver` recursor feature
-- `Message` and `Record` APIs updated to use fields instead of methods
-- `TokioRuntimeProvider` used as the connection handle
-- DNSSEC validation status retrieved via `authentic_data` flag on `Message`
+### Windows Platform Support (2026-04-26)
+- Implemented interface-specific filtering for Windows WFP.
+- Added Windows TUN route addition via `netsh`.
 
 ## Implementation Planning
 

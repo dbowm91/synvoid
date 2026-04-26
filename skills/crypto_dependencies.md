@@ -17,6 +17,8 @@ MaluWAF uses a multi-layered approach to cryptography:
 | Crate | Version | Language | Purpose |
 |-------|---------|----------|---------|
 | `aws-lc-rs` | 1.16.2 | C (compiled) | TLS 1.3, ML-KEM, ML-DSA |
+| `quinn` | 0.11 | Rust | QUIC transport, HTTP/3 |
+| `h3` | 0.0.8 | Rust | HTTP/3 protocol |
 | `ring` | 0.17.14 | Rust + asm | DNS/QUIC crypto (transitive) |
 | `libcrux-ml-dsa` | 0.0.8 | Pure Rust | ML-DSA signatures |
 | `pqc_kyber` | 0.7.1 | Rust | ML-KEM key exchange |
