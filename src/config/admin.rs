@@ -7,6 +7,7 @@ use super::validation::ConfigValidationError;
 const MIN_TOKEN_LENGTH: usize = 32;
 const WEAK_TOKEN_PATTERNS: &[&str] = &[
     "changeme",
+    "change-me",
     "password",
     "admin",
     "123456",
@@ -17,6 +18,8 @@ const WEAK_TOKEN_PATTERNS: &[&str] = &[
     "dragon",
     "master",
     "token_placeholder",
+    "token-placeholder",
+    "replace-me",
 ];
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

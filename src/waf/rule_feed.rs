@@ -290,15 +290,18 @@ pub struct RuleFeedManager {
 }
 
 impl RuleFeedManager {
-    pub fn new(config: RuleFeedConfig) -> Arc<Self> {
+    pub fn new(config: RuleFeedConfig) -> Result<Arc<Self>, String> {
         let embedded_public_key = config
             .public_key
             .as_deref()
             .filter(|k| !k.is_empty())
             .map(Self::parse_embedded_key)
-            .unwrap_or_else(|| Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY));
+            .transpose()?
+            .unwrap_or_else(|| {
+                Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY).expect("Invalid embedded key")
+            });
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             config,
             client: create_simple_http_client(Duration::from_secs(30)),
             current_version: Arc::new(RwLock::new(None)),
@@ -307,7 +310,7 @@ impl RuleFeedManager {
             last_check: Arc::new(RwLock::new(0)),
             embedded_public_key,
             on_apply_callback: Arc::new(RwLock::new(None)),
-        })
+        }))
     }
 
     pub fn set_on_apply_callback<F>(&self, callback: F)
@@ -317,13 +320,14 @@ impl RuleFeedManager {
         *self.on_apply_callback.write() = Some(Box::new(callback));
     }
 
-    fn parse_embedded_key(key_str: &str) -> VerifyingKey {
+    fn parse_embedded_key(key_str: &str) -> Result<VerifyingKey, String> {
         if key_str == PLACEHOLDER_KEY {
-            panic!(
+            return Err(
                 "RULE FEED SECURITY VIOLATION: Public key still set to placeholder value. \
                  Set [waf.rule_feed.public_key] in the TOML config to a valid \
                  base64-encoded 32-byte Ed25519 verifying key. Refusing to start with \
                  insecure default."
+                    .to_string(),
             );
         }
 
@@ -333,16 +337,17 @@ impl RuleFeedManager {
                 if let Ok(key) =
                     VerifyingKey::from_bytes(bytes[..32].try_into().expect("Invalid key length"))
                 {
-                    return key;
+                    return Ok(key);
                 }
             }
         }
 
-        panic!(
+        Err(
             "RULE FEED SECURITY VIOLATION: No valid embedded Ed25519 public key configured. \
              Set [waf.rule_feed.public_key] in the TOML config to a base64-encoded \
              32-byte Ed25519 verifying key. Refusing to start."
-        );
+                .to_string(),
+        )
     }
 
     pub fn start_background_fetching(self: &Arc<Self>) {
@@ -590,10 +595,10 @@ fn convert_rules_to_ipc_patterns(rules: &RuleSet) -> Vec<crate::process::ipc::Ru
 }
 
 impl RuleFeedManagerForWaf {
-    pub fn new(config: RuleFeedConfig) -> Arc<Self> {
-        Arc::new(Self {
-            inner: RuleFeedManager::new(config),
-        })
+    pub fn new(config: RuleFeedConfig) -> Result<Arc<Self>, String> {
+        Ok(Arc::new(Self {
+            inner: RuleFeedManager::new(config)?,
+        }))
     }
 
     pub fn start_background_fetching(self: &Arc<Self>) {
@@ -834,12 +839,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "RULE FEED SECURITY VIOLATION")]
     fn test_parse_embedded_key_invalid() {
-        // Placeholder key should generate a random key (no panic)
-        let key = RuleFeedManager::parse_embedded_key("DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER");
-        // Returns a valid VerifyingKey (randomly generated)
-        let _ = key;
+        let result = RuleFeedManager::parse_embedded_key("DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("RULE FEED SECURITY VIOLATION"));
     }
 
     #[test]
@@ -850,29 +853,10 @@ mod tests {
         let verifying_key = signing_key.verifying_key();
         let key_bytes = verifying_key.as_bytes();
 
-        // Manual base64 encode
-        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut encoded = String::new();
-        for chunk in key_bytes.chunks(3) {
-            let b0 = chunk[0] as u32;
-            let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-            let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-            let triple = (b0 << 16) | (b1 << 8) | b2;
-            encoded.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-            encoded.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-            if chunk.len() > 1 {
-                encoded.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-            if chunk.len() > 2 {
-                encoded.push(CHARS[(triple & 0x3F) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-        }
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(key_bytes);
 
-        let parsed = RuleFeedManager::parse_embedded_key(&encoded);
+        let parsed = RuleFeedManager::parse_embedded_key(&encoded).unwrap();
         assert_eq!(parsed.as_bytes(), verifying_key.as_bytes());
     }
 

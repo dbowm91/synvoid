@@ -321,7 +321,8 @@ async fn run_master(
     // Initialize rule feed manager if enabled
     let rule_feed_config = main_config.rule_feed.clone();
     let rule_feed_manager = if rule_feed_config.enabled {
-        let manager = RuleFeedManagerForWaf::new(rule_feed_config);
+        let manager = RuleFeedManagerForWaf::new(rule_feed_config)
+            .map_err(|e| format!("Rule feed initialization failed: {}", e))?;
         let manager_clone = manager.clone();
         manager_clone.start_background_fetching();
         Some(manager)
