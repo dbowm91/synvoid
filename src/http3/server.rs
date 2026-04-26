@@ -1,20 +1,27 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 use bytes::Bytes;
 use http::{header, StatusCode};
+use http_body_util::BodyExt;
 use metrics::{counter, gauge, histogram};
 
-use crate::config::Http3Config;
+use crate::config::{Http3Config, MainConfig};
 use crate::http::headers::generate_stealth_timestamp;
+use crate::http_client::{
+    create_http_client_with_config, send_request_streaming, HttpClient,
+};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
-use crate::proxy::WafDecision;
+use crate::metrics::WorkerMetrics;
+use crate::proxy::{build_forward_headers, WafDecision};
 use crate::router::{RouteResult, Router};
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
+use crate::worker::drain_state::WorkerDrainState;
+use crate::config::site::ProxyHeadersConfig;
 
 pub struct Http3Server {
     addr: SocketAddr,
@@ -22,6 +29,9 @@ pub struct Http3Server {
     router: Arc<Router>,
     waf: Arc<WafCore>,
     flood_protector: Option<Arc<FloodProtector>>,
+    client: HttpClient,
+    drain_state: Option<Arc<WorkerDrainState>>,
+    metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
 }
 
@@ -31,14 +41,24 @@ impl Http3Server {
         config: Http3Config,
         router: Router,
         waf: Arc<WafCore>,
+        _main_config: MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {
+        let client = create_http_client_with_config(
+            Duration::from_secs(5),
+            100,
+            Duration::from_secs(30),
+        );
+
         Self {
             addr,
             config,
             router: Arc::new(router),
             waf,
             flood_protector: None,
+            client,
+            drain_state: None,
+            metrics: None,
             shutdown_rx,
         }
     }
@@ -48,24 +68,30 @@ impl Http3Server {
         self
     }
 
+    pub fn with_drain_state(mut self, drain_state: Arc<WorkerDrainState>) -> Self {
+        self.drain_state = Some(drain_state);
+        self
+    }
+
+    pub fn with_metrics(mut self, metrics: Arc<WorkerMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
     pub async fn serve(
-        mut self,
+        self,
         tls_config: Arc<rustls::ServerConfig>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !self.config.enabled {
-            tracing::info!("HTTP/3 server disabled");
             return Ok(());
         }
 
-        let mut server_crypto = (*tls_config).clone();
-        server_crypto.alpn_protocols = vec![b"h3".to_vec()];
-
-        let quic_server_config =
-            quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
-                .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
-
+        // Fix for quinn 0.11: use QuicServerConfig::try_from
+        let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
+            .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
+        
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-
+        
         let transport_config =
             Arc::get_mut(&mut server_config.transport).expect("Failed to get transport config");
         transport_config.max_concurrent_uni_streams(0_u8.into());
@@ -80,21 +106,17 @@ impl Http3Server {
 
         tracing::info!("HTTP/3 server listening on {}", self.addr);
 
-        let router = self.router.clone();
-        let waf = self.waf.clone();
-        let flood_protector = self.flood_protector.clone();
-        let max_request_size = self.config.max_request_size;
+        let self_arc = Arc::new(self);
+        let mut shutdown_rx = self_arc.shutdown_rx.resubscribe();
 
         loop {
             tokio::select! {
                 incoming = endpoint.accept() => {
                     match incoming {
                         Some(conn) => {
-                            let router = router.clone();
-                            let waf = waf.clone();
-                            let flood_protector = flood_protector.clone();
+                            let s = self_arc.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_quic_connection(conn, router, waf, flood_protector, max_request_size).await {
+                                if let Err(e) = s.handle_quic_connection(conn).await {
                                     tracing::debug!("HTTP/3 connection error: {}", e);
                                 }
                             });
@@ -105,7 +127,7 @@ impl Http3Server {
                         }
                     }
                 }
-                _ = self.shutdown_rx.recv() => {
+                _ = shutdown_rx.recv() => {
                     tracing::info!("HTTP/3 server received shutdown signal");
                     endpoint.close(0u32.into(), b"Server shutdown");
                     break;
@@ -118,11 +140,8 @@ impl Http3Server {
     }
 
     async fn handle_quic_connection(
+        self: Arc<Self>,
         incoming: quinn::Incoming,
-        router: Arc<Router>,
-        waf: Arc<WafCore>,
-        flood_protector: Option<Arc<FloodProtector>>,
-        max_request_size: usize,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let connection = incoming.await.map_err(|e| {
             counter!("maluwaf.http3.connection.errors").increment(1);
@@ -134,7 +153,7 @@ impl Http3Server {
 
         tracing::debug!("HTTP/3 connection from {}", remote_addr);
 
-        if let Some(ref fp) = flood_protector {
+        if let Some(ref fp) = self.flood_protector {
             match fp.check_tcp_connection(client_ip) {
                 FloodDecision::Blackholed => {
                     counter!("maluwaf.http3.flood_blackhole").increment(1);
@@ -163,19 +182,9 @@ impl Http3Server {
         loop {
             match h3_conn.accept().await {
                 Ok(Some(resolver)) => {
-                    let router = router.clone();
-                    let waf = waf.clone();
-                    let _flood_protector = flood_protector.clone();
+                    let s = self.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_request(
-                            resolver,
-                            remote_addr,
-                            router,
-                            waf,
-                            max_request_size,
-                        )
-                        .await
-                        {
+                        if let Err(e) = s.handle_request(resolver, remote_addr).await {
                             tracing::debug!("HTTP/3 request error: {}", e);
                         }
                     });
@@ -197,17 +206,15 @@ impl Http3Server {
     }
 
     async fn handle_request(
+        self: Arc<Self>,
         resolver: h3::server::RequestResolver<h3_quinn::Connection, bytes::Bytes>,
         remote_addr: SocketAddr,
-        router: Arc<Router>,
-        waf: Arc<WafCore>,
-        max_request_size: usize,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start = Instant::now();
-
         let client_ip = remote_addr.ip();
+        let max_request_size = self.config.max_request_size;
 
-        let mut connection_token = if let Some(ref conn_limiter) = waf.connection_limiter {
+        let mut connection_token = if let Some(ref conn_limiter) = self.waf.connection_limiter {
             match conn_limiter.try_acquire("_http3_", client_ip).await {
                 Ok(token) => Some(token),
                 Err(e) => {
@@ -220,7 +227,7 @@ impl Http3Server {
             None
         };
 
-        if waf.is_over_bandwidth_limit() {
+        if self.waf.is_over_bandwidth_limit() {
             tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
             counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
             return Ok(());
@@ -254,12 +261,11 @@ impl Http3Server {
             .and_then(|v| v.to_str().ok())
             .map(String::from);
 
-        let max_body_size = max_request_size;
         let mut body_bytes = Vec::new();
         while let Ok(Some(chunk)) = request_stream.recv_data().await {
             use bytes::Buf;
             let chunk_len = chunk.remaining();
-            if body_bytes.len() + chunk_len > max_body_size {
+            if body_bytes.len() + chunk_len > max_request_size {
                 tracing::warn!(client = %client_ip, size = body_bytes.len(), "HTTP/3 request body exceeds max size");
                 counter!("maluwaf.http3.request.body_too_large").increment(1);
                 break;
@@ -285,7 +291,7 @@ impl Http3Server {
 
         tracing::trace!(client = %client_ip, method = %method_str, path = %path, body_size = body_bytes.len(), "HTTP/3 request body read");
 
-        let waf_decision = waf
+        let waf_decision = self.waf
             .check_request_full(
                 client_ip,
                 method_str,
@@ -323,11 +329,14 @@ impl Http3Server {
                     .body(Bytes::from(body))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
 
-                let (parts, _body) = response.into_parts();
+                let (parts, body) = response.into_parts();
                 request_stream
                     .send_response(http::Response::from_parts(parts, ()))
                     .await
                     .map_err(|e| format!("Failed to send response: {}", e))?;
+                request_stream.send_data(body).await?;
+                request_stream.finish().await?;
+                return Ok(());
             }
             WafDecision::Challenge(html) => {
                 counter!("maluwaf.http3.requests.challenged").increment(1);
@@ -356,6 +365,8 @@ impl Http3Server {
                     .send_data(body)
                     .await
                     .map_err(|e| format!("Failed to send data: {}", e))?;
+                request_stream.finish().await?;
+                return Ok(());
             }
             WafDecision::ChallengeWithCookie {
                 html,
@@ -394,10 +405,12 @@ impl Http3Server {
                     .send_data(body)
                     .await
                     .map_err(|e| format!("Failed to send data: {}", e))?;
+                request_stream.finish().await?;
+                return Ok(());
             }
             WafDecision::Tarpit(tar_path) => {
                 counter!("maluwaf.http3.requests.tarpitted").increment(1);
-                let html = waf.generate_tarpit_response(&tar_path);
+                let html = self.waf.generate_tarpit_response(&tar_path);
                 let body_len = html.len() as u64;
                 if let Some(ref bw) = bandwidth {
                     bw.record_egress(body_len, BandwidthProtocol::Http3, EgressDirection::Blocked);
@@ -419,6 +432,8 @@ impl Http3Server {
                     .send_data(body)
                     .await
                     .map_err(|e| format!("Failed to send data: {}", e))?;
+                request_stream.finish().await?;
+                return Ok(());
             }
             WafDecision::Drop => {
                 counter!("maluwaf.http3.blackhole_drop").increment(1);
@@ -427,7 +442,7 @@ impl Http3Server {
             WafDecision::Pass => {}
         }
 
-        let route_result = router.route(&host, &path);
+        let route_result = self.router.route(&host, &path);
 
         match route_result {
             RouteResult::Found(route_target) => {
@@ -437,7 +452,7 @@ impl Http3Server {
                 let site_max_per_ip = site_traffic_config.max_connections_per_ip;
 
                 if site_max_connections.is_some() || site_max_per_ip.is_some() {
-                    if let Some(ref conn_limiter) = waf.connection_limiter {
+                    if let Some(ref conn_limiter) = self.waf.connection_limiter {
                         if let Some(token) = connection_token.take() {
                             conn_limiter.release(token);
                         }
@@ -460,36 +475,107 @@ impl Http3Server {
                                     e
                                 );
                                 counter!("maluwaf.http3.connection_limited").increment(1);
-                                request_stream
-                                    .finish()
-                                    .await
-                                    .map_err(|e| format!("Failed to finish stream: {}", e))?;
+                                request_stream.finish().await?;
                                 return Ok(());
                             }
                         }
                     }
                 }
 
-                let body = format!(
-                    "HTTP/3 proxied to {} - path: {}",
-                    route_target.upstream, path
-                );
-                let response = http::Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/plain")
-                    .header(header::DATE, generate_stealth_timestamp(5))
-                    .body(Bytes::from(body))
-                    .map_err(|e| format!("Failed to build response: {}", e))?;
+                // Actual proxying logic
+                let upstream_url = format!("{}{}", route_target.upstream.trim_end_matches('/'), path);
+                
+                static DEFAULT_HEADERS_CONFIG: ProxyHeadersConfig = ProxyHeadersConfig {
+                    clear: Vec::new(),
+                    set: Vec::new(),
+                    forward: Vec::new(),
+                    hide: Vec::new(),
+                };
 
-                let (parts, body) = response.into_parts();
-                request_stream
-                    .send_response(http::Response::from_parts(parts, ()))
-                    .await
-                    .map_err(|e| format!("Failed to send response: {}", e))?;
-                request_stream
-                    .send_data(body)
-                    .await
-                    .map_err(|e| format!("Failed to send data: {}", e))?;
+                let forward_headers = build_forward_headers(
+                    client_ip,
+                    &headers,
+                    route_target.site_config.proxy.headers.as_ref().unwrap_or(&DEFAULT_HEADERS_CONFIG),
+                    true, // HTTP/3 is always TLS
+                );
+
+                let body_to_send = if body_bytes.is_empty() {
+                    None
+                } else {
+                    Some(Bytes::from(body_bytes))
+                };
+
+                let upstream_result = send_request_streaming(
+                    &self.client,
+                    method,
+                    &upstream_url,
+                    body_to_send,
+                    forward_headers,
+                    Some(Duration::from_secs(30)),
+                ).await;
+
+                match upstream_result {
+                    Ok(upstream_resp) => {
+                        let (parts, mut upstream_body) = upstream_resp.into_parts();
+                        
+                        let mut resp_builder = http::Response::builder()
+                            .status(parts.status);
+                        
+                        for (name, value) in parts.headers.iter() {
+                            if !crate::proxy::is_hop_by_hop_header_name(name) {
+                                resp_builder = resp_builder.header(name, value);
+                            }
+                        }
+                        
+                        let response = resp_builder.body(())
+                            .map_err(|e| format!("Failed to build response: {}", e))?;
+
+                        request_stream.send_response(response).await?;
+
+                        while let Some(chunk) = upstream_body.frame().await {
+                            match chunk {
+                                Ok(frame) => {
+                                    if let Some(data) = frame.data_ref() {
+                                        request_stream.send_data(data.clone()).await?;
+                                        
+                                        // Record egress bandwidth
+                                        let data_len = data.len() as u64;
+                                        if let Some(ref bw) = bandwidth {
+                                            bw.record_egress(data_len, BandwidthProtocol::Http3, EgressDirection::Proxied);
+                                            bw.record_site_egress(&host, data_len);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Error reading upstream body: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_site_upstream_success(&site_id);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Upstream error over HTTP/3: {}", e);
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_site_upstream_failure(&site_id);
+                        }
+                        
+                        let body = Bytes::from("Bad Gateway");
+                        let response = http::Response::builder()
+                            .status(StatusCode::BAD_GATEWAY)
+                            .header(header::CONTENT_TYPE, "text/plain")
+                            .body(body)
+                            .unwrap();
+                        
+                        let (parts, body) = response.into_parts();
+                        request_stream.send_response(http::Response::from_parts(parts, ()))
+                            .await?;
+                        request_stream.send_data(body).await?;
+                    }
+                }
             }
             RouteResult::NotFound(e) | RouteResult::Error(e) => {
                 tracing::debug!("Route not found: {} for host: {}", e, host);
@@ -502,11 +588,12 @@ impl Http3Server {
                     .body(Bytes::from(body))
                     .map_err(|e| format!("Failed to build response: {}", e))?;
 
-                let (parts, _body) = response.into_parts();
+                let (parts, body) = response.into_parts();
                 request_stream
                     .send_response(http::Response::from_parts(parts, ()))
                     .await
                     .map_err(|e| format!("Failed to send response: {}", e))?;
+                request_stream.send_data(body).await?;
             }
         }
 

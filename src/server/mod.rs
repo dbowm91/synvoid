@@ -1244,16 +1244,27 @@ impl UnifiedServer {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use crate::http3::Http3Server;
 
+        let main_config = state.config.read().await.main.clone();
+
         let mut server = Http3Server::new(
             http3_addr,
             http3_config,
             (*state.router).clone(),
             state.waf.clone(),
+            main_config,
             shutdown_rx,
         );
 
         if let Some(fp) = state.flood_protector.clone() {
             server = server.with_flood_protector(fp);
+        }
+
+        if let Some(ds) = state.drain_state.clone() {
+            server = server.with_drain_state(ds);
+        }
+
+        if let Some(metrics) = state.metrics.clone() {
+            server = server.with_metrics(metrics);
         }
 
         let tls_config = cert_resolver.build_server_config()?;
