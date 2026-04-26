@@ -340,11 +340,11 @@ impl RecursiveDnsServer {
             Err(_) => return Err(RecursiveDnsError::InvalidQuery),
         };
 
-        if parsed.queries().is_empty() {
+        if parsed.queries.is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
         }
 
-        let question = &parsed.queries()[0];
+        let question = &parsed.queries[0];
         let qname_str = question.name().to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
 
@@ -458,11 +458,11 @@ impl RecursiveDnsServer {
     }
 
     async fn resolve_query(&self, query: &Message, message_id: u16) -> RecursiveDnsResult<Vec<u8>> {
-        if query.queries().is_empty() {
+        if query.queries.is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
         }
 
-        let question = &query.queries()[0];
+        let question = &query.queries[0];
         let qname_str = question.name().to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
         let qtype = question.query_type();

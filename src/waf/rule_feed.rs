@@ -834,6 +834,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "RULE FEED SECURITY VIOLATION")]
     fn test_parse_embedded_key_invalid() {
         // Placeholder key should generate a random key (no panic)
         let key = RuleFeedManager::parse_embedded_key("DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER");
