@@ -43,7 +43,7 @@ For distributed state (DHT, Mesh messages, Persistence), follow these standards:
 
 1. **Prefer Postcard over JSON**: Use `crate::serialization::serialize/deserialize` (Postcard) for binary stability and performance. Avoid `serde_json` in high-performance or distributed paths.
 2. **Use Typed Structs**: Do not use `serde_json::Value` (maps) for records. Define explicit Rust structs with `Archive`, `RkyvSerialize`, `RkyvDeserialize`, `Serialize`, and `Deserialize` derives.
-3. **Unix Timestamps (u64)**: Use `u64` for all timestamps that need to be persisted or sent over the network. `Instant` is monotonic and local to a single process; it cannot be serialized or compared across reloads. 
+3. **Unix Timestamps (u64)**: Use `u64` for all timestamps that need to be persisted or sent over the network. `Instant` is monotonic and local to a single process; it cannot be serialized or compared across reloads.
    - Use `crate::mesh::safe_unix_timestamp()` or `crate::utils::current_timestamp()` to get the current time.
    - Use `.saturating_sub()` for duration calculations.
 4. **Binary Signatures**: Cryptographic signatures (Ed25519) should operate on `&[u8]`. Use `MeshMessageSigner::sign/verify` with binary data. Use `postcard` to generate stable signable bytes for structs.
@@ -355,9 +355,7 @@ The codebase uses placeholder values that should trigger warnings at startup:
 
 These placeholders indicate the value was not configured and may indicate a security issue.
 
-### Critical Security Patterns (Wave 0)
-
-The following security patterns were implemented in the 2026-04-25 wave:
+### Critical Security Patterns
 
 **Trusted Signer Verification for ThreatAnnounce**
 ```rust
@@ -401,6 +399,29 @@ if !authorized {
 }
 ```
 
+**Edge Node PoW Authentication (REQUIRED)**
+```rust
+// Edge nodes must provide BOTH pow_nonce AND pow_public_key
+// If either is missing, authentication fails with error
+if let (Some(nonce), Some(pk)) = (pow_nonce, pow_public_key) {
+    validate_edge_node_pow(pubkey, nonce)?;
+} else {
+    return Err("Edge node did not provide PoW nonce and public key - PoW is required");
+}
+```
+
+**Genesis Key Default Deny**
+```rust
+// Empty authorized_genesis_keys now denies by default (security fix)
+pub fn is_genesis_key_authorized(&self, genesis_public_key: &str) -> bool {
+    if self.authorized_genesis_keys.is_empty() {
+        tracing::warn!("No authorized genesis keys configured - rejecting genesis key authentication.");
+        return false;  // Changed from true (secure default)
+    }
+    self.authorized_genesis_keys.iter().any(|k| k == genesis_public_key)
+}
+```
+
 ### Mesh Configuration Patterns
 
 **Mesh Routing Configuration**
@@ -418,80 +439,22 @@ stale_cache_ttl_secs = 60
 - `mesh_backend_pool: Option<Arc<MeshBackendPool>>` field in UnifiedServer
 - Use `site_config.mesh_routing` to enable mesh routing for a site
 
-### utoipa 4→5 Note
+## Deferred Items
 
+The following items are deferred and should not be attempted without further research:
+
+### utoipa 4→5 Upgrade
 **Blocked**: utoipa upgrade from 4 to 5 is blocked by version mismatch with transitive dependencies. The `utoipa-swagger-ui` package version being used requires utoipa 5, but other dependencies (notably in admin handlers) are pinned to utoipa 4. Do not change `utoipa = "4"` in Cargo.toml without first resolving the dep graph.
 
-### Wave 7 Platform Implementation (COMPLETE)
+### Org Key Trust Chain (7.11)
+**Deferred**: Very large implementation requiring new modules. Trust chain: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes. The `organization.rs` module exists but full trust chain verification is not implemented.
 
-The following platform-specific features were implemented in the 2026-04-26 wave:
-
-**BSD Service Management**
-- FreeBSD rc.d scripts at `/usr/local/etc/rc.d/` with rc.subr framework
-- OpenBSD `rcctl` integration
-
-**macOS Support**
-- `sendfile_to_socket()` with value-result API
-- `fcopyfile` for file-to-file operations
-- UTUN interface support for WireGuard
-
-**Windows Improvements**
-- `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` instead of tasklist parsing
-- Graceful termination with timeout
-- `SetConsoleCtrlHandler` for Ctrl+Break
-- `WSA_FLAG_NO_HANDLE_INHERIT` for socket creation
-
-**BSD Sandbox**
-- FreeBSD: Capsicum capability framework
-- OpenBSD: pledge/unveil system calls
-
-### Wave 5 Admin API Implementation (COMPLETE)
-
-The following Admin API enhancements were implemented in the 2026-04-26 wave:
-
-**Overseer Status via IPC**
-- Overseer now writes status to `runtime/overseer_status.json` periodically
-- `GET /api/system/overseer` reads from status file for real-time data
-- Falls back to ProcessManager state if status file unavailable
-
-**Serverless Mesh Integration (2026-04-26)**
-
-Wave 3.2 implemented ServerlessInvokeRequest handler:
-- Added `handle_serverless_invoke_request()` in `transport_peer.rs`
-- Handles `MeshMessage::ServerlessInvokeRequest` variants in peer message loop
-- Calls `ServerlessManager.invoke_for_mesh()` with proper `CallerContext`
-- Logs success/failure for observability
-- Note: Remaining Wave 3 items (3.3-3.14) deferred due to dependency on mesh_id field and DHT watcher infrastructure
-
-**Config Versioning and Rollback**
-- `ConfigVersionManager` in `src/admin/audit.rs` tracks config snapshots
-- `GET /config/versions` - lists all saved config versions
-- `GET /config/versions/{id}` - gets version content
-- `POST /config/rollback/{id}` - rolls back to a specific version
-- All config updates now save snapshot BEFORE making changes
-- Version storage: `config/versions/main-{timestamp}.toml`
-
-**Config Diff Endpoint**
-- `GET /config/diff?from={id}&to={id}` - compares two config versions with line-by-line diff
-
-**New Config Handlers Added**
-- ServerlessConfig: GET/PUT `/serverless/config`
-- HoneypotPortConfig: GET/PUT `/honeypot/config`
-- MainStaticConfig: GET/PUT `/config/static`
-- 20 new DefaultsConfig sub-configs: GET/PUT `/config/defaults/{subconfig}`
-- MetricsConfig: GET/PUT `/config/metrics`
-- TokioConfig: GET/PUT `/config/tokio`
-
-### Moka Cache with Weigher + TTL
-
-When using Moka with weighted entries (via `weigher` callback) AND time-to-live expiration:
-- `entry_count()` may return 0 even when entries exist
-- Use `len()`, `positive_len()`, `negative_len()` methods which correctly use `iter().count()`
-- The `RecursiveDnsCache` in `src/dns/recursive_cache.rs` handles this correctly
+### hickory-recursor 0.25 → 0.26
+**Deferred**: Requires Rust 1.85 for ml-kem dependency.
 
 ## Implementation Planning
 
-The consolidated implementation plan is located at `plans/plan.md`. This plan organizes all implementation items into 7 waves (plus a Critical pre-wave) with dependency tracking and sub-agent execution guidance.
+The consolidated implementation plan is located at `plans/plan.md`. This plan contains only deferred/blocked items that require future attention.
 
 ### Verification Commands
 
