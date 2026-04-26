@@ -444,7 +444,6 @@ The following platform-specific features were implemented in the 2026-04-26 wave
 **BSD Sandbox**
 - FreeBSD: Capsicum capability framework
 - OpenBSD: pledge/unveil system calls
-- Implementation in `src/platform/sandbox.rs:359-558`
 
 ### Moka Cache with Weigher + TTL
 
