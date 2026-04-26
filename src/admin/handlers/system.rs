@@ -44,7 +44,7 @@ pub struct SystemInfoResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/system/master",
+    path = "/system/master",
     responses(
         (status = 200, description = "Master process status", body = MasterStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -80,7 +80,7 @@ pub async fn get_master_status(
 
 #[utoipa::path(
     get,
-    path = "/api/system/info",
+    path = "/system/info",
     responses(
         (status = 200, description = "System information", body = SystemInfoResponse),
         (status = 401, description = "Unauthorized"),
@@ -162,7 +162,7 @@ fn calculate_health_status(
 
 #[utoipa::path(
     get,
-    path = "/api/system/workers",
+    path = "/system/workers",
     responses(
         (status = 200, description = "List of workers", body = Vec<WorkerStatusResponse>),
         (status = 401, description = "Unauthorized"),
@@ -225,7 +225,7 @@ pub async fn get_workers(
 
 #[utoipa::path(
     post,
-    path = "/api/system/workers/{worker_id}/restart",
+    path = "/system/workers/{worker_id}/restart",
     params(
         ("worker_id" = String, Path, description = "Worker ID to restart")
     ),
@@ -276,7 +276,7 @@ pub struct BatchRestartResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/system/workers/batch-restart",
+    path = "/system/workers/batch-restart",
     request_body = BatchRestartRequest,
     responses(
         (status = 200, description = "Batch restart result", body = BatchRestartResponse),
@@ -374,7 +374,7 @@ pub struct WorkerCountResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/system/workers/count",
+    path = "/system/workers/count",
     responses(
         (status = 200, description = "Worker count information", body = WorkerCountResponse),
         (status = 401, description = "Unauthorized"),
@@ -403,7 +403,7 @@ pub async fn get_worker_count(
 
 #[utoipa::path(
     put,
-    path = "/api/system/workers/scale",
+    path = "/system/workers/scale",
     request_body = ScaleWorkersRequest,
     responses(
         (status = 200, description = "Worker scaling result", body = ScaleWorkersResponse),
@@ -480,7 +480,7 @@ pub struct OverseerStatusResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/system/overseer",
+    path = "/system/overseer",
     responses(
         (status = 200, description = "Overseer status", body = OverseerStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -526,7 +526,7 @@ pub struct GranianLogsResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/system/app-servers/{site_id}/logs",
+    path = "/system/app-servers/{site_id}/logs",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),

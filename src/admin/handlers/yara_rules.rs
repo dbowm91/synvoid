@@ -161,7 +161,7 @@ pub struct YaraDeleteResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/yara/status",
+    path = "/yara/status",
     responses(
         (status = 200, description = "YARA rules status", body = YaraStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -199,7 +199,7 @@ pub async fn get_status(
 
 #[utoipa::path(
     get,
-    path = "/api/yara/submissions",
+    path = "/yara/submissions",
     responses(
         (status = 200, description = "List of YARA rule submissions", body = YaraSubmissionsListResponse),
         (status = 401, description = "Unauthorized"),
@@ -235,7 +235,7 @@ pub async fn list_submissions(
 
 #[utoipa::path(
     get,
-    path = "/api/yara/submissions/{submission_id}",
+    path = "/yara/submissions/{submission_id}",
     params(
         ("submission_id" = String, Path, description = "Submission ID")
     ),
@@ -267,7 +267,7 @@ pub async fn get_submission(
 
 #[utoipa::path(
     post,
-    path = "/api/yara/submissions/{submission_id}/approve",
+    path = "/yara/submissions/{submission_id}/approve",
     params(
         ("submission_id" = String, Path, description = "Submission ID to approve")
     ),
@@ -308,7 +308,7 @@ pub async fn approve_submission(
 
 #[utoipa::path(
     post,
-    path = "/api/yara/submissions/{submission_id}/reject",
+    path = "/yara/submissions/{submission_id}/reject",
     params(
         ("submission_id" = String, Path, description = "Submission ID to reject")
     ),
@@ -348,7 +348,7 @@ pub async fn reject_submission(
 
 #[utoipa::path(
     post,
-    path = "/api/yara/broadcast",
+    path = "/yara/broadcast",
     responses(
         (status = 200, description = "Rules broadcast to mesh", body = YaraBroadcastResponse),
         (status = 401, description = "Unauthorized"),
@@ -384,7 +384,7 @@ pub async fn broadcast_rules(
 
 #[utoipa::path(
     post,
-    path = "/api/yara/sync",
+    path = "/yara/sync",
     responses(
         (status = 200, description = "Sync request sent", body = YaraSyncResponse),
         (status = 401, description = "Unauthorized"),
@@ -413,7 +413,7 @@ pub async fn sync_from_global(
 
 #[utoipa::path(
     post,
-    path = "/api/yara/submit",
+    path = "/yara/submit",
     request_body = YaraSubmitRequest,
     responses(
         (status = 200, description = "Rules submitted for approval", body = YaraSubmitResponse),
@@ -472,7 +472,7 @@ pub async fn submit_rules(
 
 #[utoipa::path(
     post,
-    path = "/api/yara/apply",
+    path = "/yara/apply",
     request_body = YaraApplyRequest,
     responses(
         (status = 200, description = "Rules applied directly", body = YaraApplyResponse),
@@ -519,7 +519,7 @@ pub async fn apply_rules_direct(
 
 #[utoipa::path(
     delete,
-    path = "/api/yara/submissions/{submission_id}",
+    path = "/yara/submissions/{submission_id}",
     params(
         ("submission_id" = String, Path, description = "Submission ID to delete")
     ),

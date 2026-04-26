@@ -13,7 +13,7 @@ pub struct AlertConfigResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/alerting/config",
+    path = "/alerting/config",
     responses(
         (status = 200, description = "Alert configuration", body = AlertConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -44,7 +44,7 @@ pub struct UpdateAlertConfigRequest {
 
 #[utoipa::path(
     put,
-    path = "/api/alerting/config",
+    path = "/alerting/config",
     request_body = UpdateAlertConfigRequest,
     responses(
         (status = 200, description = "Alert configuration updated", body = AlertConfigResponse),
@@ -81,7 +81,7 @@ pub struct TestAlertResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/alerting/test-webhook",
+    path = "/alerting/test-webhook",
     responses(
         (status = 200, description = "Test webhook result", body = TestAlertResponse),
         (status = 401, description = "Unauthorized"),

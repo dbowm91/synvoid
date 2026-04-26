@@ -44,7 +44,7 @@ pub struct SiteUpstreams {
 
 #[utoipa::path(
     get,
-    path = "/api/upstreams",
+    path = "/upstreams",
     responses(
         (status = 200, description = "List of upstreams", body = Vec<SiteUpstreams>),
         (status = 401, description = "Unauthorized"),
@@ -73,7 +73,7 @@ pub async fn list_upstreams(
 
 #[utoipa::path(
     get,
-    path = "/api/upstreams/{site_id}",
+    path = "/upstreams/{site_id}",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),
@@ -115,7 +115,7 @@ pub struct HealthCheckResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/upstreams/{site_id}/health-check",
+    path = "/upstreams/{site_id}/health-check",
     params(
         ("site_id" = String, Path, description = "Site ID to check")
     ),

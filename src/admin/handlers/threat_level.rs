@@ -77,7 +77,7 @@ pub struct SetLevelRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/threat-level/status",
+    path = "/threat-level/status",
     responses(
         (status = 200, description = "Threat level status", body = ThreatLevelStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -126,7 +126,7 @@ pub async fn get_status(
 
 #[utoipa::path(
     get,
-    path = "/api/threat-level/history",
+    path = "/threat-level/history",
     responses(
         (status = 200, description = "Threat level history", body = ThreatLevelHistoryResponse),
         (status = 401, description = "Unauthorized"),
@@ -172,7 +172,7 @@ pub async fn get_history(
 
 #[utoipa::path(
     get,
-    path = "/api/threat-level/baseline",
+    path = "/threat-level/baseline",
     responses(
         (status = 200, description = "Baseline statistics", body = BaselineStatsResponse),
         (status = 401, description = "Unauthorized"),
@@ -215,7 +215,7 @@ pub async fn get_baseline(
 
 #[utoipa::path(
     post,
-    path = "/api/threat-level/baseline/reset",
+    path = "/threat-level/baseline/reset",
     responses(
         (status = 200, description = "Baseline reset", body = StatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -239,7 +239,7 @@ pub async fn reset_baseline(
 
 #[utoipa::path(
     put,
-    path = "/api/threat-level/level/{level}",
+    path = "/threat-level/level/{level}",
     params(
         ("level" = u8, Path, description = "Threat level (1-5)")
     ),
@@ -269,7 +269,7 @@ pub async fn set_level(
 
 #[utoipa::path(
     post,
-    path = "/api/threat-level/auto",
+    path = "/threat-level/auto",
     responses(
         (status = 200, description = "Threat level set to auto", body = StatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -308,7 +308,7 @@ pub struct PruneResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/threat-level/backup",
+    path = "/threat-level/backup",
     responses(
         (status = 200, description = "Backup created", body = BackupResponse),
         (status = 401, description = "Unauthorized"),
@@ -349,7 +349,7 @@ pub async fn create_backup(
 
 #[utoipa::path(
     get,
-    path = "/api/threat-level/backups",
+    path = "/threat-level/backups",
     responses(
         (status = 200, description = "List of backups", body = BackupsListResponse),
         (status = 401, description = "Unauthorized"),
@@ -386,7 +386,7 @@ pub struct DeleteBackupQuery {
 
 #[utoipa::path(
     delete,
-    path = "/api/threat-level/backup",
+    path = "/threat-level/backup",
     params(
         ("path" = String, Query, description = "Backup path to delete")
     ),
@@ -420,7 +420,7 @@ pub async fn delete_backup(
 
 #[utoipa::path(
     post,
-    path = "/api/threat-level/history/prune",
+    path = "/threat-level/history/prune",
     responses(
         (status = 200, description = "History pruned", body = PruneResponse),
         (status = 401, description = "Unauthorized"),
@@ -457,7 +457,7 @@ pub async fn prune_history(
 
 #[utoipa::path(
     get,
-    path = "/api/threat-level/history/stats",
+    path = "/threat-level/history/stats",
     responses(
         (status = 200, description = "History statistics"),
         (status = 401, description = "Unauthorized"),

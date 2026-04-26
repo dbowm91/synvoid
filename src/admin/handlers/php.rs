@@ -28,7 +28,7 @@ fn default_drain_timeout() -> u64 {
 
 #[utoipa::path(
     get,
-    path = "/api/system/php-pools",
+    path = "/system/php-pools",
     responses(
         (status = 200, description = "List of PHP-FPM pool statuses", body = Vec<PhpPoolStatus>),
         (status = 401, description = "Unauthorized"),
@@ -57,7 +57,7 @@ pub async fn list_php_pools(
 
 #[utoipa::path(
     post,
-    path = "/api/system/php-pools/reload",
+    path = "/system/php-pools/reload",
     request_body = PhpPoolReloadRequest,
     responses(
         (status = 200, description = "PHP-FPM pool reload initiated", body = StatusResponse),

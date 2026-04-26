@@ -32,7 +32,7 @@ pub struct RuleFeedApplyResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/rule-feed/status",
+    path = "/rule-feed/status",
     responses(
         (status = 200, description = "Rule feed status", body = RuleFeedStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -66,7 +66,7 @@ pub async fn get_status(
 
 #[utoipa::path(
     post,
-    path = "/api/rule-feed/check",
+    path = "/rule-feed/check",
     responses(
         (status = 200, description = "Rule feed check result", body = RuleFeedCheckResponse),
         (status = 401, description = "Unauthorized"),
@@ -114,7 +114,7 @@ pub async fn check_for_updates(
 
 #[utoipa::path(
     post,
-    path = "/api/rule-feed/apply",
+    path = "/rule-feed/apply",
     responses(
         (status = 200, description = "Apply pending rules", body = RuleFeedApplyResponse),
         (status = 401, description = "Unauthorized"),
@@ -159,7 +159,7 @@ pub async fn apply_pending(
 
 #[utoipa::path(
     post,
-    path = "/api/rule-feed/discard",
+    path = "/rule-feed/discard",
     responses(
         (status = 200, description = "Discard pending rules", body = StatusResponse),
         (status = 401, description = "Unauthorized"),

@@ -28,7 +28,7 @@ pub struct ServerlessHealth {
 
 #[utoipa::path(
     get,
-    path = "/api/serverless/health",
+    path = "/serverless/health",
     responses(
         (status = 200, description = "Serverless functions health status", body = ServerlessHealth),
         (status = 401, description = "Unauthorized"),
@@ -63,7 +63,7 @@ pub async fn get_serverless_health(
 
 #[utoipa::path(
     get,
-    path = "/api/serverless/functions",
+    path = "/serverless/functions",
     responses(
         (status = 200, description = "List of serverless functions", body = ServerlessStatus),
         (status = 401, description = "Unauthorized"),
@@ -103,7 +103,7 @@ pub async fn list_functions(_auth: OptionalAuth) -> Result<Json<ServerlessStatus
 
 #[utoipa::path(
     get,
-    path = "/api/serverless/functions/{name}/stats",
+    path = "/serverless/functions/{name}/stats",
     params(
         ("name" = String, Path, description = "Function name")
     ),

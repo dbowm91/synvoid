@@ -41,7 +41,7 @@ pub struct LogsResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/logs",
+    path = "/logs",
     responses(
         (status = 200, description = "Log entries", body = LogsResponse),
         (status = 401, description = "Unauthorized"),
@@ -71,7 +71,7 @@ pub struct ErrorPageResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/error-pages",
+    path = "/error-pages",
     responses(
         (status = 200, description = "List of error page templates", body = Vec<ErrorPageResponse>),
         (status = 401, description = "Unauthorized"),
@@ -98,7 +98,7 @@ pub async fn list_error_pages(
 
 #[utoipa::path(
     get,
-    path = "/api/error-pages/{code}",
+    path = "/error-pages/{code}",
     params(
         ("code" = u16, Path, description = "HTTP status code (e.g., 404, 500)")
     ),
@@ -136,7 +136,7 @@ pub struct UpdateErrorPageRequest {
 
 #[utoipa::path(
     put,
-    path = "/api/error-pages/{code}",
+    path = "/error-pages/{code}",
     params(
         ("code" = u16, Path, description = "HTTP status code (e.g., 404, 500)")
     ),
@@ -220,7 +220,7 @@ pub struct AuditLogsResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/audit-logs",
+    path = "/audit-logs",
     responses(
         (status = 200, description = "Audit log entries", body = AuditLogsResponse),
         (status = 401, description = "Unauthorized"),

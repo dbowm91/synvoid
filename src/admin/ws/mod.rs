@@ -55,6 +55,7 @@ fn validate_ws_cookie_token(headers: &HeaderMap, admin_token: &str) -> Result<()
     }
 }
 
+#[allow(dead_code)]
 fn build_cookie_header(token: &str) -> AppendHeaders<(axum::http::header::HeaderName, String)> {
     AppendHeaders((
         axum::http::header::SET_COOKIE,
@@ -70,7 +71,7 @@ pub async fn ws_metrics_handler(
     State(state): State<Arc<AdminState>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(_) = validate_bearer_token(&headers, &state.security.admin_token) {
+    if validate_bearer_token(&headers, &state.security.admin_token).is_err() {
         if validate_ws_cookie_token(&headers, &state.security.admin_token).is_err() {
             return StatusCode::UNAUTHORIZED.into_response();
         }
@@ -87,7 +88,7 @@ pub async fn ws_logs_handler(
     State(state): State<Arc<AdminState>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(_) = validate_bearer_token(&headers, &state.security.admin_token) {
+    if validate_bearer_token(&headers, &state.security.admin_token).is_err() {
         if validate_ws_cookie_token(&headers, &state.security.admin_token).is_err() {
             return StatusCode::UNAUTHORIZED.into_response();
         }

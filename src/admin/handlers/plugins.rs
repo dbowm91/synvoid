@@ -39,7 +39,7 @@ pub struct WasmModulesResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/plugins/metrics",
+    path = "/plugins/metrics",
     responses(
         (status = 200, description = "All plugins metrics"),
         (status = 401, description = "Unauthorized"),
@@ -75,7 +75,7 @@ pub async fn get_all_plugins_metrics(
 
 #[utoipa::path(
     get,
-    path = "/api/plugins/{plugin_name}/metrics",
+    path = "/plugins/{plugin_name}/metrics",
     params(
         ("plugin_name" = String, Path, description = "Plugin name")
     ),
@@ -118,7 +118,7 @@ pub async fn get_plugin_metrics(
 
 #[utoipa::path(
     get,
-    path = "/api/plugins/status",
+    path = "/plugins/status",
     responses(
         (status = 200, description = "Plugins status", body = PluginStatus),
         (status = 401, description = "Unauthorized"),
@@ -161,7 +161,7 @@ pub async fn get_plugins_status(
 
 #[utoipa::path(
     post,
-    path = "/api/plugins/{plugin_name}/reload",
+    path = "/plugins/{plugin_name}/reload",
     params(
         ("plugin_name" = String, Path, description = "Plugin name to reload")
     ),
@@ -215,7 +215,7 @@ pub async fn reload_plugin(
 
 #[utoipa::path(
     get,
-    path = "/api/plugins/mesh/modules",
+    path = "/plugins/mesh/modules",
     responses(
         (status = 200, description = "Mesh WASM modules", body = WasmModulesResponse),
         (status = 401, description = "Unauthorized"),

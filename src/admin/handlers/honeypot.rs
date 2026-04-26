@@ -30,7 +30,7 @@ pub struct HoneypotControlResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/honeypot/status",
+    path = "/honeypot/status",
     responses(
         (status = 200, description = "Honeypot status", body = HoneypotStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -73,7 +73,7 @@ pub async fn get_honeypot_status(
 
 #[utoipa::path(
     post,
-    path = "/api/honeypot/control",
+    path = "/honeypot/control",
     request_body = HoneypotControlRequest,
     responses(
         (status = 200, description = "Honeypot control result", body = HoneypotControlResponse),

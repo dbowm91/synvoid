@@ -54,7 +54,7 @@ pub struct IcmpBackendsResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/icmp/status",
+    path = "/icmp/status",
     responses(
         (status = 200, description = "ICMP filter status", body = IcmpStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -132,7 +132,7 @@ pub async fn get_status(
 
 #[utoipa::path(
     get,
-    path = "/api/icmp/config",
+    path = "/icmp/config",
     responses(
         (status = 200, description = "ICMP filter configuration", body = IcmpConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -164,7 +164,7 @@ pub async fn get_config(
 
 #[utoipa::path(
     put,
-    path = "/api/icmp/config",
+    path = "/icmp/config",
     request_body = UpdateIcmpConfigRequest,
     responses(
         (status = 200, description = "ICMP filter config updated", body = IcmpEnableResponse),
@@ -242,7 +242,7 @@ pub async fn update_config(
 
 #[utoipa::path(
     post,
-    path = "/api/icmp/enable",
+    path = "/icmp/enable",
     responses(
         (status = 200, description = "ICMP filter enabled", body = IcmpEnableResponse),
         (status = 401, description = "Unauthorized"),
@@ -298,7 +298,7 @@ pub async fn enable(
 
 #[utoipa::path(
     post,
-    path = "/api/icmp/disable",
+    path = "/icmp/disable",
     responses(
         (status = 200, description = "ICMP filter disabled", body = IcmpEnableResponse),
         (status = 401, description = "Unauthorized"),
@@ -353,7 +353,7 @@ pub async fn disable(
 
 #[utoipa::path(
     get,
-    path = "/api/icmp/backends",
+    path = "/icmp/backends",
     responses(
         (status = 200, description = "List of ICMP filter backends", body = IcmpBackendsResponse),
         (status = 401, description = "Unauthorized"),

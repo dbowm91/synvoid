@@ -212,7 +212,7 @@ fn role_to_string(role: crate::mesh::config::MeshNodeRole) -> String {
 
 #[utoipa::path(
     get,
-    path = "/api/mesh/nodes",
+    path = "/mesh/nodes",
     responses(
         (status = 200, description = "List of mesh nodes", body = MeshNodeListResponse),
         (status = 401, description = "Unauthorized"),
@@ -296,7 +296,7 @@ pub async fn list_mesh_nodes(
 
 #[utoipa::path(
     get,
-    path = "/api/mesh/nodes/{node_id}",
+    path = "/mesh/nodes/{node_id}",
     params(
         ("node_id" = String, Path, description = "Node ID")
     ),
@@ -351,7 +351,7 @@ pub async fn get_mesh_node(
 
 #[utoipa::path(
     post,
-    path = "/api/mesh/ban/ip",
+    path = "/mesh/ban/ip",
     request_body = BanIpRequest,
     responses(
         (status = 200, description = "IP banned successfully"),
@@ -411,7 +411,7 @@ pub async fn ban_ip(
 
 #[utoipa::path(
     post,
-    path = "/api/mesh/ban/mesh-id",
+    path = "/mesh/ban/mesh-id",
     request_body = BanMeshIdRequest,
     responses(
         (status = 200, description = "Mesh ID banned successfully"),
@@ -473,7 +473,7 @@ pub async fn ban_mesh_id(
 
 #[utoipa::path(
     delete,
-    path = "/api/mesh/ban",
+    path = "/mesh/ban",
     params(
         ("identifier" = String, Query, description = "IP address or mesh ID to unban"),
         ("ban_type" = String, Query, description = "Type of ban: 'ip' or 'mesh_id'")
@@ -528,7 +528,7 @@ pub async fn unban(
 
 #[utoipa::path(
     get,
-    path = "/api/mesh/bans",
+    path = "/mesh/bans",
     responses(
         (status = 200, description = "List of bans", body = BanListResponse),
         (status = 401, description = "Unauthorized"),
@@ -587,7 +587,7 @@ pub async fn list_bans(
 
 #[utoipa::path(
     get,
-    path = "/api/mesh/status",
+    path = "/mesh/status",
     responses(
         (status = 200, description = "Mesh status", body = MeshAdminStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -672,7 +672,7 @@ pub async fn get_mesh_status(
 
 #[utoipa::path(
     post,
-    path = "/api/mesh/derive-signing-key",
+    path = "/mesh/derive-signing-key",
     request_body = DeriveSigningKeyRequest,
     responses(
         (status = 200, description = "Signing key derived", body = DeriveSigningKeyResponse),
@@ -742,7 +742,7 @@ pub async fn derive_signing_key(
 
 #[utoipa::path(
     post,
-    path = "/api/mesh/audit/report",
+    path = "/mesh/audit/report",
     request_body = AuditReportRequest,
     responses(
         (status = 200, description = "Audit report submitted", body = AuditReportResponseDto),
@@ -826,7 +826,7 @@ pub struct SignatureFailureResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/mesh/report/signature-failure",
+    path = "/mesh/report/signature-failure",
     request_body = SignatureFailureReport,
     responses(
         (status = 200, description = "Signature failure reported", body = SignatureFailureResponse),
@@ -875,7 +875,7 @@ pub struct AttestCapabilityResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/mesh/attest-capability",
+    path = "/mesh/attest-capability",
     request_body = AttestCapabilityRequest,
     responses(
         (status = 200, description = "Capability attested successfully", body = AttestCapabilityResponse),

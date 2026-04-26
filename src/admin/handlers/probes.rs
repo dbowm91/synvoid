@@ -102,7 +102,7 @@ pub struct ProbeEndpointStatsResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/probes",
+    path = "/probes",
     responses(
         (status = 200, description = "List of probing IPs", body = PaginatedResponseOfProbeResponse),
         (status = 401, description = "Unauthorized"),
@@ -160,7 +160,7 @@ pub async fn list_probes(
 
 #[utoipa::path(
     get,
-    path = "/api/probes/{ip}",
+    path = "/probes/{ip}",
     params(
         ("ip" = String, Path, description = "IP address to get probe info for")
     ),
@@ -212,7 +212,7 @@ pub async fn get_probe(
 
 #[utoipa::path(
     get,
-    path = "/api/probes/stats",
+    path = "/probes/stats",
     responses(
         (status = 200, description = "Probe statistics", body = ProbeStatsResponse),
         (status = 401, description = "Unauthorized"),
@@ -248,7 +248,7 @@ pub async fn get_probe_stats(
 
 #[utoipa::path(
     delete,
-    path = "/api/probes/{ip}",
+    path = "/probes/{ip}",
     params(
         ("ip" = String, Path, description = "IP address to delete probe record for")
     ),
@@ -302,7 +302,7 @@ fn parse_duration(duration: &str) -> u64 {
 
 #[utoipa::path(
     post,
-    path = "/api/probes/block",
+    path = "/probes/block",
     request_body = BlockProbesRequest,
     responses(
         (status = 200, description = "IPs blocked"),
@@ -384,7 +384,7 @@ pub struct SuspiciousWordCountResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/probes/suspicious-words",
+    path = "/probes/suspicious-words",
     responses(
         (status = 200, description = "List of suspicious word records", body = SuspiciousWordListResponse),
         (status = 401, description = "Unauthorized"),
@@ -430,7 +430,7 @@ pub async fn list_suspicious_words(
 
 #[utoipa::path(
     get,
-    path = "/api/probes/suspicious-words/stats",
+    path = "/probes/suspicious-words/stats",
     responses(
         (status = 200, description = "Suspicious word statistics", body = SuspiciousWordStatsResponse),
         (status = 401, description = "Unauthorized"),
@@ -465,7 +465,7 @@ pub async fn get_suspicious_word_stats(
 
 #[utoipa::path(
     delete,
-    path = "/api/probes/suspicious-words/{ip}",
+    path = "/probes/suspicious-words/{ip}",
     params(
         ("ip" = String, Path, description = "IP address to delete suspicious word record for")
     ),
@@ -524,7 +524,7 @@ pub struct UpstreamErrorEndpointCountResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/probes/upstream-errors",
+    path = "/probes/upstream-errors",
     responses(
         (status = 200, description = "List of upstream error records", body = UpstreamErrorListResponse),
         (status = 401, description = "Unauthorized"),
@@ -569,7 +569,7 @@ pub async fn list_upstream_errors(
 
 #[utoipa::path(
     get,
-    path = "/api/probes/upstream-errors/stats",
+    path = "/probes/upstream-errors/stats",
     responses(
         (status = 200, description = "Upstream error statistics", body = UpstreamErrorStatsResponse),
         (status = 401, description = "Unauthorized"),
@@ -604,7 +604,7 @@ pub async fn get_upstream_error_stats(
 
 #[utoipa::path(
     delete,
-    path = "/api/probes/upstream-errors/{ip}",
+    path = "/probes/upstream-errors/{ip}",
     params(
         ("ip" = String, Path, description = "IP address to delete upstream error record for")
     ),

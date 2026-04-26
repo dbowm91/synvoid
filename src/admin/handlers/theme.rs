@@ -121,7 +121,7 @@ fn build_theme_response(theme: &ThemeDefaults) -> ThemeResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/theme",
+    path = "/theme",
     responses(
         (status = 200, description = "Theme configuration", body = ThemeResponse),
         (status = 401, description = "Unauthorized"),
@@ -140,7 +140,7 @@ pub async fn get_theme(
 
 #[utoipa::path(
     put,
-    path = "/api/theme",
+    path = "/theme",
     request_body = UpdateThemeRequest,
     responses(
         (status = 200, description = "Theme updated", body = ThemeResponse),
@@ -197,7 +197,7 @@ pub async fn update_theme(
 
 #[utoipa::path(
     get,
-    path = "/api/theme/css",
+    path = "/theme/css",
     responses(
         (status = 200, description = "Theme CSS", body = String),
         (status = 401, description = "Unauthorized"),
@@ -217,7 +217,7 @@ pub async fn get_theme_css(
 
 #[utoipa::path(
     get,
-    path = "/api/theme/presets",
+    path = "/theme/presets",
     responses(
         (status = 200, description = "Available theme presets", body = Vec<ThemePresetInfo>),
         (status = 401, description = "Unauthorized"),

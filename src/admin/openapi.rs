@@ -41,9 +41,6 @@ impl Modify for AddBearerAuth {
         (url = "http://localhost:8080", description = "Local development server"),
         (url = "https://localhost:8080", description = "Production server")
     ),
-    components(
-        schemas()
-    ),
     modifiers(&AddBearerAuth),
     paths(
         crate::admin::handlers::stats::get_summary,

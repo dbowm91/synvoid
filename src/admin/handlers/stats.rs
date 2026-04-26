@@ -63,7 +63,7 @@ pub struct SiteStats {
 
 #[utoipa::path(
     get,
-    path = "/api/stats/summary",
+    path = "/stats/summary",
     responses(
         (status = 200, description = "System statistics", body = SystemStats),
         (status = 401, description = "Unauthorized"),
@@ -111,7 +111,7 @@ pub async fn get_summary(
 
 #[utoipa::path(
     get,
-    path = "/api/stats/sites",
+    path = "/stats/sites",
     responses(
         (status = 200, description = "Site statistics", body = Vec<SiteStats>),
         (status = 401, description = "Unauthorized"),
@@ -177,7 +177,7 @@ pub struct MetricsHistoryParams {
 
 #[utoipa::path(
     get,
-    path = "/api/stats/history",
+    path = "/stats/history",
     params(
         ("seconds" = Option<u64>, Query, description = "Time window in seconds (default: 300)")
     ),
@@ -207,7 +207,7 @@ pub struct AttackStats {
 
 #[utoipa::path(
     get,
-    path = "/api/stats/attacks",
+    path = "/stats/attacks",
     responses(
         (status = 200, description = "Attack statistics", body = AttackStats),
         (status = 401, description = "Unauthorized"),
@@ -241,7 +241,7 @@ pub struct CacheStats {
 
 #[utoipa::path(
     get,
-    path = "/api/stats/cache",
+    path = "/stats/cache",
     responses(
         (status = 200, description = "Cache statistics", body = CacheStats),
         (status = 401, description = "Unauthorized"),
@@ -291,7 +291,7 @@ use crate::metrics::bandwidth::{get_global_bandwidth_tracker, BandwidthPayload};
 
 #[utoipa::path(
     get,
-    path = "/api/stats/bandwidth",
+    path = "/stats/bandwidth",
     responses(
         (status = 200, description = "Bandwidth statistics"),
         (status = 401, description = "Unauthorized"),
@@ -346,7 +346,7 @@ pub struct RequestLogsQuery {
 
 #[utoipa::path(
     get,
-    path = "/api/stats/request-logs",
+    path = "/stats/request-logs",
     params(
         ("site_id" = Option<String>, Query, description = "Filter by site ID"),
         ("method" = Option<String>, Query, description = "Filter by HTTP method"),

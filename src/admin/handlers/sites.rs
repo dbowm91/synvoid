@@ -25,7 +25,7 @@ pub struct SiteDetail {
 
 #[utoipa::path(
     get,
-    path = "/api/sites",
+    path = "/sites",
     responses(
         (status = 200, description = "List of sites", body = Vec<SiteInfo>),
         (status = 401, description = "Unauthorized"),
@@ -55,7 +55,7 @@ pub async fn list_sites(
 
 #[utoipa::path(
     get,
-    path = "/api/sites/{site_id}",
+    path = "/sites/{site_id}",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),
@@ -94,7 +94,7 @@ pub struct CreateSiteRequest {
 
 #[utoipa::path(
     post,
-    path = "/api/sites",
+    path = "/sites",
     request_body = CreateSiteRequest,
     responses(
         (status = 200, description = "Site created", body = SiteDetail),
@@ -210,7 +210,7 @@ pub async fn create_site(
 
 #[utoipa::path(
     delete,
-    path = "/api/sites/{site_id}",
+    path = "/sites/{site_id}",
     params(
         ("site_id" = String, Path, description = "Site ID to delete")
     ),
@@ -251,7 +251,7 @@ pub struct UpdateSiteRequest {
 
 #[utoipa::path(
     put,
-    path = "/api/sites/{site_id}",
+    path = "/sites/{site_id}",
     params(
         ("site_id" = String, Path, description = "Site ID to update")
     ),
@@ -378,7 +378,7 @@ pub struct UpdateSiteThemeRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/sites/{site_id}/theme",
+    path = "/sites/{site_id}/theme",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),
@@ -411,7 +411,7 @@ pub async fn get_site_theme(
 
 #[utoipa::path(
     put,
-    path = "/api/sites/{site_id}/theme",
+    path = "/sites/{site_id}/theme",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),
@@ -505,7 +505,7 @@ pub struct UpdateSiteBotDetectionRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/sites/{site_id}/bot-detection",
+    path = "/sites/{site_id}/bot-detection",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),
@@ -540,7 +540,7 @@ pub async fn get_site_bot_detection(
 
 #[utoipa::path(
     put,
-    path = "/api/sites/{site_id}/bot-detection",
+    path = "/sites/{site_id}/bot-detection",
     params(
         ("site_id" = String, Path, description = "Site ID")
     ),
@@ -642,7 +642,7 @@ pub struct UpdateSiteErrorPagesRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/sites/{site_id}/error-pages",
+    path = "/sites/{site_id}/error-pages",
     responses(
         (status = 200, description = "Site error pages config", body = SiteErrorPagesResponse),
         (status = 401, description = "Unauthorized"),
@@ -672,7 +672,7 @@ pub async fn get_site_error_pages(
 
 #[utoipa::path(
     put,
-    path = "/api/sites/{site_id}/error-pages",
+    path = "/sites/{site_id}/error-pages",
     request_body = UpdateSiteErrorPagesRequest,
     responses(
         (status = 200, description = "Site error pages updated", body = SiteErrorPagesResponse),

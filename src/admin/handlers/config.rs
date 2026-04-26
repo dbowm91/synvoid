@@ -24,7 +24,7 @@ fn redact_admin_token(config: &mut serde_json::Value) {
 
 #[utoipa::path(
     get,
-    path = "/api/config/main",
+    path = "/config/main",
     responses(
         (status = 200, description = "Main configuration", body = MainConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -55,7 +55,7 @@ pub struct UpdateMainConfigRequest {
 
 #[utoipa::path(
     put,
-    path = "/api/config/main",
+    path = "/config/main",
     request_body = UpdateMainConfigRequest,
     responses(
         (status = 200, description = "Configuration updated", body = StatusResponse),
@@ -132,7 +132,7 @@ pub async fn update_main_config(
 
 #[utoipa::path(
     get,
-    path = "/api/config/schema",
+    path = "/config/schema",
     responses(
         (status = 200, description = "JSON Schema of configuration"),
         (status = 401, description = "Unauthorized"),
@@ -149,7 +149,7 @@ pub async fn get_config_schema(_auth: OptionalAuth) -> Result<Json<serde_json::V
 
 #[utoipa::path(
     post,
-    path = "/api/config/reload",
+    path = "/config/reload",
     responses(
         (status = 200, description = "Configuration reloaded", body = StatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -249,7 +249,7 @@ pub struct SetLogLevelRequest {
 
 #[utoipa::path(
     put,
-    path = "/api/config/log-level",
+    path = "/config/log-level",
     request_body = SetLogLevelRequest,
     responses(
         (status = 200, description = "Log level set", body = StatusResponse),
@@ -278,7 +278,7 @@ pub async fn set_log_level(
 
 #[utoipa::path(
     get,
-    path = "/api/config/log-level",
+    path = "/config/log-level",
     responses(
         (status = 200, description = "Current log level", body = StatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -299,7 +299,7 @@ pub async fn get_log_level(
 
 #[utoipa::path(
     get,
-    path = "/api/config/export",
+    path = "/config/export",
     responses(
         (status = 200, description = "Exported configuration as TOML"),
         (status = 401, description = "Unauthorized"),
@@ -398,7 +398,7 @@ fn validate_config_paths(content: &str) -> Result<(), String> {
 
 #[utoipa::path(
     post,
-    path = "/api/config/import",
+    path = "/config/import",
     request_body = ImportConfigRequest,
     responses(
         (status = 200, description = "Configuration imported", body = StatusResponse),
@@ -480,7 +480,7 @@ pub struct CheckRegexRequest {
 
 #[utoipa::path(
     post,
-    path = "/api/config/check-regex",
+    path = "/config/check-regex",
     request_body = CheckRegexRequest,
     responses(
         (status = 200, description = "Regex check result", body = RegexCheckResult),
@@ -515,7 +515,7 @@ pub struct UpdateOverseerConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/overseer",
+    path = "/config/overseer",
     responses(
         (status = 200, description = "Overseer configuration", body = OverseerConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -535,7 +535,7 @@ pub async fn get_overseer_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/overseer",
+    path = "/config/overseer",
     request_body = UpdateOverseerConfigRequest,
     responses(
         (status = 200, description = "Overseer config updated", body = StatusResponse),
@@ -608,7 +608,7 @@ pub struct UpdateProcessManagerConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/process-manager",
+    path = "/config/process-manager",
     responses(
         (status = 200, description = "Process manager configuration", body = ProcessManagerConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -634,7 +634,7 @@ pub async fn get_process_manager_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/process-manager",
+    path = "/config/process-manager",
     request_body = UpdateProcessManagerConfigRequest,
     responses(
         (status = 200, description = "Process manager config updated", body = StatusResponse),
@@ -711,7 +711,7 @@ pub struct UpdateSupervisorConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/supervisor",
+    path = "/config/supervisor",
     responses(
         (status = 200, description = "Supervisor configuration", body = SupervisorConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -731,7 +731,7 @@ pub async fn get_supervisor_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/supervisor",
+    path = "/config/supervisor",
     request_body = UpdateSupervisorConfigRequest,
     responses(
         (status = 200, description = "Supervisor config updated", body = StatusResponse),
@@ -828,7 +828,7 @@ pub struct UpdateTlsConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/tls",
+    path = "/config/tls",
     responses(
         (status = 200, description = "TLS configuration", body = TlsConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -848,7 +848,7 @@ pub async fn get_tls_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/tls",
+    path = "/config/tls",
     request_body = UpdateTlsConfigRequest,
     responses(
         (status = 200, description = "TLS config updated", body = StatusResponse),
@@ -886,7 +886,7 @@ pub struct UpdateHttpConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/http",
+    path = "/config/http",
     responses(
         (status = 200, description = "HTTP configuration", body = HttpConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -906,7 +906,7 @@ pub async fn get_http_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/http",
+    path = "/config/http",
     request_body = UpdateHttpConfigRequest,
     responses(
         (status = 200, description = "HTTP config updated", body = StatusResponse),
@@ -944,7 +944,7 @@ pub struct UpdateAcmeConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/acme",
+    path = "/config/acme",
     responses(
         (status = 200, description = "ACME configuration", body = AcmeConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -964,7 +964,7 @@ pub async fn get_acme_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/acme",
+    path = "/config/acme",
     request_body = UpdateAcmeConfigRequest,
     responses(
         (status = 200, description = "ACME config updated", body = StatusResponse),
@@ -1002,7 +1002,7 @@ pub struct UpdateHttp3ConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/http3",
+    path = "/config/http3",
     responses(
         (status = 200, description = "HTTP/3 configuration", body = Http3ConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1022,7 +1022,7 @@ pub async fn get_http3_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/http3",
+    path = "/config/http3",
     request_body = UpdateHttp3ConfigRequest,
     responses(
         (status = 200, description = "HTTP/3 config updated", body = StatusResponse),
@@ -1060,7 +1060,7 @@ pub struct UpdateSecurityConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/security",
+    path = "/config/security",
     responses(
         (status = 200, description = "Security configuration", body = SecurityConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1080,7 +1080,7 @@ pub async fn get_security_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/security",
+    path = "/config/security",
     request_body = UpdateSecurityConfigRequest,
     responses(
         (status = 200, description = "Security config updated", body = StatusResponse),
@@ -1118,7 +1118,7 @@ pub struct UpdateTunnelConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/tunnel",
+    path = "/config/tunnel",
     responses(
         (status = 200, description = "Tunnel configuration", body = TunnelConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1138,7 +1138,7 @@ pub async fn get_tunnel_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/tunnel",
+    path = "/config/tunnel",
     request_body = UpdateTunnelConfigRequest,
     responses(
         (status = 200, description = "Tunnel config updated", body = StatusResponse),
@@ -1176,7 +1176,7 @@ pub struct UpdatePluginsConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/plugins",
+    path = "/config/plugins",
     responses(
         (status = 200, description = "Plugins configuration", body = PluginsConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1196,7 +1196,7 @@ pub async fn get_plugins_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/plugins",
+    path = "/config/plugins",
     request_body = UpdatePluginsConfigRequest,
     responses(
         (status = 200, description = "Plugins config updated", body = StatusResponse),
@@ -1234,7 +1234,7 @@ pub struct UpdateLoggingConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/logging",
+    path = "/config/logging",
     responses(
         (status = 200, description = "Logging configuration", body = LoggingConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1254,7 +1254,7 @@ pub async fn get_logging_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/logging",
+    path = "/config/logging",
     request_body = UpdateLoggingConfigRequest,
     responses(
         (status = 200, description = "Logging config updated", body = StatusResponse),
@@ -1292,7 +1292,7 @@ pub struct UpdateTrafficShapingConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/traffic-shaping",
+    path = "/config/traffic-shaping",
     responses(
         (status = 200, description = "Traffic shaping configuration", body = TrafficShapingConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1312,7 +1312,7 @@ pub async fn get_traffic_shaping_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/traffic-shaping",
+    path = "/config/traffic-shaping",
     request_body = UpdateTrafficShapingConfigRequest,
     responses(
         (status = 200, description = "Traffic shaping config updated", body = StatusResponse),
@@ -1352,7 +1352,7 @@ pub struct UpdateThreatLevelConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/threat-level",
+    path = "/config/threat-level",
     responses(
         (status = 200, description = "Threat level configuration", body = ThreatLevelConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1372,7 +1372,7 @@ pub async fn get_threat_level_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/threat-level",
+    path = "/config/threat-level",
     request_body = UpdateThreatLevelConfigRequest,
     responses(
         (status = 200, description = "Threat level config updated", body = StatusResponse),
@@ -1412,7 +1412,7 @@ pub struct UpdateIpFeedsConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/ip-feeds",
+    path = "/config/ip-feeds",
     responses(
         (status = 200, description = "IP feeds configuration", body = IpFeedsConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1432,7 +1432,7 @@ pub async fn get_ip_feeds_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/ip-feeds",
+    path = "/config/ip-feeds",
     request_body = UpdateIpFeedsConfigRequest,
     responses(
         (status = 200, description = "IP feeds config updated", body = StatusResponse),
@@ -1473,7 +1473,7 @@ pub struct UpdateDnsConfigRequest {
 #[cfg(feature = "dns")]
 #[utoipa::path(
     get,
-    path = "/api/config/dns",
+    path = "/config/dns",
     responses(
         (status = 200, description = "DNS configuration", body = DnsConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1494,7 +1494,7 @@ pub async fn get_dns_config(
 #[cfg(feature = "dns")]
 #[utoipa::path(
     put,
-    path = "/api/config/dns",
+    path = "/config/dns",
     request_body = UpdateDnsConfigRequest,
     responses(
         (status = 200, description = "DNS config updated", body = StatusResponse),
@@ -1538,7 +1538,7 @@ pub struct UpdateRateLimitsConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/rate-limits",
+    path = "/config/rate-limits",
     responses(
         (status = 200, description = "Rate limits configuration", body = RateLimitsConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1561,7 +1561,7 @@ pub async fn get_rate_limits_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/rate-limits",
+    path = "/config/rate-limits",
     request_body = UpdateRateLimitsConfigRequest,
     responses(
         (status = 200, description = "Rate limits config updated", body = StatusResponse),
@@ -1612,7 +1612,7 @@ pub struct UpdateBotDetectionConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/bot-detection",
+    path = "/config/bot-detection",
     responses(
         (status = 200, description = "Bot detection configuration", body = BotDetectionConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1632,7 +1632,7 @@ pub async fn get_bot_detection_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/bot-detection",
+    path = "/config/bot-detection",
     request_body = UpdateBotDetectionConfigRequest,
     responses(
         (status = 200, description = "Bot detection config updated", body = StatusResponse),
@@ -1674,7 +1674,7 @@ pub struct UpdateMeshConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/mesh",
+    path = "/config/mesh",
     responses(
         (status = 200, description = "Mesh configuration", body = MeshConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1694,7 +1694,7 @@ pub async fn get_mesh_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/mesh",
+    path = "/config/mesh",
     request_body = UpdateMeshConfigRequest,
     responses(
         (status = 200, description = "Mesh config updated", body = StatusResponse),
@@ -1734,7 +1734,7 @@ pub struct UpdateMimeTypesConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/mime-types",
+    path = "/config/mime-types",
     responses(
         (status = 200, description = "MIME types configuration", body = MimeTypesConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1754,7 +1754,7 @@ pub async fn get_mime_types_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/mime-types",
+    path = "/config/mime-types",
     request_body = UpdateMimeTypesConfigRequest,
     responses(
         (status = 200, description = "MIME types config updated", body = StatusResponse),
@@ -1794,7 +1794,7 @@ pub struct UpdateTcpUdpDefaultsConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/tcp-udp-defaults",
+    path = "/config/tcp-udp-defaults",
     responses(
         (status = 200, description = "TCP/UDP defaults configuration", body = TcpUdpDefaultsConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1815,7 +1815,7 @@ pub async fn get_tcp_udp_defaults_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/tcp-udp-defaults",
+    path = "/config/tcp-udp-defaults",
     request_body = UpdateTcpUdpDefaultsConfigRequest,
     responses(
         (status = 200, description = "TCP/UDP defaults config updated", body = StatusResponse),
@@ -1860,7 +1860,7 @@ pub struct UpdateFallbackConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/fallback",
+    path = "/config/fallback",
     responses(
         (status = 200, description = "Fallback configuration", body = FallbackConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1880,7 +1880,7 @@ pub async fn get_fallback_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/fallback",
+    path = "/config/fallback",
     request_body = UpdateFallbackConfigRequest,
     responses(
         (status = 200, description = "Fallback config updated", body = StatusResponse),
@@ -1918,7 +1918,7 @@ pub struct UpdateUpgradeConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/upgrade",
+    path = "/config/upgrade",
     responses(
         (status = 200, description = "Upgrade configuration", body = UpgradeConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1938,7 +1938,7 @@ pub async fn get_upgrade_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/upgrade",
+    path = "/config/upgrade",
     request_body = UpdateUpgradeConfigRequest,
     responses(
         (status = 200, description = "Upgrade config updated", body = StatusResponse),
@@ -1976,7 +1976,7 @@ pub struct UpdateRuleFeedConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/rule-feed",
+    path = "/config/rule-feed",
     responses(
         (status = 200, description = "Rule feed configuration", body = RuleFeedConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -1996,7 +1996,7 @@ pub async fn get_rule_feed_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/rule-feed",
+    path = "/config/rule-feed",
     request_body = UpdateRuleFeedConfigRequest,
     responses(
         (status = 200, description = "Rule feed config updated", body = StatusResponse),
@@ -2034,7 +2034,7 @@ pub struct UpdateYaraFeedConfigRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/yara-feed",
+    path = "/config/yara-feed",
     responses(
         (status = 200, description = "YARA feed configuration", body = YaraFeedConfigResponse),
         (status = 401, description = "Unauthorized"),
@@ -2054,7 +2054,7 @@ pub async fn get_yara_feed_config(
 
 #[utoipa::path(
     put,
-    path = "/api/config/yara-feed",
+    path = "/config/yara-feed",
     request_body = UpdateYaraFeedConfigRequest,
     responses(
         (status = 200, description = "YARA feed config updated", body = StatusResponse),
@@ -2093,7 +2093,7 @@ pub struct ValidateConfigResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/config/validate",
+    path = "/config/validate",
     request_body = ValidateConfigRequest,
     responses(
         (status = 200, description = "Configuration validation result", body = ValidateConfigResponse),
@@ -2133,7 +2133,7 @@ pub struct UpdateConfigBundleRequest {
 
 #[utoipa::path(
     get,
-    path = "/api/config/bundle",
+    path = "/config/bundle",
     responses(
         (status = 200, description = "Full configuration bundle", body = ConfigBundleResponse),
         (status = 401, description = "Unauthorized"),
@@ -2153,7 +2153,7 @@ pub async fn get_config_bundle(
 
 #[utoipa::path(
     put,
-    path = "/api/config/bundle",
+    path = "/config/bundle",
     request_body = UpdateConfigBundleRequest,
     responses(
         (status = 200, description = "Configuration bundle updated", body = StatusResponse),

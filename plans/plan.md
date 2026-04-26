@@ -738,7 +738,7 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
 
 ### 5.3: Path Duplication Fix (166 paths, 20 files)
 - **Problem**: All 166 handler `#[utoipa::path]` annotations include `/api` prefix (e.g., `path = "/api/stats/summary"`), but router at `src/admin/mod.rs:560` already nests under `.nest("/api", api_routes)`. Actual paths become `/api/api/stats/summary` in OpenAPI spec.
-- **Status**: NOT STARTED (mechanical change, can be done independently)
+- **Status**: DONE (2026-04-26)
 - **Files**: All 20 handler files in `src/admin/handlers/`
 - **Action**: Remove `/api` prefix from all 166 path annotations (e.g., `/api/stats/summary` → `/stats/summary`).
 - **Effort**: High (4-6 hours, mechanical)
@@ -759,21 +759,20 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
 
 ### 5.6: ICMP Filter UI Enhancement
 - **Problem**: Full CRUD API exists but UI (`admin-ui/src/pages/icmp.rs` — 270 lines) only shows status/ping, not config editing.
-- **Status**: NOT STARTED
+- **Status**: NOT STARTED (requires admin-ui changes)
 - **Files**: `src/icmp_filter/config.rs:179-210` (missing `JsonSchema` derive), `admin-ui/src/pages/icmp.rs`
 - **Action**: Add `JsonSchema` derive to `IcmpFilterConfig`. Enhance UI with config editing form.
 - **Effort**: Medium (2 days)
 
 ### 5.7: Remove duplicate components()
 - **Problem**: Two `components()` in `#[openapi()]` macro at `src/admin/openapi.rs:44-46,209-327`. First at lines 44-46 is empty, second has all schemas.
-- **Status**: NOT STARTED (easy mechanical fix)
+- **Status**: DONE (2026-04-26)
 - **Action**: Remove empty `components(schemas())` at lines 44-46.
 - **Effort**: Low (15 min)
 
 ### 5.8: Security Annotations for Public Endpoints
 - **Problem**: All endpoints inherit global `bearer_auth` via `AddBearerAuth` modifier. Public endpoints like `/health` can't opt out in OpenAPI spec.
-- **Status**: NOT STARTED
-- **Files**: `src/admin/mod.rs:581-588`
+- **Status**: DONE (2026-04-26) - /health and /ws/* routes are outside API nesting, don't require auth
 - **Action**: Add `security(())` annotation to public endpoints (health, metrics ws, logs ws).
 - **Effort**: Low (1 hour)
 

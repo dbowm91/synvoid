@@ -26,7 +26,7 @@ pub struct ListListenersResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/tcp-udp/listeners",
+    path = "/tcp-udp/listeners",
     responses(
         (status = 200, description = "List of TCP/UDP listeners", body = ListListenersResponse),
         (status = 401, description = "Unauthorized"),
@@ -74,7 +74,7 @@ pub struct CreateListenerResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/tcp-udp/listeners",
+    path = "/tcp-udp/listeners",
     request_body = CreateListenerRequest,
     responses(
         (status = 200, description = "Listener created", body = CreateListenerResponse),
@@ -124,7 +124,7 @@ pub async fn create_listener(
 
 #[utoipa::path(
     delete,
-    path = "/api/tcp-udp/listeners/{listener_id}",
+    path = "/tcp-udp/listeners/{listener_id}",
     params(
         ("listener_id" = String, Path, description = "Listener ID to delete")
     ),
@@ -170,7 +170,7 @@ pub struct ProtocolInfo {
 
 #[utoipa::path(
     get,
-    path = "/api/tcp-udp/protocols",
+    path = "/tcp-udp/protocols",
     responses(
         (status = 200, description = "List of supported protocols", body = Vec<ProtocolInfo>),
         (status = 401, description = "Unauthorized"),
