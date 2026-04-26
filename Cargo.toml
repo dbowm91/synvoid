@@ -24,7 +24,7 @@ dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:tokio-dstip", "dep:cryp
 socket-handoff = []
 wireguard = ["dep:defguard_boringtun"]
 icmp-filter = []
-flood-ebpf = []
+flood-ebpf = ["dep:aya"]
 origin_key_exchange = []
 audit = []
 post-quantum = ["dep:rustls-post-quantum"]
@@ -174,6 +174,9 @@ fastcgi-client = "0.10"
 
 # Dynamic plugin loading
 libloading = "0.8"
+
+# eBPF support
+aya = { version = "0.13", optional = true }
 
 # WASM support for plugins
 wasmtime = "42.0.2"

@@ -1464,7 +1464,7 @@ pub enum AckStatus {
     InternalError,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum WasmModuleType {
     Plugin = 0,
     Serverless = 1,
