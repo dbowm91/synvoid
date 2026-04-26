@@ -28,7 +28,7 @@ fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
         .or_insert_with(|| regex::Regex::new(pattern).ok())
         .value()
         .as_ref()
-        .map(|r| r.clone())
+        .cloned()
 }
 
 use crate::mesh::config::MeshConfig;

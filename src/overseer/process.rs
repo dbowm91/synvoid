@@ -22,6 +22,7 @@ use crate::utils::errors;
 use crate::RunningFlag;
 
 const OVERSEER_STATUS_FILE: &str = "overseer_status.json";
+#[allow(dead_code)]
 const STATUS_WRITE_INTERVAL_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
