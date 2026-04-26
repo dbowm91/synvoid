@@ -33,12 +33,7 @@ tun-rs = []
 mesh = []
 rkyv = []
 
-# TODO: Remove git patch when quinn 0.11.10+ is released with fixed quinn-proto
-# Tracking: https://github.com/quinn-rs/quinn/releases
-# Fixes RUSTSEC-2026-0037 / CVE-2026-31812 (DoS via malformed transport parameters)
 [patch.crates-io]
-quinn-proto = { git = "https://github.com/quinn-rs/quinn", tag = "quinn-proto-0.11.14" }
-
 # Patch wasmtime from yara-x transitive dependency (RUSTSEC-2026-0096, RUSTSEC-2026-0086, etc.)
 # yara-x 1.14.0 depends on wasmtime 40.0.4 which has multiple vulnerabilities
 # Force all wasmtime dependencies to use 42.0.2
