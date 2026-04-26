@@ -1,20 +1,20 @@
 //! Zero-copy file operations.
 //!
 //! This module provides high-performance file-to-socket and file-to-file transfer
-//! using Linux kernel syscalls. The unsafe blocks in this module are REQUIRED and
+//! using kernel syscalls. The unsafe blocks in this module are REQUIRED and
 //! CANNOT be eliminated because:
 //!
-//! 1. **`libc::sendfile`** - Linux kernel syscall with no safe Rust wrapper in std or nix.
+//! 1. **`libc::sendfile`** - Kernel syscall with no safe Rust wrapper in std or nix.
 //!    The syscall transfers data directly between file descriptors in kernel space,
 //!    bypassing user space for optimal performance.
 //!
-//! 2. **`libc::copy_file_range`** - Linux kernel syscall for efficient file-to-file
+//! 2. **`libc::copy_file_range`** - Kernel syscall for efficient file-to-file
 //!    copying. No safe Rust alternative exists in the standard library or popular crates.
 //!
 //! These operations are inherently low-level and require direct FFI to the kernel.
 
 use std::fs::File;
-use std::io::{Read, Result, Seek, Write};
+use std::io::{Read, Result};
 use std::os::fd::AsRawFd;
 
 pub struct ZeroCopyReader {
@@ -47,17 +47,9 @@ impl ZeroCopyReader {
 
 #[cfg(target_os = "linux")]
 pub fn sendfile_to_socket(socket_fd: i32, file: &File, offset: u64, count: usize) -> Result<usize> {
-    use std::os::unix::io::AsRawFd;
-
     let mut c_offset = offset as libc::off_t;
     let c_count = count as libc::size_t;
 
-    // SAFETY: This is a direct syscall to Linux kernel's sendfile(2).
-    // - socket_fd and file.as_raw_fd() are valid file descriptors
-    // - c_offset must point to a valid off_t that we have mutable access to
-    // - c_count is a valid size_t
-    // No safe Rust wrapper exists for this syscall - this is the only way to achieve
-    // zero-copy file-to-socket transfer in user space.
     let written = unsafe { libc::sendfile(socket_fd, file.as_raw_fd(), &mut c_offset, c_count) };
 
     if written < 0 {
@@ -67,7 +59,57 @@ pub fn sendfile_to_socket(socket_fd: i32, file: &File, offset: u64, count: usize
     Ok(written as usize)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn sendfile_to_socket(socket_fd: i32, file: &File, offset: u64, count: usize) -> Result<usize> {
+    use std::os::unix::io::AsRawFd;
+
+    let c_offset = offset as libc::off_t;
+    let mut bytes_sent: i64 = 0;
+
+    let result = unsafe {
+        libc::sendfile(
+            file.as_raw_fd(),
+            socket_fd,
+            c_offset,
+            &mut bytes_sent,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(std::cmp::min(bytes_sent as usize, count))
+}
+
+#[cfg(target_os = "freebsd")]
+pub fn sendfile_to_socket(socket_fd: i32, file: &File, offset: u64, count: usize) -> Result<usize> {
+    let c_offset = offset as libc::off_t;
+    let mut bytes_sent: u64 = 0;
+    let c_count = count as libc::size_t;
+
+    let result = unsafe {
+        libc::sendfile(
+            file.as_raw_fd(),
+            socket_fd,
+            c_offset,
+            c_count as i64,
+            &mut 0,
+            &mut bytes_sent,
+            0,
+        )
+    };
+
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(bytes_sent as usize)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
 pub fn sendfile_to_socket(
     _socket_fd: i32,
     _file: &File,
@@ -102,18 +144,10 @@ impl FilePath for File {
 
 #[cfg(target_os = "linux")]
 pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
-    use std::os::unix::io::AsRawFd;
-
     let c_count = count as libc::size_t;
     let mut off_in = 0i64 as libc::off_t;
     let mut off_out = 0i64 as libc::off_t;
 
-    // SAFETY: This is a direct syscall to Linux kernel's copy_file_range(2).
-    // - src.as_raw_fd() and dst.as_raw_fd() are valid file descriptors
-    // - off_in and off_out point to valid loff_t values
-    // - c_count is a valid size_t
-    // - 0 for flags means no special behavior
-    // No safe Rust wrapper exists for this efficient file-to-file syscall.
     let written = unsafe {
         libc::copy_file_range(
             src.as_raw_fd(),
@@ -132,15 +166,52 @@ pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
     Ok(written as usize)
 }
 
-#[cfg(not(target_os = "linux"))]
-pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
-    use std::io::SeekFrom;
+#[cfg(target_os = "macos")]
+pub fn copy_file_range(src: &File, dst: &File, _count: usize) -> Result<usize> {
+    let src_fd = src.as_raw_fd();
+    let dst_fd = dst.as_raw_fd();
 
+    const COPYFILE_ALL: libc::c_uint = 3;
+
+    let result = unsafe { libc::fcopyfile(src_fd, dst_fd, std::ptr::null_mut(), COPYFILE_ALL) };
+
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    let src_meta = src.metadata()?;
+    let src_size = src_meta.len();
+    Ok(src_size as usize)
+}
+
+#[cfg(target_os = "freebsd")]
+pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
+    let c_count = count as libc::size_t;
+    let mut off_in = 0i64 as libc::off_t;
+    let mut off_out = 0i64 as libc::off_t;
+
+    let written = unsafe {
+        libc::copy_file_range(
+            src.as_raw_fd(),
+            &mut off_in,
+            dst.as_raw_fd(),
+            &mut off_out,
+            c_count,
+            0,
+        )
+    };
+
+    if written < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(written as usize)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+pub fn copy_file_range(src: &File, dst: &File, count: usize) -> Result<usize> {
     let mut src_file = File::open(src.path()?)?;
     let mut dst_file = File::open(dst.path()?)?;
-
-    src_file.seek(SeekFrom::Start(0))?;
-    dst_file.seek(SeekFrom::Start(0))?;
 
     let mut buffer = vec![0u8; count];
     let read = src_file.read(&mut buffer)?;
