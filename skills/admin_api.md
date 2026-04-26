@@ -2,6 +2,10 @@
 
 This skill covers the Admin API implementation patterns for MaluWAF, including config handlers, versioning, and status retrieval.
 
+**Note**: This codebase uses utoipa 5 (upgraded from utoipa 4 on 2026-04-26). Some API changes apply:
+- OpenAPI tests use `HttpMethod` enum instead of `PathItemType`
+- Complex config types (MainConfig, MeshConfig, DnsConfig, etc.) use `serde_json::Value` in request/response types
+
 ## Overview
 
 The Admin API provides REST endpoints for configuration management, system monitoring, and operational control. It is located in `src/admin/` with handlers in `src/admin/handlers/`.
@@ -219,6 +223,38 @@ All 24 DefaultsConfig sub-configs now have GET/PUT handlers at `/config/defaults
 | `/config/defaults/asn-scraping` | `defaults.asn_scraping` |
 
 Also covered: ratelimit, bot, tcp, udp, theme (pre-existing handlers)
+
+## Manual ToSchema Implementation
+
+For types containing fields that cannot derive `ToSchema` (like `DateTime<Utc>`, `PathBuf`, or complex config types), use manual implementations in `src/admin/schema.rs`:
+
+```rust
+use chrono::{DateTime, Utc};
+use std::path::PathBuf;
+use utoipa::{PartialSchema, ToSchema};
+
+pub struct DateTimeUtc(pub DateTime<Utc>);
+
+impl PartialSchema for DateTimeUtc {
+    fn schema() -> RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .format(Some(utoipa::openapi::schema::SchemaFormat::KnownFormat(
+                utoipa::openapi::KnownFormat::DateTime,
+            )))
+            .into()
+    }
+}
+```
+
+For complex config types in request/response, use `serde_json::Value`:
+
+```rust
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MeshConfigResponse {
+    pub config: serde_json::Value,
+}
+```
 
 ## Testing
 
