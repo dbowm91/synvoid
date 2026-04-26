@@ -69,9 +69,9 @@ pub struct AttackDetectionConfig {
     #[serde(default)]
     pub anomaly_scoring: AnomalyScoringConfig,
     #[serde(default)]
-    pub sqli: SimpleDetectorConfig,
+    pub sqli: DetectorConfig,
     #[serde(default)]
-    pub xss: SimpleDetectorConfig,
+    pub xss: DetectorConfig,
     #[serde(default)]
     pub path_traversal: DetectorConfig,
     #[serde(default)]
@@ -126,8 +126,8 @@ impl Default for AttackDetectionConfig {
             max_headers: default_max_headers(),
             max_request_body_size: default_max_body_size(),
             anomaly_scoring: AnomalyScoringConfig::default(),
-            sqli: SimpleDetectorConfig::default(),
-            xss: SimpleDetectorConfig::default(),
+            sqli: DetectorConfig::default(),
+            xss: DetectorConfig::default(),
             path_traversal: DetectorConfig::default(),
             rfi: DetectorConfig::default(),
             ssrf: SsrfConfig::default(),
@@ -161,8 +161,8 @@ fn default_block_private_ips() -> bool {
     true
 }
 
-pub type SqliConfig = SimpleDetectorConfig;
-pub type XssConfig = SimpleDetectorConfig;
+pub type SqliConfig = DetectorConfig;
+pub type XssConfig = DetectorConfig;
 pub type PathTraversalConfig = DetectorConfig;
 pub type RfiConfig = DetectorConfig;
 pub type SstiConfig = DetectorConfig;

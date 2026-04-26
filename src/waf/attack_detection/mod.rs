@@ -45,6 +45,8 @@ pub use xxe::XxeDetector;
 pub struct AttackDetector {
     config: AttackDetectionConfig,
     normalizer: Arc<InputNormalizer>,
+    sqli_detector: Arc<SqliDetector>,
+    xss_detector: Arc<XssDetector>,
     path_traversal_detector: Arc<PathTraversalDetector>,
     rfi_detector: Arc<RfiDetector>,
     ssrf_detector: Arc<SsrfDetector>,
@@ -61,6 +63,16 @@ pub struct AttackDetector {
 
 impl AttackDetector {
     pub fn new(config: AttackDetectionConfig) -> Self {
+        let sqli_detector = Arc::new(SqliDetector::new(
+            config.paranoia_level,
+            &config.sqli.custom_patterns,
+        ));
+
+        let xss_detector = Arc::new(XssDetector::new(
+            config.paranoia_level,
+            &config.xss.custom_patterns,
+        ));
+
         let path_traversal_detector = Arc::new(PathTraversalDetector::new(
             config.paranoia_level,
             &config.path_traversal.custom_patterns,
@@ -126,6 +138,8 @@ impl AttackDetector {
         Self {
             config,
             normalizer,
+            sqli_detector,
+            xss_detector,
             path_traversal_detector,
             rfi_detector,
             ssrf_detector,
@@ -284,14 +298,14 @@ impl AttackDetector {
 
     fn check_sqli(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = SqliDetector::detect(path.as_bytes(), InputLocation::Path, None) {
+            if let Some(result) = self.sqli_detector.detect(path.as_bytes(), InputLocation::Path) {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
             if let Some(result) =
-                SqliDetector::detect(qs.as_bytes(), InputLocation::QueryString, None)
+                self.sqli_detector.detect(qs.as_bytes(), InputLocation::QueryString)
             {
                 return Some(result);
             }
@@ -299,7 +313,7 @@ impl AttackDetector {
 
         for (name, value) in &inputs.headers {
             if let Some(result) =
-                SqliDetector::detect(value.as_bytes(), InputLocation::header(name), None)
+                self.sqli_detector.detect(value.as_bytes(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -307,7 +321,7 @@ impl AttackDetector {
 
         if let Some(ref body) = inputs.body {
             if let Some(result) =
-                SqliDetector::detect(body.as_bytes(), InputLocation::PostBody, None)
+                self.sqli_detector.detect(body.as_bytes(), InputLocation::PostBody)
             {
                 return Some(result);
             }
@@ -318,14 +332,14 @@ impl AttackDetector {
 
     fn check_xss(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = XssDetector::detect(path.as_bytes(), InputLocation::Path, None) {
+            if let Some(result) = self.xss_detector.detect(path.as_bytes(), InputLocation::Path) {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
             if let Some(result) =
-                XssDetector::detect(qs.as_bytes(), InputLocation::QueryString, None)
+                self.xss_detector.detect(qs.as_bytes(), InputLocation::QueryString)
             {
                 return Some(result);
             }
@@ -333,7 +347,7 @@ impl AttackDetector {
 
         for (name, value) in &inputs.headers {
             if let Some(result) =
-                XssDetector::detect(value.as_bytes(), InputLocation::header(name), None)
+                self.xss_detector.detect(value.as_bytes(), InputLocation::header(name))
             {
                 return Some(result);
             }
@@ -341,7 +355,7 @@ impl AttackDetector {
 
         if let Some(ref body) = inputs.body {
             if let Some(result) =
-                XssDetector::detect(body.as_bytes(), InputLocation::PostBody, None)
+                self.xss_detector.detect(body.as_bytes(), InputLocation::PostBody)
             {
                 return Some(result);
             }
@@ -602,26 +616,14 @@ impl AttackDetector {
         }
 
         if self.config.sqli.enabled {
-            if let Ok(s) = std::str::from_utf8(body) {
-                if let Some(result) = SqliDetector::detect(
-                    s.as_bytes(),
-                    InputLocation::PostBody,
-                    Some(&self.normalizer),
-                ) {
-                    return Some(result);
-                }
+            if let Some(result) = self.sqli_detector.detect(body, InputLocation::PostBody) {
+                return Some(result);
             }
         }
 
         if self.config.xss.enabled {
-            if let Ok(s) = std::str::from_utf8(body) {
-                if let Some(result) = XssDetector::detect(
-                    s.as_bytes(),
-                    InputLocation::PostBody,
-                    Some(&self.normalizer),
-                ) {
-                    return Some(result);
-                }
+            if let Some(result) = self.xss_detector.detect(body, InputLocation::PostBody) {
+                return Some(result);
             }
         }
 

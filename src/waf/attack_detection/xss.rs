@@ -1,27 +1,64 @@
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
-use crate::waf::attack_detection::detector_common::detect_in_headers;
+use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::normalizer::InputNormalizer;
+use crate::waf::attack_detection::patterns::DefaultPatterns;
+use aho_corasick::AhoCorasick;
+use std::sync::Arc;
 
-pub struct XssDetector;
+pub struct XssDetector {
+    inner: BasePatternDetector,
+    normalizer: InputNormalizer,
+}
 
 impl XssDetector {
+    pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
+        let inner = BasePatternDetector::new(
+            DefaultPatterns::xss().as_slice(),
+            DefaultPatterns::xss_high().as_slice(),
+            custom_patterns,
+            paranoia_level,
+            AttackType::Xss,
+            "xss",
+        );
+        Self {
+            inner,
+            normalizer: InputNormalizer::new(),
+        }
+    }
+
     pub fn detect(
+        &self,
         input: &[u8],
         location: InputLocation,
-        normalizer: Option<&InputNormalizer>,
     ) -> Option<AttackDetectionResult> {
-        let normalized = if let Some(n) = normalizer {
-            n.normalize(std::str::from_utf8(input).unwrap_or(""))
-        } else {
-            InputNormalizer::new().normalize(std::str::from_utf8(input).unwrap_or(""))
-        };
+        let input_str = std::str::from_utf8(input).unwrap_or("");
+        let normalized = self.normalizer.normalize(input_str);
+
+        // 1. Try pattern-based detection
+        if let Some(mat) = self.inner.patterns_ref().find(&normalized.normalized) {
+            let matched = normalized.normalized[mat.start()..mat.end()].to_string();
+            tracing::warn!(
+                attack_type = "xss",
+                matched_pattern = %matched,
+                location = %location,
+                "XSS detected (pattern)"
+            );
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::Xss,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
+        }
+
+        // 2. Try libinjection detection
         let result = libinjectionrs::detect_xss(normalized.as_bytes());
 
         if result.is_injection() {
             tracing::warn!(
                 attack_type = "xss",
                 location = %location,
-                "XSS attack detected"
+                "XSS attack detected (libinjection)"
             );
 
             Some(AttackDetectionResult {
@@ -34,22 +71,15 @@ impl XssDetector {
             None
         }
     }
+}
 
-    pub fn detect_in_headers<F>(
-        headers: &http::HeaderMap,
-        check_header: F,
-        normalizer: Option<&crate::waf::attack_detection::normalizer::InputNormalizer>,
-    ) -> Option<AttackDetectionResult>
-    where
-        F: FnMut(&str) -> bool,
-    {
-        let normalizer = normalizer.cloned();
-        detect_in_headers(
-            headers,
-            check_header,
-            normalizer.as_ref(),
-            |input, location| Self::detect(input, location, normalizer.as_ref()),
-        )
+impl PatternDetector for XssDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        self.inner.patterns()
+    }
+
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect(input.as_bytes(), location)
     }
 }
 
@@ -59,75 +89,95 @@ mod tests {
 
     #[test]
     fn test_xss_detection_script() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<script>alert('xss')</script>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_detection_event_handler() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<img src=x onerror=alert(1)>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_detection_benign() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<p>Hello, world!</p>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_none());
+        assert!(detector.detect(input, InputLocation::QueryString).is_none());
     }
 
     #[test]
     fn test_xss_attack_type_field() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<script>alert('xss')</script>";
-        let result = XssDetector::detect(input, InputLocation::QueryString, None).unwrap();
+        let result = detector.detect(input, InputLocation::QueryString).unwrap();
         assert_eq!(result.attack_type, AttackType::Xss);
     }
 
     #[test]
     fn test_xss_svg_onload() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<svg onload=alert(1)>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_onmouseover() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<div onmouseover=alert(1)>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_onfocus() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<input onfocus=alert(1)>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_encoded_script_tags_detected() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"%3Cscript%3Ealert(1)%3C/script%3E";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_img_onerror() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<img src=x onerror=alert(1)>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
     }
 
     #[test]
     fn test_xss_input_location_preserved() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<script>alert('xss')</script>";
-        let result = XssDetector::detect(input, InputLocation::PostBody, None).unwrap();
+        let result = detector.detect(input, InputLocation::PostBody).unwrap();
         assert!(matches!(result.input_location, InputLocation::PostBody));
     }
 
     #[test]
     fn test_xss_plain_text_benign() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"just some regular text without any tags";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_none());
+        assert!(detector.detect(input, InputLocation::QueryString).is_none());
     }
 
     #[test]
     fn test_xss_href_javascript() {
+        let detector = XssDetector::new(2, &[]);
         let input = b"<a href=javascript:alert(1)>";
-        assert!(XssDetector::detect(input, InputLocation::QueryString, None).is_some());
+        assert!(detector.detect(input, InputLocation::QueryString).is_some());
+    }
+
+    #[test]
+    fn test_xss_pattern_match() {
+        let detector = XssDetector::new(2, &["CUSTOM_XSS_PATTERN".to_string()]);
+        let input = b"some input with CUSTOM_XSS_PATTERN";
+        let result = detector.detect(input, InputLocation::QueryString).unwrap();
+        assert_eq!(result.matched_pattern, Some("custom_xss_pattern".to_string()));
     }
 }

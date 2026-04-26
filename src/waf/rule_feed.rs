@@ -6,6 +6,8 @@ use chrono::DateTime;
 use ed25519_dalek::{Signature as Ed25519Signature, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -265,7 +267,7 @@ pub struct ChangelogEntry {
     pub description: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedRules {
     pub version: String,
     pub timestamp: u64,
@@ -301,7 +303,7 @@ impl RuleFeedManager {
                 Self::parse_embedded_key(EMBEDDED_PUBLIC_KEY).expect("Invalid embedded key")
             });
 
-        Ok(Arc::new(Self {
+        let manager = Arc::new(Self {
             config,
             client: create_simple_http_client(Duration::from_secs(30)),
             current_version: Arc::new(RwLock::new(None)),
@@ -310,7 +312,59 @@ impl RuleFeedManager {
             last_check: Arc::new(RwLock::new(0)),
             embedded_public_key,
             on_apply_callback: Arc::new(RwLock::new(None)),
-        }))
+        });
+
+        // Try to load rules from disk on startup
+        if let Err(e) = manager.load_from_disk() {
+            tracing::debug!("No existing rules loaded from disk: {}", e);
+        }
+
+        Ok(manager)
+    }
+
+    pub fn save_to_disk(&self, rules: &ParsedRules) -> Result<(), String> {
+        let Some(ref storage_dir) = self.config.storage_dir else {
+            return Ok(());
+        };
+
+        let dir = Path::new(storage_dir);
+        if !dir.exists() {
+            fs::create_dir_all(dir).map_err(|e| format!("Failed to create storage dir: {}", e))?;
+        }
+
+        let file_path = dir.join("rules.json");
+
+        let json = serde_json::to_string_pretty(rules)
+            .map_err(|e| format!("Failed to serialize rules: {}", e))?;
+
+        fs::write(file_path, json).map_err(|e| format!("Failed to write rules to disk: {}", e))?;
+
+        Ok(())
+    }
+
+    pub fn load_from_disk(&self) -> Result<(), String> {
+        let Some(ref storage_dir) = self.config.storage_dir else {
+            return Err("No storage directory configured".to_string());
+        };
+
+        let file_path = Path::new(storage_dir).join("rules.json");
+        if !file_path.exists() {
+            return Err("Rules file not found".to_string());
+        }
+
+        let json = fs::read_to_string(file_path).map_err(|e| format!("Failed to read rules: {}", e))?;
+        let rules: ParsedRules = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to parse rules: {}", e))?;
+
+        // Apply loaded rules
+        apply_rule_set_to_detection(&rules.rules);
+
+        *self.current_version.write() = Some(rules.version.clone());
+        *self.last_update.write() = rules.timestamp;
+
+        tracing::info!("Loaded rule version {} from disk persistence", rules.version);
+
+        Ok(())
     }
 
     pub fn set_on_apply_callback<F>(&self, callback: F)
@@ -392,8 +446,13 @@ impl RuleFeedManager {
                 *self.downloaded_rules.write() = Some(rules.clone());
 
                 if self.config.auto_apply && self.apply_rules().is_ok() {
-                    *self.current_version.write() = Some(rules.version);
+                    *self.current_version.write() = Some(rules.version.clone());
                     *self.last_update.write() = now_timestamp();
+                    
+                    // Persist to disk
+                    if let Err(e) = self.save_to_disk(&rules) {
+                        tracing::warn!("Failed to persist rules to disk: {}", e);
+                    }
                 }
             }
             Err(e) => {

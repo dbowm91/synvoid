@@ -1083,4 +1083,86 @@ impl DefaultPatterns {
             "moz-extension://",
         ]
     }
+
+    pub fn sqli() -> Vec<&'static str> {
+        vec![
+            "' OR '1'='1",
+            "\" OR \"1\"=\"1",
+            "admin'--",
+            "admin' #",
+            "' UNION SELECT",
+            "UNION ALL SELECT",
+            "SELECT * FROM",
+            "DROP TABLE",
+            "INSERT INTO",
+            "UPDATE SET",
+            "DELETE FROM",
+            "SLEEP(",
+            "BENCHMARK(",
+            "WAITFOR DELAY",
+            "INFORMATION_SCHEMA",
+            "sys.databases",
+            "pg_sleep",
+            "DBMS_LOCK.SLEEP",
+        ]
+    }
+
+    pub fn sqli_high() -> Vec<&'static str> {
+        vec![
+            "'",
+            "\"",
+            "--",
+            "/*",
+            "*/",
+            " #",
+            ";",
+            "0x",
+            "||",
+            "&&",
+        ]
+    }
+
+    pub fn xss() -> Vec<&'static str> {
+        vec![
+            "<script",
+            "javascript:",
+            "onerror=",
+            "onload=",
+            "onclick=",
+            "alert(",
+            "prompt(",
+            "confirm(",
+            "String.fromCharCode",
+            "eval(",
+            "base64,",
+            "document.cookie",
+            "document.location",
+            "window.location",
+            "<iframe",
+            "<object",
+            "<embed",
+            "<svg",
+            "xlink:href",
+            "fscommand",
+            "onmouseover",
+            "onfocus",
+        ]
+    }
+
+    pub fn xss_high() -> Vec<&'static str> {
+        vec![
+            "<",
+            ">",
+            "\"",
+            "'",
+            "`",
+            "=",
+            "(",
+            ")",
+            "[",
+            "]",
+            "{",
+            "}",
+        ]
+    }
 }

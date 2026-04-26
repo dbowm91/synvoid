@@ -297,6 +297,9 @@ pub struct RuleFeedConfig {
     /// If not set, falls back to the compiled-in key (placeholder by default).
     #[serde(default)]
     pub public_key: Option<String>,
+    /// Directory to persist downloaded rules.
+    #[serde(default)]
+    pub storage_dir: Option<String>,
 }
 
 impl Default for RuleFeedConfig {
@@ -308,6 +311,7 @@ impl Default for RuleFeedConfig {
             auto_apply: true,
             allow_downgrade: false,
             public_key: None,
+            storage_dir: None,
         }
     }
 }

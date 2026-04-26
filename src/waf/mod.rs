@@ -716,6 +716,8 @@ impl WafCore {
         }
 
         merge_patterns!("path_traversal", path_traversal);
+        merge_patterns!("sqli", sqli);
+        merge_patterns!("xss", xss);
         merge_patterns!("rfi", rfi);
         merge_patterns!("ssrf", ssrf);
         merge_patterns!("ssti", ssti);
