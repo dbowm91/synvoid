@@ -2632,8 +2632,7 @@ impl MeshTransport {
                                 ip_addr,
                                 host_str
                             );
-                            let forbidden =
-                                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                            let forbidden = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
                             send_stream
                                 .write_all(forbidden)
                                 .await

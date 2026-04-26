@@ -3,8 +3,8 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use flate2::read::GzDecoder;
 use flate2::{write::GzEncoder, Compression};
 use parking_lot::RwLock;
@@ -528,9 +528,7 @@ impl YaraRulesManager {
                 version, content_hash, self.node_id, timestamp, chunk_count, is_chunked
             );
             let sig = signer.sign(content.as_bytes());
-            let pk = URL_SAFE_NO_PAD.encode(
-                signer.get_public_key_bytes(),
-            );
+            let pk = URL_SAFE_NO_PAD.encode(signer.get_public_key_bytes());
             (sig, Some(pk))
         } else {
             (Vec::new(), None)
@@ -618,9 +616,7 @@ impl YaraRulesManager {
                     version, rules, content_hash, self.node_id, timestamp
                 );
                 let sig = signer.sign(content.as_bytes());
-                let pk = URL_SAFE_NO_PAD.encode(
-                    signer.get_public_key_bytes(),
-                );
+                let pk = URL_SAFE_NO_PAD.encode(signer.get_public_key_bytes());
                 (sig, Some(pk))
             } else {
                 (Vec::new(), None)
@@ -720,9 +716,7 @@ impl YaraRulesManager {
             };
 
             let compressed_b64 = value.get("compressed_data").and_then(|v| v.as_str())?;
-            let compressed_data =
-                URL_SAFE_NO_PAD.decode( compressed_b64)
-                    .ok()?;
+            let compressed_data = URL_SAFE_NO_PAD.decode(compressed_b64).ok()?;
 
             if version_str.is_none() {
                 version_str = value
@@ -745,18 +739,14 @@ impl YaraRulesManager {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if !chunk_signature.is_empty() && !signer_pk.is_empty() {
-                let sig_bytes = match URL_SAFE_NO_PAD.decode(
-                    chunk_signature,
-                ) {
+                let sig_bytes = match URL_SAFE_NO_PAD.decode(chunk_signature) {
                     Ok(s) => s,
                     Err(_) => {
                         tracing::warn!("YARA sync: invalid chunk signature base64 for chunk {}", i);
                         return None;
                     }
                 };
-                let pk_bytes = match URL_SAFE_NO_PAD.decode(
-                    signer_pk,
-                ) {
+                let pk_bytes = match URL_SAFE_NO_PAD.decode(signer_pk) {
                     Ok(p) => p,
                     Err(_) => {
                         tracing::warn!("YARA sync: invalid chunk signer pk base64 for chunk {}", i);
@@ -908,9 +898,7 @@ impl YaraRulesManager {
                     };
 
                     if !manifest_signature.is_empty() && !manifest_signer_pk.is_empty() {
-                        let sig_bytes = match URL_SAFE_NO_PAD.decode(
-                            manifest_signature,
-                        ) {
+                        let sig_bytes = match URL_SAFE_NO_PAD.decode(manifest_signature) {
                             Ok(s) => s,
                             Err(_) => {
                                 tracing::warn!(
@@ -920,9 +908,7 @@ impl YaraRulesManager {
                                 continue;
                             }
                         };
-                        let pk_bytes = match URL_SAFE_NO_PAD.decode(
-                            manifest_signer_pk,
-                        ) {
+                        let pk_bytes = match URL_SAFE_NO_PAD.decode(manifest_signer_pk) {
                             Ok(p) => p,
                             Err(_) => {
                                 tracing::warn!(
@@ -1776,7 +1762,8 @@ impl YaraRulesManager {
                 if !signature.is_empty() && !signer_public_key.is_empty() {
                     if let Some(ref signer) = self.signer {
                         let sign_content = format!("{}:{}", version, rules);
-                        let pk_bytes = URL_SAFE_NO_PAD.decode(signer_public_key)
+                        let pk_bytes = URL_SAFE_NO_PAD
+                            .decode(signer_public_key)
                             .unwrap_or_default();
                         if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(

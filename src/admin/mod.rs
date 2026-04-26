@@ -19,17 +19,15 @@ mod ws;
 
 pub use audit::{AuditLog, AuditState};
 pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token};
-pub use metrics::start_metrics_publisher;
-pub use state::{
-    get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
-    AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter,
-};
-pub use ws::broadcaster::Broadcaster;
-
 use axum::{
     http::StatusCode,
     routing::{delete, get, post},
     Json, Router,
+};
+pub use metrics::start_metrics_publisher;
+pub use state::{
+    get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
+    AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter,
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
 
@@ -293,6 +291,16 @@ fn build_router_from_state(
             "/config/upgrade",
             get(handlers::config::get_upgrade_config).put(handlers::config::update_upgrade_config),
         )
+        .route(
+            "/config/rule-feed",
+            get(handlers::config::get_rule_feed_config)
+                .put(handlers::config::update_rule_feed_config),
+        )
+        .route(
+            "/config/yara-feed",
+            get(handlers::config::get_yara_feed_config)
+                .put(handlers::config::update_yara_feed_config),
+        )
         .route("/config/validate", post(handlers::config::validate_config))
         .route(
             "/config/bundle",
@@ -451,6 +459,10 @@ fn build_router_from_state(
         .route(
             "/system/workers/{worker_id}/restart",
             post(handlers::system::restart_worker),
+        )
+        .route(
+            "/system/workers/batch-restart",
+            post(handlers::system::batch_restart_workers),
         )
         .route("/system/overseer", get(handlers::system::get_overseer))
         .route(

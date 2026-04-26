@@ -1113,7 +1113,10 @@ impl MeshProxy {
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 cache.remove(&upstream);
-                tracing::debug!("Stale cache invalidated for {}, will re-fetch on next request", upstream);
+                tracing::debug!(
+                    "Stale cache invalidated for {}, will re-fetch on next request",
+                    upstream
+                );
             });
         }
     }

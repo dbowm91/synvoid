@@ -46,8 +46,8 @@ fn validate_bearer_token(headers: &HeaderMap, admin_token: &str) -> Result<(), S
 }
 
 fn validate_ws_cookie_token(headers: &HeaderMap, admin_token: &str) -> Result<(), StatusCode> {
-    let cookie_value = get_cookie_value(headers, ADMIN_WS_COOKIE_NAME)
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let cookie_value =
+        get_cookie_value(headers, ADMIN_WS_COOKIE_NAME).ok_or(StatusCode::UNAUTHORIZED)?;
     if verify_admin_token(&cookie_value, admin_token) {
         Ok(())
     } else {
