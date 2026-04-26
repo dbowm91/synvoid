@@ -1,42 +1,30 @@
 # MaluWAF Implementation Plan
 
-**Status**: Active - All Items Complete
+**Status**: Active - Implementation Complete, Maintenance Mode
 **Last Updated**: 2026-04-26
-
-## Implementation Summary
-
-All 126 implementation items across 8 waves (Critical + Waves 1-7) have been completed.
-
-| Wave | Items | Status |
-|------|-------|--------|
-| Wave 0 (Critical) | 9 | **COMPLETE** |
-| Wave 1 | 14 | **COMPLETE** |
-| Wave 2 | 16 | **COMPLETE** |
-| Wave 3 | 22 | **COMPLETE** |
-| Wave 4 | 20 | **COMPLETE** |
-| Wave 5 | 17 | **COMPLETE** (5.1 blocked - skipped) |
-| Wave 6 | 14 | **COMPLETE** |
-| Wave 7 | 14 | **COMPLETE** (7.11 Org Key Trust Chain deferred) |
 
 ## Deferred Items
 
 The following items were intentionally deferred or blocked:
 
-### 5.1: utoipa 4→5 Upgrade
+### utoipa 4→5 Upgrade
 - **Status**: BLOCKED - Dependency version conflicts
 - **Reason**: `utoipa-swagger-ui = "9"` requires `utoipa >= 5`, but other dependencies are pinned to utoipa 4
 - **Action**: Monitor for resolution of dependency conflicts
 
-### 7.11: Org Key Trust Chain
+### Org Key Trust Chain (7.11)
 - **Status**: DEFERRED (4-5 weeks effort)
 - **Reason**: Very large implementation requiring new modules (organization.rs, org_key_manager.rs, etc.)
 - **Sub-phases**: Core types → DHT integration → OrgKeyManager → Quorum formation → Peer auth → Heartbeat → Auto-renewal → Integration
 - **Trust chain**: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes
+- **Note**: `organization.rs` exists but trust chain verification not fully implemented
 
-### 7.2: hickory-recursor 0.25 → 0.26 Migration
+### hickory-recursor 0.25 → 0.26 Migration
 - **Status**: DEFERRED
 - **Reason**: Requires Rust 1.85 for ml-kem dependency
 - **Action**: Migration guide documented in plan, execute when Rust 1.85 is available
+
+---
 
 ## Configuration Options
 
@@ -90,21 +78,45 @@ storage_namespace_isolation = true
 
 ---
 
-## Sub-Agent Execution Guide
+## Common Patterns
 
-### Common patterns:
-- **Serialization**: Use `crate::serialization::serialize/deserialize` (Postcard) for binary
-- **Timestamps**: Use `u64` via `crate::mesh::safe_unix_timestamp()` or `crate::utils::current_timestamp()`
-- **Concurrency**: Use `DashMap` instead of `RwLock<HashMap>` for hot paths
-- **Caching**: Use Moka `Cache` with capacity + TTL bounds
-- **Errors**: Use `thiserror` for error types, add variants to existing error enums
-- **IPC**: Use `Message` enum in `src/process/ipc.rs` for new message types
-- **Metrics**: Add `AtomicU64` counters in `src/metrics/mod.rs` following dropped events pattern
+### Serialization
+Use `crate::serialization::serialize/deserialize` (Postcard) for binary state.
 
-### Verification commands:
+### Timestamps
+Use `u64` via `crate::mesh::safe_unix_timestamp()` or `crate::utils::current_timestamp()`. Never use `Instant` for persisted/cross-process timestamps.
+
+### Concurrency
+- **DashMap**: Preferred over `RwLock<HashMap>` for hot paths (170+ uses)
+- **Atomic types**: Use `AtomicU64`, `AtomicU32` for counters and flags
+- **Moka Cache**: Use with `max_capacity` and `time_to_live` bounds
+
+### Errors
+- Use `thiserror` for error types
+- Add variants to existing error enums rather than creating new types
+
+### IPC Messages
+Use `Message` enum in `src/process/ipc.rs` for new message types.
+
+### Metrics
+Add `AtomicU64` counters in `src/metrics/mod.rs` following dropped events pattern.
+
+---
+
+## Verification Commands
+
 ```bash
-cargo test --lib --no-run          # Verify test code compiles
-cargo test --test integration_test # Integration tests (~5s)
-cargo fmt                           # Format
-cargo clippy -- -D warnings         # Lint
+# Verify tests compile (not just cargo check)
+cargo test --lib --no-run
+
+# Run targeted tests
+cargo test --lib <test_name>
+cargo test --test integration_test
+
+# Check specific modules compile
+cargo check --lib -p maluwaf --features <feature>
+
+# Format and lint
+cargo fmt
+cargo clippy -- -D warnings
 ```
