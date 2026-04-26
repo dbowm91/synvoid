@@ -3,14 +3,31 @@
 **Status**: Active - Implementation Complete, Maintenance Mode
 **Last Updated**: 2026-04-26
 
+## Completed Items
+
+### utoipa 4→5 Upgrade (2026-04-26)
+- **Status**: COMPLETED
+- **Changes**:
+  - Updated `utoipa = "4"` to `utoipa = "5"` in Cargo.toml
+  - Fixed 100+ types missing `ToSchema` derive
+  - Changed response/request types to use `serde_json::Value` for complex config types
+  - Added manual `ToSchema` implementation in `src/admin/schema.rs` for types with `DateTime<Utc>` and `PathBuf` fields
+  - Updated OpenAPI tests to use `HttpMethod` instead of `PathItemType` (API change in utoipa 5)
+- **Files modified**:
+  - `Cargo.toml`
+  - `src/admin/schema.rs` (new)
+  - `src/admin/audit.rs`
+  - `src/admin/openapi.rs`
+  - `src/admin/handlers/config.rs`
+  - `src/admin/handlers/probes.rs`
+  - `src/theme/config.rs`
+  - Many config files to add `ToSchema` derives
+
+---
+
 ## Deferred Items
 
 The following items were intentionally deferred or blocked:
-
-### utoipa 4→5 Upgrade
-- **Status**: BLOCKED - Dependency version conflicts
-- **Reason**: `utoipa-swagger-ui = "9"` requires `utoipa >= 5`, but other dependencies are pinned to utoipa 4
-- **Action**: Monitor for resolution of dependency conflicts
 
 ### Org Key Trust Chain (7.11)
 - **Status**: DEFERRED (4-5 weeks effort)
@@ -21,8 +38,14 @@ The following items were intentionally deferred or blocked:
 
 ### hickory-recursor 0.25 → 0.26 Migration
 - **Status**: DEFERRED
-- **Reason**: Requires Rust 1.85 for ml-kem dependency
-- **Action**: Migration guide documented in plan, execute when Rust 1.85 is available
+- **Reason**: Requires extensive API changes (recursor merged into hickory-resolver, RData method→field changes, import path updates)
+- **Rust version**: 1.93.0 is now available (was 1.85 requirement, now met)
+- **Scope**: 75+ compilation errors due to:
+  - `hickory-recursor` crate merged into `hickory-resolver` (behind `recursor` feature)
+  - Network protocol support moved from `hickory-proto` to new `hickory-net` crate
+  - RData accessors changed from methods to fields (e.g., `soa.refresh()` → `soa.refresh`)
+  - `ResolverConfig::google()`/`cloudflare()` removed
+- **Action**: Migration guide documented in plan, execute when resources are available
 
 ---
 

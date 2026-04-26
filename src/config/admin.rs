@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;
 
@@ -201,7 +202,7 @@ fn default_bcrypt_cost() -> u32 {
     12
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct MetricsConfig {
     #[serde(default = "default_metrics_enabled")]
     pub enabled: bool,

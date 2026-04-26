@@ -1,9 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::DnsConfigError;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsMeshConfig {
     #[serde(default = "default_true")]

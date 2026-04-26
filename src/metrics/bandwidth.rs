@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BandwidthPersistedState {
@@ -79,7 +80,7 @@ pub fn create_bandwidth_tracker(retention_days: u32, mesh_excluded: bool) -> Arc
     Arc::new(BandwidthTracker::new(retention_days, mesh_excluded))
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
 pub struct MonthlyResetConfig {
     pub mode: MonthlyResetMode,
     pub fixed_day: Option<u32>,
@@ -94,7 +95,7 @@ impl Default for MonthlyResetConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
 pub enum MonthlyResetMode {
     #[serde(rename = "rolling_30_days")]
     Rolling30Days,

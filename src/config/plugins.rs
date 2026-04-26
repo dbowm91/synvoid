@@ -1,13 +1,14 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct PluginConfig {
     #[serde(default)]
     pub wasm: WasmPluginGlobalConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct WasmPluginGlobalConfig {
     #[serde(default = "default_max_memory_mb")]
     pub max_memory_mb: usize,
@@ -30,7 +31,7 @@ impl Default for WasmPluginGlobalConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct WasmPluginInstanceConfig {
     pub name: String,
     pub path: String,

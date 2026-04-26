@@ -17,8 +17,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock as TokioRwLock;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReloadEvent {
     pub timestamp: String,
     pub plugin_name: String,

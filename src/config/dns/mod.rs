@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 mod dns_anycast;
 mod dns_dnssec;
@@ -29,7 +30,7 @@ mod defaults {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsMode {
     #[default]
@@ -37,7 +38,7 @@ pub enum DnsMode {
     Mesh,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsRateLimitMode {
     #[default]
@@ -45,7 +46,7 @@ pub enum DnsRateLimitMode {
     Dedicated,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsSecAlgorithm {
     #[default]

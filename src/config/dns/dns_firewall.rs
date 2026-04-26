@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsLimitsConfig {
     #[serde(default = "default_max_tcp_connections")]
@@ -64,7 +65,7 @@ fn default_udp_buffer_size() -> usize {
     65535
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FirewallAction {
     #[default]
@@ -72,7 +73,7 @@ pub enum FirewallAction {
     Block,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsFirewallConfig {
     #[serde(default)]
@@ -100,7 +101,7 @@ fn default_firewall_max_rules() -> usize {
     1000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct RebindingProtectionConfig {
     #[serde(default = "default_true")]

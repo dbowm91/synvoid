@@ -508,12 +508,12 @@ pub async fn check_regex(
     }))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct OverseerConfigResponse {
     pub config: crate::config::OverseerConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateOverseerConfigRequest {
     pub config: crate::config::OverseerConfig,
 }
@@ -603,12 +603,12 @@ pub async fn update_overseer_config(
     )))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ProcessManagerConfigResponse {
     pub config: crate::config::ProcessManagerConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateProcessManagerConfigRequest {
     pub config: crate::config::ProcessManagerConfig,
 }
@@ -712,12 +712,12 @@ pub async fn update_process_manager_config(
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct SupervisorConfigResponse {
     pub config: crate::config::SupervisorConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateSupervisorConfigRequest {
     pub config: crate::config::SupervisorConfig,
 }
@@ -831,12 +831,12 @@ pub async fn update_supervisor_config(
 
 // --- TLS config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TlsConfigResponse {
     pub config: crate::config::tls::TlsConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTlsConfigRequest {
     pub config: crate::config::tls::TlsConfig,
 }
@@ -889,12 +889,12 @@ pub async fn update_tls_config(
 
 // --- HTTP config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HttpConfigResponse {
     pub config: crate::config::http::HttpConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateHttpConfigRequest {
     pub config: crate::config::http::HttpConfig,
 }
@@ -947,12 +947,12 @@ pub async fn update_http_config(
 
 // --- ACME config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AcmeConfigResponse {
     pub config: crate::config::tls::AcmeConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateAcmeConfigRequest {
     pub config: crate::config::tls::AcmeConfig,
 }
@@ -1005,12 +1005,12 @@ pub async fn update_acme_config(
 
 // --- HTTP/3 config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Http3ConfigResponse {
     pub config: crate::config::http::Http3Config,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateHttp3ConfigRequest {
     pub config: crate::config::http::Http3Config,
 }
@@ -1063,12 +1063,12 @@ pub async fn update_http3_config(
 
 // --- Security config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SecurityConfigResponse {
     pub config: crate::config::security::MainSecurityConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateSecurityConfigRequest {
     pub config: crate::config::security::MainSecurityConfig,
 }
@@ -1121,12 +1121,12 @@ pub async fn update_security_config(
 
 // --- Static config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StaticConfigResponse {
     pub config: crate::config::security::MainStaticConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateStaticConfigRequest {
     pub config: crate::config::security::MainStaticConfig,
 }
@@ -1179,14 +1179,14 @@ pub async fn update_static_config(
 
 // --- Tunnel config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TunnelConfigResponse {
-    pub config: crate::config::tunnel::TunnelConfig,
+    pub config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTunnelConfigRequest {
-    pub config: crate::config::tunnel::TunnelConfig,
+    pub config: serde_json::Value,
 }
 
 #[utoipa::path(
@@ -1205,7 +1205,11 @@ pub async fn get_tunnel_config(
 ) -> Result<Json<TunnelConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(TunnelConfigResponse {
-        config: config.main.tunnel.clone(),
+        config: serde_json::to_value(&config.main.tunnel)
+            .map_err(|e| {
+                tracing::error!("Failed to serialize tunnel config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?,
     }))
 }
 
@@ -1226,10 +1230,15 @@ pub async fn update_tunnel_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateTunnelConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    let tunnel_config: crate::config::tunnel::TunnelConfig = serde_json::from_value(req.config)
+        .map_err(|e| {
+            tracing::error!("Failed to parse tunnel config: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
-        config.main.tunnel = req.config;
+        config.main.tunnel = tunnel_config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Tunnel config updated.")))
@@ -1237,12 +1246,12 @@ pub async fn update_tunnel_config(
 
 // --- Plugins config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PluginsConfigResponse {
     pub config: crate::config::plugins::PluginConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdatePluginsConfigRequest {
     pub config: crate::config::plugins::PluginConfig,
 }
@@ -1295,12 +1304,12 @@ pub async fn update_plugins_config(
 
 // --- Logging config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct LoggingConfigResponse {
     pub config: crate::config::logging::LoggingConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateLoggingConfigRequest {
     pub config: crate::config::logging::LoggingConfig,
 }
@@ -1353,12 +1362,12 @@ pub async fn update_logging_config(
 
 // --- Metrics config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MetricsConfigResponse {
     pub config: crate::config::admin::MetricsConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMetricsConfigRequest {
     pub config: crate::config::admin::MetricsConfig,
 }
@@ -1411,12 +1420,12 @@ pub async fn update_metrics_config(
 
 // --- Tokio config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TokioConfigResponse {
     pub config: crate::config::http::TokioConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTokioConfigRequest {
     pub config: crate::config::http::TokioConfig,
 }
@@ -1469,12 +1478,12 @@ pub async fn update_tokio_config(
 
 // --- Traffic shaping config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TrafficShapingConfigResponse {
     pub config: crate::config::traffic::TrafficShapingConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTrafficShapingConfigRequest {
     pub config: crate::config::traffic::TrafficShapingConfig,
 }
@@ -1529,12 +1538,12 @@ pub async fn update_traffic_shaping_config(
 
 // --- Threat level config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ThreatLevelConfigResponse {
     pub config: crate::config::protection::ThreatLevelConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateThreatLevelConfigRequest {
     pub config: crate::config::protection::ThreatLevelConfig,
 }
@@ -1589,12 +1598,12 @@ pub async fn update_threat_level_config(
 
 // --- IP feeds config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IpFeedsConfigResponse {
     pub config: crate::config::protection::IpFeedConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateIpFeedsConfigRequest {
     pub config: crate::config::protection::IpFeedConfig,
 }
@@ -1648,15 +1657,15 @@ pub async fn update_ip_feeds_config(
 // --- DNS config (feature-gated) ---
 
 #[cfg(feature = "dns")]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DnsConfigResponse {
-    pub config: crate::config::dns::DnsConfig,
+    pub config: serde_json::Value,
 }
 
 #[cfg(feature = "dns")]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateDnsConfigRequest {
-    pub config: crate::config::dns::DnsConfig,
+    pub config: serde_json::Value,
 }
 
 #[cfg(feature = "dns")]
@@ -1676,7 +1685,11 @@ pub async fn get_dns_config(
 ) -> Result<Json<DnsConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(DnsConfigResponse {
-        config: config.main.dns.clone(),
+        config: serde_json::to_value(&config.main.dns)
+            .map_err(|e| {
+                tracing::error!("Failed to serialize DNS config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?,
     }))
 }
 
@@ -1698,10 +1711,15 @@ pub async fn update_dns_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateDnsConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    let dns_config: crate::config::dns::DnsConfig = serde_json::from_value(req.config)
+        .map_err(|e| {
+            tracing::error!("Failed to parse DNS config: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
-        config.main.dns = req.config;
+        config.main.dns = dns_config;
     }
     persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("DNS config updated.")))
@@ -1709,7 +1727,7 @@ pub async fn update_dns_config(
 
 // --- Rate limits config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RateLimitsConfigResponse {
     pub rate_limit_memory: crate::config::limits::RateLimitMemoryConfig,
     pub proxy_limits: crate::config::limits::ProxyLimitsConfig,
@@ -1717,7 +1735,7 @@ pub struct RateLimitsConfigResponse {
     pub defaults: crate::config::defaults::RateLimitDefaults,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateRateLimitsConfigRequest {
     pub rate_limit_memory: Option<crate::config::limits::RateLimitMemoryConfig>,
     pub proxy_limits: Option<crate::config::limits::ProxyLimitsConfig>,
@@ -1789,12 +1807,12 @@ pub async fn update_rate_limits_config(
 
 // --- Bot detection config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct BotDetectionConfigResponse {
     pub config: crate::config::defaults::BotDefaults,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateBotDetectionConfigRequest {
     pub config: crate::config::defaults::BotDefaults,
 }
@@ -1851,14 +1869,14 @@ pub async fn update_bot_detection_config(
 
 // --- Mesh config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MeshConfigResponse {
-    pub config: Option<crate::config::mesh::MeshConfig>,
+    pub config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMeshConfigRequest {
-    pub config: Option<crate::config::mesh::MeshConfig>,
+    pub config: serde_json::Value,
 }
 
 #[utoipa::path(
@@ -1876,8 +1894,10 @@ pub async fn get_mesh_config(
     _auth: OptionalAuth,
 ) -> Result<Json<MeshConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
+    let mesh_value = serde_json::to_value(&config.main.mesh)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(MeshConfigResponse {
-        config: config.main.mesh.clone(),
+        config: mesh_value,
     }))
 }
 
@@ -1900,9 +1920,12 @@ pub async fn update_mesh_config(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let _guard = state.metrics.config_write_lock.write().await;
 
+    let mesh_config: crate::config::mesh::MeshConfig = serde_json::from_value(req.config)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
     {
         let mut config = state.process.config.write().await;
-        config.main.mesh = req.config;
+        config.main.mesh = Some(mesh_config);
     }
 
     persist_with_snapshot(&state, "TLS config updated").await?;
@@ -1911,12 +1934,12 @@ pub async fn update_mesh_config(
 
 // --- Mime types config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MimeTypesConfigResponse {
     pub config: crate::config::protection::MimesConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMimeTypesConfigRequest {
     pub config: crate::config::protection::MimesConfig,
 }
@@ -1969,13 +1992,13 @@ pub async fn update_mime_types_config(
 
 // --- TCP/UDP Defaults config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TcpUdpDefaultsConfigResponse {
     pub tcp: crate::config::network::TcpDefaults,
     pub udp: crate::config::network::UdpDefaults,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTcpUdpDefaultsConfigRequest {
     pub tcp: Option<crate::config::network::TcpDefaults>,
     pub udp: Option<crate::config::network::UdpDefaults>,
@@ -2037,12 +2060,12 @@ pub async fn update_tcp_udp_defaults_config(
 
 // --- Fallback config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FallbackConfigResponse {
     pub config: crate::config::server::FallbackConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateFallbackConfigRequest {
     pub config: crate::config::server::FallbackConfig,
 }
@@ -2095,12 +2118,12 @@ pub async fn update_fallback_config(
 
 // --- Upgrade config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpgradeConfigResponse {
     pub config: Option<crate::config::upgrade::UpgradeConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateUpgradeConfigRequest {
     pub config: Option<crate::config::upgrade::UpgradeConfig>,
 }
@@ -2153,12 +2176,12 @@ pub async fn update_upgrade_config(
 
 // --- Rule Feed config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RuleFeedConfigResponse {
     pub config: crate::config::RuleFeedConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateRuleFeedConfigRequest {
     pub config: crate::config::RuleFeedConfig,
 }
@@ -2211,12 +2234,12 @@ pub async fn update_rule_feed_config(
 
 // --- YARA Feed config ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct YaraFeedConfigResponse {
     pub config: crate::config::YaraRuleFeedConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateYaraFeedConfigRequest {
     pub config: crate::config::YaraRuleFeedConfig,
 }
@@ -2269,12 +2292,12 @@ pub async fn update_yara_feed_config(
 
 // --- Validate config ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ValidateConfigRequest {
-    pub config: crate::config::main::MainConfig,
+    pub config: serde_json::Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ValidateConfigResponse {
     pub valid: bool,
     pub errors: Vec<String>,
@@ -2296,7 +2319,9 @@ pub async fn validate_config(
     _auth: OptionalAuth,
     Json(req): Json<ValidateConfigRequest>,
 ) -> Result<Json<ValidateConfigResponse>, StatusCode> {
-    match req.config.validate() {
+    let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    match main_config.validate() {
         Ok(()) => Ok(Json(ValidateConfigResponse {
             valid: true,
             errors: vec![],
@@ -2312,12 +2337,12 @@ pub async fn validate_config(
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConfigBundleResponse {
-    pub config: crate::config::main::MainConfig,
+    pub config: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateConfigBundleRequest {
-    pub config: crate::config::main::MainConfig,
+    pub config: serde_json::Value,
 }
 
 #[utoipa::path(
@@ -2336,7 +2361,11 @@ pub async fn get_config_bundle(
 ) -> Result<Json<ConfigBundleResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(ConfigBundleResponse {
-        config: config.main.clone(),
+        config: serde_json::to_value(&config.main.clone())
+            .map_err(|e| {
+                tracing::error!("Failed to serialize config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?,
     }))
 }
 
@@ -2359,12 +2388,18 @@ pub async fn update_config_bundle(
 ) -> Result<Json<StatusResponse>, StatusCode> {
     save_config_snapshot(&state, Some("Before update_config_bundle".to_string())).await?;
 
-    req.config.validate().map_err(|e| {
+    let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config.clone())
+        .map_err(|e| {
+            tracing::error!("Failed to parse config: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    main_config.validate().map_err(|e| {
         tracing::error!("Config validation failed: {}", e);
         StatusCode::BAD_REQUEST
     })?;
 
-    let toml_content = toml::to_string_pretty(&req.config).map_err(|e| {
+    let toml_content = toml::to_string_pretty(&main_config).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;

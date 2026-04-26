@@ -1,13 +1,14 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 pub struct DnsZonesConfig {
     #[serde(default)]
     pub items: Vec<DnsZoneEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct DnsZoneEntry {
     pub zone: String,
 
@@ -18,7 +19,7 @@ pub struct DnsZoneEntry {
     pub dnssec: Option<DnsZoneDnssecConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct DnsZoneDnssecConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -39,7 +40,7 @@ pub struct DnsZoneDnssecConfig {
     pub nsec3_algorithm: Option<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsRecordType {
     A,
@@ -65,7 +66,7 @@ pub enum DnsRecordType {
     Other,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct DnsRecordEntry {
     pub name: String,
 

@@ -7,12 +7,12 @@ use utoipa::ToSchema;
 
 use crate::config::honeypot_port::HoneypotPortConfig;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HoneypotPortConfigResponse {
     pub config: HoneypotPortConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateHoneypotPortConfigRequest {
     pub config: HoneypotPortConfig,
 }

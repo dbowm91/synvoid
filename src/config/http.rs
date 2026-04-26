@@ -1,9 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct HttpConfig {
     #[serde(default = "default_header_read_timeout")]
     pub header_read_timeout_secs: u64,
@@ -121,7 +122,7 @@ impl HttpConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct Http3Config {
     #[serde(default)]
     pub enabled: bool,
@@ -147,7 +148,7 @@ fn default_http3_max_request_size() -> usize {
     10 * 1024 * 1024 // 10MB default for HTTP/3
 }
 
-#[derive(Debug, Clone, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema, ToSchema)]
 pub struct TokioConfig {
     pub worker_threads: usize,
 }

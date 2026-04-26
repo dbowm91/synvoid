@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsDotConfig {
     #[serde(default)]
@@ -27,7 +28,7 @@ fn default_dot_port() -> u16 {
     853
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsDohConfig {
     #[serde(default)]
@@ -63,7 +64,7 @@ fn default_doh_path() -> String {
     "/dns-query".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsDoqConfig {
     #[serde(default)]

@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;
 
@@ -7,7 +8,7 @@ fn default_tls_1_3_only() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -153,7 +154,7 @@ impl AcmeConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct AcmeConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -171,7 +172,7 @@ pub struct AcmeConfig {
     pub terms_of_service_agreed: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AcmeChallengeType {
     #[default]
@@ -179,7 +180,7 @@ pub enum AcmeChallengeType {
     Dns01,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct ClientAuthConfig {
     #[serde(default)]
     pub enabled: bool,

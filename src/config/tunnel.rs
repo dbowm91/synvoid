@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;
 
@@ -27,7 +28,7 @@ impl TunnelConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct TunnelVpnConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -75,7 +76,7 @@ fn default_wg_interface() -> String {
     "wg0".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct WireGuardPeerConfig {
     #[serde(default)]
     pub public_key: String,
@@ -95,7 +96,7 @@ fn default_peer_keepalive() -> u16 {
     25
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct TunnelQuicConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -213,7 +214,7 @@ fn default_connection_receive_window() -> u64 {
     64 * 1024 * 1024
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VpnAccessLevel {
     #[default]
@@ -230,7 +231,7 @@ impl VpnAccessLevel {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct QuicVpnClientConfig {
     #[serde(default)]
     pub auth_token: String,
@@ -254,7 +255,7 @@ fn default_client_enabled() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct QuicVpnAccessConfig {
     #[serde(default = "default_general_allowed_ports")]
     pub general_allowed_ports: Vec<u16>,
@@ -278,7 +279,7 @@ fn default_general_allowed_ports_udp() -> Vec<u16> {
     vec![53, 443]
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct TunnelQuicServerConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -325,7 +326,7 @@ fn default_quic_server_max_connections() -> usize {
     1000
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct PortMappingConfig {
     pub port: u16,
     pub protocol: String,
@@ -344,7 +345,7 @@ impl Default for PortMappingConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct TunnelQuicClientConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -366,7 +367,7 @@ pub struct TunnelQuicClientConfig {
     pub verify_server: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TunnelQuicPeerConfig {
     pub address: String,
     #[serde(default)]

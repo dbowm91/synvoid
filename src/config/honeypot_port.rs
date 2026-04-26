@@ -1,8 +1,9 @@
 #[allow(unused_imports)]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct HoneypotPortConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,

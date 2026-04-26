@@ -374,7 +374,7 @@ mod tests {
         assert!(openapi.info.description.is_some());
         assert!(openapi.info.contact.is_some());
 
-        assert!(matches!(openapi.openapi, openapi::OpenApiVersion::Version3));
+        assert!(matches!(openapi.openapi, openapi::OpenApiVersion::Version31));
     }
 
     #[test]
@@ -408,23 +408,23 @@ mod tests {
         for path_key in openapi.paths.paths.keys() {
             let has_operation = openapi
                 .paths
-                .get_path_operation(path_key, openapi::path::PathItemType::Get)
+                .get_path_operation(path_key, openapi::path::HttpMethod::Get)
                 .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Post)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Post)
                     .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Put)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Put)
                     .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Delete)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Delete)
                     .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Patch)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Patch)
                     .is_some();
             assert!(
                 has_operation,
@@ -470,7 +470,7 @@ mod tests {
         for path_key in openapi.paths.paths.keys() {
             if let Some(operation) = openapi
                 .paths
-                .get_path_operation(path_key, openapi::path::PathItemType::Get)
+                .get_path_operation(path_key, openapi::path::HttpMethod::Get)
             {
                 if let Some(tags) = &operation.tags {
                     assert!(!tags.is_empty(), "GET {} must have tags", path_key);
@@ -508,19 +508,19 @@ mod tests {
         for path_key in openapi.paths.paths.keys() {
             let operation_exists = openapi
                 .paths
-                .get_path_operation(path_key, openapi::path::PathItemType::Get)
+                .get_path_operation(path_key, openapi::path::HttpMethod::Get)
                 .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Post)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Post)
                     .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Put)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Put)
                     .is_some()
                 || openapi
                     .paths
-                    .get_path_operation(path_key, openapi::path::PathItemType::Delete)
+                    .get_path_operation(path_key, openapi::path::HttpMethod::Delete)
                     .is_some();
 
             assert!(

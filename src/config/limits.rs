@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct RateLimitMemoryConfig {
     #[serde(default = "default_max_ip_entries")]
     pub max_ip_entries: usize,
@@ -31,7 +32,7 @@ fn default_num_shards() -> usize {
     256
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct ProxyLimitsConfig {
     #[serde(default = "default_max_response_size")]
     pub max_response_size: usize,
@@ -55,7 +56,7 @@ fn default_connection_pool_size() -> usize {
     100
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct BlocklistLimitsConfig {
     #[serde(default = "default_max_block_entries")]
     pub max_entries: usize,

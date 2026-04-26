@@ -9,12 +9,13 @@ pub mod alerting;
 mod audit;
 mod auth;
 mod handlers;
-mod metrics;
+pub mod metrics;
 mod middleware;
 pub mod openapi;
 pub use openapi::MaluWafOpenApi;
 mod rate_limit;
 mod state;
+pub mod schema;
 mod ws;
 
 pub use audit::{AuditLog, AuditState, ConfigVersion, ConfigVersionManager};

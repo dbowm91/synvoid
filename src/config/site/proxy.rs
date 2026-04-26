@@ -1,9 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::backend::{BackendConfig, CgiConfig, FastCgiConfig, LocationConfig, PhpConfig};
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WasmOnError {
     #[default]

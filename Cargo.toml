@@ -201,7 +201,7 @@ log = "0.4"
 
 # OpenAPI / Swagger UI
 schemars = "0.8"
-utoipa = "4"
+utoipa = "5"
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 prost = "0.14"
 prost-build = "0.14"

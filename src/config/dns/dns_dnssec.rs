@@ -1,10 +1,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::defaults::default_true;
 use super::DnsConfigError;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsSecConfig {
     #[serde(default)]
@@ -136,7 +137,7 @@ impl DnsSecConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct HsmConfig {
     #[serde(default)]
@@ -155,7 +156,7 @@ pub struct HsmConfig {
     pub pin: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HsmProvider {
     #[default]
@@ -163,7 +164,7 @@ pub enum HsmProvider {
     Soft,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TsigAlgorithm {
     #[default]
@@ -203,7 +204,7 @@ impl TsigAlgorithm {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, ToSchema)]
 #[serde(default)]
 pub struct TsigKeyConfig {
     pub name: String,
@@ -212,7 +213,7 @@ pub struct TsigKeyConfig {
     pub algorithm: TsigAlgorithm,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct TrustAnchorConfig {
     #[serde(default)]

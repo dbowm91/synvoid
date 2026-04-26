@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsRpzConfig {
     #[serde(default)]
@@ -32,7 +33,7 @@ pub struct DnsRpzConfig {
     pub default_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct Dns64Config {
     #[serde(default)]
@@ -59,7 +60,7 @@ impl Default for Dns64Config {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsPrefetchConfig {
     #[serde(default)]

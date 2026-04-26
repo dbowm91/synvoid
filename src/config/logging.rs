@@ -2,10 +2,11 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -76,7 +77,7 @@ impl LoggingConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct RequestBodyLoggingConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -121,7 +122,7 @@ fn default_sensitive_fields() -> Vec<String> {
     ]
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct VerboseRequestLoggingConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -157,7 +158,7 @@ fn default_max_logs_per_second() -> u32 {
     100
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct LogExporterConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -177,7 +178,7 @@ impl Default for LogExporterConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct ElasticsearchConfig {
     pub url: String,
     #[serde(default = "default_es_index")]
@@ -210,7 +211,7 @@ fn default_es_flush_interval_secs() -> u64 {
     5
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct LokiConfig {
     pub url: String,
     #[serde(default)]

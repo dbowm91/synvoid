@@ -8,12 +8,12 @@ use utoipa::ToSchema;
 
 use crate::config::ServerlessConfig;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServerlessConfigResponse {
     pub config: ServerlessConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateServerlessConfigRequest {
     pub config: ServerlessConfig,
 }

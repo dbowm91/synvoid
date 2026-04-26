@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct ThemeDefaults {
     #[serde(default)]
     pub preset: String,
@@ -51,7 +52,7 @@ fn default_allow_only() -> String {
     "both".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, ToSchema)]
 pub struct ThemeColors {
     #[serde(default = "default_dark_background")]
     pub dark_background: String,
@@ -142,7 +143,7 @@ fn default_light_accent_secondary() -> String {
     "#10b981".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct ThemeSpacing {
     #[serde(default = "default_border_radius")]
     pub border_radius: String,
@@ -172,7 +173,7 @@ fn default_max_width() -> String {
     "420px".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct ThemeEffects {
     #[serde(default = "default_glass_opacity")]
     pub glass_opacity: f32,
@@ -208,7 +209,7 @@ fn default_neon_glow() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct ThemeBranding {
     #[serde(default = "default_logo_url")]
     pub logo_url: Option<String>,

@@ -1,9 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::DnsConfigError;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsSettingsConfig {
     #[serde(default = "default_dns_ttl")]
@@ -180,7 +181,7 @@ impl DnsSettingsConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsPaddingConfig {
     #[serde(default = "default_padding_enabled")]
@@ -205,7 +206,7 @@ fn default_padding_mode() -> DnsPaddingMode {
     DnsPaddingMode::Normal
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DnsPaddingMode {
     #[default]
@@ -213,7 +214,7 @@ pub enum DnsPaddingMode {
     Block,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct QnamePrivacyConfig {
     #[serde(default = "default_qname_privacy_enabled")]
@@ -238,7 +239,7 @@ fn default_qname_log_level() -> QnameLogLevel {
     QnameLogLevel::Zone
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QnamePrivacyMode {
     #[default]
@@ -247,7 +248,7 @@ pub enum QnamePrivacyMode {
     Full,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum QnameLogLevel {
     #[default]
@@ -256,7 +257,7 @@ pub enum QnameLogLevel {
     Hidden,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct QueryCoalescingConfig {
     #[serde(default = "default_coalescing_enabled")]
@@ -295,7 +296,7 @@ fn default_coalescing_cleanup_interval() -> u64 {
     10
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DynamicUpdateConfig {
     #[serde(default = "default_dynamic_update_enabled")]
@@ -312,7 +313,7 @@ fn default_dynamic_update_enabled() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct NotifyConfig {
     #[serde(default = "default_notify_enabled")]
@@ -326,7 +327,7 @@ fn default_notify_enabled() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct EcsFilteringConfig {
     #[serde(default = "default_ecs_enabled")]
@@ -365,7 +366,7 @@ impl Default for EcsFilteringConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct ServeStaleConfig {
     #[serde(default = "default_serve_stale_enabled")]

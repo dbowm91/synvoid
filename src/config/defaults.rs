@@ -2,6 +2,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::limits::{BlocklistLimitsConfig, ProxyLimitsConfig, RateLimitMemoryConfig};
 use super::network::{TarpitDefaults, TcpDefaults, UdpDefaults};
@@ -10,7 +11,7 @@ use super::upload::UploadDefaults;
 use super::validation::ConfigValidationError;
 use crate::theme::ThemeDefaults;
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct DefaultsConfig {
     pub ratelimit: RateLimitDefaults,
     pub blocked: BlockedDefaults,
@@ -89,7 +90,7 @@ impl DefaultsConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct RateLimitDefaults {
     #[serde(default = "default_ratelimit_mode")]
     pub mode: String,
@@ -128,7 +129,7 @@ fn default_ratelimit_mode() -> String {
     "shared".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct IpRateLimitConfig {
     #[serde(default = "default_ip_per_second")]
     pub per_second: u32,
@@ -168,7 +169,7 @@ fn default_ip_burst() -> u32 {
     20
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]
 pub struct GlobalRateLimitConfig {
     #[serde(default = "default_global_per_second")]
     pub per_second: u32,
@@ -193,7 +194,7 @@ fn default_global_max_connections() -> u32 {
     1000
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct EndpointRateLimitConfig {
     pub path_pattern: String,
     #[serde(default = "default_endpoint_per_minute")]
@@ -214,7 +215,7 @@ fn default_endpoint_burst() -> u32 {
     10
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct BlockedDefaults {
     #[serde(default)]
     pub paths: Vec<String>,
@@ -248,7 +249,7 @@ fn default_block_response() -> u16 {
     403
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct BotDefaults {
     #[serde(default = "default_block_ai")]
     pub block_ai_crawlers: bool,
@@ -396,7 +397,7 @@ fn default_js_difficulty() -> u8 {
     1
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct AsnScrapingConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -475,7 +476,7 @@ fn default_asn_cache_size() -> usize {
     10000
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct HoneypotDefaults {
     #[serde(default = "default_honeypot_endpoints_file")]
     pub endpoints_file: String,
@@ -486,7 +487,7 @@ pub struct HoneypotDefaults {
     pub block: HoneypotBlockDefaults,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct HoneypotBlockDefaults {
     #[serde(default = "default_honeypot_block_enabled")]
     pub enabled: bool,
@@ -530,7 +531,7 @@ fn default_honeypot_ban_duration() -> String {
     "24h".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct HoneypotProbingDefaults {
     #[serde(default = "default_probing_enabled")]
     pub enabled: bool,
@@ -609,7 +610,7 @@ fn default_probing_ban_duration() -> u64 {
     900
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct SuspiciousWordsConfig {
     #[serde(default = "default_suspicious_words_enabled")]
     pub enabled: bool,
@@ -652,7 +653,7 @@ fn default_suspicious_words_enabled() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct UpstreamErrorsConfig {
     #[serde(default = "default_upstream_errors_enabled")]
     pub enabled: bool,
@@ -700,7 +701,7 @@ fn default_error_codes() -> Vec<u16> {
 /// - `generic`: Plain HTML, no styling - default for stealth/undetectable WAF
 /// - `styled`: Modern styled pages with MaluWAF branding
 /// - `custom`: User-defined directory (requires custom_directory to be set)
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct ErrorPagesDefaults {
     /// Enable custom error pages
     #[serde(default = "default_true")]
@@ -730,7 +731,7 @@ fn default_error_pages_mode() -> String {
     "generic".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct CssChallengeDefaults {
     #[serde(default = "default_css_enabled")]
     pub enabled: bool,
@@ -774,7 +775,7 @@ impl Default for CssChallengeDefaults {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct CssBlockDefaults {
     #[serde(default = "default_css_block_enabled")]
     pub enabled: bool,
@@ -819,7 +820,7 @@ fn default_css_ban_duration() -> String {
     "24h".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct PowChallengeDefaults {
     #[serde(default)]
     pub enabled: bool,
@@ -847,7 +848,7 @@ impl Default for PowChallengeDefaults {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct PowBlockDefaults {
     #[serde(default = "default_pow_block_enabled")]
     pub enabled: bool,
@@ -880,7 +881,7 @@ fn default_pow_ban_duration() -> String {
     "1h".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct ChallengeDefaults {
     #[serde(default = "default_challenge_priority")]
     pub priority: String,
@@ -898,7 +899,7 @@ fn default_challenge_priority() -> String {
     "pow_then_css".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct AuthDefaults {
     #[serde(default = "default_auth_enabled")]
     pub enabled: bool,
@@ -940,7 +941,7 @@ fn default_auth_login_path() -> String {
     "/_waf_login".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct WorkerPoolDefaults {
     #[serde(default = "default_worker_pool_mode")]
     pub mode: String,
@@ -997,7 +998,7 @@ fn default_auto_scale() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct PersistenceConfig {
     #[serde(default = "default_persistence_enabled")]
     pub enabled: bool,

@@ -1,9 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::validation::{parse_size_string, ConfigValidationError};
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct UploadDefaults {
     #[serde(default = "default_upload_enabled")]
     pub enabled: bool,
@@ -113,7 +114,7 @@ fn default_archive_max_size() -> u64 {
     100 * 1024 * 1024
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct UploadAllowedTypesDefaults {
     #[serde(default = "default_allowed_types_mode")]
     pub mode: String,

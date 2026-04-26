@@ -104,7 +104,7 @@ pub struct ProbeEndpointStatsResponse {
     get,
     path = "/probes",
     responses(
-        (status = 200, description = "List of probing IPs", body = PaginatedResponseOfProbeResponse),
+        (status = 200, description = "List of probing IPs", body = PaginatedResponse<ProbeResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),

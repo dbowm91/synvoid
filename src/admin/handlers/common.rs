@@ -12,6 +12,7 @@ use axum_extra::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use utoipa::ToSchema;
 
 pub type OptionalAuth = Option<TypedHeader<Authorization<Bearer>>>;
 
@@ -123,7 +124,7 @@ impl Default for PaginationQuery {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PaginatedResponse<T> {
     pub items: Vec<T>,
     pub total: usize,
@@ -148,7 +149,7 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatusResponse {
     pub status: String,
     pub message: String,
@@ -217,7 +218,7 @@ pub const ERROR_PAGES: &[(u16, &str, &str)] = &[
     ),
 ];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorPage {
     pub code: u16,
     pub name: String,

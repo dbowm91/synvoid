@@ -1,8 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TcpDefaults {
     #[serde(default = "default_tcp_enabled")]
     pub enabled: bool,
@@ -26,7 +27,7 @@ pub struct TcpDefaults {
     pub half_open_per_ip_max: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TcpSocketConfig {
     #[serde(default = "default_tcp_nodelay")]
     pub nodelay: bool,
@@ -139,7 +140,7 @@ impl TcpDefaults {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TcpProtocolConfig {
     #[serde(default)]
     pub ports: Vec<u16>,
@@ -158,7 +159,7 @@ fn default_tcp_worker_pool_size() -> usize {
         .unwrap_or(4)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct UdpDefaults {
     #[serde(default = "default_udp_enabled")]
     pub enabled: bool,
@@ -174,7 +175,7 @@ pub struct UdpDefaults {
     pub rate_global: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct UdpSocketConfig {
     #[serde(default = "default_udp_recv_buffer_size")]
     pub recv_buffer_size: usize,
@@ -226,7 +227,7 @@ impl UdpDefaults {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct UdpProtocolConfig {
     #[serde(default)]
     pub ports: Vec<u16>,
@@ -249,7 +250,7 @@ fn default_udp_rate_global() -> u32 {
     100000
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct TarpitDefaults {
     #[serde(default = "default_tarpit_enabled")]
     pub enabled: bool,
