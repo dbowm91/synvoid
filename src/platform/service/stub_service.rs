@@ -74,6 +74,291 @@ impl UnixServiceManager {
         self.running.store(false, Ordering::SeqCst);
     }
 
+    fn install_bsd(&self, config: &ServiceConfig) -> Result<(), PlatformError> {
+        let binary_path = config.binary_path.clone().unwrap_or_else(|| {
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("maluwaf"))
+        });
+
+        let rc_script = format!(
+            r#"#!/bin/sh
+#
+# PROVIDE: {name}
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+# {description}
+#
+
+. /etc/rc.subr
+
+name="{name}"
+rcvar=$(set_rcvar)
+command="{binary_path}"
+command_args="--config /etc/maluwaf/config.toml"
+pidfile="/var/run/{{name}}.pid"
+procname="${{command}}"
+
+start_cmd="{{name}}_start"
+stop_cmd="{{name}}_stop"
+status_cmd="{{name}}_status"
+
+{name}_start() {{
+    echo "Starting ${{name}}."
+    /usr/sbin/daemon -P "$pidfile" -r -f $command ${{command_args}}
+}}
+
+{name}_stop() {{
+    if [ -f "$pidfile" ]; then
+        pid=$(cat "$pidfile")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping ${{name}} (PID: $pid)."
+            kill -TERM "$pid"
+            for i in 1 2 3 4 5; do
+                sleep 1
+                kill -0 "$pid" 2>/dev/null || break
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Force killing ${{name}}."
+                kill -KILL "$pid"
+            fi
+            rm -f "$pidfile"
+        else
+            rm -f "$pidfile"
+        fi
+    fi
+}}
+
+{name}_status() {{
+    if [ -f "$pidfile" ]; then
+        pid=$(cat "$pidfile")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "${{name}} is running as PID $pid."
+            return 0
+        fi
+        rm -f "$pidfile"
+    fi
+    echo "${{name}} is not running."
+    return 1
+}}
+
+load_rc_config $name
+run_rc_command "$1"
+"#,
+            name = config.name,
+            description = config.display_name,
+            binary_path = binary_path.display()
+        );
+
+        let rc_dir = if cfg!(target_os = "freebsd") {
+            "/usr/local/etc/rc.d"
+        } else {
+            "/etc/rc.d"
+        };
+
+        let rc_script_path = format!("{}/{}", rc_dir, config.name);
+
+        std::fs::write(&rc_script_path, &rc_script).map_err(|e| {
+            PlatformError::NotSupported(format!("Failed to write rc.d script: {}", e))
+        })?;
+
+        let output = std::process::Command::new("chmod")
+            .args(["+x", &rc_script_path])
+            .output()
+            .map_err(|e| PlatformError::NotSupported(format!("Failed to chmod: {}", e)))?;
+
+        if !output.status.success() {
+            return Err(PlatformError::NotSupported(
+                "Failed to make rc.d script executable".to_string(),
+            ));
+        }
+
+        tracing::info!("BSD rc.d script installed to {}", rc_script_path);
+
+        if config.auto_start {
+            self.enable_bsd(&config.name)?;
+        }
+
+        Ok(())
+    }
+
+    fn enable_bsd(&self, name: &str) -> Result<(), PlatformError> {
+        let rc_conf_line = format!("{}_enable=\"YES\"", name);
+
+        let rc_conf_path = if cfg!(target_os = "freebsd") {
+            "/etc/rc.conf.d/maluwaf"
+        } else {
+            "/etc/rc.conf.local"
+        };
+
+        let rc_conf_path_buf = PathBuf::from(rc_conf_path);
+        let parent_dir = rc_conf_path_buf.parent().unwrap();
+
+        if !parent_dir.exists() {
+            std::fs::create_dir_all(parent_dir).map_err(|e| {
+                PlatformError::NotSupported(format!("Failed to create rc.conf.d dir: {}", e))
+            })?;
+        }
+
+        let existing = std::fs::read_to_string(rc_conf_path).unwrap_or_default();
+        let mut lines: Vec<&str> = existing.lines().collect();
+
+        lines.retain(|line| !line.starts_with(&format!("{}_enable", name)));
+
+        let mut new_content = lines.join("\n");
+        if !new_content.is_empty() {
+            new_content.push('\n');
+        }
+        new_content.push_str(&rc_conf_line);
+        new_content.push('\n');
+
+        std::fs::write(rc_conf_path, &new_content)
+            .map_err(|e| PlatformError::NotSupported(format!("Failed to write rc.conf: {}", e)))?;
+
+        tracing::info!("Enabled {} in {}", name, rc_conf_path);
+        Ok(())
+    }
+
+    fn uninstall_bsd(&self, name: &str) -> Result<(), PlatformError> {
+        self.stop_bsd(name)?;
+
+        let rc_script_path = if cfg!(target_os = "freebsd") {
+            format!("/usr/local/etc/rc.d/{}", name)
+        } else {
+            format!("/etc/rc.d/{}", name)
+        };
+
+        if std::path::Path::new(&rc_script_path).exists() {
+            std::fs::remove_file(&rc_script_path).map_err(|e| {
+                PlatformError::NotSupported(format!("Failed to remove rc.d script: {}", e))
+            })?;
+            tracing::info!("Removed rc.d script {}", rc_script_path);
+        }
+
+        let rc_conf_path = if cfg!(target_os = "freebsd") {
+            "/etc/rc.conf.d/maluwaf"
+        } else {
+            "/etc/rc.conf.local"
+        };
+
+        if std::path::Path::new(rc_conf_path).exists() {
+            let existing = std::fs::read_to_string(rc_conf_path).unwrap_or_default();
+            let lines: Vec<&str> = existing
+                .lines()
+                .filter(|line| !line.starts_with(&format!("{}_enable", name)))
+                .collect();
+
+            let new_content = lines.join("\n");
+            std::fs::write(rc_conf_path, new_content).map_err(|e| {
+                PlatformError::NotSupported(format!("Failed to update rc.conf: {}", e))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn start_bsd(&self, name: &str) -> Result<(), PlatformError> {
+        if cfg!(target_os = "freebsd") {
+            let output = std::process::Command::new("service")
+                .arg(format!("{} start", name))
+                .output()
+                .map_err(|e| {
+                    PlatformError::NotSupported(format!("Failed to run service: {}", e))
+                })?;
+
+            if !output.status.success() {
+                return Err(PlatformError::NotSupported(format!(
+                    "service {} start failed: {}",
+                    name,
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+        } else if cfg!(target_os = "openbsd") {
+            let output = std::process::Command::new("rcctl")
+                .args(["start", name])
+                .output()
+                .map_err(|e| PlatformError::NotSupported(format!("Failed to run rcctl: {}", e)))?;
+
+            if !output.status.success() {
+                return Err(PlatformError::NotSupported(format!(
+                    "rcctl start {} failed: {}",
+                    name,
+                    String::from_utf8_lossy(&output.stderr)
+                )));
+            }
+        } else {
+            return Err(PlatformError::NotSupported(
+                "Service start not supported on this BSD variant".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn stop_bsd(&self, name: &str) -> Result<(), PlatformError> {
+        if cfg!(target_os = "freebsd") {
+            let output = std::process::Command::new("service")
+                .arg(format!("{} stop", name))
+                .output()
+                .map_err(|e| {
+                    PlatformError::NotSupported(format!("Failed to run service: {}", e))
+                })?;
+
+            if !output.status.success() {
+                tracing::warn!(
+                    "service {} stop failed: {}",
+                    name,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        } else if cfg!(target_os = "openbsd") {
+            let output = std::process::Command::new("rcctl")
+                .args(["stop", name])
+                .output()
+                .map_err(|e| PlatformError::NotSupported(format!("Failed to run rcctl: {}", e)))?;
+
+            if !output.status.success() {
+                tracing::warn!(
+                    "rcctl stop {} failed: {}",
+                    name,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn status_bsd(&self, name: &str) -> Result<ServiceState, PlatformError> {
+        if cfg!(target_os = "freebsd") {
+            let output = std::process::Command::new("service")
+                .arg(format!("{} status", name))
+                .output()
+                .map_err(|e| {
+                    PlatformError::NotSupported(format!("Failed to run service: {}", e))
+                })?;
+
+            if output.status.success()
+                || String::from_utf8_lossy(&output.stdout).contains("is running")
+            {
+                return Ok(ServiceState::Running);
+            }
+        } else if cfg!(target_os = "openbsd") {
+            let output = std::process::Command::new("rcctl")
+                .args(["get", name])
+                .output()
+                .map_err(|e| PlatformError::NotSupported(format!("Failed to run rcctl: {}", e)))?;
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("status=ON") {
+                    return Ok(ServiceState::Running);
+                }
+            }
+        }
+
+        Ok(ServiceState::Stopped)
+    }
+
     fn run_systemctl(&self, args: &[&str], action: &str) -> Result<(), PlatformError> {
         let output = std::process::Command::new("systemctl")
             .args(args)
@@ -168,10 +453,7 @@ impl ServiceControl for UnixServiceManager {
             target_os = "openbsd",
             target_os = "netbsd"
         )) {
-            Err(PlatformError::NotSupported(
-                "rc.d service installation not yet implemented. Please install manually."
-                    .to_string(),
-            ))
+            self.install_bsd(config)
         } else {
             Err(PlatformError::NotSupported(
                 "Service installation not supported on this platform".to_string(),
@@ -182,6 +464,12 @@ impl ServiceControl for UnixServiceManager {
     fn uninstall(&self, name: &str) -> Result<(), PlatformError> {
         if cfg!(target_os = "linux") {
             self.uninstall_linux(name)
+        } else if cfg!(any(
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd"
+        )) {
+            self.uninstall_bsd(name)
         } else {
             Err(PlatformError::NotSupported(
                 "Service uninstallation not supported on this platform".to_string(),
@@ -192,6 +480,8 @@ impl ServiceControl for UnixServiceManager {
     fn start(&self, name: &str) -> Result<(), PlatformError> {
         if cfg!(target_os = "linux") {
             self.run_systemctl(&["start", name], "start")
+        } else if cfg!(any(target_os = "freebsd", target_os = "openbsd")) {
+            self.start_bsd(name)
         } else {
             Err(PlatformError::NotSupported(
                 "Automatic service start not supported on this platform".to_string(),
@@ -202,6 +492,8 @@ impl ServiceControl for UnixServiceManager {
     fn stop(&self, name: &str) -> Result<(), PlatformError> {
         if cfg!(target_os = "linux") {
             self.run_systemctl(&["stop", name], "stop")
+        } else if cfg!(any(target_os = "freebsd", target_os = "openbsd")) {
+            self.stop_bsd(name)
         } else {
             Err(PlatformError::NotSupported(
                 "Automatic service stop not supported on this platform".to_string(),
@@ -221,6 +513,8 @@ impl ServiceControl for UnixServiceManager {
                     return Ok(ServiceState::Running);
                 }
             }
+        } else if cfg!(any(target_os = "freebsd", target_os = "openbsd")) {
+            return self.status_bsd(name);
         }
 
         Ok(ServiceState::Stopped)
@@ -234,7 +528,12 @@ impl ServiceControl for UnixServiceManager {
             target_os = "openbsd",
             target_os = "netbsd"
         )) {
-            std::path::Path::new(&format!("/usr/local/etc/rc.d/{}", name)).exists()
+            let rc_script = if cfg!(target_os = "freebsd") {
+                format!("/usr/local/etc/rc.d/{}", name)
+            } else {
+                format!("/etc/rc.d/{}", name)
+            };
+            std::path::Path::new(&rc_script).exists()
         } else {
             false
         }

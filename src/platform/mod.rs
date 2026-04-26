@@ -170,7 +170,10 @@ impl Platform {
     }
 
     pub fn supports_sandbox(&self) -> bool {
-        matches!(self, Platform::Linux | Platform::LinuxMusl)
+        matches!(
+            self,
+            Platform::Linux | Platform::LinuxMusl | Platform::FreeBSD | Platform::OpenBSD
+        )
     }
 
     pub fn libc_name(&self) -> &'static str {

@@ -2,6 +2,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 use bytes::BytesMut;
 use tokio::sync::broadcast;
@@ -166,10 +167,12 @@ mod platform {
         }
 
         pub fn into_async(self) -> Result<AsyncTunDevice, io::Error> {
-            Ok(AsyncTunDevice {
-                fd: self.fd,
-                name: self.name.clone(),
-            })
+            let fd = self.fd;
+            let name = self.name;
+
+            std::mem::forget(self);
+
+            Ok(AsyncTunDevice { fd, name })
         }
     }
 
@@ -464,14 +467,299 @@ pub use bsd_platform::{
     set_interface_up, AsyncTunDevice, BsdTunDevice,
 };
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-pub use {TunReader, TunWriter};
+#[cfg(target_os = "macos")]
+mod macos_platform {
+    use super::*;
+
+    const UTUN_OPT_IFNAME: libc::c_int = 0x4001;
+
+    #[repr(C)]
+    struct Ifreq {
+        name: [u8; 16],
+        flags: libc::c_short,
+        _pad: [u8; 22],
+    }
+
+    pub struct MacosUtunDevice {
+        fd: i32,
+        name: String,
+    }
+
+    impl MacosUtunDevice {
+        pub fn create(name: &str) -> Result<Self, io::Error> {
+            // SAFETY: socket is called with valid domain, type, and protocol;
+            // we check for invalid socket (negative value).
+            let socket_fd =
+                unsafe { libc::socket(libc::PF_INET, libc::SOCK_DGRAM, libc::IPPROTO_IP) };
+
+            if socket_fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let requested_name = if name.starts_with("utun") {
+                name.to_string()
+            } else {
+                format!("utun{}", &name[2..])
+            };
+
+            let name_bytes = requested_name.as_bytes();
+            let mut ifreq = Ifreq {
+                name: [0u8; 16],
+                flags: 0,
+                _pad: [0u8; 22],
+            };
+            ifreq.name[..name_bytes.len()].copy_from_slice(name_bytes);
+
+            // SAFETY: ioctl is called with a valid fd and request; we check result.
+            let result = unsafe {
+                libc::ioctl(
+                    socket_fd,
+                    UTUN_OPT_IFNAME as _,
+                    &mut ifreq as *mut _ as *mut libc::c_void,
+                )
+            };
+
+            // SAFETY: close is called on the socket fd after ioctl
+            unsafe { libc::close(socket_fd) };
+
+            if result < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let actual_name = String::from_utf8_lossy(&ifreq.name[..])
+                .trim_end_matches('\0')
+                .to_string();
+
+            // Open the TUN device for actual I/O
+            let tun_fd = unsafe {
+                libc::open(
+                    std::ffi::CString::new("/dev/tun").unwrap().as_ptr(),
+                    libc::O_RDWR | libc::O_NONBLOCK,
+                )
+            };
+
+            if tun_fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            Ok(Self {
+                fd: tun_fd,
+                name: actual_name,
+            })
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
+        }
+
+        pub fn into_async(self) -> Result<AsyncTunDevice, io::Error> {
+            let fd = self.fd;
+            let name = self.name.clone();
+            Ok(AsyncTunDevice { fd, name })
+        }
+
+        fn get_iface_name(_fd: i32) -> Result<String, io::Error> {
+            Ok("utun0".to_string())
+        }
+    }
+
+    impl Drop for MacosUtunDevice {
+        fn drop(&mut self) {
+            if self.fd >= 0 {
+                // SAFETY: close is called on a valid file descriptor we own.
+                unsafe {
+                    libc::close(self.fd);
+                }
+            }
+        }
+    }
+
+    pub struct AsyncTunDevice {
+        fd: i32,
+        name: String,
+    }
+
+    impl AsyncTunDevice {
+        pub async fn read_packet(&self, buf: &mut [u8]) -> io::Result<usize> {
+            let fd = self.fd;
+            let buf_len = buf.len();
+
+            let read_result = tokio::task::spawn_blocking(move || {
+                let mut packet_buf = vec![0u8; buf_len + 4];
+
+                // SAFETY: read is called with a valid fd and buffer; we check result.
+                let n = unsafe {
+                    libc::read(
+                        fd,
+                        packet_buf.as_mut_ptr() as *mut libc::c_void,
+                        packet_buf.len(),
+                    )
+                };
+
+                if n < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+
+                // macOS utun prepends a 4-byte address family header (AF_INET=2 or AF_INET6=30)
+                // Strip it if present
+                let data_start = if n >= 4 && (packet_buf[0] == 2 || packet_buf[0] == 30) {
+                    4
+                } else {
+                    0
+                };
+
+                let payload_len = (n as usize) - data_start;
+                let copy_len = std::cmp::min(payload_len, buf_len);
+
+                Ok((copy_len, data_start, packet_buf))
+            })
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+
+            buf[..read_result.0]
+                .copy_from_slice(&read_result.2[read_result.1..read_result.1 + read_result.0]);
+
+            Ok(read_result.0)
+        }
+
+        pub async fn write_packet(&self, data: &[u8]) -> io::Result<usize> {
+            let fd = self.fd;
+
+            // Determine address family from packet version
+            let af_header = if !data.is_empty() {
+                let version = (data[0] >> 4) & 0x0F;
+                if version == 6 {
+                    30
+                } else {
+                    2
+                } // AF_INET6 or AF_INET
+            } else {
+                2 // default to IPv4
+            };
+
+            let mut packet = vec![af_header, 0, 0, 0];
+            packet.extend_from_slice(data);
+
+            let n = tokio::task::spawn_blocking(move || {
+                // SAFETY: write is called with a valid fd and data pointer; we check result.
+                let result = unsafe {
+                    libc::write(fd, packet.as_ptr() as *const libc::c_void, packet.len())
+                };
+
+                if result < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    // Return actual payload size without header
+                    Ok((result as usize).saturating_sub(4))
+                }
+            })
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+
+            Ok(n)
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    pub fn set_interface_up(name: &str) -> io::Result<()> {
+        let output = std::process::Command::new("ifconfig")
+            .args([name, "up"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "ifconfig up failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn set_interface_address(name: &str, addr: IpAddr, netmask: IpAddr) -> io::Result<()> {
+        let (family, addr_str, mask_str) = match addr {
+            IpAddr::V4(a) => ("inet", a.to_string(), netmask.to_string()),
+            IpAddr::V6(a) => ("inet6", a.to_string(), netmask.to_string()),
+        };
+
+        let output = std::process::Command::new("ifconfig")
+            .args([name, family, &addr_str, "netmask", &mask_str])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "ifconfig address failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn set_interface_mtu(name: &str, mtu: u16) -> io::Result<()> {
+        let output = std::process::Command::new("ifconfig")
+            .args([name, "mtu", &mtu.to_string()])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "ifconfig mtu failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn add_route(name: &str, destination: &str) -> io::Result<()> {
+        let output = std::process::Command::new("route")
+            .args(["add", "-net", destination, "-interface", name])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "route add failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn delete_route(_destination: &str) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn delete_interface(name: &str) -> io::Result<()> {
+        let _ = std::process::Command::new("ifconfig")
+            .args([name, "destroy"])
+            .output();
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use macos_platform::{
+    add_route, delete_interface, delete_route, AsyncTunDevice, MacosUtunDevice,
+};
 
 #[cfg(not(any(
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd"
+    target_os = "netbsd",
+    target_os = "macos"
 )))]
 pub struct AsyncTunDevice;
 
@@ -512,16 +800,35 @@ impl TunInterface {
         Ok((interface, async_device))
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn create(config: TunConfig) -> Result<(Self, AsyncTunDevice), io::Error> {
+        let (shutdown_tx, _) = broadcast::channel(1);
+
+        let device = MacosUtunDevice::create(&config.name)?;
+        let async_device = device.into_async()?;
+
+        let interface = Self {
+            name: config.name.clone(),
+            config,
+            shutdown_tx,
+        };
+
+        tracing::info!("Created macOS UTUN interface: {}", interface.name);
+
+        Ok((interface, async_device))
+    }
+
     #[cfg(not(any(
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "netbsd"
+        target_os = "netbsd",
+        target_os = "macos"
     )))]
     pub fn create(_config: TunConfig) -> Result<(Self, ()), io::Error> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "TUN interfaces are only supported on Linux and BSD systems",
+            "TUN interfaces are only supported on Linux, BSD, and macOS systems",
         ))
     }
 
@@ -537,7 +844,8 @@ impl TunInterface {
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "netbsd"
+        target_os = "netbsd",
+        target_os = "macos"
     ))]
     pub fn add_route(&self, destination: &str) -> io::Result<()> {
         add_route(&self.name, destination)
@@ -547,7 +855,8 @@ impl TunInterface {
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "netbsd"
+        target_os = "netbsd",
+        target_os = "macos"
     ))]
     pub fn delete_route(&self, destination: &str) -> io::Result<()> {
         delete_route(destination)
@@ -566,7 +875,8 @@ impl TunInterface {
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd"
+    target_os = "netbsd",
+    target_os = "macos"
 ))]
 impl Drop for TunInterface {
     fn drop(&mut self) {
@@ -579,7 +889,8 @@ impl Drop for TunInterface {
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd"
+    target_os = "netbsd",
+    target_os = "macos"
 ))]
 pub struct TunReader {
     device: Arc<AsyncTunDevice>,
@@ -590,7 +901,8 @@ pub struct TunReader {
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd"
+    target_os = "netbsd",
+    target_os = "macos"
 ))]
 impl TunReader {
     pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
@@ -631,7 +943,8 @@ impl TunReader {
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd"
+    target_os = "netbsd",
+    target_os = "macos"
 ))]
 pub struct TunWriter {
     device: Arc<AsyncTunDevice>,
@@ -642,7 +955,8 @@ pub struct TunWriter {
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd"
+    target_os = "netbsd",
+    target_os = "macos"
 ))]
 impl TunWriter {
     pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
@@ -675,11 +989,17 @@ pub fn is_tun_available() -> bool {
         std::path::Path::new("/dev/tun").exists()
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        std::path::Path::new("/dev/tun").exists()
+    }
+
     #[cfg(not(any(
         target_os = "linux",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "netbsd"
+        target_os = "netbsd",
+        target_os = "macos"
     )))]
     {
         false

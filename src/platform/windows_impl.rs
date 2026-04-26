@@ -155,7 +155,7 @@ pub fn duplicate_socket_for_child(socket: RawSocket, target_pid: u32) -> io::Res
 pub fn create_socket_from_duplicate(info_bytes: &[u8]) -> io::Result<WindowsSocketHandle> {
     use std::mem;
     use windows_sys::Win32::Networking::WinSock::{
-        WSASocketW, SOCKET, WSAPROTOCOL_INFOW, WSA_FLAG_OVERLAPPED,
+        WSASocketW, SOCKET, WSAPROTOCOL_INFOW, WSA_FLAG_NO_HANDLE_INHERIT, WSA_FLAG_OVERLAPPED,
     };
 
     if info_bytes.len() != mem::size_of::<WSAPROTOCOL_INFOW>() {
@@ -169,6 +169,7 @@ pub fn create_socket_from_duplicate(info_bytes: &[u8]) -> io::Result<WindowsSock
         (info_bytes.as_ptr() as *const _ as *const WSAPROTOCOL_INFOW).read_unaligned();
 
     // SAFETY: WSASocketW is called with validated protocol info; result is checked for INVALID_SOCKET.
+    // WSA_FLAG_NO_HANDLE_INHERIT prevents child processes from inheriting the socket.
     let socket = unsafe {
         WSASocketW(
             0,
@@ -176,7 +177,7 @@ pub fn create_socket_from_duplicate(info_bytes: &[u8]) -> io::Result<WindowsSock
             0,
             &protocol_info as *const _ as *mut _,
             0,
-            WSA_FLAG_OVERLAPPED,
+            WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT,
         )
     };
 
@@ -328,17 +329,34 @@ impl IpcStream for WindowsIpcStream {
     }
 }
 
-pub struct WindowsProcessControl;
+pub struct WindowsProcessControl {
+    graceful_shutdown_timeout_secs: u64,
+}
+
+impl WindowsProcessControl {
+    pub fn new() -> Self {
+        Self {
+            graceful_shutdown_timeout_secs: 30,
+        }
+    }
+
+    pub fn with_graceful_shutdown_timeout(mut self, secs: u64) -> Self {
+        self.graceful_shutdown_timeout_secs = secs;
+        self
+    }
+}
+
+impl Default for WindowsProcessControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ProcessControl for WindowsProcessControl {
     fn send_signal(&self, pid: u32, signal: Signal) -> Result<(), PlatformError> {
         match signal {
             Signal::Terminate | Signal::Interrupt => {
-                use std::process::Command;
-                let _ = Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/F"])
-                    .output();
-                Ok(())
+                self.graceful_terminate(pid)
             }
             _ => Err(PlatformError::NotSupported(
                 "Only terminate/interrupt signals supported on Windows. Use IPC for other commands.".into()
@@ -347,12 +365,22 @@ impl ProcessControl for WindowsProcessControl {
     }
 
     fn is_process_running(&self, pid: u32) -> bool {
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid)])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-            .unwrap_or(false)
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+        };
+
+        // SAFETY: OpenProcess is called with PROCESS_QUERY_LIMITED_INFORMATION access right.
+        // We only need to check if the process exists, and CloseHandle properly releases the handle.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+
+        if handle == 0 {
+            return false;
+        }
+
+        // SAFETY: CloseHandle is called on a handle we just opened.
+        unsafe { CloseHandle(handle) };
+        true
     }
 
     fn daemonize(&self, _pid_file: Option<&Path>) -> Result<(), PlatformError> {
@@ -362,9 +390,83 @@ impl ProcessControl for WindowsProcessControl {
     }
 }
 
+impl WindowsProcessControl {
+    fn graceful_terminate(&self, pid: u32) -> Result<(), PlatformError> {
+        use std::thread;
+        use std::time::Duration;
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_TERMINATE,
+        };
+
+        // SAFETY: OpenProcess is called with PROCESS_TERMINATE access right for graceful termination.
+        // We properly close the handle after use.
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            )
+        };
+
+        if handle == 0 {
+            return Err(PlatformError::NotSupported(format!(
+                "Failed to open process {}: {}",
+                pid,
+                std::io::Error::last_os_error()
+            )));
+        }
+
+        // First try graceful shutdown via Ctrl+C signal
+        let ctrl_result = self.send_ctrl_c_to_process(pid);
+
+        if ctrl_result.is_ok() {
+            // Wait for graceful shutdown with timeout
+            let timeout_ms = (self.graceful_shutdown_timeout_secs * 1000) as u32;
+            let wait_result = unsafe { WaitForSingleObject(handle, timeout_ms) };
+
+            if wait_result == WAIT_TIMEOUT {
+                // Graceful shutdown timed out, force terminate
+                tracing::warn!("Process {} did not terminate gracefully, forcing", pid);
+                unsafe { TerminateProcess(handle, 1) };
+            }
+        } else {
+            // Process doesn't respond to Ctrl+C, terminate directly
+            tracing::warn!("Process {} does not respond to Ctrl+C, terminating", pid);
+            unsafe { TerminateProcess(handle, 1) };
+        }
+
+        // SAFETY: CloseHandle is called on a handle we just opened.
+        unsafe { CloseHandle(handle) };
+        Ok(())
+    }
+
+    fn send_ctrl_c_to_process(&self, pid: u32) -> Result<(), PlatformError> {
+        use std::process::Command;
+
+        let output = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T"])
+            .output()
+            .map_err(|e| PlatformError::NotSupported(format!("Failed to send Ctrl+C: {}", e)))?;
+
+        if !output.status.success() {
+            return Err(PlatformError::NotSupported(format!(
+                "Ctrl+C to process {} failed: {}",
+                pid,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        Ok(())
+    }
+}
+
 pub struct WindowsSignalHandler {
     handlers: Vec<(Signal, Box<dyn Fn() + Send + Sync>)>,
     running: RunningFlag,
+    #[cfg(windows)]
+    ctrl_handler_handle: Option<windows_sys::Win32::System::Console::HANDLE>,
 }
 
 impl WindowsSignalHandler {
@@ -372,6 +474,61 @@ impl WindowsSignalHandler {
         Self {
             handlers: Vec::new(),
             running: RunningFlag::new(),
+            #[cfg(windows)]
+            ctrl_handler_handle: None,
+        }
+    }
+}
+
+#[cfg(windows)]
+extern "system" fn windows_ctrl_handler(dw_ctrl_type: u32) -> i32 {
+    use windows_sys::Win32::System::Console::{
+        CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+    };
+
+    let signal = match dw_ctrl_type {
+        CTRL_C_EVENT | CTRL_BREAK_EVENT => Signal::Interrupt,
+        CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT => Signal::Terminate,
+        _ => return 0, // Event not handled
+    };
+
+    tracing::info!("Received Windows console control event: {}", dw_ctrl_type);
+
+    // Global handler will be invoked through the registered handlers
+    unsafe {
+        if let Some(ctx) = CURRENT_HANDLER.load(std::sync::atomic::Ordering::SeqCst) {
+            (*ctx).invoke_handlers(signal);
+        }
+    }
+
+    1 // Event handled
+}
+
+#[cfg(windows)]
+static CURRENT_HANDLER: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(windows)]
+impl WindowsSignalHandler {
+    unsafe fn invoke_handlers(&self, signal: Signal) {
+        for (s, handler) in &self.handlers {
+            if matches!(s, Signal::Terminate | Signal::Interrupt) {
+                handler();
+            }
+        }
+    }
+
+    fn register_windows_ctrl_handler() -> Option<windows_sys::Win32::System::Console::HANDLE> {
+        use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+
+        // SAFETY: SetConsoleCtrlHandler is called with our handler function.
+        // The handler properly handles all control events and calls registered Rust handlers.
+        let result = unsafe { SetConsoleCtrlHandler(Some(windows_ctrl_handler), 1) };
+
+        if result != 0 {
+            None
+        } else {
+            Some(0) // Return dummy handle to indicate registration attempted
         }
     }
 }
@@ -405,6 +562,11 @@ impl SignalHandler for WindowsSignalHandler {
 
         let running = self.running.clone();
 
+        #[cfg(windows)]
+        {
+            self.ctrl_handler_handle = Self::register_windows_ctrl_handler();
+        }
+
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             if running.is_running() {
@@ -417,6 +579,16 @@ impl SignalHandler for WindowsSignalHandler {
 
     fn stop_listening(&mut self) {
         self.running.stop();
+
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+            if self.ctrl_handler_handle.is_some() {
+                // SAFETY: SetConsoleCtrlHandler is called to remove our handler.
+                unsafe { SetConsoleCtrlHandler(Some(windows_ctrl_handler), 0) };
+                self.ctrl_handler_handle = None;
+            }
+        }
     }
 }
 

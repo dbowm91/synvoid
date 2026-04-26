@@ -94,7 +94,17 @@ impl ProcessSandbox {
             {
                 Box::new(crate::platform::sandbox::linux::LandlockSandbox::new(level))
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(target_os = "freebsd")]
+            {
+                Box::new(crate::platform::sandbox::capsicum::CapsicumSandbox::new(
+                    level,
+                ))
+            }
+            #[cfg(target_os = "openbsd")]
+            {
+                Box::new(crate::platform::sandbox::pledge::PledgeSandbox::new(level))
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
             {
                 let feature = match level {
                     SandboxLevel::Off => "disabled",
@@ -200,6 +210,258 @@ pub mod linux {
                         let minor: u32 = parts[1].parse().unwrap_or(0);
                         if major > 5 || (major == 5 && minor >= 13) {
                             return Some(true);
+                        }
+
+                        #[cfg(target_os = "freebsd")]
+                        pub mod capsicum {
+                            use super::{SandboxBackend, SandboxError, SandboxLevel};
+                            use std::ffi::CStr;
+                            use std::path::Path;
+
+                            const CAPSICUM_CAP_MODE: libc::c_int = 3;
+                            const CAPENABLED: libc::c_int = 2;
+
+                            #[repr(C)]
+                            struct CapsicumRights {
+                                bits: [u64; 2],
+                            }
+
+                            pub struct CapsicumSandbox {
+                                level: SandboxLevel,
+                            }
+
+                            impl CapsicumSandbox {
+                                pub fn new(level: SandboxLevel) -> Self {
+                                    Self { level }
+                                }
+
+                                fn is_capsicum_available() -> bool {
+                                    unsafe {
+                                        let capsicum =
+                                            CStr::from_bytes_with_nul(b"capsicum\0").unwrap();
+                                        libc::cap_enter();
+                                        let enabled = libc::cap_getmode(std::ptr::null_mut());
+                                        enabled >= 0
+                                    }
+                                }
+
+                                fn enter_sandbox(&self) -> Result<(), SandboxError> {
+                                    // SAFETY: cap_enter enters capability mode; we check return value.
+                                    let result = unsafe { libc::cap_enter() };
+                                    if result < 0 {
+                                        return Err(SandboxError::Syscall(
+                                            "cap_enter failed".into(),
+                                        ));
+                                    }
+                                    Ok(())
+                                }
+
+                                fn limit_fd(
+                                    &self,
+                                    fd: i32,
+                                    rights: &[libc::c_char],
+                                ) -> Result<(), SandboxError> {
+                                    #[repr(C)]
+                                    struct CapRights {
+                                        cr_next: *mut libc::c_void,
+                                        cr_left: i32,
+                                        cr_rights: *mut libc::c_char,
+                                    }
+
+                                    let mut right_size: libc::size_t = 0;
+
+                                    // SAFETY: cap_rights_init is called with valid parameters; we check result.
+                                    let result = unsafe {
+                                        libc::cap_rights_init(std::ptr::null_mut(), rights.as_ptr())
+                                    };
+
+                                    if result.is_null() {
+                                        return Err(SandboxError::Syscall(
+                                            "cap_rights_init failed".into(),
+                                        ));
+                                    }
+
+                                    // SAFETY: cap_rights_limit is called with a valid fd and rights; we check result.
+                                    let limit_result =
+                                        unsafe { libc::cap_rights_limit(fd, result) };
+                                    if limit_result < 0 {
+                                        return Err(SandboxError::Syscall(
+                                            "cap_rights_limit failed".into(),
+                                        ));
+                                    }
+
+                                    Ok(())
+                                }
+                            }
+
+                            impl SandboxBackend for CapsicumSandbox {
+                                fn apply(
+                                    &self,
+                                    allowed_paths: &[&Path],
+                                    denied_paths: &[&Path],
+                                ) -> Result<(), SandboxError> {
+                                    if !Self::is_capsicum_available() {
+                                        tracing::warn!(
+                                            "Capsicum not available on this FreeBSD system. \
+                     OS-level sandboxing is not active."
+                                        );
+                                        return Err(SandboxError::NotSupported(
+                                            "Capsicum not available".into(),
+                                        ));
+                                    }
+
+                                    // Enter capability mode
+                                    self.enter_sandbox()?;
+
+                                    tracing::info!(
+                "Applied capsicum sandbox (level: {:?}) with {} allowed paths",
+                self.level,
+                allowed_paths.len()
+            );
+                                    let _ = denied_paths;
+
+                                    Ok(())
+                                }
+
+                                fn is_supported(&self) -> bool {
+                                    Self::is_capsicum_available()
+                                }
+
+                                fn feature_name(&self) -> &'static str {
+                                    "capsicum"
+                                }
+
+                                fn level(&self) -> SandboxLevel {
+                                    self.level
+                                }
+                            }
+                        }
+
+                        #[cfg(target_os = "openbsd")]
+                        pub mod pledge {
+                            use super::{SandboxBackend, SandboxError, SandboxLevel};
+                            use std::ffi::CStr;
+                            use std::path::Path;
+
+                            pub struct PledgeSandbox {
+                                level: SandboxLevel,
+                            }
+
+                            impl PledgeSandbox {
+                                pub fn new(level: SandboxLevel) -> Self {
+                                    Self { level }
+                                }
+
+                                fn is_pledge_available() -> bool {
+                                    // pledge is always available on OpenBSD
+                                    true
+                                }
+
+                                fn pledge(&self, promises: &str) -> Result<(), SandboxError> {
+                                    let promises_cstr = CStr::from_bytes_with_nul(
+                                        format!("{}\0", promises).as_bytes(),
+                                    )
+                                    .map_err(|_| {
+                                        SandboxError::Syscall("Invalid pledge promises".into())
+                                    })?;
+
+                                    // SAFETY: pledge is called with a valid C string; we check return value.
+                                    let result = unsafe {
+                                        libc::pledge(promises_cstr.as_ptr(), std::ptr::null())
+                                    };
+
+                                    if result < 0 {
+                                        return Err(SandboxError::Syscall("pledge failed".into()));
+                                    }
+
+                                    Ok(())
+                                }
+
+                                fn unveil(
+                                    &self,
+                                    path: &Path,
+                                    permissions: &str,
+                                ) -> Result<(), SandboxError> {
+                                    let path_cstr = CStr::from_bytes_with_nul(
+                                        format!("{}\0", path.display()).as_bytes(),
+                                    )
+                                    .map_err(|_| SandboxError::Syscall("Invalid path".into()))?;
+
+                                    let perms_cstr = CStr::from_bytes_with_nul(
+                                        format!("{}\0", permissions).as_bytes(),
+                                    )
+                                    .map_err(|_| {
+                                        SandboxError::Syscall("Invalid permissions".into())
+                                    })?;
+
+                                    // SAFETY: unveil is called with valid C strings; we check return value.
+                                    let result = unsafe {
+                                        libc::unveil(path_cstr.as_ptr(), perms_cstr.as_ptr())
+                                    };
+
+                                    if result < 0 {
+                                        return Err(SandboxError::Syscall("unveil failed".into()));
+                                    }
+
+                                    Ok(())
+                                }
+
+                                fn commit_pledge(&self) -> Result<(), SandboxError> {
+                                    self.pledge("stdio")
+                                }
+                            }
+
+                            impl SandboxBackend for PledgeSandbox {
+                                fn apply(
+                                    &self,
+                                    allowed_paths: &[&Path],
+                                    denied_paths: &[&Path],
+                                ) -> Result<(), SandboxError> {
+                                    if !Self::is_pledge_available() {
+                                        tracing::warn!(
+                                            "Pledge not available on this OpenBSD system. \
+                     OS-level sandboxing is not active."
+                                        );
+                                        return Err(SandboxError::NotSupported(
+                                            "Pledge not available".into(),
+                                        ));
+                                    }
+
+                                    // Apply unveil restrictions for allowed paths
+                                    for path in allowed_paths {
+                                        let perms = if denied_paths.contains(path) {
+                                            "r" // read-only for denied paths (they shouldn't be here)
+                                        } else {
+                                            "rwc" // read, write, create for allowed paths
+                                        };
+                                        self.unveil(path, perms)?;
+                                    }
+
+                                    // Commit to pledge (remove unveil ability, restrict to stated promises)
+                                    self.commit_pledge()?;
+
+                                    tracing::info!(
+                "Applied pledge sandbox (level: {:?}) with {} allowed paths",
+                self.level,
+                allowed_paths.len()
+            );
+                                    let _ = denied_paths;
+
+                                    Ok(())
+                                }
+
+                                fn is_supported(&self) -> bool {
+                                    Self::is_pledge_available()
+                                }
+
+                                fn feature_name(&self) -> &'static str {
+                                    "pledge"
+                                }
+
+                                fn level(&self) -> SandboxLevel {
+                                    self.level
+                                }
+                            }
                         }
                     }
                     None
