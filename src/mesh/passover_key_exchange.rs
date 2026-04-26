@@ -64,7 +64,12 @@ use lru_time_cache::LruCache;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use std::path::PathBuf;
 use tokio::sync::RwLock;
+use tokio_rustls::TlsAcceptor;
+use hyper_util::rt::TokioIo;
+use hyper::server::conn::http1;
+use hyper_util::service::TowerToHyperService;
 use tonic::{Request, Response, Status};
 use tower_http::cors::{Any, CorsLayer};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
@@ -1081,19 +1086,55 @@ pub async fn run_key_exchange_server(
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let scheme = if config.tls.cert_path.is_some() && config.tls.key_path.is_some() {
-        "https"
+    let tls_acceptor = if let (Some(ref cert_path), Some(ref key_path)) =
+        (&config.tls.cert_path, &config.tls.key_path)
+    {
+        let mut tls_config = crate::tls::config::InternalTlsConfig::default();
+        tls_config.cert_path = Some(PathBuf::from(cert_path));
+        tls_config.key_path = Some(PathBuf::from(key_path));
+
+        let resolver = crate::tls::cert_resolver::CertResolver::new(tls_config);
+        resolver.load_certificates()?;
+
+        let server_config = resolver.build_server_config()?;
+        Some(TlsAcceptor::from(server_config))
     } else {
-        "http"
+        None
     };
 
-    tracing::warn!(
-        "Key exchange server starting on {}://{} (HTTPS proxy required for TLS - direct TLS not yet implemented)",
-        scheme,
-        addr
-    );
+    if let Some(acceptor) = tls_acceptor {
+        tracing::info!(
+            "Key exchange server starting on https://{} (direct TLS)",
+            addr
+        );
 
-    axum::serve(listener, router).await?;
+        loop {
+            let (stream, _remote_addr) = listener.accept().await?;
+            let acceptor = acceptor.clone();
+            let router = router.clone();
+
+            tokio::spawn(async move {
+                match acceptor.accept(stream).await {
+                    Ok(tls_stream) => {
+                        let io = TokioIo::new(tls_stream);
+                        let service = TowerToHyperService::new(router);
+                        if let Err(err) = http1::Builder::new()
+                            .serve_connection(io, service)
+                            .await
+                        {
+                            tracing::error!("Error serving TLS connection: {}", err);
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!("Error accepting TLS connection: {}", err);
+                    }
+                }
+            });
+        }
+    } else {
+        tracing::info!("Key exchange server starting on http://{}", addr);
+        axum::serve(listener, router).await?;
+    }
 
     Ok(())
 }
