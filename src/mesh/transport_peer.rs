@@ -2420,6 +2420,14 @@ impl MeshTransport {
                 );
                 self.handle_serverless_function_announce(announce).await;
             }
+            MeshMessage::ServerlessInvokeRequest(req) => {
+                tracing::debug!(
+                    "Received serverless invoke request: {} from {}",
+                    req.function_name,
+                    req.caller_node_id
+                );
+                self.handle_serverless_invoke_request(&req).await?;
+            }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");
             }
@@ -2467,6 +2475,65 @@ impl MeshTransport {
                 );
             }
         }
+    }
+
+    pub(crate) async fn handle_serverless_invoke_request(
+        &self,
+        req: &crate::mesh::protocol::ServerlessInvokeRequest,
+    ) -> Result<(), MeshTransportError> {
+        use crate::serverless::manager::CallerContext;
+        use std::time::Instant;
+
+        let start = Instant::now();
+
+        let sm = {
+            let guard = self.serverless_manager.read();
+            guard.clone()
+        };
+
+        let Some(serverless_manager) = sm else {
+            tracing::warn!(
+                "ServerlessInvokeRequest for '{}' but serverless manager not available",
+                req.function_name
+            );
+            return Ok(());
+        };
+
+        let caller = CallerContext {
+            node_id: req.caller_node_id.clone(),
+            role: crate::mesh::config::MeshNodeRole::EDGE,
+            org_id: None,
+            tier: None,
+            is_local: false,
+        };
+
+        let function_name = req.function_name.clone();
+        let result = serverless_manager
+            .invoke_for_mesh(
+                &function_name,
+                "POST",
+                "/",
+                &http::HeaderMap::new(),
+                None,
+                caller,
+            )
+            .await;
+
+        match result {
+            Ok(response) => {
+                tracing::debug!(
+                    "Serverless invoke '{}' completed: status={}, {}ms",
+                    function_name,
+                    response.status_code,
+                    start.elapsed().as_millis()
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Serverless invoke '{}' failed: {}", function_name, e);
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) async fn perform_health_check(&self, peer_id: &str) -> Option<u32> {
