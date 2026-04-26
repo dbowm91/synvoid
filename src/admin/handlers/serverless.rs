@@ -1,8 +1,99 @@
-use super::common::OptionalAuth;
+use super::super::state::AdminState;
+use super::common::{OptionalAuth, StatusResponse};
 use crate::serverless::registry::get_global_serverless_registry;
-use axum::{extract::Path, http::StatusCode, Json};
-use serde::Serialize;
+use axum::{extract::Path, extract::State, http::StatusCode, Json};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use utoipa::ToSchema;
+
+use crate::config::ServerlessConfig;
+
+#[derive(Debug, Serialize)]
+pub struct ServerlessConfigResponse {
+    pub config: ServerlessConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateServerlessConfigRequest {
+    pub config: ServerlessConfig,
+}
+
+async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), StatusCode> {
+    let main_config_path = {
+        let cfg = state.process.config.read().await;
+        cfg.config_dir.join("main.toml")
+    };
+
+    let toml_content = {
+        let cfg = state.process.config.read().await;
+        toml::to_string_pretty(&cfg.main).map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    };
+
+    {
+        let _guard = state.metrics.config_write_lock.write().await;
+        tokio::fs::write(&main_config_path, toml_content)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write main config: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
+
+    if let Some(ref pm) = state.process.process_manager {
+        let config_dir = state.process.config.read().await.config_dir.clone();
+        pm.broadcast_config_reload(config_dir).await;
+    }
+
+    Ok(())
+}
+
+#[utoipa::path(
+    get,
+    path = "/serverless/config",
+    responses(
+        (status = 200, description = "Serverless configuration", body = ServerlessConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "serverless"
+)]
+pub async fn get_serverless_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<ServerlessConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(ServerlessConfigResponse {
+        config: config.main.serverless.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/serverless/config",
+    request_body = UpdateServerlessConfigRequest,
+    responses(
+        (status = 200, description = "Serverless config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "serverless"
+)]
+pub async fn update_serverless_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateServerlessConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    {
+        let mut config = state.process.config.write().await;
+        config.main.serverless = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("Serverless config updated.")))
+}
 
 #[derive(Clone, Serialize, ToSchema)]
 pub struct ServerlessStatus {

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use nix::sys::signal::kill;
 use nix::unistd::Pid;
+use serde::{Deserialize, Serialize};
 
 use super::drain_manager::DrainManager;
 use super::socket_handoff::DualMasterHandoff;
@@ -20,10 +21,35 @@ use crate::process::{
 use crate::utils::errors;
 use crate::RunningFlag;
 
+const OVERSEER_STATUS_FILE: &str = "overseer_status.json";
+const STATUS_WRITE_INTERVAL_SECS: u64 = 5;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverseerStatusFile {
+    pub running: bool,
+    pub pid: Option<u32>,
+    pub master_pid: Option<u32>,
+    pub master_status: String,
+    pub uptime_secs: u64,
+    pub upgrade_mode: String,
+    pub drain_status: String,
+    pub workers: Vec<WorkerStatusInfo>,
+    pub version: String,
+    pub last_updated: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerStatusInfo {
+    pub id: u32,
+    pub status: String,
+    pub connections: u64,
+}
+
 pub struct OverseerProcess {
     master_child: Option<Child>,
     upgraded_master_child: Option<Child>,
     config_path: PathBuf,
+    runtime_dir: PathBuf,
     running: RunningFlag,
     persistence: Persistence,
     orchestrator: Orchestrator,
@@ -31,16 +57,19 @@ pub struct OverseerProcess {
     restart_count: u32,
     last_restart_at: Option<Instant>,
     stable_since: Option<Instant>,
+    start_time: Instant,
     dual_master_mode: bool,
     socket_handoff: Option<DualMasterHandoff>,
-    // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     drain_manager: Arc<DrainManager>,
     upgrade_generation: Option<u32>,
 }
 
 impl OverseerProcess {
-    pub fn new(config: OverseerConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(
+        config: OverseerConfig,
+        runtime_dir: PathBuf,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let persistence = Persistence::new(None);
         let orchestrator = Orchestrator::new(None, None, None);
 
@@ -55,6 +84,7 @@ impl OverseerProcess {
             master_child: None,
             upgraded_master_child: None,
             config_path: config_path.clone(),
+            runtime_dir,
             running: RunningFlag::new(),
             persistence,
             orchestrator,
@@ -62,6 +92,7 @@ impl OverseerProcess {
             restart_count: 0,
             last_restart_at: None,
             stable_since: None,
+            start_time: Instant::now(),
             dual_master_mode: false,
             socket_handoff: None,
             drain_manager: Arc::new(DrainManager::new(drain_check_interval_ms)),
@@ -288,6 +319,9 @@ impl OverseerProcess {
 
         self.spawn_master()?;
 
+        // Write initial status file
+        self.write_status_file().await;
+
         while self.running.is_running() {
             tokio::time::sleep(Duration::from_secs(self.config.health_check_interval_secs)).await;
 
@@ -307,10 +341,84 @@ impl OverseerProcess {
             } else if !health.ipc_responsive {
                 tracing::warn!("Master process is alive but not responding to IPC");
             }
+
+            // Periodically write status file
+            self.write_status_file().await;
         }
 
         self.stop_master(true)?;
         Ok(())
+    }
+
+    async fn write_status_file(&self) {
+        let status = self.collect_status();
+        let json = match serde_json::to_string_pretty(&status) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::warn!("Failed to serialize overseer status: {}", e);
+                return;
+            }
+        };
+
+        let status_path = self.runtime_dir.join(OVERSEER_STATUS_FILE);
+        let temp_path = self
+            .runtime_dir
+            .join(format!("{}.tmp", OVERSEER_STATUS_FILE));
+
+        if let Err(e) = tokio::fs::write(&temp_path, json).await {
+            tracing::warn!("Failed to write overseer status file: {}", e);
+            return;
+        }
+
+        if let Err(e) = tokio::fs::rename(&temp_path, &status_path).await {
+            tracing::warn!("Failed to rename overseer status file: {}", e);
+            let _ = tokio::fs::remove_file(&temp_path).await;
+        }
+    }
+
+    fn collect_status(&self) -> OverseerStatusFile {
+        let running = self.running.is_running();
+        let pid = std::process::id();
+
+        let master_pid = self.master_child.as_ref().map(|c| c.id());
+        let (master_status, workers) = if self.master_child.is_some() {
+            ("Running".to_string(), Vec::new())
+        } else {
+            ("Stopped".to_string(), Vec::new())
+        };
+
+        let uptime_secs = self.start_time.elapsed().as_secs();
+
+        let upgrade_mode = self
+            .persistence
+            .load()
+            .map(|s| s.state.to_string())
+            .unwrap_or_else(|_| "IDLE".to_string());
+
+        let drain_status = if let Ok(state) = self.persistence.load() {
+            if state.state.is_transition() && state.state != UpgradeState::Idle {
+                "Active".to_string()
+            } else {
+                "Idle".to_string()
+            }
+        } else {
+            "Idle".to_string()
+        };
+
+        let version = env!("CARGO_PKG_VERSION").to_string();
+
+        OverseerStatusFile {
+            running,
+            pid: Some(pid),
+            master_pid,
+            master_status,
+            uptime_secs,
+            upgrade_mode,
+            drain_status,
+            workers,
+            version,
+            last_updated: crate::utils::safe_unix_timestamp(),
+        }
     }
 
     async fn handle_master_restart(
@@ -1464,11 +1572,15 @@ impl OverseerProcess {
 pub fn run_overseer_process(
     config: OverseerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let mut overseer = OverseerProcess::new(config)?;
+    let mut overseer = OverseerProcess::new(config, runtime_dir)?;
 
     #[cfg(unix)]
     {

@@ -160,6 +160,21 @@ pub fn run_overseer_mode(
             .unwrap_or(100),
     };
 
+    // Determine runtime directory for status file
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/run"))
+        .join("maluwaf");
+
+    // Ensure runtime directory exists
+    if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
+        tracing::warn!(
+            "Failed to create runtime directory {}: {}",
+            runtime_dir.display(),
+            e
+        );
+    }
+
     // Run the overseer (which spawns Master, which spawns Workers)
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -169,7 +184,7 @@ pub fn run_overseer_mode(
 
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         rt.block_on(async {
-            let mut overseer = OverseerProcess::new(overseer_config)?;
+            let mut overseer = OverseerProcess::new(overseer_config, runtime_dir)?;
             overseer.run().await
         })
     }));

@@ -1,4 +1,4 @@
-use super::super::audit::AuditLog;
+use super::super::audit::{AuditLog, ConfigVersion};
 use super::super::state::AdminState;
 use crate::log_controller;
 use axum::{extract::State, http::StatusCode, Json};
@@ -70,6 +70,9 @@ pub async fn update_main_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateMainConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    // Save snapshot before making changes
+    save_config_snapshot(&state, Some("Before update_main_config".to_string())).await?;
+
     let main_config: crate::config::main::MainConfig = serde_json::from_value(req.config.clone())
         .map_err(|e| {
         tracing::error!("Failed to parse config: {}", e);
@@ -413,6 +416,8 @@ pub async fn import_config(
     _auth: OptionalAuth,
     Json(req): Json<ImportConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    save_config_snapshot(&state, Some("Before import_config".to_string())).await?;
+
     validate_config_paths(&req.config).map_err(|e| {
         tracing::error!("Config path validation failed: {}", e);
         StatusCode::BAD_REQUEST
@@ -550,6 +555,8 @@ pub async fn update_overseer_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateOverseerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    save_config_snapshot(&state, Some("Before update_overseer_config".to_string())).await?;
+
     let _guard = state.metrics.config_write_lock.write().await;
 
     let main_config_path = {
@@ -649,6 +656,12 @@ pub async fn update_process_manager_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateProcessManagerConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    save_config_snapshot(
+        &state,
+        Some("Before update_process_manager_config".to_string()),
+    )
+    .await?;
+
     let needs_restart = if let Some(ref pm) = state.process.process_manager {
         match pm.update_config(req.config.clone()) {
             Ok(restart_needed) => {
@@ -746,6 +759,8 @@ pub async fn update_supervisor_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateSupervisorConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    save_config_snapshot(&state, Some("Before update_supervisor_config".to_string())).await?;
+
     let _guard = state.metrics.config_write_lock.write().await;
 
     {
@@ -868,7 +883,7 @@ pub async fn update_tls_config(
         let mut config = state.process.config.write().await;
         config.main.tls = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("TLS config updated.")))
 }
 
@@ -926,7 +941,7 @@ pub async fn update_http_config(
         let mut config = state.process.config.write().await;
         config.main.http = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("HTTP config updated.")))
 }
 
@@ -984,7 +999,7 @@ pub async fn update_acme_config(
         let mut config = state.process.config.write().await;
         config.main.tls.acme = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("ACME config updated.")))
 }
 
@@ -1042,7 +1057,7 @@ pub async fn update_http3_config(
         let mut config = state.process.config.write().await;
         config.main.http3 = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("HTTP/3 config updated.")))
 }
 
@@ -1100,8 +1115,66 @@ pub async fn update_security_config(
         let mut config = state.process.config.write().await;
         config.main.security = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Security config updated.")))
+}
+
+// --- Static config ---
+
+#[derive(Debug, Serialize)]
+pub struct StaticConfigResponse {
+    pub config: crate::config::security::MainStaticConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateStaticConfigRequest {
+    pub config: crate::config::security::MainStaticConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/static",
+    responses(
+        (status = 200, description = "Static configuration", body = StaticConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_static_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<StaticConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(StaticConfigResponse {
+        config: config.main.static_config.clone().unwrap_or_default(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/static",
+    request_body = UpdateStaticConfigRequest,
+    responses(
+        (status = 200, description = "Static config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_static_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateStaticConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.static_config = Some(req.config);
+    }
+    persist_with_snapshot(&state, "Static config updated").await?;
+    Ok(Json(StatusResponse::success("Static config updated.")))
 }
 
 // --- Tunnel config ---
@@ -1158,7 +1231,7 @@ pub async fn update_tunnel_config(
         let mut config = state.process.config.write().await;
         config.main.tunnel = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Tunnel config updated.")))
 }
 
@@ -1216,7 +1289,7 @@ pub async fn update_plugins_config(
         let mut config = state.process.config.write().await;
         config.main.plugins = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Plugins config updated.")))
 }
 
@@ -1274,8 +1347,124 @@ pub async fn update_logging_config(
         let mut config = state.process.config.write().await;
         config.main.logging = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Logging config updated.")))
+}
+
+// --- Metrics config ---
+
+#[derive(Debug, Serialize)]
+pub struct MetricsConfigResponse {
+    pub config: crate::config::admin::MetricsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMetricsConfigRequest {
+    pub config: crate::config::admin::MetricsConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/metrics",
+    responses(
+        (status = 200, description = "Metrics configuration", body = MetricsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_metrics_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<MetricsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(MetricsConfigResponse {
+        config: config.main.metrics.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/metrics",
+    request_body = UpdateMetricsConfigRequest,
+    responses(
+        (status = 200, description = "Metrics config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_metrics_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateMetricsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.metrics = req.config;
+    }
+    persist_with_snapshot(&state, "Metrics config updated").await?;
+    Ok(Json(StatusResponse::success("Metrics config updated.")))
+}
+
+// --- Tokio config ---
+
+#[derive(Debug, Serialize)]
+pub struct TokioConfigResponse {
+    pub config: crate::config::http::TokioConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTokioConfigRequest {
+    pub config: crate::config::http::TokioConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/tokio",
+    responses(
+        (status = 200, description = "Tokio configuration", body = TokioConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_tokio_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TokioConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TokioConfigResponse {
+        config: config.main.tokio.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/tokio",
+    request_body = UpdateTokioConfigRequest,
+    responses(
+        (status = 200, description = "Tokio config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_tokio_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTokioConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.tokio = req.config;
+    }
+    persist_with_snapshot(&state, "Tokio config updated").await?;
+    Ok(Json(StatusResponse::success("Tokio config updated.")))
 }
 
 // --- Traffic shaping config ---
@@ -1332,7 +1521,7 @@ pub async fn update_traffic_shaping_config(
         let mut config = state.process.config.write().await;
         config.main.traffic_shaping = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success(
         "Traffic shaping config updated.",
     )))
@@ -1392,7 +1581,7 @@ pub async fn update_threat_level_config(
         let mut config = state.process.config.write().await;
         config.main.threat_level = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success(
         "Threat level config updated.",
     )))
@@ -1452,7 +1641,7 @@ pub async fn update_ip_feeds_config(
         let mut config = state.process.config.write().await;
         config.main.ip_feeds = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("IP feeds config updated.")))
 }
 
@@ -1514,7 +1703,7 @@ pub async fn update_dns_config(
         let mut config = state.process.config.write().await;
         config.main.dns = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("DNS config updated.")))
 }
 
@@ -1594,7 +1783,7 @@ pub async fn update_rate_limits_config(
         }
     }
 
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Rate limits config updated.")))
 }
 
@@ -1654,7 +1843,7 @@ pub async fn update_bot_detection_config(
         config.main.defaults.bot = req.config;
     }
 
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success(
         "Bot detection config updated.",
     )))
@@ -1716,7 +1905,7 @@ pub async fn update_mesh_config(
         config.main.mesh = req.config;
     }
 
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Mesh config updated.")))
 }
 
@@ -1774,7 +1963,7 @@ pub async fn update_mime_types_config(
         let mut config = state.process.config.write().await;
         config.main.mimes = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("MIME types config updated.")))
 }
 
@@ -1840,7 +2029,7 @@ pub async fn update_tcp_udp_defaults_config(
             config.main.udp = udp;
         }
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success(
         "TCP/UDP defaults config updated.",
     )))
@@ -1900,7 +2089,7 @@ pub async fn update_fallback_config(
         let mut config = state.process.config.write().await;
         config.main.fallback = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Fallback config updated.")))
 }
 
@@ -1958,7 +2147,7 @@ pub async fn update_upgrade_config(
         let mut config = state.process.config.write().await;
         config.main.upgrade = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Upgrade config updated.")))
 }
 
@@ -2016,7 +2205,7 @@ pub async fn update_rule_feed_config(
         let mut config = state.process.config.write().await;
         config.main.rule_feed = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Rule feed config updated.")))
 }
 
@@ -2074,7 +2263,7 @@ pub async fn update_yara_feed_config(
         let mut config = state.process.config.write().await;
         config.main.yara_feed = req.config;
     }
-    persist_main_config_and_notify(&state).await?;
+    persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("YARA feed config updated.")))
 }
 
@@ -2168,6 +2357,8 @@ pub async fn update_config_bundle(
     _auth: OptionalAuth,
     Json(req): Json<UpdateConfigBundleRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
+    save_config_snapshot(&state, Some("Before update_config_bundle".to_string())).await?;
+
     req.config.validate().map_err(|e| {
         tracing::error!("Config validation failed: {}", e);
         StatusCode::BAD_REQUEST
@@ -2252,4 +2443,1215 @@ async fn persist_main_config_and_notify(state: &Arc<AdminState>) -> Result<(), S
     }
 
     Ok(())
+}
+
+async fn save_config_snapshot(
+    state: &Arc<AdminState>,
+    description: Option<String>,
+) -> Result<ConfigVersion, StatusCode> {
+    let toml_content = {
+        let config = state.process.config.read().await;
+        let content = toml::to_string_pretty(&config.main).map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        content
+    };
+
+    state
+        .config_versions
+        .save_version(&toml_content, description)
+        .map_err(|e| {
+            tracing::error!("Failed to save config version: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+async fn persist_with_snapshot(
+    state: &Arc<AdminState>,
+    description: &str,
+) -> Result<(), StatusCode> {
+    save_config_snapshot(state, Some(description.to_string())).await?;
+    persist_main_config_and_notify(state).await
+}
+
+// --- Config Versions ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigVersionsResponse {
+    pub versions: Vec<ConfigVersion>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigVersionContentResponse {
+    pub version: ConfigVersion,
+    pub content: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/versions",
+    responses(
+        (status = 200, description = "List of config versions", body = ConfigVersionsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn list_config_versions(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<ConfigVersionsResponse>, StatusCode> {
+    let versions = state.config_versions.list_versions();
+    Ok(Json(ConfigVersionsResponse { versions }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/versions/{id}",
+    responses(
+        (status = 200, description = "Config version content", body = ConfigVersionContentResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Version not found")
+    ),
+    tag = "config"
+)]
+pub async fn get_config_version(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<ConfigVersionContentResponse>, StatusCode> {
+    let version = state
+        .config_versions
+        .get_version(&id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let content = state
+        .config_versions
+        .get_version_content(&id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(ConfigVersionContentResponse { version, content }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RollbackRequest {
+    #[allow(dead_code)]
+    pub description: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/config/rollback/{id}",
+    responses(
+        (status = 200, description = "Config rolled back", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Version not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn rollback_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(_req): Json<RollbackRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    // Save current config as a version before rolling back
+    let current_content = {
+        let config = state.process.config.read().await;
+        toml::to_string_pretty(&config.main).map_err(|e| {
+            tracing::error!("Failed to serialize config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    };
+
+    let _ = state
+        .config_versions
+        .save_version(&current_content, Some(format!("Before rollback to {}", id)));
+
+    let main_config_path = {
+        let config = state.process.config.read().await;
+        config.config_dir.join("main.toml")
+    };
+
+    state
+        .config_versions
+        .rollback(&id, &main_config_path)
+        .map_err(|e| {
+            tracing::error!("Failed to rollback config: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Reload config in memory
+    {
+        let mut cfg = state.process.config.write().await;
+        if cfg.load_main(&main_config_path).is_ok() {
+            cfg.discover_sites();
+        }
+    }
+
+    // Broadcast to workers
+    if let Some(ref pm) = state.process.process_manager {
+        let config_dir = state.process.config.read().await.config_dir.clone();
+        pm.broadcast_config_reload(config_dir).await;
+    }
+
+    state.audit.log(AuditLog::new(
+        None,
+        Some("admin".to_string()),
+        "rollback_config".to_string(),
+        "config".to_string(),
+        "unknown".to_string(),
+        None,
+        Some(format!("Rolled back to version {}", id)),
+        true,
+    ));
+
+    Ok(Json(StatusResponse::success(format!(
+        "Configuration rolled back to version {}.",
+        id
+    ))))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigDiffResponse {
+    pub from_id: String,
+    pub to_id: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub diff: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiffQueryParams {
+    pub from: String,
+    pub to: String,
+}
+
+fn compute_line_diff(old_content: &str, new_content: &str) -> String {
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+
+    let mut diff = String::new();
+    let mut i = 0;
+    let mut j = 0;
+    let mut additions = 0;
+    let mut deletions = 0;
+
+    while i < old_lines.len() || j < new_lines.len() {
+        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
+            diff.push_str(&format!("  {}\n", old_lines[i]));
+            i += 1;
+            j += 1;
+        } else if j < new_lines.len()
+            && (i >= old_lines.len() || !new_lines[j..].contains(&old_lines[i]))
+        {
+            diff.push_str(&format!("+ {}\n", new_lines[j]));
+            additions += 1;
+            j += 1;
+        } else if i < old_lines.len() {
+            diff.push_str(&format!("- {}\n", old_lines[i]));
+            deletions += 1;
+            i += 1;
+        }
+    }
+
+    format!("+{} -{}\n\n{}", additions, deletions, diff)
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/diff",
+    params(
+        ("from" = String, Query, description = "Source version ID"),
+        ("to" = String, Query, description = "Target version ID")
+    ),
+    responses(
+        (status = 200, description = "Config diff result", body = ConfigDiffResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Version not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn diff_config_versions(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    axum::extract::Query(params): axum::extract::Query<DiffQueryParams>,
+) -> Result<Json<ConfigDiffResponse>, StatusCode> {
+    let from_content = state
+        .config_versions
+        .get_version_content(&params.from)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let to_content = state
+        .config_versions
+        .get_version_content(&params.to)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let diff = compute_line_diff(&from_content, &to_content);
+
+    let additions = diff.matches("+ ").count();
+    let deletions = diff.matches("- ").count();
+
+    Ok(Json(ConfigDiffResponse {
+        from_id: params.from,
+        to_id: params.to,
+        additions,
+        deletions,
+        diff,
+    }))
+}
+
+// ============================================================================
+// DefaultsConfig sub-config handlers
+// ============================================================================
+
+// --- Honeypot config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HoneypotDefaultsResponse {
+    pub config: crate::config::defaults::HoneypotDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateHoneypotDefaultsRequest {
+    pub config: crate::config::defaults::HoneypotDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/honeypot",
+    responses(
+        (status = 200, description = "Honeypot defaults configuration", body = HoneypotDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_honeypot_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<HoneypotDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(HoneypotDefaultsResponse {
+        config: config.main.defaults.honeypot.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/honeypot",
+    request_body = UpdateHoneypotDefaultsRequest,
+    responses(
+        (status = 200, description = "Honeypot defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_honeypot_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateHoneypotDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.honeypot = req.config;
+    }
+    persist_with_snapshot(&state, "Honeypot defaults updated").await?;
+    Ok(Json(StatusResponse::success("Honeypot defaults updated.")))
+}
+
+// --- Honeypot Probe config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HoneypotProbingDefaultsResponse {
+    pub config: crate::config::defaults::HoneypotProbingDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateHoneypotProbingDefaultsRequest {
+    pub config: crate::config::defaults::HoneypotProbingDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/honeypot-probe",
+    responses(
+        (status = 200, description = "Honeypot probing defaults configuration", body = HoneypotProbingDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_honeypot_probing_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<HoneypotProbingDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(HoneypotProbingDefaultsResponse {
+        config: config.main.defaults.honeypot_probe.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/honeypot-probe",
+    request_body = UpdateHoneypotProbingDefaultsRequest,
+    responses(
+        (status = 200, description = "Honeypot probing defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_honeypot_probing_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateHoneypotProbingDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.honeypot_probe = req.config;
+    }
+    persist_with_snapshot(&state, "Honeypot probe defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Honeypot probing defaults updated.",
+    )))
+}
+
+// --- Blocked defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BlockedDefaultsResponse {
+    pub config: crate::config::defaults::BlockedDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateBlockedDefaultsRequest {
+    pub config: crate::config::defaults::BlockedDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/blocked",
+    responses(
+        (status = 200, description = "Blocked defaults configuration", body = BlockedDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_blocked_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<BlockedDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(BlockedDefaultsResponse {
+        config: config.main.defaults.blocked.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/blocked",
+    request_body = UpdateBlockedDefaultsRequest,
+    responses(
+        (status = 200, description = "Blocked defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_blocked_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateBlockedDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.blocked = req.config;
+    }
+    persist_with_snapshot(&state, "Blocked defaults updated").await?;
+    Ok(Json(StatusResponse::success("Blocked defaults updated.")))
+}
+
+// --- Suspicious words config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SuspiciousWordsConfigResponse {
+    pub config: crate::config::defaults::SuspiciousWordsConfig,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateSuspiciousWordsConfigRequest {
+    pub config: crate::config::defaults::SuspiciousWordsConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/suspicious-words",
+    responses(
+        (status = 200, description = "Suspicious words configuration", body = SuspiciousWordsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_suspicious_words_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<SuspiciousWordsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(SuspiciousWordsConfigResponse {
+        config: config.main.defaults.suspicious_words.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/suspicious-words",
+    request_body = UpdateSuspiciousWordsConfigRequest,
+    responses(
+        (status = 200, description = "Suspicious words config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_suspicious_words_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateSuspiciousWordsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.suspicious_words = req.config;
+    }
+    persist_with_snapshot(&state, "Suspicious words defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Suspicious words defaults updated.",
+    )))
+}
+
+// --- Upstream errors config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UpstreamErrorsConfigResponse {
+    pub config: crate::config::defaults::UpstreamErrorsConfig,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateUpstreamErrorsConfigRequest {
+    pub config: crate::config::defaults::UpstreamErrorsConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/upstream-errors",
+    responses(
+        (status = 200, description = "Upstream errors configuration", body = UpstreamErrorsConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_upstream_errors_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<UpstreamErrorsConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(UpstreamErrorsConfigResponse {
+        config: config.main.defaults.upstream_errors.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/upstream-errors",
+    request_body = UpdateUpstreamErrorsConfigRequest,
+    responses(
+        (status = 200, description = "Upstream errors config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_upstream_errors_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateUpstreamErrorsConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.upstream_errors = req.config;
+    }
+    persist_with_snapshot(&state, "Upstream errors defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Upstream errors defaults updated.",
+    )))
+}
+
+// --- Error pages config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorPagesDefaultsResponse {
+    pub config: crate::config::defaults::ErrorPagesDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateErrorPagesDefaultsRequest {
+    pub config: crate::config::defaults::ErrorPagesDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/error-pages",
+    responses(
+        (status = 200, description = "Error pages defaults configuration", body = ErrorPagesDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_error_pages_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<ErrorPagesDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(ErrorPagesDefaultsResponse {
+        config: config.main.defaults.error_pages.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/error-pages",
+    request_body = UpdateErrorPagesDefaultsRequest,
+    responses(
+        (status = 200, description = "Error pages defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_error_pages_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateErrorPagesDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.error_pages = req.config;
+    }
+    persist_with_snapshot(&state, "Error pages defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Error pages defaults updated.",
+    )))
+}
+
+// --- CSS challenge config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CssChallengeDefaultsResponse {
+    pub config: crate::config::defaults::CssChallengeDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateCssChallengeDefaultsRequest {
+    pub config: crate::config::defaults::CssChallengeDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/css-challenge",
+    responses(
+        (status = 200, description = "CSS challenge defaults configuration", body = CssChallengeDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_css_challenge_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<CssChallengeDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(CssChallengeDefaultsResponse {
+        config: config.main.defaults.css_challenge.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/css-challenge",
+    request_body = UpdateCssChallengeDefaultsRequest,
+    responses(
+        (status = 200, description = "CSS challenge defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_css_challenge_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateCssChallengeDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.css_challenge = req.config;
+    }
+    persist_with_snapshot(&state, "CSS challenge defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "CSS challenge defaults updated.",
+    )))
+}
+
+// --- POW challenge config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PowChallengeDefaultsResponse {
+    pub config: crate::config::defaults::PowChallengeDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdatePowChallengeDefaultsRequest {
+    pub config: crate::config::defaults::PowChallengeDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/pow-challenge",
+    responses(
+        (status = 200, description = "POW challenge defaults configuration", body = PowChallengeDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_pow_challenge_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<PowChallengeDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(PowChallengeDefaultsResponse {
+        config: config.main.defaults.pow_challenge.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/pow-challenge",
+    request_body = UpdatePowChallengeDefaultsRequest,
+    responses(
+        (status = 200, description = "POW challenge defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_pow_challenge_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdatePowChallengeDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.pow_challenge = req.config;
+    }
+    persist_with_snapshot(&state, "POW challenge defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "POW challenge defaults updated.",
+    )))
+}
+
+// --- Challenge priority config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ChallengeDefaultsResponse {
+    pub config: crate::config::defaults::ChallengeDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateChallengeDefaultsRequest {
+    pub config: crate::config::defaults::ChallengeDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/challenge",
+    responses(
+        (status = 200, description = "Challenge defaults configuration", body = ChallengeDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_challenge_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<ChallengeDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(ChallengeDefaultsResponse {
+        config: config.main.defaults.challenge.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/challenge",
+    request_body = UpdateChallengeDefaultsRequest,
+    responses(
+        (status = 200, description = "Challenge defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_challenge_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateChallengeDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.challenge = req.config;
+    }
+    persist_with_snapshot(&state, "Challenge defaults updated").await?;
+    Ok(Json(StatusResponse::success("Challenge defaults updated.")))
+}
+
+// --- Auth defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthDefaultsResponse {
+    pub config: crate::config::defaults::AuthDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateAuthDefaultsRequest {
+    pub config: crate::config::defaults::AuthDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/auth",
+    responses(
+        (status = 200, description = "Auth defaults configuration", body = AuthDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_auth_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<AuthDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(AuthDefaultsResponse {
+        config: config.main.defaults.auth.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/auth",
+    request_body = UpdateAuthDefaultsRequest,
+    responses(
+        (status = 200, description = "Auth defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_auth_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateAuthDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.auth = req.config;
+    }
+    persist_with_snapshot(&state, "Auth defaults updated").await?;
+    Ok(Json(StatusResponse::success("Auth defaults updated.")))
+}
+
+// --- Worker pool defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WorkerPoolDefaultsResponse {
+    pub config: crate::config::defaults::WorkerPoolDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateWorkerPoolDefaultsRequest {
+    pub config: crate::config::defaults::WorkerPoolDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/worker-pool",
+    responses(
+        (status = 200, description = "Worker pool defaults configuration", body = WorkerPoolDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_worker_pool_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<WorkerPoolDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(WorkerPoolDefaultsResponse {
+        config: config.main.defaults.worker_pool.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/worker-pool",
+    request_body = UpdateWorkerPoolDefaultsRequest,
+    responses(
+        (status = 200, description = "Worker pool defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_worker_pool_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateWorkerPoolDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.worker_pool = req.config;
+    }
+    persist_with_snapshot(&state, "Worker pool defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Worker pool defaults updated.",
+    )))
+}
+
+// --- Persistence config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PersistenceConfigResponse {
+    pub config: crate::config::defaults::PersistenceConfig,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdatePersistenceConfigRequest {
+    pub config: crate::config::defaults::PersistenceConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/persistence",
+    responses(
+        (status = 200, description = "Persistence configuration", body = PersistenceConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_persistence_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<PersistenceConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(PersistenceConfigResponse {
+        config: config.main.defaults.persistence.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/persistence",
+    request_body = UpdatePersistenceConfigRequest,
+    responses(
+        (status = 200, description = "Persistence config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_persistence_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdatePersistenceConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.persistence = req.config;
+    }
+    persist_with_snapshot(&state, "Persistence defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Persistence defaults updated.",
+    )))
+}
+
+// --- Tarpit defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TarpitDefaultsResponse {
+    pub config: crate::config::network::TarpitDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateTarpitDefaultsRequest {
+    pub config: crate::config::network::TarpitDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/tarpit",
+    responses(
+        (status = 200, description = "Tarpit defaults configuration", body = TarpitDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_tarpit_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TarpitDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TarpitDefaultsResponse {
+        config: config.main.defaults.tarpit.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/tarpit",
+    request_body = UpdateTarpitDefaultsRequest,
+    responses(
+        (status = 200, description = "Tarpit defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_tarpit_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTarpitDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.tarpit = req.config;
+    }
+    persist_with_snapshot(&state, "Tarpit defaults updated").await?;
+    Ok(Json(StatusResponse::success("Tarpit defaults updated.")))
+}
+
+// --- Upload defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UploadDefaultsResponse {
+    pub config: crate::config::upload::UploadDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateUploadDefaultsRequest {
+    pub config: crate::config::upload::UploadDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/upload",
+    responses(
+        (status = 200, description = "Upload defaults configuration", body = UploadDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_upload_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<UploadDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(UploadDefaultsResponse {
+        config: config.main.defaults.upload.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/upload",
+    request_body = UpdateUploadDefaultsRequest,
+    responses(
+        (status = 200, description = "Upload defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_upload_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateUploadDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.upload = req.config;
+    }
+    persist_with_snapshot(&state, "Upload defaults updated").await?;
+    Ok(Json(StatusResponse::success("Upload defaults updated.")))
+}
+
+// --- Traffic shaping defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TrafficShapingDefaultsResponse {
+    pub config: crate::config::traffic::TrafficShapingDefaults,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateTrafficShapingDefaultsRequest {
+    pub config: crate::config::traffic::TrafficShapingDefaults,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/traffic-shaping",
+    responses(
+        (status = 200, description = "Traffic shaping defaults configuration", body = TrafficShapingDefaultsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_traffic_shaping_sub_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<TrafficShapingDefaultsResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(TrafficShapingDefaultsResponse {
+        config: config.main.defaults.traffic_shaping.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/traffic-shaping",
+    request_body = UpdateTrafficShapingDefaultsRequest,
+    responses(
+        (status = 200, description = "Traffic shaping defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_traffic_shaping_sub_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateTrafficShapingDefaultsRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.traffic_shaping = req.config;
+    }
+    persist_with_snapshot(&state, "Traffic shaping defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "Traffic shaping defaults updated.",
+    )))
+}
+
+// --- ASN scraping defaults config ---
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AsnScrapingConfigResponse {
+    pub config: crate::config::defaults::AsnScrapingConfig,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateAsnScrapingConfigRequest {
+    pub config: crate::config::defaults::AsnScrapingConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/config/defaults/asn-scraping",
+    responses(
+        (status = 200, description = "ASN scraping defaults configuration", body = AsnScrapingConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_asn_scraping_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<AsnScrapingConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(AsnScrapingConfigResponse {
+        config: config.main.defaults.asn_scraping.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/config/defaults/asn-scraping",
+    request_body = UpdateAsnScrapingConfigRequest,
+    responses(
+        (status = 200, description = "ASN scraping defaults config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_asn_scraping_defaults(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateAsnScrapingConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.defaults.asn_scraping = req.config;
+    }
+    persist_with_snapshot(&state, "ASN scraping defaults updated").await?;
+    Ok(Json(StatusResponse::success(
+        "ASN scraping defaults updated.",
+    )))
 }

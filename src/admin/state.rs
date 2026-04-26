@@ -1,5 +1,5 @@
 use super::alerting::AlertManager;
-use super::audit::AuditState;
+use super::audit::{AuditState, ConfigVersionManager};
 use super::ws::broadcaster::Broadcaster;
 use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
@@ -239,6 +239,7 @@ pub struct AdminState {
     pub process: ProcessState,
     pub plugins: PluginsState,
     pub audit: AuditState,
+    pub config_versions: ConfigVersionManager,
 }
 
 #[derive(Clone)]
@@ -336,7 +337,13 @@ impl AdminState {
                 reload_log: Arc::new(RwLock::new(VecDeque::new())),
             },
             audit: AuditState::new(),
+            config_versions: ConfigVersionManager::new(std::path::PathBuf::new()),
         }
+    }
+
+    pub fn with_config_versions(mut self, config_versions: ConfigVersionManager) -> Self {
+        self.config_versions = config_versions;
+        self
     }
 
     pub fn with_rate_limiter(mut self, rate_limiter: Option<Arc<AdminRateLimiter>>) -> Self {

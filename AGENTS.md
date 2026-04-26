@@ -445,6 +445,34 @@ The following platform-specific features were implemented in the 2026-04-26 wave
 - FreeBSD: Capsicum capability framework
 - OpenBSD: pledge/unveil system calls
 
+### Wave 5 Admin API Implementation (COMPLETE)
+
+The following Admin API enhancements were implemented in the 2026-04-26 wave:
+
+**Overseer Status via IPC**
+- Overseer now writes status to `runtime/overseer_status.json` periodically
+- `GET /api/system/overseer` reads from status file for real-time data
+- Falls back to ProcessManager state if status file unavailable
+
+**Config Versioning and Rollback**
+- `ConfigVersionManager` in `src/admin/audit.rs` tracks config snapshots
+- `GET /config/versions` - lists all saved config versions
+- `GET /config/versions/{id}` - gets version content
+- `POST /config/rollback/{id}` - rolls back to a specific version
+- All config updates now save snapshot BEFORE making changes
+- Version storage: `config/versions/main-{timestamp}.toml`
+
+**Config Diff Endpoint**
+- `GET /config/diff?from={id}&to={id}` - compares two config versions with line-by-line diff
+
+**New Config Handlers Added**
+- ServerlessConfig: GET/PUT `/serverless/config`
+- HoneypotPortConfig: GET/PUT `/honeypot/config`
+- MainStaticConfig: GET/PUT `/config/static`
+- 20 new DefaultsConfig sub-configs: GET/PUT `/config/defaults/{subconfig}`
+- MetricsConfig: GET/PUT `/config/metrics`
+- TokioConfig: GET/PUT `/config/tokio`
+
 ### Moka Cache with Weigher + TTL
 
 When using Moka with weighted entries (via `weigher` callback) AND time-to-live expiration:

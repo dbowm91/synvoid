@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -467,7 +467,7 @@ pub async fn scale_workers(
     }))
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct OverseerStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
@@ -476,6 +476,14 @@ pub struct OverseerStatusResponse {
     pub uptime_secs: u64,
     pub upgrade_mode: String,
     pub drain_status: String,
+}
+
+fn get_overseer_status_file_path() -> std::path::PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/var/run"))
+        .join("maluwaf")
+        .join("overseer_status.json")
 }
 
 #[utoipa::path(
@@ -499,6 +507,55 @@ pub async fn get_overseer(
         .as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let status_file_path = get_overseer_status_file_path();
+
+    // Try to read status from file first
+    if status_file_path.exists() {
+        match tokio::fs::read_to_string(&status_file_path).await {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json) => {
+                    return Ok(Json(OverseerStatusResponse {
+                        running: json
+                            .get("running")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                        pid: json.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32),
+                        master_pid: json
+                            .get("master_pid")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32),
+                        master_status: json
+                            .get("master_status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown")
+                            .to_string(),
+                        uptime_secs: json
+                            .get("uptime_secs")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        upgrade_mode: json
+                            .get("upgrade_mode")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown")
+                            .to_string(),
+                        drain_status: json
+                            .get("drain_status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown")
+                            .to_string(),
+                    }));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse overseer status file: {}", e);
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to read overseer status file: {}", e);
+            }
+        }
+    }
+
+    // Fallback to process manager state
     let running = pm.is_running();
     let master_pid = pm.get_master_pid();
     let _worker_count = pm.get_running_worker_count();

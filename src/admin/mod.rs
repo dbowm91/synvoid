@@ -17,7 +17,7 @@ mod rate_limit;
 mod state;
 mod ws;
 
-pub use audit::{AuditLog, AuditState};
+pub use audit::{AuditLog, AuditState, ConfigVersion, ConfigVersionManager};
 pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token};
 use axum::{
     http::StatusCode,
@@ -112,7 +112,12 @@ pub fn create_admin_router(
             return Router::new();
         }
     };
+
+    let config_dir = config.blocking_read().config_dir.clone();
+    let config_versions = ConfigVersionManager::new(config_dir);
+
     let state_builder = AdminState::new(config, token_hash)
+        .with_config_versions(config_versions)
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
         .with_upstream_error_tracker(upstream_error_tracker)
@@ -232,6 +237,10 @@ fn build_router_from_state(
                 .put(handlers::config::update_security_config),
         )
         .route(
+            "/config/static",
+            get(handlers::config::get_static_config).put(handlers::config::update_static_config),
+        )
+        .route(
             "/config/tunnel",
             get(handlers::config::get_tunnel_config).put(handlers::config::update_tunnel_config),
         )
@@ -242,6 +251,14 @@ fn build_router_from_state(
         .route(
             "/config/logging",
             get(handlers::config::get_logging_config).put(handlers::config::update_logging_config),
+        )
+        .route(
+            "/config/metrics",
+            get(handlers::config::get_metrics_config).put(handlers::config::update_metrics_config),
+        )
+        .route(
+            "/config/tokio",
+            get(handlers::config::get_tokio_config).put(handlers::config::update_tokio_config),
         )
         .route(
             "/config/traffic-shaping",
@@ -303,6 +320,19 @@ fn build_router_from_state(
         )
         .route("/config/validate", post(handlers::config::validate_config))
         .route(
+            "/config/versions",
+            get(handlers::config::list_config_versions),
+        )
+        .route(
+            "/config/versions/{id}",
+            get(handlers::config::get_config_version),
+        )
+        .route(
+            "/config/rollback/{id}",
+            post(handlers::config::rollback_config),
+        )
+        .route("/config/diff", get(handlers::config::diff_config_versions))
+        .route(
             "/config/bundle",
             get(handlers::config::get_config_bundle).put(handlers::config::update_config_bundle),
         )
@@ -315,6 +345,85 @@ fn build_router_from_state(
             "/config/supervisor",
             get(handlers::config::get_supervisor_config)
                 .put(handlers::config::update_supervisor_config),
+        )
+        .route(
+            "/config/defaults/honeypot",
+            get(handlers::config::get_honeypot_defaults)
+                .put(handlers::config::update_honeypot_defaults),
+        )
+        .route(
+            "/config/defaults/honeypot-probe",
+            get(handlers::config::get_honeypot_probing_defaults)
+                .put(handlers::config::update_honeypot_probing_defaults),
+        )
+        .route(
+            "/config/defaults/blocked",
+            get(handlers::config::get_blocked_defaults)
+                .put(handlers::config::update_blocked_defaults),
+        )
+        .route(
+            "/config/defaults/suspicious-words",
+            get(handlers::config::get_suspicious_words_defaults)
+                .put(handlers::config::update_suspicious_words_defaults),
+        )
+        .route(
+            "/config/defaults/upstream-errors",
+            get(handlers::config::get_upstream_errors_defaults)
+                .put(handlers::config::update_upstream_errors_defaults),
+        )
+        .route(
+            "/config/defaults/error-pages",
+            get(handlers::config::get_error_pages_defaults)
+                .put(handlers::config::update_error_pages_defaults),
+        )
+        .route(
+            "/config/defaults/css-challenge",
+            get(handlers::config::get_css_challenge_defaults)
+                .put(handlers::config::update_css_challenge_defaults),
+        )
+        .route(
+            "/config/defaults/pow-challenge",
+            get(handlers::config::get_pow_challenge_defaults)
+                .put(handlers::config::update_pow_challenge_defaults),
+        )
+        .route(
+            "/config/defaults/challenge",
+            get(handlers::config::get_challenge_defaults)
+                .put(handlers::config::update_challenge_defaults),
+        )
+        .route(
+            "/config/defaults/auth",
+            get(handlers::config::get_auth_defaults).put(handlers::config::update_auth_defaults),
+        )
+        .route(
+            "/config/defaults/worker-pool",
+            get(handlers::config::get_worker_pool_defaults)
+                .put(handlers::config::update_worker_pool_defaults),
+        )
+        .route(
+            "/config/defaults/persistence",
+            get(handlers::config::get_persistence_defaults)
+                .put(handlers::config::update_persistence_defaults),
+        )
+        .route(
+            "/config/defaults/tarpit",
+            get(handlers::config::get_tarpit_defaults)
+                .put(handlers::config::update_tarpit_defaults),
+        )
+        .route(
+            "/config/defaults/upload",
+            get(handlers::config::get_upload_defaults)
+                .put(handlers::config::update_upload_defaults),
+        )
+        .route(
+            "/config/defaults/traffic-shaping",
+            get(handlers::config::get_traffic_shaping_sub_defaults)
+                .put(handlers::config::update_traffic_shaping_sub_defaults),
+        )
+        .route(
+            "/config/defaults/asn-scraping",
+            get(handlers::config::get_asn_scraping_defaults)
+                .put(handlers::config::update_asn_scraping_defaults),
         )
         .route(
             "/tcp-udp/listeners",
@@ -541,12 +650,22 @@ fn build_router_from_state(
             get(handlers::serverless::get_serverless_health),
         )
         .route(
+            "/serverless/config",
+            get(handlers::serverless::get_serverless_config)
+                .put(handlers::serverless::update_serverless_config),
+        )
+        .route(
             "/honeypot/status",
             get(handlers::honeypot::get_honeypot_status),
         )
         .route(
             "/honeypot/control",
             post(handlers::honeypot::control_honeypot),
+        )
+        .route(
+            "/honeypot/config",
+            get(handlers::honeypot::get_honeypot_port_config)
+                .put(handlers::honeypot::update_honeypot_port_config),
         )
         .route(
             "/theme",
