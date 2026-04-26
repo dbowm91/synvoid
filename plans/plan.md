@@ -383,6 +383,7 @@ This wave builds out mesh serverless infrastructure. Items have dependencies —
   2. Implement `handle_serverless_invoke_request()`: get ServerlessManager, call `invoke_for_mesh()`, send `ServerlessInvokeResponse` ✓
   3. Signature verification skipped (caller public key not available in MeshTopology) - can be added when public key storage is added
 - **Effort**: Medium (4-6 hours)
+- **Status**: **COMPLETE** (2026-04-26)
 
 ### 3.3: find_origin_by_mesh_id() Implementation
 - **Problem**: Stub at `src/mesh/topology.rs:688-690` returns `None` unconditionally (parameter named `_mesh_id` = unused). Breaks mesh serverless routing.
