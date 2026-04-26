@@ -102,10 +102,9 @@ cargo test --lib --no-run
 **`cargo check` vs test compilation**: `cargo check` does NOT compile `#[cfg(test)]` code. Always run `cargo test --lib --no-run` to verify test code compiles. Visibility errors in cross-module test access (e.g., sibling modules calling private methods) will only surface during test compilation.
 
 **Ignored tests**: Several tests are marked `#[ignore]` with explanations:
-- `src/waf/ratelimit/sliding.rs:356,372,388` — DashMap initialization hang in test context
-- `src/streaming/bidirectional.rs:337,365` — copy_bidirectional ring buffer deadlock
-- `src/waf/traffic_shaper/bucket.rs:~150` — Flaky timing-dependent test
+- `src/streaming/bidirectional.rs:337,365` — copy_bidirectional ring buffer deadlock (FIXED: use `copy_bidirectional_with_config`)
 - `src/process/socket_fd.rs:626,648` — Require cross-process FD transfer (SCM_RIGHTS)
+- DashMap test hang issue was fixed by using RwLock<HashMap> in SlidingWindowLimiter for test contexts
 
 ## Codebase Structure
 
@@ -144,12 +143,12 @@ The overseer/master/worker architecture uses:
 
 ### Key Mesh Components
 
-- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. **Note**: These types exist but are NOT yet wired into HTTP request handling (see plan item C1).
+- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. Wired to HTTP request handling via `BackendType::Mesh`.
 - `MeshProxy` at `src/mesh/proxy.rs` — request routing, caching, provider selection
 - `MeshTransport` at `src/mesh/transport.rs` — peer communication, transport initialization
 - `DHT` at `src/mesh/dht/` — distributed hash table for state sync
 - Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN)
-- `ReplayProtection` at `src/mesh/protocol.rs:153-196` — exists but is dead code (`check_and_add()` never called)
+- `ReplayProtection` at `src/mesh/protocol.rs:153-196` — marked as `#[allow(dead_code)]` (was dead code, kept for potential future use)
 
 ## Adding Tests
 
@@ -419,7 +418,9 @@ stale_cache_ttl_secs = 60
 - `mesh_backend_pool: Option<Arc<MeshBackendPool>>` field in UnifiedServer
 - Use `site_config.mesh_routing` to enable mesh routing for a site
 
-### utoipa 4→5 Upgraded
+### utoipa 4→5 Note
+
+**Blocked**: utoipa upgrade from 4 to 5 is blocked by version mismatch with transitive dependencies. The `utoipa-swagger-ui` package version being used requires utoipa 5, but other dependencies (notably in admin handlers) are pinned to utoipa 4. Do not change `utoipa = "4"` in Cargo.toml without first resolving the dep graph.
 
 ### Moka Cache with Weigher + TTL
 
