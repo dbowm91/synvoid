@@ -154,6 +154,12 @@ pub struct HsmConfig {
 
     #[serde(default)]
     pub pin: Option<String>,
+
+    #[serde(default)]
+    pub key_label: Option<String>,
+
+    #[serde(default)]
+    pub key_id: Option<String>,
 }
 
 #[derive(

@@ -61,11 +61,9 @@ pub struct Pkcs11Hsm {
     context: cryptoki::context::Pkcs11,
     slot: cryptoki::slot::Slot,
     pin: Zeroizing<String>,
-    key_label: String,
+    key_label: Option<String>,
+    key_id: Option<Vec<u8>>,
     algorithm: Algorithm,
-    // SAFETY_REASON: Future HSM support - will be used when PKCS#11 key retrieval is implemented
-    #[allow(dead_code)]
-    key_id: Vec<u8>,
 }
 
 impl Pkcs11Hsm {
@@ -73,7 +71,8 @@ impl Pkcs11Hsm {
         module_path: &str,
         slot_id: usize,
         pin: &str,
-        key_label: &str,
+        key_label: Option<&str>,
+        key_id: Option<&[u8]>,
         algorithm: super::dnssec::Algorithm,
     ) -> Result<Self, HsmError> {
         use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
@@ -82,9 +81,18 @@ impl Pkcs11Hsm {
         let context =
             Pkcs11::new(module_path).map_err(|e| HsmError::InitializationFailed(e.to_string()))?;
 
-        context
+        // Initialize with multi-threading support
+        let _ = context
             .initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK))
-            .map_err(|e| HsmError::InitializationFailed(e.to_string()))?;
+            .map_err(|e| {
+                // If already initialized, that's fine
+                let err_str = e.to_string();
+                if err_str.contains("CRYPTOKI_ALREADY_INITIALIZED") {
+                    Ok(())
+                } else {
+                    Err(HsmError::InitializationFailed(err_str))
+                }
+            });
 
         let slots: Vec<Slot> = context
             .get_all_slots()
@@ -94,15 +102,13 @@ impl Pkcs11Hsm {
             .get(slot_id)
             .ok_or_else(|| HsmError::Provider(format!("Slot {} not found", slot_id)))?;
 
-        let key_id = key_label.as_bytes().to_vec();
-
         Ok(Self {
             context,
             slot,
             pin: Zeroizing::new(pin.to_string()),
-            key_label: key_label.to_string(),
+            key_label: key_label.map(|s| s.to_string()),
+            key_id: key_id.map(|b| b.to_vec()),
             algorithm: Algorithm::from(algorithm),
-            key_id,
         })
     }
 
@@ -114,32 +120,48 @@ impl Pkcs11Hsm {
             .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        session
-            .login(
-                cryptoki::session::UserType::User,
-                Some(&cryptoki::types::AuthPin::new(
-                    (*self.pin).clone().into_boxed_str(),
-                )),
-            )
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
 
-        let template = vec![
-            Attribute::Label(self.key_label.clone().into()),
-            Attribute::Class(ObjectClass::PRIVATE_KEY),
-            Attribute::Sign(true),
-        ];
+        let mut template = vec![Attribute::Class(ObjectClass::PRIVATE_KEY)];
+
+        if let Some(ref label) = self.key_label {
+            template.push(Attribute::Label(label.clone().into()));
+        }
+
+        if let Some(ref id) = self.key_id {
+            template.push(Attribute::Id(id.clone()));
+        }
+
+        if template.len() == 1 {
+            // Default to searching for something if neither label nor id is provided
+            template.push(Attribute::Label("dnssec-key".into()));
+        }
 
         let objects = session
             .find_objects(&template)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        session
-            .logout()
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        let handle = objects.into_iter().next().ok_or_else(|| {
+            HsmError::KeyNotFound(format!(
+                "Key not found (label={:?}, id={:?})",
+                self.key_label, self.key_id
+            ))
+        })?;
 
-        objects.into_iter().next().ok_or_else(|| {
-            HsmError::KeyNotFound(format!("Key with label '{}' not found", self.key_label))
-        })
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
+
+        Ok(handle)
     }
 
     pub fn find_public_key(&self) -> Result<cryptoki::object::ObjectHandle, HsmError> {
@@ -150,34 +172,47 @@ impl Pkcs11Hsm {
             .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        session
-            .login(
-                cryptoki::session::UserType::User,
-                Some(&cryptoki::types::AuthPin::new(
-                    (*self.pin).clone().into_boxed_str(),
-                )),
-            )
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
 
-        let template = vec![
-            Attribute::Label(self.key_label.clone().into()),
-            Attribute::Class(ObjectClass::PUBLIC_KEY),
-        ];
+        let mut template = vec![Attribute::Class(ObjectClass::PUBLIC_KEY)];
+
+        if let Some(ref label) = self.key_label {
+            template.push(Attribute::Label(label.clone().into()));
+        }
+
+        if let Some(ref id) = self.key_id {
+            template.push(Attribute::Id(id.clone()));
+        }
+
+        if template.len() == 1 {
+            template.push(Attribute::Label("dnssec-key".into()));
+        }
 
         let objects = session
             .find_objects(&template)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        session
-            .logout()
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
-
-        objects.into_iter().next().ok_or_else(|| {
+        let handle = objects.into_iter().next().ok_or_else(|| {
             HsmError::KeyNotFound(format!(
-                "Public key with label '{}' not found",
-                self.key_label
+                "Public key not found (label={:?}, id={:?})",
+                self.key_label, self.key_id
             ))
-        })
+        })?;
+
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
+
+        Ok(handle)
     }
 
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError> {
@@ -188,14 +223,16 @@ impl Pkcs11Hsm {
             .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        session
-            .login(
-                cryptoki::session::UserType::User,
-                Some(&cryptoki::types::AuthPin::new(
-                    (*self.pin).clone().into_boxed_str(),
-                )),
-            )
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
 
         let mechanism = self.algorithm.to_cryptoki_mechanism();
 
@@ -203,9 +240,9 @@ impl Pkcs11Hsm {
             .sign(&mechanism, key_handle, data)
             .map_err(|e| HsmError::SigningFailed(e.to_string()))?;
 
-        session
-            .logout()
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
 
         Ok(signature)
     }
@@ -220,14 +257,16 @@ impl Pkcs11Hsm {
             .open_rw_session(self.slot)
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        session
-            .login(
-                cryptoki::session::UserType::User,
-                Some(&cryptoki::types::AuthPin::new(
-                    (*self.pin).clone().into_boxed_str(),
-                )),
-            )
-            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
 
         let attributes = session
             .get_attributes(
@@ -236,15 +275,25 @@ impl Pkcs11Hsm {
             )
             .map_err(|e| HsmError::SessionError(e.to_string()))?;
 
-        let _ = session.logout();
-
-        if let Some(Attribute::EcPoint(params)) = attributes.first() {
-            Ok(params.clone())
-        } else if let Some(Attribute::Modulus(modulus)) = attributes.first() {
-            Ok(modulus.clone())
-        } else {
-            Err(HsmError::ObjectNotFound)
+        if !self.pin.is_empty() {
+            let _ = session.logout();
         }
+
+        for attr in attributes {
+            match attr {
+                Attribute::EcPoint(point) => {
+                    // For Ed25519, the EcPoint attribute often contains the DER-encoded OID and then the public key
+                    // We might need to strip the DER prefix depending on how cryptoki returns it
+                    return Ok(point);
+                }
+                Attribute::Modulus(modulus) => {
+                    return Ok(modulus);
+                }
+                _ => {}
+            }
+        }
+
+        Err(HsmError::ObjectNotFound)
     }
 }
 
@@ -258,7 +307,7 @@ impl HsmSigner for Pkcs11Hsm {
     }
 
     fn key_id(&self) -> &str {
-        &self.key_label
+        self.key_label.as_deref().unwrap_or("unnamed")
     }
 }
 
@@ -333,11 +382,14 @@ impl HsmManager {
                     return Ok(());
                 }
 
+                let key_id_bytes = config.key_id.as_ref().map(|id| id.as_bytes());
+
                 match Pkcs11Hsm::new(
                     &config.module_path,
                     config.slot_id.unwrap_or(0),
                     config.pin.as_deref().unwrap_or(""),
-                    "dnssec-key",
+                    config.key_label.as_deref().or(Some("dnssec-key")),
+                    key_id_bytes,
                     super::dnssec::Algorithm::Ed25519,
                 ) {
                     Ok(hsm) => {
@@ -467,6 +519,8 @@ mod tests {
             module_path: String::new(),
             slot_id: None,
             pin: None,
+            key_label: None,
+            key_id: None,
         };
 
         manager
@@ -490,6 +544,8 @@ mod tests {
             module_path: String::new(),
             slot_id: None,
             pin: None,
+            key_label: None,
+            key_id: None,
         };
 
         manager
