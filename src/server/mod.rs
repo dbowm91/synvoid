@@ -1020,15 +1020,19 @@ impl UnifiedServer {
         let dns_jh: Option<tokio::task::JoinHandle<()>> = {
             match &self.dns_server {
                 Some(dns_server) => {
-                    let is_global = self.mesh_transport.as_ref()
+                    let is_global = self
+                        .mesh_transport
+                        .as_ref()
                         .map(|mt| mt.is_global_node())
                         .unwrap_or(false);
                     let dns_mesh_mode_only = {
-                        let topology = self.mesh_transport.as_ref()
-                            .map(|mt| mt.get_topology());
+                        let topology = self.mesh_transport.as_ref().map(|mt| mt.get_topology());
                         if let Some(ref t) = topology {
                             let cfg = t.config();
-                            cfg.dht.as_ref().map(|d| d.dns_mesh_mode_only).unwrap_or(true)
+                            cfg.dht
+                                .as_ref()
+                                .map(|d| d.dns_mesh_mode_only)
+                                .unwrap_or(true)
                         } else {
                             true
                         }
@@ -1044,7 +1048,9 @@ impl UnifiedServer {
                             }
                         }))
                     } else {
-                        tracing::info!("Skipping DNS server: dns_mesh_mode_only=true and node is not global");
+                        tracing::info!(
+                            "Skipping DNS server: dns_mesh_mode_only=true and node is not global"
+                        );
                         None
                     }
                 }

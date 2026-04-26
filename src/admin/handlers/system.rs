@@ -117,12 +117,47 @@ pub struct WorkerStatusResponse {
     pub worker_type: String,
     pub pid: Option<u32>,
     pub status: String,
+    pub health: String,
     pub uptime_secs: u64,
     pub total_requests: u64,
     pub blocked: u64,
     pub errors: u64,
     pub memory_mb: u64,
     pub cpu_percent: f64,
+    pub health_score: f64,
+    pub last_request_at: Option<u64>,
+    pub active_connections: u64,
+    pub restart_count: u32,
+    pub slow_queries: u64,
+}
+
+fn calculate_health_status(
+    cpu_percent: f64,
+    memory_mb: u64,
+    errors: u64,
+    total_requests: u64,
+) -> (String, f64) {
+    let mut health_score = 100.0;
+
+    health_score -= cpu_percent.min(50.0);
+    health_score -= (memory_mb as f64 / 1024.0).min(30.0);
+    health_score -= if errors > 0 && total_requests > 0 {
+        ((errors as f64 / total_requests as f64) * 100.0).min(20.0)
+    } else {
+        0.0
+    };
+
+    health_score = health_score.max(0.0);
+
+    let status = if health_score >= 80.0 {
+        "ok".to_string()
+    } else if health_score >= 50.0 {
+        "warn".to_string()
+    } else {
+        "critical".to_string()
+    };
+
+    (status, health_score)
 }
 
 #[utoipa::path(
@@ -156,17 +191,31 @@ pub async fn get_workers(
                 "stopped"
             };
 
+            let memory_mb = metrics.memory_bytes / 1024 / 1024;
+            let (health, health_score) = calculate_health_status(
+                metrics.cpu_percent,
+                memory_mb,
+                metrics.errors,
+                metrics.total_requests,
+            );
+
             WorkerStatusResponse {
                 id: format!("{:?}", id),
                 worker_type: "Unified Server".to_string(),
                 pid: pm.get_worker_pid(&id),
                 status: status.to_string(),
+                health,
                 uptime_secs: metrics.uptime_secs,
                 total_requests: metrics.total_requests,
                 blocked: metrics.blocked,
                 errors: metrics.errors,
-                memory_mb: metrics.memory_bytes / 1024 / 1024,
+                memory_mb,
                 cpu_percent: metrics.cpu_percent,
+                health_score,
+                last_request_at: None,
+                active_connections: 0,
+                restart_count: 0,
+                slow_queries: 0,
             }
         })
         .collect();
@@ -208,6 +257,99 @@ pub async fn restart_worker(
         "Restart signal sent to worker {}",
         worker_id
     ))))
+}
+
+#[derive(Debug, serde::Deserialize, ToSchema)]
+pub struct BatchRestartRequest {
+    pub worker_ids: Vec<String>,
+    pub strategy: String,
+    pub drain_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BatchRestartResponse {
+    pub success: bool,
+    pub message: String,
+    pub restarted: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/system/workers/batch-restart",
+    request_body = BatchRestartRequest,
+    responses(
+        (status = 200, description = "Batch restart result", body = BatchRestartResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Process manager not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
+pub async fn batch_restart_workers(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<BatchRestartRequest>,
+) -> Result<Json<BatchRestartResponse>, StatusCode> {
+    let pm = state
+        .process
+        .process_manager
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut restarted = Vec::new();
+    let mut failed = Vec::new();
+
+    match req.strategy.as_str() {
+        "parallel" => {
+            for worker_id in &req.worker_ids {
+                if pm.restart_worker_by_id(worker_id).is_ok() {
+                    restarted.push(worker_id.clone());
+                } else {
+                    failed.push(worker_id.clone());
+                }
+            }
+        }
+        "rolling" => {
+            let drain_timeout = req.drain_timeout_secs.unwrap_or(30);
+            for worker_id in &req.worker_ids {
+                tracing::info!(
+                    "Rolling restart: draining worker {} for {} seconds",
+                    worker_id,
+                    drain_timeout
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(drain_timeout)).await;
+                if pm.restart_worker_by_id(worker_id).is_ok() {
+                    restarted.push(worker_id.clone());
+                } else {
+                    failed.push(worker_id.clone());
+                }
+            }
+        }
+        _ => {
+            return Ok(Json(BatchRestartResponse {
+                success: false,
+                message: format!(
+                    "Unknown strategy: {}. Use 'parallel' or 'rolling'",
+                    req.strategy
+                ),
+                restarted: vec![],
+                failed: vec![],
+            }));
+        }
+    }
+
+    let success = failed.is_empty();
+    Ok(Json(BatchRestartResponse {
+        success,
+        message: format!(
+            "Restarted {} workers, {} failed",
+            restarted.len(),
+            failed.len()
+        ),
+        restarted,
+        failed,
+    }))
 }
 
 #[derive(Debug, serde::Deserialize, ToSchema)]

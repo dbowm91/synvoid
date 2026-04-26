@@ -129,7 +129,11 @@ pub async fn csrf_middleware(
     let csrf_token = match csrf_token {
         Some(token) => token,
         None => {
-            tracing::warn!("CSRF validation failed for {} {} - missing CSRF token", method, path);
+            tracing::warn!(
+                "CSRF validation failed for {} {} - missing CSRF token",
+                method,
+                path
+            );
             return StatusCode::FORBIDDEN.into_response();
         }
     };
@@ -137,7 +141,11 @@ pub async fn csrf_middleware(
     let session_id = match session_id {
         Some(id) => id,
         None => {
-            tracing::warn!("CSRF validation failed for {} {} - missing session", method, path);
+            tracing::warn!(
+                "CSRF validation failed for {} {} - missing session",
+                method,
+                path
+            );
             return StatusCode::FORBIDDEN.into_response();
         }
     };

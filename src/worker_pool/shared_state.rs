@@ -8,16 +8,23 @@ use tokio::time::interval;
 use parking_lot::RwLock as PLRwLock;
 use metrics::gauge;
 
+const DEFAULT_PERSIST_INTERVAL_SECS: u64 = 60;
+
 #[derive(Clone)]
 pub struct SharedWafState {
     waf: Arc<PLRwLock<Option<Arc<WafCore>>>>,
     last_persist: Arc<PLRwLock<Instant>>,
     persist_path: Arc<PLRwLock<Option<PathBuf>>>,
     persist_enabled: bool,
+    persist_interval_secs: u64,
 }
 
 impl SharedWafState {
     pub fn new(persist_enabled: bool, data_dir: Option<PathBuf>) -> Self {
+        Self::new_with_config(persist_enabled, data_dir, DEFAULT_PERSIST_INTERVAL_SECS)
+    }
+
+    pub fn new_with_config(persist_enabled: bool, data_dir: Option<PathBuf>, persist_interval_secs: u64) -> Self {
         let persist_path = data_dir.map(PathBuf::from);
 
         SharedWafState {
@@ -25,7 +32,16 @@ impl SharedWafState {
             last_persist: Arc::new(PLRwLock::new(Instant::now())),
             persist_path: Arc::new(PLRwLock::new(persist_path)),
             persist_enabled,
+            persist_interval_secs: persist_interval_secs.max(10),
         }
+    }
+
+    pub fn get_persist_interval_secs(&self) -> u64 {
+        self.persist_interval_secs
+    }
+
+    pub fn set_persist_interval_secs(&mut self, interval_secs: u64) {
+        self.persist_interval_secs = interval_secs.max(10);
     }
 
     pub async fn initialize(&self) {
@@ -48,9 +64,10 @@ impl SharedWafState {
         let last_persist = self.last_persist.clone();
         let persist_path = self.persist_path.clone();
         let waf = self.waf.clone();
+        let persist_interval_secs = self.persist_interval_secs;
 
         tokio::spawn(async move {
-            let persist_interval = Duration::from_secs(60);
+            let persist_interval = Duration::from_secs(persist_interval_secs);
 
             let mut ticker = interval(persist_interval);
             

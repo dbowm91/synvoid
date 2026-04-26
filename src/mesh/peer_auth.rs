@@ -131,7 +131,7 @@ pub fn validate_peer_role(
     revoked_nodes: Option<&GlobalNodeRevocationList>,
     global_node_attestation_key: Option<&str>,
     global_node_attestation_sig: Option<&str>,
-pow_nonce: Option<u64>,
+    pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
 ) -> Result<(), String> {
     if role.is_global() && role.is_edge() {
@@ -139,12 +139,9 @@ pow_nonce: Option<u64>,
 
         if pow_nonce.is_none() || pow_public_key.is_none() {
             errors.push("GLOBAL_EDGE role requires PoW (nonce and public key)".to_string());
-        } else if let Err(e) = validate_edge_node_pow(
-            peer_node_id,
-            peer_public_key,
-            pow_nonce,
-            pow_public_key,
-        ) {
+        } else if let Err(e) =
+            validate_edge_node_pow(peer_node_id, peer_public_key, pow_nonce, pow_public_key)
+        {
             errors.push(format!("PoW validation failed: {}", e));
         }
 
@@ -185,12 +182,9 @@ pow_nonce: Option<u64>,
 
         if pow_nonce.is_none() || pow_public_key.is_none() {
             errors.push("GLOBAL_EDGE role requires PoW (nonce and public key)".to_string());
-        } else if let Err(e) = validate_edge_node_pow(
-            peer_node_id,
-            peer_public_key,
-            pow_nonce,
-            pow_public_key,
-        ) {
+        } else if let Err(e) =
+            validate_edge_node_pow(peer_node_id, peer_public_key, pow_nonce, pow_public_key)
+        {
             errors.push(format!("PoW validation failed: {}", e));
         }
 
@@ -1496,12 +1490,22 @@ mod tests {
         let origin_challenge = format!("origin:edge-origin-node:{}", timestamp);
 
         let origin_signing_key = ed25519_dalek::SigningKey::from_bytes(&origin_secret);
-        let origin_signature = URL_SAFE_NO_PAD.encode(origin_signing_key.sign(origin_challenge.as_bytes()).to_bytes());
+        let origin_signature = URL_SAFE_NO_PAD.encode(
+            origin_signing_key
+                .sign(origin_challenge.as_bytes())
+                .to_bytes(),
+        );
 
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
-        let attestation_signature = URL_SAFE_NO_PAD.encode(global_signing_key.sign(origin_challenge.as_bytes()).to_bytes());
+        let attestation_signature = URL_SAFE_NO_PAD.encode(
+            global_signing_key
+                .sign(origin_challenge.as_bytes())
+                .to_bytes(),
+        );
 
-        let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&origin_public).expect("valid base64");
+        let pow_pk_bytes = URL_SAFE_NO_PAD
+            .decode(&origin_public)
+            .expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
 
         let result = validate_peer_role(
@@ -1518,13 +1522,18 @@ mod tests {
             Some(pow_nonce),
             Some(&origin_public),
         );
-        assert!(result.is_ok(), "EDGE_ORIGIN validation failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "EDGE_ORIGIN validation failed: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_global_edge_requires_pow_and_signature() {
         let (secret, public) = generate_test_keypair();
-        let (signature, timestamp) = generate_global_node_auth("global-edge-node", &secret).unwrap();
+        let (signature, timestamp) =
+            generate_global_node_auth("global-edge-node", &secret).unwrap();
         use crate::mesh::dht::routing::node_id::NodeId;
         let pow_pk_bytes = URL_SAFE_NO_PAD.decode(&public).expect("valid base64");
         let pow_nonce = NodeId::find_pow_nonce(&pow_pk_bytes).expect("pow nonce found");
@@ -1545,7 +1554,11 @@ mod tests {
         );
         assert!(result_with_pow_only.is_err(), "Should require signature");
         let err_pow = result_with_pow_only.unwrap_err();
-        assert!(err_pow.contains("GLOBAL_EDGE role requires Ed25519 signature"), "Error: {}", err_pow);
+        assert!(
+            err_pow.contains("GLOBAL_EDGE role requires Ed25519 signature"),
+            "Error: {}",
+            err_pow
+        );
 
         let result_with_signature_only = validate_peer_role(
             &crate::mesh::config::MeshNodeRole::GLOBAL_EDGE,
@@ -1563,7 +1576,11 @@ mod tests {
         );
         assert!(result_with_signature_only.is_err(), "Should require PoW");
         let err_sig = result_with_signature_only.unwrap_err();
-        assert!(err_sig.contains("GLOBAL_EDGE role requires PoW"), "Error: {}", err_sig);
+        assert!(
+            err_sig.contains("GLOBAL_EDGE role requires PoW"),
+            "Error: {}",
+            err_sig
+        );
 
         let result_with_both = validate_peer_role(
             &crate::mesh::config::MeshNodeRole::GLOBAL_EDGE,
@@ -1579,6 +1596,10 @@ mod tests {
             Some(pow_nonce),
             Some(&public),
         );
-        assert!(result_with_both.is_ok(), "Should pass with both: {:?}", result_with_both);
+        assert!(
+            result_with_both.is_ok(),
+            "Should pass with both: {:?}",
+            result_with_both
+        );
     }
 }

@@ -1962,6 +1962,122 @@ pub async fn update_upgrade_config(
     Ok(Json(StatusResponse::success("Upgrade config updated.")))
 }
 
+// --- Rule Feed config ---
+
+#[derive(Debug, Serialize)]
+pub struct RuleFeedConfigResponse {
+    pub config: crate::config::RuleFeedConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRuleFeedConfigRequest {
+    pub config: crate::config::RuleFeedConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/rule-feed",
+    responses(
+        (status = 200, description = "Rule feed configuration", body = RuleFeedConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_rule_feed_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<RuleFeedConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(RuleFeedConfigResponse {
+        config: config.main.rule_feed.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/rule-feed",
+    request_body = UpdateRuleFeedConfigRequest,
+    responses(
+        (status = 200, description = "Rule feed config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_rule_feed_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateRuleFeedConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.rule_feed = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("Rule feed config updated.")))
+}
+
+// --- YARA Feed config ---
+
+#[derive(Debug, Serialize)]
+pub struct YaraFeedConfigResponse {
+    pub config: crate::config::YaraRuleFeedConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateYaraFeedConfigRequest {
+    pub config: crate::config::YaraRuleFeedConfig,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/config/yara-feed",
+    responses(
+        (status = 200, description = "YARA feed configuration", body = YaraFeedConfigResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn get_yara_feed_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<YaraFeedConfigResponse>, StatusCode> {
+    let config = state.process.config.read().await;
+    Ok(Json(YaraFeedConfigResponse {
+        config: config.main.yara_feed.clone(),
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/config/yara-feed",
+    request_body = UpdateYaraFeedConfigRequest,
+    responses(
+        (status = 200, description = "YARA feed config updated", body = StatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Invalid configuration"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "config"
+)]
+pub async fn update_yara_feed_config(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(req): Json<UpdateYaraFeedConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let _guard = state.metrics.config_write_lock.write().await;
+    {
+        let mut config = state.process.config.write().await;
+        config.main.yara_feed = req.config;
+    }
+    persist_main_config_and_notify(&state).await?;
+    Ok(Json(StatusResponse::success("YARA feed config updated.")))
+}
+
 // --- Validate config ---
 
 #[derive(Debug, Deserialize)]
