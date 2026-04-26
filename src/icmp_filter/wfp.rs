@@ -31,13 +31,6 @@ impl WfpFilter {
             );
         }
 
-        if !config.interfaces.is_all() {
-            tracing::warn!(
-                "Interface-specific filtering on Windows WFP requires additional Windows API \
-                 calls not yet implemented. All interfaces will be filtered."
-            );
-        }
-
         if config.has_type_rules() {
             tracing::info!(
                 "ICMP type/code rules configured. Note: WFP crate limitations may apply."
@@ -79,6 +72,24 @@ impl WfpFilter {
 
             self.filter_ids.clear();
 
+            // Handle interface-specific filtering
+            let interface_indices = if !self.config.interfaces.is_all() {
+                let mut indices = Vec::new();
+                for iface in self.config.interfaces.names() {
+                    // Try to parse as index first
+                    if let Ok(idx) = iface.parse::<u32>() {
+                        indices.push(idx);
+                    } else {
+                        // In a real implementation, we would resolve name to index here
+                        // For now we log a warning if it's not a numeric index
+                        tracing::warn!("WFP interface filtering currently requires numeric indices: {}", iface);
+                    }
+                }
+                Some(indices)
+            } else {
+                None
+            };
+
             if !self.config.exempt_ips.is_empty() {
                 for ip in &self.config.exempt_ips {
                     if block_in {
@@ -110,20 +121,29 @@ impl WfpFilter {
                 )?;
             }
 
-            let add_icmp_block =
+            let mut add_icmp_block =
                 |name: &str, layer: Layer, protocol: u8, tx: &Transaction| -> Result<u64> {
-                    let condition = ProtocolConditionBuilder::new()
-                        .field(ConditionField::Protocol)
-                        .equal(protocol)
-                        .build();
-
-                    let filter_id = FilterBuilder::default()
+                    let mut builder = FilterBuilder::default()
                         .name(name)
                         .description("Maluwaf ICMP block filter")
                         .action(ActionType::Block)
-                        .layer(layer)
-                        .condition(condition)
-                        .add(tx)
+                        .layer(layer);
+                    
+                    builder = builder.condition(ProtocolConditionBuilder::new()
+                        .field(ConditionField::Protocol)
+                        .equal(protocol)
+                        .build());
+
+                    if let Some(ref indices) = interface_indices {
+                        for &idx in indices {
+                            // WFP condition for interface index
+                            let iface_cond = Condition::new(ConditionField::InterfaceIndex, MatchType::Equal)
+                                .value(idx);
+                            builder = builder.condition(iface_cond);
+                        }
+                    }
+
+                    let filter_id = builder.add(tx)
                         .map_err(|e| {
                             IcmpFilterError::Wfp(format!("Failed to add filter '{}': {}", name, e))
                         })?;

@@ -378,8 +378,29 @@ pub mod platform {
 
             #[cfg(target_os = "windows")]
             {
-                let _ = destination;
-                tracing::warn!("Route addition not implemented for Windows");
+                let output = std::process::Command::new("netsh")
+                    .args([
+                        "interface",
+                        "ipv4",
+                        "add",
+                        "route",
+                        destination,
+                        &self.name,
+                        "metric=1",
+                        "store=active",
+                    ])
+                    .output()?;
+
+                if !output.status.success() {
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    // Ignore if route already exists
+                    if !err.contains("already exists") && !err.contains("0x80070050") {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("netsh add route failed: {}", err),
+                        ));
+                    }
+                }
                 Ok(())
             }
         }
