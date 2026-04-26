@@ -454,7 +454,12 @@ The following items are deferred and should not be attempted without further res
 **Deferred**: Very large implementation requiring new modules. Trust chain: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes. The `organization.rs` module exists but full trust chain verification is not implemented.
 
 ### hickory-recursor 0.25 → 0.26
-**Deferred**: Requires extensive API changes. The hickory-recursor crate has been merged into hickory-resolver (behind `recursor` feature), and many RData accessors changed from methods to fields. Rust version 1.93.0 is now available (requirement was met), but migration scope is large (~75+ compilation errors).
+**Completed (2026-04-26)**: The hickory-dns migration is now complete. Key changes:
+- `hickory-proto` and `hickory-resolver` updated to 0.26
+- `Recursor` integration migrated to `hickory-resolver` recursor feature
+- `Message` and `Record` APIs updated to use fields instead of methods
+- `TokioRuntimeProvider` used as the connection handle
+- DNSSEC validation status retrieved via `authentic_data` flag on `Message`
 
 ## Implementation Planning
 
