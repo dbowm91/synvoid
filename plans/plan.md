@@ -139,9 +139,18 @@ The following items were identified during verification but are not blocking cur
 
 The following Phase 2 items are deferred but non-blocking:
 
-1. **QNAME Minimization** (`src/dns/resolver.rs:13-17`): Full QNAME minimization (RFC 7816) requires a newer version of Hickory DNS. The feature was merged in Hickory DNS PR #2919 (merged in 2025). Current implementation uses a stub that strips query names to coarser granularity.
+### QNAME Minimization (RFC 7816/9156) (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - `cargo check` succeeds, library source verified to implement iterative label resolution
+- **Reason**: Hickory DNS 0.26 natively supports QNAME minimization in its recursor.
+- **Changes**:
+  - Removed unused `QnameMinimizer` stub from `src/dns/qname.rs`.
+  - Updated `HickoryRecursor` in `src/dns/resolver.rs` to use `RecursorOptions` with `case_randomization = true`.
+  - Updated documentation to reflect that `HickoryRecursor` handles minimization natively.
+  - `HickoryResolver` (forwarder) continues to rely on upstream recursive resolvers for minimization.
 
-2. **Signed Rule Feed Phase 2** (`docs/SIGNED_RULE_FEED.md:126-129`): Phase 2 of signed rule feed implementation is deferred. Phase 1 (core infrastructure with Ed25519 verification) is complete. Phase 2 includes integration with DefaultPatterns, hot-reload support, and version tracking.
+### Signed Rule Feed Phase 2
+ (`docs/SIGNED_RULE_FEED.md:126-129`): Phase 2 of signed rule feed implementation is deferred. Phase 1 (core infrastructure with Ed25519 verification) is complete. Phase 2 includes integration with DefaultPatterns, hot-reload support, and version tracking.
 
 3. **HSM PKCS#11 Key Retrieval** (`src/dns/hsm.rs:66-68`): The `key_id` field is marked as future HSM support. Full PKCS#11 key retrieval is not yet implemented.
 
