@@ -156,7 +156,8 @@ pub fn validate_member_certificate(
         global_keys_map.insert(pubkey.clone(), pubkey.clone());
     }
 
-    if !org_pub_key.verify_quorum(&global_keys_map) {
+    let total_signers = authorized_global_pubkeys.len();
+    if !org_pub_key.verify_quorum(&global_keys_map, total_signers) {
         return Err(
             "Organization key lacks sufficient quorum signatures from global nodes".to_string(),
         );

@@ -56,8 +56,12 @@ impl OrgPublicKey {
         });
     }
 
-    pub fn verify_quorum(&self, authorized_global_keys: &HashMap<String, String>) -> bool {
+    pub fn verify_quorum(&self, authorized_global_keys: &HashMap<String, String>, total_signers: usize) -> bool {
         if self.quorum_signatures.is_empty() {
+            return false;
+        }
+
+        if total_signers == 0 {
             return false;
         }
 
@@ -81,9 +85,8 @@ impl OrgPublicKey {
             }
         }
 
-        // 2/3 quorum logic would go here, for now we just need at least one for phase 1/2 tests
-        // or a fixed number if known.
-        valid_signatures > 0 
+        let required = (total_signers * 2 + 2) / 3;
+        valid_signatures >= required
     }
 }
 

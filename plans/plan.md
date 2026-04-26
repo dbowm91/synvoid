@@ -1,10 +1,20 @@
 # MaluWAF Implementation Plan
 
-**Status**: Active - Implementation Complete, Maintenance Mode
+**Status**: Active - Maintenance Mode
 **Last Updated**: 2026-04-26
 **Verification Completed**: 2026-04-26
 
 ## Completed Items
+
+### Quorum Threshold 2/3 Enforcement (2026-04-26)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-26 - Tests pass (1511/1511), cargo check succeeds
+- **Reason**: Previously used permissive `valid_signatures > 0` threshold
+- **Changes**:
+  - `OrgPublicKey::verify_quorum()` in `src/mesh/organization.rs:59-91` now takes `total_signers` parameter
+  - Uses proper 2/3 Byzantine fault tolerance: `required = (total_signers * 2 + 2) / 3`
+  - Updated call site in `src/mesh/peer_auth.rs:160` to pass `authorized_global_pubkeys.len()` as total
+- **Security Impact**: Properly enforces quorum for org key trust chain establishment
 
 ### Org Key Trust Chain (7.11) (2026-04-26)
 - **Status**: COMPLETED
@@ -61,7 +71,6 @@ The following items were identified during verification but are not blocking cur
 
 ### Phase 2/Production Items
 1. **Org Key Loading from Config**: TODO comments at `transport.rs:1864-1865` and `2154-2155` for loading org keys from persistent config (DHT sync works in Phase 1)
-2. **Quorum Threshold**: `verify_quorum()` accepts `valid_signatures > 0` instead of enforcing 2/3 (documented as Phase 1/2 behavior)
 
 ### Security Notes
 3. **quinn-proto git patch**: `Cargo.toml:36` - Remove when quinn 0.11.10+ releases with RUSTSEC-2026-0037/CVE-2026-31812 fix
