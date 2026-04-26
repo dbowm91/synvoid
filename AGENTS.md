@@ -350,7 +350,7 @@ The codebase uses placeholder values that should trigger warnings at startup:
 
 | Placeholder | Location | Behavior |
 |-----------|----------|----------|
-| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:321` | Logs warning on startup |
+| `DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER` | `src/waf/rule_feed.rs:321` | **Panics** on startup (fail-closed security behavior) |
 | `TOKEN_PLACEHOLDER` | `src/config/admin.rs` | Detected as weak token |
 
 These placeholders indicate the value was not configured and may indicate a security issue.
