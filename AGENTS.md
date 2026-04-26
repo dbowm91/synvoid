@@ -444,13 +444,17 @@ stale_cache_ttl_secs = 60
 The following items are deferred and should not be attempted without further research:
 
 ### utoipa 4→5 Upgrade
-**Blocked**: utoipa upgrade from 4 to 5 is blocked by version mismatch with transitive dependencies. The `utoipa-swagger-ui` package version being used requires utoipa 5, but other dependencies (notably in admin handlers) are pinned to utoipa 4. Do not change `utoipa = "4"` in Cargo.toml without first resolving the dep graph.
+**Completed (2026-04-26)**: The utoipa upgrade from 4 to 5 is now complete. Key changes:
+- `utoipa = "5"` is now used in Cargo.toml
+- Response/request types for complex config (MainConfig, MeshConfig, DnsConfig, etc.) now use `serde_json::Value`
+- Types with fields like `DateTime<Utc>`, `PathBuf` use manual `ToSchema` impls in `src/admin/schema.rs`
+- OpenAPI tests use `HttpMethod` enum instead of `PathItemType` (API change in utoipa 5)
 
 ### Org Key Trust Chain (7.11)
 **Deferred**: Very large implementation requiring new modules. Trust chain: Genesis Key → Global Nodes (2/3 quorum) → Org Keys → Edge Nodes. The `organization.rs` module exists but full trust chain verification is not implemented.
 
 ### hickory-recursor 0.25 → 0.26
-**Deferred**: Requires Rust 1.85 for ml-kem dependency.
+**Deferred**: Requires extensive API changes. The hickory-recursor crate has been merged into hickory-resolver (behind `recursor` feature), and many RData accessors changed from methods to fields. Rust version 1.93.0 is now available (requirement was met), but migration scope is large (~75+ compilation errors).
 
 ## Implementation Planning
 
