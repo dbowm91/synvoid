@@ -49,6 +49,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use crate::mesh::cert::MeshCertManager;
 use crate::mesh::config::{MeshConfig, MeshPeerConfig};
+use crate::mesh::organization::{MemberCertificate, OrgPublicKey};
 use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::kem::MlKem768;
 use crate::mesh::protocol::{
@@ -320,6 +321,19 @@ impl PendingQueryManager {
 }
 
 impl MeshTransport {
+    fn get_org_auth_data(&self) -> (Option<MemberCertificate>, Option<OrgPublicKey>) {
+        let org_id = self.config.node_identity.genesis_org_id();
+        let org_manager = self.org_manager.read();
+        let member_cert = org_manager
+            .get_organization(&org_id)
+            .and_then(|org| org.get_valid_member_certificate(&self.config.node_id()))
+            .cloned();
+
+        let org_pub_key = self.org_key_manager.get_org_public_key(&org_id);
+
+        (member_cert, org_pub_key)
+    }
+
     pub fn new(
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
@@ -1862,8 +1876,14 @@ impl MeshTransport {
             quic_port,
             wireguard_port,
             public_key: self.config.signing_public_key().map(|s| s.into()),
-            member_certificate: None, // TODO: Load from config/store
-            org_public_key: None,     // TODO: Load from config/store
+            member_certificate: {
+                let (cert, _) = self.get_org_auth_data();
+                cert
+            },
+            org_public_key: {
+                let (_, key) = self.get_org_auth_data();
+                key
+            },
         };
 
         let encoded = hello_ack
@@ -2152,8 +2172,14 @@ impl MeshTransport {
             public_key: self.config.signing_public_key().map(|s| s.into()),
             pow_nonce,
             pow_public_key,
-            member_certificate: None, // TODO: Load from config/store
-            org_public_key: None,     // TODO: Load from config/store
+            member_certificate: {
+                let (cert, _) = self.get_org_auth_data();
+                cert
+            },
+            org_public_key: {
+                let (_, key) = self.get_org_auth_data();
+                key
+            },
         };
 
         let encoded = hello
