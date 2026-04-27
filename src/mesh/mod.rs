@@ -52,6 +52,8 @@ pub mod transport_peer;
 pub mod transport_rate_limit;
 #[cfg(feature = "mesh")]
 pub mod transport_routing;
+#[cfg(feature = "mesh")]
+pub mod transport_serverless;
 pub mod transport_types;
 pub mod transports;
 pub mod verification;

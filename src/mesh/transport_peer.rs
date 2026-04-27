@@ -2524,18 +2524,47 @@ impl MeshTransport {
             )
             .await;
 
-        match result {
+        let execution_time_ms = start.elapsed().as_millis() as u64;
+
+        let (success, response_data, error_message) = match result {
             Ok(response) => {
                 tracing::debug!(
                     "Serverless invoke '{}' completed: status={}, {}ms",
                     function_name,
                     response.status_code,
-                    start.elapsed().as_millis()
+                    execution_time_ms
                 );
+                let body_vec = response.body.to_vec();
+                (true, body_vec, String::new())
             }
             Err(e) => {
                 tracing::warn!("Serverless invoke '{}' failed: {}", function_name, e);
+                (false, Vec::new(), e.to_string())
             }
+        };
+
+        let response_msg = MeshMessage::ServerlessInvokeResponse(
+            crate::mesh::protocol::ServerlessInvokeResponse {
+                function_name,
+                caller_node_id: req.caller_node_id.clone(),
+                timestamp: crate::utils::safe_unix_timestamp(),
+                response_data,
+                success,
+                error_message,
+                execution_time_ms,
+                response_signature: Vec::new(),
+            },
+        );
+
+        if let Err(e) = self
+            .send_message_to_peer(&req.caller_node_id, &response_msg)
+            .await
+        {
+            tracing::warn!(
+                "Failed to send ServerlessInvokeResponse to {}: {}",
+                req.caller_node_id,
+                e
+            );
         }
 
         Ok(())

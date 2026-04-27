@@ -250,6 +250,29 @@ impl MeshTransport {
         if self.serverless_manager.read().is_some() {
             self.announce_serverless();
         }
+
+        if let Some(ref yara_rules) = self.yara_rules {
+            if let Some(sync_msg) = yara_rules.request_sync_from_global() {
+                if let Err(e) = self.send_datagram_to_peer(peer_node_id, &sync_msg).await {
+                    tracing::debug!(
+                        "Failed to send YARA sync request to {}: {}",
+                        peer_node_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        if let Some(ref threat_intel) = self.threat_intel {
+            let sync_msg = threat_intel.create_sync_request();
+            if let Err(e) = self.send_datagram_to_peer(peer_node_id, &sync_msg).await {
+                tracing::debug!(
+                    "Failed to send threat sync request to {}: {}",
+                    peer_node_id,
+                    e
+                );
+            }
+        }
     }
 
     pub(crate) async fn request_seed_list(
