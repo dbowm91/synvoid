@@ -75,6 +75,18 @@ impl InputNormalizer {
         while i < chars.len() {
             match chars[i] {
                 '%' => {
+                    if i + 5 < chars.len() && chars[i + 1] == 'u' {
+                        let hex: String = chars[i + 2..=i + 5].iter().collect();
+                        if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+                            if code_point != 0 {
+                                if let Some(ch) = char::from_u32(code_point) {
+                                    input.push(ch);
+                                }
+                            }
+                            i += 6;
+                            continue;
+                        }
+                    }
                     if i + 2 < chars.len() {
                         let hex: String = chars[i + 1..=i + 2].iter().collect();
                         if let Ok(byte) = u8::from_str_radix(&hex, 16) {

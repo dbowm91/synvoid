@@ -387,6 +387,14 @@ pub struct MeshConnectionConfig {
     pub auth_failure_window_secs: u64,
     #[serde(default = "default_max_pending_connections")]
     pub max_pending_connections: usize,
+    #[serde(default = "default_circuit_open_threshold")]
+    pub circuit_open_threshold: u32,
+    #[serde(default = "default_circuit_open_timeout_secs")]
+    pub circuit_open_timeout_secs: u64,
+    #[serde(default = "default_half_open_max_requests")]
+    pub half_open_max_requests: u32,
+    #[serde(default = "default_circuit_close_threshold")]
+    pub circuit_close_threshold: u32,
 }
 
 fn default_min_peers() -> usize {
@@ -421,6 +429,22 @@ fn default_max_pending_connections() -> usize {
     100
 }
 
+fn default_circuit_open_threshold() -> u32 {
+    5
+}
+
+fn default_circuit_open_timeout_secs() -> u64 {
+    30
+}
+
+fn default_half_open_max_requests() -> u32 {
+    3
+}
+
+fn default_circuit_close_threshold() -> u32 {
+    3
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -434,6 +458,10 @@ impl Default for MeshConnectionConfig {
             max_auth_failures: 5,
             auth_failure_window_secs: 300,
             max_pending_connections: 100,
+            circuit_open_threshold: 5,
+            circuit_open_timeout_secs: 30,
+            half_open_max_requests: 3,
+            circuit_close_threshold: 3,
         }
     }
 }

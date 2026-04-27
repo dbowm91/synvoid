@@ -92,15 +92,6 @@ pub struct CachedPolicy {
     pub expires_at: Instant,
 }
 
-/// Number of consecutive provider failures before opening circuit
-const CIRCUIT_OPEN_THRESHOLD: u32 = 5;
-/// Duration circuit stays open before transitioning to half-open
-const CIRCUIT_OPEN_TIMEOUT_SECS: u64 = 30;
-/// Maximum requests allowed in half-open state before evaluating
-const HALF_OPEN_MAX_REQUESTS: u32 = 3;
-/// Consecutive successes required to close circuit from half-open
-const CIRCUIT_CLOSE_THRESHOLD: u32 = 3;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CircuitState {
     Closed,
@@ -130,7 +121,7 @@ impl ProviderStats {
         self.successful_requests as f64 / self.total_requests as f64
     }
 
-    fn is_available(&self) -> bool {
+    fn is_available(&self, half_open_max_requests: u32) -> bool {
         match self.circuit_state {
             CircuitState::Closed => true,
             CircuitState::Open => {
@@ -140,11 +131,11 @@ impl ProviderStats {
                     true
                 }
             }
-            CircuitState::HalfOpen => self.half_open_requests < HALF_OPEN_MAX_REQUESTS,
+            CircuitState::HalfOpen => self.half_open_requests < half_open_max_requests,
         }
     }
 
-    fn record_success(&mut self) {
+    fn record_success(&mut self, circuit_close_threshold: u32, circuit_open_timeout_secs: u64) {
         self.total_requests += 1;
         self.successful_requests += 1;
         self.consecutive_failures = 0;
@@ -154,7 +145,7 @@ impl ProviderStats {
             CircuitState::Closed => {}
             CircuitState::HalfOpen => {
                 self.consecutive_successes += 1;
-                if self.consecutive_successes >= CIRCUIT_CLOSE_THRESHOLD {
+                if self.consecutive_successes >= circuit_close_threshold {
                     self.circuit_state = CircuitState::Closed;
                     self.consecutive_successes = 0;
                     self.half_open_requests = 0;
@@ -168,27 +159,27 @@ impl ProviderStats {
         }
     }
 
-    fn record_failure(&mut self) {
+    fn record_failure(&mut self, circuit_open_threshold: u32, circuit_open_timeout_secs: u64) {
         self.consecutive_failures += 1;
         self.last_failure = Some(Instant::now());
 
         match self.circuit_state {
             CircuitState::Closed => {
-                if self.consecutive_failures >= CIRCUIT_OPEN_THRESHOLD {
+                if self.consecutive_failures >= circuit_open_threshold {
                     self.circuit_state = CircuitState::Open;
                     self.circuit_open_until =
-                        Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                        Some(Instant::now() + Duration::from_secs(circuit_open_timeout_secs));
                 }
             }
             CircuitState::HalfOpen => {
                 self.circuit_state = CircuitState::Open;
                 self.circuit_open_until =
-                    Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                    Some(Instant::now() + Duration::from_secs(circuit_open_timeout_secs));
                 self.consecutive_successes = 0;
             }
             CircuitState::Open => {
                 self.circuit_open_until =
-                    Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                    Some(Instant::now() + Duration::from_secs(circuit_open_timeout_secs));
             }
         }
     }
@@ -645,7 +636,8 @@ impl MeshProxy {
             let mut stats = self.provider_stats.write();
             if let Some(provider_stats) = stats.get_mut(provider_node_id) {
                 provider_stats.decay();
-                !provider_stats.is_available()
+                let half_open_max = self.config.connection.half_open_max_requests;
+                !provider_stats.is_available(half_open_max)
             } else {
                 drop(stats);
                 return self.is_provider_failed(provider_node_id);
@@ -661,7 +653,9 @@ impl MeshProxy {
         let entry = stats.entry(provider_node_id.to_string());
         match entry {
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().record_success();
+                let close_thresh = self.config.connection.circuit_close_threshold;
+                let open_timeout = self.config.connection.circuit_open_timeout_secs;
+                e.get_mut().record_success(close_thresh, open_timeout);
             }
             std::collections::hash_map::Entry::Vacant(e) => {
                 let mut new_stats = ProviderStats {
@@ -675,7 +669,9 @@ impl MeshProxy {
                     circuit_open_until: None,
                     half_open_requests: 0,
                 };
-                new_stats.record_success();
+                let close_thresh = self.config.connection.circuit_close_threshold;
+                let open_timeout = self.config.connection.circuit_open_timeout_secs;
+                new_stats.record_success(close_thresh, open_timeout);
                 e.insert(new_stats);
             }
         }
@@ -687,7 +683,9 @@ impl MeshProxy {
             let entry = stats.entry(provider_node_id.to_string());
             match entry {
                 std::collections::hash_map::Entry::Occupied(mut e) => {
-                    e.get_mut().record_failure();
+                    let open_thresh = self.config.connection.circuit_open_threshold;
+                    let open_timeout = self.config.connection.circuit_open_timeout_secs;
+                    e.get_mut().record_failure(open_thresh, open_timeout);
                     e.get().consecutive_failures
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
@@ -702,7 +700,9 @@ impl MeshProxy {
                         circuit_open_until: None,
                         half_open_requests: 0,
                     };
-                    new_stats.record_failure();
+                    let open_thresh = self.config.connection.circuit_open_threshold;
+                    let open_timeout = self.config.connection.circuit_open_timeout_secs;
+                    new_stats.record_failure(open_thresh, open_timeout);
                     e.insert(new_stats);
                     1
                 }
@@ -1299,6 +1299,7 @@ impl MeshProxy {
             }
         }
 
+        let has_record_store;
         {
             let mut rs = self.record_store.write();
             if rs.is_none() {
@@ -1306,9 +1307,11 @@ impl MeshProxy {
                     *rs = Some(record_store);
                 }
             }
+            has_record_store = rs.is_some();
         }
 
-        if image_protection.is_none()
+        if !has_record_store
+            && image_protection.is_none()
             && image_poison_config.is_none()
             && compression.is_none()
             && minification.is_none()

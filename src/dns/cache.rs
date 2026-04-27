@@ -584,14 +584,7 @@ impl SecureDnsCache {
         self.0.get(key)
     }
 
-    pub fn insert(
-        &self,
-        key: CacheKey,
-        data: Vec<u8>,
-        record_ttl: u32,
-        _source_ip: Option<IpAddr>,
-        _is_dnssec_signed: bool,
-    ) {
+    pub fn insert(&self, key: CacheKey, data: Vec<u8>, record_ttl: u32) {
         self.0.insert(key, data, record_ttl);
     }
 
