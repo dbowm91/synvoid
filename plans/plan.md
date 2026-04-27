@@ -103,6 +103,14 @@
 - **Verification**: 2026-04-26 - Library compiles without utoipa errors
 - **Action**: Migration executed, dependencies updated to 5.0, `ToSchema` derives fixed across codebase.
 
+### Raft Consensus Subsystem Removal (2026-04-26)
+- **Status**: ABANDONED / REMOVED
+- **Reason**: Raft introduces significant centralized complexity that conflicts with MaluWAF's decentralized architectural design. 
+- **Changes**:
+  - Removed unused `src/mesh/consensus.rs` stub.
+  - Removed `openraft` dependency from `Cargo.toml`.
+  - Consensus requirements (e.g., Org Key Quorum) will continue to be handled via decentralized DHT and manual quorum signatures.
+
 ---
 
 ## Known Deferred/Security Notes
