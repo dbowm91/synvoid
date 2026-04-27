@@ -828,7 +828,7 @@ impl ThreatIntelligenceManager {
             return false;
         }
 
-        let key = indicator.indicator_value.clone();
+        let key = make_indicator_key(&indicator.indicator_value, indicator.threat_type);
 
         let now = crate::mesh::safe_unix_timestamp();
 
@@ -1509,10 +1509,6 @@ impl ThreatIntelligenceManager {
             return;
         }
 
-        let Some(message) = self.create_threat_announce() else {
-            return;
-        };
-
         let pending_count = self.pending_announces.read().len();
         if pending_count == 0 {
             return;
@@ -1526,13 +1522,39 @@ impl ThreatIntelligenceManager {
             return;
         }
 
+        let highest_severity = {
+            let queue = self.pending_announces.read();
+            queue
+                .iter()
+                .map(|i| i.severity)
+                .max_by_key(|s| *s as u32)
+                .unwrap_or(ThreatSeverity::Unspecified)
+        };
+
+        let should_broadcast_all = highest_severity == ThreatSeverity::Critical
+            || highest_severity == ThreatSeverity::High;
+
+        let Some(message) = self.create_threat_announce() else {
+            return;
+        };
+
         let transport_opt = self.transport.read().clone();
-        let fanout_factor = self.config.fanout_factor;
         if let Some(transport) = transport_opt {
-            let (success, fail) = transport
-                .broadcast_to_random_peers(message, fanout_factor, None)
-                .await;
-            tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
+            if should_broadcast_all {
+                let (success, fail, _) = transport.broadcast_to_all_peers(message, None).await;
+                tracing::debug!(
+                    "Broadcast all threat announce (severity {:?}): {} sent, {} failed",
+                    highest_severity,
+                    success,
+                    fail
+                );
+            } else {
+                let fanout_factor = self.config.fanout_factor;
+                let (success, fail) = transport
+                    .broadcast_to_random_peers(message, fanout_factor, None)
+                    .await;
+                tracing::debug!("Fanout threat announce: {} sent, {} failed", success, fail);
+            }
         } else {
             let sender = self.mesh_sender.read().clone();
             if let Some(sender) = sender {
@@ -1604,7 +1626,19 @@ impl ThreatIntelligenceManager {
                         }
 
                         // C7: Check trusted signers for non-global nodes
-                        if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+                        if !self.node_role.is_global() {
+                            if self.config.trusted_signers.is_empty() {
+                                tracing::warn!(
+                                    "ThreatAnnounce rejected: no trusted_signers configured, rejecting threat from non-global node"
+                                );
+                                return Some(MeshMessage::ThreatAcknowledgement {
+                                    original_request_id: request_id.clone(),
+                                    node_id: self.node_id.clone().into(),
+                                    accepted: false,
+                                    reason: "No trusted_signers configured".into(),
+                                    timestamp: MeshMessage::generate_timestamp(),
+                                });
+                            }
                             if !self.check_trusted_signer(source_node_id, signer_public_key) {
                                 tracing::warn!(
                                     "ThreatAnnounce rejected: signer {} not in trusted_signers list",

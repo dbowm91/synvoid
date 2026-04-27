@@ -71,7 +71,11 @@ impl PluginManager {
                         .get_module_data(name_str, crate::mesh::protocol::WasmModuleType::Plugin)
                     {
                         tracing::debug!("Loading plugin '{}' from mesh WASM store", name_str);
-                        self.wasm_manager.load_plugin_from_memory(name_str, &data)?;
+                        self.wasm_manager.load_plugin_from_memory(
+                            name_str,
+                            &data,
+                            self.wasm_manager.get_default_limits(),
+                        )?;
                         return Ok(());
                     }
                 }

@@ -476,8 +476,9 @@ impl ServerlessManager {
                     func_def.name
                 );
                 let (default_memory, default_cpu, default_timeout) = self.get_default_limits();
-                let _limits = WasmResourceLimits {
+                let limits = WasmResourceLimits {
                     max_memory_mb: func_def.memory_mb.unwrap_or(default_memory),
+                    max_table_elements: None,
                     max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_cpu),
                     timeout_seconds: func_def.timeout_seconds.unwrap_or(default_timeout),
                     max_instances: 1,
@@ -487,7 +488,7 @@ impl ServerlessManager {
                 };
                 return self
                     .runtime
-                    .load_plugin_from_memory(&func_def.name, &data)
+                    .load_plugin_from_memory(&func_def.name, &data, limits)
                     .map_err(|e| ServerlessError::WasmError(e.to_string()));
             }
         }
@@ -503,8 +504,9 @@ impl ServerlessManager {
         }
 
         let (default_memory, default_cpu, default_timeout) = self.get_default_limits();
-        let _limits = WasmResourceLimits {
+        let limits = WasmResourceLimits {
             max_memory_mb: func_def.memory_mb.unwrap_or(default_memory),
+            max_table_elements: None,
             max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_cpu),
             timeout_seconds: func_def.timeout_seconds.unwrap_or(default_timeout),
             max_instances: 1,
@@ -514,7 +516,7 @@ impl ServerlessManager {
         };
 
         self.runtime
-            .load_plugin(&wasm_path)
+            .load_plugin_with_limits(&wasm_path, limits)
             .map_err(|e| ServerlessError::WasmError(e.to_string()))
     }
 

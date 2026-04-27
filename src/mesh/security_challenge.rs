@@ -3,8 +3,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use digest::Digest;
+use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use rand::Rng;
+use sha2::Sha256;
 
 use crate::mesh::config::MeshConfig;
 
@@ -12,6 +14,8 @@ const DEFAULT_CHALLENGE_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_CHALLENGE_DIFFICULTY: u32 = 24;
 const MAX_CHALLENGE_ATTEMPTS: usize = 3;
 const CHALLENGE_CACHE_SIZE: usize = 1000;
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone)]
 pub struct MeshSecurityChallenge {
@@ -143,6 +147,11 @@ impl MeshSecurityChallengeManager {
         let time_window = (now.elapsed().as_secs() / 30) % 100;
         let challenge_data = format!("{}:{}:{}", target_node, time_window, challenge_id);
 
+        let mut mac =
+            HmacSha256::new_from_slice(target_node.as_bytes()).expect("HMAC accepts any key size");
+        mac.update(challenge_data.as_bytes());
+        let expected_solution = hex::encode(mac.finalize().into_bytes());
+
         MeshSecurityChallenge {
             challenge_id: challenge_id.clone(),
             challenge_type: ChallengeType::TimeBased,
@@ -151,12 +160,12 @@ impl MeshSecurityChallengeManager {
             expires_at: now + Duration::from_secs(5),
             target_node: target_node.to_string(),
             challenge_data: challenge_data.into_bytes(),
-            solution: None,
+            solution: Some(expected_solution),
             verified: false,
         }
     }
 
-    pub fn verify_time_based_challenge(&self, challenge_id: &str, _solution: &str) -> bool {
+    pub fn verify_time_based_challenge(&self, challenge_id: &str, solution: &str) -> bool {
         let mut challenges = self.active_challenges.write();
 
         let challenge = match challenges.get(challenge_id) {
@@ -170,6 +179,25 @@ impl MeshSecurityChallengeManager {
         if Instant::now() > challenge.expires_at {
             tracing::warn!("Time-based challenge {} has expired", challenge_id);
             challenges.remove(challenge_id);
+            return false;
+        }
+
+        let expected_solution = match &challenge.solution {
+            Some(s) => s,
+            None => {
+                tracing::warn!(
+                    "Time-based challenge {} has no expected solution",
+                    challenge_id
+                );
+                return false;
+            }
+        };
+
+        if solution != expected_solution {
+            tracing::warn!(
+                "Time-based challenge {} verification failed: invalid solution",
+                challenge_id
+            );
             return false;
         }
 

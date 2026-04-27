@@ -29,7 +29,7 @@ pub mod violation_tracker;
 
 pub use asn_tracker::{AsnCheckResult, AsnTracker};
 pub use attack_detection::{
-    AttackDetectionConfig, AttackDetectionResult, AttackDetector, AttackType,
+    AttackDetectionConfig, AttackDetectionResult, AttackDetector, AttackType, StreamingWafCore,
 };
 pub use bot::{BotDetectionResult, BotDetector};
 pub use endpoints::{
@@ -532,6 +532,24 @@ impl WafCore {
             test_mode,
             honeypot_ban_duration_secs,
         }
+    }
+
+    pub fn streaming(&self) -> Option<StreamingWafCore> {
+        self.attack_detector
+            .load()
+            .as_ref()
+            .map(|d| d.clone().streaming())
+    }
+
+    pub fn streaming_with_config(
+        &self,
+        chunk_size: usize,
+        max_buffered_chunks: usize,
+    ) -> Option<StreamingWafCore> {
+        self.attack_detector.load().as_ref().map(|d| {
+            d.clone()
+                .streaming_with_config(chunk_size, max_buffered_chunks)
+        })
     }
 
     pub fn start_background_tasks(&self) {

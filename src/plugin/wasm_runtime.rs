@@ -47,6 +47,7 @@ type GuestFreeFn = TypedFunc<(i32, i32), ()>;
 #[derive(Clone)]
 pub struct WasmResourceLimits {
     pub max_memory_mb: usize,
+    pub max_table_elements: Option<usize>,
     pub max_cpu_fuel: u64,
     pub timeout_seconds: u64,
     pub max_instances: usize,
@@ -59,6 +60,7 @@ impl Default for WasmResourceLimits {
     fn default() -> Self {
         Self {
             max_memory_mb: 64,
+            max_table_elements: None,
             max_cpu_fuel: 1000000,
             timeout_seconds: 30,
             max_instances: 1,
@@ -118,6 +120,10 @@ impl WasmPluginManager {
         self
     }
 
+    pub fn get_default_limits(&self) -> WasmResourceLimits {
+        self.default_limits.clone()
+    }
+
     fn sorted_runtimes(&self) -> Vec<Arc<WasmRuntime>> {
         let mut runtimes: Vec<Arc<WasmRuntime>> = self.runtimes.read().iter().cloned().collect();
         runtimes.sort_by_key(|r| r.priority());
@@ -137,8 +143,9 @@ impl WasmPluginManager {
         &self,
         name: &str,
         data: &[u8],
+        limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
-        let runtime = WasmRuntime::load_from_bytes(name, data, self.default_limits.clone())?;
+        let runtime = WasmRuntime::load_from_bytes(name, data, limits)?;
         let arc = Arc::new(runtime);
         let runtime_name = arc.name().to_string();
         self.runtimes.write().push(arc.clone());
@@ -304,6 +311,7 @@ pub(crate) struct RequestContext {
     pub(crate) env: std::collections::HashMap<String, String>,
     pub(crate) allowed_dht_prefixes: Vec<String>,
     pub(crate) max_memory: usize,
+    pub(crate) max_table_elements: usize,
 }
 
 impl ResourceLimiter for RequestContext {
@@ -319,10 +327,10 @@ impl ResourceLimiter for RequestContext {
     fn table_growing(
         &mut self,
         _current: usize,
-        _desired: usize,
+        desired: usize,
         _maximum: Option<usize>,
     ) -> std::result::Result<bool, wasmtime::Error> {
-        Ok(true)
+        Ok(desired <= self.max_table_elements)
     }
 }
 
@@ -472,6 +480,7 @@ impl WasmRuntime {
     ) -> Store<RequestContext> {
         let timeout = Duration::from_secs(self.limits.timeout_seconds);
         let max_memory = self.limits.max_memory_mb * 1024 * 1024;
+        let max_table_elements = self.limits.max_table_elements.unwrap_or(0);
         let mut store = Store::new(
             &self.engine,
             RequestContext {
@@ -480,6 +489,7 @@ impl WasmRuntime {
                 env,
                 allowed_dht_prefixes: self.limits.allowed_dht_prefixes.clone(),
                 max_memory,
+                max_table_elements,
             },
         );
 

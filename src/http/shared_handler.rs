@@ -12,6 +12,7 @@ use crate::config::MainConfig;
 use crate::http::response_builder::{
     build_json_response, build_response_with_alt_svc, build_response_with_cookie,
 };
+use crate::waf::attack_detection::StreamingWafDecision;
 
 pub struct SharedRequestHandler;
 
@@ -335,9 +336,6 @@ where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: std::fmt::Debug,
 {
-    const CHUNK_SIZE: usize = 64 * 1024;
-    const MAX_ACCUMULATED_WAF: usize = 512 * 1024;
-
     let mut accumulated = BytesMut::new();
     if let Some(cl) = content_length {
         if cl > max_body_size {
@@ -352,35 +350,26 @@ where
         }
         accumulated.reserve(cl);
     }
-    let mut waf_checked_up_to: usize = 0;
+
+    let streaming_waf = waf.streaming();
 
     while let Some(frame_result) = body.frame().await {
         match frame_result {
             Ok(frame) => {
                 if let Ok(chunk) = frame.into_data() {
-                    accumulated.extend_from_slice(&chunk);
-
-                    if accumulated.len() - waf_checked_up_to >= CHUNK_SIZE {
-                        let check_end = accumulated
-                            .len()
-                            .min(waf_checked_up_to + MAX_ACCUMULATED_WAF);
-                        if check_end > waf_checked_up_to {
-                            let chunk_to_check = &accumulated[waf_checked_up_to..check_end];
-                            if let Some(
-                                crate::proxy::WafDecision::Drop
-                                | crate::proxy::WafDecision::Block(_, _),
-                            ) = waf.check_request_body(chunk_to_check)
-                            {
-                                tracing::warn!(
-                                    client_ip = %client_ip,
-                                    "Request blocked during streaming body WAF check"
-                                );
-                                metrics::counter!(protocol.counter_blocked()).increment(1);
-                                return Err(());
-                            }
-                            waf_checked_up_to = check_end;
+                    // 1. Streaming scan
+                    if let Some(sw) = streaming_waf.as_ref() {
+                        if let StreamingWafDecision::Block(_, _) = sw.scan_chunk(&chunk) {
+                            tracing::warn!(
+                                client_ip = %client_ip,
+                                "Request blocked during streaming body WAF check"
+                            );
+                            metrics::counter!(protocol.counter_blocked()).increment(1);
+                            return Err(());
                         }
                     }
+
+                    accumulated.extend_from_slice(&chunk);
 
                     if accumulated.len() > max_body_size {
                         tracing::warn!(

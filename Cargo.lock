@@ -5946,15 +5946,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pqc_kyber"
-version = "0.7.1"
+name = "pqc_kyber_edit"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b23e1823e8a78ad67990c5cb843d5eba75ab3b8a44d041f3814fde89463dc6f"
+checksum = "90af5ab02bb265c976d2f0de25fa35a70dec379fee21d509a8bbd9a606054bc0"
 dependencies = [
- "getrandom 0.2.17",
- "rand 0.8.6",
  "rand_core 0.6.4",
- "wasm-bindgen",
  "zeroize",
 ]
 
@@ -8901,7 +8898,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "js-sys",
- "pqc_kyber",
+ "pqc_kyber_edit",
  "rand 0.8.6",
  "serde",
  "serde-wasm-bindgen",

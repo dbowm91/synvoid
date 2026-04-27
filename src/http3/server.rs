@@ -18,6 +18,7 @@ use crate::metrics::bandwidth::{
 use crate::metrics::WorkerMetrics;
 use crate::proxy::{build_forward_headers, WafDecision};
 use crate::router::{RouteResult, Router};
+use crate::waf::attack_detection::StreamingWafDecision;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 
@@ -257,6 +258,8 @@ impl Http3Server {
             .map(String::from);
 
         let mut body_bytes = Vec::new();
+        let streaming_waf = self.waf.streaming();
+
         while let Ok(Some(chunk)) = request_stream.recv_data().await {
             use bytes::Buf;
             let chunk_len = chunk.remaining();
@@ -265,8 +268,34 @@ impl Http3Server {
                 counter!("maluwaf.http3.request.body_too_large").increment(1);
                 break;
             }
-            let mut chunk = chunk;
-            body_bytes.extend_from_slice(chunk.copy_to_bytes(chunk_len).as_ref());
+
+            let mut chunk_to_scan = chunk;
+            let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
+
+            // 1. Streaming scan
+            if let Some(sw) = streaming_waf.as_ref() {
+                if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes) {
+                    counter!("maluwaf.http3.requests.blocked").increment(1);
+                    let body = format!("{{\"error\":\"{}\"}}", message);
+                    let response = http::Response::builder()
+                        .status(StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::DATE, generate_stealth_timestamp(5))
+                        .body(Bytes::from(body))
+                        .map_err(|e| format!("Failed to build response: {}", e))?;
+
+                    let (parts, body) = response.into_parts();
+                    request_stream
+                        .send_response(http::Response::from_parts(parts, ()))
+                        .await
+                        .map_err(|e| format!("Failed to send response: {}", e))?;
+                    request_stream.send_data(body).await?;
+                    request_stream.finish().await?;
+                    return Ok(());
+                }
+            }
+
+            body_bytes.extend_from_slice(chunk_bytes.as_ref());
         }
 
         let body_slice: Option<&[u8]> = if body_bytes.is_empty() {

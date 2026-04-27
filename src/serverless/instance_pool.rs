@@ -164,6 +164,7 @@ impl InstancePool {
                 &wasm_path,
                 crate::plugin::WasmResourceLimits {
                     max_memory_mb: function_definition.memory_mb.unwrap_or(64),
+                    max_table_elements: None,
                     max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(0),
                     timeout_seconds: function_definition.timeout_seconds.unwrap_or(30),
                     max_instances: function_definition.max_instances.unwrap_or(10),

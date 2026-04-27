@@ -19,6 +19,7 @@ pub(crate) struct WasmPooledInstance {
     pub(crate) store: Store<RequestContext>,
     pub(crate) filter_name: String,
     pub(crate) max_cpu_fuel: u64,
+    pub(crate) default_allowed_dht_prefixes: Vec<String>,
 }
 
 impl WasmInstancePool {
@@ -87,6 +88,7 @@ impl WasmInstancePool {
                     env: std::collections::HashMap::new(),
                     allowed_dht_prefixes: Vec::new(),
                     max_memory: 64 * 1024 * 1024,
+                    max_table_elements: 1024 * 1024,
                 },
             );
 
@@ -119,6 +121,7 @@ impl WasmInstancePool {
                         store,
                         filter_name: filter_name.clone(),
                         max_cpu_fuel: 0,
+                        default_allowed_dht_prefixes: Vec::new(),
                     });
                 }
                 Err(e) => {
@@ -153,6 +156,7 @@ impl WasmPooledInstance {
         self.store.data_mut().start = Instant::now();
         self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
         self.store.data_mut().env = env;
+        self.store.data_mut().allowed_dht_prefixes = self.default_allowed_dht_prefixes.clone();
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }
@@ -175,6 +179,7 @@ impl WasmPool for WasmInstancePool {
             store: instance.store,
             filter_name: instance.filter_name,
             max_cpu_fuel: instance.max_cpu_fuel,
+            default_allowed_dht_prefixes: Vec::new(),
         })
     }
 

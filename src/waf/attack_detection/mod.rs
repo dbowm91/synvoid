@@ -1023,6 +1023,18 @@ impl AttackDetector {
         None
     }
 
+    pub fn streaming(self: Arc<Self>) -> StreamingWafCore {
+        StreamingWafCore::new(self)
+    }
+
+    pub fn streaming_with_config(
+        self: Arc<Self>,
+        chunk_size: usize,
+        max_buffered_chunks: usize,
+    ) -> StreamingWafCore {
+        StreamingWafCore::with_config(self, chunk_size, max_buffered_chunks)
+    }
+
     fn check_jwt(
         &self,
         headers: &http::HeaderMap,

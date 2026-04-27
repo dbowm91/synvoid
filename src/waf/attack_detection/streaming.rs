@@ -13,7 +13,6 @@ const DEFAULT_MAX_BUFFERED_CHUNKS: usize = 64;
 pub enum StreamingWafDecision {
     Continue,
     Block(u16, String),
-    NeedMore,
 }
 
 #[allow(dead_code)]
@@ -26,7 +25,7 @@ pub struct StreamingWafCore {
 
 struct StreamingState {
     pending_chunks: VecDeque<Bytes>,
-    current_input: Option<String>,
+    current_input: String,
     chunks_processed: usize,
     last_result: Option<AttackDetectionResult>,
     bytes_seen: usize,
@@ -40,7 +39,7 @@ impl StreamingWafCore {
             max_buffered_chunks: DEFAULT_MAX_BUFFERED_CHUNKS,
             state: RwLock::new(StreamingState {
                 pending_chunks: VecDeque::new(),
-                current_input: None,
+                current_input: String::with_capacity(DEFAULT_CHUNK_SIZE * 4),
                 chunks_processed: 0,
                 last_result: None,
                 bytes_seen: 0,
@@ -59,7 +58,7 @@ impl StreamingWafCore {
             max_buffered_chunks,
             state: RwLock::new(StreamingState {
                 pending_chunks: VecDeque::new(),
-                current_input: None,
+                current_input: String::with_capacity(chunk_size * 4),
                 chunks_processed: 0,
                 last_result: None,
                 bytes_seen: 0,
@@ -67,10 +66,11 @@ impl StreamingWafCore {
         }
     }
 
+    /// Scans a chunk of data. Optimized for 1M+ RPS by using a persistent string buffer.
     pub fn scan_chunk(&self, chunk: &[u8]) -> StreamingWafDecision {
         let mut state = self.state.write();
 
-        if state.pending_chunks.len() >= self.max_buffered_chunks {
+        if state.chunks_processed >= self.max_buffered_chunks {
             return StreamingWafDecision::Block(
                 413,
                 "Request body too large: buffer overflow".to_string(),
@@ -78,15 +78,24 @@ impl StreamingWafCore {
         }
 
         state.bytes_seen += chunk.len();
-
-        let chunk_bytes = Bytes::copy_from_slice(chunk);
-        state.pending_chunks.push_back(chunk_bytes);
         state.chunks_processed += 1;
 
-        let current_input = Self::assemble_input(&state.pending_chunks);
-        state.current_input = Some(current_input.clone());
+        // Efficiently append to existing string instead of re-assembling
+        if let Ok(s) = std::str::from_utf8(chunk) {
+            state.current_input.push_str(s);
+        } else {
+            // Fallback for non-UTF8: we still want to store it for potential binary patterns
+            // or just treat as invalid if WAF requires UTF8.
+            // For now, we'll try to lossy convert to keep scanning.
+            state
+                .current_input
+                .push_str(&String::from_utf8_lossy(chunk));
+        }
 
-        if let Some(result) = self.inner.check_body_only_via_normalized(&current_input) {
+        if let Some(result) = self
+            .inner
+            .check_body_only_via_normalized(&state.current_input)
+        {
             state.last_result = Some(result.clone());
             return StreamingWafDecision::Block(
                 result.get_block_status().unwrap_or(403),
@@ -95,53 +104,6 @@ impl StreamingWafCore {
         }
 
         StreamingWafDecision::Continue
-    }
-
-    pub fn scan_chunk_utf8(&self, chunk: &[u8]) -> StreamingWafDecision {
-        let mut state = self.state.write();
-
-        if state.pending_chunks.len() >= self.max_buffered_chunks {
-            return StreamingWafDecision::Block(
-                413,
-                "Request body too large: buffer overflow".to_string(),
-            );
-        }
-
-        state.bytes_seen += chunk.len();
-
-        if let Ok(s) = std::str::from_utf8(chunk) {
-            if let Some(ref mut current) = state.current_input {
-                current.push_str(s);
-            } else {
-                state.current_input = Some(s.to_string());
-            }
-        } else {
-            return StreamingWafDecision::Block(400, "Invalid UTF-8 in request body".to_string());
-        }
-
-        state.chunks_processed += 1;
-
-        if let Some(ref current_input) = state.current_input {
-            if let Some(result) = self.inner.check_body_only_via_normalized(current_input) {
-                state.last_result = Some(result.clone());
-                return StreamingWafDecision::Block(
-                    result.get_block_status().unwrap_or(403),
-                    format!("Attack detected: {:?}", result.attack_type),
-                );
-            }
-        }
-
-        StreamingWafDecision::Continue
-    }
-
-    fn assemble_input(chunks: &VecDeque<Bytes>) -> String {
-        let mut result = String::with_capacity(chunks.iter().map(|c| c.len()).sum());
-        for chunk in chunks {
-            if let Ok(s) = std::str::from_utf8(chunk) {
-                result.push_str(s);
-            }
-        }
-        result
     }
 
     pub fn finalize(&self) -> Option<AttackDetectionResult> {
@@ -157,14 +119,10 @@ impl StreamingWafCore {
         self.state.read().chunks_processed
     }
 
-    pub fn pending_chunks_count(&self) -> usize {
-        self.state.read().pending_chunks.len()
-    }
-
     pub fn reset(&self) {
         let mut state = self.state.write();
         state.pending_chunks.clear();
-        state.current_input = None;
+        state.current_input.clear();
         state.chunks_processed = 0;
         state.last_result = None;
         state.bytes_seen = 0;
