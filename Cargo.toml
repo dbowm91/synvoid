@@ -96,7 +96,7 @@ base64 = "0.22"
 sha2 = "0.10"
 hex = "0.4"
 futures = "0.3"
-sysinfo = "0.33"
+sysinfo = "0.38"
 nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "6"
@@ -114,11 +114,11 @@ tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 infer = "0.16"
-yara-x = "1.15"
+yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 pin-project-lite = "0.2"
-bcrypt = "0.15"
+bcrypt = "0.19"
 dirs = "5"
 flate2 = "1"
 tar = "0.4"
