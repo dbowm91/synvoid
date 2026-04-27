@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // SAFETY_REASON: Proof-of-work challenge system - reserved for anti-abuse mechanisms
 
 use crate::theme::{ChallengePageTemplate, ThemeConfig};

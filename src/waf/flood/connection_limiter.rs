@@ -100,22 +100,6 @@ impl ConnectionLimiter {
         FloodDecision::Allowed
     }
 
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use try_register_connection instead to avoid race conditions"
-    )]
-    pub fn check_connection(&self, ip: IpAddr) -> FloodDecision {
-        self.try_register_connection(ip)
-    }
-
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use try_register_connection instead to avoid race conditions"
-    )]
-    pub fn register_connection(&self, ip: IpAddr) {
-        let _ = self.try_register_connection(ip);
-    }
-
     pub fn release_connection(&self) {
         let _ = self
             .active_connections

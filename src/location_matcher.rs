@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // SAFETY_REASON: Location-based routing - reserved for geographic load balancing
 
 use crate::utils::check_regex_complexity;
