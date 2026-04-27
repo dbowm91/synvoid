@@ -714,6 +714,26 @@ impl Message {
                 Ok(())
             }
         }
+        // Helper: validate path fields (reject path traversal)
+        fn check_path_str(
+            field: &'static str,
+            value: &str,
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            if value.len() > max {
+                return Err(IpcValidationError {
+                    field: field.into(),
+                    message: format!("{} > {}", value.len(), max),
+                });
+            }
+            if value.contains("..") {
+                return Err(IpcValidationError {
+                    field: field.into(),
+                    message: "path traversal detected".into(),
+                });
+            }
+            Ok(())
+        }
         // Helper: validate an optional string field
         fn check_opt_str(
             field: &'static str,
@@ -722,6 +742,18 @@ impl Message {
         ) -> Result<(), IpcValidationError> {
             if let Some(ref v) = value {
                 check_str(field, v, max)
+            } else {
+                Ok(())
+            }
+        }
+        // Helper: validate an optional path field
+        fn check_opt_path_str(
+            field: &'static str,
+            value: &Option<String>,
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            if let Some(ref v) = value {
+                check_path_str(field, v, max)
             } else {
                 Ok(())
             }
@@ -832,8 +864,8 @@ impl Message {
                     site_id,
                     MAX_STRING_LENGTH,
                 )?;
-                check_str("StaticWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
-                check_str(
+                check_path_str("StaticWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
+                check_path_str(
                     "StaticWorkerCacheUpdate.minified_path",
                     minified_path,
                     MAX_PATH_LENGTH,
@@ -937,7 +969,7 @@ impl Message {
                 ..
             } => {
                 check_str("AppServerStarted.site_id", site_id, MAX_STRING_LENGTH)?;
-                check_opt_str("AppServerStarted.socket_path", socket_path, MAX_PATH_LENGTH)
+                check_opt_path_str("AppServerStarted.socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::AppServerReady { site_id, .. } => {
                 check_str("AppServerReady.site_id", site_id, MAX_STRING_LENGTH)
@@ -981,8 +1013,8 @@ impl Message {
                 config_path,
                 version,
             } => {
-                check_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
-                check_opt_str("config_path", config_path, MAX_PATH_LENGTH)?;
+                check_path_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
+                check_opt_path_str("config_path", config_path, MAX_PATH_LENGTH)?;
                 check_str("version", version, MAX_STRING_LENGTH)
             }
             Message::OverseerUpgradePrepareAck { error, .. } => {
@@ -1005,8 +1037,8 @@ impl Message {
                 config_path,
                 version,
             } => {
-                check_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
-                check_opt_str("config_path", config_path, MAX_PATH_LENGTH)?;
+                check_path_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
+                check_opt_path_str("config_path", config_path, MAX_PATH_LENGTH)?;
                 check_str("version", version, MAX_STRING_LENGTH)
             }
             Message::OverseerDualMasterPrepareAck { error, .. } => {
@@ -1016,7 +1048,7 @@ impl Message {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
             Message::SocketHandoffRequest { socket_path } => {
-                check_str("socket_path", socket_path, MAX_PATH_LENGTH)
+                check_path_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
             Message::PluginStateSync { plugin_name, .. } => check_str(

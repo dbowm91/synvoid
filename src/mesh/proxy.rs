@@ -1299,6 +1299,7 @@ impl MeshProxy {
             }
         }
 
+        let has_record_store;
         {
             let mut rs = self.record_store.write();
             if rs.is_none() {
@@ -1306,9 +1307,11 @@ impl MeshProxy {
                     *rs = Some(record_store);
                 }
             }
+            has_record_store = rs.is_some();
         }
 
-        if image_protection.is_none()
+        if !has_record_store
+            && image_protection.is_none()
             && image_poison_config.is_none()
             && compression.is_none()
             && minification.is_none()

@@ -2,9 +2,11 @@ use super::super::audit::{AuditLog, ConfigVersion};
 use super::super::state::AdminState;
 use crate::log_controller;
 use axum::{extract::State, http::StatusCode, Json};
+use regex::Regex;
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
@@ -500,6 +502,32 @@ pub async fn check_regex(
     Json(req): Json<CheckRegexRequest>,
 ) -> Result<Json<RegexCheckResult>, StatusCode> {
     let result = check_regex_complexity(&req.pattern);
+
+    if result.safe {
+        let start = Instant::now();
+        match Regex::new(&req.pattern) {
+            Ok(_) => {
+                let elapsed = start.elapsed();
+                if elapsed.as_millis() > 100 {
+                    return Ok(Json(RegexCheckResult {
+                        pattern: req.pattern,
+                        safe: false,
+                        reason: Some(format!(
+                            "Regex compilation took {}ms (limit 100ms) - potential ReDoS",
+                            elapsed.as_millis()
+                        )),
+                    }));
+                }
+            }
+            Err(e) => {
+                return Ok(Json(RegexCheckResult {
+                    pattern: req.pattern,
+                    safe: false,
+                    reason: Some(format!("Invalid regex: {}", e)),
+                }));
+            }
+        }
+    }
 
     Ok(Json(RegexCheckResult {
         pattern: req.pattern,
