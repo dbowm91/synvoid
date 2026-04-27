@@ -184,9 +184,6 @@ wasmtime = "42.0.2"
 # URL parsing (already used elsewhere)
 url = "2"
 
-# Raft consensus for high availability
-openraft = "0.9"
-
 # WireGuard (optional - requires defguard_boringtun)
 defguard_boringtun = { version = "0.6", optional = true }
 

@@ -12,7 +12,6 @@ pub mod cert_dist;
 pub mod cli;
 pub mod client_audit;
 pub mod config;
-pub mod consensus;
 pub mod dht;
 pub mod hierarchical_routing;
 pub mod kem;
