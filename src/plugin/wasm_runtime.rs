@@ -1152,7 +1152,6 @@ impl WasmRuntime {
         response: Response<Bytes>,
         env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
-        let start = Instant::now();
         let plugin_name = &self.name;
 
         record_wasm_invocation(plugin_name);
@@ -1165,8 +1164,32 @@ impl WasmRuntime {
             parts.status
         );
 
+        let pooled_instance = self.pool.get(&self.name);
+
+        if let Some(mut inst) = pooled_instance {
+            inst.prepare_for_request(env, self.limits.timeout_seconds);
+            let exports =
+                WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
+            let result =
+                self.do_transform_response_with_exports(parts, body, &mut inst.store, exports);
+            self.pool.return_instance(inst);
+            return result;
+        }
+
         let mut store = self.create_store(env);
         let exports = self.instantiate(&mut store)?;
+        self.do_transform_response_with_exports(parts, body, &mut store, exports)
+    }
+
+    fn do_transform_response_with_exports(
+        &self,
+        parts: http::response::Parts,
+        body: Bytes,
+        store: &mut Store<RequestContext>,
+        exports: GuestExports,
+    ) -> Result<Response<Bytes>, WasmPluginError> {
+        let start = Instant::now();
+        let plugin_name = &self.name;
 
         let transform_fn = match exports.transform_response.as_ref() {
             Some(f) => f,
@@ -1180,23 +1203,23 @@ impl WasmRuntime {
 
         let body_bytes = body.as_ref();
         let (body_ptr, body_len) = if !body_bytes.is_empty() {
-            self.write_to_guest_memory(&mut store, &exports, body_bytes)?
+            self.write_to_guest_memory(&mut *store, &exports, body_bytes)?
         } else {
-            let (p, _) = self.write_to_guest_memory(&mut store, &exports, &[])?;
+            let (p, _) = self.write_to_guest_memory(&mut *store, &exports, &[])?;
             (p, 0i32)
         };
 
-        Self::check_timeout(&store)?;
+        Self::check_timeout(&*store)?;
 
         let out_max = (body_bytes.len() + 65536).min(MAX_WASM_DATA_SIZE) as i32;
         let (out_ptr, _) =
-            self.write_to_guest_memory(&mut store, &exports, &vec![0u8; out_max as usize])?;
+            self.write_to_guest_memory(&mut *store, &exports, &vec![0u8; out_max as usize])?;
 
         let status_code = parts.status.as_u16() as i32;
 
         let new_len = transform_fn
             .call(
-                &mut store,
+                &mut *store,
                 (status_code, body_ptr, body_len, out_ptr, out_max),
             )
             .map_err(|e| {
@@ -1219,7 +1242,7 @@ impl WasmRuntime {
         record_wasm_decision_pass(plugin_name);
 
         let result_body = if new_len > 0 && (new_len as usize) <= MAX_WASM_DATA_SIZE {
-            let data = self.read_from_guest_memory(&mut store, &exports, out_ptr, new_len)?;
+            let data = self.read_from_guest_memory(&mut *store, &exports, out_ptr, new_len)?;
             Bytes::from(data)
         } else if new_len == 0 {
             Bytes::new()
@@ -1232,8 +1255,8 @@ impl WasmRuntime {
             body
         };
 
-        self.free_guest_memory(&mut store, &exports, body_ptr, body_len);
-        self.free_guest_memory(&mut store, &exports, out_ptr, out_max);
+        self.free_guest_memory(&mut *store, &exports, body_ptr, body_len);
+        self.free_guest_memory(&mut *store, &exports, out_ptr, out_max);
 
         Ok(Response::from_parts(parts, result_body))
     }

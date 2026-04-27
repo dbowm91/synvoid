@@ -33,8 +33,9 @@ impl SstiDetector {
     ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
         let normalized = self.normalizer.normalize(input);
 
-        if let Some(mat) = self.inner.patterns_ref().find(&normalized.normalized) {
-            let matched = normalized.normalized[mat.start()..mat.end()].to_string();
+        let search_target: &str = &normalized.lowercased;
+        if let Some(mat) = self.inner.patterns_ref().find(search_target) {
+            let matched = search_target[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "ssti",
                 matched_pattern = %matched,
@@ -49,26 +50,6 @@ impl SstiDetector {
                     input_location: location,
                 },
             );
-        }
-
-        if normalized.normalized != input {
-            if let Some(mat) = self.inner.patterns_ref().find(input) {
-                let matched = input[mat.start()..mat.end()].to_string();
-                tracing::warn!(
-                    attack_type = "ssti",
-                    matched_pattern = %matched,
-                    location = %location,
-                    "SSTI detected (encoded)"
-                );
-                return Some(
-                    crate::waf::attack_detection::config::AttackDetectionResult {
-                        attack_type: AttackType::Ssti,
-                        fingerprint: None,
-                        matched_pattern: Some(matched),
-                        input_location: location,
-                    },
-                );
-            }
         }
 
         None
