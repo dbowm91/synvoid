@@ -272,6 +272,21 @@ pub fn filter_response_headers_buf(
     result
 }
 
+#[inline]
+pub fn filter_response_headers_buf_with_str_set(
+    headers: &http::HeaderMap,
+    headers_to_filter: &std::collections::HashSet<&str>,
+) -> http::HeaderMap {
+    let mut result = http::HeaderMap::new();
+    for (k, v) in headers.iter() {
+        if HOP_BY_HOP_HEADER_NAMES.contains(k) || headers_to_filter.contains(k.as_str()) {
+            continue;
+        }
+        result.insert(k, v.clone());
+    }
+    result
+}
+
 pub fn apply_response_header_transforms(
     headers: &mut http::HeaderMap,
     config: &ProxyHeadersConfig,

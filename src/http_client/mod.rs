@@ -876,6 +876,15 @@ pub async fn send_request_via_quic_tunnel(
         }
     }
 
+    let response_headers = {
+        use crate::proxy::headers::filter_response_headers_buf_with_str_set;
+        let hop_by_hop: std::collections::HashSet<&str> = crate::proxy::headers::HOP_BY_HOP_HEADERS
+            .iter()
+            .copied()
+            .collect();
+        filter_response_headers_buf_with_str_set(&response_headers, &hop_by_hop)
+    };
+
     let body_start = response_str
         .find("\r\n\r\n")
         .map(|pos| pos + 4)
