@@ -8,11 +8,10 @@ use http::{header, StatusCode};
 use http_body_util::BodyExt;
 use metrics::{counter, gauge, histogram};
 
+use crate::config::site::ProxyHeadersConfig;
 use crate::config::{Http3Config, MainConfig};
 use crate::http::headers::generate_stealth_timestamp;
-use crate::http_client::{
-    create_http_client_with_config, send_request_streaming, HttpClient,
-};
+use crate::http_client::{create_http_client_with_config, send_request_streaming, HttpClient};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
@@ -21,7 +20,6 @@ use crate::proxy::{build_forward_headers, WafDecision};
 use crate::router::{RouteResult, Router};
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
-use crate::config::site::ProxyHeadersConfig;
 
 pub struct Http3Server {
     addr: SocketAddr,
@@ -44,11 +42,8 @@ impl Http3Server {
         _main_config: MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {
-        let client = create_http_client_with_config(
-            Duration::from_secs(5),
-            100,
-            Duration::from_secs(30),
-        );
+        let client =
+            create_http_client_with_config(Duration::from_secs(5), 100, Duration::from_secs(30));
 
         Self {
             addr,
@@ -89,9 +84,9 @@ impl Http3Server {
         // Fix for quinn 0.11: use QuicServerConfig::try_from
         let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
             .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
-        
+
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        
+
         let transport_config =
             Arc::get_mut(&mut server_config.transport).expect("Failed to get transport config");
         transport_config.max_concurrent_uni_streams(0_u8.into());
@@ -291,7 +286,8 @@ impl Http3Server {
 
         tracing::trace!(client = %client_ip, method = %method_str, path = %path, body_size = body_bytes.len(), "HTTP/3 request body read");
 
-        let waf_decision = self.waf
+        let waf_decision = self
+            .waf
             .check_request_full(
                 client_ip,
                 method_str,
@@ -483,8 +479,9 @@ impl Http3Server {
                 }
 
                 // Actual proxying logic
-                let upstream_url = format!("{}{}", route_target.upstream.trim_end_matches('/'), path);
-                
+                let upstream_url =
+                    format!("{}{}", route_target.upstream.trim_end_matches('/'), path);
+
                 static DEFAULT_HEADERS_CONFIG: ProxyHeadersConfig = ProxyHeadersConfig {
                     clear: Vec::new(),
                     set: Vec::new(),
@@ -495,7 +492,12 @@ impl Http3Server {
                 let forward_headers = build_forward_headers(
                     client_ip,
                     &headers,
-                    route_target.site_config.proxy.headers.as_ref().unwrap_or(&DEFAULT_HEADERS_CONFIG),
+                    route_target
+                        .site_config
+                        .proxy
+                        .headers
+                        .as_ref()
+                        .unwrap_or(&DEFAULT_HEADERS_CONFIG),
                     true, // HTTP/3 is always TLS
                 );
 
@@ -512,22 +514,23 @@ impl Http3Server {
                     body_to_send,
                     forward_headers,
                     Some(Duration::from_secs(30)),
-                ).await;
+                )
+                .await;
 
                 match upstream_result {
                     Ok(upstream_resp) => {
                         let (parts, mut upstream_body) = upstream_resp.into_parts();
-                        
-                        let mut resp_builder = http::Response::builder()
-                            .status(parts.status);
-                        
+
+                        let mut resp_builder = http::Response::builder().status(parts.status);
+
                         for (name, value) in parts.headers.iter() {
                             if !crate::proxy::is_hop_by_hop_header_name(name) {
                                 resp_builder = resp_builder.header(name, value);
                             }
                         }
-                        
-                        let response = resp_builder.body(())
+
+                        let response = resp_builder
+                            .body(())
                             .map_err(|e| format!("Failed to build response: {}", e))?;
 
                         request_stream.send_response(response).await?;
@@ -537,11 +540,15 @@ impl Http3Server {
                                 Ok(frame) => {
                                     if let Some(data) = frame.data_ref() {
                                         request_stream.send_data(data.clone()).await?;
-                                        
+
                                         // Record egress bandwidth
                                         let data_len = data.len() as u64;
                                         if let Some(ref bw) = bandwidth {
-                                            bw.record_egress(data_len, BandwidthProtocol::Http3, EgressDirection::Proxied);
+                                            bw.record_egress(
+                                                data_len,
+                                                BandwidthProtocol::Http3,
+                                                EgressDirection::Proxied,
+                                            );
                                             bw.record_site_egress(&host, data_len);
                                         }
                                     }
@@ -552,7 +559,7 @@ impl Http3Server {
                                 }
                             }
                         }
-                        
+
                         if let Some(ref metrics) = self.metrics {
                             metrics.record_site_upstream_success(&site_id);
                         }
@@ -562,16 +569,17 @@ impl Http3Server {
                         if let Some(ref metrics) = self.metrics {
                             metrics.record_site_upstream_failure(&site_id);
                         }
-                        
+
                         let body = Bytes::from("Bad Gateway");
                         let response = http::Response::builder()
                             .status(StatusCode::BAD_GATEWAY)
                             .header(header::CONTENT_TYPE, "text/plain")
                             .body(body)
                             .unwrap();
-                        
+
                         let (parts, body) = response.into_parts();
-                        request_stream.send_response(http::Response::from_parts(parts, ()))
+                        request_stream
+                            .send_response(http::Response::from_parts(parts, ()))
                             .await?;
                         request_stream.send_data(body).await?;
                     }

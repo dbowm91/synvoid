@@ -82,7 +82,10 @@ impl WfpFilter {
                     } else {
                         // In a real implementation, we would resolve name to index here
                         // For now we log a warning if it's not a numeric index
-                        tracing::warn!("WFP interface filtering currently requires numeric indices: {}", iface);
+                        tracing::warn!(
+                            "WFP interface filtering currently requires numeric indices: {}",
+                            iface
+                        );
                     }
                 }
                 Some(indices)
@@ -128,25 +131,27 @@ impl WfpFilter {
                         .description("Maluwaf ICMP block filter")
                         .action(ActionType::Block)
                         .layer(layer);
-                    
-                    builder = builder.condition(ProtocolConditionBuilder::new()
-                        .field(ConditionField::Protocol)
-                        .equal(protocol)
-                        .build());
+
+                    builder = builder.condition(
+                        ProtocolConditionBuilder::new()
+                            .field(ConditionField::Protocol)
+                            .equal(protocol)
+                            .build(),
+                    );
 
                     if let Some(ref indices) = interface_indices {
                         for &idx in indices {
                             // WFP condition for interface index
-                            let iface_cond = Condition::new(ConditionField::InterfaceIndex, MatchType::Equal)
-                                .value(idx);
+                            let iface_cond =
+                                Condition::new(ConditionField::InterfaceIndex, MatchType::Equal)
+                                    .value(idx);
                             builder = builder.condition(iface_cond);
                         }
                     }
 
-                    let filter_id = builder.add(tx)
-                        .map_err(|e| {
-                            IcmpFilterError::Wfp(format!("Failed to add filter '{}': {}", name, e))
-                        })?;
+                    let filter_id = builder.add(tx).map_err(|e| {
+                        IcmpFilterError::Wfp(format!("Failed to add filter '{}': {}", name, e))
+                    })?;
                     Ok(filter_id)
                 };
 

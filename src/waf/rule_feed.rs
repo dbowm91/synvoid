@@ -352,9 +352,10 @@ impl RuleFeedManager {
             return Err("Rules file not found".to_string());
         }
 
-        let json = fs::read_to_string(file_path).map_err(|e| format!("Failed to read rules: {}", e))?;
-        let rules: ParsedRules = serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse rules: {}", e))?;
+        let json =
+            fs::read_to_string(file_path).map_err(|e| format!("Failed to read rules: {}", e))?;
+        let rules: ParsedRules =
+            serde_json::from_str(&json).map_err(|e| format!("Failed to parse rules: {}", e))?;
 
         // Apply loaded rules
         apply_rule_set_to_detection(&rules.rules);
@@ -362,7 +363,10 @@ impl RuleFeedManager {
         *self.current_version.write() = Some(rules.version.clone());
         *self.last_update.write() = rules.timestamp;
 
-        tracing::info!("Loaded rule version {} from disk persistence", rules.version);
+        tracing::info!(
+            "Loaded rule version {} from disk persistence",
+            rules.version
+        );
 
         Ok(())
     }
@@ -448,7 +452,7 @@ impl RuleFeedManager {
                 if self.config.auto_apply && self.apply_rules().is_ok() {
                     *self.current_version.write() = Some(rules.version.clone());
                     *self.last_update.write() = now_timestamp();
-                    
+
                     // Persist to disk
                     if let Err(e) = self.save_to_disk(&rules) {
                         tracing::warn!("Failed to persist rules to disk: {}", e);

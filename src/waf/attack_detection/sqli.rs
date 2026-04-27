@@ -26,11 +26,7 @@ impl SqliDetector {
         }
     }
 
-    pub fn detect(
-        &self,
-        input: &[u8],
-        location: InputLocation,
-    ) -> Option<AttackDetectionResult> {
+    pub fn detect(&self, input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
         let input_str = std::str::from_utf8(input).unwrap_or("");
         let normalized = self.normalizer.normalize(input_str);
 
@@ -181,6 +177,9 @@ mod tests {
         let detector = SqliDetector::new(2, &["CUSTOM_SQLI_PATTERN".to_string()]);
         let input = b"SELECT * FROM users WHERE id = CUSTOM_SQLI_PATTERN";
         let result = detector.detect(input, InputLocation::QueryString).unwrap();
-        assert_eq!(result.matched_pattern, Some("custom_sqli_pattern".to_string()));
+        assert_eq!(
+            result.matched_pattern,
+            Some("custom_sqli_pattern".to_string())
+        );
     }
 }
