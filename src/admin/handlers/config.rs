@@ -2174,7 +2174,14 @@ pub async fn update_upgrade_config(
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RuleFeedConfigResponse {
-    pub config: crate::config::RuleFeedConfig,
+    pub enabled: bool,
+    pub url: String,
+    pub update_interval_hours: u32,
+    pub auto_apply: bool,
+    pub allow_downgrade: bool,
+    pub public_key_prefix: Option<String>,
+    pub public_key_configured: bool,
+    pub storage_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -2197,8 +2204,29 @@ pub async fn get_rule_feed_config(
     _auth: OptionalAuth,
 ) -> Result<Json<RuleFeedConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
+    let rule_feed = &config.main.rule_feed;
+    let public_key_prefix = rule_feed.public_key.as_ref().map(|k| {
+        if k.len() > 8 {
+            format!("{}...", &k[..8])
+        } else {
+            k.clone()
+        }
+    });
+    let storage_dir = rule_feed.storage_dir.as_ref().map(|d| {
+        std::path::Path::new(d)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| d.clone())
+    });
     Ok(Json(RuleFeedConfigResponse {
-        config: config.main.rule_feed.clone(),
+        enabled: rule_feed.enabled,
+        url: rule_feed.url.clone(),
+        update_interval_hours: rule_feed.update_interval_hours,
+        auto_apply: rule_feed.auto_apply,
+        allow_downgrade: rule_feed.allow_downgrade,
+        public_key_prefix,
+        public_key_configured: rule_feed.public_key.is_some(),
+        storage_dir,
     }))
 }
 
@@ -2232,7 +2260,15 @@ pub async fn update_rule_feed_config(
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct YaraFeedConfigResponse {
-    pub config: crate::config::YaraRuleFeedConfig,
+    pub enabled: bool,
+    pub url: String,
+    pub update_interval_hours: u32,
+    pub elevated_interval_hours: u32,
+    pub auto_apply: bool,
+    pub allow_downgrade: bool,
+    pub signer_public_key_prefix: Option<String>,
+    pub signer_public_key_configured: bool,
+    pub max_rules_size_kb: u32,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -2255,8 +2291,26 @@ pub async fn get_yara_feed_config(
     _auth: OptionalAuth,
 ) -> Result<Json<YaraFeedConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
+    let yara_feed = &config.main.yara_feed;
+    let signer_public_key_prefix = if !yara_feed.signer_public_key.is_empty() {
+        Some(if yara_feed.signer_public_key.len() > 8 {
+            format!("{}...", &yara_feed.signer_public_key[..8])
+        } else {
+            yara_feed.signer_public_key.clone()
+        })
+    } else {
+        None
+    };
     Ok(Json(YaraFeedConfigResponse {
-        config: config.main.yara_feed.clone(),
+        enabled: yara_feed.enabled,
+        url: yara_feed.url.clone(),
+        update_interval_hours: yara_feed.update_interval_hours,
+        elevated_interval_hours: yara_feed.elevated_interval_hours,
+        auto_apply: yara_feed.auto_apply,
+        allow_downgrade: yara_feed.allow_downgrade,
+        signer_public_key_prefix,
+        signer_public_key_configured: !yara_feed.signer_public_key.is_empty(),
+        max_rules_size_kb: yara_feed.max_rules_size_kb,
     }))
 }
 
