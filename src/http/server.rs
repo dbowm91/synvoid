@@ -117,6 +117,7 @@ use crate::http_client::{
 };
 use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
+use crate::mesh::MeshBackendPool;
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use crate::metrics::WorkerMetrics;
 use crate::process::{current_timestamp, RequestLogPayload};
@@ -339,6 +340,7 @@ pub struct HttpServer {
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     connection_limit: Arc<Semaphore>,
     app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
+    mesh_backend_pool: Option<Arc<MeshBackendPool>>,
 }
 
 impl HttpServer {
@@ -377,6 +379,7 @@ impl HttpServer {
             serverless_manager: None,
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             app_servers: None,
+            mesh_backend_pool: None,
         }
     }
 
@@ -438,6 +441,11 @@ impl HttpServer {
         self
     }
 
+    pub fn with_mesh_backend_pool(mut self, pool: Option<Arc<MeshBackendPool>>) -> Self {
+        self.mesh_backend_pool = pool;
+        self
+    }
+
     pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind(self.addr).await?;
         tracing::info!("HTTP server listening on {} (HTTP/1.1 + HTTP/2)", self.addr);
@@ -457,6 +465,7 @@ impl HttpServer {
         let serverless_manager = self.serverless_manager.clone();
         let connection_limit = self.connection_limit.clone();
         let app_servers = self.app_servers.clone();
+        let mesh_backend_pool = self.mesh_backend_pool.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -503,6 +512,7 @@ impl HttpServer {
                             let serverless_manager = serverless_manager.clone();
                             let connection_limit = connection_limit.clone();
                             let app_servers = app_servers.clone();
+                            let mesh_backend_pool = mesh_backend_pool.clone();
 
                             let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
                                 let mut peek_buf = [0u8; 16];
@@ -571,8 +581,9 @@ impl HttpServer {
                                     let serverless_manager = serverless_manager.clone();
                                     let connection_limit = connection_limit.clone();
                                     let app_servers = app_servers.clone();
+                                    let mesh_backend_pool = mesh_backend_pool.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -624,6 +635,7 @@ impl HttpServer {
         app_servers: Option<
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
+        mesh_backend_pool: Option<Arc<MeshBackendPool>>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
         // SECTION 1: Connection Management
@@ -2310,6 +2322,163 @@ impl HttpServer {
                         &alt_svc,
                         &main_config,
                     ));
+                }
+
+                // Mesh backend dispatch - route through mesh proxy
+                if matches!(target.backend_type, crate::router::BackendType::Mesh) {
+                    if let Some(ref pool) = mesh_backend_pool {
+                        let upstream_id = target.upstream.as_ref();
+                        if let Some(backend) = pool.select_backend(upstream_id).await {
+                            let body_bytes_for_mesh: Bytes = full_body_arc.as_ref().clone();
+                            let mut proxy_req = http::Request::builder()
+                                .method(parts.method.clone())
+                                .uri(parts.uri.clone());
+                            for (name, value) in parts.headers.iter() {
+                                proxy_req =
+                                    proxy_req.header(name.as_str(), value.to_str().unwrap_or(""));
+                            }
+                            let proxy_req = proxy_req
+                                .body(http_body_util::Full::new(body_bytes_for_mesh))
+                                .unwrap_or_else(|_| {
+                                    http::Request::new(http_body_util::Full::new(Bytes::new()))
+                                });
+
+                            match backend.proxy_request(proxy_req).await {
+                                Ok(resp) => {
+                                    if let Some(ref rm) = req_metrics {
+                                        rm.record_upstream_success();
+                                    }
+                                    let (resp_parts, body) = resp.into_parts();
+                                    let status = resp_parts.status.as_u16();
+                                    let body_len = resp_parts
+                                        .headers
+                                        .get("content-length")
+                                        .and_then(|v| v.to_str().ok())
+                                        .and_then(|v| v.parse::<u64>().ok())
+                                        .unwrap_or(0);
+
+                                    if let Some(ref m) = metrics {
+                                        m.bandwidth.record_proxied(
+                                            request_body_size,
+                                            body_len,
+                                            upstream_id,
+                                        );
+                                        m.bandwidth.record_site_proxied(
+                                            &site_id,
+                                            request_body_size,
+                                            body_len,
+                                        );
+                                        m.bandwidth.record_egress(
+                                            body_len,
+                                            BandwidthProtocol::Http,
+                                            EgressDirection::Proxied,
+                                        );
+                                        m.bandwidth.record_site_egress(&site_id, body_len);
+                                    }
+
+                                    let headers_to_filter = build_headers_to_filter(
+                                        &main_config.security.more_clear_headers,
+                                        &target
+                                            .site_config
+                                            .security
+                                            .more_clear_headers
+                                            .iter()
+                                            .chain(
+                                                target
+                                                    .site_config
+                                                    .security_headers
+                                                    .more_clear_headers
+                                                    .iter(),
+                                            )
+                                            .cloned()
+                                            .collect::<Vec<_>>(),
+                                    );
+                                    let filtered_headers = filter_response_headers_buf(
+                                        &resp_parts.headers,
+                                        &headers_to_filter,
+                                    );
+
+                                    let mut builder = Response::builder().status(status);
+                                    for (key, value) in filtered_headers.iter() {
+                                        if let Ok(v) = value.to_str() {
+                                            builder = builder.header(key.as_str(), v);
+                                        }
+                                    }
+
+                                    if let Some(ref alt_svc) = alt_svc {
+                                        builder = builder.header("Alt-Svc", alt_svc.as_str());
+                                    }
+
+                                    builder = Self::apply_security_headers(
+                                        builder,
+                                        &target,
+                                        &main_config,
+                                    );
+
+                                    return Ok(builder
+                                        .body(
+                                            body.map_err(|e| {
+                                                tracing::warn!("Mesh proxy body error: {}", e);
+                                                unreachable!()
+                                            })
+                                            .boxed(),
+                                        )
+                                        .unwrap_or_else(|_| {
+                                            Self::build_response_with_alt_svc(
+                                                500,
+                                                crate::http::reason_phrase(500).to_string(),
+                                                "text/plain",
+                                                &alt_svc,
+                                                &main_config,
+                                            )
+                                        }));
+                                }
+                                Err(e) => {
+                                    if let Some(ref rm) = req_metrics {
+                                        rm.record_upstream_failure();
+                                    }
+                                    tracing::warn!(
+                                        "Mesh proxy error for site {} path {}: {}",
+                                        site_id,
+                                        path,
+                                        e
+                                    );
+                                    backend.record_failure();
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        502,
+                                        format!("Mesh Proxy Error: {}", e),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Mesh backend selected no available backend for upstream: {}",
+                                upstream_id
+                            );
+                            return Ok(Self::build_response_with_alt_svc(
+                                503,
+                                "Mesh backend temporarily unavailable".to_string(),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Mesh backend but no mesh_backend_pool configured for site {}",
+                            site_id
+                        );
+                        return Ok(Self::build_response_with_alt_svc(
+                            502,
+                            "Backend misconfigured: mesh backend pool not available".to_string(),
+                            "text/plain",
+                            &alt_svc,
+                            &main_config,
+                        ));
+                    }
                 }
 
                 // FastCGI, PHP, CGI, and AppServer backends fall through to upstream proxy

@@ -183,10 +183,15 @@ impl MeshBackend {
         }
     }
 
-    pub async fn proxy_request(
+    pub async fn proxy_request<B>(
         &self,
-        req: hyper::Request<hyper::body::Incoming>,
-    ) -> Result<hyper::Response<BoxBody<bytes::Bytes, Infallible>>, MeshProxyError> {
+        req: hyper::Request<B>,
+    ) -> Result<hyper::Response<BoxBody<bytes::Bytes, Infallible>>, MeshProxyError>
+    where
+        B: http_body::Body + Send + 'static,
+        B::Data: Send,
+        B::Error: std::fmt::Debug + Send,
+    {
         self.proxy.route_request(&self.upstream_id, req).await
     }
 
@@ -243,13 +248,14 @@ impl MeshBackendPool {
             return None;
         }
 
-        let backends = self.backends.read();
-
-        let available: Vec<Arc<MeshBackend>> = backends
-            .iter()
-            .filter(|b| b.is_healthy())
-            .cloned()
-            .collect();
+        let available: Vec<Arc<MeshBackend>> = {
+            let backends = self.backends.read();
+            backends
+                .iter()
+                .filter(|b| b.is_healthy())
+                .cloned()
+                .collect()
+        };
 
         if available.is_empty() {
             return None;

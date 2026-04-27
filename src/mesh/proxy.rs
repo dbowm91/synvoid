@@ -784,11 +784,16 @@ impl MeshProxy {
 
     // Response transform holds a cache lock across an await; low contention expected.
     #[allow(clippy::await_holding_lock)]
-    pub async fn route_request(
+    pub async fn route_request<B>(
         &self,
         upstream_id: &str,
-        req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError> {
+        req: Request<B>,
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
+    where
+        B: HttpBody + Send,
+        B::Data: Send,
+        B::Error: std::fmt::Debug + Send,
+    {
         let timeout_duration = Duration::from_secs(self.config.request_timeout_secs);
         let start = Instant::now();
 
@@ -925,12 +930,17 @@ impl MeshProxy {
         }
     }
 
-    async fn proxy_to_peer_with_fallback(
+    async fn proxy_to_peer_with_fallback<B>(
         &self,
         upstream_id: &str,
         providers: Vec<crate::mesh::protocol::ProviderInfo>,
-        req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError> {
+        req: Request<B>,
+    ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
+    where
+        B: HttpBody + Send,
+        B::Data: Send,
+        B::Error: std::fmt::Debug + Send,
+    {
         if providers.is_empty() {
             return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
         }
@@ -942,13 +952,13 @@ impl MeshProxy {
         let uri = req.uri().clone();
         let headers = req.headers().clone();
 
-        // Collect request body upfront since hyper consumes it
+        // Collect request body upfront since we need to send it multiple times
         let body_bytes = match req.into_body().collect().await {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
-                tracing::warn!("Failed to collect request body for retry: {}", e);
+                tracing::warn!("Failed to collect request body for retry: {:?}", e);
                 return Err(MeshProxyError::SendFailed(format!(
-                    "Failed to collect request body: {}",
+                    "Failed to collect request body: {:?}",
                     e
                 )));
             }
