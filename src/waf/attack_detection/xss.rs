@@ -26,11 +26,7 @@ impl XssDetector {
         }
     }
 
-    pub fn detect(
-        &self,
-        input: &[u8],
-        location: InputLocation,
-    ) -> Option<AttackDetectionResult> {
+    pub fn detect(&self, input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
         let input_str = std::str::from_utf8(input).unwrap_or("");
         let normalized = self.normalizer.normalize(input_str);
 
@@ -178,6 +174,9 @@ mod tests {
         let detector = XssDetector::new(2, &["CUSTOM_XSS_PATTERN".to_string()]);
         let input = b"some input with CUSTOM_XSS_PATTERN";
         let result = detector.detect(input, InputLocation::QueryString).unwrap();
-        assert_eq!(result.matched_pattern, Some("custom_xss_pattern".to_string()));
+        assert_eq!(
+            result.matched_pattern,
+            Some("custom_xss_pattern".to_string())
+        );
     }
 }

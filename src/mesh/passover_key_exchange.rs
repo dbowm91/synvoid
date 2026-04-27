@@ -60,16 +60,16 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use hyper::server::conn::http1;
+use hyper_util::rt::TokioIo;
+use hyper_util::service::TowerToHyperService;
 use lru_time_cache::LruCache;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::path::PathBuf;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
-use hyper_util::rt::TokioIo;
-use hyper::server::conn::http1;
-use hyper_util::service::TowerToHyperService;
 use tonic::{Request, Response, Status};
 use tower_http::cors::{Any, CorsLayer};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
@@ -1118,9 +1118,7 @@ pub async fn run_key_exchange_server(
                     Ok(tls_stream) => {
                         let io = TokioIo::new(tls_stream);
                         let service = TowerToHyperService::new(router);
-                        if let Err(err) = http1::Builder::new()
-                            .serve_connection(io, service)
-                            .await
+                        if let Err(err) = http1::Builder::new().serve_connection(io, service).await
                         {
                             tracing::error!("Error serving TLS connection: {}", err);
                         }
