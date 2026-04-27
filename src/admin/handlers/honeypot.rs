@@ -115,6 +115,7 @@ pub struct HoneypotStatusResponse {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[allow(dead_code)]
 pub struct HoneypotControlRequest {
     pub command: String,
     pub reason: Option<String>,

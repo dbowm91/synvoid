@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // SAFETY_REASON: Connection tracking for observability - reserved for debugging
 
 use std::collections::HashMap;
