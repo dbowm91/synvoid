@@ -300,6 +300,7 @@ pub struct YaraRulesManager {
     broadcast_tracker: Arc<RwLock<Option<BroadcastAckTracker>>>,
     rule_change_tracker: Arc<RwLock<RuleChangeTracker>>,
     record_store: Arc<RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>>,
+    transport: Arc<RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>>,
 }
 
 impl YaraRulesManager {
@@ -328,6 +329,7 @@ impl YaraRulesManager {
             broadcast_tracker: Arc::new(RwLock::new(None)),
             rule_change_tracker: Arc::new(RwLock::new(RuleChangeTracker::default())),
             record_store: Arc::new(RwLock::new(None)),
+            transport: Arc::new(RwLock::new(None)),
         };
 
         if manager.node_role.is_global() || manager.node_role.contains(MeshNodeRole::GLOBAL) {
@@ -939,7 +941,8 @@ impl YaraRulesManager {
                             );
                             continue;
                         }
-                        if !self.config.trusted_signers.is_empty()
+                        if !self.node_role.is_global()
+                            && !self.config.trusted_signers.is_empty()
                             && !self
                                 .config
                                 .trusted_signers
@@ -1065,6 +1068,29 @@ impl YaraRulesManager {
 
     pub fn is_global(&self) -> bool {
         self.node_role.is_global() || self.node_role.contains(MeshNodeRole::GLOBAL)
+    }
+
+    pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
+        *self.transport.write() = Some(transport);
+    }
+
+    fn check_trusted_signer(&self, source_node_id: &str, signer_pk: &str) -> bool {
+        if self.node_role.is_global() {
+            return true;
+        }
+
+        if self.config.trusted_signers.is_empty() {
+            let transport = self.transport.read();
+            if let Some(ref t) = *transport {
+                let topology = t.get_topology();
+                return tokio::runtime::Handle::current()
+                    .block_on(topology.get_global_nodes())
+                    .contains(&source_node_id.to_string());
+            }
+            return false;
+        }
+
+        self.config.trusted_signers.contains(&signer_pk.to_string())
     }
 
     pub fn apply_rules_from_feed(&self) -> Result<String, YaraRulesError> {
@@ -1779,6 +1805,23 @@ impl YaraRulesManager {
                             });
                         }
                         tracing::debug!("YARA rule signature verified from {}", from_node);
+
+                        if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+                            if !self.check_trusted_signer(from_node, signer_public_key) {
+                                tracing::warn!(
+                                    "YARA rule announce rejected: signer {} not in trusted_signers list",
+                                    signer_public_key
+                                );
+                                return Some(MeshMessage::YaraRuleAcknowledgement {
+                                    original_request_id: request_id.clone(),
+                                    node_id: self.node_id.clone().into(),
+                                    accepted: false,
+                                    reason: "Signer not in trusted_signers list".into(),
+                                    timestamp:
+                                        crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                                });
+                            }
+                        }
                     } else {
                         tracing::warn!(
                             "Received signed YARA rules from {} but no local signer configured, rejecting",
@@ -2117,6 +2160,7 @@ impl Clone for YaraRulesManager {
             broadcast_tracker: Arc::clone(&self.broadcast_tracker),
             rule_change_tracker: Arc::clone(&self.rule_change_tracker),
             record_store: Arc::clone(&self.record_store),
+            transport: Arc::clone(&self.transport),
         }
     }
 }
