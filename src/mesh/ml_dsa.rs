@@ -14,7 +14,7 @@ use crate::mesh::config::GlobalNodeConfig;
 pub type MlDsaSigningKeyType = SigningKey;
 pub type MlDsaVerifyingKeyType = VerifyingKey;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MeshMlDsaSigner {
     signing_key: Option<SigningKey>,
     verifying_key: Option<VerifyingKey>,
@@ -49,7 +49,8 @@ impl MeshMlDsaSigner {
     }
 
     pub fn generate() -> Self {
-        let (verifying_key, signing_key) = MlDsa44::generate_keypair().expect("ML-DSA key generation failed");
+        let (verifying_key, signing_key) =
+            MlDsa44::generate_keypair().expect("ML-DSA key generation failed");
         Self {
             signing_key: Some(signing_key),
             verifying_key: Some(verifying_key),
@@ -90,15 +91,6 @@ impl MeshMlDsaSigner {
 
     pub fn signing_key_base64(&self) -> Option<String> {
         self.signing_key.as_ref().map(|k| k.to_base64())
-    }
-}
-
-impl Default for MeshMlDsaSigner {
-    fn default() -> Self {
-        Self {
-            signing_key: None,
-            verifying_key: None,
-        }
     }
 }
 
@@ -151,11 +143,16 @@ impl MeshHybridSigner {
         ed25519_sig.to_bytes().to_vec()
     }
 
-    pub fn sign_with_ml_dsa(&self, content: &[u8]) -> crate::mesh::hybrid_signature::HybridSignature {
+    pub fn sign_with_ml_dsa(
+        &self,
+        content: &[u8],
+    ) -> crate::mesh::hybrid_signature::HybridSignature {
         use crate::mesh::hybrid_signature::HybridSignature;
 
         let ed25519_sig = self.sign(content);
-        let ml_dsa_sig = self.ml_dsa_signer.as_ref()
+        let ml_dsa_sig = self
+            .ml_dsa_signer
+            .as_ref()
             .and_then(|s| s.sign(content))
             .unwrap_or_default();
 
@@ -177,7 +174,9 @@ impl MeshHybridSigner {
         pk_array.copy_from_slice(&self.ed25519_verifying_key_bytes);
 
         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-            Ok(pk) => pk.verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array)).is_ok(),
+            Ok(pk) => pk
+                .verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+                .is_ok(),
             Err(_) => false,
         }
     }
@@ -204,7 +203,10 @@ impl MeshHybridSigner {
     }
 
     pub fn has_ml_dsa(&self) -> bool {
-        self.ml_dsa_signer.as_ref().map(|s| s.has_signing_key()).unwrap_or(false)
+        self.ml_dsa_signer
+            .as_ref()
+            .map(|s| s.has_signing_key())
+            .unwrap_or(false)
     }
 
     pub fn public_key_base64(&self) -> String {

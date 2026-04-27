@@ -184,8 +184,7 @@ pub async fn get_topology_graph(
     let nodes: Vec<GraphNode> = global_nodes
         .iter()
         .chain(edge_nodes.iter())
-        .enumerate()
-        .map(|(_i, p)| {
+        .map(|p| {
             let (x, y) = if p.is_global {
                 (Some(geo_to_x(&p.geo)), Some(geo_to_y(&p.geo)))
             } else {

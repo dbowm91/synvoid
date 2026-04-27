@@ -481,6 +481,11 @@ stale_cache_ttl_secs = 60
 - Added `/api/mesh/topology/graph` endpoint for D3.js-compatible graph data
 - New handler module `src/admin/handlers/mesh_topology.rs`
 
+### Bug Fixes (2026-04-27)
+- Fixed pattern matching in SqliDetector and XssDetector to use lowercase search target
+- Patterns are stored lowercase, so search now uses `normalized.lowercased` instead of `normalized.normalized`
+- Updated custom pattern tests to use isolated inputs that won't conflict with base patterns
+
 ### HTTP/3 and QUIC Support (2026-04-26)
 - Implemented full upstream proxying in `src/http3/server.rs`.
 - Removed unused `Http3Handler` stub.

@@ -1114,18 +1114,16 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 signer_public_key,
             } => proto::MeshMessage {
                 message_type: 162,
-                payload: Some(
-                    proto::mesh_message::Payload::BehavioralFingerprintAnnounce(
-                        proto::BehavioralFingerprintAnnounce {
-                            request_id: request_id.to_string(),
-                            fingerprints: fingerprints.iter().map(|fp| fp.into()).collect(),
-                            timestamp: *timestamp,
-                            source_node_id: source_node_id.to_string(),
-                            signature: signature.clone(),
-                            signer_public_key: signer_public_key.clone(),
-                        },
-                    ),
-                ),
+                payload: Some(proto::mesh_message::Payload::BehavioralFingerprintAnnounce(
+                    proto::BehavioralFingerprintAnnounce {
+                        request_id: request_id.to_string(),
+                        fingerprints: fingerprints.iter().map(|fp| fp.into()).collect(),
+                        timestamp: *timestamp,
+                        source_node_id: source_node_id.to_string(),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.clone(),
+                    },
+                )),
             },
             MeshMessage::BehavioralFingerprintSyncRequest {
                 request_id,

@@ -16,7 +16,9 @@ pub struct BehavioralFingerprint {
     pub signature: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, Archive, RkyvSerialize, RkyvDeserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, Default, Archive, RkyvSerialize, RkyvDeserialize,
+)]
 pub struct BehavioralFeatures {
     pub header_timing_variance_ms: u32,
     pub request_sequence_entropy: f32,
@@ -73,10 +75,9 @@ impl BehavioralFeatures {
     }
 
     pub fn similarity(&self, other: &BehavioralFeatures) -> f32 {
-        let timing_diff = (self.header_timing_variance_ms as f32
-            - other.header_timing_variance_ms as f32)
-            .abs()
-            / 1000.0;
+        let timing_diff =
+            (self.header_timing_variance_ms as f32 - other.header_timing_variance_ms as f32).abs()
+                / 1000.0;
         let entropy_diff = (self.request_sequence_entropy - other.request_sequence_entropy).abs();
         let inter_diff =
             (self.inter_request_timing_ms as f32 - other.inter_request_timing_ms as f32).abs()
@@ -84,8 +85,8 @@ impl BehavioralFeatures {
         let url_diff = (self.url_entropy - other.url_entropy).abs();
         let ratio_diff = (self.body_to_header_ratio - other.body_to_header_ratio).abs();
 
-        let similarity = 1.0
-            - (timing_diff + entropy_diff + inter_diff + url_diff + ratio_diff).min(1.0);
+        let similarity =
+            1.0 - (timing_diff + entropy_diff + inter_diff + url_diff + ratio_diff).min(1.0);
         similarity.max(0.0)
     }
 }
@@ -149,7 +150,10 @@ mod tests {
         };
 
         let similarity = features1.similarity(&features2);
-        assert!(similarity > 0.8, "Similar features should have high similarity");
+        assert!(
+            similarity > 0.8,
+            "Similar features should have high similarity"
+        );
     }
 
     #[test]
@@ -161,7 +165,10 @@ mod tests {
         different_features.header_timing_variance_ms = 10000;
         let bucket2 = different_features.compute_lsh_bucket();
 
-        assert_ne!(bucket1, bucket2, "Different features should produce different buckets");
+        assert_ne!(
+            bucket1, bucket2,
+            "Different features should produce different buckets"
+        );
     }
 
     #[test]

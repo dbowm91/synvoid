@@ -30,9 +30,10 @@ impl XssDetector {
         let input_str = std::str::from_utf8(input).unwrap_or("");
         let normalized = self.normalizer.normalize(input_str);
 
-        // 1. Try pattern-based detection
-        if let Some(mat) = self.inner.patterns_ref().find(&normalized.normalized) {
-            let matched = normalized.normalized[mat.start()..mat.end()].to_string();
+        // 1. Try pattern-based detection - search lowercase to match lowercase patterns
+        let search_target: &str = &normalized.lowercased;
+        if let Some(mat) = self.inner.patterns_ref().find(search_target) {
+            let matched = search_target[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "xss",
                 matched_pattern = %matched,
@@ -172,7 +173,9 @@ mod tests {
     #[test]
     fn test_xss_pattern_match() {
         let detector = XssDetector::new(2, &["CUSTOM_XSS_PATTERN".to_string()]);
-        let input = b"some input with CUSTOM_XSS_PATTERN";
+
+        // Use input that won't trigger base patterns - just the custom pattern in isolation
+        let input = b"CUSTOM_XSS_PATTERN";
         let result = detector.detect(input, InputLocation::QueryString).unwrap();
         assert_eq!(
             result.matched_pattern,

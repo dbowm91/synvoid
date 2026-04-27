@@ -1,5 +1,5 @@
 use super::*;
-use crate::mesh::behavioral::{BehavioralFingerprint, BehavioralFeatures};
+use crate::mesh::behavioral::{BehavioralFeatures, BehavioralFingerprint};
 
 pub enum ReplayResult {
     Valid,

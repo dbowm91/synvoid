@@ -77,10 +77,10 @@ pub mod proto {
 }
 
 use crate::mesh::config::MeshNodeRole;
-use crate::mesh::organization::TierClaim;
-use crate::mesh::transports::MeshTransportType;
 use crate::mesh::hybrid_signature::HybridSignature;
 use crate::mesh::ml_dsa::MeshMlDsaSigner;
+use crate::mesh::organization::TierClaim;
+use crate::mesh::transports::MeshTransportType;
 
 pub const MESH_MESSAGE_VERSION: u8 = 1;
 const COMPRESSION_THRESHOLD: usize = 512;
@@ -134,7 +134,9 @@ impl MeshMessageSigner {
 
     pub fn sign_hybrid(&self, content: &[u8]) -> HybridSignature {
         let ed25519_sig = self.sign(content);
-        let ml_dsa_sig = self.ml_dsa_signer.as_ref()
+        let ml_dsa_sig = self
+            .ml_dsa_signer
+            .as_ref()
             .and_then(|s| s.sign(content))
             .unwrap_or_default();
         HybridSignature::new(ed25519_sig, ml_dsa_sig, self.get_public_key())
@@ -160,7 +162,9 @@ impl MeshMessageSigner {
     }
 
     pub fn verify_hybrid(&self, content: &[u8], hybrid: &HybridSignature) -> bool {
-        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&hybrid.signer_public_key) {
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&hybrid.signer_public_key)
+        {
             Ok(bytes) => bytes,
             Err(_) => return false,
         };
@@ -182,7 +186,10 @@ impl MeshMessageSigner {
     }
 
     pub fn has_ml_dsa(&self) -> bool {
-        self.ml_dsa_signer.as_ref().map(|s| s.has_signing_key()).unwrap_or(false)
+        self.ml_dsa_signer
+            .as_ref()
+            .map(|s| s.has_signing_key())
+            .unwrap_or(false)
     }
 
     pub fn get_public_key(&self) -> String {

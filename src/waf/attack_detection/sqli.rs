@@ -30,9 +30,10 @@ impl SqliDetector {
         let input_str = std::str::from_utf8(input).unwrap_or("");
         let normalized = self.normalizer.normalize(input_str);
 
-        // 1. Try pattern-based detection
-        if let Some(mat) = self.inner.patterns_ref().find(&normalized.normalized) {
-            let matched = normalized.normalized[mat.start()..mat.end()].to_string();
+        // 1. Try pattern-based detection - search lowercase to match lowercase patterns
+        let search_target: &str = &normalized.lowercased;
+        if let Some(mat) = self.inner.patterns_ref().find(search_target) {
+            let matched = search_target[mat.start()..mat.end()].to_string();
             tracing::warn!(
                 attack_type = "sqli",
                 matched_pattern = %matched,
@@ -173,10 +174,18 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_enumerate_index)]
     fn test_sqli_pattern_match() {
         let detector = SqliDetector::new(2, &["CUSTOM_SQLI_PATTERN".to_string()]);
-        let input = b"SELECT * FROM users WHERE id = CUSTOM_SQLI_PATTERN";
-        let result = detector.detect(input, InputLocation::QueryString).unwrap();
+
+        // Use input that won't trigger base patterns - just the custom pattern in isolation
+        let input = b"CUSTOM_SQLI_PATTERN";
+        let result = detector.detect(input, InputLocation::QueryString);
+
+        assert!(result.is_some(), "Expected detection result but got None");
+        let result = result.unwrap();
+
+        // Pattern matching now uses lowercase, so expect lowercase pattern
         assert_eq!(
             result.matched_pattern,
             Some("custom_sqli_pattern".to_string())

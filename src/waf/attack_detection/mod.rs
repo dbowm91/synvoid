@@ -184,13 +184,9 @@ impl AttackDetector {
         }
 
         if let Some(ref behavioral_intel) = self.behavioral_intel {
-            if let Some(features) = self.extract_behavioral_features(
-                _method,
-                path,
-                query_string,
-                headers,
-                body,
-            ) {
+            if let Some(features) =
+                self.extract_behavioral_features(_method, path, query_string, headers, body)
+            {
                 if let Some(fingerprint) = behavioral_intel.analyze_request(&features) {
                     if fingerprint.severity_score >= 70 {
                         return Some(AttackDetectionResult {

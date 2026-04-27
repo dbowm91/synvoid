@@ -69,10 +69,8 @@ pub use audit_session::{AuditSession, AuditSessionManager, SessionValidationResu
 pub use backend::{
     create_mesh_backend_from_config, initialize_mesh_transports, MeshBackend, MeshBackendPool,
 };
-pub use behavioral::{BehavioralFingerprint, BehavioralFeatures};
+pub use behavioral::{BehavioralFeatures, BehavioralFingerprint};
 pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
-pub use hybrid_signature::{HybridSignature, HybridSigner, HybridSignatureError, ML_DSA_SIGNATURE_SIZE, ED25519_SIGNATURE_SIZE};
-pub use ml_dsa::{MeshMlDsaSigner, MeshMlDsaVerifier, MeshHybridSigner, MlDsaSigningKeyType, MlDsaVerifyingKeyType};
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};
 pub use client_audit::{
@@ -92,7 +90,15 @@ pub use hierarchical_routing::{
     DirectedRouteQuery, HierarchicalRoutingConfig, HierarchicalRoutingManager, MeshBloomFilter,
     RegionalHubInfo, RouteAdvertisement,
 };
+pub use hybrid_signature::{
+    HybridSignature, HybridSignatureError, HybridSigner, ED25519_SIGNATURE_SIZE,
+    ML_DSA_SIGNATURE_SIZE,
+};
 pub use kem::{KemSession, MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret};
+pub use ml_dsa::{
+    MeshHybridSigner, MeshMlDsaSigner, MeshMlDsaVerifier, MlDsaSigningKeyType,
+    MlDsaVerifyingKeyType,
+};
 pub use ml_kem_key_exchange::MlKemKeyExchangeService;
 pub use network_security::{
     AccessAction, AccessDecision, ConnectionState, MeshDataEncryption, NetworkAccessControl,

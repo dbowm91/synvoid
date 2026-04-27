@@ -59,7 +59,8 @@ static THREAT_INTEL_DHT_SYNC_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| Atom
 static THREAT_INTEL_DHT_SYNC_ADDED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static THREAT_INTEL_DHT_SYNC_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static BEHAVIORAL_FINGERPRINT_DHT_PUBLISH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static BEHAVIORAL_FINGERPRINT_DHT_PUBLISH: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 static BEHAVIORAL_FINGERPRINT_RECEIVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static BEHAVIORAL_FINGERPRINT_MATCH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 

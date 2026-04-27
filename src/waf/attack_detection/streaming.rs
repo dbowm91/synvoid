@@ -16,6 +16,7 @@ pub enum StreamingWafDecision {
     NeedMore,
 }
 
+#[allow(dead_code)]
 pub struct StreamingWafCore {
     inner: Arc<AttackDetector>,
     chunk_size: usize,

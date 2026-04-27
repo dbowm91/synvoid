@@ -5,7 +5,7 @@ use std::time::Instant;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::mesh::behavioral::{BehavioralFingerprint, BehavioralFeatures};
+use crate::mesh::behavioral::{BehavioralFeatures, BehavioralFingerprint};
 use crate::mesh::config::MeshNodeRole;
 use crate::mesh::protocol::{MeshMessage, MeshMessageSigner};
 use crate::metrics;
@@ -139,8 +139,7 @@ impl BehavioralIntelligenceManager {
                 if let Some(existing) = fingerprints.get_mut(&fp.fingerprint_id) {
                     existing.last_seen = now;
                     existing.sample_count += 1;
-                    existing.confidence =
-                        (existing.confidence + similarity).min(1.0);
+                    existing.confidence = (existing.confidence + similarity).min(1.0);
                     return Some(existing.clone());
                 }
             }
@@ -149,11 +148,7 @@ impl BehavioralIntelligenceManager {
         None
     }
 
-    pub fn adjust_paranoia_level(
-        &self,
-        features: &RequestFeatures,
-        base_paranoia: u8,
-    ) -> u8 {
+    pub fn adjust_paranoia_level(&self, features: &RequestFeatures, base_paranoia: u8) -> u8 {
         if !self.config.enabled {
             return base_paranoia;
         }
@@ -193,7 +188,9 @@ impl BehavioralIntelligenceManager {
         }
 
         let mut collectors = self.sample_collectors.write();
-        let collector = collectors.entry(request_id.to_string()).or_insert_with(Vec::new);
+        let collector = collectors
+            .entry(request_id.to_string())
+            .or_insert_with(Vec::new);
         collector.push(features);
 
         if collector.len() >= self.config.min_samples_for_fingerprint as usize {
@@ -208,32 +205,30 @@ impl BehavioralIntelligenceManager {
             return BehavioralFeatures::default();
         }
 
-        let avg_timing: u32 =
-            samples.iter().map(|s| s.header_timing_variance_ms).sum::<u32>()
-                / samples.len() as u32;
+        let avg_timing: u32 = samples
+            .iter()
+            .map(|s| s.header_timing_variance_ms)
+            .sum::<u32>()
+            / samples.len() as u32;
         let avg_entropy: f32 = samples
             .iter()
             .map(|s| s.request_sequence_entropy)
             .sum::<f32>()
             / samples.len() as f32;
-        let avg_inter: u32 =
-            samples.iter().map(|s| s.inter_request_timing_ms).sum::<u32>()
-                / samples.len() as u32;
+        let avg_inter: u32 = samples
+            .iter()
+            .map(|s| s.inter_request_timing_ms)
+            .sum::<u32>()
+            / samples.len() as u32;
         let avg_suspicious: u8 = (samples
             .iter()
             .map(|s| s.suspicious_header_count as u32)
             .sum::<u32>()
             / samples.len() as u32) as u8;
-        let avg_url_entropy: f32 = samples
-            .iter()
-            .map(|s| s.url_entropy)
-            .sum::<f32>()
-            / samples.len() as f32;
-        let avg_ratio: f32 = samples
-            .iter()
-            .map(|s| s.body_to_header_ratio)
-            .sum::<f32>()
-            / samples.len() as f32;
+        let avg_url_entropy: f32 =
+            samples.iter().map(|s| s.url_entropy).sum::<f32>() / samples.len() as f32;
+        let avg_ratio: f32 =
+            samples.iter().map(|s| s.body_to_header_ratio).sum::<f32>() / samples.len() as f32;
 
         let mut combined_distribution = vec![0u32; 10];
         for sample in samples {
@@ -255,11 +250,7 @@ impl BehavioralIntelligenceManager {
         }
     }
 
-    fn create_fingerprint_from_aggregated(
-        &self,
-        request_id: &str,
-        features: &BehavioralFeatures,
-    ) {
+    fn create_fingerprint_from_aggregated(&self, request_id: &str, features: &BehavioralFeatures) {
         let severity_score = Self::compute_severity_from_features(features);
         if severity_score < 30 {
             return;
@@ -336,10 +327,7 @@ impl BehavioralIntelligenceManager {
             let mut fingerprints = self.fingerprints.write();
 
             if fingerprints.len() >= MAX_FINGERPRINTS {
-                if let Some((_, oldest)) = fingerprints
-                    .iter()
-                    .min_by_key(|(_, fp)| fp.last_seen)
-                {
+                if let Some((_, oldest)) = fingerprints.iter().min_by_key(|(_, fp)| fp.last_seen) {
                     let removed_id = oldest.fingerprint_id.clone();
                     drop(fingerprints);
 
@@ -416,7 +404,8 @@ impl BehavioralIntelligenceManager {
         let key_str = key.as_str();
 
         if let Ok(bytes) = serde_json::to_vec(fingerprint) {
-            if record_store.store_and_announce(key_str.to_string(), bytes, fingerprint.ttl_seconds) {
+            if record_store.store_and_announce(key_str.to_string(), bytes, fingerprint.ttl_seconds)
+            {
                 metrics::record_behavioral_fingerprint_dht_publish();
                 tracing::debug!(
                     "Published behavioral fingerprint to DHT: {} (severity: {})",
@@ -453,7 +442,10 @@ impl BehavioralIntelligenceManager {
         }
 
         if !expired_ids.is_empty() {
-            tracing::debug!("Cleaned up {} expired behavioral fingerprints", expired_ids.len());
+            tracing::debug!(
+                "Cleaned up {} expired behavioral fingerprints",
+                expired_ids.len()
+            );
         }
 
         *self.last_cleanup.write() = Instant::now();
@@ -478,8 +470,7 @@ impl BehavioralIntelligenceManager {
             None => return Err("Record store not available".to_string()),
         };
 
-        let dht_records =
-            record_store.get_by_prefix("behavior_fingerprint:", 1000);
+        let dht_records = record_store.get_by_prefix("behavior_fingerprint:", 1000);
         let mut added = 0;
 
         for record in dht_records {
@@ -521,11 +512,7 @@ impl BehavioralIntelligenceManager {
         }
     }
 
-    pub fn create_sync_response(
-        &self,
-        request_id: &str,
-        from_version: u64,
-    ) -> Option<MeshMessage> {
+    pub fn create_sync_response(&self, request_id: &str, from_version: u64) -> Option<MeshMessage> {
         let fingerprints: Vec<BehavioralFingerprint> = self
             .fingerprints
             .read()
@@ -675,7 +662,10 @@ impl BehavioralIntelligenceManager {
                 from_version: _,
                 prefer_delta: _,
             } => {
-                tracing::debug!("Received BehavioralFingerprintSyncRequest from {}", from_node);
+                tracing::debug!(
+                    "Received BehavioralFingerprintSyncRequest from {}",
+                    from_node
+                );
                 self.create_sync_response(request_id, *self.local_version.read())
             }
             MeshMessage::BehavioralFingerprintSyncResponse {
@@ -819,7 +809,8 @@ mod tests {
             url_entropy: 1.0,
             body_to_header_ratio: 0.1,
         };
-        let low_score = BehavioralIntelligenceManager::compute_severity_from_features(&low_severity_features);
+        let low_score =
+            BehavioralIntelligenceManager::compute_severity_from_features(&low_severity_features);
         assert!(low_score < 30);
 
         let high_severity_features = BehavioralFeatures {
@@ -831,7 +822,8 @@ mod tests {
             url_entropy: 7.0,
             body_to_header_ratio: 0.1,
         };
-        let high_score = BehavioralIntelligenceManager::compute_severity_from_features(&high_severity_features);
+        let high_score =
+            BehavioralIntelligenceManager::compute_severity_from_features(&high_severity_features);
         assert!(high_score >= 70);
     }
 }
