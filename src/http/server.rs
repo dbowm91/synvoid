@@ -33,24 +33,24 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
 use crate::waf::traffic_shaper::ConnectionLimiter;
 use crate::waf::ConnectionToken;
-use std::sync::Mutex as StdMutex;
+use parking_lot::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStream};
 
 struct ConnectionTokenGuard {
     limiter: Arc<ConnectionLimiter>,
-    token: Arc<StdMutex<Option<ConnectionToken>>>,
+    token: Arc<Mutex<Option<ConnectionToken>>>,
 }
 
 impl ConnectionTokenGuard {
     fn new(limiter: Arc<ConnectionLimiter>, token: ConnectionToken) -> Self {
         Self {
             limiter,
-            token: Arc::new(StdMutex::new(Some(token))),
+            token: Arc::new(Mutex::new(Some(token))),
         }
     }
 
     fn release_and_acquire(&self, new_token: ConnectionToken) -> Option<ConnectionToken> {
-        let mut guard = self.token.lock().unwrap();
+        let mut guard = self.token.lock();
         let old_token = guard.take();
         *guard = Some(new_token);
         old_token
@@ -59,7 +59,7 @@ impl ConnectionTokenGuard {
 
 impl Drop for ConnectionTokenGuard {
     fn drop(&mut self) {
-        if let Some(token) = self.token.lock().unwrap().take() {
+        if let Some(token) = self.token.lock().take() {
             self.limiter.release(token);
         }
     }
@@ -130,7 +130,6 @@ use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 use crate::RunningFlag;
 use moka::sync::Cache;
-use parking_lot::Mutex;
 use tokio::sync::RwLock;
 
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);

@@ -1,5 +1,6 @@
+use std::collections::{BTreeSet, HashSet};
 use std::io::{self, Read, Write};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -21,50 +22,65 @@ struct NonceEntry {
     timestamp: u64,
 }
 
+impl Ord for NonceEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.timestamp.cmp(&other.timestamp)
+    }
+}
+
+impl PartialOrd for NonceEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for NonceEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.nonce == other.nonce
+    }
+}
+
+impl Eq for NonceEntry {}
+
 struct NonceCache {
-    entries: Vec<NonceEntry>,
+    by_nonce: HashSet<[u8; 16]>,
+    by_timestamp: BTreeSet<NonceEntry>,
 }
 
 impl NonceCache {
     fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            by_nonce: HashSet::new(),
+            by_timestamp: BTreeSet::new(),
         }
     }
 
     fn contains(&self, nonce: &[u8; 16]) -> bool {
-        self.entries.iter().any(|e| e.nonce == *nonce)
+        self.by_nonce.contains(nonce)
     }
 
     fn insert(&mut self, nonce: [u8; 16], timestamp: u64) {
-        self.entries.push(NonceEntry { nonce, timestamp });
+        let entry = NonceEntry { nonce, timestamp };
+        self.by_nonce.insert(nonce);
+        self.by_timestamp.insert(entry);
     }
 
     fn evict_oldest(&mut self) {
-        while self.entries.len() > MAX_NONCE_CACHE_SIZE {
-            if self.entries.is_empty() {
-                return;
+        while self.by_timestamp.len() > MAX_NONCE_CACHE_SIZE {
+            if let Some(oldest) = self.by_timestamp.pop_first() {
+                self.by_nonce.remove(&oldest.nonce);
             }
-
-            let mut oldest_idx = 0;
-            let mut oldest_ts = u64::MAX;
-            for (i, entry) in self.entries.iter().enumerate() {
-                if entry.timestamp < oldest_ts {
-                    oldest_ts = entry.timestamp;
-                    oldest_idx = i;
-                }
-            }
-            self.entries.swap_remove(oldest_idx);
         }
     }
 }
 
-static NONCE_CACHE: LazyLock<Mutex<NonceCache>> = LazyLock::new(|| Mutex::new(NonceCache::new()));
+static NONCE_CACHE: LazyLock<parking_lot::Mutex<NonceCache>> =
+    LazyLock::new(|| parking_lot::Mutex::new(NonceCache::new()));
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 
 fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
-    let mut cache = NONCE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = NONCE_CACHE.lock();
 
     if cache.contains(nonce) {
         return false;
