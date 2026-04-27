@@ -3,7 +3,7 @@
 //! This module provides a unified interface for PQC operations
 //! using pqc_kyber as the backend for ML-KEM-768 (Kyber-768).
 
-use pqc_kyber::*;
+use pqc_kyber_edit::*;
 use serde::{Deserialize, Serialize};
 
 pub const PUBLIC_KEY_SIZE: usize = 1184; // KYBER768
@@ -25,7 +25,7 @@ pub struct PqcEncapsulationResult {
 pub fn generate_keypair() -> Result<PqcKeyPair, String> {
     let mut rng = rand::rngs::OsRng;
     let keys =
-        pqc_kyber::keypair(&mut rng).map_err(|e| format!("Key generation failed: {:?}", e))?;
+        pqc_kyber_edit::keypair(&mut rng).map_err(|e| format!("Key generation failed: {:?}", e))?;
 
     Ok(PqcKeyPair {
         public_key: keys.public.to_vec(),
@@ -43,7 +43,7 @@ pub fn encapsulate(public_key: &[u8]) -> Result<PqcEncapsulationResult, String> 
     }
 
     let mut rng = rand::rngs::OsRng;
-    let (ct, ss) = pqc_kyber::encapsulate(public_key, &mut rng)
+    let (ct, ss) = pqc_kyber_edit::encapsulate(public_key, &mut rng)
         .map_err(|e| format!("Encapsulation failed: {:?}", e))?;
 
     Ok(PqcEncapsulationResult {
@@ -68,7 +68,7 @@ pub fn decapsulate(ciphertext: &[u8], secret_key: &[u8]) -> Result<Vec<u8>, Stri
         ));
     }
 
-    pqc_kyber::decapsulate(ciphertext, secret_key)
+    pqc_kyber_edit::decapsulate(ciphertext, secret_key)
         .map_err(|e| format!("Decapsulation failed: {:?}", e))
         .map(|ss| ss.to_vec())
 }

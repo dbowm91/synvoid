@@ -27,7 +27,7 @@ tracing = "0.1"
 tracing-wasm = "0.2"
 
 # Post-quantum cryptography - ML-KEM-768 for key exchange
-pqc_kyber = { version = "0.7", features = ["wasm", "kyber768", "zeroize"] }
+pqc_kyber_edit = { version = "0.7", features = ["kyber768", "zeroize"] }
 
 [dependencies.web-sys]
 version = "0.3"
