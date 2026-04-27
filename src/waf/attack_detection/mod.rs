@@ -19,7 +19,6 @@ pub mod xpath_injection;
 pub mod xss;
 pub mod xxe;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use cmd_injection::CmdInjectionDetector;
@@ -407,16 +406,25 @@ impl AttackDetector {
             return 0.0;
         }
 
-        let mut char_counts: HashMap<char, usize> = HashMap::new();
+        let mut char_counts = [0usize; 256];
+        let mut seen_indices = Vec::new();
+
         for c in s.chars() {
-            *char_counts.entry(c).or_insert(0) += 1;
+            if (c as usize) < 256 {
+                let idx = c as usize;
+                if char_counts[idx] == 0 {
+                    seen_indices.push(idx);
+                }
+                char_counts[idx] += 1;
+            }
         }
 
         let len = s.len() as f32;
-        let entropy: f32 = char_counts
-            .values()
-            .map(|&count| {
-                let p = count as f32 / len;
+        let entropy: f32 = seen_indices
+            .iter()
+            .map(|&idx| {
+                let count = char_counts[idx] as f32;
+                let p = count / len;
                 -p * p.log2()
             })
             .sum();

@@ -9,7 +9,7 @@ use crate::waf::attack_detection::patterns::DefaultPatterns;
 
 pub struct OpenRedirectDetector {
     inner: BasePatternDetector,
-    redirect_param_patterns: Vec<&'static str>,
+    redirect_param_matcher: AhoCorasick,
 }
 
 impl OpenRedirectDetector {
@@ -99,16 +99,16 @@ impl OpenRedirectDetector {
             "urlsrc",
         ];
 
+        let redirect_param_matcher = AhoCorasick::new(&redirect_param_patterns).unwrap();
+
         Self {
             inner,
-            redirect_param_patterns,
+            redirect_param_matcher,
         }
     }
 
     fn is_redirect_param(&self, input_lower: &str) -> bool {
-        self.redirect_param_patterns
-            .iter()
-            .any(|param| input_lower.contains(param))
+        self.redirect_param_matcher.is_match(input_lower)
     }
 
     fn is_external_redirect(&self, input_lower: &str) -> bool {
