@@ -55,6 +55,14 @@ pub struct ThreatIntelligenceConfig {
     pub re_announce_interval_secs: u64,
     #[serde(default)]
     pub trusted_signers: Vec<String>,
+    #[serde(default)]
+    pub behavioral_enabled: bool,
+    #[serde(default = "default_min_fingerprint_samples")]
+    pub min_samples_for_fingerprint: u64,
+    #[serde(default = "default_fingerprint_ttl_secs")]
+    pub fingerprint_ttl_secs: u64,
+    #[serde(default = "default_high_severity_threshold")]
+    pub high_severity_threshold: u32,
 }
 
 fn default_fanout_factor() -> f64 {
@@ -87,6 +95,18 @@ fn default_re_announce_interval() -> u64 {
     300
 }
 
+fn default_min_fingerprint_samples() -> u64 {
+    10
+}
+
+fn default_fingerprint_ttl_secs() -> u64 {
+    3600
+}
+
+fn default_high_severity_threshold() -> u32 {
+    70
+}
+
 impl ThreatIntelligenceConfig {
     pub fn to_internal(&self) -> ThreatIntelligenceConfigInternal {
         ThreatIntelligenceConfigInternal {
@@ -109,6 +129,10 @@ impl ThreatIntelligenceConfig {
             fanout_factor: self.fanout_factor,
             re_announce_interval_secs: self.re_announce_interval_secs,
             trusted_signers: self.trusted_signers.clone(),
+            behavioral_enabled: self.behavioral_enabled,
+            min_samples_for_fingerprint: self.min_samples_for_fingerprint,
+            fingerprint_ttl_secs: self.fingerprint_ttl_secs,
+            high_severity_threshold: self.high_severity_threshold,
         }
     }
 }
@@ -128,6 +152,10 @@ pub struct ThreatIntelligenceConfigInternal {
     pub fanout_factor: f64,
     pub re_announce_interval_secs: u64,
     pub trusted_signers: Vec<String>,
+    pub behavioral_enabled: bool,
+    pub min_samples_for_fingerprint: u64,
+    pub fingerprint_ttl_secs: u64,
+    pub high_severity_threshold: u32,
 }
 
 impl Default for ThreatIntelligenceConfig {
@@ -146,6 +174,10 @@ impl Default for ThreatIntelligenceConfig {
             fanout_factor: 0.5,
             re_announce_interval_secs: DEFAULT_RE_ANNOUNCE_INTERVAL_SECS,
             trusted_signers: Vec::new(),
+            behavioral_enabled: true,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
         }
     }
 }

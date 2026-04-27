@@ -97,6 +97,9 @@ pub enum DhtKey {
     ServerlessFunction {
         function_name: String,
     },
+    BehavioralFingerprint {
+        fingerprint_id: String,
+    },
 }
 
 impl DhtKey {
@@ -301,6 +304,12 @@ impl DhtKey {
         }
     }
 
+    pub fn behavior_fingerprint(fingerprint_id: &str) -> Self {
+        DhtKey::BehavioralFingerprint {
+            fingerprint_id: fingerprint_id.to_string(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -428,6 +437,9 @@ impl DhtKey {
             DhtKey::ServerlessFunction { function_name } => {
                 format!("serverless_function:{}", function_name)
             }
+            DhtKey::BehavioralFingerprint { fingerprint_id } => {
+                format!("behavior_fingerprint:{}", fingerprint_id)
+            }
         }
     }
 
@@ -549,6 +561,9 @@ impl DhtKey {
             "serverless_function" if parts.len() >= 2 => DhtKey::ServerlessFunction {
                 function_name: parts[1..].join(":"),
             },
+            "behavior_fingerprint" if parts.len() >= 2 => DhtKey::BehavioralFingerprint {
+                fingerprint_id: parts[1..].join(":"),
+            },
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
@@ -602,6 +617,7 @@ impl DhtKey {
                 | DhtKey::ServerlessFunction { .. }
                 | DhtKey::UpstreamProxyCachePreferences(_)
                 | DhtKey::OrgPublicKey(_)
+                | DhtKey::BehavioralFingerprint { .. }
         )
     }
 
@@ -668,6 +684,7 @@ impl DhtKey {
             DhtKey::GenesisKeyTransition { .. } => "genesis_key_transition",
             DhtKey::RevokedGlobalNode { .. } => "revoked_global_node",
             DhtKey::ServerlessFunction { .. } => "serverless_function",
+            DhtKey::BehavioralFingerprint { .. } => "behavioral_fingerprint",
         }
     }
 
@@ -716,6 +733,7 @@ impl DhtKey {
             DhtKey::GenesisKeyTransition { .. } => None,
             DhtKey::RevokedGlobalNode { .. } => None,
             DhtKey::ServerlessFunction { .. } => None,
+            DhtKey::BehavioralFingerprint { .. } => None,
         }
     }
 

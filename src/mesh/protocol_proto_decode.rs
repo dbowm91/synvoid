@@ -705,6 +705,39 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: r.signature,
                 })
             }
+            proto::mesh_message::Payload::BehavioralFingerprintAnnounce(r) => {
+                Ok(MeshMessage::BehavioralFingerprintAnnounce {
+                    request_id: r.request_id.into(),
+                    fingerprints: r.fingerprints.iter().map(|fp| fp.into()).collect(),
+                    timestamp: r.timestamp,
+                    source_node_id: r.source_node_id.into(),
+                    signature: r.signature.clone(),
+                    signer_public_key: r.signer_public_key.clone(),
+                })
+            }
+            proto::mesh_message::Payload::BehavioralFingerprintSyncRequest(r) => {
+                Ok(MeshMessage::BehavioralFingerprintSyncRequest {
+                    request_id: r.request_id.into(),
+                    node_id: r.node_id.into(),
+                    from_version: r.from_version,
+                    prefer_delta: r.prefer_delta,
+                })
+            }
+            proto::mesh_message::Payload::BehavioralFingerprintSyncResponse(r) => {
+                Ok(MeshMessage::BehavioralFingerprintSyncResponse {
+                    request_id: r.request_id.into(),
+                    fingerprints: r.fingerprints.into_iter().map(|fp| fp.into()).collect(),
+                    version: r.version,
+                    is_delta: r.is_delta,
+                    removed_fingerprint_ids: r
+                        .removed_fingerprint_ids
+                        .into_iter()
+                        .map(|s| s.into())
+                        .collect(),
+                    signature: r.signature.clone(),
+                    signer_public_key: r.signer_public_key.clone(),
+                })
+            }
             proto::mesh_message::Payload::YaraRuleAnnounce(r) => {
                 Ok(MeshMessage::YaraRuleAnnounce {
                     request_id: r.request_id.into(),

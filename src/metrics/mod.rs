@@ -59,6 +59,10 @@ static THREAT_INTEL_DHT_SYNC_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| Atom
 static THREAT_INTEL_DHT_SYNC_ADDED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static THREAT_INTEL_DHT_SYNC_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+static BEHAVIORAL_FINGERPRINT_DHT_PUBLISH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static BEHAVIORAL_FINGERPRINT_RECEIVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static BEHAVIORAL_FINGERPRINT_MATCH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
@@ -338,6 +342,30 @@ pub fn get_threat_intel_dht_sync_added() -> u64 {
 
 pub fn get_threat_intel_dht_sync_removed() -> u64 {
     THREAT_INTEL_DHT_SYNC_REMOVED.load(Ordering::Relaxed)
+}
+
+pub fn record_behavioral_fingerprint_dht_publish() {
+    BEHAVIORAL_FINGERPRINT_DHT_PUBLISH.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_behavioral_fingerprint_received() {
+    BEHAVIORAL_FINGERPRINT_RECEIVED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_behavioral_fingerprint_match() {
+    BEHAVIORAL_FINGERPRINT_MATCH.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_behavioral_fingerprint_dht_publish() -> u64 {
+    BEHAVIORAL_FINGERPRINT_DHT_PUBLISH.load(Ordering::Relaxed)
+}
+
+pub fn get_behavioral_fingerprint_received() -> u64 {
+    BEHAVIORAL_FINGERPRINT_RECEIVED.load(Ordering::Relaxed)
+}
+
+pub fn get_behavioral_fingerprint_match() -> u64 {
+    BEHAVIORAL_FINGERPRINT_MATCH.load(Ordering::Relaxed)
 }
 
 pub fn record_dht_quorum_success() {
