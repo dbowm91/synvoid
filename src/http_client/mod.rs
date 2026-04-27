@@ -160,7 +160,7 @@ impl UpstreamTlsConfig {
 }
 
 pub fn create_http_client() -> HttpClient {
-    create_http_client_with_config(Duration::from_secs(5), 100, Duration::from_secs(30))
+    create_http_client_with_config(Duration::from_secs(5), 1000, Duration::from_secs(30))
 }
 
 pub fn create_http_client_with_config(

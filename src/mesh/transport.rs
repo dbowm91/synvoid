@@ -239,7 +239,7 @@ impl Clone for MeshTransport {
             seen_messages: Arc::new(RwLock::new(
                 lru_time_cache::LruCache::with_expiry_duration_and_capacity(
                     Duration::from_secs(300),
-                    10000,
+                    500000,
                 ),
             )),
             stake_manager: self.stake_manager.clone(),
@@ -1052,6 +1052,9 @@ impl MeshTransport {
         transport_arc
             .org_key_manager
             .set_transport(transport_arc.clone());
+
+        let wasm_dist_manager = Arc::new(crate::mesh::wasm_dist::WasmDistManager::new());
+        crate::mesh::wasm_dist::set_global_wasm_dist_manager(wasm_dist_manager);
     }
 
     pub fn check_global_rate_limit(&self) -> bool {
