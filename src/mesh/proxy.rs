@@ -748,35 +748,78 @@ impl MeshProxy {
         &self,
         providers: Vec<crate::mesh::protocol::ProviderInfo>,
     ) -> Vec<crate::mesh::protocol::ProviderInfo> {
-        if providers.len() <= 1 {
+        let n = providers.len();
+        if n <= 1 {
             return providers;
         }
 
-        let total_score: f64 = providers.iter().map(|p| p.score.max(0.01)).sum();
-        let weighted: Vec<(usize, f64)> = providers
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (i, p.score.max(0.01)))
-            .collect();
+        let weights: Vec<f64> = providers.iter().map(|p| p.score.max(0.01)).collect();
+        let total: f64 = weights.iter().sum();
+        if total <= 0.0 {
+            return providers;
+        }
 
-        let mut result = Vec::with_capacity(providers.len());
-        let mut remaining: Vec<usize> = (0..providers.len()).collect();
+        let mut prob = Vec::with_capacity(n);
+        let mut alias = Vec::with_capacity(n);
+        let n_f64 = n as f64;
 
-        while !remaining.is_empty() {
-            let r: f64 = rand::rng().random_range(0.0..total_score);
-            let mut cumulative = 0.0;
-            let mut selected_idx = 0;
+        for &w in &weights {
+            let p = w * n_f64 / total;
+            prob.push(p);
+            alias.push(0);
+        }
 
-            for &idx in &remaining {
-                cumulative += weighted[idx].1;
-                if cumulative >= r {
-                    selected_idx = idx;
-                    break;
-                }
+        let mut small = Vec::new();
+        let mut large = Vec::new();
+        for (i, &p) in prob.iter().enumerate() {
+            if p < 1.0 {
+                small.push(i);
+            } else {
+                large.push(i);
             }
+        }
 
-            result.push(providers[selected_idx].clone());
-            remaining.retain(|&x| x != selected_idx);
+        while !small.is_empty() && !large.is_empty() {
+            let l = small.pop().unwrap();
+            let g = large.pop().unwrap();
+            alias[l] = g;
+            prob[g] = prob[g] + prob[l] - 1.0;
+            if prob[g] < 1.0 {
+                small.push(g);
+            } else {
+                large.push(g);
+            }
+        }
+
+        while let Some(i) = small.pop() {
+            prob[i] = 1.0;
+        }
+        while let Some(i) = large.pop() {
+            prob[i] = 1.0;
+        }
+
+        let mut result = Vec::with_capacity(n);
+        let mut used = vec![false; n];
+        let mut used_count = 0;
+
+        while used_count < n {
+            let u: f64 = rand::rng().random_range(0.0..n_f64);
+            let idx = u as usize;
+            let j = u - idx as f64;
+
+            let actual_idx = if idx >= n {
+                0
+            } else if j < prob[idx] {
+                idx
+            } else {
+                alias[idx]
+            };
+
+            if !used[actual_idx] {
+                result.push(providers[actual_idx].clone());
+                used[actual_idx] = true;
+                used_count += 1;
+            }
         }
 
         result

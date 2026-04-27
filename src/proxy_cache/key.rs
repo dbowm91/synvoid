@@ -29,12 +29,16 @@ impl CacheKey {
 
         let vary = Self::build_vary_key(headers, vary_by);
 
-        let key = key_pattern
-            .replace("$scheme", scheme)
-            .replace("$request_method", method.as_str())
-            .replace("$host", host)
-            .replace("$request_uri", &uri_str)
-            .replace("$site_id", site_id);
+        let key = Self::replace_pattern_single_pass(
+            key_pattern,
+            &[
+                ("$scheme", scheme),
+                ("$request_method", method.as_str()),
+                ("$host", host),
+                ("$request_uri", &uri_str),
+                ("$site_id", site_id),
+            ],
+        );
 
         let mut hasher = AHasher::default();
         std::hash::Hash::hash(&key, &mut hasher);
@@ -49,6 +53,37 @@ impl CacheKey {
             vary,
             site_id: site_id.to_string(),
         }
+    }
+
+    fn replace_pattern_single_pass<'a>(
+        pattern: &'a str,
+        replacements: &[(&str, &'a str)],
+    ) -> String {
+        let mut result = String::with_capacity(pattern.len());
+        let bytes = pattern.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            let remaining = &bytes[i..];
+            let mut matched_placeholder: Option<(&str, &str)> = None;
+
+            for &(placeholder, replacement) in replacements {
+                if remaining.starts_with(placeholder.as_bytes()) {
+                    matched_placeholder = Some((placeholder, replacement));
+                    break;
+                }
+            }
+
+            if let Some((placeholder, replacement)) = matched_placeholder {
+                result.push_str(replacement);
+                i += placeholder.len();
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+
+        result
     }
 
     fn build_vary_key(headers: &HeaderMap, vary_by: &[String]) -> String {
