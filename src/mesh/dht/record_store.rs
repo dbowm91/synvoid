@@ -148,6 +148,9 @@ pub struct RecordStoreConfig {
     pub convergence_threshold: usize,
     pub manual_quorum_override: usize,
     pub enable_degraded_quorum: bool,
+    pub neighborhood_persistence_enabled: bool,
+    pub neighborhood_cache_size: usize,
+    pub persist_max_age_secs: u64,
 }
 
 impl Default for RecordStoreConfig {
@@ -171,6 +174,9 @@ impl Default for RecordStoreConfig {
             convergence_threshold: DEFAULT_CONVERGENCE_THRESHOLD,
             manual_quorum_override: 0,
             enable_degraded_quorum: true,
+            neighborhood_persistence_enabled: false,
+            neighborhood_cache_size: 1000,
+            persist_max_age_secs: 604800,
         }
     }
 }
@@ -550,5 +556,7 @@ mod record_store_crud;
 mod record_store_dns;
 #[path = "record_store_message.rs"]
 mod record_store_message;
+#[path = "record_store_persist.rs"]
+mod record_store_persist;
 #[path = "record_store_sync.rs"]
 mod record_store_sync;

@@ -1373,6 +1373,12 @@ pub struct MeshPersistenceConfig {
     pub persist_interval_secs: u64,
     #[serde(default = "default_policy_cache_size")]
     pub policy_cache_size: usize,
+    #[serde(default)]
+    pub neighborhood_persistence_enabled: bool,
+    #[serde(default = "default_neighborhood_cache_size")]
+    pub neighborhood_cache_size: usize,
+    #[serde(default = "default_persist_max_age_secs")]
+    pub persist_max_age_secs: u64,
 }
 
 fn default_policy_cache_size() -> usize {
@@ -1383,6 +1389,14 @@ fn default_persist_interval_secs() -> u64 {
     300
 }
 
+fn default_neighborhood_cache_size() -> usize {
+    1000
+}
+
+fn default_persist_max_age_secs() -> u64 {
+    604800
+}
+
 impl Default for MeshPersistenceConfig {
     fn default() -> Self {
         Self {
@@ -1390,6 +1404,9 @@ impl Default for MeshPersistenceConfig {
             peer_cache_path: None,
             persist_interval_secs: 300,
             policy_cache_size: 100000,
+            neighborhood_persistence_enabled: false,
+            neighborhood_cache_size: 1000,
+            persist_max_age_secs: 604800,
         }
     }
 }

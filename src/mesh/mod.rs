@@ -7,6 +7,8 @@
 pub mod audit;
 pub mod audit_session;
 pub mod backend;
+pub mod behavioral;
+pub mod behavioral_intel;
 pub mod cert;
 pub mod cert_dist;
 pub mod cli;
@@ -65,6 +67,8 @@ pub use audit_session::{AuditSession, AuditSessionManager, SessionValidationResu
 pub use backend::{
     create_mesh_backend_from_config, initialize_mesh_transports, MeshBackend, MeshBackendPool,
 };
+pub use behavioral::{BehavioralFingerprint, BehavioralFeatures};
+pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};
 pub use client_audit::{

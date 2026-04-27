@@ -662,6 +662,10 @@ pub async fn run_unified_server_worker(
                 fanout_factor: mesh_threat_intel.fanout_factor,
                 re_announce_interval_secs: mesh_threat_intel.re_announce_interval_secs,
                 trusted_signers: mesh_threat_intel.trusted_signers.clone(),
+                behavioral_enabled: mesh_threat_intel.behavioral_enabled,
+                min_samples_for_fingerprint: mesh_threat_intel.min_samples_for_fingerprint,
+                fingerprint_ttl_secs: mesh_threat_intel.fingerprint_ttl_secs,
+                high_severity_threshold: mesh_threat_intel.high_severity_threshold,
             };
 
             // Create signer for threat intel

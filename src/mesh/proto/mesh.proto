@@ -278,6 +278,9 @@ message MeshMessage {
         OrgKeySignResponse org_key_sign_response = 161;
         ServerlessInvokeRequest serverless_invoke_request = 150;
         ServerlessInvokeResponse serverless_invoke_response = 151;
+        BehavioralFingerprintAnnounce behavioral_fingerprint_announce = 162;
+        BehavioralFingerprintSyncRequest behavioral_fingerprint_sync_request = 163;
+        BehavioralFingerprintSyncResponse behavioral_fingerprint_sync_response = 164;
     }
 }
 
@@ -740,6 +743,55 @@ message YaraRuleSubmissionResponse {
     string node_id = 3;
     string status = 4;
     uint64 timestamp = 5;
+}
+
+message BehavioralFingerprintAnnounce {
+    string request_id = 1;
+    repeated BehavioralFingerprint fingerprints = 2;
+    uint64 timestamp = 3;
+    string source_node_id = 4;
+    bytes signature = 5;
+    string signer_public_key = 6;
+}
+
+message BehavioralFingerprintSyncRequest {
+    string request_id = 1;
+    string node_id = 2;
+    uint64 from_version = 3;
+    bool prefer_delta = 4;
+}
+
+message BehavioralFingerprintSyncResponse {
+    string request_id = 1;
+    repeated BehavioralFingerprint fingerprints = 2;
+    uint64 version = 3;
+    bool is_delta = 4;
+    repeated string removed_fingerprint_ids = 5;
+    bytes signature = 6;
+    string signer_public_key = 7;
+}
+
+message BehavioralFingerprint {
+    string fingerprint_id = 1;
+    BehavioralFeatures features = 2;
+    uint32 severity_score = 3;
+    float confidence = 4;
+    uint64 sample_count = 5;
+    uint64 first_seen = 6;
+    uint64 last_seen = 7;
+    uint64 ttl_seconds = 8;
+    string mesh_node_id = 9;
+    bytes signature = 10;
+}
+
+message BehavioralFeatures {
+    uint32 header_timing_variance_ms = 1;
+    float request_sequence_entropy = 2;
+    repeated uint32 byte_length_distribution = 3;
+    uint32 inter_request_timing_ms = 4;
+    uint32 suspicious_header_count = 5;
+    float url_entropy = 6;
+    float body_to_header_ratio = 7;
 }
 
 message DhtRecord {

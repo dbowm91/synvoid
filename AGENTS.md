@@ -442,6 +442,44 @@ stale_cache_ttl_secs = 60
 
 ## Recently Completed Items
 
+### Wave 1.1: Streaming WAF Engine (2026-04-27)
+- Added `StreamingWafCore` for incremental body scanning
+- New method `check_body_only_via_normalized()` for streaming-friendly detection
+- Fail-closed behavior on buffer overflow (HTTP 413)
+- Uses `Bytes` (zero-copy) for chunk buffering
+- Exported `StreamingWafCore` and `StreamingWafDecision` types
+
+### Wave 1.2: DHT Neighborhood Persistence (2026-04-27)
+- Added neighborhood persistence configuration to `MeshPersistenceConfig`
+- Implement `persist_neighborhood()` and `load_neighborhood()` methods
+- Use SHA256-based key distance for determining "closest" records
+- Atomic file writes with temp file + rename pattern
+- New module `src/mesh/dht/record_store_persist.rs`
+
+### Wave 2.1: Hybrid Post-Quantum Mesh Signatures (2026-04-27)
+- Added `HybridSignature` struct with Ed25519 + ML-DSA-65 signatures
+- New module `src/mesh/hybrid_signature.rs` and `src/mesh/ml_dsa.rs`
+- Extend `MeshMessageSigner` with `sign_hybrid()` and `verify_hybrid()`
+- Add `pqc-mesh` feature flag
+- Maintain backward compatibility with Ed25519-only signatures
+
+### Wave 2.2: Windows Service & DX Improvements (2026-04-27)
+- Added `WindowsInterfaceResolver` for interface index resolution
+- Added firewall management functions for HTTP/HTTPS and QUIC ports
+- Use netsh advfirewall for Windows Firewall integration
+- Service installer properly sets description via sc
+
+### Wave 3.1: Federated Behavioral Intelligence (2026-04-27)
+- Added `BehavioralFingerprint` and `BehavioralFeatures` types
+- Added `BehavioralIntelligenceManager` for fingerprint analysis
+- LSH-based approximate matching for pattern detection
+- Privacy-first design: no client IPs stored, only timing/structural features
+
+### Wave 3.2: Real-time Topology Visualizer (2026-04-27)
+- Added `/api/mesh/topology` endpoint for mesh topology data
+- Added `/api/mesh/topology/graph` endpoint for D3.js-compatible graph data
+- New handler module `src/admin/handlers/mesh_topology.rs`
+
 ### HTTP/3 and QUIC Support (2026-04-26)
 - Implemented full upstream proxying in `src/http3/server.rs`.
 - Removed unused `Http3Handler` stub.

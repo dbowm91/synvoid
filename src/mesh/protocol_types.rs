@@ -1,4 +1,5 @@
 use super::*;
+use crate::mesh::behavioral::{BehavioralFingerprint, BehavioralFeatures};
 
 pub enum ReplayResult {
     Valid,
@@ -600,6 +601,99 @@ impl From<DhtRecord> for proto::DhtRecord {
             signature: r.signature,
             signer_public_key: r.signer_public_key.unwrap_or_default(),
             content_hash: r.content_hash,
+        }
+    }
+}
+
+impl From<&BehavioralFeatures> for proto::BehavioralFeatures {
+    fn from(f: &BehavioralFeatures) -> Self {
+        proto::BehavioralFeatures {
+            header_timing_variance_ms: f.header_timing_variance_ms,
+            request_sequence_entropy: f.request_sequence_entropy,
+            byte_length_distribution: f.byte_length_distribution.clone(),
+            inter_request_timing_ms: f.inter_request_timing_ms,
+            suspicious_header_count: f.suspicious_header_count as u32,
+            url_entropy: f.url_entropy,
+            body_to_header_ratio: f.body_to_header_ratio,
+        }
+    }
+}
+
+impl From<proto::BehavioralFeatures> for BehavioralFeatures {
+    fn from(pb: proto::BehavioralFeatures) -> Self {
+        BehavioralFeatures {
+            header_timing_variance_ms: pb.header_timing_variance_ms,
+            request_sequence_entropy: pb.request_sequence_entropy,
+            byte_length_distribution: pb.byte_length_distribution,
+            inter_request_timing_ms: pb.inter_request_timing_ms,
+            suspicious_header_count: pb.suspicious_header_count as u8,
+            url_entropy: pb.url_entropy,
+            body_to_header_ratio: pb.body_to_header_ratio,
+        }
+    }
+}
+
+impl From<&proto::BehavioralFeatures> for BehavioralFeatures {
+    fn from(pb: &proto::BehavioralFeatures) -> Self {
+        BehavioralFeatures {
+            header_timing_variance_ms: pb.header_timing_variance_ms,
+            request_sequence_entropy: pb.request_sequence_entropy,
+            byte_length_distribution: pb.byte_length_distribution.clone(),
+            inter_request_timing_ms: pb.inter_request_timing_ms,
+            suspicious_header_count: pb.suspicious_header_count as u8,
+            url_entropy: pb.url_entropy,
+            body_to_header_ratio: pb.body_to_header_ratio,
+        }
+    }
+}
+
+impl From<&BehavioralFingerprint> for proto::BehavioralFingerprint {
+    fn from(fp: &BehavioralFingerprint) -> Self {
+        proto::BehavioralFingerprint {
+            fingerprint_id: fp.fingerprint_id.clone(),
+            features: Some((&fp.features).into()),
+            severity_score: fp.severity_score,
+            confidence: fp.confidence,
+            sample_count: fp.sample_count,
+            first_seen: fp.first_seen,
+            last_seen: fp.last_seen,
+            ttl_seconds: fp.ttl_seconds,
+            mesh_node_id: fp.mesh_node_id.clone(),
+            signature: fp.signature.clone(),
+        }
+    }
+}
+
+impl From<proto::BehavioralFingerprint> for BehavioralFingerprint {
+    fn from(pb: proto::BehavioralFingerprint) -> Self {
+        BehavioralFingerprint {
+            fingerprint_id: pb.fingerprint_id,
+            features: pb.features.map(|f| f.into()).unwrap_or_default(),
+            severity_score: pb.severity_score,
+            confidence: pb.confidence,
+            sample_count: pb.sample_count,
+            first_seen: pb.first_seen,
+            last_seen: pb.last_seen,
+            ttl_seconds: pb.ttl_seconds,
+            mesh_node_id: pb.mesh_node_id,
+            signature: pb.signature,
+        }
+    }
+}
+
+impl From<&proto::BehavioralFingerprint> for BehavioralFingerprint {
+    fn from(pb: &proto::BehavioralFingerprint) -> Self {
+        BehavioralFingerprint {
+            fingerprint_id: pb.fingerprint_id.clone(),
+            features: pb.features.as_ref().map(|f| f.into()).unwrap_or_default(),
+            severity_score: pb.severity_score,
+            confidence: pb.confidence,
+            sample_count: pb.sample_count,
+            first_seen: pb.first_seen,
+            last_seen: pb.last_seen,
+            ttl_seconds: pb.ttl_seconds,
+            mesh_node_id: pb.mesh_node_id.clone(),
+            signature: pb.signature.clone(),
         }
     }
 }

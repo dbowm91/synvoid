@@ -93,7 +93,10 @@ impl MeshMessage {
             | Self::ThreatSyncRequest { .. }
             | Self::ThreatSyncResponse { .. }
             | Self::ThreatAcknowledgement { .. }
-            | Self::ReputationUpdate { .. } => MessageCategory::ThreatIntel,
+            | Self::ReputationUpdate { .. }
+            | Self::BehavioralFingerprintAnnounce { .. }
+            | Self::BehavioralFingerprintSyncRequest { .. }
+            | Self::BehavioralFingerprintSyncResponse { .. } => MessageCategory::ThreatIntel,
             Self::YaraRuleAnnounce { .. }
             | Self::YaraRuleSyncRequest { .. }
             | Self::YaraRuleSyncResponse { .. }

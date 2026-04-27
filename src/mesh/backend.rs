@@ -46,6 +46,9 @@ pub fn create_record_store(
         convergence_threshold: dht_config.convergence_threshold,
         manual_quorum_override: 0,
         enable_degraded_quorum: true,
+        neighborhood_persistence_enabled: false,
+        neighborhood_cache_size: 1000,
+        persist_max_age_secs: 604800,
     };
 
     let access_control = DhtAccessControl::new(config);

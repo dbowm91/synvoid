@@ -19,6 +19,7 @@ pub mod xpath_injection;
 pub mod xss;
 pub mod xxe;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use cmd_injection::CmdInjectionDetector;
@@ -62,6 +63,7 @@ pub struct AttackDetector {
     ldap_injection_detector: Arc<LdapInjectionDetector>,
     xpath_injection_detector: Arc<XPathInjectionDetector>,
     open_redirect_detector: Arc<OpenRedirectDetector>,
+    behavioral_intel: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
 }
 
 impl AttackDetector {
@@ -155,7 +157,17 @@ impl AttackDetector {
             ldap_injection_detector,
             xpath_injection_detector,
             open_redirect_detector,
+            behavioral_intel: None,
         }
+    }
+
+    pub fn new_with_behavioral_intel(
+        config: AttackDetectionConfig,
+        behavioral_intel: Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>,
+    ) -> Self {
+        let mut detector = Self::new(config);
+        detector.behavioral_intel = Some(behavioral_intel);
+        detector
     }
 
     #[inline]
@@ -169,6 +181,43 @@ impl AttackDetector {
     ) -> Option<AttackDetectionResult> {
         if !self.config.enabled {
             return None;
+        }
+
+        if let Some(ref behavioral_intel) = self.behavioral_intel {
+            if let Some(features) = self.extract_behavioral_features(
+                _method,
+                path,
+                query_string,
+                headers,
+                body,
+            ) {
+                if let Some(fingerprint) = behavioral_intel.analyze_request(&features) {
+                    if fingerprint.severity_score >= 70 {
+                        return Some(AttackDetectionResult {
+                            attack_type: AttackType::Other,
+                            input_location: InputLocation::Path,
+                            fingerprint: Some(format!(
+                                "behavioral_fingerprint:{}",
+                                fingerprint.fingerprint_id
+                            )),
+                            matched_pattern: Some(format!(
+                                "Behavioral fingerprint match (severity: {}, confidence: {})",
+                                fingerprint.severity_score, fingerprint.confidence
+                            )),
+                        });
+                    }
+                }
+
+                let adjusted_paranoia =
+                    behavioral_intel.adjust_paranoia_level(&features, self.config.paranoia_level);
+                if adjusted_paranoia > self.config.paranoia_level {
+                    tracing::debug!(
+                        "Behavioral intelligence elevated paranoia from {} to {}",
+                        self.config.paranoia_level,
+                        adjusted_paranoia
+                    );
+                }
+            }
         }
 
         if let Some(max_size) = self.config.max_request_body_size {
@@ -297,6 +346,86 @@ impl AttackDetector {
         }
 
         None
+    }
+
+    fn extract_behavioral_features(
+        &self,
+        _method: &http::Method,
+        path: &str,
+        query_string: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
+    ) -> Option<crate::mesh::behavioral_intel::RequestFeatures> {
+        let _behavioral_intel = self.behavioral_intel.as_ref()?;
+
+        let url = if let Some(qs) = query_string {
+            format!("{}?{}", path, qs)
+        } else {
+            path.to_string()
+        };
+
+        let url_entropy = Self::calculate_string_entropy(&url);
+
+        let mut suspicious_header_count: u8 = 0;
+
+        for (name, _) in headers {
+            let name_lower = name.as_str().to_lowercase();
+            if name_lower.contains("x-forwarded")
+                || name_lower.contains("x-real-ip")
+                || name_lower.contains("x-proxyuser-ip")
+                || name_lower.contains("via")
+            {
+                suspicious_header_count += 1;
+            }
+        }
+
+        let body_len = body.map(|b| b.len()).unwrap_or(0);
+        let header_len: usize = headers
+            .iter()
+            .map(|(k, v)| k.as_str().len() + v.len())
+            .sum();
+        let body_to_header_ratio = if header_len > 0 {
+            body_len as f32 / header_len as f32
+        } else {
+            0.0
+        };
+
+        Some(crate::mesh::behavioral_intel::RequestFeatures {
+            header_timing_variance_ms: 0,
+            request_sequence_entropy: 0.5,
+            byte_length_distribution: vec![
+                body_len as u32 / 1000,
+                (body_len % 1000) as u32 / 100,
+                (body_len % 100) as u32 / 10,
+                body_len as u32 % 10,
+            ],
+            inter_request_timing_ms: 0,
+            suspicious_header_count,
+            url_entropy,
+            body_to_header_ratio,
+        })
+    }
+
+    fn calculate_string_entropy(s: &str) -> f32 {
+        if s.is_empty() {
+            return 0.0;
+        }
+
+        let mut char_counts: HashMap<char, usize> = HashMap::new();
+        for c in s.chars() {
+            *char_counts.entry(c).or_insert(0) += 1;
+        }
+
+        let len = s.len() as f32;
+        let entropy: f32 = char_counts
+            .values()
+            .map(|&count| {
+                let p = count as f32 / len;
+                -p * p.log2()
+            })
+            .sum();
+
+        entropy
     }
 
     fn check_sqli(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
