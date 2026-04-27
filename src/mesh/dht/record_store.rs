@@ -468,11 +468,15 @@ impl RecordStoreManager {
 impl Clone for RecordStoreManager {
     fn clone(&self) -> Self {
         let rs = self.record_state.read();
+        let records = ShardedRecordStore::new();
+        for (key, value) in rs.records.iter() {
+            records.insert(key.clone(), value.clone());
+        }
         let record_state = RecordStoreState {
             mesh_signer: rs.mesh_signer.clone(),
             record_signer: rs.record_signer.clone(),
             local_version: rs.local_version,
-            records: ShardedRecordStore::new(),
+            records,
             pending_announces: rs.pending_announces.clone(),
             last_snapshot_version: rs.last_snapshot_version,
             merkle_tree: rs.merkle_tree.clone(),
