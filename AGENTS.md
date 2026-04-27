@@ -361,10 +361,21 @@ These placeholders indicate the value was not configured and may indicate a secu
 **Trusted Signer Verification for ThreatAnnounce**
 ```rust
 // In threat_intel.rs: After signature verification, check trusted_signers
+// BUG (P0.3): Condition allows any non-global node when trusted_signers is empty
 if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
     if !self.check_trusted_signer(source_node_id, signer_public_key) {
         return Some(MeshMessage::ThreatAcknowledgement { accepted: false, ... });
     }
+}
+```
+
+**YARA trusted_signer bypass (similar bug - P0.12)**
+```rust
+// BUG: Missing !self.node_role.is_global() check - global nodes only bypass when list is empty
+if !self.config.trusted_signers.is_empty()
+    && !self.config.trusted_signers.contains(&manifest_signer_pk.to_string())
+{
+    // reject
 }
 ```
 
@@ -511,6 +522,20 @@ stale_cache_ttl_secs = 60
 ## Implementation Planning
 
 The consolidated implementation plan is located at `plans/plan.md`. This plan contains only deferred/blocked items that require future attention.
+
+The plan organizes work into phases that can be executed in parallel by different agents:
+- **Phase 1**: Critical Security (sequential start, then parallelize)
+- **Phase 2**: High Priority Functional (all parallel)
+- **Phase 3**: Performance & Code Quality (parallel)
+- **Phase 4**: Admin API & Documentation (parallel)
+- **Phase 5**: New Features (sequential after mesh work)
+
+### Key Security Bugs to Fix (from plan.md P0 items)
+
+1. **P0.3 Threat intel signer bypass**: When `trusted_signers` is empty, any non-global node can send threats
+2. **P0.5 Time-based challenge bypass**: `_solution` parameter ignored in verification
+3. **P0.9 Threat duplicate detection**: Incoming threats stored at raw IP key, local at complex key
+4. **P0.12 YARA trusted_signer bypass**: Missing `!is_global()` check like threat intel has
 
 ### Verification Commands
 
