@@ -32,6 +32,7 @@ verify-pq = []
 tun-rs = []
 mesh = []
 rkyv = []
+pqc-mesh = []  # Post-quantum mesh signatures (ML-DSA-44 for mesh messages)
 
 [patch.crates-io]
 # Patch wasmtime from yara-x transitive dependency (RUSTSEC-2026-0096, RUSTSEC-2026-0086, etc.)

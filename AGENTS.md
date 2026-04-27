@@ -457,11 +457,12 @@ stale_cache_ttl_secs = 60
 - New module `src/mesh/dht/record_store_persist.rs`
 
 ### Wave 2.1: Hybrid Post-Quantum Mesh Signatures (2026-04-27)
-- Added `HybridSignature` struct with Ed25519 + ML-DSA-65 signatures
-- New module `src/mesh/hybrid_signature.rs` and `src/mesh/ml_dsa.rs`
-- Extend `MeshMessageSigner` with `sign_hybrid()` and `verify_hybrid()`
-- Add `pqc-mesh` feature flag
+- Added `HybridSignature` struct with Ed25519 + ML-DSA-44 signatures
+- New modules `src/mesh/hybrid_signature.rs` and `src/mesh/ml_dsa.rs`
+- Extended `MeshMessageSigner` with `sign_hybrid()` and `verify_hybrid()`
+- Added `pqc-mesh` feature flag
 - Maintain backward compatibility with Ed25519-only signatures
+- Key sizes: Ed25519 (64 bytes), ML-DSA-44 (2420 bytes)
 
 ### Wave 2.2: Windows Service & DX Improvements (2026-04-27)
 - Added `WindowsInterfaceResolver` for interface index resolution

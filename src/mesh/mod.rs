@@ -16,7 +16,9 @@ pub mod client_audit;
 pub mod config;
 pub mod dht;
 pub mod hierarchical_routing;
+pub mod hybrid_signature;
 pub mod kem;
+pub mod ml_dsa;
 pub mod ml_kem_key_exchange;
 pub mod network_security;
 pub mod org_key_manager;
@@ -69,6 +71,8 @@ pub use backend::{
 };
 pub use behavioral::{BehavioralFingerprint, BehavioralFeatures};
 pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
+pub use hybrid_signature::{HybridSignature, HybridSigner, HybridSignatureError, ML_DSA_SIGNATURE_SIZE, ED25519_SIGNATURE_SIZE};
+pub use ml_dsa::{MeshMlDsaSigner, MeshMlDsaVerifier, MeshHybridSigner, MlDsaSigningKeyType, MlDsaVerifyingKeyType};
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};
 pub use client_audit::{

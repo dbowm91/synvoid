@@ -1,8 +1,43 @@
 # MaluWAF Implementation Plan
 
-**Status**: Active - Maintenance Mode
-**Last Updated**: 2026-04-26
-**Verification Completed**: 2026-04-26
+**Status**: Active - Implementation Phase
+**Last Updated**: 2026-04-27
+**Verification Completed**: 2026-04-27
+
+## Current Wave Status
+
+### Wave 1.1: Streaming WAF Engine (2026-04-27)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-27 - Tests pass, cargo check succeeds
+- Added `StreamingWafCore` for incremental body scanning
+
+### Wave 1.2: DHT Neighborhood Persistence (2026-04-27)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-27 - cargo check succeeds
+- Added neighborhood persistence configuration and persistence module
+
+### Wave 2.1: Hybrid Post-Quantum Mesh Signatures (2026-04-27)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-27 - Tests pass (9 tests), cargo check succeeds
+- Added `HybridSignature` struct and `MeshMlDsaSigner` wrapper
+- Extended `MeshMessageSigner` with `sign_hybrid()` and `verify_hybrid()`
+- Added `pqc-mesh` feature flag
+- Backward compatible with Ed25519-only signatures
+
+### Wave 2.2: Windows Service & DX (2026-04-27)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-27 - cargo check succeeds
+- Added Windows service management and interface resolver
+
+### Wave 3.1: Federated Behavioral Intelligence (2026-04-27)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-27 - cargo check succeeds
+- Added behavioral fingerprint and intelligence manager
+
+### Wave 3.2: Real-time Topology Visualizer (2026-04-27)
+- **Status**: COMPLETED
+- **Verification**: 2026-04-27 - cargo check succeeds
+- Added `/api/mesh/topology` and `/api/mesh/topology/graph` endpoints
 
 ## Completed Items
 
