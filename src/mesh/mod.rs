@@ -80,8 +80,7 @@ pub use client_audit::{
     ClientAuditReport, NodeProbeResult,
 };
 pub use config::{
-    MeshConfig, MeshMlKemConfig, MeshNodeRole, MeshTransportPreference, MeshWireGuardConfig,
-    MeshWireGuardPeer, NodeIdentityConfig,
+    MeshConfig, MeshMlKemConfig, MeshNodeRole, MeshTransportPreference, NodeIdentityConfig,
 };
 pub use dht::{
     CapabilityAttestation, DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry,

@@ -166,10 +166,6 @@ impl MeshConfig {
         self.quic_port.unwrap_or(self.port)
     }
 
-    pub fn get_wireguard_port(&self) -> u16 {
-        self.wireguard_port.unwrap_or(self.wireguard.listen_port)
-    }
-
     pub fn get_advertised_quic_port(&self) -> u16 {
         if self.auto_port {
             self.quic_port.unwrap_or(self.port)
@@ -178,20 +174,8 @@ impl MeshConfig {
         }
     }
 
-    pub fn get_advertised_wireguard_port(&self) -> Option<u16> {
-        if self.auto_port {
-            self.wireguard_port.or(Some(self.wireguard.listen_port))
-        } else {
-            Some(self.wireguard.listen_port)
-        }
-    }
-
     pub fn set_quic_port(&mut self, port: u16) {
         self.quic_port = Some(port);
-    }
-
-    pub fn set_wireguard_port(&mut self, port: u16) {
-        self.wireguard_port = Some(port);
     }
 
     pub fn generate_random_port(&self) -> u16 {

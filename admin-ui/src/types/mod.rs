@@ -715,8 +715,6 @@ pub struct MeshConfig {
     pub global_nodes: Option<Vec<String>>,
     #[serde(rename = "dht_enabled")]
     pub dht_enabled: Option<bool>,
-    #[serde(rename = "wireguard_enabled")]
-    pub wireguard_enabled: Option<bool>,
     #[serde(rename = "anycast_enabled")]
     pub anycast_enabled: Option<bool>,
     #[serde(rename = "dns_registration_enabled")]

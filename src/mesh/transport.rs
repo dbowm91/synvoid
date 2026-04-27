@@ -1133,14 +1133,6 @@ impl MeshTransport {
         }
     }
 
-    pub fn wireguard_port(&self) -> Option<u16> {
-        if self.config.wireguard.enabled {
-            Some(self.config.wireguard.listen_port)
-        } else {
-            None
-        }
-    }
-
     pub async fn get_actual_quic_port(&self) -> Option<u16> {
         if let Some(ref runtime) = self.runtime {
             if let Some(addr) = runtime.local_addr().await {
@@ -1856,7 +1848,7 @@ impl MeshTransport {
 
         let session_id = uuid::Uuid::new_v4().to_string();
         let quic_port = self.get_quic_port().map(|p| p as u32);
-        let wireguard_port = self.wireguard_port().map(|p| p as u32);
+        let wireguard_port = None;
         let upstreams = self.topology.get_local_upstreams().await;
         let upstreams_internal: HashMap<String, crate::mesh::protocol::UpstreamInfo> = upstreams
             .into_iter()
@@ -2088,7 +2080,7 @@ impl MeshTransport {
         let auth_token = peer_config.auth_token.clone();
 
         let quic_port = self.get_actual_quic_port().await.map(|p| p as u32);
-        let wireguard_port = self.wireguard_port().map(|p| p as u32);
+        let wireguard_port = None;
 
         let is_edge = self.config.role.is_edge();
 
