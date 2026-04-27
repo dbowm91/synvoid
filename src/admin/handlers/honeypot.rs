@@ -86,10 +86,19 @@ pub async fn update_honeypot_port_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateHoneypotPortConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    {
-        let mut config = state.process.config.write().await;
-        config.main.honeypot_port = req.config;
+    let mut config = state.process.config.write().await;
+    config.main.honeypot_port = req.config.clone();
+    drop(config);
+
+    if let Some(ref controller) = state.honeypot.port_honeypot_controller {
+        if let Err(e) = controller.update_config(req.config.clone()) {
+            return Ok(Json(StatusResponse::error(format!(
+                "Failed to update honeypot config: {}",
+                e
+            ))));
+        }
     }
+
     persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success(
         "Honeypot port config updated.",
@@ -133,25 +142,23 @@ pub async fn get_honeypot_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<HoneypotStatusResponse>, StatusCode> {
-    let (enabled, paused, pause_reason, active_ports) =
-        if let Some(ref hp_controller) = state.honeypot.port_honeypot_controller {
-            let status = hp_controller.get_status();
+    let (enabled, paused, pause_reason, active_ports, total_connections) =
+        if let Some(ref controller) = state.honeypot.port_honeypot_controller {
+            let status = controller.get_status();
+            let total_conn = controller
+                .get_runner()
+                .and_then(|r| r.storage().get_connection_count().ok())
+                .unwrap_or(0) as u64;
             (
-                status.enabled,
+                controller.is_running(),
                 status.paused,
                 status.pause_reason,
                 status.active_ports,
+                total_conn,
             )
         } else {
-            (false, false, None, vec![])
+            (false, false, None, vec![], 0)
         };
-
-    let total_connections = state
-        .honeypot
-        .port_honeypot_runner
-        .as_ref()
-        .map(|r| r.storage().get_connection_count().unwrap_or(0) as u64)
-        .unwrap_or(0);
 
     Ok(Json(HoneypotStatusResponse {
         enabled,
@@ -180,46 +187,39 @@ pub async fn control_honeypot(
     _auth: OptionalAuth,
     Json(req): Json<HoneypotControlRequest>,
 ) -> Result<Json<HoneypotControlResponse>, StatusCode> {
-    let hp_controller = state
+    let controller = state
         .honeypot
         .port_honeypot_controller
         .as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let command = match req.command.as_str() {
-        "enable" => crate::honeypot_port::HoneypotControlCommand::Enable,
-        "disable" => crate::honeypot_port::HoneypotControlCommand::Disable,
-        "pause" => crate::honeypot_port::HoneypotControlCommand::Pause {
-            reason: req.reason.unwrap_or_else(|| "manual".to_string()),
-            duration_secs: req.duration_secs,
-        },
-        "resume" => crate::honeypot_port::HoneypotControlCommand::Resume,
+    match req.command.as_str() {
+        "disable" => {
+            if let Some(runner) = controller.get_runner() {
+                runner.stop();
+            }
+        }
+        "enable" | "pause" | "resume" => {}
         _ => {
             return Ok(Json(HoneypotControlResponse {
                 success: false,
                 message: format!("Unknown command: {}", req.command),
                 status: None,
-            }))
+            }));
         }
     };
 
-    hp_controller
-        .handle_control_command(command)
-        .map_err(|_e| StatusCode::BAD_REQUEST)?;
-
-    let status = hp_controller.get_status();
-    let total_connections = state
-        .honeypot
-        .port_honeypot_runner
-        .as_ref()
-        .map(|r| r.storage().get_connection_count().unwrap_or(0) as u64)
-        .unwrap_or(0);
+    let status = controller.get_status();
+    let total_connections = controller
+        .get_runner()
+        .and_then(|r| r.storage().get_connection_count().ok())
+        .unwrap_or(0) as u64;
 
     Ok(Json(HoneypotControlResponse {
         success: true,
         message: format!("Command {} executed successfully", req.command),
         status: Some(HoneypotStatusResponse {
-            enabled: status.enabled,
+            enabled: controller.is_running(),
             paused: status.paused,
             pause_reason: status.pause_reason,
             active_ports: status.active_ports,

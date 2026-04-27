@@ -1,4 +1,5 @@
 pub mod config;
+pub mod controller;
 pub mod listener;
 pub mod mesh_control;
 pub mod protocol;
@@ -10,6 +11,7 @@ pub mod storage;
 pub mod threat_intel;
 
 pub use config::{AiConfig, PortHoneypotConfig, ResponseModeConfig, StablePortConfig};
+pub use controller::PortHoneypotController;
 pub use listener::PortHoneypotListener;
 pub use mesh_control::{
     HoneypotControlCommand, HoneypotControlError, HoneypotMeshController, HoneypotStatus,

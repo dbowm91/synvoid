@@ -1,4 +1,6 @@
 pub mod alerting;
+pub mod api_discovery;
+pub mod behavioral_intel;
 pub mod common;
 pub mod config;
 pub mod honeypot;
