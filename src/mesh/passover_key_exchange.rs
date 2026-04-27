@@ -502,7 +502,16 @@ impl GrpcKeyExchangeService for KeyExchangeService {
             mesh_id, client_x25519_pubkey, expires_at
         );
 
-        let pending_signature = if let Some(ref signer_config) = self.config.origin_signing_key {
+        let pending_signature = if self.config.role.is_global() {
+            let global_key = self
+                .config
+                .global_node
+                .ed25519_private_key
+                .ok_or_else(|| Status::unavailable("Global node Ed25519 key not available"))?;
+            let signing_key = SigningKey::from_bytes(&global_key);
+            let signature = signing_key.sign(sign_message.as_bytes());
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
+        } else if let Some(ref signer_config) = self.config.origin_signing_key {
             if let Some(ref private_key) = signer_config.private_key {
                 let signing_key = SigningKey::from_bytes(private_key);
                 let signature = signing_key.sign(sign_message.as_bytes());
@@ -511,7 +520,7 @@ impl GrpcKeyExchangeService for KeyExchangeService {
                 return Err(Status::unavailable("Origin signing key not available"));
             }
         } else {
-            return Err(Status::unavailable("Origin signing key not configured"));
+            return Err(Status::unavailable("Signing key not configured"));
         };
 
         let global_node_key = self.config.global_node_key.clone().unwrap_or_default();
