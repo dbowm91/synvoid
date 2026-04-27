@@ -144,7 +144,7 @@ The overseer/master/worker architecture uses:
 
 ### Key Mesh Components
 
-- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. Wired to HTTP request handling via `BackendType::Mesh`.
+- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. `BackendType::Mesh` variant exists in router but is NOT yet dispatched in the HTTP handler (see plan.md P1.1).
 - `MeshProxy` at `src/mesh/proxy.rs` — request routing, caching, provider selection
 - `MeshTransport` at `src/mesh/transport.rs` — peer communication, transport initialization
 - `DHT` at `src/mesh/dht/` — distributed hash table for state sync
@@ -217,7 +217,7 @@ Key features that affect testing:
 - `post-quantum` - Post-quantum cryptography
 - Serverless functions use WASM (wasmtime), not Deno
 
-**Note**: WireGuard transport is deprecated and non-functional — the system falls back to QUIC transport with a warning. Code still exists at `src/mesh/wireguard_mesh.rs`.
+**Note**: WireGuard **mesh transport** is deprecated and non-functional (slated for removal — see plan.md Wave 7A). WireGuard **VPN tunnel** (`src/tunnel/wireguard/`, `src/vpn_client/`) is separate and working.
 
 ## Common Patterns
 
@@ -451,93 +451,31 @@ stale_cache_ttl_secs = 60
 - `mesh_backend_pool: Option<Arc<MeshBackendPool>>` field in UnifiedServer
 - Use `site_config.mesh_routing` to enable mesh routing for a site
 
-## Recently Completed Items
-
-### Wave 1.1: Streaming WAF Engine (2026-04-27)
-- Added `StreamingWafCore` for incremental body scanning
-- New method `check_body_only_via_normalized()` for streaming-friendly detection
-- Fail-closed behavior on buffer overflow (HTTP 413)
-- Uses `Bytes` (zero-copy) for chunk buffering
-- Exported `StreamingWafCore` and `StreamingWafDecision` types
-
-### Wave 1.2: DHT Neighborhood Persistence (2026-04-27)
-- Added neighborhood persistence configuration to `MeshPersistenceConfig`
-- Implement `persist_neighborhood()` and `load_neighborhood()` methods
-- Use SHA256-based key distance for determining "closest" records
-- Atomic file writes with temp file + rename pattern
-- New module `src/mesh/dht/record_store_persist.rs`
-
-### Wave 2.1: Hybrid Post-Quantum Mesh Signatures (2026-04-27)
-- Added `HybridSignature` struct with Ed25519 + ML-DSA-44 signatures
-- New modules `src/mesh/hybrid_signature.rs` and `src/mesh/ml_dsa.rs`
-- Extended `MeshMessageSigner` with `sign_hybrid()` and `verify_hybrid()`
-- Added `pqc-mesh` feature flag
-- Maintain backward compatibility with Ed25519-only signatures
-- Key sizes: Ed25519 (64 bytes), ML-DSA-44 (2420 bytes)
-
-### Wave 2.2: Windows Service & DX Improvements (2026-04-27)
-- Added `WindowsInterfaceResolver` for interface index resolution
-- Added firewall management functions for HTTP/HTTPS and QUIC ports
-- Use netsh advfirewall for Windows Firewall integration
-- Service installer properly sets description via sc
-
-### Wave 3.1: Federated Behavioral Intelligence (2026-04-27)
-- Added `BehavioralFingerprint` and `BehavioralFeatures` types
-- Added `BehavioralIntelligenceManager` for fingerprint analysis
-- LSH-based approximate matching for pattern detection
-- Privacy-first design: no client IPs stored, only timing/structural features
-
-### Wave 3.2: Real-time Topology Visualizer (2026-04-27)
-- Added `/api/mesh/topology` endpoint for mesh topology data
-- Added `/api/mesh/topology/graph` endpoint for D3.js-compatible graph data
-- New handler module `src/admin/handlers/mesh_topology.rs`
-
-### Bug Fixes (2026-04-27)
-- Fixed pattern matching in SqliDetector and XssDetector to use lowercase search target
-- Patterns are stored lowercase, so search now uses `normalized.lowercased` instead of `normalized.normalized`
-- Updated custom pattern tests to use isolated inputs that won't conflict with base patterns
-
-### HTTP/3 and QUIC Support (2026-04-26)
-- Implemented full upstream proxying in `src/http3/server.rs`.
-- Removed unused `Http3Handler` stub.
-- Wired HTTP/3 listener into `UnifiedServer` with full WAF support.
-
-### Direct TLS for Mesh Key Exchange (2026-04-26)
-- Added direct HTTPS support to the mesh key exchange server in `src/mesh/passover_key_exchange.rs`.
-- Integrated with `CertResolver` for automated certificate management.
-
-### HSM PKCS#11 Enhancements (2026-04-26)
-- Implemented full key retrieval by label and ID in `src/dns/hsm.rs`.
-- Added support for Ed25519 and RSA public key extraction from HSM.
-
-### Signed Rule Feed Phase 2 (2026-04-26)
-- Enabled dynamic pattern updates for all WAF categories (SQLi, XSS, etc.).
-- Implemented hot-reload of attack detectors via IPC.
-- Added disk persistence for downloaded rules.
-
-### Windows Platform Support (2026-04-26)
-- Implemented interface-specific filtering for Windows WFP.
-- Added Windows TUN route addition via `netsh`.
-
 ## Implementation Planning
 
-The consolidated implementation plan is located at `plans/plan.md`. This plan contains only deferred/blocked items that require future attention.
+The consolidated implementation plan is at `plans/plan.md`. It organizes remaining work into waves designed for parallel execution by sub-agents:
 
-The plan organizes work into phases that can be executed in parallel by different agents:
-- **Phase 1**: Critical Security (sequential start, then parallelize)
-- **Phase 2**: High Priority Functional (all parallel)
-- **Phase 3**: Performance & Code Quality (parallel)
-- **Phase 4**: Admin API & Documentation (parallel)
-- **Phase 5**: New Features (sequential after mesh work)
+- **Wave 4**: Critical Security Fixes (must complete first)
+- **Wave 5**: High Priority Functional (parallel after Wave 4)
+- **Wave 6**: Performance Optimizations (parallel with Wave 5)
+- **Wave 7**: Code Quality & Cleanup (parallel)
+- **Wave 8**: Admin API & DX (parallel)
+- **Wave 9**: Dependency Updates (parallel)
+- **Wave 10**: Testing Improvements (parallel)
+- **Wave 11**: New Features (after mesh functional)
 
-### Key Security Bugs to Fix (from plan.md P0 items)
+Waves 1-3 are completed (Streaming WAF, DHT Persistence, Post-Quantum Signatures, Windows Service, Behavioral Intelligence, Topology Visualizer).
 
-1. **P0.3 Threat intel signer bypass**: When `trusted_signers` is empty, any non-global node can send threats
-2. **P0.5 Time-based challenge bypass**: `_solution` parameter ignored in verification
-3. **P0.9 Threat duplicate detection**: Incoming threats stored at raw IP key, local at complex key
-4. **P0.12 YARA trusted_signer bypass**: Missing `!is_global()` check like threat intel has
+## Known File Path Corrections
 
-### Verification Commands
+When working with the plan, note these verified correct file paths (some plan items originally had wrong paths):
+
+| Wrong Path | Correct Path | Notes |
+|-----------|-------------|-------|
+| `src/http/client.rs` | `src/http_client/mod.rs` | HTTP client module |
+| `src/mesh/proxy.rs:1485` (edge_only) | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` | edge_only flag locations |
+
+## Verification Commands
 
 ```bash
 # Verify tests compile (not just cargo check)
