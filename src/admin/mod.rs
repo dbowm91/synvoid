@@ -624,6 +624,14 @@ fn build_router_from_state(
         .route("/mesh/ban", delete(handlers::mesh_admin::unban))
         .route("/mesh/bans", get(handlers::mesh_admin::list_bans))
         .route(
+            "/mesh/topology",
+            get(handlers::mesh_topology::get_mesh_topology),
+        )
+        .route(
+            "/mesh/topology/graph",
+            get(handlers::mesh_topology::get_topology_graph),
+        )
+        .route(
             "/mesh/audit/report",
             post(handlers::mesh_admin::submit_audit_report),
         )

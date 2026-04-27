@@ -298,30 +298,36 @@ impl AttackDetector {
 
     fn check_sqli(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = self.sqli_detector.detect(path.as_bytes(), InputLocation::Path) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect(path.as_bytes(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) =
-                self.sqli_detector.detect(qs.as_bytes(), InputLocation::QueryString)
+            if let Some(result) = self
+                .sqli_detector
+                .detect(qs.as_bytes(), InputLocation::QueryString)
             {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) =
-                self.sqli_detector.detect(value.as_bytes(), InputLocation::header(name))
+            if let Some(result) = self
+                .sqli_detector
+                .detect(value.as_bytes(), InputLocation::header(name))
             {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) =
-                self.sqli_detector.detect(body.as_bytes(), InputLocation::PostBody)
+            if let Some(result) = self
+                .sqli_detector
+                .detect(body.as_bytes(), InputLocation::PostBody)
             {
                 return Some(result);
             }
@@ -332,30 +338,36 @@ impl AttackDetector {
 
     fn check_xss(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = self.xss_detector.detect(path.as_bytes(), InputLocation::Path) {
+            if let Some(result) = self
+                .xss_detector
+                .detect(path.as_bytes(), InputLocation::Path)
+            {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) =
-                self.xss_detector.detect(qs.as_bytes(), InputLocation::QueryString)
+            if let Some(result) = self
+                .xss_detector
+                .detect(qs.as_bytes(), InputLocation::QueryString)
             {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) =
-                self.xss_detector.detect(value.as_bytes(), InputLocation::header(name))
+            if let Some(result) = self
+                .xss_detector
+                .detect(value.as_bytes(), InputLocation::header(name))
             {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) =
-                self.xss_detector.detect(body.as_bytes(), InputLocation::PostBody)
+            if let Some(result) = self
+                .xss_detector
+                .detect(body.as_bytes(), InputLocation::PostBody)
             {
                 return Some(result);
             }
