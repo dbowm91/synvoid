@@ -550,6 +550,13 @@ impl Http3Server {
                     Ok(upstream_resp) => {
                         let (parts, mut upstream_body) = upstream_resp.into_parts();
 
+                        let body_len = parts
+                            .headers
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+
                         let mut resp_builder = http::Response::builder().status(parts.status);
 
                         for (name, value) in parts.headers.iter() {
@@ -564,28 +571,58 @@ impl Http3Server {
 
                         request_stream.send_response(response).await?;
 
-                        while let Some(chunk) = upstream_body.frame().await {
-                            match chunk {
-                                Ok(frame) => {
-                                    if let Some(data) = frame.data_ref() {
-                                        request_stream.send_data(data.clone()).await?;
+                        const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB
 
-                                        // Record egress bandwidth
-                                        let data_len = data.len() as u64;
-                                        if let Some(ref bw) = bandwidth {
-                                            bw.record_egress(
-                                                data_len,
-                                                BandwidthProtocol::Http3,
-                                                EgressDirection::Proxied,
-                                            );
-                                            bw.record_site_egress(&host, data_len);
+                        if body_len > ZERO_COPY_THRESHOLD {
+                            while let Some(chunk) = upstream_body.frame().await {
+                                match chunk {
+                                    Ok(frame) => {
+                                        if let Some(data) = frame.data_ref() {
+                                            request_stream.send_data(data.clone()).await?;
+
+                                            let data_len = data.len() as u64;
+                                            if let Some(ref bw) = bandwidth {
+                                                bw.record_egress(
+                                                    data_len,
+                                                    BandwidthProtocol::Http3,
+                                                    EgressDirection::Proxied,
+                                                );
+                                                bw.record_site_egress(&host, data_len);
+                                            }
                                         }
                                     }
+                                    Err(e) => {
+                                        tracing::error!("Error reading upstream body: {}", e);
+                                        break;
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::error!("Error reading upstream body: {}", e);
-                                    break;
+                            }
+                        } else {
+                            let mut body_bytes = Vec::new();
+                            while let Some(chunk) = upstream_body.frame().await {
+                                match chunk {
+                                    Ok(frame) => {
+                                        if let Some(data) = frame.data_ref() {
+                                            body_bytes.extend_from_slice(data.as_ref());
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Error reading upstream body: {}", e);
+                                        break;
+                                    }
                                 }
+                            }
+                            let body_len = body_bytes.len() as u64;
+                            if let Some(ref bw) = bandwidth {
+                                bw.record_egress(
+                                    body_len,
+                                    BandwidthProtocol::Http3,
+                                    EgressDirection::Proxied,
+                                );
+                                bw.record_site_egress(&host, body_len);
+                            }
+                            if !body_bytes.is_empty() {
+                                request_stream.send_data(body_bytes.into()).await?;
                             }
                         }
 
