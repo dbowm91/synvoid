@@ -1429,6 +1429,67 @@ pub async fn run_unified_server_worker(
                         );
                     }
                 }
+                Some(Message::ThreatFeedUpdate {
+                    indicators,
+                    version: _,
+                    timestamp: _,
+                }) => {
+                    tracing::debug!(
+                        "Received threat feed update with {} indicators from Master",
+                        indicators.len()
+                    );
+                    if let Some(threat_intel) = crate::waf::get_threat_intel() {
+                        for indicator_data in &indicators {
+                            let threat_type = match indicator_data.threat_type {
+                                crate::process::ipc::ThreatIndicatorType::IpBlock => {
+                                    crate::mesh::protocol::ThreatType::IpBlock
+                                }
+                                crate::process::ipc::ThreatIndicatorType::RateLimitViolation => {
+                                    crate::mesh::protocol::ThreatType::RateLimitViolation
+                                }
+                                crate::process::ipc::ThreatIndicatorType::SuspiciousActivity => {
+                                    crate::mesh::protocol::ThreatType::SuspiciousActivity
+                                }
+                            };
+                            let severity = match indicator_data.severity {
+                                crate::process::ipc::ThreatSeverityLevel::Low => {
+                                    crate::mesh::protocol::ThreatSeverity::Low
+                                }
+                                crate::process::ipc::ThreatSeverityLevel::Medium => {
+                                    crate::mesh::protocol::ThreatSeverity::Medium
+                                }
+                                crate::process::ipc::ThreatSeverityLevel::High => {
+                                    crate::mesh::protocol::ThreatSeverity::High
+                                }
+                                crate::process::ipc::ThreatSeverityLevel::Critical => {
+                                    crate::mesh::protocol::ThreatSeverity::Critical
+                                }
+                            };
+                            let indicator = crate::mesh::protocol::ThreatIndicator {
+                                threat_type,
+                                indicator_value: indicator_data.indicator_value.clone(),
+                                severity,
+                                reason: indicator_data.reason.clone(),
+                                ttl_seconds: indicator_data.ttl_seconds,
+                                source_node_id: indicator_data.source_node_id.clone(),
+                                timestamp: indicator_data.timestamp,
+                                site_scope: indicator_data.site_scope.clone(),
+                                rate_limit_requests: indicator_data.rate_limit_requests,
+                                rate_limit_window_secs: indicator_data.rate_limit_window_secs,
+                                suspicious_pattern: indicator_data.suspicious_pattern.clone(),
+                                signature: Vec::new(),
+                                signer_public_key: None,
+                            };
+                            threat_intel.add_feed_indicator(indicator);
+                        }
+                        tracing::info!(
+                            "Applied {} threat feed indicators from Master",
+                            indicators.len()
+                        );
+                    } else {
+                        tracing::warn!("No threat intel manager available to apply feed update");
+                    }
+                }
                 Some(Message::UnifiedServerWorkerDrain {
                     timeout_secs,
                     drain_id: request_drain_id,

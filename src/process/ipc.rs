@@ -368,6 +368,11 @@ pub enum Message {
         indicators: Vec<ThreatIndicatorData>,
         version: u64,
     },
+    ThreatFeedUpdate {
+        indicators: Vec<ThreatIndicatorData>,
+        version: u64,
+        timestamp: u64,
+    },
     BlocklistRequest {
         worker_id: usize,
         from_version: u64,
@@ -895,6 +900,16 @@ impl Message {
                 check_str("reason", reason, MAX_STRING_LENGTH)?;
                 check_str("site_scope", site_scope, MAX_STRING_LENGTH)
             }
+            Message::ThreatFeedUpdate { indicators, version, timestamp } => {
+                check_str("ThreatFeedUpdate.version", &version.to_string(), MAX_STRING_LENGTH)?;
+                check_str("ThreatFeedUpdate.timestamp", &timestamp.to_string(), MAX_STRING_LENGTH)?;
+                for indicator in indicators {
+                    check_str("indicator_value", &indicator.indicator_value, MAX_STRING_LENGTH)?;
+                    check_str("reason", &indicator.reason, MAX_STRING_LENGTH)?;
+                    check_str("site_scope", &indicator.site_scope, MAX_STRING_LENGTH)?;
+                }
+                Ok(())
+            }
             Message::RulePatternsUpdate { version, patterns } => {
                 check_str("version", version, MAX_STRING_LENGTH)?;
                 for p in patterns {
@@ -1098,6 +1113,7 @@ impl Message {
             | Message::ThreatIndicatorFromMesh { .. }
             | Message::ThreatSyncRequest { .. }
             | Message::ThreatSyncResponse { .. }
+            | Message::ThreatFeedUpdate { .. }
             | Message::BlocklistRequest { .. }
             | Message::BlocklistResponse { .. } => MessageCategory::ThreatIntel,
 

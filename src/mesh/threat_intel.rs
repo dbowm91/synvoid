@@ -455,6 +455,54 @@ impl ThreatIntelligenceManager {
         }
     }
 
+    pub fn add_feed_indicator(&self, indicator: ThreatIndicator) {
+        let key = format!(
+            "threat_indicator:{}:{:?}",
+            indicator.indicator_value, indicator.threat_type
+        );
+
+        {
+            let mut indicators = self.indicators.write();
+            indicators.insert(
+                key,
+                ThreatIndicatorEntry {
+                    indicator: indicator.clone(),
+                    received_from: Some("feed".to_string()),
+                    local_origin: false,
+                    version: *self.local_version.read(),
+                },
+            );
+        }
+
+        *self.local_version.write() += 1;
+        self.persist_if_needed();
+
+        if !indicator.site_scope.is_empty() {
+            self.publish_feed_indicator_to_dht(&indicator);
+        } else {
+            self.publish_indicator_to_dht(&indicator);
+        }
+
+        let indicator_value = indicator.indicator_value.clone();
+        let indicator_type = indicator.threat_type;
+        let indicator_scope = indicator.site_scope.clone();
+        let indicator_severity = indicator.severity;
+
+        if self.config.push_enabled {
+            let threshold = self.config.push_severity_threshold as u32;
+            if (indicator_severity as u32) >= threshold {
+                self.queue_for_push(indicator);
+            }
+        }
+
+        tracing::debug!(
+            "Added feed indicator: {} ({}) scope={}",
+            indicator_value,
+            indicator_type as u8,
+            indicator_scope
+        );
+    }
+
     pub fn announce_honeypot_indicator(
         &self,
         ip: IpAddr,
@@ -776,6 +824,76 @@ impl ThreatIntelligenceManager {
             } else {
                 metrics::record_threat_intel_dht_publish_failed();
             }
+        } else {
+            metrics::record_threat_intel_dht_publish_failed();
+        }
+    }
+
+    pub fn publish_feed_indicator_to_dht(&self, indicator: &ThreatIndicator) {
+        if !self.config.enabled {
+            return;
+        }
+
+        if self.signer.is_none() {
+            tracing::warn!("Cannot publish feed indicator: no signer configured");
+            return;
+        }
+
+        let transport_opt = self.transport.read().clone();
+        let Some(transport) = transport_opt else {
+            tracing::debug!("Transport not available for feed DHT publish");
+            return;
+        };
+
+        let Some(record_store) = transport.get_record_store() else {
+            tracing::debug!("Record store not available for feed DHT publish");
+            return;
+        };
+
+        let site_scope = if indicator.site_scope.is_empty() {
+            "global".to_string()
+        } else {
+            indicator.site_scope.clone()
+        };
+
+        let inner_key = DhtKey::threat_indicator(&indicator.indicator_value, &format!("{:?}", indicator.threat_type));
+        let scoped_key = DhtKey::site_scoped(&site_scope, inner_key);
+        let key_str = scoped_key.as_str();
+
+        let (signature, signer_public_key) = if let Some(ref signer) = self.signer {
+            let content = format!(
+                "{}:{}:{}:{}:{}",
+                indicator.indicator_value,
+                indicator.threat_type as u8,
+                indicator.severity as u8,
+                indicator.timestamp,
+                indicator.source_node_id
+            );
+            let sig = signer.sign(content.as_bytes());
+            let pk = signer.get_public_key();
+            (sig, Some(pk))
+        } else {
+            (Vec::new(), None)
+        };
+
+        let value = match crate::serialization::serialize(indicator) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                metrics::record_threat_intel_dht_publish_failed();
+                return;
+            }
+        };
+
+        let ttl = indicator.ttl_seconds.max(self.config.min_ttl_seconds);
+
+        if record_store.store_and_announce(key_str.to_string(), value, ttl) {
+            metrics::record_threat_intel_dht_publish();
+            tracing::debug!(
+                "Published feed indicator to DHT (SiteScoped): {} ({}) scope={}",
+                indicator.indicator_value,
+                indicator.threat_type as u8,
+                site_scope
+            );
         } else {
             metrics::record_threat_intel_dht_publish_failed();
         }
