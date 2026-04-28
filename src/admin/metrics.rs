@@ -1,6 +1,7 @@
 use crate::admin::alerting::AlertManager;
 use crate::admin::state::{AdminState, AggregatedMetrics, SystemResources};
-use crate::process::{ProcessManager, SiteMetricsPayload};
+use crate::metrics::SiteMetricsPayload;
+use crate::process::ProcessManager;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -198,7 +199,7 @@ pub async fn start_metrics_publisher(
                             p50_latency_ms: 0.0,
                             p95_latency_ms: 0.0,
                             p99_latency_ms: 0.0,
-                            blocked_by_type: std::collections::HashMap::new(),
+                            blocked_by_type: std::collections::HashMap::<String, u64>::new(),
                             upstream_healthy: true,
                             proxy_cache_hits: 0,
                             proxy_cache_misses: 0,

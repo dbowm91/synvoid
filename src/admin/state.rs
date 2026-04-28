@@ -5,7 +5,7 @@ use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
 use crate::plugin::PluginManager;
 use crate::process::ProcessManager;
-use crate::process::SiteMetricsPayload;
+use crate::metrics::SiteMetricsPayload;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,

@@ -119,8 +119,8 @@ use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
 use crate::mesh::MeshBackendPool;
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
-use crate::metrics::WorkerMetrics;
-use crate::process::{current_timestamp, RequestLogPayload};
+use crate::metrics::{RequestLogPayload, WorkerMetrics};
+use crate::process::current_timestamp;
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
@@ -4081,7 +4081,7 @@ impl HttpServer {
         if let (Some(ref ipc_ref), Some(worker_id_value)) = (&ipc, worker_id) {
             let ipc_clone = ipc_ref.clone();
             tokio::spawn(async move {
-                let log = crate::process::RequestLogPayload {
+                let log = crate::metrics::RequestLogPayload {
                     timestamp: current_timestamp(),
                     client_ip: client_ip_str,
                     method: "UNKNOWN".to_string(),

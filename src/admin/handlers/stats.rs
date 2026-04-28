@@ -1,7 +1,6 @@
 use super::super::state::{AdminState, AggregatedMetrics};
 use super::common::OptionalAuth;
-use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
-use crate::process::RequestLogPayload;
+use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses, RequestLogPayload};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
