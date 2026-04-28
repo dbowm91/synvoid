@@ -144,10 +144,11 @@ The overseer/master/worker architecture uses:
 
 ### Key Mesh Components
 
-- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. `BackendType::Mesh` variant exists in router but is NOT yet dispatched in the HTTP handler (see plan.md P1.1).
+- `MeshBackend`/`MeshBackendPool` at `src/mesh/backend.rs:109-303` — backend health checking and selection. `BackendType::Mesh` variant is dispatched in the HTTP handler via `mesh_backend_pool`.
 - `MeshProxy` at `src/mesh/proxy.rs` — request routing, caching, provider selection
 - `MeshTransport` at `src/mesh/transport.rs` — peer communication, transport initialization
 - `DHT` at `src/mesh/dht/` — distributed hash table for state sync
+- `SpinRuntime` at `src/spin/` — Spin WASM serverless runtime support
 - Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN)
 - `ReplayProtection` at `src/mesh/protocol.rs:153-196` — marked as `#[allow(dead_code)]` (was dead code, kept for potential future use)
 
@@ -361,18 +362,22 @@ These placeholders indicate the value was not configured and may indicate a secu
 **Trusted Signer Verification for ThreatAnnounce**
 ```rust
 // In threat_intel.rs: After signature verification, check trusted_signers
-// BUG (P0.3): Condition allows any non-global node when trusted_signers is empty
-if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+if !self.node_role.is_global() {
+    if self.config.trusted_signers.is_empty() {
+        tracing::warn!("No trusted signers configured - rejecting threat from non-global node");
+        return Some(MeshMessage::ThreatAcknowledgement { accepted: false, ... });
+    }
     if !self.check_trusted_signer(source_node_id, signer_public_key) {
         return Some(MeshMessage::ThreatAcknowledgement { accepted: false, ... });
     }
 }
 ```
 
-**YARA trusted_signer bypass (similar bug - P0.12)**
+**YARA trusted_signer bypass**
 ```rust
-// BUG: Missing !self.node_role.is_global() check - global nodes only bypass when list is empty
-if !self.config.trusted_signers.is_empty()
+// YARA rules now enforce deny-by-default for non-global nodes
+if !self.node_role.is_global()
+    && !self.config.trusted_signers.is_empty()
     && !self.config.trusted_signers.contains(&manifest_signer_pk.to_string())
 {
     // reject
@@ -455,14 +460,14 @@ stale_cache_ttl_secs = 60
 
 The consolidated implementation plan is at `plans/plan.md`. It organizes remaining work into waves designed for parallel execution by sub-agents:
 
-- **Wave 4**: Critical Security Fixes (must complete first)
-- **Wave 5**: High Priority Functional (parallel after Wave 4)
-- **Wave 6**: Performance Optimizations (parallel with Wave 5)
-- **Wave 7**: Code Quality & Cleanup (parallel)
-- **Wave 8**: Admin API & DX (parallel)
-- **Wave 9**: Dependency Updates (parallel)
-- **Wave 10**: Testing Improvements (parallel)
-- **Wave 11**: New Features (after mesh functional)
+- **Wave 4**: Critical Security Fixes (COMPLETED)
+- **Wave 5**: High Priority Functional (COMPLETED)
+- **Wave 6**: Performance Optimizations (COMPLETED)
+- **Wave 7**: Code Quality & Cleanup (COMPLETED)
+- **Wave 8**: Admin API & DX (COMPLETED)
+- **Wave 9**: Dependency Updates (COMPLETED)
+- **Wave 10**: Testing Improvements (COMPLETED)
+- **Wave 11**: New Features (IN PROGRESS - P11.1 Spin WASM Runtime completed, P11.2 pending)
 
 Waves 1-3 are completed (Streaming WAF, DHT Persistence, Post-Quantum Signatures, Windows Service, Behavioral Intelligence, Topology Visualizer).
 

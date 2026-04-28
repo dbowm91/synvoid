@@ -4,6 +4,192 @@
 
 This skill documents the security patterns implemented for the MaluWAF codebase.
 
+## Critical Security Fixes (Wave 4)
+
+### Trusted Signer Default Deny (P0.3)
+
+**Location**: `src/mesh/threat_intel.rs:1628-1656`
+
+**Issue**: When `trusted_signers` is empty, condition `!self.node_role.is_global() && !self.config.trusted_signers.is_empty()` short-circuits and ALL non-global nodes bypass the check. Any non-global node can send forged threats.
+
+**Fix**: Deny-by-default for non-global nodes:
+```rust
+if !self.node_role.is_global() {
+    if self.config.trusted_signers.is_empty() {
+        tracing::warn!("No trusted signers configured - rejecting threat from non-global node");
+        return Some(MeshMessage::ThreatAcknowledgement { accepted: false, ... });
+    }
+    if !self.check_trusted_signer(source_node_id, signer_public_key) {
+        return Some(MeshMessage::ThreatAcknowledgement { accepted: false, ... });
+    }
+}
+```
+
+---
+
+### Time-Based Challenge Verification (P0.5)
+
+**Location**: `src/mesh/security_challenge.rs:159-190`
+
+**Issue**: `verify_time_based_challenge()` took `_solution: &str` (unused) and only checked challenge existence and expiry. Any string was accepted.
+
+**Fix**: Store expected solution at creation, verify against it:
+```rust
+// In generate_time_based_challenge:
+solution: Some(expected_solution),  // Store HMAC of solution
+
+// In verify_time_based_challenge:
+let expected_solution = match &challenge.solution {
+    Some(s) => s,
+    None => { /* reject - no solution expected */ }
+};
+if solution != expected_solution {
+    return false;
+}
+```
+
+---
+
+### Pass-Over Fallback Signing (P0.6)
+
+**Location**: `src/mesh/passover_key_exchange.rs:505-515`
+
+**Issue**: When origin is unreachable, fallback path used `origin_signing_key` to sign. A global node with `origin_signing_key` would produce messages appearing signed by an origin node.
+
+**Fix**: Check node role before using origin signing key:
+```rust
+let pending_signature = if self.config.role.is_global() {
+    // Use global node key instead of origin signing key
+    let global_key = self.config.global_node.ed25519_private_key
+        .ok_or_else(|| Status::unavailable("Global node Ed25519 key not available"))?;
+    // ... sign with global key
+} else if let Some(ref signer_config) = self.config.origin_signing_key {
+    // Original origin signing path
+};
+```
+
+---
+
+### RecordStoreManager Clone (P0.7)
+
+**Location**: `src/mesh/dht/record_store.rs:468-519`
+
+**Issue**: Clone impl used `records: ShardedRecordStore::new()` instead of cloning from `self.records`. Cloned managers had zero records.
+
+**Fix**: Iterate and clone records:
+```rust
+let records = ShardedRecordStore::new();
+for (key, value) in rs.records.iter() {
+    records.insert(key.clone(), value.clone());
+}
+```
+
+---
+
+### YARA Trusted Signer Bypass (P0.12)
+
+**Location**: `src/mesh/yara_rules.rs:942-954,1818-1824`
+
+**Issue**: Two problems:
+1. DHT sync path: `if !self.config.trusted_signers.is_empty()` with no `is_global()` check
+2. Announce path: Signature verification only, no trusted_signers check
+
+**Fix**: Add deny-by-default for non-global nodes in both paths:
+```rust
+// DHT sync path
+if !self.node_role.is_global()
+    && !self.config.trusted_signers.is_empty()
+    && !self.config.trusted_signers.contains(&manifest_signer_pk.to_string())
+{
+    // reject
+}
+
+// Announce path
+if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+    if !self.check_trusted_signer(from_node, signer_public_key) {
+        return Some(MeshMessage::YaraRuleAcknowledgement { accepted: false, ... });
+    }
+}
+```
+
+---
+
+### WASM Table Growing Unbounded (P0.1)
+
+**Location**: `src/plugin/wasm_runtime.rs:319-326`
+
+**Issue**: `table_growing()` returned `Ok(true)` unconditionally. Tables could grow without bound.
+
+**Fix**: Check against max_table_elements limit:
+```rust
+fn table_growing(
+    &mut self,
+    _current: usize,
+    desired: usize,
+    _maximum: Option<usize>,
+) -> std::result::Result<bool, wasmtime::Error> {
+    Ok(desired <= self.max_table_elements)
+}
+```
+
+---
+
+### WASM Pool DHT Prefix Leakage (P0.2)
+
+**Location**: `src/plugin/instance_pool.rs:148-163`
+
+**Issue**: `prepare_for_request()` reset `start`, `timeout`, and `env` but NOT `allowed_dht_prefixes`. Previous tenant's DHT prefixes persisted across pool reuse.
+
+**Fix**: Reset allowed_dht_prefixes:
+```rust
+pub(crate) fn prepare_for_request(&mut self, env: ..., timeout_seconds: u64) {
+    self.store.data_mut().start = Instant::now();
+    self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
+    self.store.data_mut().env = env;
+    self.store.data_mut().allowed_dht_prefixes = self.default_allowed_dht_prefixes.clone();
+    // ...
+}
+```
+
+---
+
+### Serverless Ignore Limits (P0.4)
+
+**Location**: `src/serverless/manager.rs:479-491,506-518`
+
+**Issue**: `_limits` was constructed but NOT passed to `load_plugin_from_memory()` / `load_plugin()`. Memory/CPU/timeout limits were silently discarded.
+
+**Fix**: Pass limits to the calls:
+```rust
+let limits = WasmResourceLimits {
+    max_memory_mb: func_def.memory_mb.unwrap_or(default_memory),
+    // ...
+};
+return self.runtime
+    .load_plugin_from_memory(&func_def.name, &data, limits)
+    .map_err(|e| ServerlessError::WasmError(e.to_string()));
+```
+
+---
+
+### KyberSlash Vulnerability (P0.A)
+
+**Location**: `src/wasm_pow/Cargo.toml:30`, `src/wasm_pow/src/pqc.rs:6`
+
+**Issue**: `pqc_kyber` 0.7.1 has timing side-channel in ML-KEM-768 division operations (CVSS 7.4).
+
+**Fix**: Replace with fixed fork:
+```toml
+# Cargo.toml
+pqc_kyber_edit = { version = "0.7", features = ["wasm", "kyber768", "zeroize"] }
+```
+```rust
+// pqc.rs
+use pqc_kyber_edit::*;
+```
+
+---
+
 ## Critical Security
 
 ### Path Traversal Prevention in Template Loading
