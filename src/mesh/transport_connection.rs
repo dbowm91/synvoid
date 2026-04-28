@@ -30,6 +30,7 @@ impl MeshTransport {
             query_dedup: self.query_dedup.clone(),
             pending_queries: self.pending_queries.clone(),
             pending_dht_queries: self.pending_dht_queries.clone(),
+            pending_serverless_invocations: self.pending_serverless_invocations.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             snapshot_request_times: self.snapshot_request_times.clone(),

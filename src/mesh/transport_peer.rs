@@ -2433,6 +2433,15 @@ impl MeshTransport {
                 );
                 self.handle_serverless_invoke_request(&req).await?;
             }
+            MeshMessage::ServerlessInvokeResponse(response) => {
+                tracing::debug!(
+                    "Received ServerlessInvokeResponse from {}: success={}, function={}",
+                    response.caller_node_id,
+                    response.success,
+                    response.function_name
+                );
+                self.handle_serverless_invoke_response(&response).await?;
+            }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");
             }
@@ -2567,6 +2576,27 @@ impl MeshTransport {
             );
         }
 
+        Ok(())
+    }
+
+    pub(crate) async fn handle_serverless_invoke_response(
+        &self,
+        response: &crate::mesh::protocol::ServerlessInvokeResponse,
+    ) -> Result<(), MeshTransportError> {
+        let mut pending = self.pending_serverless_invocations.lock().await;
+        let key = format!("{}:{}", response.function_name, response.caller_node_id);
+        if let Some(sender) = pending.remove(&key) {
+            tracing::debug!(
+                "Delivering serverless invocation response for '{}' to waiting caller",
+                response.function_name
+            );
+            let _ = sender.send(response.clone());
+        } else {
+            tracing::warn!(
+                "Received ServerlessInvokeResponse for '{}' but no pending invocation found",
+                response.function_name
+            );
+        }
         Ok(())
     }
 

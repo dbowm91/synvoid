@@ -102,6 +102,7 @@ pub struct MeshTransport {
     pub(crate) query_dedup: Arc<Mutex<HashMap<String, oneshot::Sender<RouteQueryResult>>>>,
     pub(crate) pending_queries: Arc<Mutex<PendingQueryManager>>,
     pub(crate) pending_dht_queries: Arc<Mutex<HashMap<String, oneshot::Sender<DhtRecord>>>>,
+    pub(crate) pending_serverless_invocations: Arc<Mutex<HashMap<String, oneshot::Sender<crate::mesh::protocol::ServerlessInvokeResponse>>>>,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -222,6 +223,7 @@ impl Clone for MeshTransport {
             query_dedup: self.query_dedup.clone(),
             pending_queries: self.pending_queries.clone(),
             pending_dht_queries: self.pending_dht_queries.clone(),
+            pending_serverless_invocations: self.pending_serverless_invocations.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             snapshot_request_times: self.snapshot_request_times.clone(),
@@ -425,6 +427,7 @@ impl MeshTransport {
             query_dedup: Arc::new(Mutex::new(HashMap::new())),
             pending_queries: Arc::new(Mutex::new(PendingQueryManager::new())),
             pending_dht_queries: Arc::new(Mutex::new(HashMap::new())),
+            pending_serverless_invocations: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: Arc::new(RwLock::new(HashMap::new())),
             peer_message_times: Arc::new(RwLock::new(HashMap::new())),
             snapshot_request_times: Arc::new(RwLock::new(HashMap::new())),
@@ -1310,6 +1313,51 @@ impl MeshTransport {
 
         tracing::debug!("Sent stream message to peer {}: {:?}", peer_id, message);
         Ok(())
+    }
+
+    /// Invoke a serverless function on a remote peer
+    /// Returns a future that resolves to the invocation response
+    pub async fn invoke_serverless_remote(
+        &self,
+        peer_id: &str,
+        function_name: &str,
+    ) -> Result<crate::mesh::protocol::ServerlessInvokeResponse, MeshTransportError> {
+        let request = crate::mesh::protocol::ServerlessInvokeRequest::new(
+            function_name.to_string(),
+            self.config.node_id().into(),
+        );
+
+        let response_future = {
+            let mut pending = self.pending_serverless_invocations.lock().await;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let key = format!("{}:{}", function_name, self.config.node_id());
+            pending.insert(key, tx);
+            rx
+        };
+
+        let msg = MeshMessage::ServerlessInvokeRequest(request);
+        self.send_message_to_peer(peer_id, &msg).await?;
+
+        tracing::debug!(
+            "Sent ServerlessInvokeRequest for '{}' to peer {}",
+            function_name,
+            peer_id
+        );
+
+        // Wait for response with timeout
+        match tokio::time::timeout(Duration::from_secs(30), response_future).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(MeshTransportError::ReceiveFailed(
+                "Serverless invocation response channel closed".to_string(),
+            )),
+            Err(_) => {
+                // Clean up pending invocation on timeout
+                let mut pending = self.pending_serverless_invocations.lock().await;
+                let key = format!("{}:{}", function_name, self.config.node_id());
+                pending.remove(&key);
+                Err(MeshTransportError::Timeout)
+            }
+        }
     }
 
     pub fn get_key_exchange_endpoint(&self) -> Option<String> {
