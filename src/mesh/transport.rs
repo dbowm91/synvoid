@@ -102,7 +102,9 @@ pub struct MeshTransport {
     pub(crate) query_dedup: Arc<Mutex<HashMap<String, oneshot::Sender<RouteQueryResult>>>>,
     pub(crate) pending_queries: Arc<Mutex<PendingQueryManager>>,
     pub(crate) pending_dht_queries: Arc<Mutex<HashMap<String, oneshot::Sender<DhtRecord>>>>,
-    pub(crate) pending_serverless_invocations: Arc<Mutex<HashMap<String, oneshot::Sender<crate::mesh::protocol::ServerlessInvokeResponse>>>>,
+    pub(crate) pending_serverless_invocations: Arc<
+        Mutex<HashMap<String, oneshot::Sender<crate::mesh::protocol::ServerlessInvokeResponse>>>,
+    >,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -1324,7 +1326,7 @@ impl MeshTransport {
     ) -> Result<crate::mesh::protocol::ServerlessInvokeResponse, MeshTransportError> {
         let request = crate::mesh::protocol::ServerlessInvokeRequest::new(
             function_name.to_string(),
-            self.config.node_id().into(),
+            self.config.node_id(),
         );
 
         let response_future = {

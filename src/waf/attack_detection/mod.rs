@@ -19,7 +19,6 @@ pub mod xpath_injection;
 pub mod xss;
 pub mod xxe;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use cmd_injection::CmdInjectionDetector;

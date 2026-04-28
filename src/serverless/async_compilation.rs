@@ -30,10 +30,12 @@ impl CompilationState {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub struct AsyncCompilationHandle {
     state: Arc<RwLock<CompilationState>>,
     completion_sender: Arc<std::sync::Mutex<Option<oneshot::Sender<Result<(), WasmPluginError>>>>>,
-    completion_receiver: Arc<std::sync::Mutex<Option<oneshot::Receiver<Result<(), WasmPluginError>>>>>,
+    completion_receiver:
+        Arc<std::sync::Mutex<Option<oneshot::Receiver<Result<(), WasmPluginError>>>>>,
 }
 
 impl AsyncCompilationHandle {
@@ -78,7 +80,10 @@ impl AsyncCompilationHandle {
     }
 
     pub fn state(&self) -> CompilationState {
-        self.state.try_read().map(|g| g.clone()).unwrap_or(CompilationState::Pending)
+        self.state
+            .try_read()
+            .map(|g| g.clone())
+            .unwrap_or(CompilationState::Pending)
     }
 
     pub async fn wait_for_completion(&self) -> Result<(), WasmPluginError> {
@@ -91,14 +96,15 @@ impl AsyncCompilationHandle {
                 )),
             }
         } else {
-            Err(WasmPluginError::LoadFailed(
-                "Already awaited".to_string(),
-            ))
+            Err(WasmPluginError::LoadFailed("Already awaited".to_string()))
         }
     }
 
     pub fn poll_state(&self) -> CompilationState {
-        self.state.try_read().map(|g| g.clone()).unwrap_or(CompilationState::Pending)
+        self.state
+            .try_read()
+            .map(|g| g.clone())
+            .unwrap_or(CompilationState::Pending)
     }
 }
 

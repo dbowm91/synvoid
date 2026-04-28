@@ -1,6 +1,5 @@
 #![allow(unused_variables)]
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -16,6 +15,8 @@ use hyper::body::Incoming;
 use hyper::{Request, Response};
 use moka::sync::Cache;
 use parking_lot::RwLock;
+use rand::distr::weighted::WeightedIndex;
+use rand::distr::Distribution;
 use rand::Rng;
 use tokio::sync::RwLock as TokioRwLock;
 
@@ -647,15 +648,15 @@ impl MeshProxy {
     fn record_provider_success(&self, provider_node_id: &str) {
         self.clear_provider_failure(provider_node_id);
 
-        let mut stats = self.provider_stats.write();
-        let entry = stats.entry(provider_node_id.to_string());
+        let close_thresh = self.config.connection.circuit_close_threshold;
+        let open_timeout = self.config.connection.circuit_open_timeout_secs;
+
+        let entry = self.provider_stats.entry(provider_node_id.to_string());
         match entry {
-            std::collections::hash_map::Entry::Occupied(mut e) => {
-                let close_thresh = self.config.connection.circuit_close_threshold;
-                let open_timeout = self.config.connection.circuit_open_timeout_secs;
+            dashmap::mapref::entry::Entry::Occupied(mut e) => {
                 e.get_mut().record_success(close_thresh, open_timeout);
             }
-            std::collections::hash_map::Entry::Vacant(e) => {
+            dashmap::mapref::entry::Entry::Vacant(e) => {
                 let mut new_stats = ProviderStats {
                     total_requests: 0,
                     successful_requests: 0,
@@ -667,8 +668,6 @@ impl MeshProxy {
                     circuit_open_until: None,
                     half_open_requests: 0,
                 };
-                let close_thresh = self.config.connection.circuit_close_threshold;
-                let open_timeout = self.config.connection.circuit_open_timeout_secs;
                 new_stats.record_success(close_thresh, open_timeout);
                 e.insert(new_stats);
             }
@@ -677,16 +676,16 @@ impl MeshProxy {
 
     fn record_provider_failure(&self, provider_node_id: &str) -> u32 {
         let failure_count = {
-            let mut stats = self.provider_stats.write();
-            let entry = stats.entry(provider_node_id.to_string());
+            let open_thresh = self.config.connection.circuit_open_threshold;
+            let open_timeout = self.config.connection.circuit_open_timeout_secs;
+
+            let entry = self.provider_stats.entry(provider_node_id.to_string());
             match entry {
-                std::collections::hash_map::Entry::Occupied(mut e) => {
-                    let open_thresh = self.config.connection.circuit_open_threshold;
-                    let open_timeout = self.config.connection.circuit_open_timeout_secs;
+                dashmap::mapref::entry::Entry::Occupied(mut e) => {
                     e.get_mut().record_failure(open_thresh, open_timeout);
                     e.get().consecutive_failures
                 }
-                std::collections::hash_map::Entry::Vacant(e) => {
+                dashmap::mapref::entry::Entry::Vacant(e) => {
                     let mut new_stats = ProviderStats {
                         total_requests: 0,
                         successful_requests: 0,
@@ -698,8 +697,6 @@ impl MeshProxy {
                         circuit_open_until: None,
                         half_open_requests: 0,
                     };
-                    let open_thresh = self.config.connection.circuit_open_threshold;
-                    let open_timeout = self.config.connection.circuit_open_timeout_secs;
                     new_stats.record_failure(open_thresh, open_timeout);
                     e.insert(new_stats);
                     1
@@ -750,20 +747,18 @@ impl MeshProxy {
             return providers;
         }
 
-        let scores: Vec<f64> = providers
-            .iter()
-            .map(|p| p.score.max(0.01))
-            .collect();
+        let scores: Vec<f64> = providers.iter().map(|p| p.score.max(0.01)).collect();
 
-        let weighted_index = rand::distr::WeightedIndex::new(&scores).unwrap();
+        let weighted_index = WeightedIndex::new(&scores).unwrap();
         let mut indices: Vec<usize> = (0..providers.len()).collect();
         let mut rng = rand::rng();
 
-        Vec::with_capacity(providers.len())
-            .into_iter()
-            .map(|_| indices.remove(weighted_index.sample(&mut rng)))
-            .map(|i| providers[i].clone())
-            .collect()
+        let mut result = Vec::with_capacity(providers.len());
+        for _ in 0..providers.len() {
+            let idx = indices.remove(weighted_index.sample(&mut rng));
+            result.push(providers[idx].clone());
+        }
+        result
     }
 
     // Response transform holds a cache lock across an await; low contention expected.

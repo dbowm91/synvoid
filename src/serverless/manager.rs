@@ -10,7 +10,9 @@ use thiserror::Error;
 use crate::config::serverless::{FunctionDefinition, ServerlessConfig};
 use crate::mesh::config::MeshNodeRole;
 use crate::plugin::{WasmPluginManager, WasmResourceLimits};
-use crate::serverless::async_compilation::{AsyncCompilationHandle, AsyncCompilationManager, CompilationState};
+use crate::serverless::async_compilation::{
+    AsyncCompilationHandle, AsyncCompilationManager, CompilationState,
+};
 use crate::serverless::instance_pool::{InstancePool, InstancePoolConfig};
 use crate::serverless::registry::get_global_serverless_registry;
 use crate::serverless::routing::{parse_routes, MethodMatch, RouteMatch, ServerlessRoute};
@@ -356,8 +358,7 @@ impl ServerlessManager {
             let func_def_clone = func_def.clone();
             let func_name = func_def.name.clone();
             let runtime = self.runtime.clone();
-            let compilation_manager = self.compilation_manager.clone();
-            let (tx, rx) = tokio::sync::oneshot::channel();
+            let (tx, _rx) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
                 let compile_result = tokio::task::spawn_blocking({
                     let func_def = func_def_clone.clone();
@@ -378,7 +379,11 @@ impl ServerlessManager {
                                     wasi_enabled: false,
                                     allowed_dht_prefixes: Vec::new(),
                                 };
-                                return runtime.load_plugin_from_memory(&func_def.name, &data, limits);
+                                return runtime.load_plugin_from_memory(
+                                    &func_def.name,
+                                    &data,
+                                    limits,
+                                );
                             }
                         }
                         let wasm_dir = std::path::PathBuf::from("plugins");
@@ -401,7 +406,8 @@ impl ServerlessManager {
                         };
                         runtime.load_plugin_with_limits(&wasm_path, limits)
                     }
-                }).await;
+                })
+                .await;
                 let _ = tx.send((func_name.clone(), compile_result, func_def_clone));
             });
             let func_name = func_def.name.clone();
@@ -423,7 +429,7 @@ impl ServerlessManager {
                 pool_clone.run_autoscaler().await;
             });
             self.pools.write().insert(func_name.clone(), pool);
-            compilation_manager.mark_compiling(&func_name);
+            self.compilation_manager.mark_compiling(&func_name);
 
             let record_store = self.record_store.read().clone();
             if let Some(rs) = record_store {
@@ -530,6 +536,7 @@ impl ServerlessManager {
         }
     }
 
+    #[allow(dead_code)]
     fn load_function_wasm(
         &self,
         func_def: &FunctionDefinition,
@@ -829,18 +836,35 @@ impl ServerlessManager {
         let Some(runtime) = function.runtime else {
             if let Some(ref compilation_handle) = function.compilation_handle {
                 let state = compilation_handle.poll_state();
-                if let crate::serverless::async_compilation::CompilationState::Failed { error } = state {
+                if let crate::serverless::async_compilation::CompilationState::Failed { error } =
+                    state
+                {
                     get_global_serverless_registry().record_error(function_name);
                     return Err(ServerlessError::CompilationFailed(error));
                 }
-                if matches!(state, crate::serverless::async_compilation::CompilationState::Compiling { .. }) {
-                    tracing::debug!("Function '{}' compilation in progress, waiting...", function_name);
+                if matches!(
+                    state,
+                    crate::serverless::async_compilation::CompilationState::Compiling { .. }
+                ) {
+                    tracing::debug!(
+                        "Function '{}' compilation in progress, waiting...",
+                        function_name
+                    );
                     match compilation_handle.wait_for_completion().await {
                         Ok(()) => {
                             let func = self.functions.read().get(function_name).cloned();
                             if let Some(func) = func {
                                 if let Some(runtime) = func.runtime.clone() {
-                                    return self.invoke_with_runtime(runtime, function_name, method, path, headers, body).await;
+                                    return self
+                                        .invoke_with_runtime(
+                                            runtime,
+                                            function_name,
+                                            method,
+                                            path,
+                                            headers,
+                                            body,
+                                        )
+                                        .await;
                                 }
                             }
                         }
@@ -857,7 +881,8 @@ impl ServerlessManager {
             ));
         };
 
-        self.invoke_with_runtime(runtime, function_name, method, path, headers, body).await
+        self.invoke_with_runtime(runtime, function_name, method, path, headers, body)
+            .await
     }
 
     async fn invoke_with_runtime(
@@ -1069,18 +1094,34 @@ pub async fn handle_serverless_function(
     let Some(runtime) = function.runtime else {
         if let Some(ref compilation_handle) = function.compilation_handle {
             let state = compilation_handle.poll_state();
-            if let crate::serverless::async_compilation::CompilationState::Failed { error } = state {
+            if let crate::serverless::async_compilation::CompilationState::Failed { error } = state
+            {
                 get_global_serverless_registry().record_error(&function_name);
                 return Err(ServerlessError::CompilationFailed(error));
             }
-            if matches!(state, crate::serverless::async_compilation::CompilationState::Compiling { .. }) {
-                tracing::debug!("Function '{}' compilation in progress, waiting...", function_name);
+            if matches!(
+                state,
+                crate::serverless::async_compilation::CompilationState::Compiling { .. }
+            ) {
+                tracing::debug!(
+                    "Function '{}' compilation in progress, waiting...",
+                    function_name
+                );
                 match compilation_handle.wait_for_completion().await {
                     Ok(()) => {
                         let func = manager.functions.read().get(&function_name).cloned();
                         if let Some(func) = func {
                             if let Some(runtime) = func.runtime.clone() {
-                                return manager.invoke_serverless_with_runtime(runtime, &function_name, method, path, headers, body).await;
+                                return manager
+                                    .invoke_serverless_with_runtime(
+                                        runtime,
+                                        &function_name,
+                                        method,
+                                        path,
+                                        headers,
+                                        body,
+                                    )
+                                    .await;
                             }
                         }
                     }

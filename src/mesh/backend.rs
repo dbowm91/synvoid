@@ -1,6 +1,6 @@
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use http_body_util::combinators::BoxBody;
