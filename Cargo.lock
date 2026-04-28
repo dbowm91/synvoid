@@ -1863,6 +1863,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "7.0.0-rc2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a1e35a65fe0538a60167f0ada6e195ad5d477f6ddae273943596d4a1a5730b"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "equivalent",
+ "hashbrown 0.15.5",
+ "lock_api",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4208,7 +4222,7 @@ dependencies = [
  "const-str",
  "cssparser",
  "cssparser-color",
- "dashmap",
+ "dashmap 5.5.3",
  "data-encoding",
  "getrandom 0.3.4",
  "indexmap",
@@ -4401,7 +4415,7 @@ dependencies = [
  "criterion",
  "cryptoki",
  "daemonize2",
- "dashmap",
+ "dashmap 7.0.0-rc2",
  "defguard_boringtun",
  "digest",
  "dirs",
