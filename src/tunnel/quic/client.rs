@@ -7,7 +7,7 @@ use metrics::{counter, gauge, histogram};
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::buffer::BufferPool;
 use crate::config::{PortMappingConfig, TunnelQuicConfig, TunnelQuicPeerConfig};
@@ -20,6 +20,44 @@ use crate::tunnel::quic::runtime::{QuicConnection, QuicRuntime};
 use crate::tunnel::quic::tls::QuicTlsConfig;
 use crate::tunnel::quic::validation::JitteredBackoff;
 use crate::tunnel::quic::ConnectionQuality;
+
+const MAX_STREAM_POOL_SIZE: usize = 8;
+
+pub(crate) struct StreamPool {
+    streams: Vec<(SendStream, RecvStream)>,
+    connection: Option<Connection>,
+    max_size: usize,
+}
+
+impl StreamPool {
+    fn new(connection: Option<Connection>) -> Self {
+        Self {
+            streams: Vec::new(),
+            connection,
+            max_size: MAX_STREAM_POOL_SIZE,
+        }
+    }
+
+    async fn acquire(
+        &mut self,
+    ) -> Result<(SendStream, RecvStream), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(stream) = self.streams.pop() {
+            return Ok(stream);
+        }
+
+        let connection = self.connection.as_ref().ok_or("No connection available")?;
+        connection
+            .open_bi()
+            .await
+            .map_err(|e| format!("Failed to open stream: {}", e).into())
+    }
+
+    fn release(&mut self, stream: (SendStream, RecvStream)) {
+        if self.streams.len() < self.max_size {
+            self.streams.push(stream);
+        }
+    }
+}
 
 pub struct QuicTunnelClient {
     config: TunnelQuicConfig,
@@ -45,6 +83,7 @@ pub struct QuicClientSession {
     pub mappings: HashMap<String, PortMappingConfig>,
     pub connection: Option<Connection>,
     pub datagram_capabilities: DatagramCapabilities,
+    pub(crate) stream_pool: Arc<Mutex<StreamPool>>,
 }
 
 impl QuicTunnelClient {
@@ -247,6 +286,7 @@ impl QuicTunnelClient {
                     mappings: HashMap::new(),
                     connection: Some(connection.clone()),
                     datagram_capabilities: datagram_caps,
+                    stream_pool: Arc::new(Mutex::new(StreamPool::new(Some(connection.clone())))),
                 };
 
                 Ok((session, connection))
@@ -316,6 +356,7 @@ impl QuicTunnelClient {
                     mappings: Self::convert_mappings(&server_mappings),
                     connection: Some(connection.clone()),
                     datagram_capabilities: datagram_caps,
+                    stream_pool: Arc::new(Mutex::new(StreamPool::new(Some(connection.clone())))),
                 };
 
                 self.sessions.insert(client_id.to_string(), session.clone());
@@ -405,15 +446,36 @@ impl QuicTunnelClient {
             .get(peer_id)
             .ok_or_else(|| format!("No session for peer: {}", peer_id))?;
 
-        let connection = session
-            .connection
-            .as_ref()
-            .ok_or_else(|| format!("No connection for peer: {}", peer_id))?;
+        let pool = session.stream_pool.clone();
+        drop(session);
 
-        connection
-            .open_bi()
-            .await
-            .map_err(|e| format!("Failed to open stream: {}", e).into())
+        let stream = {
+            let mut pool = pool.lock().await;
+            pool.acquire().await?
+        };
+
+        Ok(stream)
+    }
+
+    pub async fn release_stream_to_peer(
+        &self,
+        peer_id: &str,
+        stream: (SendStream, RecvStream),
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let session = self
+            .sessions
+            .get(peer_id)
+            .ok_or_else(|| format!("No session for peer: {}", peer_id))?;
+
+        let pool = session.stream_pool.clone();
+        drop(session);
+
+        {
+            let mut pool = pool.lock().await;
+            pool.release(stream);
+        }
+
+        Ok(())
     }
 
     pub async fn send_keepalive(
@@ -516,6 +578,13 @@ impl QuicTunnelClient {
         write_message(&mut send_stream, &open_msg).await?;
 
         let response = read_message_default(&mut recv_stream).await?;
+
+        let release_result = self
+            .release_stream_to_peer(peer_id, (send_stream, recv_stream))
+            .await;
+        if release_result.is_err() {
+            tracing::warn!("Failed to release stream to pool for peer {}", peer_id);
+        }
 
         let connection = session
             .connection

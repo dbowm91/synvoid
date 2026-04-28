@@ -1,16 +1,20 @@
 # MaluWAF Implementation Plan
 
-**Status**: All Pending Items Complete
+**Status**: All Wave 1-4 Items Complete
 **Last Updated**: 2026-04-28
-**Verification Completed**: 2026-04-28 (all items verified against codebase)
+**Verification Completed**: 2026-04-28
 
 ---
 
 ## Overview
 
-All implementation waves (1-11) are **COMPLETE**. See AGENTS.md "Recently Completed Items" section for the full list of completed features with verification dates.
+All implementation waves (1-4) are **COMPLETE**. See AGENTS.md "Recently Completed Items" section for the full list of completed features with verification dates.
 
-**All previously pending items are now complete:**
+**Wave 1-4 Implementation Summary:**
+- Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
+- Wave 2: Performance & Scalability (W2.1-W2.4)
+- Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
+- Wave 4: Security & Resilience (W4.1-W4.2)
 
 ---
 
@@ -22,6 +26,17 @@ All implementation waves (1-11) are **COMPLETE**. See AGENTS.md "Recently Comple
 | P11.1 | Spin WASM HTTP routing not integrated | Added `BackendType::Spin` to router.rs, `spin_app_name` to RouteTarget, `BackendConfig::Spin` to config/site/backend.rs, and HTTP dispatch in server.rs at lines 1961-2048. | 2026-04-28 |
 | P7A | WireGuard mesh transport enum not fully removed | Removed deprecated `WireGuard` variant from `MeshTransportPreference` in `src/mesh/config.rs:616-620`. Cleaned up `src/mesh/backend.rs:354-357` and `src/mesh/protocol.rs:1181-1185`. | 2026-04-28 |
 | D1 | dashmap 5.5.3 → 7.0.0-rc2 | Updated version in Cargo.toml. Verified compilation. | 2026-04-28 |
+| W1.1 | Strategic metrics module split | Split `src/metrics/mod.rs` into `src/metrics/payloads.rs` (structs) and `src/metrics/collection.rs` (atomic counters). Re-exports maintained for public API compatibility. | 2026-04-28 |
+| W1.2 | Continuous fuzzing integration | Added `fuzz/fuzz_early_parse.rs` and `fuzz/fuzz_protocol_proto_decode.rs` targets to fuzz/Cargo.toml. | 2026-04-28 |
+| W1.3 | E2E fault injection test | Added test simulating worker crash mid-request in `tests/integration_test.rs` for Overseer recovery verification. | 2026-04-28 |
+| W2.1 | Zero-copy HTTP proxying | Implemented streaming body pipe for large responses (>1MB) in `src/http/server.rs` to reduce allocations at 500K RPS. | 2026-04-28 |
+| W2.2 | HTTP/3 zero-copy proxying | Applied streaming body optimization to QUIC proxy paths in `src/http3/server.rs`. | 2026-04-28 |
+| W2.3 | DHT routing LRU cache | Added moka-based LRU cache to `RoutingTable::find_closest` for O(1) hot path lookups. | 2026-04-28 |
+| W2.4 | QUIC stream pooling | Implemented `StreamPool` in `src/tunnel/quic/client.rs` to reuse streams per peer instead of opening/closing per message. | 2026-04-28 |
+| W3.1 | Site isolation audit | Audited `ratelimit.rs`, `rule_feed.rs`, and `WorkerMetrics` - found already properly isolated per site. | 2026-04-28 |
+| W3.2 | WASM Component Model support | Created `src/plugin/plugin.wit` WIT file, added `load_component` implementation using wasmtime Component API. | 2026-04-28 |
+| W4.1 | Automated threat feed ingestion | Created `src/waf/threat_intel/feed_client.rs` with Ed25519 signature verification and background fetch task. | 2026-04-28 |
+| W4.2 | Threat feed DHT distribution | Added `ThreatFeedUpdate` IPC message, `broadcast_threat_feed_update`, and `publish_feed_indicator_to_dht` using SiteScoped keys. | 2026-04-28 |
 
 ---
 
@@ -86,21 +101,4 @@ cargo check --features post-quantum
 
 ## Historical Context
 
-All waves 1-11 were implemented and verified between 2026-04-27 and 2026-04-28. The full history of completed items is maintained in AGENTS.md under "Recently Completed Items."
-e>
-cargo test --test integration_test
-
-# Format and lint
-cargo fmt
-cargo clippy -- -D warnings
-
-# Feature-specific checks
-cargo check --features dns
-cargo check --features post-quantum
-```
-
----
-
-## Historical Context
-
-All waves 1-11 were implemented and verified between 2026-04-27 and 2026-04-28. The full history of completed items is maintained in AGENTS.md under "Recently Completed Items."
+All waves 1-4 were implemented and verified between 2026-04-27 and 2026-04-28. The full history of completed items is maintained in AGENTS.md under "Recently Completed Items."

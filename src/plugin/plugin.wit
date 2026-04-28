@@ -1,0 +1,61 @@
+/// Host exports for WASM plugin components
+interface host {
+    /// Log a message from the plugin
+    log: func(level: string, message: string);
+
+    /// Get a request header value
+    get-header: func(name: string) -> option<string>;
+
+    /// Set a response header
+    set-header: func(name: string, value: string);
+
+    /// Get the request method
+    get-method: func() -> string;
+
+    /// Get the request URI
+    get-uri: func() -> string;
+
+    /// Get the request body
+    get-body: func() -> list<u8>;
+
+    /// Set the response body
+    set-body: func(data: list<u8>);
+
+    /// Set the response status code
+    set-status: func(code: u16);
+
+    /// Get an environment variable
+    get-env: func(key: string) -> option<string>;
+
+    /// Check if request has timed out
+    check-timeout: func() -> bool;
+
+    /// Query the DHT for a key
+    /// Returns: list<u8> on success (empty if not found), error code -1 on failure, -2 on unauthorized
+    mesh-query-dht: func(key: string) -> result<list<u8>, s8>;
+
+    /// Check if an IP is a known threat
+    /// Returns: 1 if threatened, 0 if clean, -1 on error
+    mesh-check-threat: func(ip: string) -> s8;
+
+    /// Emit an event to the mesh
+    /// Returns: 0 on success, -1 on error
+    mesh-emit-event: func(topic: string, data: list<u8>) -> result<(), s8>;
+
+    /// Allocate memory in the guest
+    guest-alloc: func(size: u32) -> u32;
+
+    /// Free memory in the guest
+    guest-free: func(ptr: u32, size: u32);
+}
+
+/// WASM component plugin interface
+world plugin {
+    import host;
+
+    /// Filter a request - return 0 for pass, 1 for block, 2 for challenge
+    export filter-request: func() -> s32;
+
+    /// Transform response body
+    export transform-response: func() -> s32;
+}

@@ -288,8 +288,31 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | P1.8 | `proxy_cache` not wired in `MeshProxy::route_request()` | Wired cache lookup/insert in `proxy_to_peer_with_fallback()` at `src/mesh/proxy.rs:1169-1259`. Added cache key builder, `is_cacheable_method`, `should_bypass_cache`, `is_response_cacheable`, `get_cache_max_age` helpers. | 2026-04-28 |
 | P11.1 | Spin WASM HTTP routing not integrated | Added `BackendType::Spin` to router.rs, `spin_app_name` to RouteTarget, `BackendConfig::Spin` to config/site/backend.rs, and HTTP dispatch in server.rs at lines 1961-2048. | 2026-04-28 |
 | P7A | WireGuard mesh transport enum not fully removed | Removed deprecated `WireGuard` variant from `MeshTransportPreference` in `src/mesh/config.rs:616-620`. Cleaned up `src/mesh/backend.rs:354-357` and `src/mesh/protocol.rs:1181-1185`. | 2026-04-28 |
+| W1.1 | Strategic metrics module split | Split `src/metrics/mod.rs` into `src/metrics/payloads.rs` (structs) and `src/metrics/collection.rs` (atomic counters). Re-exports maintained for public API compatibility. | 2026-04-28 |
+| W1.2 | Continuous fuzzing integration | Added `fuzz/fuzz_early_parse.rs` and `fuzz/fuzz_protocol_proto_decode.rs` targets to fuzz/Cargo.toml. | 2026-04-28 |
+| W1.3 | E2E fault injection test | Added test simulating worker crash mid-request in `tests/integration_test.rs` for Overseer recovery verification. | 2026-04-28 |
+| W2.1 | Zero-copy HTTP proxying | Implemented streaming body pipe for large responses (>1MB) in `src/http/server.rs` to reduce allocations at 500K RPS. | 2026-04-28 |
+| W2.2 | HTTP/3 zero-copy proxying | Applied streaming body optimization to QUIC proxy paths in `src/http3/server.rs`. | 2026-04-28 |
+| W2.3 | DHT routing LRU cache | Added moka-based LRU cache to `RoutingTable::find_closest` for O(1) hot path lookups. | 2026-04-28 |
+| W2.4 | QUIC stream pooling | Implemented `StreamPool` in `src/tunnel/quic/client.rs` to reuse streams per peer instead of opening/closing per message. | 2026-04-28 |
+| W3.1 | Site isolation audit | Audited `ratelimit.rs`, `rule_feed.rs`, and `WorkerMetrics` - found already properly isolated per site. | 2026-04-28 |
+| W3.2 | WASM Component Model support | Created `src/plugin/plugin.wit` WIT file, added `load_component` implementation using wasmtime Component API. | 2026-04-28 |
+| W4.1 | Automated threat feed ingestion | Created `src/waf/threat_intel/feed_client.rs` with Ed25519 signature verification and background fetch task. | 2026-04-28 |
+| W4.2 | Threat feed DHT distribution | Added `ThreatFeedUpdate` IPC message, `broadcast_threat_feed_update`, and `publish_feed_indicator_to_dht` using SiteScoped keys. | 2026-04-28 |
 
 ## Known Issues
 
-There are no known incomplete items. All previously tracked issues (P1.8, P11.1, P7A) and Deferred Items (D1-D6, D8-D10) have been resolved.
-Deferred Item D7 (God module splits) was explicitly skipped as a large-scale manual refactor to adhere to the "no capability reversions" requirement.
+There are no known incomplete items. All items from `plans/future_work.md` have been verified and completed (or explicitly skipped where appropriate):
+
+- **D7 God module splits**: Skipped due to "no capability reversions" requirement
+- All W1.x, W2.x, W3.x, W4.x items: Verified and implemented
+
+## Branch Recovery Note
+
+During a previous session, several wave branches (W1.2, W2.1-W2.4, W3.2) were created but their changes were not merged to HEAD before the session ended. This branch (`wave-final`) recovered and verified the following implementations:
+- W1.2: `fuzz/fuzz_early_parse.rs`, `fuzz/fuzz_protocol_proto_decode.rs`
+- W2.1: Zero-copy HTTP proxying in `src/http/server.rs`
+- W2.2: Zero-copy HTTP/3 proxying in `src/http3/server.rs`
+- W2.3: LRU cache in `src/mesh/dht/routing/table.rs`
+- W2.4: QUIC stream pooling in `src/tunnel/quic/client.rs`
+- W3.2: WASM Component Model (`src/plugin/plugin.wit`, updated `wasm_runtime.rs`)

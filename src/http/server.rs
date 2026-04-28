@@ -2834,6 +2834,8 @@ impl HttpServer {
                         .enable_compression
                         .unwrap_or(false);
 
+                const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB - stream above this size
+
                 if !needs_body_transform && !crate::http_client::is_quictunnel_url(&target.upstream)
                 {
                     let forward_header_map = build_forward_headers(
@@ -2872,6 +2874,13 @@ impl HttpServer {
                                 .and_then(|v| v.parse::<u64>().ok())
                                 .unwrap_or(0);
 
+                            let is_chunked = resp_parts
+                                .headers
+                                .get("transfer-encoding")
+                                .and_then(|v| v.to_str().ok())
+                                .map(|v| v.contains("chunked"))
+                                .unwrap_or(false);
+
                             if let Some(ref m) = metrics {
                                 m.bandwidth.record_proxied(
                                     request_body_size,
@@ -2909,24 +2918,69 @@ impl HttpServer {
 
                             builder = Self::apply_security_headers(builder, &target, &main_config);
 
-                            return Ok(builder
-                                .body(
-                                    upstream_body
-                                        .map_err(|e| {
-                                            tracing::warn!("Upstream body stream error: {}", e);
-                                            unreachable!()
-                                        })
-                                        .boxed(),
-                                )
-                                .unwrap_or_else(|_| {
-                                    Self::build_response_with_alt_svc(
-                                        500,
-                                        crate::http::reason_phrase(500).to_string(),
-                                        "text/plain",
-                                        &alt_svc,
-                                        &main_config,
+                            let should_zero_copy = body_len > ZERO_COPY_THRESHOLD
+                                || (body_len == 0 && is_chunked);
+
+                            if should_zero_copy {
+                                return Ok(builder
+                                    .body(
+                                        upstream_body
+                                            .map_err(|e| {
+                                                tracing::warn!("Upstream body stream error: {}", e);
+                                                unreachable!()
+                                            })
+                                            .boxed(),
                                     )
-                                }));
+                                    .unwrap_or_else(|_| {
+                                        Self::build_response_with_alt_svc(
+                                            500,
+                                            crate::http::reason_phrase(500).to_string(),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        )
+                                    }));
+                            } else {
+                                match upstream_body.collect().await {
+                                    Ok(collected) => {
+                                        let body_bytes = collected.to_bytes();
+                                        let body_len = body_bytes.len() as u64;
+                                        if let Some(ref m) = metrics {
+                                            m.bandwidth.record_egress(
+                                                body_len,
+                                                BandwidthProtocol::Http,
+                                                EgressDirection::Proxied,
+                                            );
+                                            m.bandwidth.record_site_egress(&site_id, body_len);
+                                        }
+                                        return Ok(builder
+                                            .body(Full::new(body_bytes).boxed())
+                                            .unwrap_or_else(|_| {
+                                                Self::build_response_with_alt_svc(
+                                                    500,
+                                                    crate::http::reason_phrase(500).to_string(),
+                                                    "text/plain",
+                                                    &alt_svc,
+                                                    &main_config,
+                                                )
+                                            }));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to collect upstream body: {}", e);
+                                        return Ok(builder
+                                            .body(Full::new(Bytes::new()).boxed())
+                                            .unwrap_or_else(|_| {
+                                                Self::build_response_with_alt_svc(
+                                                    500,
+                                                    crate::http::reason_phrase(500).to_string(),
+                                                    "text/plain",
+                                                    &alt_svc,
+                                                    &main_config,
+                                                )
+                                            }));
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             if let Some(ref rm) = req_metrics {
