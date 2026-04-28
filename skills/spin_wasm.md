@@ -163,6 +163,51 @@ if let Some(value) = runtime.kv_store().get("key").await {
 }
 ```
 
+## HTTP Routing Integration
+
+Spin apps are integrated into the HTTP request handling pipeline via `BackendType::Spin` in `src/router.rs`. The HTTP server dispatches to Spin apps at `src/http/server.rs:1961-2048`.
+
+### Integration Flow
+
+1. **Configuration**: `BackendConfig::Spin { spin_app_name }` is parsed from site config
+2. **Route Target**: `RouteTarget` has `spin_app_name: Option<Arc<str>>` field
+3. **Dispatch**: HTTP server checks for `BackendType::Spin` and routes to SpinAppsManager
+
+### Key Integration Points
+
+```rust
+// Getting the global manager
+use crate::spin::handler::get_global_spin_apps_manager;
+let manager = get_global_spin_apps_manager();
+
+// Looking up a Spin app
+let runtime = manager.get("app-name"); // returns Option<Arc<SpinRuntime>>
+
+// Creating a Spin HTTP handler
+use crate::spin::handler::SpinHttpHandler;
+let handler = SpinHttpHandler::new(runtime);
+
+// Handling a request
+use crate::spin::handler::{SpinRequest, SpinResponse};
+let spin_req = SpinRequest::new(method, path)
+    .with_headers(headers)
+    .with_body(body_bytes);
+let spin_resp = handler.handle_request(spin_req).await?;
+```
+
+## Testing
+
+```bash
+# Run Spin tests
+cargo test --lib spin
+
+# Run WASM runtime tests
+cargo test --lib plugin::wasm_runtime
+
+# Run integration tests
+cargo test --test integration_test
+```
+
 ## Known Issue: HTTP Routing Gap
 
 **Spin apps are NOT yet integrated into the HTTP request handling pipeline.**
