@@ -1440,6 +1440,7 @@ impl HttpServer {
             crate::proxy::WafDecision::Pass
         } else {
             waf.check_request_full(
+                Some(&site_id),
                 client_ip,
                 method_str.as_str(),
                 &path,

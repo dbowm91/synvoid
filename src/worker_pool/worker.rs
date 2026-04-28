@@ -124,7 +124,7 @@ impl Worker {
                         let http_method = http::Method::from_bytes(method.as_str().as_bytes())
                             .unwrap_or(http::Method::GET);
                         
-                        match waf.check_request(client_ip, http_method.clone(), &path_str, user_agent.as_deref()).await {
+                        match waf.check_request(None, client_ip, http_method.as_str(), &path_str, user_agent.as_deref()).await {
                             WafDecision::Block(status, message) => {
                                 metrics.blocked.fetch_add(1, Ordering::Relaxed);
                                 counter!("maluwaf.requests.blocked").increment(1);

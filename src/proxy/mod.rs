@@ -317,6 +317,7 @@ impl ProxyServer {
             let waf_decision = self
                 .waf
                 .check_request_full(
+                    Some(self.site_id.as_str()),
                     client_ip,
                     method.as_str(),
                     &path,

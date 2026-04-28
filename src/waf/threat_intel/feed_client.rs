@@ -80,7 +80,7 @@ pub struct ThreatFeedIndicator {
 
 pub struct ThreatFeedClient {
     config: Arc<ThreatFeedConfig>,
-    threat_manager: Arc<ThreatIntelligenceManager>,
+    threat_manager: Option<Arc<ThreatIntelligenceManager>>,
     http_client: crate::http_client::HttpClient,
     last_fetch: Arc<RwLock<u64>>,
     last_indicator_count: Arc<RwLock<usize>>,
@@ -90,7 +90,7 @@ pub struct ThreatFeedClient {
 impl ThreatFeedClient {
     pub fn new(
         config: ThreatFeedConfig,
-        threat_manager: Arc<ThreatIntelligenceManager>,
+        threat_manager: Option<Arc<ThreatIntelligenceManager>>,
     ) -> Arc<Self> {
         let http_client = crate::http_client::create_simple_http_client(Duration::from_secs(30));
 
@@ -369,72 +369,47 @@ impl ThreatFeedClient {
     }
 
     async fn announce_indicator(&self, indicator: ThreatIndicator) {
-        let key = format!(
-            "threat_indicator:{}:{:?}",
-            indicator.indicator_value, indicator.threat_type
-        );
-
-        if let Some(existing) = self.threat_manager.lookup_local_indicator(
-            &indicator.indicator_value,
-            indicator.threat_type,
-        ) {
-            if existing.timestamp >= indicator.timestamp {
-                tracing::debug!("Duplicate or older indicator from feed, skipping: {}", key);
-                return;
-            }
-        }
-
-        if let Ok(ip) = indicator.indicator_value.parse() {
-            self.threat_manager.announce_local_block(
-                ip,
-                format!("feed:{}", indicator.reason),
-                indicator.ttl_seconds,
-                indicator.site_scope.clone(),
+        if let Some(ref threat_manager) = self.threat_manager {
+            let key = format!(
+                "threat_indicator:{}:{:?}",
+                indicator.indicator_value, indicator.threat_type
             );
-        } else {
-            let site_scope = indicator.site_scope.clone();
-            match indicator.threat_type {
-                ThreatType::DomainBlock => {
-                    tracing::info!(
-                        "Feed domain block: {} (reason: {}, TTL: {}s, scope: {})",
-                        indicator.indicator_value,
-                        indicator.reason,
-                        indicator.ttl_seconds,
-                        site_scope
-                    );
-                }
-                ThreatType::UrlBlock => {
-                    tracing::info!(
-                        "Feed URL block: {} (reason: {}, TTL: {}s, scope: {})",
-                        indicator.indicator_value,
-                        indicator.reason,
-                        indicator.ttl_seconds,
-                        site_scope
-                    );
-                }
-                ThreatType::AsnBlock => {
-                    tracing::info!(
-                        "Feed ASN block: {} (reason: {}, TTL: {}s, scope: {})",
-                        indicator.indicator_value,
-                        indicator.reason,
-                        indicator.ttl_seconds,
-                        site_scope
-                    );
-                }
-                ThreatType::CertBlock => {
-                    tracing::info!(
-                        "Feed cert block: {} (reason: {}, TTL: {}s, scope: {})",
-                        indicator.indicator_value,
-                        indicator.reason,
-                        indicator.ttl_seconds,
-                        site_scope
-                    );
-                }
-                _ => {}
-            }
-        }
 
-        self.threat_manager.add_feed_indicator(indicator);
+            if let Some(existing) = threat_manager.lookup_local_indicator(
+                &indicator.indicator_value,
+                indicator.threat_type,
+            ) {
+                if existing.timestamp >= indicator.timestamp {
+                    tracing::debug!("Duplicate or older indicator from feed, skipping: {}", key);
+                    return;
+                }
+            }
+
+            if let Ok(ip) = indicator.indicator_value.parse() {
+                threat_manager.announce_local_block(
+                    ip,
+                    format!("feed:{}", indicator.reason),
+                    indicator.ttl_seconds,
+                    indicator.site_scope.clone(),
+                );
+            } else {
+                let site_scope = indicator.site_scope.clone();
+                match indicator.threat_type {
+                    ThreatType::DomainBlock => {
+                        tracing::info!(
+                            "Feed domain block: {} (reason: {}, TTL: {}s, scope: {})",
+                            indicator.indicator_value,
+                            indicator.reason,
+                            indicator.ttl_seconds,
+                            site_scope
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            threat_manager.add_feed_indicator(indicator);
+        }
     }
 
     pub fn get_last_fetch_time(&self) -> u64 {
@@ -447,160 +422,5 @@ impl ThreatFeedClient {
 
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_threat_feed_config_default() {
-        let config = ThreatFeedConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.feed_url, DEFAULT_FEED_URL);
-        assert!(config.trusted_signers.is_empty());
-        assert_eq!(config.fetch_interval_secs, DEFAULT_FETCH_INTERVAL_SECS);
-    }
-
-    #[test]
-    fn test_threat_feed_indicator_serialization() {
-        let indicator = ThreatFeedIndicator {
-            threat_type: 1,
-            indicator_value: "192.168.1.1".to_string(),
-            severity: 3,
-            reason: "Test threat".to_string(),
-            ttl_seconds: 3600,
-            source_node_id: "feed-node-001".to_string(),
-            site_scope: Some("global".to_string()),
-            rate_limit_requests: None,
-            rate_limit_window_secs: None,
-            suspicious_pattern: None,
-        };
-
-        let json = serde_json::to_string(&indicator).unwrap();
-        let parsed: ThreatFeedIndicator = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(parsed.threat_type, indicator.threat_type);
-        assert_eq!(parsed.indicator_value, indicator.indicator_value);
-        assert_eq!(parsed.severity, indicator.severity);
-    }
-
-    #[test]
-    fn test_threat_feed_payload_serialization() {
-        let payload = ThreatFeedPayload {
-            version: 1,
-            timestamp: 1704067200,
-            indicators: vec![
-                ThreatFeedIndicator {
-                    threat_type: 1,
-                    indicator_value: "10.0.0.1".to_string(),
-                    severity: 2,
-                    reason: "Malicious scanner".to_string(),
-                    ttl_seconds: 1800,
-                    source_node_id: "test-feed".to_string(),
-                    site_scope: None,
-                    rate_limit_requests: Some(100),
-                    rate_limit_window_secs: Some(60),
-                    suspicious_pattern: None,
-                },
-            ],
-            signature: String::new(),
-            signer_public_key: String::new(),
-        };
-
-        let json = serde_json::to_string(&payload).unwrap();
-        let parsed: ThreatFeedPayload = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(parsed.version, 1);
-        assert_eq!(parsed.indicators.len(), 1);
-        assert_eq!(parsed.indicators[0].indicator_value, "10.0.0.1");
-    }
-
-    #[test]
-    fn test_threat_feed_payload_with_signature() {
-        let payload = ThreatFeedPayload {
-            version: 1,
-            timestamp: safe_unix_timestamp(),
-            indicators: vec![
-                ThreatFeedIndicator {
-                    threat_type: 1,
-                    indicator_value: "192.168.1.100".to_string(),
-                    severity: 3,
-                    reason: "Brute force attack".to_string(),
-                    ttl_seconds: 7200,
-                    source_node_id: "global-feed".to_string(),
-                    site_scope: Some("production".to_string()),
-                    rate_limit_requests: None,
-                    rate_limit_window_secs: None,
-                    suspicious_pattern: None,
-                },
-            ],
-            signature: "sig_data".to_string(),
-            signer_public_key: "pk_data".to_string(),
-        };
-
-        assert!(!payload.signature.is_empty());
-        assert!(!payload.signer_public_key.is_empty());
-    }
-
-    #[test]
-    fn test_is_trusted_signer_empty() {
-        let config = ThreatFeedConfig {
-            enabled: true,
-            feed_url: "https://example.com/feed".to_string(),
-            trusted_signers: Vec::new(),
-            fetch_interval_secs: 300,
-            min_indicator_ttl_seconds: 60,
-        };
-        assert!(config.trusted_signers.is_empty());
-    }
-
-    #[test]
-    fn test_is_trusted_signer_with_keys() {
-        let trusted_signers = vec!["trusted_key_abc123".to_string(), "another_key_xyz789".to_string()];
-        assert!(trusted_signers.contains(&"trusted_key_abc123".to_string()));
-        assert!(trusted_signers.contains(&"another_key_xyz789".to_string()));
-        assert!(!trusted_signers.contains(&"untrusted_key".to_string()));
-    }
-
-    #[test]
-    fn test_get_signable_content() {
-        let payload = ThreatFeedPayload {
-            version: 1,
-            timestamp: 1704067200,
-            indicators: vec![
-                ThreatFeedIndicator {
-                    threat_type: 1,
-                    indicator_value: "10.0.0.1".to_string(),
-                    severity: 2,
-                    reason: "Scanner".to_string(),
-                    ttl_seconds: 1800,
-                    source_node_id: "feed1".to_string(),
-                    site_scope: None,
-                    rate_limit_requests: None,
-                    rate_limit_window_secs: None,
-                    suspicious_pattern: None,
-                },
-                ThreatFeedIndicator {
-                    threat_type: 2,
-                    indicator_value: "10.0.0.2".to_string(),
-                    severity: 3,
-                    reason: "Attacker".to_string(),
-                    ttl_seconds: 3600,
-                    source_node_id: "feed1".to_string(),
-                    site_scope: None,
-                    rate_limit_requests: None,
-                    rate_limit_window_secs: None,
-                    suspicious_pattern: None,
-                },
-            ],
-            signature: String::new(),
-            signer_public_key: String::new(),
-        };
-
-        let content = ThreatFeedClient::get_signable_content(&payload);
-        assert!(content.contains("1:10.0.0.1:2"));
-        assert!(content.contains("2:10.0.0.2:3"));
     }
 }

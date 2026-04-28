@@ -318,6 +318,7 @@ impl Http3Server {
         let waf_decision = self
             .waf
             .check_request_full(
+                Some(host.as_str()),
                 client_ip,
                 method_str,
                 &path,

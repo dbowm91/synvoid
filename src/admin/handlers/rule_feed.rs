@@ -141,7 +141,7 @@ pub async fn apply_pending(
         }));
     }
 
-    match rule_feed_manager.apply_pending() {
+    match rule_feed_manager.apply_pending(None) {
         Ok(()) => {
             let version = rule_feed_manager.get_current_version().unwrap_or_default();
             Ok(Json(RuleFeedApplyResponse {
