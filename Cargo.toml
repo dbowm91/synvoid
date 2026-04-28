@@ -180,7 +180,7 @@ libloading = "0.8"
 aya = { version = "0.13", optional = true }
 
 # WASM support for plugins
-wasmtime = "42.0.2"
+wasmtime = { version = "42.0.2", features = ["component-model"] }
 
 # URL parsing (already used elsewhere)
 url = "2"

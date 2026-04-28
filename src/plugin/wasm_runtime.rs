@@ -155,6 +155,20 @@ impl WasmPluginManager {
         Ok(arc)
     }
 
+    /// EXPERIMENTAL: Load a WASM component
+    /// Currently, the component ABI is incompatible with our runtime assumptions.
+    pub fn load_component(&self, path: &Path) -> Result<(), WasmPluginError> {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        let engine = wasmtime::Engine::new(&config).map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+        
+        let _component = wasmtime::component::Component::from_file(&engine, path)
+            .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+            
+        // TODO: Map component exports to WasmRuntime
+        Err(WasmPluginError::LoadFailed("WASM components are not fully supported yet due to ABI incompatibility".to_string()))
+    }
+
     pub fn load_plugin_with_limits(
         &self,
         path: &Path,
