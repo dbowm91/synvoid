@@ -308,6 +308,36 @@ if sender.send(event).is_err() {
 
 Query via `get_dropped_event_counts() -> DroppedEventCounts` (per-category breakdown + total).
 
+### Serverless Async Compilation
+
+The serverless module (`src/serverless/`) supports async WASM compilation to avoid blocking startup:
+
+```rust
+// AsyncCompilationHandle manages compilation state
+use crate::serverless::async_compilation::{AsyncCompilationHandle, AsyncCompilationManager, CompilationState};
+
+// Check compilation status
+if let Some(ref handle) = function.compilation_handle {
+    match handle.poll_state() {
+        CompilationState::Compiling { .. } => { /* wait or fallback */ }
+        CompilationState::Ready => { /* use runtime */ }
+        CompilationState::Failed { error } => { /* handle error */ }
+        CompilationState::Pending => { /* not started */ }
+    }
+}
+
+// Spawn async compilation
+let compilation_manager = self.compilation_manager.clone();
+let (tx, rx) = tokio::sync::oneshot::channel();
+tokio::spawn(async move {
+    let result = tokio::task::spawn_blocking(move || {
+        // blocking WASM compilation work
+    }).await;
+    let _ = tx.send((function_name, result));
+});
+compilation_manager.mark_compiling(&func_name);
+```
+
 ### Concurrency Patterns
 
 - **DashMap** (170+ uses in codebase): Preferred over `RwLock<HashMap>` for hot paths. Use for any map accessed on every request.
@@ -467,7 +497,7 @@ The consolidated implementation plan is at `plans/plan.md`. It organizes remaini
 - **Wave 8**: Admin API & DX (COMPLETED)
 - **Wave 9**: Dependency Updates (COMPLETED)
 - **Wave 10**: Testing Improvements (COMPLETED)
-- **Wave 11**: New Features (IN PROGRESS - P11.1 Spin WASM Runtime completed, P11.2 pending)
+- **Wave 11**: New Features (COMPLETED - P11.1 Spin WASM Runtime, P11.2 Serverless Standalone Enhancements)
 
 Waves 1-3 are completed (Streaming WAF, DHT Persistence, Post-Quantum Signatures, Windows Service, Behavioral Intelligence, Topology Visualizer).
 

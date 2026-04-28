@@ -72,6 +72,56 @@ pub async fn initialize(&self) -> Result<(), InstancePoolError> {
 }
 ```
 
+### Async Compilation (P11.2)
+
+Serverless functions support async WASM compilation to avoid blocking startup:
+
+```rust
+// AsyncCompilationHandle tracks compilation state
+use crate::serverless::async_compilation::{AsyncCompilationHandle, AsyncCompilationManager, CompilationState};
+
+pub struct AsyncCompilationHandle {
+    state: Arc<RwLock<CompilationState>>,
+    completion_sender: Arc<Mutex<Option<oneshot::Sender<Result<(), WasmPluginError>>>>>,
+    completion_receiver: Arc<Mutex<Option<oneshot::Receiver<Result<(), WasmPluginError>>>>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CompilationState {
+    Pending,
+    Compiling { started_at: Instant },
+    Ready,
+    Failed { error: String },
+}
+```
+
+Usage in `ServerlessManager::initialize`:
+
+```rust
+let compilation_manager = self.compilation_manager.clone();
+let (tx, rx) = tokio::sync::oneshot::channel();
+tokio::spawn(async move {
+    let result = tokio::task::spawn_blocking(move || {
+        // blocking WASM compilation work
+    }).await;
+    let _ = tx.send((func_name.clone(), result));
+});
+compilation_manager.mark_compiling(&func_name);
+```
+
+Check status with `poll_state()`:
+
+```rust
+if let Some(ref handle) = function.compilation_handle {
+    match handle.poll_state() {
+        CompilationState::Compiling { started_at } => { /* wait */ }
+        CompilationState::Ready => { /* use runtime */ }
+        CompilationState::Failed { error } => { /* handle error */ }
+        CompilationState::Pending => { /* not started */ }
+    }
+}
+```
+
 ### State Isolation (Wave 4.8)
 
 Memory is cleared between requests via `_reset()` export or re-instantiation.

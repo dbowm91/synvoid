@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::config::serverless::{FunctionDefinition, ServerlessConfig};
 use crate::mesh::config::MeshNodeRole;
 use crate::plugin::{WasmPluginManager, WasmResourceLimits};
+use crate::serverless::async_compilation::{AsyncCompilationHandle, AsyncCompilationManager, CompilationState};
 use crate::serverless::instance_pool::{InstancePool, InstancePoolConfig};
 use crate::serverless::registry::get_global_serverless_registry;
 use crate::serverless::routing::{parse_routes, MethodMatch, RouteMatch, ServerlessRoute};
@@ -63,12 +64,17 @@ pub enum ServerlessError {
     RemoteExecutionRequired(String),
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
+    #[error("Function compilation in progress: {0}")]
+    CompilationInProgress(String),
+    #[error("Function compilation failed: {0}")]
+    CompilationFailed(String),
 }
 
 #[derive(Clone)]
 pub struct ServerlessFunction {
     pub definition: FunctionDefinition,
     pub runtime: Option<Arc<crate::plugin::wasm_runtime::WasmRuntime>>,
+    pub compilation_handle: Option<Arc<AsyncCompilationHandle>>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +99,7 @@ pub struct ServerlessManager {
     event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
     org_manager: RwLock<Option<Arc<crate::mesh::organization::OrganizationManager>>>,
     revocation_list: RwLock<Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>>,
+    compilation_manager: Arc<AsyncCompilationManager>,
 }
 
 impl ServerlessManager {
@@ -109,6 +116,7 @@ impl ServerlessManager {
             event_subscriptions: RwLock::new(HashMap::new()),
             org_manager: RwLock::new(None),
             revocation_list: RwLock::new(None),
+            compilation_manager: Arc::new(AsyncCompilationManager::new()),
         }
     }
 
@@ -323,16 +331,13 @@ impl ServerlessManager {
         let mut all_routes: Vec<ServerlessRoute> = Vec::new();
 
         for func_def in &config.functions {
-            let runtime = if config.enabled {
-                self.load_function_wasm(func_def).ok()
-            } else {
-                None
-            };
+            let compilation_handle = self.compilation_manager.get_or_create(&func_def.name);
+            compilation_handle.start_compilation();
 
-            let has_runtime = runtime.is_some();
             let function = ServerlessFunction {
                 definition: func_def.clone(),
-                runtime,
+                runtime: None,
+                compilation_handle: Some(compilation_handle.clone()),
             };
 
             self.functions
@@ -348,39 +353,77 @@ impl ServerlessManager {
                 }
             }
 
-            if has_runtime {
-                let pool_config = InstancePoolConfig {
-                    min_instances: func_def.min_instances.unwrap_or(1),
-                    max_instances: func_def.max_instances.unwrap_or(10),
-                    idle_timeout_seconds: func_def.idle_timeout_seconds.unwrap_or(300),
-                    scale_up_threshold: 0.7,
-                    scale_down_threshold: 0.3,
-                    scale_up_cooldown_seconds: 30,
-                    scale_down_cooldown_seconds: 60,
-                    pre_warm_instances: func_def.pre_warm_instances.unwrap_or(2),
-                    max_scale_up_per_tick: 5,
-                };
-
-                let pool = Arc::new(InstancePool::new(pool_config, func_def.clone()));
-
-                let pool_clone = pool.clone();
-                tokio::spawn(async move {
-                    pool_clone.run_autoscaler().await;
-                });
-
-                self.pools.write().insert(func_def.name.clone(), pool);
-
-                if let Some(ref topics) = func_def.event_subscriptions {
-                    for topic in topics {
-                        self.subscribe_to_event(&func_def.name, topic.clone());
+            let func_def_clone = func_def.clone();
+            let func_name = func_def.name.clone();
+            let runtime = self.runtime.clone();
+            let compilation_manager = self.compilation_manager.clone();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            tokio::spawn(async move {
+                let compile_result = tokio::task::spawn_blocking({
+                    let func_def = func_def_clone.clone();
+                    let runtime = runtime.clone();
+                    move || {
+                        if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
+                            if let Some(data) = wasm_dist.get_module_data(
+                                &func_def.name,
+                                crate::mesh::protocol::WasmModuleType::Serverless,
+                            ) {
+                                let limits = crate::plugin::WasmResourceLimits {
+                                    max_memory_mb: func_def.memory_mb.unwrap_or(64),
+                                    max_table_elements: None,
+                                    max_cpu_fuel: func_def.cpu_fuel.unwrap_or(1000000),
+                                    timeout_seconds: func_def.timeout_seconds.unwrap_or(30),
+                                    max_instances: 1,
+                                    memory_budget_mb: None,
+                                    wasi_enabled: false,
+                                    allowed_dht_prefixes: Vec::new(),
+                                };
+                                return runtime.load_plugin_from_memory(&func_def.name, &data, limits);
+                            }
+                        }
+                        let wasm_dir = std::path::PathBuf::from("plugins");
+                        let wasm_path = wasm_dir.join(&func_def.name).with_extension("wasm");
+                        if !wasm_path.exists() {
+                            return Err(crate::plugin::WasmPluginError::LoadFailed(format!(
+                                "WASM file not found: {}",
+                                wasm_path.display()
+                            )));
+                        }
+                        let limits = crate::plugin::WasmResourceLimits {
+                            max_memory_mb: func_def.memory_mb.unwrap_or(64),
+                            max_table_elements: None,
+                            max_cpu_fuel: func_def.cpu_fuel.unwrap_or(1000000),
+                            timeout_seconds: func_def.timeout_seconds.unwrap_or(30),
+                            max_instances: 1,
+                            memory_budget_mb: None,
+                            wasi_enabled: false,
+                            allowed_dht_prefixes: Vec::new(),
+                        };
+                        runtime.load_plugin_with_limits(&wasm_path, limits)
                     }
-                    tracing::debug!(
-                        "Function '{}' subscribed to {} event topics",
-                        func_def.name,
-                        topics.len()
-                    );
-                }
-            }
+                }).await;
+                let _ = tx.send((func_name.clone(), compile_result, func_def_clone));
+            });
+            let func_name = func_def.name.clone();
+            let func_def_clone = func_def.clone();
+            let pool_config = InstancePoolConfig {
+                min_instances: func_def_clone.min_instances.unwrap_or(1),
+                max_instances: func_def_clone.max_instances.unwrap_or(10),
+                idle_timeout_seconds: func_def_clone.idle_timeout_seconds.unwrap_or(300),
+                scale_up_threshold: 0.7,
+                scale_down_threshold: 0.3,
+                scale_up_cooldown_seconds: 30,
+                scale_down_cooldown_seconds: 60,
+                pre_warm_instances: func_def_clone.pre_warm_instances.unwrap_or(2),
+                max_scale_up_per_tick: 5,
+            };
+            let pool = Arc::new(InstancePool::new(pool_config, func_def_clone.clone()));
+            let pool_clone = pool.clone();
+            tokio::spawn(async move {
+                pool_clone.run_autoscaler().await;
+            });
+            self.pools.write().insert(func_name.clone(), pool);
+            compilation_manager.mark_compiling(&func_name);
 
             let record_store = self.record_store.read().clone();
             if let Some(rs) = record_store {
@@ -431,6 +474,31 @@ impl ServerlessManager {
         *self.routes.write() = all_routes;
 
         Ok(())
+    }
+
+    pub fn process_pending_compilations(&self) {
+        for (name, function) in self.functions.read().iter() {
+            if let Some(ref compilation_handle) = function.compilation_handle {
+                let state = compilation_handle.poll_state();
+                if state.is_ready() && function.runtime.is_none() {
+                    tracing::warn!(
+                        "Function '{}' marked as ready but no runtime available",
+                        name
+                    );
+                }
+                if let Some(error) = state.error() {
+                    tracing::error!("Function '{}' compilation failed: {}", name, error);
+                }
+            }
+        }
+    }
+
+    pub fn get_compilation_status(&self, function_name: &str) -> Option<CompilationState> {
+        self.functions
+            .read()
+            .get(function_name)
+            .and_then(|f| f.compilation_handle.as_ref())
+            .map(|h| h.poll_state())
     }
 
     #[allow(dead_code)]
@@ -518,6 +586,71 @@ impl ServerlessManager {
         self.runtime
             .load_plugin_with_limits(&wasm_path, limits)
             .map_err(|e| ServerlessError::WasmError(e.to_string()))
+    }
+
+    pub async fn load_function_wasm_async(
+        &self,
+        func_def: &FunctionDefinition,
+    ) -> Result<Arc<crate::plugin::wasm_runtime::WasmRuntime>, ServerlessError> {
+        let runtime = self.runtime.clone();
+        let func_def = func_def.clone();
+        let default_limits = self.get_default_limits();
+
+        let result = tokio::task::spawn_blocking(move || {
+            if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
+                if let Some(data) = wasm_dist.get_module_data(
+                    &func_def.name,
+                    crate::mesh::protocol::WasmModuleType::Serverless,
+                ) {
+                    tracing::debug!(
+                        "Loading serverless function '{}' from mesh WASM store (async)",
+                        func_def.name
+                    );
+                    let limits = WasmResourceLimits {
+                        max_memory_mb: func_def.memory_mb.unwrap_or(default_limits.0),
+                        max_table_elements: None,
+                        max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_limits.1),
+                        timeout_seconds: func_def.timeout_seconds.unwrap_or(default_limits.2),
+                        max_instances: 1,
+                        memory_budget_mb: None,
+                        wasi_enabled: false,
+                        allowed_dht_prefixes: Vec::new(),
+                    };
+                    return runtime
+                        .load_plugin_from_memory(&func_def.name, &data, limits)
+                        .map_err(|e| ServerlessError::WasmError(e.to_string()));
+                }
+            }
+
+            let wasm_dir = std::path::PathBuf::from("plugins");
+            let wasm_path = wasm_dir.join(&func_def.name).with_extension("wasm");
+
+            if !wasm_path.exists() {
+                return Err(ServerlessError::FunctionNotFound(format!(
+                    "WASM file not found: {}",
+                    wasm_path.display()
+                )));
+            }
+
+            let limits = WasmResourceLimits {
+                max_memory_mb: func_def.memory_mb.unwrap_or(default_limits.0),
+                max_table_elements: None,
+                max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_limits.1),
+                timeout_seconds: func_def.timeout_seconds.unwrap_or(default_limits.2),
+                max_instances: 1,
+                memory_budget_mb: None,
+                wasi_enabled: false,
+                allowed_dht_prefixes: Vec::new(),
+            };
+
+            runtime
+                .load_plugin_with_limits(&wasm_path, limits)
+                .map_err(|e| ServerlessError::WasmError(e.to_string()))
+        })
+        .await
+        .map_err(|e| ServerlessError::WasmError(format!("Task join error: {}", e)))??;
+
+        Ok(result)
     }
 
     fn get_default_limits(&self) -> (usize, u64, u64) {
@@ -694,12 +827,48 @@ impl ServerlessManager {
         }
 
         let Some(runtime) = function.runtime else {
+            if let Some(ref compilation_handle) = function.compilation_handle {
+                let state = compilation_handle.poll_state();
+                if let crate::serverless::async_compilation::CompilationState::Failed { error } = state {
+                    get_global_serverless_registry().record_error(function_name);
+                    return Err(ServerlessError::CompilationFailed(error));
+                }
+                if matches!(state, crate::serverless::async_compilation::CompilationState::Compiling { .. }) {
+                    tracing::debug!("Function '{}' compilation in progress, waiting...", function_name);
+                    match compilation_handle.wait_for_completion().await {
+                        Ok(()) => {
+                            let func = self.functions.read().get(function_name).cloned();
+                            if let Some(func) = func {
+                                if let Some(runtime) = func.runtime.clone() {
+                                    return self.invoke_with_runtime(runtime, function_name, method, path, headers, body).await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            get_global_serverless_registry().record_error(function_name);
+                            return Err(ServerlessError::CompilationFailed(e.to_string()));
+                        }
+                    }
+                }
+            }
             get_global_serverless_registry().record_error(function_name);
             return Err(ServerlessError::WasmError(
                 "No WASM runtime available".to_string(),
             ));
         };
 
+        self.invoke_with_runtime(runtime, function_name, method, path, headers, body).await
+    }
+
+    async fn invoke_with_runtime(
+        &self,
+        runtime: Arc<crate::plugin::wasm_runtime::WasmRuntime>,
+        function_name: &str,
+        method: &str,
+        path: &str,
+        headers: &HeaderMap,
+        body: Option<Bytes>,
+    ) -> Result<ServerlessResponse, ServerlessError> {
         let start = Instant::now();
         let uri = path.to_string();
         let method_str = method.to_string();
@@ -715,7 +884,13 @@ impl ServerlessManager {
         })?;
 
         let body_vec = body.map(|b| b.to_vec()).unwrap_or_default();
-        let env = function.definition.env.clone();
+
+        let funcs = self.functions.read();
+        let env = funcs
+            .get(function_name)
+            .map(|f| f.definition.env.clone())
+            .unwrap_or_default();
+        drop(funcs);
 
         runtime
             .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
@@ -736,6 +911,45 @@ impl ServerlessManager {
                     execution_time_ms,
                 }
             })
+            .map_err(|e| {
+                get_global_serverless_registry().record_error(function_name);
+                ServerlessError::ExecutionError(e.to_string())
+            })
+    }
+
+    pub async fn invoke_serverless_with_runtime(
+        &self,
+        runtime: Arc<crate::plugin::wasm_runtime::WasmRuntime>,
+        function_name: &str,
+        method: &Method,
+        path: &str,
+        headers: &HeaderMap,
+        body: Option<Bytes>,
+    ) -> Result<Response<Bytes>, ServerlessError> {
+        let uri = path.to_string();
+        let method_str = method.to_string();
+
+        let headers_map: std::collections::HashMap<String, String> = headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        let headers_json = serde_json::to_string(&headers_map).map_err(|e| {
+            get_global_serverless_registry().record_error(function_name);
+            ServerlessError::ExecutionError(e.to_string())
+        })?;
+
+        let body_vec = body.map(|b| b.to_vec()).unwrap_or_default();
+
+        let funcs = self.functions.read();
+        let env = funcs
+            .get(function_name)
+            .map(|f| f.definition.env.clone())
+            .unwrap_or_default();
+        drop(funcs);
+
+        runtime
+            .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
             .map_err(|e| {
                 get_global_serverless_registry().record_error(function_name);
                 ServerlessError::ExecutionError(e.to_string())
@@ -782,11 +996,23 @@ pub async fn handle_serverless_function(
         route.priority
     );
 
-    // Check if we have a local WASM runtime for this function
-    let has_local_runtime =
-        function.runtime.is_some() || manager.pools.read().contains_key(&function_name);
+    // Check if we have a local WASM runtime for this function or compilation in progress
+    let compilation_in_progress = function
+        .compilation_handle
+        .as_ref()
+        .map(|h| {
+            matches!(
+                h.poll_state(),
+                crate::serverless::async_compilation::CompilationState::Compiling { .. }
+            )
+        })
+        .unwrap_or(false);
 
-    // If no local runtime, try to find a provider via DHT
+    let has_local_runtime = function.runtime.is_some()
+        || manager.pools.read().contains_key(&function_name)
+        || compilation_in_progress;
+
+    // If no local runtime and not compiling, try to find a provider via DHT
     if !has_local_runtime {
         let upstream_id = format!("serverless_function:{}", function_name);
         if let Some(rs) = manager.record_store.read().as_ref() {
@@ -841,6 +1067,30 @@ pub async fn handle_serverless_function(
     }
 
     let Some(runtime) = function.runtime else {
+        if let Some(ref compilation_handle) = function.compilation_handle {
+            let state = compilation_handle.poll_state();
+            if let crate::serverless::async_compilation::CompilationState::Failed { error } = state {
+                get_global_serverless_registry().record_error(&function_name);
+                return Err(ServerlessError::CompilationFailed(error));
+            }
+            if matches!(state, crate::serverless::async_compilation::CompilationState::Compiling { .. }) {
+                tracing::debug!("Function '{}' compilation in progress, waiting...", function_name);
+                match compilation_handle.wait_for_completion().await {
+                    Ok(()) => {
+                        let func = manager.functions.read().get(&function_name).cloned();
+                        if let Some(func) = func {
+                            if let Some(runtime) = func.runtime.clone() {
+                                return manager.invoke_serverless_with_runtime(runtime, &function_name, method, path, headers, body).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        get_global_serverless_registry().record_error(&function_name);
+                        return Err(ServerlessError::CompilationFailed(e.to_string()));
+                    }
+                }
+            }
+        }
         get_global_serverless_registry().record_error(&function_name);
         return Err(ServerlessError::WasmError(
             "No WASM runtime available".to_string(),

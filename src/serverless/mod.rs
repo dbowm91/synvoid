@@ -1,8 +1,12 @@
+pub mod async_compilation;
 pub mod instance_pool;
 pub mod manager;
 pub mod registry;
 pub mod routing;
 
+pub use async_compilation::{
+    AsyncCompilationHandle, AsyncCompilationManager, CompilationState,
+};
 pub use instance_pool::{
     InstancePool, InstancePoolConfig, InstancePoolError, InstancePoolMode, InstanceState,
     PoolHealth, PoolMetrics, ServerlessInstance,
