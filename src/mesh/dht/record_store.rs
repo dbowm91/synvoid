@@ -151,6 +151,7 @@ pub struct RecordStoreConfig {
     pub neighborhood_persistence_enabled: bool,
     pub neighborhood_cache_size: usize,
     pub persist_max_age_secs: u64,
+    pub query_timeout_secs: u64,
 }
 
 impl Default for RecordStoreConfig {
@@ -177,6 +178,7 @@ impl Default for RecordStoreConfig {
             neighborhood_persistence_enabled: false,
             neighborhood_cache_size: 1000,
             persist_max_age_secs: 604800,
+            query_timeout_secs: 10,
         }
     }
 }

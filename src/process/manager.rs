@@ -373,6 +373,11 @@ impl ProcessManager {
                     }
                 }
             }
+        } else if self.config.allow_insecure_ipc_key {
+            // Fallback: try to read IPC key from environment if not in config
+            if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+                cmd.env("MALUWAF_IPC_KEY", key_hex);
+            }
         }
 
         cmd.arg("--config-path")

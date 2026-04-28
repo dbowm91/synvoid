@@ -32,6 +32,7 @@ pub fn create_record_store(
         enabled: dht_config.enabled,
         sync_interval_secs: 300,
         replication_factor: 20,
+        query_timeout_secs: dht_config.query_timeout_secs,
         write_quorum: dht_config.write_quorum as u32,
         read_quorum: dht_config.read_quorum as u32,
         record_ttl: Duration::from_secs(3600),

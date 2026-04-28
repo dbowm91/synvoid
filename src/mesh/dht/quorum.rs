@@ -97,6 +97,7 @@ impl QuorumRequest {
         origin_node_id: String,
         origin_signature: Vec<u8>,
         global_nodes: &[String],
+        timeout_secs: u64,
     ) -> Self {
         let now = safe_unix_timestamp();
         Self {
@@ -110,7 +111,7 @@ impl QuorumRequest {
             rejections: Vec::new(),
             global_nodes_contacted: global_nodes.to_vec(),
             created_at: now,
-            deadline: now + 10,
+            deadline: now + timeout_secs,
         }
     }
 
@@ -242,6 +243,16 @@ impl QuorumManager {
         reason: RejectionReason,
         evidence: Option<Vec<u8>>,
     ) {
+        let abuse_score = self.get_veto_abuse_score(&node_id).await;
+        if abuse_score > 0.5 {
+            tracing::warn!(
+                "Ignoring rejection from node {} due to high abuse score ({})",
+                node_id,
+                abuse_score
+            );
+            return;
+        }
+
         let mut pending = self.pending_requests.write().await;
         if let Some(request) = pending.get_mut(request_id) {
             request.add_rejection(node_id.clone(), reason.clone(), evidence);
@@ -349,6 +360,7 @@ mod tests {
                 "global2".to_string(),
                 "global3".to_string(),
             ],
+            10,
         );
 
         request.add_signature("global1".to_string(), vec![1, 2, 3]);
@@ -372,6 +384,7 @@ mod tests {
                 "global2".to_string(),
                 "global3".to_string(),
             ],
+            10,
         );
 
         request.add_rejection("global1".to_string(), RejectionReason::DomainTaken, None);
@@ -393,6 +406,7 @@ mod tests {
                 "global2".to_string(),
                 "global3".to_string(),
             ],
+            10,
         );
 
         assert!(!request.threshold_met(3));
