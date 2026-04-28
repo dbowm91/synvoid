@@ -5,72 +5,12 @@ use ed25519_dalek::Verifier;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use prost::Message;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Archive, RkyvDeserialize, RkyvSerialize)]
-pub struct ArcStr(String);
-
-impl ArcStr {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn as_arc(&self) -> Arc<str> {
-        Arc::from(self.0.clone())
-    }
-}
-
-impl std::fmt::Display for ArcStr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl From<String> for ArcStr {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-impl From<&str> for ArcStr {
-    fn from(s: &str) -> Self {
-        Self(s.to_string())
-    }
-}
-
-impl std::ops::Deref for ArcStr {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Serialize for ArcStr {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for ArcStr {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(Self(s))
-    }
-}
+pub use crate::utils::ArcStr;
 
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/mesh.rs"));
