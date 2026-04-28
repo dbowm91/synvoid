@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use http_body_util::combinators::BoxBody;
@@ -210,6 +211,7 @@ pub struct MeshBackendPool {
     backends: Arc<RwLock<Vec<Arc<MeshBackend>>>>,
     proxy: Arc<MeshProxy>,
     topology: Arc<MeshTopology>,
+    last_selected: Arc<AtomicUsize>,
 }
 
 impl MeshBackendPool {
@@ -218,6 +220,7 @@ impl MeshBackendPool {
             backends: Arc::new(RwLock::new(Vec::new())),
             proxy,
             topology,
+            last_selected: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -261,29 +264,8 @@ impl MeshBackendPool {
             return None;
         }
 
-        let mut best: Option<(Arc<MeshBackend>, f64)> = None;
-
-        for backend in &available {
-            let upstream_id = backend.upstream_id();
-            if let Some(peer_id) = self.topology.get_best_peer_for_upstream(upstream_id).await {
-                let scores = self.topology.peer_scores().read().await;
-                let score = scores.get(&peer_id).map(|s| s.total_score).unwrap_or(0.5);
-
-                match &best {
-                    None => {
-                        best = Some((backend.clone(), score));
-                    }
-                    Some((_, best_score)) if score > *best_score => {
-                        best = Some((backend.clone(), score));
-                    }
-                    _ => {}
-                }
-            } else if best.is_none() {
-                best = Some((backend.clone(), 0.5));
-            }
-        }
-
-        best.map(|(b, _)| b)
+        let idx = self.last_selected.fetch_add(1, Ordering::SeqCst) % available.len();
+        Some(available[idx].clone())
     }
 
     pub async fn get_blocked_until(&self, upstream_id: &str) -> Option<std::time::Instant> {
