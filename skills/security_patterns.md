@@ -29,11 +29,11 @@ if !self.node_role.is_global() {
 
 ### Time-Based Challenge Verification (P0.5)
 
-**Location**: `src/mesh/security_challenge.rs:159-190`
+**Location**: `src/mesh/security_challenge.rs:159-218`
 
-**Issue**: `verify_time_based_challenge()` took `_solution: &str` (unused) and only checked challenge existence and expiry. Any string was accepted.
+**Issue**: Previously, `verify_time_based_challenge()` took `_solution: &str` (unused) and only checked challenge existence and expiry. Any string was accepted.
 
-**Fix**: Store expected solution at creation, verify against it:
+**Fix (implemented)**: Store expected solution at creation, verify against it:
 ```rust
 // In generate_time_based_challenge:
 solution: Some(expected_solution),  // Store HMAC of solution
@@ -47,6 +47,8 @@ if solution != expected_solution {
     return false;
 }
 ```
+
+**Verification**: `cargo test --lib -- security_challenge`
 
 ---
 
