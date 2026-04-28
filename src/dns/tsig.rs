@@ -7,6 +7,7 @@ use hmac::{Hmac, Mac};
 use parking_lot::RwLock;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
+use subtle::ConstantTimeEq;
 
 use thiserror::Error;
 
@@ -234,12 +235,7 @@ impl TsigVerifier {
             });
         }
 
-        let mut diff = 0u8;
-        for (a, b) in computed_mac.iter().zip(original_mac.iter()) {
-            diff |= a ^ b;
-        }
-
-        if diff != 0 {
+        if !bool::from(computed_mac.ct_eq(&original_mac)) {
             return Err(TsigError::MacVerificationFailed);
         }
 
