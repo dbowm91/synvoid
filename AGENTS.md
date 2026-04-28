@@ -280,6 +280,9 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | `performance_patterns.md` | Performance optimization patterns |
 | `admin_api.md` | Admin API patterns |
 | `dns_dnssec.md` | DNS and DNSSEC patterns |
+| `wasm_components.md` | WASM component model patterns |
+| `dht_scoping.md` | DHT site isolation and scoping patterns |
+| `threat_feed_production.md` | Production and signing of threat intel feeds |
 
 ## Recently Completed Items
 
