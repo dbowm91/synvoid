@@ -291,4 +291,5 @@ The `skills/` directory contains detailed documentation for various subsystems:
 
 ## Known Issues
 
-There are no known incomplete items. All previously tracked issues (P1.8, P11.1, P7A) have been resolved.
+There are no known incomplete items. All previously tracked issues (P1.8, P11.1, P7A) and Deferred Items (D1-D6, D8-D10) have been resolved.
+Deferred Item D7 (God module splits) was explicitly skipped as a large-scale manual refactor to adhere to the "no capability reversions" requirement.
