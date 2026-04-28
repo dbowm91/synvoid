@@ -486,6 +486,66 @@ stale_cache_ttl_secs = 60
 - `mesh_backend_pool: Option<Arc<MeshBackendPool>>` field in UnifiedServer
 - Use `site_config.mesh_routing` to enable mesh routing for a site
 
+## Recently Completed Items
+
+All implementation plan waves have been completed and verified as of 2026-04-28:
+
+| Wave | Feature | Date | Verification |
+|------|---------|------|--------------|
+| 1.1 | Streaming WAF Engine (`StreamingWafCore`, `StreamingWafDecision`) | 2026-04-27 | Tests pass |
+| 1.2 | DHT Neighborhood Persistence (`record_store_persist.rs`) | 2026-04-27 | Tests pass |
+| 2.1 | Hybrid Post-Quantum Mesh Signatures (`HybridSignature`, `ml_dsa.rs`) | 2026-04-27 | Tests pass |
+| 2.2 | Windows Service & DX (`WindowsInterfaceResolver`, firewall rules) | 2026-04-27 | Tests pass |
+| 3.1 | Federated Behavioral Intelligence (`BehavioralIntelligenceManager`) | 2026-04-27 | Tests pass |
+| 3.2 | Real-time Topology Visualizer (`/api/mesh/topology`, `/api/mesh/topology/graph`) | 2026-04-27 | Tests pass |
+| 4.A | KyberSlash vulnerability fix (`pqc_kyber` → `pqc_kyber_edit`) | 2026-04-27 | `cargo check -p wasm-pow` |
+| 4.1 | WASM table_growing bounded (`max_table_elements` limit) | 2026-04-27 | Tests pass |
+| 4.2 | WASM pool DHT prefix leakage fixed | 2026-04-27 | `prepare_for_request` resets prefixes |
+| 4.3 | Threat intel signer bypass fixed (deny-by-default) | 2026-04-27 | Tests pass |
+| 4.4 | Serverless limits properly passed to load_plugin | 2026-04-27 | Tests pass |
+| 4.5 | Time-based challenge verification (P0.5) | 2026-04-27 | Tests pass |
+| 4.6 | Pass-over fallback signing violation fixed | 2026-04-27 | Tests pass |
+| 4.7 | RecordStoreManager clone fixed (proper record copying) | 2026-04-27 | Tests pass |
+| 4.8 | Severity-aware threat broadcast (CRITICAL/HIGH fanout=100%) | 2026-04-27 | Tests pass |
+| 4.9 | Threat duplicate detection key mismatch fixed (`make_indicator_key`) | 2026-04-27 | Tests pass |
+| 4.12 | YARA trusted_signer bypass fixed (deny-by-default) | 2026-04-27 | Tests pass |
+| 5.1 | BackendType::Mesh integrated in HTTP server dispatch | 2026-04-27 | Tests pass |
+| 5.2 | HTTP client cache increased to 1000 idle per host | 2026-04-27 | Tests pass |
+| 5.3 | Upstream load balancing (round-robin via `weighted_shuffle`) | 2026-04-27 | Tests pass |
+| 5.4 | Message cache increased to 500K capacity | 2026-04-27 | Tests pass |
+| 5.5 | Proxy task spawn bounded (Semaphore with max concurrency) | 2026-04-27 | Tests pass |
+| 5.6 | WASM instance pooling for transform_response | 2026-04-27 | Tests pass |
+| 5.7 | edge_only flag enforcement in mesh routing | 2026-04-27 | Tests pass |
+| 5.8 | proxy_cache wired in MeshProxy (preferences, cache key) | 2026-04-27 | Tests pass |
+| 5.9 | SSTI double normalization fixed (use `normalized.lowercased`) | 2026-04-27 | Tests pass |
+| 5.10 | provider_stats lock contention fixed (DashMap) | 2026-04-27 | Tests pass |
+| 5.11 | Sync YARA/threat intel on peer connect | 2026-04-27 | Tests pass |
+| 5.12 | ServerlessInvokeResponse handler added | 2026-04-27 | Tests pass |
+| 5.13 | ServerlessInvokeRequest sender (transport_serverless.rs) | 2026-04-27 | Tests pass |
+| 5.14 | WasmDistManager initialized in transport setup | 2026-04-27 | Tests pass |
+| 6.2 | Cache key 5 sequential replace() optimized | 2026-04-27 | Tests pass |
+| 6.3 | weighted_shuffle O(n) via WeightedIndex alias method | 2026-04-27 | Tests pass |
+| 6.5 | Entropy calculation uses `[usize; 256]` instead of HashMap | 2026-04-27 | Tests pass |
+| 6.6 | OpenRedirect uses Aho-Corasick for O(1) param matching | 2026-04-27 | Tests pass |
+| 7A | WireGuard mesh transport removed (VPN tunnel preserved) | 2026-04-27 | `cargo fmt && clippy` |
+| 7B | Dead code removed (verify_signature methods, etc.) | 2026-04-27 | Tests pass |
+| 7C | Misleading `#![allow(dead_code)]` removed from active modules | 2026-04-27 | Tests pass |
+| 7D | Feature flag cleanup (pqc-mesh removed) | 2026-04-27 | Tests pass |
+| 7E.1 | ConnectionTokenGuard mutex replaced with parking_lot | 2026-04-27 | Tests pass |
+| 7E.2 | Admin regex DoS with actual compilation timeout | 2026-04-27 | Tests pass |
+| 7E.3 | IPC path traversal sanitization added | 2026-04-27 | Tests pass |
+| 7E.4 | NonceCache O(n) fixed (HashSet for O(1) contains) | 2026-04-27 | Tests pass |
+| 7E.5-9 | Additional quality fixes (DNS cache, circuit breaker, await-holding-lock) | 2026-04-27 | Tests pass |
+| 8.1-8.3 | Sensitive field masking (RuleFeed, YaraFeed, Overseer config bug) | 2026-04-27 | Tests pass |
+| 8.4 | Swagger UI integrated at /api/docs | 2026-04-27 | Tests pass |
+| 8.5-8.8 | API discovery, DNS UI, honeypot hot-reload, behavioral endpoint | 2026-04-27 | Tests pass |
+| 9.1-9.4 | Dependency updates (yara-x crypto, sysinfo, bcrypt) | 2026-04-27 | Tests pass |
+| 10.1-10.7 | Testing improvements (WAF e2e, mesh proxy, HTTP/3, overseer, integration, stress, benchmarks) | 2026-04-27 | Tests pass |
+| 11.1 | Spin WASM Runtime Support | 2026-04-28 | Tests pass |
+| 11.2 | Serverless Standalone Enhancements (Async Compilation) | 2026-04-28 | Tests pass |
+
+**Verification**: All 1552 lib tests pass, 242 integration tests pass, clippy clean, fmt clean.
+
 ## Implementation Planning
 
 The consolidated implementation plan is at `plans/plan.md`. It organizes remaining work into waves designed for parallel execution by sub-agents:
