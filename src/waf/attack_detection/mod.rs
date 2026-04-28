@@ -407,14 +407,15 @@ impl AttackDetector {
             return 0.0;
         }
 
-        let mut char_counts: HashMap<char, usize> = HashMap::new();
-        for c in s.chars() {
-            *char_counts.entry(c).or_insert(0) += 1;
+        let mut freq = [0usize; 256];
+        for byte in s.bytes() {
+            freq[byte as usize] += 1;
         }
 
         let len = s.len() as f32;
-        let entropy: f32 = char_counts
-            .values()
+        let entropy: f32 = freq
+            .iter()
+            .filter(|&&count| count > 0)
             .map(|&count| {
                 let p = count as f32 / len;
                 -p * p.log2()

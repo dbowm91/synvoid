@@ -66,7 +66,7 @@ pub struct MeshProxy {
     active_connections: Arc<DashMap<String, MeshConnection>>,
     policy_cache: Cache<String, CachedPolicy>,
     failed_providers: Cache<String, Instant>,
-    provider_stats: Arc<RwLock<HashMap<String, ProviderStats>>>,
+    provider_stats: Arc<DashMap<String, ProviderStats>>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     transform_cache: TieredTransformCache,
     proxy_cache: Arc<RwLock<Option<ProxyCache>>>,
@@ -317,7 +317,7 @@ impl MeshProxy {
             .max_capacity(cache_size as u64)
             .time_to_live(Duration::from_secs(FAILED_PROVIDER_COOLDOWN_SECS * 2))
             .build();
-        let provider_stats = Arc::new(RwLock::new(HashMap::new()));
+        let provider_stats = Arc::new(DashMap::new());
 
         let transform_cache = TieredTransformCache::new();
 
@@ -633,13 +633,11 @@ impl MeshProxy {
 
     fn is_provider_unhealthy(&self, provider_node_id: &str) -> bool {
         let is_unhealthy = {
-            let mut stats = self.provider_stats.write();
-            if let Some(provider_stats) = stats.get_mut(provider_node_id) {
+            if let Some(mut provider_stats) = self.provider_stats.get_mut(provider_node_id) {
                 provider_stats.decay();
                 let half_open_max = self.config.connection.half_open_max_requests;
                 !provider_stats.is_available(half_open_max)
             } else {
-                drop(stats);
                 return self.is_provider_failed(provider_node_id);
             }
         };
@@ -752,34 +750,20 @@ impl MeshProxy {
             return providers;
         }
 
-        let total_score: f64 = providers.iter().map(|p| p.score.max(0.01)).sum();
-        let weighted: Vec<(usize, f64)> = providers
+        let scores: Vec<f64> = providers
             .iter()
-            .enumerate()
-            .map(|(i, p)| (i, p.score.max(0.01)))
+            .map(|p| p.score.max(0.01))
             .collect();
 
-        let mut result = Vec::with_capacity(providers.len());
-        let mut remaining: Vec<usize> = (0..providers.len()).collect();
+        let weighted_index = rand::distr::WeightedIndex::new(&scores).unwrap();
+        let mut indices: Vec<usize> = (0..providers.len()).collect();
+        let mut rng = rand::rng();
 
-        while !remaining.is_empty() {
-            let r: f64 = rand::rng().random_range(0.0..total_score);
-            let mut cumulative = 0.0;
-            let mut selected_idx = 0;
-
-            for &idx in &remaining {
-                cumulative += weighted[idx].1;
-                if cumulative >= r {
-                    selected_idx = idx;
-                    break;
-                }
-            }
-
-            result.push(providers[selected_idx].clone());
-            remaining.retain(|&x| x != selected_idx);
-        }
-
-        result
+        Vec::with_capacity(providers.len())
+            .into_iter()
+            .map(|_| indices.remove(weighted_index.sample(&mut rng)))
+            .map(|i| providers[i].clone())
+            .collect()
     }
 
     // Response transform holds a cache lock across an await; low contention expected.
