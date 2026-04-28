@@ -686,6 +686,16 @@ fn build_router_from_state(
             get(handlers::serverless::get_serverless_config)
                 .put(handlers::serverless::update_serverless_config),
         )
+        .route("/spin/apps", get(handlers::spin::list_spin_apps))
+        .route("/spin/apps", post(handlers::spin::create_spin_app))
+        .route(
+            "/spin/apps/{name}",
+            get(handlers::spin::get_spin_app_manifest).delete(handlers::spin::delete_spin_app),
+        )
+        .route(
+            "/spin/apps/{name}/instances",
+            get(handlers::spin::get_spin_app_instances),
+        )
         .route(
             "/honeypot/status",
             get(handlers::honeypot::get_honeypot_status),
