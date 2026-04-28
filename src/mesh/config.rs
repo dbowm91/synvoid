@@ -616,8 +616,6 @@ impl MeshUpstreamConfig {
 pub enum MeshTransportPreference {
     #[default]
     Quic,
-    #[deprecated(since = "0.7.0", note = "WireGuard mesh transport has been removed")]
-    WireGuard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

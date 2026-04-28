@@ -87,6 +87,7 @@ impl CacheKey {
     }
 }
 
+#[derive(Clone)]
 pub struct CacheKeyBuilder {
     pattern: String,
     vary_by: Vec<String>,

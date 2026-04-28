@@ -1958,6 +1958,89 @@ impl HttpServer {
                     ));
                 }
 
+                // Spin WASM backend dispatch
+                if matches!(target.backend_type, crate::router::BackendType::Spin) {
+                    if let Some(ref spin_app_name) = target.spin_app_name {
+                        let spin_apps_manager = crate::spin::handler::get_global_spin_apps_manager();
+                        if let Some(runtime) = spin_apps_manager.get(spin_app_name) {
+                            let handler = crate::spin::handler::SpinHttpHandler::new(runtime);
+                            let spin_request = crate::spin::handler::SpinRequest::new(
+                                parts.method.clone(),
+                                path.to_string(),
+                            )
+                            .with_headers(parts.headers.clone())
+                            .with_env(std::collections::HashMap::new());
+
+                            let body_for_spin = full_body_arc.as_ref().clone();
+                            let spin_request = if !body_for_spin.is_empty() {
+                                spin_request.with_body(body_for_spin)
+                            } else {
+                                spin_request
+                            };
+
+                            match handler.handle_request(spin_request).await {
+                                Ok(spin_response) => {
+                                    let status = spin_response.status;
+                                    Self::send_request_log_if_enabled(
+                                        ipc.clone(),
+                                        worker_id,
+                                        &main_config,
+                                        client_ip,
+                                        &method_str,
+                                        &path,
+                                        status.as_u16(),
+                                        start.elapsed().as_millis() as u64,
+                                        &site_id,
+                                        user_agent.as_deref(),
+                                        false,
+                                    );
+                                    let mut response_builder = Response::builder().status(status);
+                                    for (key, value) in spin_response.headers.iter() {
+                                        response_builder = response_builder.header(key.as_str(), value.to_str().unwrap_or(""));
+                                    }
+                                    return Ok(response_builder
+                                        .body(Full::new(spin_response.body).boxed())
+                                        .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Spin handler error for {}: {}", path, e);
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        502,
+                                        format!("Spin Error: {}", e),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Spin backend for site {} but app '{}' not found in SpinAppsManager",
+                                site_id,
+                                spin_app_name
+                            );
+                            return Ok(Self::build_response_with_alt_svc(
+                                502,
+                                format!("Spin app '{}' not found", spin_app_name),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                    }
+                    tracing::warn!(
+                        "Spin backend for site {} but no spin_app_name configured",
+                        site_id
+                    );
+                    return Ok(Self::build_response_with_alt_svc(
+                        502,
+                        "Spin backend misconfigured: no spin_app_name".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+
                 // FastCGI and PHP backend dispatch
                 if matches!(
                     target.backend_type,

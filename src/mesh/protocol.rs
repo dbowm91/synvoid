@@ -1178,12 +1178,7 @@ impl MeshCapabilities {
     pub fn from_config(config: &crate::mesh::config::MeshConfig, role: MeshNodeRole) -> Self {
         use crate::mesh::transports::MeshTransportType;
 
-        #[allow(deprecated)]
-        let preferred = match config.transport_preference {
-            #[allow(deprecated)]
-            crate::mesh::config::MeshTransportPreference::WireGuard
-            | crate::mesh::config::MeshTransportPreference::Quic => MeshTransportType::Quic,
-        };
+        let preferred = MeshTransportType::Quic;
 
         let dht_config = config.dht.as_ref();
 

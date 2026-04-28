@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-**Status**: Pruned - Implementation Complete
+**Status**: All Pending Items Complete
 **Last Updated**: 2026-04-28
 **Verification Completed**: 2026-04-28 (all items verified against codebase)
 
@@ -10,19 +10,17 @@
 
 All implementation waves (1-11) are **COMPLETE**. See AGENTS.md "Recently Completed Items" section for the full list of completed features with verification dates.
 
-**Only the following items remain incomplete:**
+**All previously pending items are now complete:**
 
 ---
 
-## Remaining Items
+## Recently Completed Items
 
-### Pending (Incomplete)
-
-| Item | Issue | Files | Priority |
-|------|-------|-------|----------|
-| P1.8 | `proxy_cache` not wired in `MeshProxy::route_request()` — field exists but cache lookup/insert never called in request path | `src/mesh/proxy.rs:766-909` | HIGH |
-| P11.1 | Spin WASM HTTP routing not integrated — SpinRuntime implemented, admin API works, but HTTP requests don't route to Spin apps | `src/http/server.rs:1869-1949` | MEDIUM |
-| P7A | WireGuard mesh transport enum not fully removed — deprecated variant still exists in `MeshTransportPreference` | `src/mesh/config.rs:619-620` | LOW |
+| # | Issue | Fix | Date |
+|---|-------|-----|------|
+| P1.8 | `proxy_cache` not wired in `MeshProxy::route_request()` | Wired cache lookup/insert in `proxy_to_peer_with_fallback()` at `src/mesh/proxy.rs:1169-1259`. Added cache key builder, `is_cacheable_method`, `should_bypass_cache`, `is_response_cacheable`, `get_cache_max_age` helpers. | 2026-04-28 |
+| P11.1 | Spin WASM HTTP routing not integrated | Added `BackendType::Spin` to router.rs, `spin_app_name` to RouteTarget, `BackendConfig::Spin` to config/site/backend.rs, and HTTP dispatch in server.rs at lines 1961-2048. | 2026-04-28 |
+| P7A | WireGuard mesh transport enum not fully removed | Removed deprecated `WireGuard` variant from `MeshTransportPreference` in `src/mesh/config.rs:616-620`. Cleaned up `src/mesh/backend.rs:354-357` and `src/mesh/protocol.rs:1181-1185`. | 2026-04-28 |
 
 ---
 

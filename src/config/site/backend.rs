@@ -139,6 +139,12 @@ pub enum BackendConfig {
         #[serde(default)]
         enabled: Option<bool>,
     },
+
+    #[serde(rename = "spin")]
+    Spin {
+        #[serde(default)]
+        spin_app_name: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
@@ -158,6 +164,8 @@ pub struct LocationConfig {
     pub allowed_methods: Option<Vec<String>>,
     #[serde(default)]
     pub serverless: Option<crate::config::serverless::ServerlessConfig>,
+    #[serde(default)]
+    pub spin: Option<SpinLocationConfig>,
 }
 
 impl LocationConfig {
@@ -259,4 +267,10 @@ pub struct CgiLocationConfig {
 pub struct LocationProxyConfig {
     #[serde(default)]
     pub url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
+pub struct SpinLocationConfig {
+    #[serde(default)]
+    pub spin_app_name: Option<String>,
 }

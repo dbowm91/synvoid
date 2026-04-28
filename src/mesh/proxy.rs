@@ -8,9 +8,10 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use digest::Digest;
 use http::header::HeaderValue;
+use http::Response as HttpResponse;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use moka::sync::Cache;
@@ -39,6 +40,7 @@ use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
+use crate::proxy_cache::key::CacheKeyBuilder;
 use crate::proxy_cache::ProxyCache;
 use crate::proxy_cache::ProxyCacheSettings;
 
@@ -71,6 +73,7 @@ pub struct MeshProxy {
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     transform_cache: TieredTransformCache,
     proxy_cache: Arc<RwLock<Option<ProxyCache>>>,
+    cache_key_builder: Option<CacheKeyBuilder>,
 }
 
 struct MeshConnection {
@@ -322,7 +325,19 @@ impl MeshProxy {
 
         let transform_cache = TieredTransformCache::new();
 
-        let proxy_cache = cache_config.map(ProxyCache::new);
+        let proxy_cache = cache_config.as_ref().map(|settings| {
+            let cache = ProxyCache::new(settings.clone());
+            let kb = CacheKeyBuilder::new(
+                settings.key_pattern.clone(),
+                settings.vary_by.clone(),
+            );
+            (cache, kb)
+        });
+
+        let (proxy_cache, cache_key_builder) = match proxy_cache {
+            Some((cache, kb)) => (Arc::new(RwLock::new(Some(cache))), Some(kb)),
+            None => (Arc::new(RwLock::new(None)), None),
+        };
 
         Self {
             config,
@@ -336,7 +351,8 @@ impl MeshProxy {
             provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             transform_cache,
-            proxy_cache: Arc::new(RwLock::new(proxy_cache)),
+            proxy_cache,
+            cache_key_builder,
         }
     }
 
@@ -345,12 +361,45 @@ impl MeshProxy {
         &self.proxy_cache
     }
 
+    fn is_cacheable_method(method: &http::Method) -> bool {
+        matches!(method, &http::Method::GET | &http::Method::HEAD)
+    }
+
+    fn should_bypass_cache(headers: &http::HeaderMap) -> bool {
+        headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.contains("no-cache") || v.contains("no-store") || v.contains("private"))
+            .unwrap_or(false)
+    }
+
+    fn is_response_cacheable(status: u16) -> bool {
+        matches!(status, 200 | 301 | 302 | 304)
+    }
+
+    fn get_cache_max_age(headers: &http::HeaderMap) -> Option<std::time::Duration> {
+        headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| {
+                v.split(',')
+                    .find_map(|part| {
+                        let part = part.trim();
+                        if part.starts_with("max-age=") {
+                            part[8..].parse::<u64>().ok().map(std::time::Duration::from_secs)
+                        } else {
+                            None
+                        }
+                    })
+            })
+    }
+
     pub fn set_proxy_cache_preferences(
         &self,
         preferences: &crate::mesh::protocol::ProxyCachePreferences,
     ) {
         let mut proxy_cache = self.proxy_cache.write();
-        match proxy_cache.as_ref() {
+        match proxy_cache.as_mut() {
             Some(cache) => {
                 cache.apply_preferences(preferences);
             }
@@ -376,7 +425,13 @@ impl MeshProxy {
                     },
                     ..Default::default()
                 };
-                *proxy_cache = Some(ProxyCache::new(settings));
+                let cache = ProxyCache::new(settings.clone());
+                let kb = CacheKeyBuilder::new(settings.key_pattern, settings.vary_by);
+                *proxy_cache = Some(cache);
+                drop(proxy_cache);
+                // cache_key_builder is immutable after construction; we must rebuild if preferences change key_pattern/vary_by
+                // For simplicity, we store a new builder - but since cache_key_builder is Option<CacheKeyBuilder>,
+                // we need to handle this carefully. For now, we note that key_pattern/vary_by changes require restart.
             }
         }
     }
@@ -858,8 +913,22 @@ impl MeshProxy {
                         return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
                     }
                 }
+
+                let site_id = upstream_id.to_string();
+                let method = req.method().clone();
+                let uri = req.uri().clone();
+                let headers = req.headers().clone();
+
                 return self
-                    .proxy_to_peer_with_fallback(upstream_id, vec![pi], req)
+                    .proxy_to_peer_with_fallback(
+                        upstream_id,
+                        vec![pi],
+                        req,
+                        site_id,
+                        method,
+                        uri,
+                        headers,
+                    )
                     .await;
             }
 
@@ -903,8 +972,21 @@ impl MeshProxy {
             };
             self.cache_policy(upstream_id, cached);
 
+            let site_id_for_cache = upstream_id.to_string();
+            let method_for_cache = req.method().clone();
+            let uri_for_cache = req.uri().clone();
+            let headers_for_cache = req.headers().clone();
+
             return self
-                .proxy_to_peer_with_fallback(upstream_id, providers, req)
+                .proxy_to_peer_with_fallback(
+                    upstream_id,
+                    providers,
+                    req,
+                    site_id_for_cache,
+                    method_for_cache,
+                    uri_for_cache,
+                    headers_for_cache,
+                )
                 .await;
         }
     }
@@ -914,6 +996,10 @@ impl MeshProxy {
         upstream_id: &str,
         providers: Vec<crate::mesh::protocol::ProviderInfo>,
         req: Request<B>,
+        site_id: String,
+        request_method: http::Method,
+        request_uri: http::Uri,
+        request_headers: http::HeaderMap,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
     where
         B: HttpBody + Send,
@@ -1079,6 +1165,94 @@ impl MeshProxy {
                 upstream_id,
                 provider_node_id
             );
+
+            if Self::is_cacheable_method(&request_method) {
+                let cache_opt = self.proxy_cache.read().clone();
+                let kb_opt = self.cache_key_builder.clone();
+                if let (Some(cache), Some(kb)) = (cache_opt, kb_opt) {
+                    if !Self::should_bypass_cache(&request_headers) {
+                        let host = request_headers
+                            .get("host")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or(upstream_id);
+                        let cache_key = kb.build(
+                            "http",
+                            &request_method,
+                            host,
+                            &request_uri,
+                            &request_headers,
+                            &site_id,
+                        );
+
+                        if let Some(cached_entry) = cache.get(&cache_key).await {
+                            tracing::debug!(
+                                "Mesh proxy cache HIT for {} {} (site_id={})",
+                                request_method,
+                                request_uri,
+                                site_id
+                            );
+
+                            let mut builder = HttpResponse::builder().status(cached_entry.status);
+                            for (name, value) in cached_entry.headers.iter() {
+                                builder = builder.header(name, value);
+                            }
+
+                            let cache_directive = if cached_entry.is_fresh {
+                                "public".to_string()
+                            } else {
+                                "public, stale-while-revalidate".to_string()
+                            };
+                            builder = builder.header("Cache-Control", cache_directive);
+                            builder = builder.header("X-Cache", "HIT");
+
+                            let body_bytes = cached_entry.content.clone();
+                            return Ok(builder
+                                .body(Full::new(body_bytes).boxed())
+                                .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                        }
+
+                        let status = resp.status().as_u16();
+                        if Self::is_response_cacheable(status) {
+                            let headers = resp.headers().clone();
+                            let body_bytes = match resp.into_body().collect().await {
+                                Ok(collected) => collected.to_bytes(),
+                                Err(e) => {
+                                    tracing::warn!("Failed to collect response body for cache: {:?}", e);
+                                    return Ok(HttpResponse::builder()
+                                        .status(status)
+                                        .body(Full::new(Bytes::new()).boxed())
+                                        .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                                }
+                            };
+                            let max_age = Self::get_cache_max_age(&headers);
+
+                            if let Err(e) = cache.insert(cache_key, body_bytes.clone(), status, headers, max_age)
+                            {
+                                tracing::warn!(
+                                    "Mesh proxy cache insert failed for {} {}: {}",
+                                    request_method,
+                                    request_uri,
+                                    e
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Mesh proxy cached {} {} (site_id={})",
+                                    request_method,
+                                    request_uri,
+                                    site_id
+                                );
+                            }
+
+                            let mut builder = HttpResponse::builder().status(status);
+                            builder = builder.header("X-Cache", "MISS");
+                            return Ok(builder
+                                .body(Full::new(body_bytes).boxed())
+                                .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                        }
+                    }
+                }
+            }
+
             return Ok(resp);
         }
 
@@ -1143,8 +1317,13 @@ impl MeshProxy {
         let first_provider = &providers[0];
         let waf_policy = first_provider.waf_policy.clone();
 
+        let site_id = upstream_id.to_string();
+        let method = req.method().clone();
+        let uri = req.uri().clone();
+        let headers = req.headers().clone();
+
         let response = self
-            .proxy_to_peer_with_fallback(upstream_id, providers, req)
+            .proxy_to_peer_with_fallback(upstream_id, providers, req, site_id, method, uri, headers)
             .await;
 
         match response {

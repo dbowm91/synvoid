@@ -351,11 +351,6 @@ pub async fn initialize_mesh_transports(
     let config = Arc::new(config.clone());
     let topology = transport_manager.get_topology();
 
-    #[allow(deprecated)]
-    if config.transport_preference == crate::mesh::config::MeshTransportPreference::WireGuard {
-        tracing::warn!("WireGuard transport preference ignored — WireGuard transport has been removed due to lack of authentication. Using QUIC transport instead.");
-    }
-
     let routing_manager = if config
         .dht
         .as_ref()
