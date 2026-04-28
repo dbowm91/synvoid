@@ -31,14 +31,7 @@ These items are intentionally deferred and do not block the current release:
 
 | # | Issue | Reason |
 |---|-------|--------|
-| D1 | dashmap 5.5.3 → 7.0.0-rc2 | Await stable release; 172 usages, major breaking changes |
-| D3 | O(k×n) DHT lookup complexity | Acceptable until 10x/100x scale |
-| D4 | Hardcoded quorum timeout (10s) | Reasonable default for current scale |
-| D5 | Veto abuse score unused | Not currently observed in production |
-| D7 | God module splits | metrics/mod.rs (2086 lines), mesh/transport.rs (3291), http/server.rs (4211) |
-| D8 | WASM component support | ABI incompatible with current wasmtime runtime |
-| D9 | Site scope in DHT key | Multi-tenant feature for future release |
-| D10 | IPC key env fallback | Intentional opt-in via `allow_insecure_ipc_key` flag |
+| D7 | God module splits | Skipped: module splits of 10k+ lines introduce too much regression risk for automated agents; keeping intact to ensure no capability reversions |
 
 ---
 
