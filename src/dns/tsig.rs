@@ -235,7 +235,7 @@ impl TsigVerifier {
             });
         }
 
-        if !bool::from(computed_mac.ct_eq(&original_mac)) {
+        if !bool::from(computed_mac.ct_eq(original_mac)) {
             return Err(TsigError::MacVerificationFailed);
         }
 

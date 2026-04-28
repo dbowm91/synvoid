@@ -162,3 +162,15 @@ if let Some(value) = runtime.kv_store().get("key").await {
     // use value
 }
 ```
+
+## Known Issue: HTTP Routing Gap
+
+**Spin apps are NOT yet integrated into the HTTP request handling pipeline.**
+
+- SpinRuntime is fully implemented in `src/spin/`
+- Admin API endpoints work (registration, listing, deletion)
+- SpinHttpHandler exists and can handle requests
+- BUT: `src/http/server.rs:1869-1949` only checks `ServerlessManager` for routing
+- Spin apps can be registered but are NOT reachable via live HTTP traffic
+
+To complete integration, requests need to route to Spin apps based on `spin.toml` trigger configuration, similar to how `ServerlessManager` is integrated in the HTTP server dispatch.
