@@ -23,6 +23,7 @@ pub mod probe_tracker;
 pub mod ratelimit;
 pub mod request_sanitization;
 pub mod rule_feed;
+pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
 pub mod violation_tracker;
