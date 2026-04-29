@@ -588,6 +588,7 @@ impl RecordStoreManager {
                 .iter()
                 .map(|p| p.node_id.clone())
                 .collect::<Vec<_>>(),
+            self.config.query_timeout_secs,
         );
 
         quorum_manager.start_request(quorum_request).await;

@@ -100,6 +100,10 @@ pub enum DhtKey {
     BehavioralFingerprint {
         fingerprint_id: String,
     },
+    SiteScoped {
+        site_id: String,
+        inner_key: String,
+    },
 }
 
 impl DhtKey {
@@ -310,6 +314,13 @@ impl DhtKey {
         }
     }
 
+    pub fn site_scoped(site_id: &str, inner: DhtKey) -> Self {
+        DhtKey::SiteScoped {
+            site_id: site_id.to_string(),
+            inner_key: inner.as_str(),
+        }
+    }
+
     pub fn as_str(&self) -> String {
         match self {
             DhtKey::Organization(org_id) => format!("org:{}", org_id),
@@ -440,6 +451,12 @@ impl DhtKey {
             DhtKey::BehavioralFingerprint { fingerprint_id } => {
                 format!("behavior_fingerprint:{}", fingerprint_id)
             }
+            DhtKey::SiteScoped {
+                site_id,
+                inner_key,
+            } => {
+                format!("site_scoped:{}:{}", site_id, inner_key)
+            }
         }
     }
 
@@ -564,76 +581,95 @@ impl DhtKey {
             "behavior_fingerprint" if parts.len() >= 2 => DhtKey::BehavioralFingerprint {
                 fingerprint_id: parts[1..].join(":"),
             },
+            "site_scoped" if parts.len() >= 3 => {
+                let site_id = parts[1].to_string();
+                let inner_key = parts[2..].join(":");
+                DhtKey::SiteScoped { site_id, inner_key }
+            }
             _ => DhtKey::NodeInfo(s.to_string()),
         }
     }
 
     pub fn is_privileged(&self) -> bool {
-        matches!(
-            self,
-            DhtKey::Organization(_)
-                | DhtKey::OrgPublicKey(_)
-                | DhtKey::TierKey(_, _)
-                | DhtKey::MemberCertificate(_, _)
-                | DhtKey::GlobalNodeList
-                | DhtKey::OrgNameReservation(_)
-                | DhtKey::DnsZone(_)
-                | DhtKey::DnsRecord(_, _)
-                | DhtKey::DnsDomainRegistration(_)
-                | DhtKey::AnycastNode(_)
-        )
+        match self {
+            DhtKey::SiteScoped { inner_key, .. } => DhtKey::from_str(inner_key).is_privileged(),
+            _ => matches!(
+                self,
+                DhtKey::Organization(_)
+                    | DhtKey::OrgPublicKey(_)
+                    | DhtKey::TierKey(_, _)
+                    | DhtKey::MemberCertificate(_, _)
+                    | DhtKey::GlobalNodeList
+                    | DhtKey::OrgNameReservation(_)
+                    | DhtKey::DnsZone(_)
+                    | DhtKey::DnsRecord(_, _)
+                    | DhtKey::DnsDomainRegistration(_)
+                    | DhtKey::AnycastNode(_)
+            ),
+        }
     }
 
     pub fn is_public(&self) -> bool {
-        matches!(
-            self,
-            DhtKey::Upstream(_)
-                | DhtKey::NodeInfo(_)
-                | DhtKey::GlobalNodePublicKey(_)
-                | DhtKey::NodeHealth(_)
-                | DhtKey::NodeLoad(_)
-                | DhtKey::GlobalNodeHeartbeat(_)
-                | DhtKey::VerifiedUpstream(_)
-                | DhtKey::TierClaim(_)
-                | DhtKey::DnsZone(_)
-                | DhtKey::DnsRecord(_, _)
-                | DhtKey::AnycastNode(_)
-                | DhtKey::ThreatIndicator(_, _)
-                | DhtKey::TransformedContent { .. }
-                | DhtKey::PoisonedImage { .. }
-                | DhtKey::SiteImagePoisonConfig(_)
-                | DhtKey::SiteContentVersion(_)
-                | DhtKey::YaraRuleContent { .. }
-                | DhtKey::YaraRulesManifest { .. }
-                | DhtKey::YaraChunk { .. }
-                | DhtKey::NodeCapability { .. }
-                | DhtKey::CapabilityAttestation { .. }
-                | DhtKey::EdgeAttestation { .. }
-                | DhtKey::OriginReachability { .. }
-                | DhtKey::OriginPenalty { .. }
-                | DhtKey::UpstreamOwnershipChallenge(_)
-                | DhtKey::GenesisKeyTransition { .. }
-                | DhtKey::RevokedGlobalNode { .. }
-                | DhtKey::ServerlessFunction { .. }
-                | DhtKey::UpstreamProxyCachePreferences(_)
-                | DhtKey::OrgPublicKey(_)
-                | DhtKey::BehavioralFingerprint { .. }
-        )
+        match self {
+            DhtKey::SiteScoped { inner_key, .. } => DhtKey::from_str(inner_key).is_public(),
+            _ => matches!(
+                self,
+                DhtKey::Upstream(_)
+                    | DhtKey::NodeInfo(_)
+                    | DhtKey::GlobalNodePublicKey(_)
+                    | DhtKey::NodeHealth(_)
+                    | DhtKey::NodeLoad(_)
+                    | DhtKey::GlobalNodeHeartbeat(_)
+                    | DhtKey::VerifiedUpstream(_)
+                    | DhtKey::TierClaim(_)
+                    | DhtKey::DnsZone(_)
+                    | DhtKey::DnsRecord(_, _)
+                    | DhtKey::AnycastNode(_)
+                    | DhtKey::ThreatIndicator(_, _)
+                    | DhtKey::TransformedContent { .. }
+                    | DhtKey::PoisonedImage { .. }
+                    | DhtKey::SiteImagePoisonConfig(_)
+                    | DhtKey::SiteContentVersion(_)
+                    | DhtKey::YaraRuleContent { .. }
+                    | DhtKey::YaraRulesManifest { .. }
+                    | DhtKey::YaraChunk { .. }
+                    | DhtKey::NodeCapability { .. }
+                    | DhtKey::CapabilityAttestation { .. }
+                    | DhtKey::EdgeAttestation { .. }
+                    | DhtKey::OriginReachability { .. }
+                    | DhtKey::OriginPenalty { .. }
+                    | DhtKey::UpstreamOwnershipChallenge(_)
+                    | DhtKey::GenesisKeyTransition { .. }
+                    | DhtKey::RevokedGlobalNode { .. }
+                    | DhtKey::ServerlessFunction { .. }
+                    | DhtKey::UpstreamProxyCachePreferences(_)
+                    | DhtKey::OrgPublicKey(_)
+                    | DhtKey::BehavioralFingerprint { .. }
+            ),
+        }
     }
 
     pub fn requires_confirmation(&self) -> bool {
-        matches!(
-            self,
-            DhtKey::TierKey(_, _)
-                | DhtKey::Organization(_)
-                | DhtKey::OrgPublicKey(_)
-                | DhtKey::Upstream(_)
-                | DhtKey::OrgNameReservation(_)
-        )
+        match self {
+            DhtKey::SiteScoped { inner_key, .. } => {
+                DhtKey::from_str(inner_key).requires_confirmation()
+            }
+            _ => matches!(
+                self,
+                DhtKey::TierKey(_, _)
+                    | DhtKey::Organization(_)
+                    | DhtKey::OrgPublicKey(_)
+                    | DhtKey::Upstream(_)
+                    | DhtKey::OrgNameReservation(_)
+            ),
+        }
     }
 
     pub fn is_self_record(&self, node_id: &str) -> bool {
         match self {
+            DhtKey::SiteScoped { inner_key, .. } => {
+                DhtKey::from_str(inner_key).is_self_record(node_id)
+            }
             DhtKey::NodeHealth(nid) => nid == node_id,
             DhtKey::NodeLoad(nid) => nid == node_id,
             DhtKey::GlobalNodeHeartbeat(nid) => nid == node_id,
@@ -644,6 +680,7 @@ impl DhtKey {
 
     pub fn key_type(&self) -> &'static str {
         match self {
+            DhtKey::SiteScoped { .. } => "site_scoped",
             DhtKey::Organization(_) => "organization",
             DhtKey::OrgPublicKey(_) => "org_public_key",
             DhtKey::TierKey(_, _) => "tier_key",
@@ -691,6 +728,9 @@ impl DhtKey {
     pub fn to_signed_record_type(&self) -> Option<crate::mesh::dht::signed::SignedRecordType> {
         use crate::mesh::dht::signed::SignedRecordType;
         match self {
+            DhtKey::SiteScoped { inner_key, .. } => {
+                DhtKey::from_str(inner_key).to_signed_record_type()
+            }
             DhtKey::Organization(_) => Some(SignedRecordType::Organization),
             DhtKey::OrgPublicKey(_) => Some(SignedRecordType::OrgPublicKey),
             DhtKey::TierKey(_, _) => Some(SignedRecordType::TierKey),
@@ -755,6 +795,7 @@ impl DhtKey {
 
     pub fn site_scope(&self) -> Option<String> {
         match self {
+            DhtKey::SiteScoped { site_id, .. } => Some(site_id.clone()),
             DhtKey::Upstream(id) => Some(id.clone()),
             DhtKey::VerifiedUpstream(id) => Some(id.clone()),
             DhtKey::TierClaim(id) => Some(id.clone()),
@@ -795,6 +836,19 @@ mod tests {
 
         let key = DhtKey::from_str("tier_key:test-org:key-123");
         assert_eq!(key, DhtKey::tier_key("test-org", "key-123"));
+    }
+
+    #[test]
+    fn test_site_scoped_key() {
+        let inner = DhtKey::upstream("api.example.com");
+        let scoped = DhtKey::site_scoped("site1", inner.clone());
+        assert_eq!(scoped.as_str(), "site_scoped:site1:upstream:api.example.com");
+
+        let parsed = DhtKey::from_str("site_scoped:site1:upstream:api.example.com");
+        assert_eq!(parsed, scoped);
+        assert_eq!(parsed.site_scope(), Some("site1".to_string()));
+        assert!(parsed.is_public());
+        assert!(!parsed.is_privileged());
     }
 
     #[test]

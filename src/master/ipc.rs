@@ -6,7 +6,7 @@ use crate::process::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::WorkerMetricsPayload;
+    use crate::metrics::WorkerMetricsPayload;
 
     #[tokio::test]
     async fn test_worker_started_message_parsing() {
@@ -241,7 +241,7 @@ mod tests {
                 Message::WorkerHeartbeat {
                     id: WorkerId(3),
                     timestamp: 0,
-                    metrics: crate::process::WorkerMetricsPayload::default(),
+                    metrics: crate::metrics::WorkerMetricsPayload::default(),
                 },
                 Some(3),
             ),

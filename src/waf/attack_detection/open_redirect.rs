@@ -2,14 +2,93 @@ use crate::utils::url_decode_all;
 use aho_corasick::AhoCorasick;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 
+static REDIRECT_PARAM_AC: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    let patterns = vec![
+        "redirect",
+        "url",
+        "link",
+        "goto",
+        "next",
+        "dest",
+        "destination",
+        "callback",
+        "return",
+        "page",
+        "ref",
+        "reference",
+        "site",
+        "html",
+        "val",
+        "validate",
+        "domain",
+        "continue",
+        "c",
+        "path",
+        "dir",
+        "show",
+        "view",
+        "doc",
+        "img_url",
+        "source",
+        "src",
+        "target",
+        "to",
+        "out",
+        "viewpage",
+        "open",
+        "file",
+        "document",
+        "folder",
+        "pg",
+        "style",
+        "return_path",
+        "success_url",
+        "error_url",
+        "return_to",
+        "return_url",
+        "from_url",
+        "redir_url",
+        "redirect_uri",
+        "redirect_url",
+        "oauth_callback",
+        "callback_url",
+        "serve",
+        "proxy",
+        "bigimg",
+        "url_link",
+        "linkurl",
+        "origin",
+        "originUrl",
+        "sourceUrl",
+        "contentUrl",
+        "shareUrl",
+        "qpa",
+        "query",
+        "token",
+        "email",
+        "subject",
+        "template",
+        "func",
+        "call",
+        "mode",
+        "name",
+        "rest_url",
+        "continue_url",
+        "u",
+        "urlfrom",
+        "urlsrc",
+    ];
+    AhoCorasick::new(&patterns).unwrap()
+});
+
 pub struct OpenRedirectDetector {
     inner: BasePatternDetector,
-    redirect_param_matcher: AhoCorasick,
 }
 
 impl OpenRedirectDetector {
@@ -23,92 +102,11 @@ impl OpenRedirectDetector {
             "open_redirect",
         );
 
-        let redirect_param_patterns = vec![
-            "redirect",
-            "url",
-            "link",
-            "goto",
-            "next",
-            "dest",
-            "destination",
-            "callback",
-            "return",
-            "page",
-            "ref",
-            "reference",
-            "site",
-            "html",
-            "val",
-            "validate",
-            "domain",
-            "continue",
-            "c",
-            "path",
-            "dir",
-            "show",
-            "view",
-            "doc",
-            "img_url",
-            "source",
-            "src",
-            "target",
-            "to",
-            "out",
-            "viewpage",
-            "open",
-            "file",
-            "document",
-            "folder",
-            "pg",
-            "style",
-            "return_path",
-            "success_url",
-            "error_url",
-            "return_to",
-            "return_url",
-            "from_url",
-            "redir_url",
-            "redirect_uri",
-            "redirect_url",
-            "oauth_callback",
-            "callback_url",
-            "serve",
-            "proxy",
-            "bigimg",
-            "url_link",
-            "linkurl",
-            "origin",
-            "originUrl",
-            "sourceUrl",
-            "contentUrl",
-            "shareUrl",
-            "qpa",
-            "query",
-            "token",
-            "email",
-            "subject",
-            "template",
-            "func",
-            "call",
-            "mode",
-            "name",
-            "rest_url",
-            "continue_url",
-            "u",
-            "urlfrom",
-            "urlsrc",
-        ];
-
-        let redirect_param_matcher = AhoCorasick::new(&redirect_param_patterns).unwrap();
-
-        Self {
-            inner,
-            redirect_param_matcher,
-        }
+        Self { inner }
     }
 
     fn is_redirect_param(&self, input_lower: &str) -> bool {
-        self.redirect_param_matcher.is_match(input_lower)
+        REDIRECT_PARAM_AC.is_match(input_lower)
     }
 
     fn is_external_redirect(&self, input_lower: &str) -> bool {

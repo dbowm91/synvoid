@@ -368,6 +368,11 @@ pub enum Message {
         indicators: Vec<ThreatIndicatorData>,
         version: u64,
     },
+    ThreatFeedUpdate {
+        indicators: Vec<ThreatIndicatorData>,
+        version: u64,
+        timestamp: u64,
+    },
     BlocklistRequest {
         worker_id: usize,
         from_version: u64,
@@ -714,6 +719,26 @@ impl Message {
                 Ok(())
             }
         }
+        // Helper: validate path fields (reject path traversal)
+        fn check_path_str(
+            field: &'static str,
+            value: &str,
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            if value.len() > max {
+                return Err(IpcValidationError {
+                    field: field.into(),
+                    message: format!("{} > {}", value.len(), max),
+                });
+            }
+            if value.contains("..") {
+                return Err(IpcValidationError {
+                    field: field.into(),
+                    message: "path traversal detected".into(),
+                });
+            }
+            Ok(())
+        }
         // Helper: validate an optional string field
         fn check_opt_str(
             field: &'static str,
@@ -722,6 +747,18 @@ impl Message {
         ) -> Result<(), IpcValidationError> {
             if let Some(ref v) = value {
                 check_str(field, v, max)
+            } else {
+                Ok(())
+            }
+        }
+        // Helper: validate an optional path field
+        fn check_opt_path_str(
+            field: &'static str,
+            value: &Option<String>,
+            max: usize,
+        ) -> Result<(), IpcValidationError> {
+            if let Some(ref v) = value {
+                check_path_str(field, v, max)
             } else {
                 Ok(())
             }
@@ -832,8 +869,8 @@ impl Message {
                     site_id,
                     MAX_STRING_LENGTH,
                 )?;
-                check_str("StaticWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
-                check_str(
+                check_path_str("StaticWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
+                check_path_str(
                     "StaticWorkerCacheUpdate.minified_path",
                     minified_path,
                     MAX_PATH_LENGTH,
@@ -862,6 +899,16 @@ impl Message {
                 check_str("indicator_value", indicator_value, MAX_STRING_LENGTH)?;
                 check_str("reason", reason, MAX_STRING_LENGTH)?;
                 check_str("site_scope", site_scope, MAX_STRING_LENGTH)
+            }
+            Message::ThreatFeedUpdate { indicators, version, timestamp } => {
+                check_str("ThreatFeedUpdate.version", &version.to_string(), MAX_STRING_LENGTH)?;
+                check_str("ThreatFeedUpdate.timestamp", &timestamp.to_string(), MAX_STRING_LENGTH)?;
+                for indicator in indicators {
+                    check_str("indicator_value", &indicator.indicator_value, MAX_STRING_LENGTH)?;
+                    check_str("reason", &indicator.reason, MAX_STRING_LENGTH)?;
+                    check_str("site_scope", &indicator.site_scope, MAX_STRING_LENGTH)?;
+                }
+                Ok(())
             }
             Message::RulePatternsUpdate { version, patterns } => {
                 check_str("version", version, MAX_STRING_LENGTH)?;
@@ -937,7 +984,7 @@ impl Message {
                 ..
             } => {
                 check_str("AppServerStarted.site_id", site_id, MAX_STRING_LENGTH)?;
-                check_opt_str("AppServerStarted.socket_path", socket_path, MAX_PATH_LENGTH)
+                check_opt_path_str("AppServerStarted.socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::AppServerReady { site_id, .. } => {
                 check_str("AppServerReady.site_id", site_id, MAX_STRING_LENGTH)
@@ -981,8 +1028,8 @@ impl Message {
                 config_path,
                 version,
             } => {
-                check_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
-                check_opt_str("config_path", config_path, MAX_PATH_LENGTH)?;
+                check_path_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
+                check_opt_path_str("config_path", config_path, MAX_PATH_LENGTH)?;
                 check_str("version", version, MAX_STRING_LENGTH)
             }
             Message::OverseerUpgradePrepareAck { error, .. } => {
@@ -1005,8 +1052,8 @@ impl Message {
                 config_path,
                 version,
             } => {
-                check_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
-                check_opt_str("config_path", config_path, MAX_PATH_LENGTH)?;
+                check_path_str("binary_path", binary_path, MAX_PATH_LENGTH)?;
+                check_opt_path_str("config_path", config_path, MAX_PATH_LENGTH)?;
                 check_str("version", version, MAX_STRING_LENGTH)
             }
             Message::OverseerDualMasterPrepareAck { error, .. } => {
@@ -1016,7 +1063,7 @@ impl Message {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
             Message::SocketHandoffRequest { socket_path } => {
-                check_str("socket_path", socket_path, MAX_PATH_LENGTH)
+                check_path_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
             Message::PluginStateSync { plugin_name, .. } => check_str(
@@ -1066,6 +1113,7 @@ impl Message {
             | Message::ThreatIndicatorFromMesh { .. }
             | Message::ThreatSyncRequest { .. }
             | Message::ThreatSyncResponse { .. }
+            | Message::ThreatFeedUpdate { .. }
             | Message::BlocklistRequest { .. }
             | Message::BlocklistResponse { .. } => MessageCategory::ThreatIntel,
 
@@ -1226,74 +1274,7 @@ pub enum UpgradeModePayload {
     PortSwap { temp_port_offset: u16 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SiteMetricsPayload {
-    pub total_requests: u64,
-    pub blocked: u64,
-    pub challenged: u64,
-    pub proxied: u64,
-    pub errors: u64,
-    pub current_concurrent: u64,
-    pub peak_concurrent: u64,
-    pub avg_latency_ms: f64,
-    pub p50_latency_ms: f64,
-    pub p95_latency_ms: f64,
-    pub p99_latency_ms: f64,
-    pub blocked_by_type: std::collections::HashMap<String, u64>,
-    pub upstream_healthy: bool,
-    pub proxy_cache_hits: u64,
-    pub proxy_cache_misses: u64,
-    pub static_cache_hits: u64,
-    pub static_cache_misses: u64,
-    pub bytes_received: u64,
-    pub bytes_sent: u64,
-    pub proxied_bytes_sent: u64,
-    pub proxied_bytes_received: u64,
-    pub mesh_bytes_sent: u64,
-    pub mesh_bytes_received: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestLogPayload {
-    pub timestamp: u64,
-    pub client_ip: String,
-    pub method: String,
-    pub path: String,
-    pub status: u16,
-    pub response_time_ms: u32,
-    pub site_id: String,
-    pub user_agent: Option<String>,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WorkerMetricsPayload {
-    pub total_requests: u64,
-    pub blocked: u64,
-    pub challenged: u64,
-    pub proxied: u64,
-    pub errors: u64,
-    pub current_concurrent: u64,
-    pub peak_concurrent: u64,
-    pub avg_latency_ms: f64,
-    pub p50_latency_ms: f64,
-    pub p95_latency_ms: f64,
-    pub p99_latency_ms: f64,
-    pub uptime_secs: u64,
-    pub memory_bytes: u64,
-    pub cpu_percent: f64,
-    pub blocked_by_type: std::collections::HashMap<String, u64>,
-    pub per_site: std::collections::HashMap<String, SiteMetricsPayload>,
-    pub static_cache_hits: u64,
-    pub static_cache_misses: u64,
-    pub bandwidth: crate::metrics::bandwidth::BandwidthPayload,
-    pub serverless_metrics: Vec<crate::metrics::ServerlessMetrics>,
-    pub health_score: f64,
-    pub last_request_at: Option<u64>,
-    pub active_connections: u64,
-    pub restart_count: u32,
-}
+pub use crate::metrics::{RequestLogPayload, SiteMetricsPayload, WorkerMetricsPayload};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerStatus {

@@ -114,35 +114,3 @@ pub fn get_default_ipc_path(name: &str) -> std::path::PathBuf {
     let paths = PlatformPaths::new();
     paths.ipc_path(name)
 }
-
-#[deprecated(since = "0.2.0", note = "Use PlatformPaths::ipc_path() instead")]
-pub fn get_default_ipc_path_legacy(name: &str) -> std::path::PathBuf {
-    #[cfg(unix)]
-    {
-        if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            let path = std::path::PathBuf::from(runtime_dir).join("maluwaf");
-            if std::fs::create_dir_all(&path).is_ok() {
-                return path.join(name);
-            }
-        }
-
-        if std::path::Path::new("/var/run").exists() {
-            let path = std::path::PathBuf::from("/var/run/maluwaf");
-            if std::fs::create_dir_all(&path).is_ok() {
-                return path.join(name);
-            }
-        }
-
-        std::path::PathBuf::from("/tmp/maluwaf").join(name)
-    }
-
-    #[cfg(windows)]
-    {
-        format!("\\\\.\\pipe\\{}", name).into()
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        std::path::PathBuf::from("/tmp/maluwaf").join(name)
-    }
-}

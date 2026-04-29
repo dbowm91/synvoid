@@ -489,7 +489,7 @@ impl TcpListenerPool {
         let client_ip = client_addr.ip();
 
         if let Some(rl) = rate_limiter {
-            match rl.check_rate_limit(client_ip).await {
+            match rl.check_rate_limit(Some("global"), client_ip).await {
                 RateLimitResult::Limited { limit_type, .. } => {
                     tracing::debug!("TCP rate limited: {} for {}", limit_type, client_ip);
                     counter!("maluwaf.tcp.ip_rate_limited").increment(1);

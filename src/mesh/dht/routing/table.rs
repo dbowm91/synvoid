@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use moka::sync::Cache;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,9 @@ pub const REPLICATION_K: usize = 20;
 pub const BUCKET_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 pub const PING_TIMEOUT: Duration = Duration::from_secs(15);
 pub const DEFAULT_STALE_DURATION: Duration = Duration::from_secs(15 * 60);
+
+const ROUTING_CACHE_SIZE: u64 = 1000;
+const ROUTING_CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub enum InsertError {
@@ -104,6 +108,7 @@ pub struct RoutingTable {
     stale_duration: Duration,
     regional_hub: Option<Arc<RegionalHub>>,
     geo_distance: Option<Arc<GeoDistance>>,
+    closest_cache: Cache<u64, Vec<PeerContact>>,
 }
 
 impl RoutingTable {
@@ -113,6 +118,11 @@ impl RoutingTable {
             buckets.push(KBucket::new(i));
         }
 
+        let closest_cache = Cache::builder()
+            .max_capacity(ROUTING_CACHE_SIZE)
+            .time_to_live(ROUTING_CACHE_TTL)
+            .build();
+
         Self {
             local_node_id,
             local_node_id_string,
@@ -121,6 +131,7 @@ impl RoutingTable {
             stale_duration: DEFAULT_STALE_DURATION,
             regional_hub: None,
             geo_distance: None,
+            closest_cache,
         }
     }
 
@@ -190,6 +201,7 @@ impl RoutingTable {
                     let oldest_id = oldest.node_id;
                     let removed = bucket.remove(&oldest_id);
                     bucket.insert(peer).ok();
+                    self.closest_cache.invalidate_all();
                     return Ok(removed);
                 } else {
                     self.pending_pings.insert(oldest.node_id, Instant::now());
@@ -199,7 +211,10 @@ impl RoutingTable {
         }
 
         match bucket.insert(peer) {
-            Ok(evicted) => Ok(evicted),
+            Ok(evicted) => {
+                self.closest_cache.invalidate_all();
+                Ok(evicted)
+            }
             Err(_) => Ok(None),
         }
     }
@@ -217,7 +232,11 @@ impl RoutingTable {
         let bucket_index = peer.node_id.bucket_index(&self.local_node_id);
         let bucket = &mut self.buckets[bucket_index];
 
-        bucket.try_insert(peer)
+        let result = bucket.try_insert(peer);
+        if result.is_some() {
+            self.closest_cache.invalidate_all();
+        }
+        result
     }
 
     pub fn remove(&mut self, node_id: &NodeId) -> Option<PeerContact> {
@@ -227,10 +246,21 @@ impl RoutingTable {
 
         self.pending_pings.remove(node_id);
 
+        if removed.is_some() {
+            self.closest_cache.invalidate_all();
+        }
         removed
     }
 
     pub fn find_closest(&self, target: &NodeId, k: usize) -> Vec<PeerContact> {
+        let cache_key = Self::cache_key(target);
+
+        if let Some(cached) = self.closest_cache.get(&cache_key) {
+            let mut result = cached.clone();
+            result.truncate(k);
+            return result;
+        }
+
         let target_bucket = target.bucket_index(&self.local_node_id);
         let num_buckets = self.buckets.len();
 
@@ -274,7 +304,18 @@ impl RoutingTable {
 
         candidates.sort_by(|a, b| a.1.cmp(&b.1));
         candidates.truncate(k);
-        candidates.into_iter().map(|(p, _)| p).collect()
+        let result: Vec<PeerContact> = candidates.into_iter().map(|(p, _)| p).collect();
+
+        self.closest_cache.insert(cache_key, result.clone());
+        result
+    }
+
+    fn cache_key(target: &NodeId) -> u64 {
+        let bytes = target.as_bytes();
+        u64::from_ne_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+        ])
     }
 
     pub fn find_closest_geo(

@@ -25,5 +25,17 @@ path = "fuzz_ipc.rs"
 name = "fuzz_serialization"
 path = "fuzz_serialization.rs"
 
+[[bin]]
+name = "fuzz_serialization_new"
+path = "fuzz_serialization_new.rs"
+
+[[bin]]
+name = "fuzz_early_parse"
+path = "fuzz_early_parse.rs"
+
+[[bin]]
+name = "fuzz_protocol_proto_decode"
+path = "fuzz_protocol_proto_decode.rs"
+
 [profile.release]
 opt-level = 3

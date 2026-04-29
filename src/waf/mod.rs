@@ -10,7 +10,7 @@
 //! # Example
 //! ```ignore
 //! let waf = WafCore::new(config);
-//! let decision = waf.check_request(client_ip, "GET", "/").await;
+//! let decision = waf.check_request("example_site", client_ip, "GET", "/").await;
 //! ```
 
 pub mod asn_tracker;
@@ -23,6 +23,7 @@ pub mod probe_tracker;
 pub mod ratelimit;
 pub mod request_sanitization;
 pub mod rule_feed;
+pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
 pub mod violation_tracker;
@@ -152,6 +153,7 @@ use std::collections::HashSet;
 /// ```ignore
 /// let waf = WafCore::new(WafCoreConfig { ... });
 /// let decision = waf.check_request_full(
+///     "example_site",
 ///     client_ip,
 ///     "GET",
 ///     "/path",
@@ -159,6 +161,8 @@ use std::collections::HashSet;
 ///     &headers,
 ///     body,
 ///     user_agent,
+///     None,
+///     None,
 /// ).await;
 /// ```
 pub struct WafCore {
@@ -726,7 +730,7 @@ impl WafCore {
         // Note: sqli and xss use libinjection and don't support custom_patterns
         macro_rules! merge_patterns {
             ($category:expr, $field:ident) => {
-                let patterns = crate::waf::rule_feed::get_custom_patterns_for_category($category);
+                let patterns = crate::waf::rule_feed::get_custom_patterns_for_category($category, None);
                 if !patterns.is_empty() {
                     new_config.$field.custom_patterns.extend(patterns);
                 }
@@ -896,12 +900,14 @@ impl WafCore {
     /// A `WafDecision` indicating how to handle the request
     pub async fn check_request(
         &self,
+        site_id: Option<&str>,
         client_ip: std::net::IpAddr,
         method: &str,
         path: &str,
         user_agent: Option<&str>,
     ) -> WafDecision {
         self.check_request_full(
+            site_id,
             client_ip,
             method,
             path,
@@ -946,6 +952,7 @@ impl WafCore {
     /// - `Stall` - Connection is stalled (honeypot)
     pub async fn check_request_full(
         &self,
+        site_id: Option<&str>,
         client_ip: std::net::IpAddr,
         method: &str,
         path: &str,
@@ -982,7 +989,7 @@ impl WafCore {
         }
 
         let rate_start = std::time::Instant::now();
-        if let Some(decision) = self.check_rate_limit(client_ip, path).await {
+        if let Some(decision) = self.check_rate_limit(site_id, client_ip, path).await {
             crate::metrics::record_waf_check_timing(
                 "ratelimit",
                 rate_start.elapsed().as_millis() as u64,
@@ -1120,7 +1127,7 @@ impl WafCore {
         None
     }
 
-    async fn check_rate_limit(&self, client_ip: IpAddr, path: &str) -> Option<WafDecision> {
+    async fn check_rate_limit(&self, site_id: Option<&str>, client_ip: IpAddr, path: &str) -> Option<WafDecision> {
         if !self.test_mode.enabled || !self.test_mode.ratelimit_off {
             if self.rate_limiter.is_in_blackhole() {
                 return Some(WafDecision::Drop);
@@ -1148,7 +1155,7 @@ impl WafCore {
 
             let is_whitelisted = self.whitelist.contains(&client_ip);
             if !is_whitelisted {
-                match self.rate_limiter.check_rate_limit(client_ip).await {
+                match self.rate_limiter.check_rate_limit(site_id, client_ip).await {
                     RateLimitResult::Limited { limit_type, .. } => {
                         tracing::debug!(
                             "Rate limited: {} for {} ({})",

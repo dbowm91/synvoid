@@ -23,6 +23,7 @@
 //! - [`urlencoding_decode()`] - Decode URL-encoded strings
 //! - [`is_newer_version()`] - Compare semantic version strings
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -74,7 +75,7 @@ pub mod errors {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct ArcStr(Arc<str>);
 
 impl ArcStr {
@@ -89,8 +90,8 @@ impl ArcStr {
     }
 
     #[inline]
-    pub fn as_arc(&self) -> &Arc<str> {
-        &self.0
+    pub fn as_arc(&self) -> Arc<str> {
+        self.0.clone()
     }
 }
 

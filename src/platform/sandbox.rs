@@ -104,7 +104,15 @@ impl ProcessSandbox {
             {
                 Box::new(crate::platform::sandbox::pledge::PledgeSandbox::new(level))
             }
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+            #[cfg(target_os = "windows")]
+            {
+                Box::new(crate::platform::sandbox::windows::WindowsSandbox::new(level))
+            }
+            #[cfg(target_os = "macos")]
+            {
+                Box::new(crate::platform::sandbox::darwin::SeatbeltSandbox::new(level))
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "windows", target_os = "macos")))]
             {
                 let feature = match level {
                     SandboxLevel::Off => "disabled",
@@ -166,7 +174,8 @@ impl SandboxBackend for StubSandbox {
         tracing::warn!(
             "OS-level sandboxing is not available on this platform ({}). \
              Using basic directory isolation instead. For full sandboxing, \
-             use Linux with kernel 5.13+.",
+             use Linux with kernel 5.13+, FreeBSD with capsicum, OpenBSD with pledge, \
+             Windows with Job Objects, or macOS with Seatbelt.",
             std::env::consts::OS
         );
 
@@ -211,258 +220,6 @@ pub mod linux {
                         if major > 5 || (major == 5 && minor >= 13) {
                             return Some(true);
                         }
-
-                        #[cfg(target_os = "freebsd")]
-                        pub mod capsicum {
-                            use super::{SandboxBackend, SandboxError, SandboxLevel};
-                            use std::ffi::CStr;
-                            use std::path::Path;
-
-                            const CAPSICUM_CAP_MODE: libc::c_int = 3;
-                            const CAPENABLED: libc::c_int = 2;
-
-                            #[repr(C)]
-                            struct CapsicumRights {
-                                bits: [u64; 2],
-                            }
-
-                            pub struct CapsicumSandbox {
-                                level: SandboxLevel,
-                            }
-
-                            impl CapsicumSandbox {
-                                pub fn new(level: SandboxLevel) -> Self {
-                                    Self { level }
-                                }
-
-                                fn is_capsicum_available() -> bool {
-                                    unsafe {
-                                        let capsicum =
-                                            CStr::from_bytes_with_nul(b"capsicum\0").unwrap();
-                                        libc::cap_enter();
-                                        let enabled = libc::cap_getmode(std::ptr::null_mut());
-                                        enabled >= 0
-                                    }
-                                }
-
-                                fn enter_sandbox(&self) -> Result<(), SandboxError> {
-                                    // SAFETY: cap_enter enters capability mode; we check return value.
-                                    let result = unsafe { libc::cap_enter() };
-                                    if result < 0 {
-                                        return Err(SandboxError::Syscall(
-                                            "cap_enter failed".into(),
-                                        ));
-                                    }
-                                    Ok(())
-                                }
-
-                                fn limit_fd(
-                                    &self,
-                                    fd: i32,
-                                    rights: &[libc::c_char],
-                                ) -> Result<(), SandboxError> {
-                                    #[repr(C)]
-                                    struct CapRights {
-                                        cr_next: *mut libc::c_void,
-                                        cr_left: i32,
-                                        cr_rights: *mut libc::c_char,
-                                    }
-
-                                    let mut right_size: libc::size_t = 0;
-
-                                    // SAFETY: cap_rights_init is called with valid parameters; we check result.
-                                    let result = unsafe {
-                                        libc::cap_rights_init(std::ptr::null_mut(), rights.as_ptr())
-                                    };
-
-                                    if result.is_null() {
-                                        return Err(SandboxError::Syscall(
-                                            "cap_rights_init failed".into(),
-                                        ));
-                                    }
-
-                                    // SAFETY: cap_rights_limit is called with a valid fd and rights; we check result.
-                                    let limit_result =
-                                        unsafe { libc::cap_rights_limit(fd, result) };
-                                    if limit_result < 0 {
-                                        return Err(SandboxError::Syscall(
-                                            "cap_rights_limit failed".into(),
-                                        ));
-                                    }
-
-                                    Ok(())
-                                }
-                            }
-
-                            impl SandboxBackend for CapsicumSandbox {
-                                fn apply(
-                                    &self,
-                                    allowed_paths: &[&Path],
-                                    denied_paths: &[&Path],
-                                ) -> Result<(), SandboxError> {
-                                    if !Self::is_capsicum_available() {
-                                        tracing::warn!(
-                                            "Capsicum not available on this FreeBSD system. \
-                     OS-level sandboxing is not active."
-                                        );
-                                        return Err(SandboxError::NotSupported(
-                                            "Capsicum not available".into(),
-                                        ));
-                                    }
-
-                                    // Enter capability mode
-                                    self.enter_sandbox()?;
-
-                                    tracing::info!(
-                "Applied capsicum sandbox (level: {:?}) with {} allowed paths",
-                self.level,
-                allowed_paths.len()
-            );
-                                    let _ = denied_paths;
-
-                                    Ok(())
-                                }
-
-                                fn is_supported(&self) -> bool {
-                                    Self::is_capsicum_available()
-                                }
-
-                                fn feature_name(&self) -> &'static str {
-                                    "capsicum"
-                                }
-
-                                fn level(&self) -> SandboxLevel {
-                                    self.level
-                                }
-                            }
-                        }
-
-                        #[cfg(target_os = "openbsd")]
-                        pub mod pledge {
-                            use super::{SandboxBackend, SandboxError, SandboxLevel};
-                            use std::ffi::CStr;
-                            use std::path::Path;
-
-                            pub struct PledgeSandbox {
-                                level: SandboxLevel,
-                            }
-
-                            impl PledgeSandbox {
-                                pub fn new(level: SandboxLevel) -> Self {
-                                    Self { level }
-                                }
-
-                                fn is_pledge_available() -> bool {
-                                    // pledge is always available on OpenBSD
-                                    true
-                                }
-
-                                fn pledge(&self, promises: &str) -> Result<(), SandboxError> {
-                                    let promises_cstr = CStr::from_bytes_with_nul(
-                                        format!("{}\0", promises).as_bytes(),
-                                    )
-                                    .map_err(|_| {
-                                        SandboxError::Syscall("Invalid pledge promises".into())
-                                    })?;
-
-                                    // SAFETY: pledge is called with a valid C string; we check return value.
-                                    let result = unsafe {
-                                        libc::pledge(promises_cstr.as_ptr(), std::ptr::null())
-                                    };
-
-                                    if result < 0 {
-                                        return Err(SandboxError::Syscall("pledge failed".into()));
-                                    }
-
-                                    Ok(())
-                                }
-
-                                fn unveil(
-                                    &self,
-                                    path: &Path,
-                                    permissions: &str,
-                                ) -> Result<(), SandboxError> {
-                                    let path_cstr = CStr::from_bytes_with_nul(
-                                        format!("{}\0", path.display()).as_bytes(),
-                                    )
-                                    .map_err(|_| SandboxError::Syscall("Invalid path".into()))?;
-
-                                    let perms_cstr = CStr::from_bytes_with_nul(
-                                        format!("{}\0", permissions).as_bytes(),
-                                    )
-                                    .map_err(|_| {
-                                        SandboxError::Syscall("Invalid permissions".into())
-                                    })?;
-
-                                    // SAFETY: unveil is called with valid C strings; we check return value.
-                                    let result = unsafe {
-                                        libc::unveil(path_cstr.as_ptr(), perms_cstr.as_ptr())
-                                    };
-
-                                    if result < 0 {
-                                        return Err(SandboxError::Syscall("unveil failed".into()));
-                                    }
-
-                                    Ok(())
-                                }
-
-                                fn commit_pledge(&self) -> Result<(), SandboxError> {
-                                    self.pledge("stdio")
-                                }
-                            }
-
-                            impl SandboxBackend for PledgeSandbox {
-                                fn apply(
-                                    &self,
-                                    allowed_paths: &[&Path],
-                                    denied_paths: &[&Path],
-                                ) -> Result<(), SandboxError> {
-                                    if !Self::is_pledge_available() {
-                                        tracing::warn!(
-                                            "Pledge not available on this OpenBSD system. \
-                     OS-level sandboxing is not active."
-                                        );
-                                        return Err(SandboxError::NotSupported(
-                                            "Pledge not available".into(),
-                                        ));
-                                    }
-
-                                    // Apply unveil restrictions for allowed paths
-                                    for path in allowed_paths {
-                                        let perms = if denied_paths.contains(path) {
-                                            "r" // read-only for denied paths (they shouldn't be here)
-                                        } else {
-                                            "rwc" // read, write, create for allowed paths
-                                        };
-                                        self.unveil(path, perms)?;
-                                    }
-
-                                    // Commit to pledge (remove unveil ability, restrict to stated promises)
-                                    self.commit_pledge()?;
-
-                                    tracing::info!(
-                "Applied pledge sandbox (level: {:?}) with {} allowed paths",
-                self.level,
-                allowed_paths.len()
-            );
-                                    let _ = denied_paths;
-
-                                    Ok(())
-                                }
-
-                                fn is_supported(&self) -> bool {
-                                    Self::is_pledge_available()
-                                }
-
-                                fn feature_name(&self) -> &'static str {
-                                    "pledge"
-                                }
-
-                                fn level(&self) -> SandboxLevel {
-                                    self.level
-                                }
-                            }
-                        }
                     }
                     None
                 })
@@ -480,7 +237,7 @@ pub mod linux {
 
             unsafe {
                 let attr = LandlockRulesetAttr {
-                    handled_access_fs: 0b111, // READ | WRITE | EXEC
+                    handled_access_fs: 0b111,
                 };
 
                 let ret = libc::syscall(
@@ -573,7 +330,7 @@ pub mod linux {
             let ruleset_fd = self.create_landlock_ruleset()?;
 
             for path in allowed_paths {
-                let access = 0b11; // READ | WRITE
+                let access = 0b11;
                 self.add_path_rule(ruleset_fd, path, access)?;
             }
 
@@ -602,6 +359,557 @@ pub mod linux {
 
         fn feature_name(&self) -> &'static str {
             "landlock"
+        }
+
+        fn level(&self) -> SandboxLevel {
+            self.level
+        }
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+pub mod capsicum {
+    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use std::ffi::CStr;
+    use std::path::Path;
+
+    pub struct CapsicumSandbox {
+        level: SandboxLevel,
+    }
+
+    impl CapsicumSandbox {
+        pub fn new(level: SandboxLevel) -> Self {
+            Self { level }
+        }
+
+        fn is_capsicum_available() -> bool {
+            unsafe {
+                libc::cap_enter();
+                let enabled = libc::cap_getmode(std::ptr::null_mut());
+                enabled >= 0
+            }
+        }
+
+        fn enter_sandbox(&self) -> Result<(), SandboxError> {
+            let result = unsafe { libc::cap_enter() };
+            if result < 0 {
+                return Err(SandboxError::Syscall("cap_enter failed".into()));
+            }
+            Ok(())
+        }
+
+        fn limit_fd(&self, fd: i32, rights: &[libc::c_char]) -> Result<(), SandboxError> {
+            let result = unsafe {
+                libc::cap_rights_init(std::ptr::null_mut(), rights.as_ptr())
+            };
+
+            if result.is_null() {
+                return Err(SandboxError::Syscall("cap_rights_init failed".into()));
+            }
+
+            let limit_result = unsafe { libc::cap_rights_limit(fd, result) };
+            if limit_result < 0 {
+                return Err(SandboxError::Syscall("cap_rights_limit failed".into()));
+            }
+
+            Ok(())
+        }
+    }
+
+    impl SandboxBackend for CapsicumSandbox {
+        fn apply(
+            &self,
+            allowed_paths: &[&Path],
+            denied_paths: &[&Path],
+        ) -> Result<(), SandboxError> {
+            if !Self::is_capsicum_available() {
+                tracing::warn!(
+                    "Capsicum not available on this FreeBSD system. \
+                     OS-level sandboxing is not active."
+                );
+                return Err(SandboxError::NotSupported(
+                    "Capsicum not available".into(),
+                ));
+            }
+
+            self.enter_sandbox()?;
+
+            tracing::info!(
+                "Applied capsicum sandbox (level: {:?}) with {} allowed paths",
+                self.level,
+                allowed_paths.len()
+            );
+            let _ = denied_paths;
+
+            Ok(())
+        }
+
+        fn is_supported(&self) -> bool {
+            Self::is_capsicum_available()
+        }
+
+        fn feature_name(&self) -> &'static str {
+            "capsicum"
+        }
+
+        fn level(&self) -> SandboxLevel {
+            self.level
+        }
+    }
+}
+
+#[cfg(target_os = "openbsd")]
+pub mod pledge {
+    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use std::ffi::CStr;
+    use std::path::Path;
+
+    pub struct PledgeSandbox {
+        level: SandboxLevel,
+    }
+
+    impl PledgeSandbox {
+        pub fn new(level: SandboxLevel) -> Self {
+            Self { level }
+        }
+
+        fn is_pledge_available() -> bool {
+            true
+        }
+
+        fn pledge(&self, promises: &str) -> Result<(), SandboxError> {
+            let promises_cstr =
+                CStr::from_bytes_with_nul(format!("{}\0", promises).as_bytes())
+                    .map_err(|_| SandboxError::Syscall("Invalid pledge promises".into()))?;
+
+            let result = unsafe {
+                libc::pledge(promises_cstr.as_ptr(), std::ptr::null())
+            };
+
+            if result < 0 {
+                return Err(SandboxError::Syscall("pledge failed".into()));
+            }
+
+            Ok(())
+        }
+
+        fn unveil(&self, path: &Path, permissions: &str) -> Result<(), SandboxError> {
+            let path_cstr = CStr::from_bytes_with_nul(format!("{}\0", path.display()).as_bytes())
+                .map_err(|_| SandboxError::Syscall("Invalid path".into()))?;
+
+            let perms_cstr =
+                CStr::from_bytes_with_nul(format!("{}\0", permissions).as_bytes())
+                    .map_err(|_| SandboxError::Syscall("Invalid permissions".into()))?;
+
+            let result = unsafe {
+                libc::unveil(path_cstr.as_ptr(), perms_cstr.as_ptr())
+            };
+
+            if result < 0 {
+                return Err(SandboxError::Syscall("unveil failed".into()));
+            }
+
+            Ok(())
+        }
+
+        fn commit_pledge(&self) -> Result<(), SandboxError> {
+            self.pledge("stdio")
+        }
+    }
+
+    impl SandboxBackend for PledgeSandbox {
+        fn apply(
+            &self,
+            allowed_paths: &[&Path],
+            denied_paths: &[&Path],
+        ) -> Result<(), SandboxError> {
+            if !Self::is_pledge_available() {
+                tracing::warn!(
+                    "Pledge not available on this OpenBSD system. \
+                     OS-level sandboxing is not active."
+                );
+                return Err(SandboxError::NotSupported(
+                    "Pledge not available".into(),
+                ));
+            }
+
+            for path in allowed_paths {
+                let perms = if denied_paths.contains(path) {
+                    "r"
+                } else {
+                    "rwc"
+                };
+                self.unveil(path, perms)?;
+            }
+
+            self.commit_pledge()?;
+
+            tracing::info!(
+                "Applied pledge sandbox (level: {:?}) with {} allowed paths",
+                self.level,
+                allowed_paths.len()
+            );
+            let _ = denied_paths;
+
+            Ok(())
+        }
+
+        fn is_supported(&self) -> bool {
+            Self::is_pledge_available()
+        }
+
+        fn feature_name(&self) -> &'static str {
+            "pledge"
+        }
+
+        fn level(&self) -> SandboxLevel {
+            self.level
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub mod windows {
+    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    pub struct WindowsSandbox {
+        level: SandboxLevel,
+        applied: AtomicBool,
+    }
+
+    impl WindowsSandbox {
+        pub fn new(level: SandboxLevel) -> Self {
+            Self {
+                level,
+                applied: AtomicBool::new(false),
+            }
+        }
+
+        fn is_supported() -> bool {
+            true
+        }
+
+        fn apply_job_object(&self) -> Result<(), SandboxError> {
+            use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
+
+            const JOBOBJECT_BASIC_LIMIT_INFORMATION: u32 = 2;
+            const JOB_OBJECT_LIMIT_PROCESS_MEMORY: u32 = 0x1;
+            const JOB_OBJECT_LIMIT_JOB_MEMORY: u32 = 0x2;
+            const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x20;
+            const ProcessTlsInformation: u32 = 58;
+
+            #[repr(C)]
+            struct JOBOBJECT_BASIC_LIMIT_INFORMATION_T {
+                per_process_time: u64,
+                per_job_time: u64,
+                limits_flags: u32,
+                minimum_working_set_size: usize,
+                maximum_working_set_size: usize,
+                active_process_limit: u32,
+                affinity: usize,
+                priority_class: u32,
+                scheduling_class: i32,
+            }
+
+            #[repr(C)]
+            struct IO_COUNTERS {
+                read_operation_count: u64,
+                write_operation_count: u64,
+                other_operation_count: u64,
+                read_transfer_count: u64,
+                write_transfer_count: u64,
+                other_transfer_count: u64,
+            }
+
+            #[repr(C)]
+            struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+                basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION_T,
+                io_info: IO_COUNTERS,
+                process_memory_limit: usize,
+                job_memory_limit: usize,
+                peak_process_memory: usize,
+                peak_job_memory: usize,
+            }
+
+            let job = unsafe {
+                let create_result = windows_sys::Win32::System::Threading::CreateJobObjectW(
+                    Some(std::ptr::null_mut()),
+                    Some(std::ptr::null_mut()),
+                );
+                if create_result.is_null() {
+                    return Err(SandboxError::Syscall("CreateJobObjectW failed".into()));
+                }
+                create_result
+            };
+
+            let mut limit_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+                basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION_T {
+                    per_process_time: 0,
+                    per_job_time: 0,
+                    limits_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                        | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+                        | JOB_OBJECT_LIMIT_JOB_MEMORY,
+                    minimum_working_set_size: 0,
+                    maximum_working_set_size: 0,
+                    active_process_limit: 0,
+                    affinity: 0,
+                    priority_class: 0,
+                    scheduling_class: 0,
+                },
+                io_info: IO_COUNTERS {
+                    read_operation_count: 0,
+                    write_operation_count: 0,
+                    other_operation_count: 0,
+                    read_transfer_count: 0,
+                    write_transfer_count: 0,
+                    other_transfer_count: 0,
+                },
+                process_memory_limit: 256 * 1024 * 1024,
+                job_memory_limit: 512 * 1024 * 1024,
+                peak_process_memory: 0,
+                peak_job_memory: 0,
+            };
+
+            let set_info_result = unsafe {
+                windows_sys::Win32::System::Threading::SetInformationJobObject(
+                    job,
+                    JOBOBJECT_BASIC_LIMIT_INFORMATION,
+                    &mut limit_info as *mut _ as *mut libc::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            };
+
+            if set_info_result == 0 {
+                return Err(SandboxError::Syscall("SetInformationJobObject failed".into()));
+            }
+
+            let current_process = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+
+            let assign_result = unsafe {
+                windows_sys::Win32::System::Threading::AssignProcessToJobObject(
+                    job,
+                    current_process,
+                )
+            };
+
+            if assign_result == 0 {
+                return Err(SandboxError::Syscall("AssignProcessToJobObject failed".into()));
+            }
+
+            tracing::info!("Applied Windows Job Object sandbox (level: {:?})", self.level);
+
+            Ok(())
+        }
+
+        fn apply_mitigation_policies(&self) -> Result<(), SandboxError> {
+            use windows_sys::Win32::System::Threading;
+
+            const PROCESS_CREATION_MITIGATION_POLICY_DEP: u32 = 0x1;
+            const PROCESS_CREATION_MITIGATION_POLICY_ASLR: u32 = 0x8;
+
+            let current_process = unsafe { Threading::GetCurrentProcess() };
+
+            let dep_enabled = Threading::SetProcessMitigationPolicy(
+                Threading::ProcessDEPPolicy,
+                &PROCESS_CREATION_MITIGATION_POLICY_DEP as *const _ as *const libc::c_void,
+                std::mem::size_of::<u32>(),
+            );
+
+            if dep_enabled == 0 {
+                tracing::warn!("Failed to enable DEP mitigation");
+            } else {
+                tracing::debug!("DEP mitigation enabled");
+            }
+
+            let aslr_enabled = Threading::SetProcessMitigationPolicy(
+                Threading::ProcessASLRPolicy,
+                &PROCESS_CREATION_MITIGATION_POLICY_ASLR as *const _ as *const libc::c_void,
+                std::mem::size_of::<u32>(),
+            );
+
+            if aslr_enabled == 0 {
+                tracing::warn!("Failed to enable ASLR mitigation");
+            } else {
+                tracing::debug!("ASLR mitigation enabled");
+            }
+
+            Ok(())
+        }
+    }
+
+    impl SandboxBackend for WindowsSandbox {
+        fn apply(
+            &self,
+            allowed_paths: &[&Path],
+            denied_paths: &[&Path],
+        ) -> Result<(), SandboxError> {
+            if self.applied.load(Ordering::SeqCst) {
+                tracing::warn!("Windows sandbox already applied");
+                return Ok(());
+            }
+
+            self.apply_job_object()?;
+
+            if self.level == SandboxLevel::Strict {
+                self.apply_mitigation_policies()?;
+            }
+
+            self.applied.store(true, Ordering::SeqCst);
+
+            tracing::info!(
+                "Applied windows sandbox (level: {:?}) with {} allowed paths, {} denied paths",
+                self.level,
+                allowed_paths.len(),
+                denied_paths.len()
+            );
+
+            Ok(())
+        }
+
+        fn is_supported(&self) -> bool {
+            Self::is_supported()
+        }
+
+        fn feature_name(&self) -> &'static str {
+            "windows-job-object"
+        }
+
+        fn level(&self) -> SandboxLevel {
+            self.level
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub mod darwin {
+    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use std::path::Path;
+
+    pub struct SeatbeltSandbox {
+        level: SandboxLevel,
+    }
+
+    impl SeatbeltSandbox {
+        pub fn new(level: SandboxLevel) -> Self {
+            Self { level }
+        }
+
+        fn is_supported() -> bool {
+            true
+        }
+
+        fn compile_sandbox_profile(
+            allowed_paths: &[&Path],
+            denied_paths: &[&Path],
+            level: SandboxLevel,
+        ) -> String {
+            let mut profile = String::new();
+
+            profile.push_str("(version 1)\n");
+
+            match level {
+                SandboxLevel::Basic => {
+                    profile.push_str("(allow default)\n");
+                    profile.push_str("(deny default)\n");
+                }
+                SandboxLevel::Strict => {
+                    profile.push_str("(deny default)\n");
+                    profile.push_str("(allow process)\n");
+                    profile.push_str("(allow signal)\n");
+                    profile.push_str("(allow job-creation)\n");
+                }
+                SandboxLevel::Off => {
+                    profile.push_str("(allow default)\n");
+                    return profile;
+                }
+            }
+
+            for path in allowed_paths {
+                let path_str = path.display().to_string().replace('\\', "\\\\");
+                profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", path_str));
+            }
+
+            for path in denied_paths {
+                let path_str = path.display().to_string().replace('\\', "\\\\");
+                profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path_str));
+            }
+
+            profile
+        }
+
+        fn apply_sandbox_impl(&self, profile: &str) -> Result<(), SandboxError> {
+            #[cfg(all(target_os = "macos", feature = "macos-sandbox"))]
+            {
+                use std::ffi::CStr;
+
+                let profile_cstr = CStr::from_bytes_with_nul(format!("{}\0", profile).as_bytes())
+                    .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
+
+                #[link(name = "sandbox")]
+                extern "C" {
+                    fn sandbox_init(profile: *const libc::c_char, flags: libc::c_int, error: *mut *mut libc::c_char) -> libc::c_int;
+                }
+
+                let result = unsafe {
+                    sandbox_init(profile_cstr.as_ptr(), 0, std::ptr::null_mut())
+                };
+
+                if result != 0 {
+                    let err_msg = std::io::Error::last_os_error().to_string();
+                    return Err(SandboxError::Syscall(format!("sandbox_init failed: {}", err_msg)));
+                }
+
+                Ok(())
+            }
+
+            #[cfg(not(all(target_os = "macos", feature = "macos-sandbox")))]
+            {
+                let _ = profile;
+                tracing::info!(
+                    "macOS seatbelt sandbox profile compiled (sandbox disabled - enable 'macos-sandbox' feature for actual enforcement)"
+                );
+                Ok(())
+            }
+        }
+
+        fn apply_sandbox(&self, profile: &str) -> Result<(), SandboxError> {
+            self.apply_sandbox_impl(profile)
+        }
+    }
+
+    impl SandboxBackend for SeatbeltSandbox {
+        fn apply(
+            &self,
+            allowed_paths: &[&Path],
+            denied_paths: &[&Path],
+        ) -> Result<(), SandboxError> {
+            if self.level == SandboxLevel::Off {
+                return Ok(());
+            }
+
+            let profile = Self::compile_sandbox_profile(allowed_paths, denied_paths, self.level);
+
+            self.apply_sandbox(&profile)?;
+
+            tracing::info!(
+                "Applied seatbelt sandbox (level: {:?}) with {} allowed paths, {} denied paths",
+                self.level,
+                allowed_paths.len(),
+                denied_paths.len()
+            );
+
+            Ok(())
+        }
+
+        fn is_supported(&self) -> bool {
+            Self::is_supported()
+        }
+
+        fn feature_name(&self) -> &'static str {
+            "seatbelt"
         }
 
         fn level(&self) -> SandboxLevel {

@@ -33,24 +33,24 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
 use crate::waf::traffic_shaper::ConnectionLimiter;
 use crate::waf::ConnectionToken;
-use std::sync::Mutex as StdMutex;
+use parking_lot::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Role, WebSocketStream};
 
 struct ConnectionTokenGuard {
     limiter: Arc<ConnectionLimiter>,
-    token: Arc<StdMutex<Option<ConnectionToken>>>,
+    token: Arc<Mutex<Option<ConnectionToken>>>,
 }
 
 impl ConnectionTokenGuard {
     fn new(limiter: Arc<ConnectionLimiter>, token: ConnectionToken) -> Self {
         Self {
             limiter,
-            token: Arc::new(StdMutex::new(Some(token))),
+            token: Arc::new(Mutex::new(Some(token))),
         }
     }
 
     fn release_and_acquire(&self, new_token: ConnectionToken) -> Option<ConnectionToken> {
-        let mut guard = self.token.lock().unwrap();
+        let mut guard = self.token.lock();
         let old_token = guard.take();
         *guard = Some(new_token);
         old_token
@@ -59,7 +59,7 @@ impl ConnectionTokenGuard {
 
 impl Drop for ConnectionTokenGuard {
     fn drop(&mut self) {
-        if let Some(token) = self.token.lock().unwrap().take() {
+        if let Some(token) = self.token.lock().take() {
             self.limiter.release(token);
         }
     }
@@ -119,8 +119,8 @@ use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
 use crate::mesh::MeshBackendPool;
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
-use crate::metrics::WorkerMetrics;
-use crate::process::{current_timestamp, RequestLogPayload};
+use crate::metrics::{RequestLogPayload, WorkerMetrics};
+use crate::process::current_timestamp;
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
@@ -130,7 +130,6 @@ use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 use crate::RunningFlag;
 use moka::sync::Cache;
-use parking_lot::Mutex;
 use tokio::sync::RwLock;
 
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
@@ -1441,6 +1440,7 @@ impl HttpServer {
             crate::proxy::WafDecision::Pass
         } else {
             waf.check_request_full(
+                Some(&site_id),
                 client_ip,
                 method_str.as_str(),
                 &path,
@@ -1953,6 +1953,89 @@ impl HttpServer {
                     return Ok(Self::build_response_with_alt_svc(
                         502,
                         "Serverless backend misconfigured: no runtime available".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+
+                // Spin WASM backend dispatch
+                if matches!(target.backend_type, crate::router::BackendType::Spin) {
+                    if let Some(ref spin_app_name) = target.spin_app_name {
+                        let spin_apps_manager = crate::spin::handler::get_global_spin_apps_manager();
+                        if let Some(runtime) = spin_apps_manager.get(spin_app_name) {
+                            let handler = crate::spin::handler::SpinHttpHandler::new(runtime);
+                            let spin_request = crate::spin::handler::SpinRequest::new(
+                                parts.method.clone(),
+                                path.to_string(),
+                            )
+                            .with_headers(parts.headers.clone())
+                            .with_env(std::collections::HashMap::new());
+
+                            let body_for_spin = full_body_arc.as_ref().clone();
+                            let spin_request = if !body_for_spin.is_empty() {
+                                spin_request.with_body(body_for_spin)
+                            } else {
+                                spin_request
+                            };
+
+                            match handler.handle_request(spin_request).await {
+                                Ok(spin_response) => {
+                                    let status = spin_response.status;
+                                    Self::send_request_log_if_enabled(
+                                        ipc.clone(),
+                                        worker_id,
+                                        &main_config,
+                                        client_ip,
+                                        &method_str,
+                                        &path,
+                                        status.as_u16(),
+                                        start.elapsed().as_millis() as u64,
+                                        &site_id,
+                                        user_agent.as_deref(),
+                                        false,
+                                    );
+                                    let mut response_builder = Response::builder().status(status);
+                                    for (key, value) in spin_response.headers.iter() {
+                                        response_builder = response_builder.header(key.as_str(), value.to_str().unwrap_or(""));
+                                    }
+                                    return Ok(response_builder
+                                        .body(Full::new(spin_response.body).boxed())
+                                        .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Spin handler error for {}: {}", path, e);
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        502,
+                                        format!("Spin Error: {}", e),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Spin backend for site {} but app '{}' not found in SpinAppsManager",
+                                site_id,
+                                spin_app_name
+                            );
+                            return Ok(Self::build_response_with_alt_svc(
+                                502,
+                                format!("Spin app '{}' not found", spin_app_name),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                    }
+                    tracing::warn!(
+                        "Spin backend for site {} but no spin_app_name configured",
+                        site_id
+                    );
+                    return Ok(Self::build_response_with_alt_svc(
+                        502,
+                        "Spin backend misconfigured: no spin_app_name".to_string(),
                         "text/plain",
                         &alt_svc,
                         &main_config,
@@ -2752,6 +2835,8 @@ impl HttpServer {
                         .enable_compression
                         .unwrap_or(false);
 
+                const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB - stream above this size
+
                 if !needs_body_transform && !crate::http_client::is_quictunnel_url(&target.upstream)
                 {
                     let forward_header_map = build_forward_headers(
@@ -2790,6 +2875,13 @@ impl HttpServer {
                                 .and_then(|v| v.parse::<u64>().ok())
                                 .unwrap_or(0);
 
+                            let is_chunked = resp_parts
+                                .headers
+                                .get("transfer-encoding")
+                                .and_then(|v| v.to_str().ok())
+                                .map(|v| v.contains("chunked"))
+                                .unwrap_or(false);
+
                             if let Some(ref m) = metrics {
                                 m.bandwidth.record_proxied(
                                     request_body_size,
@@ -2827,24 +2919,69 @@ impl HttpServer {
 
                             builder = Self::apply_security_headers(builder, &target, &main_config);
 
-                            return Ok(builder
-                                .body(
-                                    upstream_body
-                                        .map_err(|e| {
-                                            tracing::warn!("Upstream body stream error: {}", e);
-                                            unreachable!()
-                                        })
-                                        .boxed(),
-                                )
-                                .unwrap_or_else(|_| {
-                                    Self::build_response_with_alt_svc(
-                                        500,
-                                        crate::http::reason_phrase(500).to_string(),
-                                        "text/plain",
-                                        &alt_svc,
-                                        &main_config,
+                            let should_zero_copy = body_len > ZERO_COPY_THRESHOLD
+                                || (body_len == 0 && is_chunked);
+
+                            if should_zero_copy {
+                                return Ok(builder
+                                    .body(
+                                        upstream_body
+                                            .map_err(|e| {
+                                                tracing::warn!("Upstream body stream error: {}", e);
+                                                unreachable!()
+                                            })
+                                            .boxed(),
                                     )
-                                }));
+                                    .unwrap_or_else(|_| {
+                                        Self::build_response_with_alt_svc(
+                                            500,
+                                            crate::http::reason_phrase(500).to_string(),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        )
+                                    }));
+                            } else {
+                                match upstream_body.collect().await {
+                                    Ok(collected) => {
+                                        let body_bytes = collected.to_bytes();
+                                        let body_len = body_bytes.len() as u64;
+                                        if let Some(ref m) = metrics {
+                                            m.bandwidth.record_egress(
+                                                body_len,
+                                                BandwidthProtocol::Http,
+                                                EgressDirection::Proxied,
+                                            );
+                                            m.bandwidth.record_site_egress(&site_id, body_len);
+                                        }
+                                        return Ok(builder
+                                            .body(Full::new(body_bytes).boxed())
+                                            .unwrap_or_else(|_| {
+                                                Self::build_response_with_alt_svc(
+                                                    500,
+                                                    crate::http::reason_phrase(500).to_string(),
+                                                    "text/plain",
+                                                    &alt_svc,
+                                                    &main_config,
+                                                )
+                                            }));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to collect upstream body: {}", e);
+                                        return Ok(builder
+                                            .body(Full::new(Bytes::new()).boxed())
+                                            .unwrap_or_else(|_| {
+                                                Self::build_response_with_alt_svc(
+                                                    500,
+                                                    crate::http::reason_phrase(500).to_string(),
+                                                    "text/plain",
+                                                    &alt_svc,
+                                                    &main_config,
+                                                )
+                                            }));
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             if let Some(ref rm) = req_metrics {
@@ -3945,7 +4082,7 @@ impl HttpServer {
         if let (Some(ref ipc_ref), Some(worker_id_value)) = (&ipc, worker_id) {
             let ipc_clone = ipc_ref.clone();
             tokio::spawn(async move {
-                let log = crate::process::RequestLogPayload {
+                let log = crate::metrics::RequestLogPayload {
                     timestamp: current_timestamp(),
                     client_ip: client_ip_str,
                     method: "UNKNOWN".to_string(),

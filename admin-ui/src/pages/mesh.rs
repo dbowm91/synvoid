@@ -46,14 +46,6 @@ pub fn Mesh() -> Html {
             if let Some(v) = &cfg.dht_enabled {
                 updated_json.insert("dht".to_string(), serde_json::json!(v));
             }
-            if let Some(v) = &cfg.wireguard_enabled {
-                updated_json.insert(
-                    "wireguard".to_string(),
-                    serde_json::json!({
-                        "enabled": v
-                    }),
-                );
-            }
 
             let saving = saving.clone();
             let save_success = save_success.clone();

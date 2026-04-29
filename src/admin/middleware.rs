@@ -55,11 +55,13 @@ pub async fn auth_middleware_with_state(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if request.uri().path() == "/health" {
+    let path = request.uri().path();
+
+    if path == "/health" || path.starts_with("/ws/") {
         return next.run(request).await;
     }
 
-    if request.uri().path().starts_with("/ws/") {
+    if path == "/api/openapi.json" || path.starts_with("/api/docs") {
         return next.run(request).await;
     }
 

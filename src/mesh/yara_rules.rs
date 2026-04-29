@@ -941,19 +941,25 @@ impl YaraRulesManager {
                             );
                             continue;
                         }
-                        if !self.node_role.is_global()
-                            && !self.config.trusted_signers.is_empty()
-                            && !self
+                        if !self.node_role.is_global() {
+                            if self.config.trusted_signers.is_empty() {
+                                tracing::warn!(
+                                    "No trusted signers configured - rejecting YARA rule from non-global node"
+                                );
+                                continue;
+                            }
+                            if !self
                                 .config
                                 .trusted_signers
                                 .contains(&manifest_signer_pk.to_string())
-                        {
-                            tracing::warn!(
-                                "YARA DHT sync: manifest signer pk {} is not in trusted signers list for record from {}",
-                                manifest_signer_pk,
-                                manifest_node_id
-                            );
-                            continue;
+                            {
+                                tracing::warn!(
+                                    "YARA DHT sync: manifest signer pk {} is not in trusted signers list for record from {}",
+                                    manifest_signer_pk,
+                                    manifest_node_id
+                                );
+                                continue;
+                            }
                         }
                     }
 
@@ -1806,7 +1812,18 @@ impl YaraRulesManager {
                         }
                         tracing::debug!("YARA rule signature verified from {}", from_node);
 
-                        if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
+                        if !self.node_role.is_global() {
+                            if self.config.trusted_signers.is_empty() {
+                                tracing::warn!("No trusted signers configured - rejecting YARA rule from non-global node");
+                                return Some(MeshMessage::YaraRuleAcknowledgement {
+                                    original_request_id: request_id.clone(),
+                                    node_id: self.node_id.clone().into(),
+                                    accepted: false,
+                                    reason: "No trusted signers configured".into(),
+                                    timestamp:
+                                        crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                                });
+                            }
                             if !self.check_trusted_signer(from_node, signer_public_key) {
                                 tracing::warn!(
                                     "YARA rule announce rejected: signer {} not in trusted_signers list",

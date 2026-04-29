@@ -896,6 +896,44 @@ impl InstancePool {
 
 ---
 
+## Metrics Module Split (W1.1)
+
+**Location**: `src/metrics/mod.rs` → `src/metrics/payloads.rs` + `src/metrics/collection.rs`
+
+**Issue**: "God module" at ~2000+ lines with complex trait bounds.
+
+**Pattern**: Split into focused modules:
+```rust
+// src/metrics/mod.rs - re-exports for backward compatibility
+pub mod bandwidth;
+pub use bandwidth::{BandwidthTracker, BandwidthPayload, BandwidthProtocol, EgressDirection};
+pub use payloads::*;  // Re-export all payload structs
+pub use collection::*; // Re-export collection functions
+
+// src/metrics/payloads.rs - pure data structures
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkerMetricsPayload { ... }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SiteMetricsPayload { ... }
+
+// src/metrics/collection.rs - atomic counter collections
+pub struct MetricsCollector { ... }
+
+impl MetricsCollector {
+    pub fn record_waf_check(&self, site_id: &str, result: &AttackDetectionResult) { ... }
+    pub fn record_request_latency(&self, site_id: &str, latency_ms: u64) { ... }
+}
+```
+
+**Verification**:
+```bash
+cargo test --lib --no-run  # Verify all re-exports work
+cargo clippy --lib -- -D warnings  # No new warnings
+```
+
+---
+
 ## DNS Zone Store O(k) Suffix Lookup
 
 **Location**: `src/dns/server/sharded_store.rs`, `src/dns/server/query.rs`
@@ -1002,3 +1040,278 @@ if let Some(cl) = content_length {
 // ... extend works the same
 Bytes::from(accumulated.freeze())  // O(1) conversion
 ```
+
+---
+
+## DHT RoutingTable LRU Cache
+
+**Location**: `src/mesh/dht/routing/table.rs`
+
+**Issue**: `find_closest` was O(k * bucket_count) with repeated bucket iteration.
+
+**Pattern**: Moka-based LRU cache for O(1) hot path lookups:
+```rust
+const ROUTING_CACHE_SIZE: u64 = 1000;
+const ROUTING_CACHE_TTL: Duration = Duration::from_secs(60);
+
+pub struct RoutingTable {
+    // ...
+    closest_cache: Cache<u64, Vec<PeerContact>>,
+}
+
+impl RoutingTable {
+    pub fn new(local_node_id: NodeId, local_node_id_string: String) -> Self {
+        let closest_cache = Cache::builder()
+            .max_capacity(ROUTING_CACHE_SIZE)
+            .time_to_live(ROUTING_CACHE_TTL)
+            .build();
+        // ...
+    }
+
+    pub fn find_closest(&self, target: &NodeId, k: usize) -> Vec<PeerContact> {
+        let cache_key = Self::cache_key(target);
+
+        if let Some(cached) = self.closest_cache.get(&cache_key) {
+            let mut result = cached.clone();
+            result.truncate(k);
+            return result;
+        }
+
+        // ... existing O(k * bucket_count) logic ...
+
+        self.closest_cache.insert(cache_key, result.clone());
+        result
+    }
+
+    fn cache_key(target: &NodeId) -> u64 {
+        let bytes = target.as_bytes();
+        u64::from_ne_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+        ])
+    }
+}
+```
+
+**Cache Invalidation**: Invalidate on peer insert/remove:
+```rust
+fn try_insert(&mut self, peer: PeerContact) -> Result<Option<PeerContact>, InsertError> {
+    // ... existing logic ...
+    match bucket.insert(peer) {
+        Ok(evicted) => {
+            self.closest_cache.invalidate_all();
+            Ok(evicted)
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+fn remove(&mut self, node_id: &NodeId) -> Option<PeerContact> {
+    let removed = /* ... */;
+    if removed.is_some() {
+        self.closest_cache.invalidate_all();
+    }
+    removed
+}
+```
+
+---
+
+## QUIC Stream Pooling
+
+**Location**: `src/tunnel/quic/client.rs`
+
+**Issue**: Opening/closing QUIC streams per message adds latency overhead.
+
+**Pattern**: Reuse streams via pool:
+```rust
+const MAX_STREAM_POOL_SIZE: usize = 8;
+
+pub(crate) struct StreamPool {
+    streams: Vec<(SendStream, RecvStream)>,
+    connection: Option<Connection>,
+    max_size: usize,
+}
+
+impl StreamPool {
+    fn new(connection: Option<Connection>) -> Self {
+        Self {
+            streams: Vec::new(),
+            connection,
+            max_size: MAX_STREAM_POOL_SIZE,
+        }
+    }
+
+    async fn acquire(
+        &mut self,
+    ) -> Result<(SendStream, RecvStream), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(stream) = self.streams.pop() {
+            return Ok(stream);
+        }
+
+        let connection = self.connection.as_ref().ok_or("No connection available")?;
+        connection
+            .open_bi()
+            .await
+            .map_err(|e| format!("Failed to open stream: {}", e).into())
+    }
+
+    fn release(&mut self, stream: (SendStream, RecvStream)) {
+        if self.streams.len() < self.max_size {
+            self.streams.push(stream);
+        }
+        // Connection handle dropped if pool is full - stream closes naturally
+    }
+}
+```
+
+**Usage in MeshPeerConnection**:
+```rust
+let mut stream_pool = self.stream_pool.lock().await;
+let (send, recv) = stream_pool.acquire().await?;
+let result = /* use streams */;
+stream_pool.release((send, recv));
+```
+
+---
+
+## Lock-Free Buffer Pool (Treiber Stack + TLS Cache)
+
+For high-throughput HTTP proxying at 500K+ RPS, buffer allocation becomes a bottleneck. The lock-free buffer pool minimizes contention.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Thread 1                                 │
+│  ┌─────────────┐    ┌──────────────────────────────────┐   │
+│  │ TLS Cache   │───▶│ 16 slots per tier                │   │
+│  │ (hot path)  │    │ No atomics needed                │   │
+│  └─────────────┘    └──────────────────────────────────┘   │
+│         │                                                      │
+│         │ (if full)                                            │
+│         ▼                                                      │
+│  ┌─────────────┐    ┌──────────────────────────────────┐   │
+│  │ Global Pool │───▶│  Treiber Stack (lock-free)       │   │
+│  │             │    │  compare_exchange on AtomicPtr    │   │
+│  └─────────────┘    └──────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Treiber Stack Implementation
+
+```rust
+struct TreiberStack {
+    head: AtomicPtr<StackNode>,
+    len: AtomicUsize,
+}
+
+struct StackNode {
+    buf: BytesMut,
+    next: *mut StackNode,
+}
+
+impl TreiberStack {
+    fn push(&self, buf: BytesMut) {
+        let node = Box::into_raw(Box::new(StackNode {
+            buf,
+            next: std::ptr::null_mut(),
+        }));
+
+        let mut head = self.head.load(Ordering::Relaxed);
+        loop {
+            unsafe { (*node).next = head; }
+            match self.head.compare_exchange_weak(
+                head,
+                node,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                Err(h) => head = h,
+            }
+        }
+    }
+
+    fn pop(&self) -> Option<BytesMut> {
+        let mut head = self.head.load(Ordering::Acquire);
+        loop {
+            if head.is_null() { return None; }
+            match self.head.compare_exchange_weak(
+                head,
+                unsafe { (*head).next },
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_sub(1, Ordering::Relaxed);
+                    let node = unsafe { Box::from_raw(head) };
+                    return Some(node.buf);
+                }
+                Err(h) => head = h,
+            }
+        }
+    }
+}
+```
+
+### Hot Path Optimization
+
+**Acquire (fast path)**:
+```rust
+fn acquire_inner(&self, size: usize) -> PooledBuf {
+    // Check TLS cache first (zero atomics)
+    let tls_result = TLS_CACHE.with(|cache| {
+        if let Some(buf) = cache.pop(tier) {
+            let mut buf = buf;
+            buf.resize(size, 0);
+            self.metrics.record_acquire(tier, true);
+            return Some(PooledBuf { buf: Some(buf), tier, requested_size: size });
+        }
+        None
+    });
+
+    if let Some(buf) = tls_result {
+        return buf;
+    }
+
+    // Fall through to global Treiber stack
+    let (buf, tier) = shard.tier.arena.acquire(size);
+    // ...
+}
+```
+
+**Release (fast path)**:
+```rust
+impl Drop for PooledBuf {
+    fn drop(&mut self) {
+        if let Some(buf) = self.buf.take() {
+            TLS_CACHE.with(|cache| {
+                // Push to TLS first (no atomics)
+                if cache.len(self.tier) < TLS_CACHE_SIZE {
+                    cache.push(buf, self.tier);
+                } else {
+                    // Drain TLS to global when full
+                    POOL.with(|pool| pool.release_to_global(buf, self.tier));
+                }
+            });
+        }
+    }
+}
+```
+
+### Key Benefits
+
+1. **TLS cache hit**: ~2 pointer indirections, zero atomic operations
+2. **Global pool access**: Only when TLS is full, uses lock-free CAS
+3. **Reduced contention**: Different threads rarely hit same shard
+4. **Memory locality**: Threads tend to reuse their own buffers
+
+### Location
+
+`src/buffer/pool.rs:75-165` (TreiberStack)
+`src/buffer/pool.rs:187-264` (ThreadLocalCache)
+`src/buffer/pool.rs:385-435` (acquire_inner with TLS fast path)

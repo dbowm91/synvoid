@@ -5,7 +5,7 @@ use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
 use crate::plugin::PluginManager;
 use crate::process::ProcessManager;
-use crate::process::SiteMetricsPayload;
+use crate::metrics::SiteMetricsPayload;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,
@@ -193,6 +193,8 @@ pub struct WafTrackingState {
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
     pub yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+    pub behavioral_intel_manager:
+        Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
 }
 
 #[derive(Clone)]
@@ -212,7 +214,7 @@ pub struct MeshState {
 
 #[derive(Clone)]
 pub struct HoneypotState {
-    pub port_honeypot_controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
+    pub port_honeypot_controller: Option<Arc<crate::honeypot_port::PortHoneypotController>>,
     pub port_honeypot_runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
     #[cfg(feature = "icmp-filter")]
     pub icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
@@ -312,6 +314,7 @@ impl AdminState {
                 threat_level_manager: None,
                 rule_feed_manager: None,
                 yara_rules: None,
+                behavioral_intel_manager: None,
             },
             security: SecurityState {
                 admin_token,
@@ -398,6 +401,14 @@ impl AdminState {
         self
     }
 
+    pub fn with_behavioral_intel_manager(
+        mut self,
+        manager: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
+    ) -> Self {
+        self.waf_tracking.behavioral_intel_manager = manager;
+        self
+    }
+
     pub fn with_process_manager(mut self, manager: Option<Arc<ProcessManager>>) -> Self {
         self.process.process_manager = manager;
         self
@@ -437,7 +448,7 @@ impl AdminState {
 
     pub fn with_port_honeypot_controller(
         mut self,
-        controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
+        controller: Option<Arc<crate::honeypot_port::PortHoneypotController>>,
     ) -> Self {
         self.honeypot.port_honeypot_controller = controller;
         self
@@ -453,7 +464,7 @@ impl AdminState {
 
     pub fn with_honeypot_state(
         mut self,
-        controller: Option<Arc<crate::honeypot_port::HoneypotMeshController>>,
+        controller: Option<Arc<crate::honeypot_port::PortHoneypotController>>,
         runner: Option<Arc<crate::honeypot_port::PortHoneypotRunner>>,
     ) -> Self {
         self.honeypot.port_honeypot_controller = controller;

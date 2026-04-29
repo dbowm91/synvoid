@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ pub fn create_record_store(
         enabled: dht_config.enabled,
         sync_interval_secs: 300,
         replication_factor: 20,
+        query_timeout_secs: dht_config.query_timeout_secs,
         write_quorum: dht_config.write_quorum as u32,
         read_quorum: dht_config.read_quorum as u32,
         record_ttl: Duration::from_secs(3600),
@@ -210,6 +212,7 @@ pub struct MeshBackendPool {
     backends: Arc<RwLock<Vec<Arc<MeshBackend>>>>,
     proxy: Arc<MeshProxy>,
     topology: Arc<MeshTopology>,
+    last_selected: Arc<AtomicUsize>,
 }
 
 impl MeshBackendPool {
@@ -218,6 +221,7 @@ impl MeshBackendPool {
             backends: Arc::new(RwLock::new(Vec::new())),
             proxy,
             topology,
+            last_selected: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -261,29 +265,8 @@ impl MeshBackendPool {
             return None;
         }
 
-        let mut best: Option<(Arc<MeshBackend>, f64)> = None;
-
-        for backend in &available {
-            let upstream_id = backend.upstream_id();
-            if let Some(peer_id) = self.topology.get_best_peer_for_upstream(upstream_id).await {
-                let scores = self.topology.peer_scores().read().await;
-                let score = scores.get(&peer_id).map(|s| s.total_score).unwrap_or(0.5);
-
-                match &best {
-                    None => {
-                        best = Some((backend.clone(), score));
-                    }
-                    Some((_, best_score)) if score > *best_score => {
-                        best = Some((backend.clone(), score));
-                    }
-                    _ => {}
-                }
-            } else if best.is_none() {
-                best = Some((backend.clone(), 0.5));
-            }
-        }
-
-        best.map(|(b, _)| b)
+        let idx = self.last_selected.fetch_add(1, Ordering::SeqCst) % available.len();
+        Some(available[idx].clone())
     }
 
     pub async fn get_blocked_until(&self, upstream_id: &str) -> Option<std::time::Instant> {
@@ -368,10 +351,6 @@ pub async fn initialize_mesh_transports(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(config.clone());
     let topology = transport_manager.get_topology();
-
-    if config.transport_preference == crate::mesh::config::MeshTransportPreference::WireGuard {
-        tracing::warn!("WireGuard transport preference ignored — WireGuard transport has been removed due to lack of authentication. Using QUIC transport instead.");
-    }
 
     let routing_manager = if config
         .dht

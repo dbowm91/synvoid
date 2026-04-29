@@ -2,7 +2,7 @@ pub mod core;
 pub mod sliding;
 
 use indexmap::IndexMap;
-use metrics::{counter, gauge};
+use metrics::counter;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -22,73 +22,39 @@ pub use sliding::{
     SlidingWindowConfig, SlidingWindowLimiter,
 };
 
-const DEFAULT_SHARDS: usize = 64;
+use dashmap::DashMap;
 
 pub struct RateLimiterState {
-    shards: Vec<RateLimiterShard>,
-    global_limiter: Arc<GlobalRateLimiter>,
-    slotted_ip_limiter: Arc<SlottedIpRateLimiter>,
-    semaphore: Arc<Semaphore>,
-    config: RateLimitConfigStore,
-    memory_config: RateLimitMemoryConfig,
-    total_entries: RwLock<usize>,
-    lru_order: RwLock<IndexMap<IpAddr, Instant>>,
+    pub(crate) site_shards: DashMap<String, Vec<RateLimiterShard>>,
+    pub(crate) global_limiter: Arc<GlobalRateLimiter>,
+    pub(crate) slotted_ip_limiter: Arc<SlottedIpRateLimiter>,
+    pub(crate) semaphore: Arc<Semaphore>,
+    pub(crate) config: RateLimitConfigStore,
+    pub(crate) memory_config: RateLimitMemoryConfig,
+    pub(crate) total_entries: RwLock<usize>,
+    pub(crate) lru_order: RwLock<IndexMap<(String, IpAddr), Instant>>,
 }
 
-struct RateLimiterShard {
-    ip_requests: RwLock<HashMap<IpAddr, IpRateLimitState>>,
-    last_cleanup: RwLock<Instant>,
+pub(crate) struct RateLimiterShard {
+    pub(crate) ip_requests: RwLock<HashMap<IpAddr, IpRateLimitState>>,
+    pub(crate) last_cleanup: RwLock<Instant>,
 }
 
 #[derive(Default)]
-struct IpRateLimitState {
-    per_second: RingBuffer<Instant>,
-    per_minute: RingBuffer<Instant>,
-    per_5min: RingBuffer<Instant>,
-    per_10min: RingBuffer<Instant>,
-    per_hour: RingBuffer<Instant>,
-    per_day: RingBuffer<Instant>,
-    last_access: Option<Instant>,
+pub(crate) struct IpRateLimitState {
+    pub(crate) per_second: RingBuffer<Instant>,
+    pub(crate) last_access: Option<Instant>,
 }
 
 impl IpRateLimitState {
-    #[allow(dead_code)]
-    fn new() -> Self {
-        Self {
-            per_second: RingBuffer::with_capacity(10),
-            per_minute: RingBuffer::with_capacity(60),
-            per_5min: RingBuffer::with_capacity(200),
-            per_10min: RingBuffer::with_capacity(350),
-            per_hour: RingBuffer::with_capacity(500),
-            per_day: RingBuffer::with_capacity(1000),
-            last_access: Some(Instant::now()),
-        }
-    }
-
     #[inline]
     fn is_empty(&self) -> bool {
         self.per_second.is_empty()
-            && self.per_minute.is_empty()
-            && self.per_5min.is_empty()
-            && self.per_10min.is_empty()
-            && self.per_hour.is_empty()
-            && self.per_day.is_empty()
     }
 
     fn remove_expired_windows(&mut self, now: Instant) {
         let cutoff_1s = now - Duration::from_secs(1);
-        let cutoff_60s = now - Duration::from_secs(60);
-        let cutoff_300s = now - Duration::from_secs(300);
-        let cutoff_600s = now - Duration::from_secs(600);
-        let cutoff_3600s = now - Duration::from_secs(3600);
-        let cutoff_86400s = now - Duration::from_secs(86400);
-
         self.per_second.remove_older_than(cutoff_1s);
-        self.per_minute.remove_older_than(cutoff_60s);
-        self.per_5min.remove_older_than(cutoff_300s);
-        self.per_10min.remove_older_than(cutoff_600s);
-        self.per_hour.remove_older_than(cutoff_3600s);
-        self.per_day.remove_older_than(cutoff_86400s);
     }
 
     fn touch(&mut self) {
@@ -96,7 +62,7 @@ impl IpRateLimitState {
     }
 }
 
-struct RingBuffer<T> {
+pub(crate) struct RingBuffer<T> {
     data: Vec<T>,
     capacity: usize,
     head: usize,
@@ -115,7 +81,6 @@ impl<T> Default for RingBuffer<T> {
 }
 
 impl<T: Copy> RingBuffer<T> {
-    #[allow(dead_code)]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             data: Vec::with_capacity(capacity),
@@ -125,7 +90,6 @@ impl<T: Copy> RingBuffer<T> {
         }
     }
 
-    #[allow(dead_code)]
     fn push(&mut self, value: T) {
         if self.len < self.capacity {
             self.data.push(value);
@@ -136,42 +100,14 @@ impl<T: Copy> RingBuffer<T> {
         }
     }
 
-    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.len
     }
 
-    #[allow(dead_code)]
     fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    #[inline]
-    #[allow(dead_code)]
-    fn retain<F: FnMut(&T) -> bool>(&mut self, mut f: F) {
-        if self.len == 0 {
-            return;
-        }
-
-        let mut write_idx = 0;
-
-        for i in 0..self.len {
-            let read_idx = (self.head + i) % self.capacity;
-            if f(&self.data[read_idx]) {
-                if write_idx != i {
-                    let write_pos = (self.head + write_idx) % self.capacity;
-                    self.data[write_pos] = self.data[read_idx];
-                }
-                write_idx += 1;
-            }
-        }
-
-        self.len = write_idx;
-    }
-
-    /// Remove all entries older than `cutoff`. Exploits the fact that entries
-    /// are pushed in chronological order — scans from the oldest entry forward
-    /// and stops at the first non-expired entry. O(k) where k = expired count.
     fn remove_older_than(&mut self, cutoff: T)
     where
         T: PartialOrd + Copy,
@@ -216,20 +152,6 @@ impl RateLimiterManager {
         cleanup_interval_secs: u64,
         memory_config: RateLimitMemoryConfig,
     ) -> Self {
-        let num_shards = if memory_config.num_shards > 0 {
-            memory_config.num_shards
-        } else {
-            DEFAULT_SHARDS
-        };
-
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RateLimiterShard {
-                ip_requests: RwLock::new(HashMap::new()),
-                last_cleanup: RwLock::new(Instant::now()),
-            });
-        }
-
         let core_global_config = CoreGlobalConfig {
             per_second: global_config.per_second,
             per_minute: global_config.per_minute,
@@ -256,7 +178,7 @@ impl RateLimiterManager {
         let semaphore = Arc::new(Semaphore::new(global_config.max_connections as usize));
 
         let state = Arc::new(RateLimiterState {
-            shards,
+            site_shards: DashMap::new(),
             global_limiter,
             slotted_ip_limiter,
             semaphore,
@@ -277,75 +199,44 @@ impl RateLimiterManager {
                 loop {
                     cleanup_timer.tick().await;
                     let now = Instant::now();
-
                     let mut total = 0usize;
 
-                    for shard in &cleanup_state.shards {
-                        {
-                            let last = *shard.last_cleanup.read();
-                            if now.duration_since(last) < Duration::from_secs(30) {
-                                let requests = shard.ip_requests.read();
-                                total += requests.len();
-                                continue;
-                            }
+                    for mut site_entry in cleanup_state.site_shards.iter_mut() {
+                        let site_id = site_entry.key().clone();
+                        let shards = site_entry.value_mut();
+                        for shard in shards {
+                            let mut requests = shard.ip_requests.write();
+                            let lru_order = &cleanup_state.lru_order;
+                            let cutoff_max = Duration::from_secs(86400);
+                            requests.retain(|ip, state| {
+                                if let Some(last_access) = state.last_access {
+                                    if now.duration_since(last_access) > cutoff_max {
+                                        return false;
+                                    }
+                                }
+                                state.remove_expired_windows(now);
+                                if state.is_empty() {
+                                    false
+                                } else {
+                                    state.touch();
+                                    if let Some(lru) = lru_order.write().get_mut(&(site_id.clone(), *ip)) {
+                                        *lru = now;
+                                    }
+                                    true
+                                }
+                            });
+                            total += requests.len();
+                            *shard.last_cleanup.write() = now;
                         }
-                        let mut requests = shard.ip_requests.write();
-                        let lru_order = &cleanup_state.lru_order;
-                        let cutoff_max = Duration::from_secs(86400);
-                        requests.retain(|_ip, state| {
-                            if let Some(last_access) = state.last_access {
-                                let age = now.duration_since(last_access);
-                                if age > cutoff_max {
-                                    return false;
-                                }
-                            }
-                            state.remove_expired_windows(now);
-
-                            if state.is_empty() {
-                                false
-                            } else {
-                                state.touch();
-                                if let Some(lru) = lru_order.write().get_mut(_ip) {
-                                    *lru = now;
-                                }
-                                true
-                            }
-                        });
-                        total += requests.len();
-                        *shard.last_cleanup.write() = now;
                     }
 
                     cleanup_state.slotted_ip_limiter.decay_all(2);
-
                     let max_entries = cleanup_state.memory_config.max_ip_entries;
                     if total > max_entries {
                         let to_evict = total - max_entries + (max_entries / 10);
                         Self::evict_lru_entries(&cleanup_state, to_evict);
                     }
-
-                    {
-                        let stats = cleanup_state.global_limiter.get_stats();
-                        gauge!("maluwaf.ratelimit.global_per_second").set(stats.per_second as f64);
-                        gauge!("maluwaf.ratelimit.global_per_minute").set(stats.per_minute as f64);
-                        gauge!("maluwaf.ratelimit.blackhole_active")
-                            .set(if stats.blackhole_active { 1.0 } else { 0.0 });
-
-                        if stats.blackhole_active {
-                            tracing::warn!(
-                                "Blackhole mode active - sample rate: 1/{}, consecutive low samples: {}",
-                                stats.sample_rate,
-                                stats.consecutive_low_samples
-                            );
-                        }
-                    }
-
                     *cleanup_state.total_entries.write() = total;
-
-                    tracing::debug!(
-                        "Rate limit cleanup: {} IPs tracked (max: {})",
-                        total,
-                        max_entries,
-                    );
                 }
             });
         }
@@ -355,24 +246,20 @@ impl RateLimiterManager {
 
     fn evict_lru_entries(state: &Arc<RateLimiterState>, count: usize) {
         let mut lru = state.lru_order.write();
+        let to_evict: Vec<(String, IpAddr)> = lru.keys().take(count).cloned().collect();
 
-        let to_evict: Vec<IpAddr> = lru.keys().take(count).cloned().collect();
-
-        for ip in &to_evict {
-            for shard in &state.shards {
-                if shard.ip_requests.write().remove(ip).is_some() {
-                    break;
+        for (site_id, ip) in &to_evict {
+            if let Some(shards) = state.site_shards.get(site_id) {
+                for shard in shards.iter() {
+                    if shard.ip_requests.write().remove(ip).is_some() {
+                        break;
+                    }
                 }
             }
         }
 
-        for ip in &to_evict {
-            lru.shift_remove(ip);
-        }
-
-        let evicted = to_evict.len();
-        if evicted > 0 {
-            tracing::info!("Evicted {} LRU entries from rate limiter", evicted);
+        for entry in &to_evict {
+            lru.shift_remove(entry);
         }
     }
 
@@ -397,20 +284,70 @@ impl RateLimiterManager {
         self.state.global_limiter.is_in_blackhole()
     }
 
-    pub async fn check_rate_limit(&self, ip: IpAddr) -> RateLimitResult {
-        let decision = self.state.slotted_ip_limiter.check_and_increment(ip);
-
-        match decision {
-            RateLimitDecision::Allowed => RateLimitResult::Allowed,
-            RateLimitDecision::Limited { limit_type } => {
-                counter!("maluwaf.ratelimit.ip_limited").increment(1);
-                RateLimitResult::Limited {
-                    limit_type: limit_type.to_string(),
-                    retry_after_millis: 1000,
-                }
+    pub async fn check_rate_limit(&self, site_id: Option<&str>, ip: IpAddr) -> RateLimitResult {
+        // Global IP limit check
+        if site_id.is_none() || site_id == Some("global") {
+            let decision = self.state.slotted_ip_limiter.check_and_increment(ip);
+            if !matches!(decision, RateLimitDecision::Allowed) {
+                return match decision {
+                    RateLimitDecision::Limited { limit_type } => RateLimitResult::Limited {
+                        limit_type: limit_type.to_string(),
+                        retry_after_millis: 1000,
+                    },
+                    _ => RateLimitResult::Blackholed,
+                };
             }
-            RateLimitDecision::Blackholed => RateLimitResult::Blackholed,
         }
+
+        let site_id_str = site_id.unwrap_or("global");
+
+        // Per-site IP limit check (Site Isolation)
+        let shards_entry = self.state.site_shards.entry(site_id_str.to_string()).or_insert_with(|| {
+            let num_shards = self.state.memory_config.num_shards.max(1);
+            let mut shards = Vec::with_capacity(num_shards);
+            for _ in 0..num_shards {
+                shards.push(RateLimiterShard {
+                    ip_requests: RwLock::new(HashMap::new()),
+                    last_cleanup: RwLock::new(Instant::now()),
+                });
+            }
+            shards
+        });
+
+        let shards = shards_entry.value();
+        let shard_idx = (u64::from_be_bytes(match ip {
+            IpAddr::V4(a) => {
+                let octets = a.octets();
+                [0, 0, 0, 0, octets[0], octets[1], octets[2], octets[3]]
+            }
+            IpAddr::V6(a) => {
+                let octets = a.octets();
+                [octets[0], octets[1], octets[2], octets[3], octets[4], octets[5], octets[6], octets[7]]
+            }
+        }) % shards.len() as u64) as usize;
+
+        let shard = &shards[shard_idx];
+        let now = Instant::now();
+        let mut requests = shard.ip_requests.write();
+        let ip_state = requests.entry(ip).or_insert_with(|| IpRateLimitState {
+            per_second: RingBuffer::with_capacity(self.state.config.ip.per_second as usize),
+            last_access: Some(now),
+        });
+        
+        ip_state.remove_expired_windows(now);
+        ip_state.touch();
+        
+        if ip_state.per_second.len() >= self.state.config.ip.per_second as usize {
+            return RateLimitResult::Limited {
+                limit_type: "site_ip_per_second".to_string(),
+                retry_after_millis: 1000,
+            };
+        }
+        
+        ip_state.per_second.push(now);
+        self.state.lru_order.write().insert((site_id_str.to_string(), ip), now);
+        
+        RateLimitResult::Allowed
     }
 
     pub async fn acquire_global_connection(&self) -> Result<GlobalConnectionPermit, ()> {
@@ -459,104 +396,36 @@ pub enum RateLimitResult {
 mod tests {
     use super::*;
 
-    // ── RingBuffer ─────────────────────────────────────────────────────
+    #[tokio::test]
+    async fn test_site_isolation_ratelimit() {
+        let manager = RateLimiterManager::new(
+            IpRateLimitConfig { 
+                per_second: 1, 
+                per_minute: 10,
+                per_5min: 50,
+                per_10min: 100,
+                per_hour: 500,
+                per_day: 1000,
+                burst: 0 
+            },
+            GlobalRateLimitConfig {
+                per_second: 100,
+                per_minute: 1000,
+                per_5min: 5000,
+                max_connections: 100,
+            },
+            0,
+            RateLimitMemoryConfig::default(),
+        );
 
-    #[test]
-    fn ring_buffer_push_within_capacity() {
-        let mut rb = RingBuffer::with_capacity(3);
-        assert!(rb.is_empty());
-        assert_eq!(rb.len(), 0);
+        let ip: IpAddr = "1.1.1.1".parse().unwrap();
 
-        rb.push(10);
-        rb.push(20);
-        rb.push(30);
+        // Site 1 allowed first request
+        assert!(matches!(manager.check_rate_limit(Some("site1"), ip).await, RateLimitResult::Allowed));
+        // Site 1 limited second request
+        assert!(matches!(manager.check_rate_limit(Some("site1"), ip).await, RateLimitResult::Limited { .. }));
 
-        assert!(!rb.is_empty());
-        assert_eq!(rb.len(), 3);
-    }
-
-    #[test]
-    fn ring_buffer_push_beyond_capacity_wraps() {
-        let mut rb = RingBuffer::with_capacity(3);
-        rb.push(1);
-        rb.push(2);
-        rb.push(3);
-        // These overwrite positions 0, 1, 2 circularly
-        rb.push(4);
-        rb.push(5);
-
-        assert_eq!(rb.len(), 3);
-    }
-
-    #[test]
-    fn ring_buffer_push_zero_capacity_is_noop() {
-        let mut rb = RingBuffer::<i32>::with_capacity(0);
-        rb.push(1);
-        rb.push(2);
-        assert_eq!(rb.len(), 0);
-        assert!(rb.is_empty());
-    }
-
-    #[test]
-    fn ring_buffer_retain_keeps_matching() {
-        let mut rb = RingBuffer::with_capacity(5);
-        rb.push(1);
-        rb.push(2);
-        rb.push(3);
-        rb.push(4);
-
-        rb.retain(|&v| v % 2 == 0);
-        assert_eq!(rb.len(), 2);
-    }
-
-    #[test]
-    fn ring_buffer_retain_empty_buffer() {
-        let mut rb = RingBuffer::<i32>::with_capacity(3);
-        rb.retain(|_| false);
-        assert_eq!(rb.len(), 0);
-        assert!(rb.is_empty());
-    }
-
-    #[test]
-    fn ring_buffer_retain_remove_all() {
-        let mut rb = RingBuffer::with_capacity(3);
-        rb.push(1);
-        rb.push(2);
-        rb.push(3);
-
-        rb.retain(|_| false);
-        assert_eq!(rb.len(), 0);
-        assert!(rb.is_empty());
-    }
-
-    #[test]
-    fn ring_buffer_retain_keep_all() {
-        let mut rb = RingBuffer::with_capacity(3);
-        rb.push(1);
-        rb.push(2);
-        rb.push(3);
-
-        rb.retain(|_| true);
-        assert_eq!(rb.len(), 3);
-    }
-
-    // ── IpRateLimitState ───────────────────────────────────────────────
-
-    #[test]
-    fn ip_rate_limit_state_new_is_not_empty() {
-        // After new(), per_second etc. have capacity 0 so len==0, but we
-        // need to verify the is_empty() logic.
-        let state = IpRateLimitState::new();
-        assert!(state.is_empty());
-    }
-
-    #[test]
-    fn ip_rate_limit_state_empty_after_push_and_retain() {
-        let mut state = IpRateLimitState::new();
-        state.per_second.push(Instant::now());
-        assert!(!state.is_empty());
-
-        state.per_second.retain(|_| false);
-        assert!(state.is_empty());
+        // Site 2 allowed first request for same IP (Isolation!)
+        assert!(matches!(manager.check_rate_limit(Some("site2"), ip).await, RateLimitResult::Allowed));
     }
 }

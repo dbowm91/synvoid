@@ -33,6 +33,7 @@ tun-rs = []
 mesh = []
 rkyv = []
 pqc-mesh = []  # Post-quantum mesh signatures (ML-DSA-44 for mesh messages)
+macos-sandbox = []  # Enable macOS sandbox enforcement
 
 [patch.crates-io]
 # Patch wasmtime from yara-x transitive dependency (RUSTSEC-2026-0096, RUSTSEC-2026-0086, etc.)
@@ -84,7 +85,7 @@ isbot = "0.1"
 cloakrs = { path = "./cloak" }
 regex = "1"
 parking_lot = "0.12"
-dashmap = "5"
+dashmap = "7.0.0-rc2"
 arc-swap = "1"
 moka = { version = "0.12", features = ["sync", "future"] }
 metrics = "0.22"
@@ -96,10 +97,10 @@ base64 = "0.22"
 sha2 = "0.10"
 hex = "0.4"
 futures = "0.3"
-sysinfo = "0.33"
+sysinfo = "0.38"
 nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
 chrono = { version = "0.4", features = ["serde"] }
-notify = "6"
+notify = "9.0.0-rc.3"
 aho-corasick = "1.1"
 unicode-normalization = "0.1"
 libinjectionrs = "0.1"
@@ -114,11 +115,11 @@ tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 infer = "0.16"
-yara-x = "1.15"
+yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 pin-project-lite = "0.2"
-bcrypt = "0.15"
+bcrypt = "0.19"
 dirs = "5"
 flate2 = "1"
 tar = "0.4"
@@ -180,7 +181,7 @@ libloading = "0.8"
 aya = { version = "0.13", optional = true }
 
 # WASM support for plugins
-wasmtime = "42.0.2"
+wasmtime = { version = "42.0.2", features = ["component-model"] }
 
 # URL parsing (already used elsewhere)
 url = "2"

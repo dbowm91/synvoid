@@ -373,6 +373,11 @@ impl ProcessManager {
                     }
                 }
             }
+        } else if self.config.allow_insecure_ipc_key {
+            // Fallback: try to read IPC key from environment if not in config
+            if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+                cmd.env("MALUWAF_IPC_KEY", key_hex);
+            }
         }
 
         cmd.arg("--config-path")
@@ -1164,6 +1169,40 @@ impl ProcessManager {
                 );
             } else {
                 tracing::info!("Broadcast rule patterns update to unified server worker");
+            }
+        }
+    }
+
+    pub async fn broadcast_threat_feed_update(
+        &self,
+        indicators: Vec<crate::process::ipc::ThreatIndicatorData>,
+        version: u64,
+    ) {
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let msg = Message::ThreatFeedUpdate {
+            indicators,
+            version,
+            timestamp,
+        };
+
+        if let Some(ref ipc) = self.get_static_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!("Failed to send threat feed update to static worker: {}", e);
+            } else {
+                tracing::debug!("Broadcast threat feed update to static worker");
+            }
+        }
+
+        for ipc in self.get_all_unified_server_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!(
+                    "Failed to send threat feed update to unified server worker: {}",
+                    e
+                );
+            } else {
+                tracing::debug!("Broadcast threat feed update to unified server worker");
             }
         }
     }

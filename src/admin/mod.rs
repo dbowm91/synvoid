@@ -31,6 +31,8 @@ pub use state::{
     AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter,
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::{AdminCorsConfig, ConfigManager};
 use crate::waf::{
@@ -632,6 +634,14 @@ fn build_router_from_state(
             get(handlers::mesh_topology::get_topology_graph),
         )
         .route(
+            "/mesh/behavioral/stats",
+            get(handlers::behavioral_intel::get_behavioral_stats),
+        )
+        .route(
+            "/mesh/behavioral/config",
+            get(handlers::behavioral_intel::get_behavioral_config),
+        )
+        .route(
             "/mesh/audit/report",
             post(handlers::mesh_admin::submit_audit_report),
         )
@@ -676,6 +686,16 @@ fn build_router_from_state(
             get(handlers::serverless::get_serverless_config)
                 .put(handlers::serverless::update_serverless_config),
         )
+        .route("/spin/apps", get(handlers::spin::list_spin_apps))
+        .route("/spin/apps", post(handlers::spin::create_spin_app))
+        .route(
+            "/spin/apps/{name}",
+            get(handlers::spin::get_spin_app_manifest).delete(handlers::spin::delete_spin_app),
+        )
+        .route(
+            "/spin/apps/{name}/instances",
+            get(handlers::spin::get_spin_app_instances),
+        )
         .route(
             "/honeypot/status",
             get(handlers::honeypot::get_honeypot_status),
@@ -689,6 +709,7 @@ fn build_router_from_state(
             get(handlers::honeypot::get_honeypot_port_config)
                 .put(handlers::honeypot::update_honeypot_port_config),
         )
+        .route("/api", get(handlers::api_discovery::get_api_discovery))
         .route(
             "/theme",
             get(handlers::theme::get_theme).put(handlers::theme::update_theme),
@@ -712,6 +733,10 @@ fn build_router_from_state(
     Router::new()
         .nest("/api", api_routes)
         .route("/api/openapi.json", get(openapi::get_openapi_json))
+        .merge(
+            SwaggerUi::new("/api/docs")
+                .url("/api/openapi.json", openapi::MaluWafOpenApi::openapi()),
+        )
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))
         .layer(create_cors_layer(&admin_cors_config))

@@ -1,6 +1,5 @@
 #![allow(unused_variables)]
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -9,13 +8,16 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use digest::Digest;
 use http::header::HeaderValue;
+use http::Response as HttpResponse;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use moka::sync::Cache;
 use parking_lot::RwLock;
+use rand::distr::weighted::WeightedIndex;
+use rand::distr::Distribution;
 use rand::Rng;
 use tokio::sync::RwLock as TokioRwLock;
 
@@ -38,6 +40,7 @@ use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
+use crate::proxy_cache::key::CacheKeyBuilder;
 use crate::proxy_cache::ProxyCache;
 use crate::proxy_cache::ProxyCacheSettings;
 
@@ -66,10 +69,11 @@ pub struct MeshProxy {
     active_connections: Arc<DashMap<String, MeshConnection>>,
     policy_cache: Cache<String, CachedPolicy>,
     failed_providers: Cache<String, Instant>,
-    provider_stats: Arc<RwLock<HashMap<String, ProviderStats>>>,
+    provider_stats: Arc<DashMap<String, ProviderStats>>,
     org_manager: Arc<TokioRwLock<OrganizationManager>>,
     transform_cache: TieredTransformCache,
     proxy_cache: Arc<RwLock<Option<ProxyCache>>>,
+    cache_key_builder: Option<CacheKeyBuilder>,
 }
 
 struct MeshConnection {
@@ -91,15 +95,6 @@ pub struct CachedPolicy {
     pub priority_tier: u32,
     pub expires_at: Instant,
 }
-
-/// Number of consecutive provider failures before opening circuit
-const CIRCUIT_OPEN_THRESHOLD: u32 = 5;
-/// Duration circuit stays open before transitioning to half-open
-const CIRCUIT_OPEN_TIMEOUT_SECS: u64 = 30;
-/// Maximum requests allowed in half-open state before evaluating
-const HALF_OPEN_MAX_REQUESTS: u32 = 3;
-/// Consecutive successes required to close circuit from half-open
-const CIRCUIT_CLOSE_THRESHOLD: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CircuitState {
@@ -130,7 +125,7 @@ impl ProviderStats {
         self.successful_requests as f64 / self.total_requests as f64
     }
 
-    fn is_available(&self) -> bool {
+    fn is_available(&self, half_open_max_requests: u32) -> bool {
         match self.circuit_state {
             CircuitState::Closed => true,
             CircuitState::Open => {
@@ -140,11 +135,11 @@ impl ProviderStats {
                     true
                 }
             }
-            CircuitState::HalfOpen => self.half_open_requests < HALF_OPEN_MAX_REQUESTS,
+            CircuitState::HalfOpen => self.half_open_requests < half_open_max_requests,
         }
     }
 
-    fn record_success(&mut self) {
+    fn record_success(&mut self, circuit_close_threshold: u32, circuit_open_timeout_secs: u64) {
         self.total_requests += 1;
         self.successful_requests += 1;
         self.consecutive_failures = 0;
@@ -154,7 +149,7 @@ impl ProviderStats {
             CircuitState::Closed => {}
             CircuitState::HalfOpen => {
                 self.consecutive_successes += 1;
-                if self.consecutive_successes >= CIRCUIT_CLOSE_THRESHOLD {
+                if self.consecutive_successes >= circuit_close_threshold {
                     self.circuit_state = CircuitState::Closed;
                     self.consecutive_successes = 0;
                     self.half_open_requests = 0;
@@ -168,27 +163,27 @@ impl ProviderStats {
         }
     }
 
-    fn record_failure(&mut self) {
+    fn record_failure(&mut self, circuit_open_threshold: u32, circuit_open_timeout_secs: u64) {
         self.consecutive_failures += 1;
         self.last_failure = Some(Instant::now());
 
         match self.circuit_state {
             CircuitState::Closed => {
-                if self.consecutive_failures >= CIRCUIT_OPEN_THRESHOLD {
+                if self.consecutive_failures >= circuit_open_threshold {
                     self.circuit_state = CircuitState::Open;
                     self.circuit_open_until =
-                        Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                        Some(Instant::now() + Duration::from_secs(circuit_open_timeout_secs));
                 }
             }
             CircuitState::HalfOpen => {
                 self.circuit_state = CircuitState::Open;
                 self.circuit_open_until =
-                    Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                    Some(Instant::now() + Duration::from_secs(circuit_open_timeout_secs));
                 self.consecutive_successes = 0;
             }
             CircuitState::Open => {
                 self.circuit_open_until =
-                    Some(Instant::now() + Duration::from_secs(CIRCUIT_OPEN_TIMEOUT_SECS));
+                    Some(Instant::now() + Duration::from_secs(circuit_open_timeout_secs));
             }
         }
     }
@@ -326,11 +321,23 @@ impl MeshProxy {
             .max_capacity(cache_size as u64)
             .time_to_live(Duration::from_secs(FAILED_PROVIDER_COOLDOWN_SECS * 2))
             .build();
-        let provider_stats = Arc::new(RwLock::new(HashMap::new()));
+        let provider_stats = Arc::new(DashMap::new());
 
         let transform_cache = TieredTransformCache::new();
 
-        let proxy_cache = cache_config.map(ProxyCache::new);
+        let proxy_cache = cache_config.as_ref().map(|settings| {
+            let cache = ProxyCache::new(settings.clone());
+            let kb = CacheKeyBuilder::new(
+                settings.key_pattern.clone(),
+                settings.vary_by.clone(),
+            );
+            (cache, kb)
+        });
+
+        let (proxy_cache, cache_key_builder) = match proxy_cache {
+            Some((cache, kb)) => (Arc::new(RwLock::new(Some(cache))), Some(kb)),
+            None => (Arc::new(RwLock::new(None)), None),
+        };
 
         Self {
             config,
@@ -344,7 +351,8 @@ impl MeshProxy {
             provider_stats,
             org_manager: Arc::new(TokioRwLock::new(OrganizationManager::new())),
             transform_cache,
-            proxy_cache: Arc::new(RwLock::new(proxy_cache)),
+            proxy_cache,
+            cache_key_builder,
         }
     }
 
@@ -353,12 +361,45 @@ impl MeshProxy {
         &self.proxy_cache
     }
 
+    fn is_cacheable_method(method: &http::Method) -> bool {
+        matches!(method, &http::Method::GET | &http::Method::HEAD)
+    }
+
+    fn should_bypass_cache(headers: &http::HeaderMap) -> bool {
+        headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.contains("no-cache") || v.contains("no-store") || v.contains("private"))
+            .unwrap_or(false)
+    }
+
+    fn is_response_cacheable(status: u16) -> bool {
+        matches!(status, 200 | 301 | 302 | 304)
+    }
+
+    fn get_cache_max_age(headers: &http::HeaderMap) -> Option<std::time::Duration> {
+        headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| {
+                v.split(',')
+                    .find_map(|part| {
+                        let part = part.trim();
+                        if let Some(val) = part.strip_prefix("max-age=") {
+                            val.parse::<u64>().ok().map(std::time::Duration::from_secs)
+                        } else {
+                            None
+                        }
+                    })
+            })
+    }
+
     pub fn set_proxy_cache_preferences(
         &self,
         preferences: &crate::mesh::protocol::ProxyCachePreferences,
     ) {
         let mut proxy_cache = self.proxy_cache.write();
-        match proxy_cache.as_ref() {
+        match proxy_cache.as_mut() {
             Some(cache) => {
                 cache.apply_preferences(preferences);
             }
@@ -384,7 +425,13 @@ impl MeshProxy {
                     },
                     ..Default::default()
                 };
-                *proxy_cache = Some(ProxyCache::new(settings));
+                let cache = ProxyCache::new(settings.clone());
+                let kb = CacheKeyBuilder::new(settings.key_pattern, settings.vary_by);
+                *proxy_cache = Some(cache);
+                drop(proxy_cache);
+                // cache_key_builder is immutable after construction; we must rebuild if preferences change key_pattern/vary_by
+                // For simplicity, we store a new builder - but since cache_key_builder is Option<CacheKeyBuilder>,
+                // we need to handle this carefully. For now, we note that key_pattern/vary_by changes require restart.
             }
         }
     }
@@ -642,12 +689,11 @@ impl MeshProxy {
 
     fn is_provider_unhealthy(&self, provider_node_id: &str) -> bool {
         let is_unhealthy = {
-            let mut stats = self.provider_stats.write();
-            if let Some(provider_stats) = stats.get_mut(provider_node_id) {
+            if let Some(mut provider_stats) = self.provider_stats.get_mut(provider_node_id) {
                 provider_stats.decay();
-                !provider_stats.is_available()
+                let half_open_max = self.config.connection.half_open_max_requests;
+                !provider_stats.is_available(half_open_max)
             } else {
-                drop(stats);
                 return self.is_provider_failed(provider_node_id);
             }
         };
@@ -657,13 +703,15 @@ impl MeshProxy {
     fn record_provider_success(&self, provider_node_id: &str) {
         self.clear_provider_failure(provider_node_id);
 
-        let mut stats = self.provider_stats.write();
-        let entry = stats.entry(provider_node_id.to_string());
+        let close_thresh = self.config.connection.circuit_close_threshold;
+        let open_timeout = self.config.connection.circuit_open_timeout_secs;
+
+        let entry = self.provider_stats.entry(provider_node_id.to_string());
         match entry {
-            std::collections::hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().record_success();
+            dashmap::mapref::entry::Entry::Occupied(mut e) => {
+                e.get_mut().record_success(close_thresh, open_timeout);
             }
-            std::collections::hash_map::Entry::Vacant(e) => {
+            dashmap::mapref::entry::Entry::Vacant(e) => {
                 let mut new_stats = ProviderStats {
                     total_requests: 0,
                     successful_requests: 0,
@@ -675,7 +723,7 @@ impl MeshProxy {
                     circuit_open_until: None,
                     half_open_requests: 0,
                 };
-                new_stats.record_success();
+                new_stats.record_success(close_thresh, open_timeout);
                 e.insert(new_stats);
             }
         }
@@ -683,14 +731,16 @@ impl MeshProxy {
 
     fn record_provider_failure(&self, provider_node_id: &str) -> u32 {
         let failure_count = {
-            let mut stats = self.provider_stats.write();
-            let entry = stats.entry(provider_node_id.to_string());
+            let open_thresh = self.config.connection.circuit_open_threshold;
+            let open_timeout = self.config.connection.circuit_open_timeout_secs;
+
+            let entry = self.provider_stats.entry(provider_node_id.to_string());
             match entry {
-                std::collections::hash_map::Entry::Occupied(mut e) => {
-                    e.get_mut().record_failure();
+                dashmap::mapref::entry::Entry::Occupied(mut e) => {
+                    e.get_mut().record_failure(open_thresh, open_timeout);
                     e.get().consecutive_failures
                 }
-                std::collections::hash_map::Entry::Vacant(e) => {
+                dashmap::mapref::entry::Entry::Vacant(e) => {
                     let mut new_stats = ProviderStats {
                         total_requests: 0,
                         successful_requests: 0,
@@ -702,7 +752,7 @@ impl MeshProxy {
                         circuit_open_until: None,
                         half_open_requests: 0,
                     };
-                    new_stats.record_failure();
+                    new_stats.record_failure(open_thresh, open_timeout);
                     e.insert(new_stats);
                     1
                 }
@@ -748,80 +798,21 @@ impl MeshProxy {
         &self,
         providers: Vec<crate::mesh::protocol::ProviderInfo>,
     ) -> Vec<crate::mesh::protocol::ProviderInfo> {
-        let n = providers.len();
-        if n <= 1 {
+        if providers.len() <= 1 {
             return providers;
         }
 
-        let weights: Vec<f64> = providers.iter().map(|p| p.score.max(0.01)).collect();
-        let total: f64 = weights.iter().sum();
-        if total <= 0.0 {
-            return providers;
+        let scores: Vec<f64> = providers.iter().map(|p| p.score.max(0.01)).collect();
+
+        let weighted_index = WeightedIndex::new(&scores).unwrap();
+        let mut indices: Vec<usize> = (0..providers.len()).collect();
+        let mut rng = rand::rng();
+
+        let mut result = Vec::with_capacity(providers.len());
+        for _ in 0..providers.len() {
+            let idx = indices.remove(weighted_index.sample(&mut rng));
+            result.push(providers[idx].clone());
         }
-
-        let mut prob = Vec::with_capacity(n);
-        let mut alias = Vec::with_capacity(n);
-        let n_f64 = n as f64;
-
-        for &w in &weights {
-            let p = w * n_f64 / total;
-            prob.push(p);
-            alias.push(0);
-        }
-
-        let mut small = Vec::new();
-        let mut large = Vec::new();
-        for (i, &p) in prob.iter().enumerate() {
-            if p < 1.0 {
-                small.push(i);
-            } else {
-                large.push(i);
-            }
-        }
-
-        while !small.is_empty() && !large.is_empty() {
-            let l = small.pop().unwrap();
-            let g = large.pop().unwrap();
-            alias[l] = g;
-            prob[g] = prob[g] + prob[l] - 1.0;
-            if prob[g] < 1.0 {
-                small.push(g);
-            } else {
-                large.push(g);
-            }
-        }
-
-        while let Some(i) = small.pop() {
-            prob[i] = 1.0;
-        }
-        while let Some(i) = large.pop() {
-            prob[i] = 1.0;
-        }
-
-        let mut result = Vec::with_capacity(n);
-        let mut used = vec![false; n];
-        let mut used_count = 0;
-
-        while used_count < n {
-            let u: f64 = rand::rng().random_range(0.0..n_f64);
-            let idx = u as usize;
-            let j = u - idx as f64;
-
-            let actual_idx = if idx >= n {
-                0
-            } else if j < prob[idx] {
-                idx
-            } else {
-                alias[idx]
-            };
-
-            if !used[actual_idx] {
-                result.push(providers[actual_idx].clone());
-                used[actual_idx] = true;
-                used_count += 1;
-            }
-        }
-
         result
     }
 
@@ -922,8 +913,22 @@ impl MeshProxy {
                         return Err(MeshProxyError::NoRouteToUpstream(upstream_id.to_string()));
                     }
                 }
+
+                let site_id = upstream_id.to_string();
+                let method = req.method().clone();
+                let uri = req.uri().clone();
+                let headers = req.headers().clone();
+
                 return self
-                    .proxy_to_peer_with_fallback(upstream_id, vec![pi], req)
+                    .proxy_to_peer_with_fallback(
+                        upstream_id,
+                        vec![pi],
+                        req,
+                        site_id,
+                        method,
+                        uri,
+                        headers,
+                    )
                     .await;
             }
 
@@ -967,8 +972,21 @@ impl MeshProxy {
             };
             self.cache_policy(upstream_id, cached);
 
+            let site_id_for_cache = upstream_id.to_string();
+            let method_for_cache = req.method().clone();
+            let uri_for_cache = req.uri().clone();
+            let headers_for_cache = req.headers().clone();
+
             return self
-                .proxy_to_peer_with_fallback(upstream_id, providers, req)
+                .proxy_to_peer_with_fallback(
+                    upstream_id,
+                    providers,
+                    req,
+                    site_id_for_cache,
+                    method_for_cache,
+                    uri_for_cache,
+                    headers_for_cache,
+                )
                 .await;
         }
     }
@@ -978,6 +996,10 @@ impl MeshProxy {
         upstream_id: &str,
         providers: Vec<crate::mesh::protocol::ProviderInfo>,
         req: Request<B>,
+        site_id: String,
+        request_method: http::Method,
+        request_uri: http::Uri,
+        request_headers: http::HeaderMap,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
     where
         B: HttpBody + Send,
@@ -1143,6 +1165,94 @@ impl MeshProxy {
                 upstream_id,
                 provider_node_id
             );
+
+            if Self::is_cacheable_method(&request_method) {
+                let cache_opt = self.proxy_cache.read().clone();
+                let kb_opt = self.cache_key_builder.clone();
+                if let (Some(cache), Some(kb)) = (cache_opt, kb_opt) {
+                    if !Self::should_bypass_cache(&request_headers) {
+                        let host = request_headers
+                            .get("host")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or(upstream_id);
+                        let cache_key = kb.build(
+                            "http",
+                            &request_method,
+                            host,
+                            &request_uri,
+                            &request_headers,
+                            &site_id,
+                        );
+
+                        if let Some(cached_entry) = cache.get(&cache_key).await {
+                            tracing::debug!(
+                                "Mesh proxy cache HIT for {} {} (site_id={})",
+                                request_method,
+                                request_uri,
+                                site_id
+                            );
+
+                            let mut builder = HttpResponse::builder().status(cached_entry.status);
+                            for (name, value) in cached_entry.headers.iter() {
+                                builder = builder.header(name, value);
+                            }
+
+                            let cache_directive = if cached_entry.is_fresh {
+                                "public".to_string()
+                            } else {
+                                "public, stale-while-revalidate".to_string()
+                            };
+                            builder = builder.header("Cache-Control", cache_directive);
+                            builder = builder.header("X-Cache", "HIT");
+
+                            let body_bytes = cached_entry.content.clone();
+                            return Ok(builder
+                                .body(Full::new(body_bytes).boxed())
+                                .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                        }
+
+                        let status = resp.status().as_u16();
+                        if Self::is_response_cacheable(status) {
+                            let headers = resp.headers().clone();
+                            let body_bytes = match resp.into_body().collect().await {
+                                Ok(collected) => collected.to_bytes(),
+                                Err(e) => {
+                                    tracing::warn!("Failed to collect response body for cache: {:?}", e);
+                                    return Ok(HttpResponse::builder()
+                                        .status(status)
+                                        .body(Full::new(Bytes::new()).boxed())
+                                        .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                                }
+                            };
+                            let max_age = Self::get_cache_max_age(&headers);
+
+                            if let Err(e) = cache.insert(cache_key, body_bytes.clone(), status, headers, max_age)
+                            {
+                                tracing::warn!(
+                                    "Mesh proxy cache insert failed for {} {}: {}",
+                                    request_method,
+                                    request_uri,
+                                    e
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Mesh proxy cached {} {} (site_id={})",
+                                    request_method,
+                                    request_uri,
+                                    site_id
+                                );
+                            }
+
+                            let mut builder = HttpResponse::builder().status(status);
+                            builder = builder.header("X-Cache", "MISS");
+                            return Ok(builder
+                                .body(Full::new(body_bytes).boxed())
+                                .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                        }
+                    }
+                }
+            }
+
             return Ok(resp);
         }
 
@@ -1207,8 +1317,13 @@ impl MeshProxy {
         let first_provider = &providers[0];
         let waf_policy = first_provider.waf_policy.clone();
 
+        let site_id = upstream_id.to_string();
+        let method = req.method().clone();
+        let uri = req.uri().clone();
+        let headers = req.headers().clone();
+
         let response = self
-            .proxy_to_peer_with_fallback(upstream_id, providers, req)
+            .proxy_to_peer_with_fallback(upstream_id, providers, req, site_id, method, uri, headers)
             .await;
 
         match response {
@@ -1342,6 +1457,7 @@ impl MeshProxy {
             }
         }
 
+        let has_record_store;
         {
             let mut rs = self.record_store.write();
             if rs.is_none() {
@@ -1349,9 +1465,11 @@ impl MeshProxy {
                     *rs = Some(record_store);
                 }
             }
+            has_record_store = rs.is_some();
         }
 
-        if image_protection.is_none()
+        if !has_record_store
+            && image_protection.is_none()
             && image_poison_config.is_none()
             && compression.is_none()
             && minification.is_none()

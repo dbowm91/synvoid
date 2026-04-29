@@ -1,11 +1,10 @@
 #![allow(unused_variables)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
-use linked_hash_map::LinkedHashMap;
 use metrics::counter;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -39,14 +38,14 @@ fn record_shard_index(key: &str) -> usize {
 }
 
 pub struct ShardedRecordStore {
-    shards: Vec<RwLock<LinkedHashMap<String, DhtRecordEntry>>>,
+    shards: Vec<RwLock<BTreeMap<String, DhtRecordEntry>>>,
 }
 
 impl ShardedRecordStore {
     pub fn new() -> Self {
         Self {
             shards: (0..NUM_RECORD_SHARDS)
-                .map(|_| RwLock::new(LinkedHashMap::new()))
+                .map(|_| RwLock::new(BTreeMap::new()))
                 .collect(),
         }
     }
@@ -76,7 +75,7 @@ impl ShardedRecordStore {
 
     pub fn front(&self) -> Option<(String, DhtRecordEntry)> {
         for shard in &self.shards {
-            if let Some((k, v)) = shard.read().front() {
+            if let Some((k, v)) = shard.read().iter().next() {
                 return Some((k.clone(), v.clone()));
             }
         }
@@ -109,12 +108,16 @@ impl ShardedRecordStore {
         let mut result = Vec::new();
         for shard in &self.shards {
             let guard = shard.read();
-            for (k, v) in guard.iter() {
+            for (k, v) in guard.range(prefix.to_string()..) {
                 if k.starts_with(prefix) {
                     result.push((k.clone(), v.clone()));
                     if result.len() >= limit {
                         return result;
                     }
+                } else {
+                    // Since it's a BTreeMap, we can stop as soon as we find a key
+                    // that doesn't start with the prefix and is greater than the prefix.
+                    break;
                 }
             }
         }
@@ -151,6 +154,7 @@ pub struct RecordStoreConfig {
     pub neighborhood_persistence_enabled: bool,
     pub neighborhood_cache_size: usize,
     pub persist_max_age_secs: u64,
+    pub query_timeout_secs: u64,
 }
 
 impl Default for RecordStoreConfig {
@@ -177,6 +181,7 @@ impl Default for RecordStoreConfig {
             neighborhood_persistence_enabled: false,
             neighborhood_cache_size: 1000,
             persist_max_age_secs: 604800,
+            query_timeout_secs: 10,
         }
     }
 }

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use maluwaf::master::{
-    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
-    handle_stop,
+    handle_configtest, handle_export_threat_feed, handle_generatenewtoken, handle_generatetoken,
+    handle_rehash, handle_status, handle_stop,
 };
 use maluwaf::worker::{
     run_static_worker, run_unified_server_worker, setup_unified_server_panic_handler,
@@ -144,6 +144,19 @@ struct Args {
 
     #[arg(long, help = "Export API specification (OpenAPI 3.0) as JSON and exit")]
     export_api_spec: bool,
+
+    #[arg(long, help = "Export threat feed as JSON")]
+    export_threat_feed: bool,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Path to Ed25519 private key for signing threat feed"
+    )]
+    sign_with: Option<PathBuf>,
+
+    #[arg(long, value_name = "SITE_ID", help = "Filter threat feed by site ID")]
+    site_id: Option<String>,
 
     #[arg(long, help = "Generate a new genesis key for first global node setup")]
     genesis: bool,
@@ -342,6 +355,14 @@ fn main() {
     if args.rehash {
         if let Err(e) = handle_rehash() {
             eprintln!("Reload failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if args.export_threat_feed {
+        if let Err(e) = handle_export_threat_feed(&args.sign_with, args.site_id.as_deref()) {
+            eprintln!("Export threat feed failed: {}", e);
             std::process::exit(1);
         }
         std::process::exit(0);

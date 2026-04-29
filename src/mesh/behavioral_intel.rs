@@ -459,6 +459,15 @@ impl BehavioralIntelligenceManager {
         *self.local_version.read()
     }
 
+    pub fn get_config(&self) -> BehavioralConfig {
+        BehavioralConfig {
+            enabled: self.config.enabled,
+            min_samples_for_fingerprint: self.config.min_samples_for_fingerprint,
+            fingerprint_ttl_secs: self.config.fingerprint_ttl_secs,
+            high_severity_threshold: self.config.high_severity_threshold,
+        }
+    }
+
     pub fn sync_from_dht(&self) -> Result<usize, String> {
         let transport = self.transport.read().clone();
         let record_store = match transport {

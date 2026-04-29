@@ -363,34 +363,4 @@ impl MeshMessage {
             _ => None,
         }
     }
-
-    #[deprecated(
-        since = "0.3.0",
-        note = "HMAC verification no longer supported - use Ed25519 via MeshMessageSigner"
-    )]
-    pub fn verify_signature_with_signer(
-        &self,
-        _signer: &MeshMessageSigner,
-    ) -> Result<(), SignatureError> {
-        tracing::warn!(
-            "Deprecated verify_signature_with_signer called - HMAC is no longer supported"
-        );
-        Err(SignatureError::VerificationFailed(
-            "HMAC verification deprecated".to_string(),
-        ))
-    }
-
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use MeshMessageSigner.verify() with explicit public key"
-    )]
-    pub fn verify_signature(&self, expected_signer: &str) -> Result<(), SignatureError> {
-        tracing::warn!(
-            "Deprecated verify_signature called - signature not actually verified for {}",
-            expected_signer
-        );
-        Err(SignatureError::VerificationFailed(
-            "verify_signature is deprecated - use MeshMessageSigner.verify() with explicit public key".to_string(),
-        ))
-    }
 }

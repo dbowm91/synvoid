@@ -30,8 +30,19 @@ const EMBEDDED_PUBLIC_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
 const PLACEHOLDER_KEY: &str = "DEFAULT_EMBEDDED_PUBLIC_KEY_PLACEHOLDER";
 
-static RULE_PATTERN_STORE: LazyLock<RwLock<GlobalRulePatterns>> =
-    LazyLock::new(|| RwLock::new(GlobalRulePatterns::default()));
+use dashmap::DashMap;
+
+static RULE_PATTERN_STORE: LazyLock<DashMap<String, GlobalRulePatterns>> =
+    LazyLock::new(DashMap::new);
+
+pub fn get_global_patterns() -> GlobalRulePatterns {
+    RULE_PATTERN_STORE.get("global").map(|r| r.value().clone()).unwrap_or_default()
+}
+
+pub fn get_site_patterns(site_id: Option<&str>) -> GlobalRulePatterns {
+    let site_id = site_id.unwrap_or("global");
+    RULE_PATTERN_STORE.get(site_id).map(|r| r.value().clone()).unwrap_or_else(get_global_patterns)
+}
 
 #[derive(Default, Clone)]
 pub struct GlobalRulePatterns {
@@ -114,16 +125,12 @@ impl GlobalRulePatterns {
     }
 }
 
-pub fn get_global_patterns() -> GlobalRulePatterns {
-    RULE_PATTERN_STORE.read().clone()
-}
-
 pub fn clear_global_patterns() {
-    *RULE_PATTERN_STORE.write() = GlobalRulePatterns::default();
+    RULE_PATTERN_STORE.remove("global");
 }
 
 pub fn update_patterns_for_category(category: &str, patterns: Vec<String>) {
-    let mut store = RULE_PATTERN_STORE.write();
+    let mut store = RULE_PATTERN_STORE.entry("global".to_string()).or_default();
     macro_rules! set_cat {
         ($name:expr, $field:ident) => {
             if category == $name {
@@ -146,8 +153,8 @@ pub fn update_patterns_for_category(category: &str, patterns: Vec<String>) {
     set_cat!("jwt", jwt);
 }
 
-pub fn get_custom_patterns_for_category(category: &str) -> Vec<String> {
-    let patterns = RULE_PATTERN_STORE.read();
+pub fn get_custom_patterns_for_category(category: &str, site_id: Option<&str>) -> Vec<String> {
+    let patterns = get_site_patterns(site_id);
     macro_rules! get_cat {
         ($name:expr, $field:ident) => {
             if category == $name {
@@ -174,19 +181,20 @@ pub fn get_merged_patterns(
     category: &str,
     default_patterns: &[&'static str],
     config_custom: &[String],
+    site_id: Option<&str>,
 ) -> Vec<String> {
     let mut result: Vec<String> = default_patterns.iter().map(|s| s.to_string()).collect();
 
     result.extend(config_custom.iter().cloned());
 
-    let feed_patterns = get_custom_patterns_for_category(category);
+    let feed_patterns = get_custom_patterns_for_category(category, site_id);
     result.extend(feed_patterns.iter().cloned());
 
     result
 }
 
-pub fn has_custom_patterns(category: &str) -> bool {
-    let patterns = RULE_PATTERN_STORE.read();
+pub fn has_custom_patterns(category: &str, site_id: Option<&str>) -> bool {
+    let patterns = get_site_patterns(site_id);
     macro_rules! has_cat {
         ($name:expr, $field:ident) => {
             if category == $name {
@@ -358,7 +366,7 @@ impl RuleFeedManager {
             serde_json::from_str(&json).map_err(|e| format!("Failed to parse rules: {}", e))?;
 
         // Apply loaded rules
-        apply_rule_set_to_detection(&rules.rules);
+        apply_rule_set_to_detection(&rules.rules, None);
 
         *self.current_version.write() = Some(rules.version.clone());
         *self.last_update.write() = rules.timestamp;
@@ -449,7 +457,7 @@ impl RuleFeedManager {
                 tracing::info!("Fetched new rules version {}", rules.version);
                 *self.downloaded_rules.write() = Some(rules.clone());
 
-                if self.config.auto_apply && self.apply_rules().is_ok() {
+                if self.config.auto_apply && self.apply_rules(None).is_ok() {
                     *self.current_version.write() = Some(rules.version.clone());
                     *self.last_update.write() = now_timestamp();
 
@@ -541,11 +549,11 @@ impl RuleFeedManager {
         Ok(())
     }
 
-    pub fn apply_rules(&self) -> Result<(), String> {
+    pub fn apply_rules(&self, site_id: Option<&str>) -> Result<(), String> {
         let rules = self.downloaded_rules.read();
         let rules = rules.as_ref().ok_or("No rules downloaded")?;
 
-        apply_rule_set_to_detection(&rules.rules);
+        apply_rule_set_to_detection(&rules.rules, site_id);
 
         tracing::info!("Applied rule version {}", rules.version);
 
@@ -583,11 +591,12 @@ fn now_timestamp() -> u64 {
     crate::utils::safe_unix_timestamp()
 }
 
-fn apply_rule_set_to_detection(rules: &RuleSet) {
-    let mut global_patterns = RULE_PATTERN_STORE.write();
-    global_patterns.update_from_rule_set(rules);
+fn apply_rule_set_to_detection(rules: &RuleSet, site_id: Option<&str>) {
+    let site_id = site_id.unwrap_or("global");
+    let mut patterns = RULE_PATTERN_STORE.entry(site_id.to_string()).or_default();
+    patterns.update_from_rule_set(rules);
 
-    tracing::debug!("Updated global pattern store");
+    tracing::debug!("Updated pattern store for site: {}", site_id);
 
     if let Some(ref sqli) = rules.sqli {
         tracing::debug!("Applying SQLi rules: enabled={}", sqli.enabled);
@@ -689,8 +698,8 @@ impl RuleFeedManagerForWaf {
         Ok(self.inner.get_current_version())
     }
 
-    pub fn apply_pending(&self) -> Result<(), String> {
-        self.inner.apply_rules()
+    pub fn apply_pending(&self, site_id: Option<&str>) -> Result<(), String> {
+        self.inner.apply_rules(site_id)
     }
 
     pub fn discard_pending(&self) {
@@ -871,17 +880,17 @@ mod tests {
         clear_global_patterns();
 
         update_patterns_for_category("sqli", vec!["custom1".to_string()]);
-        assert!(has_custom_patterns("sqli"));
-        assert!(!has_custom_patterns("xss"));
+        assert!(has_custom_patterns("sqli", None));
+        assert!(!has_custom_patterns("xss", None));
 
-        let retrieved = get_custom_patterns_for_category("sqli");
+        let retrieved = get_custom_patterns_for_category("sqli", None);
         assert_eq!(retrieved, vec!["custom1"]);
 
-        let empty = get_custom_patterns_for_category("xss");
+        let empty = get_custom_patterns_for_category("xss", None);
         assert!(empty.is_empty());
 
         clear_global_patterns();
-        assert!(!has_custom_patterns("sqli"));
+        assert!(!has_custom_patterns("sqli", None));
     }
 
     #[test]
@@ -891,12 +900,12 @@ mod tests {
 
         let defaults = vec!["default1", "default2"];
         let config_custom = vec!["config1".to_string()];
-        let merged = get_merged_patterns("sqli", &defaults, &config_custom);
+        let merged = get_merged_patterns("sqli", &defaults, &config_custom, None);
 
-        assert!(merged.contains(&"default1".to_string()));
-        assert!(merged.contains(&"default2".to_string()));
-        assert!(merged.contains(&"config1".to_string()));
-        assert!(merged.contains(&"feed_pattern".to_string()));
+        assert!(merged.iter().any(|s| s == "default1"));
+        assert!(merged.iter().any(|s| s == "default2"));
+        assert!(merged.iter().any(|s| s == "config1"));
+        assert!(merged.iter().any(|s| s == "feed_pattern"));
 
         clear_global_patterns();
     }
@@ -951,11 +960,11 @@ mod tests {
         update_patterns_for_category("rfi", vec!["evil_include".to_string()]);
         update_patterns_for_category("cmd_injection", vec!["; custom_cmd".to_string()]);
         // ssti and xxe have no feed patterns
-        assert!(has_custom_patterns("path_traversal"));
-        assert!(has_custom_patterns("rfi"));
-        assert!(has_custom_patterns("cmd_injection"));
-        assert!(!has_custom_patterns("ssti"));
-        assert!(!has_custom_patterns("xxe"));
+        assert!(has_custom_patterns("path_traversal", None));
+        assert!(has_custom_patterns("rfi", None));
+        assert!(has_custom_patterns("cmd_injection", None));
+        assert!(!has_custom_patterns("ssti", None));
+        assert!(!has_custom_patterns("xxe", None));
 
         // Simulate the merge that reload_attack_detector does
         let categories = [
@@ -967,7 +976,7 @@ mod tests {
         ];
 
         for (category, config_patterns) in &categories {
-            let feed_patterns = get_custom_patterns_for_category(category);
+            let feed_patterns = get_custom_patterns_for_category(category, None);
             let mut merged = config_patterns.clone();
             merged.extend(feed_patterns);
 

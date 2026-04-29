@@ -781,6 +781,7 @@ impl HttpsServer {
         let ja4_hash = http_conn.get_ja4();
         let waf_decision = waf
             .check_request_full(
+                Some(&target.site_id),
                 client_ip,
                 method_str.as_str(),
                 &path,
@@ -792,6 +793,7 @@ impl HttpsServer {
                 Some(&target.site_config.bot),
             )
             .await;
+
 
         let site_id = target.site_id.clone();
 

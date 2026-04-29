@@ -224,8 +224,6 @@ pub struct MeshSeedNode {
     #[serde(default)]
     pub quic_port: Option<u16>,
     #[serde(default)]
-    pub wireguard_port: Option<u16>,
-    #[serde(default)]
     pub pinned_cert_fingerprint: Option<String>,
 }
 
@@ -252,130 +250,6 @@ pub struct MeshPeerConfig {
     pub address: String,
     #[serde(default)]
     pub auth_token: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum WireGuardPerformanceProfile {
-    #[default]
-    Balanced,
-    LowLatency,
-    HighThroughput,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct WireGuardPerfConfig {
-    #[serde(default)]
-    pub rx_buffer_size: usize,
-    #[serde(default)]
-    pub tx_buffer_size: usize,
-    #[serde(default)]
-    pub congestion_control: String,
-    #[serde(default)]
-    pub gro_enabled: bool,
-    #[serde(default)]
-    pub gso_enabled: bool,
-}
-
-impl Default for WireGuardPerfConfig {
-    fn default() -> Self {
-        Self {
-            rx_buffer_size: 0,
-            tx_buffer_size: 0,
-            congestion_control: String::new(),
-            gro_enabled: true,
-            gso_enabled: true,
-        }
-    }
-}
-
-impl WireGuardPerfConfig {
-    pub fn for_low_latency() -> Self {
-        Self {
-            rx_buffer_size: 256 * 1024,
-            tx_buffer_size: 256 * 1024,
-            congestion_control: String::from("bbr"),
-            gro_enabled: true,
-            gso_enabled: false,
-        }
-    }
-
-    pub fn for_high_throughput() -> Self {
-        Self {
-            rx_buffer_size: 4 * 1024 * 1024,
-            tx_buffer_size: 4 * 1024 * 1024,
-            congestion_control: String::from("bbr"),
-            gro_enabled: true,
-            gso_enabled: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct MeshWireGuardConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_wg_interface")]
-    pub interface: String,
-    #[serde(default)]
-    pub private_key: Option<String>,
-    #[serde(default)]
-    pub addresses: Vec<String>,
-    #[serde(default = "default_wg_listen_port")]
-    pub listen_port: u16,
-    #[serde(default)]
-    pub persistent_keepalive: u16,
-    #[serde(default)]
-    pub peers: Vec<MeshWireGuardPeer>,
-    #[serde(default = "default_mtu")]
-    pub mtu: u16,
-    #[serde(default)]
-    pub dns: Vec<String>,
-    #[serde(default)]
-    pub performance_profile: WireGuardPerformanceProfile,
-    #[serde(default)]
-    pub perf_config: Option<WireGuardPerfConfig>,
-}
-
-fn default_wg_interface() -> String {
-    "wg-mesh0".to_string()
-}
-
-fn default_wg_listen_port() -> u16 {
-    51821
-}
-
-fn default_mtu() -> u16 {
-    1420
-}
-
-impl Default for MeshWireGuardConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            interface: default_wg_interface(),
-            private_key: None,
-            addresses: Vec::new(),
-            listen_port: default_wg_listen_port(),
-            persistent_keepalive: 25,
-            peers: Vec::new(),
-            mtu: default_mtu(),
-            dns: Vec::new(),
-            performance_profile: WireGuardPerformanceProfile::Balanced,
-            perf_config: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct MeshWireGuardPeer {
-    pub public_key: String,
-    #[serde(default)]
-    pub endpoint: Option<String>,
-    #[serde(default)]
-    pub allowed_ips: Vec<String>,
-    #[serde(default)]
-    pub persistent_keepalive: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -513,6 +387,14 @@ pub struct MeshConnectionConfig {
     pub auth_failure_window_secs: u64,
     #[serde(default = "default_max_pending_connections")]
     pub max_pending_connections: usize,
+    #[serde(default = "default_circuit_open_threshold")]
+    pub circuit_open_threshold: u32,
+    #[serde(default = "default_circuit_open_timeout_secs")]
+    pub circuit_open_timeout_secs: u64,
+    #[serde(default = "default_half_open_max_requests")]
+    pub half_open_max_requests: u32,
+    #[serde(default = "default_circuit_close_threshold")]
+    pub circuit_close_threshold: u32,
 }
 
 fn default_min_peers() -> usize {
@@ -547,6 +429,22 @@ fn default_max_pending_connections() -> usize {
     100
 }
 
+fn default_circuit_open_threshold() -> u32 {
+    5
+}
+
+fn default_circuit_open_timeout_secs() -> u64 {
+    30
+}
+
+fn default_half_open_max_requests() -> u32 {
+    3
+}
+
+fn default_circuit_close_threshold() -> u32 {
+    3
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -560,6 +458,10 @@ impl Default for MeshConnectionConfig {
             max_auth_failures: 5,
             auth_failure_window_secs: 300,
             max_pending_connections: 100,
+            circuit_open_threshold: 5,
+            circuit_open_timeout_secs: 30,
+            half_open_max_requests: 3,
+            circuit_close_threshold: 3,
         }
     }
 }
@@ -713,7 +615,6 @@ impl MeshUpstreamConfig {
 #[serde(rename_all = "lowercase")]
 pub enum MeshTransportPreference {
     #[default]
-    WireGuard,
     Quic,
 }
 
@@ -738,15 +639,11 @@ pub struct MeshConfig {
     #[serde(default)]
     pub quic_port: Option<u16>,
     #[serde(default)]
-    pub wireguard_port: Option<u16>,
-    #[serde(default)]
     pub auto_port: bool,
     #[serde(default)]
     pub seeds: Vec<MeshSeedNode>,
     #[serde(default)]
     pub peers: Vec<MeshPeerConfig>,
-    #[serde(default)]
-    pub wireguard: MeshWireGuardConfig,
     #[serde(default)]
     pub local_upstreams: HashMap<String, MeshUpstreamConfig>,
     #[serde(default)]
@@ -1466,29 +1363,6 @@ fn default_quic_enable_0rtt() -> bool {
 
 fn default_strict_certificate_validation() -> bool {
     true
-}
-
-impl MeshWireGuardConfig {
-    pub fn effective_perf_config(&self) -> WireGuardPerfConfig {
-        if let Some(ref config) = self.perf_config {
-            return config.clone();
-        }
-
-        match self.performance_profile {
-            WireGuardPerformanceProfile::LowLatency => WireGuardPerfConfig::for_low_latency(),
-            WireGuardPerformanceProfile::HighThroughput => {
-                WireGuardPerfConfig::for_high_throughput()
-            }
-            WireGuardPerformanceProfile::Balanced => WireGuardPerfConfig::default(),
-        }
-    }
-
-    pub fn effective_mtu(&self) -> u16 {
-        match self.performance_profile {
-            WireGuardPerformanceProfile::HighThroughput => self.mtu.max(1500),
-            _ => self.mtu,
-        }
-    }
 }
 
 #[path = "config_conversion.rs"]

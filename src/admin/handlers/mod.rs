@@ -1,4 +1,6 @@
 pub mod alerting;
+pub mod api_discovery;
+pub mod behavioral_intel;
 pub mod common;
 pub mod config;
 pub mod honeypot;
@@ -12,6 +14,7 @@ pub mod probes;
 pub mod rule_feed;
 pub mod serverless;
 pub mod sites;
+pub mod spin;
 pub mod stats;
 pub mod system;
 pub mod tcp_udp;

@@ -63,6 +63,7 @@ pub enum BackendType {
     QuicTunnel,
     Serverless,
     Mesh,
+    Spin,
 }
 
 #[derive(Clone)]
@@ -78,6 +79,7 @@ pub struct RouteTarget {
     pub tunnel_port: Option<u16>,
     pub serverless_function: Option<Arc<str>>,
     pub php_location_config: Option<PhpLocationConfig>,
+    pub spin_app_name: Option<Arc<str>>,
 }
 
 #[derive(Clone)]
@@ -454,6 +456,7 @@ impl Router {
                                 tunnel_port: Some(port),
                                 serverless_function: None,
                                 php_location_config: None,
+                                spin_app_name: None,
                             })
                         } else {
                             RouteResult::Found(RouteTarget {
@@ -468,6 +471,7 @@ impl Router {
                                 tunnel_port: None,
                                 serverless_function: None,
                                 php_location_config: None,
+                                spin_app_name: None,
                             })
                         }
                     }
@@ -487,6 +491,7 @@ impl Router {
                             tunnel_port: None,
                             serverless_function: None,
                             php_location_config: None,
+                            spin_app_name: None,
                         })
                     }
                     BackendConfig::AxumDynamic { socket, plugin } => {
@@ -508,6 +513,7 @@ impl Router {
                             tunnel_port: None,
                             serverless_function: None,
                             php_location_config: None,
+                            spin_app_name: None,
                         })
                     }
                     BackendConfig::AppServer { socket } => {
@@ -530,6 +536,7 @@ impl Router {
                             tunnel_port: None,
                             serverless_function: None,
                             php_location_config: None,
+                            spin_app_name: None,
                         })
                     }
                     BackendConfig::Static { enabled } => {
@@ -548,10 +555,31 @@ impl Router {
                                     tunnel_port: None,
                                     serverless_function: None,
                                     php_location_config: location.php.clone(),
+                                    spin_app_name: None,
                                 }));
                             }
                         }
                         RouteResult::Error("Static backend not available".to_string())
+                    }
+                    BackendConfig::Spin { spin_app_name } => {
+                        if let Some(ref app_name) = spin_app_name {
+                            let site_id = site_config.site_id();
+                            return Some(RouteResult::Found(RouteTarget {
+                                site_id: Arc::from(site_id.as_str()),
+                                upstream: Arc::from(""),
+                                site_config: site_config.clone(),
+                                static_handler: None,
+                                backend_type: BackendType::Spin,
+                                backend_socket: None,
+                                backend_plugin: None,
+                                tunnel_peer: None,
+                                tunnel_port: None,
+                                serverless_function: None,
+                                php_location_config: None,
+                                spin_app_name: Some(Arc::from(app_name.clone())),
+                            }));
+                        }
+                        RouteResult::Error("Spin backend missing app name".to_string())
                     }
                 });
             }
@@ -579,6 +607,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: location.php.clone(),
+                        spin_app_name: None,
                     }));
                 }
             }
@@ -598,6 +627,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     }));
                 }
             }
@@ -617,6 +647,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     }));
                 }
             }
@@ -636,6 +667,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     }));
                 }
             }
@@ -656,6 +688,7 @@ impl Router {
                             tunnel_port: None,
                             serverless_function: Some(Arc::from(func.name.clone())),
                             php_location_config: None,
+                            spin_app_name: None,
                         }));
                     }
                 }
@@ -698,6 +731,7 @@ impl Router {
                             tunnel_port: Some(port),
                             serverless_function: None,
                             php_location_config: None,
+                            spin_app_name: None,
                         });
                     }
 
@@ -713,6 +747,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     });
                 }
                 BackendConfig::FastCgi { socket } => {
@@ -731,6 +766,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     });
                 }
                 BackendConfig::AxumDynamic { socket, plugin } => {
@@ -752,6 +788,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     });
                 }
                 BackendConfig::AppServer { socket } => {
@@ -774,6 +811,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     });
                 }
                 BackendConfig::Static { enabled } => {
@@ -791,8 +829,27 @@ impl Router {
                                 tunnel_port: None,
                                 serverless_function: None,
                                 php_location_config: None,
+                                spin_app_name: None,
                             });
                         }
+                    }
+                }
+                BackendConfig::Spin { spin_app_name } => {
+                    if let Some(ref app_name) = spin_app_name {
+                        return RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(""),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::Spin,
+                            backend_socket: None,
+                            backend_plugin: None,
+                            tunnel_peer: None,
+                            tunnel_port: None,
+                            serverless_function: None,
+                            php_location_config: None,
+                            spin_app_name: Some(Arc::from(app_name.clone())),
+                        });
                     }
                 }
             }
@@ -824,6 +881,7 @@ impl Router {
                     tunnel_port: None,
                     serverless_function: None,
                     php_location_config: None,
+                    spin_app_name: None,
                 });
             }
         }
@@ -842,6 +900,7 @@ impl Router {
                     tunnel_port: None,
                     serverless_function: None,
                     php_location_config: None,
+                    spin_app_name: None,
                 });
             }
         }
@@ -864,6 +923,7 @@ impl Router {
                 tunnel_port: None,
                 serverless_function: None,
                 php_location_config: None,
+                spin_app_name: None,
             });
         }
 
@@ -882,6 +942,7 @@ impl Router {
                     tunnel_port: None,
                     serverless_function: None,
                     php_location_config: None,
+                    spin_app_name: None,
                 });
             }
         }
@@ -899,6 +960,7 @@ impl Router {
             tunnel_port: None,
             serverless_function: None,
             php_location_config: None,
+            spin_app_name: None,
         })
     }
 
@@ -983,6 +1045,7 @@ impl Router {
                         tunnel_port: None,
                         serverless_function: None,
                         php_location_config: None,
+                        spin_app_name: None,
                     })
                 } else {
                     RouteResult::Error(

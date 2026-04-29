@@ -78,6 +78,7 @@ pub mod serder;
 pub mod serialization;
 pub mod server;
 pub mod serverless;
+pub mod spin;
 pub mod startup;
 pub mod static_files;
 pub mod streaming;

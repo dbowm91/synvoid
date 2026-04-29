@@ -406,25 +406,17 @@ impl AttackDetector {
             return 0.0;
         }
 
-        let mut char_counts = [0usize; 256];
-        let mut seen_indices = Vec::new();
-
-        for c in s.chars() {
-            if (c as usize) < 256 {
-                let idx = c as usize;
-                if char_counts[idx] == 0 {
-                    seen_indices.push(idx);
-                }
-                char_counts[idx] += 1;
-            }
+        let mut freq = [0usize; 256];
+        for byte in s.bytes() {
+            freq[byte as usize] += 1;
         }
 
         let len = s.len() as f32;
-        let entropy: f32 = seen_indices
+        let entropy: f32 = freq
             .iter()
-            .map(|&idx| {
-                let count = char_counts[idx] as f32;
-                let p = count / len;
+            .filter(|&&count| count > 0)
+            .map(|&count| {
+                let p = count as f32 / len;
                 -p * p.log2()
             })
             .sum();
