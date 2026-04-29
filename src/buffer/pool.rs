@@ -1,7 +1,5 @@
 use bytes::{Buf, BufMut, BytesMut};
-use parking_lot::Mutex;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const SMALL_BUF_SIZE: usize = 4 * 1024;
@@ -14,6 +12,7 @@ const LARGE_POOL_CAP: usize = 64;
 const JUMBO_POOL_CAP: usize = 32;
 
 const NUM_SHARDS: usize = 8;
+const TLS_CACHE_SIZE: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
 enum BufferTier {
@@ -24,27 +23,27 @@ enum BufferTier {
 }
 
 struct PoolMetrics {
-    small_acquired: AtomicU64,
-    medium_acquired: AtomicU64,
-    large_acquired: AtomicU64,
-    jumbo_acquired: AtomicU64,
-    small_reused: AtomicU64,
-    medium_reused: AtomicU64,
-    large_reused: AtomicU64,
-    jumbo_reused: AtomicU64,
+    small_acquired: std::sync::atomic::AtomicU64,
+    medium_acquired: std::sync::atomic::AtomicU64,
+    large_acquired: std::sync::atomic::AtomicU64,
+    jumbo_acquired: std::sync::atomic::AtomicU64,
+    small_reused: std::sync::atomic::AtomicU64,
+    medium_reused: std::sync::atomic::AtomicU64,
+    large_reused: std::sync::atomic::AtomicU64,
+    jumbo_reused: std::sync::atomic::AtomicU64,
 }
 
 impl PoolMetrics {
     fn new() -> Self {
         Self {
-            small_acquired: AtomicU64::new(0),
-            medium_acquired: AtomicU64::new(0),
-            large_acquired: AtomicU64::new(0),
-            jumbo_acquired: AtomicU64::new(0),
-            small_reused: AtomicU64::new(0),
-            medium_reused: AtomicU64::new(0),
-            large_reused: AtomicU64::new(0),
-            jumbo_reused: AtomicU64::new(0),
+            small_acquired: std::sync::atomic::AtomicU64::new(0),
+            medium_acquired: std::sync::atomic::AtomicU64::new(0),
+            large_acquired: std::sync::atomic::AtomicU64::new(0),
+            jumbo_acquired: std::sync::atomic::AtomicU64::new(0),
+            small_reused: std::sync::atomic::AtomicU64::new(0),
+            medium_reused: std::sync::atomic::AtomicU64::new(0),
+            large_reused: std::sync::atomic::AtomicU64::new(0),
+            jumbo_reused: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -63,41 +62,256 @@ impl PoolMetrics {
     }
 }
 
-/// Lock-free, sharded buffer pool for high-throughput HTTP proxying.
-///
-/// Pools `BytesMut` buffers in 4 size classes (small/medium/large/jumbo)
-/// with 8 shards per class to reduce contention. Buffers are returned
-/// to the pool on drop via `PooledBuf`.
+struct TreiberStack {
+    head: AtomicPtr<StackNode>,
+    len: AtomicUsize,
+}
+
+struct StackNode {
+    buf: BytesMut,
+    next: *mut StackNode,
+}
+
+impl TreiberStack {
+    fn new() -> Self {
+        Self {
+            head: AtomicPtr::new(std::ptr::null_mut()),
+            len: AtomicUsize::new(0),
+        }
+    }
+
+    fn push(&self, buf: BytesMut) {
+        let node = Box::into_raw(Box::new(StackNode {
+            buf,
+            next: std::ptr::null_mut(),
+        }));
+
+        let mut head = self.head.load(Ordering::Relaxed);
+        loop {
+            unsafe {
+                (*node).next = head;
+            }
+            match self.head.compare_exchange_weak(
+                head,
+                node,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                Err(h) => head = h,
+            }
+        }
+    }
+
+    fn pop(&self) -> Option<BytesMut> {
+        let mut head = self.head.load(Ordering::Acquire);
+        loop {
+            if head.is_null() {
+                return None;
+            }
+            match self.head.compare_exchange_weak(
+                head,
+                unsafe { (*head).next },
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_sub(1, Ordering::Relaxed);
+                    let node = unsafe { Box::from_raw(head) };
+                    return Some(node.buf);
+                }
+                Err(h) => head = h,
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len.load(Ordering::Relaxed)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.head.load(Ordering::Acquire).is_null()
+    }
+}
+
+unsafe impl Send for TreiberStack {}
+unsafe impl Sync for TreiberStack {}
+
+struct TierArena {
+    stack: TreiberStack,
+    buf_size: usize,
+    cap: usize,
+}
+
+impl TierArena {
+    fn new(buf_size: usize, cap: usize) -> Self {
+        Self {
+            stack: TreiberStack::new(),
+            buf_size,
+            cap,
+        }
+    }
+
+    fn acquire(&self, requested_size: usize) -> (BytesMut, BufferTier) {
+        if let Some(buf) = self.stack.pop() {
+            let mut buf = buf;
+            buf.resize(requested_size, 0);
+            return (buf, self.tier());
+        }
+        let mut buf = BytesMut::with_capacity(self.buf_size);
+        buf.resize(requested_size, 0);
+        (buf, self.tier())
+    }
+
+    fn release(&self, buf: BytesMut) {
+        if buf.capacity() > 0 && self.stack.len() < self.cap {
+            let mut buf = buf;
+            buf.clear();
+            self.stack.push(buf);
+        }
+    }
+
+    fn tier(&self) -> BufferTier {
+        match self.buf_size {
+            SMALL_BUF_SIZE => BufferTier::Small,
+            MEDIUM_BUF_SIZE => BufferTier::Medium,
+            LARGE_BUF_SIZE => BufferTier::Large,
+            _ => BufferTier::Jumbo,
+        }
+    }
+}
+
+struct ThreadLocalCache {
+    small: Vec<Option<BytesMut>>,
+    medium: Vec<Option<BytesMut>>,
+    large: Vec<Option<BytesMut>>,
+    jumbo: Vec<Option<BytesMut>>,
+    small_len: std::cell::Cell<usize>,
+    medium_len: std::cell::Cell<usize>,
+    large_len: std::cell::Cell<usize>,
+    jumbo_len: std::cell::Cell<usize>,
+}
+
+impl ThreadLocalCache {
+    fn new() -> Self {
+        Self {
+            small: vec![None; TLS_CACHE_SIZE],
+            medium: vec![None; TLS_CACHE_SIZE],
+            large: vec![None; TLS_CACHE_SIZE],
+            jumbo: vec![None; TLS_CACHE_SIZE],
+            small_len: std::cell::Cell::new(0),
+            medium_len: std::cell::Cell::new(0),
+            large_len: std::cell::Cell::new(0),
+            jumbo_len: std::cell::Cell::new(0),
+        }
+    }
+
+    fn push(&self, buf: BytesMut, tier: BufferTier) {
+        match tier {
+            BufferTier::Small => self.push_to_array(&self.small, &self.small_len, buf),
+            BufferTier::Medium => self.push_to_array(&self.medium, &self.medium_len, buf),
+            BufferTier::Large => self.push_to_array(&self.large, &self.large_len, buf),
+            BufferTier::Jumbo => self.push_to_array(&self.jumbo, &self.jumbo_len, buf),
+        }
+    }
+
+    fn push_to_array(&self, arr: &[Option<BytesMut>], len: &std::cell::Cell<usize>, buf: BytesMut) {
+        let current_len = len.get();
+        if current_len < TLS_CACHE_SIZE {
+            let arr = arr;
+            let mut_arr = arr as *const [Option<BytesMut>] as *mut [Option<BytesMut>];
+            unsafe {
+                (*mut_arr)[current_len] = Some(buf);
+            }
+            len.set(current_len + 1);
+        }
+    }
+
+    fn pop(&self, tier: BufferTier) -> Option<BytesMut> {
+        match tier {
+            BufferTier::Small => self.pop_from_array(&self.small, &self.small_len),
+            BufferTier::Medium => self.pop_from_array(&self.medium, &self.medium_len),
+            BufferTier::Large => self.pop_from_array(&self.large, &self.large_len),
+            BufferTier::Jumbo => self.pop_from_array(&self.jumbo, &self.jumbo_len),
+        }
+    }
+
+    fn pop_from_array(&self, arr: &[Option<BytesMut>], len: &std::cell::Cell<usize>) -> Option<BytesMut> {
+        let current_len = len.get();
+        if current_len == 0 {
+            return None;
+        }
+        let new_len = current_len - 1;
+        len.set(new_len);
+        let arr = arr;
+        let mut_arr = arr as *const [Option<BytesMut>] as *mut [Option<BytesMut>];
+        unsafe { std::ptr::replace(&mut (*mut_arr)[new_len], None) }
+    }
+
+    fn len(&self, tier: BufferTier) -> usize {
+        match tier {
+            BufferTier::Small => self.small_len.get(),
+            BufferTier::Medium => self.medium_len.get(),
+            BufferTier::Large => self.large_len.get(),
+            BufferTier::Jumbo => self.jumbo_len.get(),
+        }
+    }
+}
+
+thread_local! {
+    pub static TLS_CACHE: ThreadLocalCache = ThreadLocalCache::new();
+}
+
+struct Shard {
+    small: TierArena,
+    medium: TierArena,
+    large: TierArena,
+    jumbo: TierArena,
+}
+
+impl Shard {
+    fn new() -> Self {
+        Self {
+            small: TierArena::new(SMALL_BUF_SIZE, SMALL_POOL_CAP / NUM_SHARDS),
+            medium: TierArena::new(MEDIUM_BUF_SIZE, MEDIUM_POOL_CAP / NUM_SHARDS),
+            large: TierArena::new(LARGE_BUF_SIZE, LARGE_POOL_CAP / NUM_SHARDS),
+            jumbo: TierArena::new(256 * 1024, JUMBO_POOL_CAP / NUM_SHARDS),
+        }
+    }
+}
+
 pub struct BufferPool {
-    small: Vec<Mutex<VecDeque<BytesMut>>>,
-    medium: Vec<Mutex<VecDeque<BytesMut>>>,
-    large: Vec<Mutex<VecDeque<BytesMut>>>,
-    jumbo: Vec<Mutex<VecDeque<BytesMut>>>,
+    shards: Vec<Shard>,
     metrics: PoolMetrics,
     config: BufferPoolConfig,
 }
 
 impl BufferPool {
-    fn get_shard_index(&self) -> usize {
-        THREAD_SHARD.with(|shard| {
-            if let Some(idx) = shard.get() {
-                return idx;
-            }
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            std::thread::current().id().hash(&mut hasher);
-            let idx = (hasher.finish() as usize) % NUM_SHARDS;
-            shard.set(Some(idx));
-            idx
-        })
+    fn get_shard_index() -> usize {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        std::thread::current().id().hash(&mut hasher);
+        (hasher.finish() as usize) % NUM_SHARDS
+    }
+
+    fn get_tier<'a>(buf: &'a BytesMut, config: &BufferPoolConfig) -> BufferTier {
+        let cap = buf.capacity();
+        if cap <= config.small_buf_size {
+            BufferTier::Small
+        } else if cap <= config.medium_buf_size {
+            BufferTier::Medium
+        } else if cap <= config.large_buf_size {
+            BufferTier::Large
+        } else {
+            BufferTier::Jumbo
+        }
     }
 }
 
-/// Configuration for buffer pool size classes and capacities.
-///
-/// Each size class has a buffer size (in bytes) and a per-shard capacity
-/// (max buffers to retain). Total memory ≈ Σ(size × capacity × num_shards).
 #[derive(Debug, Clone)]
 pub struct BufferPoolConfig {
     pub small_buf_size: usize,
@@ -125,7 +339,6 @@ impl Default for BufferPoolConfig {
 
 thread_local! {
     pub static POOL: BufferPool = BufferPool::new();
-    static THREAD_SHARD: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 pub static GLOBAL_POOL: std::sync::LazyLock<Arc<BufferPool>> =
@@ -133,24 +346,9 @@ pub static GLOBAL_POOL: std::sync::LazyLock<Arc<BufferPool>> =
 
 impl BufferPool {
     fn new() -> Self {
-        let small: Vec<_> = (0..NUM_SHARDS)
-            .map(|_| Mutex::new(VecDeque::with_capacity(SMALL_POOL_CAP / NUM_SHARDS)))
-            .collect();
-        let medium: Vec<_> = (0..NUM_SHARDS)
-            .map(|_| Mutex::new(VecDeque::with_capacity(MEDIUM_POOL_CAP / NUM_SHARDS)))
-            .collect();
-        let large: Vec<_> = (0..NUM_SHARDS)
-            .map(|_| Mutex::new(VecDeque::with_capacity(LARGE_POOL_CAP / NUM_SHARDS)))
-            .collect();
-        let jumbo: Vec<_> = (0..NUM_SHARDS)
-            .map(|_| Mutex::new(VecDeque::with_capacity(JUMBO_POOL_CAP / NUM_SHARDS)))
-            .collect();
-
+        let shards = (0..NUM_SHARDS).map(|_| Shard::new()).collect();
         Self {
-            small,
-            medium,
-            large,
-            jumbo,
+            shards,
             metrics: PoolMetrics::new(),
             config: BufferPoolConfig::default(),
         }
@@ -185,131 +383,102 @@ impl BufferPool {
     }
 
     fn acquire_inner(&self, size: usize) -> PooledBuf {
-        let shard = self.get_shard_index();
-
-        let (buf, tier) = if size <= self.config.small_buf_size {
-            let mut guard = self.small[shard].lock();
-            match guard.pop_front() {
-                Some(mut buf) => {
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Small, true);
-                    (buf, BufferTier::Small)
-                }
-                _ => {
-                    let mut buf = BytesMut::with_capacity(self.config.small_buf_size);
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Small, false);
-                    (buf, BufferTier::Small)
-                }
-            }
+        let tier = if size <= self.config.small_buf_size {
+            BufferTier::Small
         } else if size <= self.config.medium_buf_size {
-            let mut guard = self.medium[shard].lock();
-            match guard.pop_front() {
-                Some(mut buf) => {
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Medium, true);
-                    (buf, BufferTier::Medium)
-                }
-                _ => {
-                    let mut buf = BytesMut::with_capacity(self.config.medium_buf_size);
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Medium, false);
-                    (buf, BufferTier::Medium)
-                }
-            }
+            BufferTier::Medium
         } else if size <= self.config.large_buf_size {
-            let mut guard = self.large[shard].lock();
-            match guard.pop_front() {
-                Some(mut buf) => {
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Large, true);
-                    (buf, BufferTier::Large)
-                }
-                _ => {
-                    let mut buf = BytesMut::with_capacity(self.config.large_buf_size);
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Large, false);
-                    (buf, BufferTier::Large)
-                }
-            }
+            BufferTier::Large
         } else {
-            let mut guard = self.jumbo[shard].lock();
-            match guard.pop_front() {
-                Some(mut buf) => {
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Jumbo, true);
-                    (buf, BufferTier::Jumbo)
-                }
-                _ => {
-                    let mut buf = BytesMut::with_capacity(size);
-                    buf.resize(size, 0);
-                    self.metrics.record_acquire(BufferTier::Jumbo, false);
-                    (buf, BufferTier::Jumbo)
-                }
-            }
+            BufferTier::Jumbo
         };
+
+        let tls_result = TLS_CACHE.with(|cache| {
+            if let Some(buf) = cache.pop(tier) {
+                let mut buf = buf;
+                buf.resize(size, 0);
+                self.metrics.record_acquire(tier, true);
+                return Some(PooledBuf {
+                    buf: Some(buf),
+                    tier,
+                    requested_size: size,
+                });
+            }
+            None
+        });
+
+        if let Some(buf) = tls_result {
+            return buf;
+        }
+
+        let shard_idx = Self::get_shard_index();
+        let shard = &self.shards[shard_idx];
+
+        let (buf, actual_tier) = match tier {
+            BufferTier::Small => shard.small.acquire(size),
+            BufferTier::Medium => shard.medium.acquire(size),
+            BufferTier::Large => shard.large.acquire(size),
+            BufferTier::Jumbo => shard.jumbo.acquire(size),
+        };
+
+        self.metrics.record_acquire(actual_tier, false);
 
         PooledBuf {
             buf: Some(buf),
-            tier,
+            tier: actual_tier,
             requested_size: size,
         }
     }
 
-    fn release(&self, mut buf: BytesMut, tier: BufferTier) {
-        buf.clear();
-
-        let capacity = buf.capacity();
-        let pool_cap = match tier {
-            BufferTier::Small => self.config.small_pool_cap / NUM_SHARDS,
-            BufferTier::Medium => self.config.medium_pool_cap / NUM_SHARDS,
-            BufferTier::Large => self.config.large_pool_cap / NUM_SHARDS,
-            BufferTier::Jumbo => self.config.jumbo_pool_cap / NUM_SHARDS,
-        };
-
-        let shard = self.get_shard_index();
-
-        let mut guard = match tier {
-            BufferTier::Small => self.small[shard].lock(),
-            BufferTier::Medium => self.medium[shard].lock(),
-            BufferTier::Large => self.large[shard].lock(),
-            BufferTier::Jumbo => self.jumbo[shard].lock(),
-        };
-
-        if guard.len() < pool_cap && capacity > 0 {
-            guard.push_back(buf);
+    fn release_to_global(&self, buf: BytesMut, tier: BufferTier) {
+        let shard_idx = Self::get_shard_index();
+        let shard = &self.shards[shard_idx];
+        match tier {
+            BufferTier::Small => shard.small.release(buf),
+            BufferTier::Medium => shard.medium.release(buf),
+            BufferTier::Large => shard.large.release(buf),
+            BufferTier::Jumbo => shard.jumbo.release(buf),
         }
     }
 
     pub fn stats() -> PoolStats {
-        POOL.with(|pool| {
-            let mut small_total = 0;
-            let mut medium_total = 0;
-            let mut large_total = 0;
-            let mut jumbo_total = 0;
+        POOL.with(|pool| pool.collect_stats())
+    }
 
-            for shard in 0..NUM_SHARDS {
-                small_total += pool.small[shard].lock().len();
-                medium_total += pool.medium[shard].lock().len();
-                large_total += pool.large[shard].lock().len();
-                jumbo_total += pool.jumbo[shard].lock().len();
-            }
+    fn collect_stats(&self) -> PoolStats {
+        let mut small_available = 0;
+        let mut medium_available = 0;
+        let mut large_available = 0;
+        let mut jumbo_available = 0;
 
-            PoolStats {
-                small_available: small_total,
-                medium_available: medium_total,
-                large_available: large_total,
-                jumbo_available: jumbo_total,
-                small_acquired: pool.metrics.small_acquired.load(Ordering::Relaxed),
-                medium_acquired: pool.metrics.medium_acquired.load(Ordering::Relaxed),
-                large_acquired: pool.metrics.large_acquired.load(Ordering::Relaxed),
-                jumbo_acquired: pool.metrics.jumbo_acquired.load(Ordering::Relaxed),
-                small_reused: pool.metrics.small_reused.load(Ordering::Relaxed),
-                medium_reused: pool.metrics.medium_reused.load(Ordering::Relaxed),
-                large_reused: pool.metrics.large_reused.load(Ordering::Relaxed),
-                jumbo_reused: pool.metrics.jumbo_reused.load(Ordering::Relaxed),
-            }
-        })
+        for shard in &self.shards {
+            small_available += shard.small.stack.len();
+            medium_available += shard.medium.stack.len();
+            large_available += shard.large.stack.len();
+            jumbo_available += shard.jumbo.stack.len();
+        }
+
+        TLS_CACHE.with(|cache| {
+            small_available += cache.len(BufferTier::Small);
+            medium_available += cache.len(BufferTier::Medium);
+            large_available += cache.len(BufferTier::Large);
+            jumbo_available += cache.len(BufferTier::Jumbo);
+        });
+
+        PoolStats {
+            small_available,
+            medium_available,
+            large_available,
+            jumbo_available,
+            small_acquired: self.metrics.small_acquired.load(Ordering::Relaxed),
+            medium_acquired: self.metrics.medium_acquired.load(Ordering::Relaxed),
+            large_acquired: self.metrics.large_acquired.load(Ordering::Relaxed),
+            jumbo_acquired: self.metrics.jumbo_acquired.load(Ordering::Relaxed),
+            small_reused: self.metrics.small_reused.load(Ordering::Relaxed),
+            medium_reused: self.metrics.medium_reused.load(Ordering::Relaxed),
+            large_reused: self.metrics.large_reused.load(Ordering::Relaxed),
+            jumbo_reused: self.metrics.jumbo_reused.load(Ordering::Relaxed),
+        }
     }
 
     pub fn config() -> BufferPoolConfig {
@@ -345,15 +514,24 @@ pub struct PoolStats {
 
 impl PoolStats {
     pub fn total_available(&self) -> usize {
-        self.small_available + self.medium_available + self.large_available + self.jumbo_available
+        self.small_available
+            .saturating_add(self.medium_available)
+            .saturating_add(self.large_available)
+            .saturating_add(self.jumbo_available)
     }
 
     pub fn total_acquired(&self) -> u64 {
-        self.small_acquired + self.medium_acquired + self.large_acquired + self.jumbo_acquired
+        self.small_acquired
+            .saturating_add(self.medium_acquired)
+            .saturating_add(self.large_acquired)
+            .saturating_add(self.jumbo_acquired)
     }
 
     pub fn total_reused(&self) -> u64 {
-        self.small_reused + self.medium_reused + self.large_reused + self.jumbo_reused
+        self.small_reused
+            .saturating_add(self.medium_reused)
+            .saturating_add(self.large_reused)
+            .saturating_add(self.jumbo_reused)
     }
 
     pub fn reuse_rate(&self) -> f64 {
@@ -485,7 +663,13 @@ impl std::io::Write for PooledBuf {
 impl Drop for PooledBuf {
     fn drop(&mut self) {
         if let Some(buf) = self.buf.take() {
-            POOL.with(|pool| pool.release(buf, self.tier));
+            TLS_CACHE.with(|cache| {
+                if cache.len(self.tier) < TLS_CACHE_SIZE {
+                    cache.push(buf, self.tier);
+                } else {
+                    POOL.with(|pool| pool.release_to_global(buf, self.tier));
+                }
+            });
         }
     }
 }
