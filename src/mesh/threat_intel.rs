@@ -1932,7 +1932,7 @@ impl ThreatIntelligenceManager {
         }
     }
 
-    pub fn get_feed_signable_content(&self, indicators: &[ThreatIndicator]) -> String {
+    pub fn get_feed_signable_content(&self, indicators: &[ThreatIndicator], version: u64, timestamp: u64) -> String {
         let indicator_hashes: Vec<String> = indicators
             .iter()
             .map(|i| {
@@ -1946,8 +1946,9 @@ impl ThreatIntelligenceManager {
             .collect();
 
         format!(
-            "{}:{}:{}",
-            MESH_MESSAGE_VERSION,
+            "{}:{}:{}:{}",
+            version,
+            timestamp,
             indicators.len(),
             indicator_hashes.join(",")
         )
@@ -1996,7 +1997,7 @@ impl ThreatIntelligenceManager {
             })
             .collect();
 
-        let signable_content = self.get_feed_signable_content(&filtered);
+        let signable_content = self.get_feed_signable_content(&filtered, version, now);
 
         let (signature, signer_public_key) = if let Some(ref signer) = self.signer {
             let sig = signer.sign(signable_content.as_bytes());
