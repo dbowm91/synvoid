@@ -17,6 +17,13 @@
 //! Edge and Origin nodes use ConsistentRead RPC to query the cluster.
 
 pub mod network;
+pub mod state_machine;
 
 pub use network::MeshRaftNetwork;
 pub use network::MeshRaftNetworkFactory;
+pub use state_machine::{
+    GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage,
+    GlobalRegistryStateMachine,
+    Namespace, OrgPublicKey, ThreatIntel, GlobalNodeRevocationList,
+    StateMachineValue, RaftCommand,
+};
