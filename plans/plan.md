@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-**Status**: Wave 1-6 Complete
+**Status**: Wave 1-6 Complete (Wave 7 Active)
 **Last Updated**: 2026-04-29
 **Verification Completed**: 2026-04-29 (Wave 6)
 
@@ -8,20 +8,53 @@
 
 ## Overview
 
-All implementation waves (1-6) are **COMPLETE**.
-**Wave 6: Mesh Consensus & Trust Resiliency** has been successfully implemented, providing strong consistency for the Global Control Plane via Raft consensus.
+Waves 1-6 are **COMPLETE**, providing a solid foundation for the Raft consensus layer. **Wave 7: Raft Integration & Hardening** is now active to fully wire the consensus layer into the Global Control Plane and replace the legacy DHT-based authority.
 
-**Wave 1-6 Implementation Summary:**
+**Wave 1-7 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
 - Wave 2: Performance & Scalability (W2.1-W2.4)
 - Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
 - Wave 4: Security & Resilience (W4.1-W4.2)
 - Wave 5: OS Foundations & Core Optimization (W5.1-W5.3)
-- **Wave 6: Mesh Consensus & Trust Resiliency (W6.1-W6.4) [COMPLETE]**
+- Wave 6: Mesh Consensus Foundations (W6.1-W6.4) [COMPLETE]
+- **Wave 7: Raft Integration & Hardening (W7.1-W7.5) [ACTIVE]**
 
 ---
 
-## Completed: Wave 6 - Mesh Consensus & Trust Resiliency
+## Active Plan: Wave 7 - Raft Integration & Hardening
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| **W7.1** | **Storage Layer Traits** | Implement `openraft::RaftStateMachine` and `RaftLogStorage` for `rusqlite` backends. | **IN PROGRESS** |
+| **W7.2** | **RPC Handler Integration** | Wire `/raft` POST endpoint in `MeshProxy` to route messages to the internal `Raft` instance. | **PLANNED** |
+| **W7.3** | **Cluster Lifecycle & Init** | Implement Global node bootstrap, join logic, and leadership monitoring. | **PLANNED** |
+| **W7.4** | **Client Write Correction** | Update `RaftAwareClient` to use `client_write` (Proposals) instead of raw `AppendEntries`. | **PLANNED** |
+| **W7.5** | **SQLite Snapshots** | Implement point-in-time snapshotting using SQLite's backup API for log compaction. | **PLANNED** |
+
+### W7.1: Storage Layer Traits (IN PROGRESS)
+- Implement `RaftTypeConfig` for the `GlobalRegistry` types.
+- Map `GlobalRegistryStateMachine` methods to `RaftStateMachine` async trait.
+- Map `GlobalRegistryLogStorage` methods to `RaftLogStorage` async trait.
+- Ensure strict serializability of log entries in `rusqlite`.
+
+### W7.2: RPC Handler Integration (PLANNED)
+- Add `/raft` route to `src/mesh/proxy.rs`.
+- Implement `postcard` deserialization for `RaftPayload`.
+- Dispatch to `raft.append_entries()`, `raft.vote()`, etc. based on `RaftMsgType`.
+
+### W7.3: Cluster Lifecycle & Init (PLANNED)
+- Update `src/mesh/backend.rs` to initialize `openraft::Raft` instance on Global nodes.
+- Implement genesis bootstrap (Node 1 initializes cluster).
+- Implement dynamic membership updates (Node N joins existing cluster).
+
+### W7.4: Client Write Correction (PLANNED)
+- Update `src/mesh/protocol.rs` to add `RaftMsgType::ClientWrite`.
+- Update `RaftAwareClient::raft_write` to send command proposals to the Leader.
+- Leader node calls `raft.client_write(command)` and returns commit index.
+
+---
+
+## Completed: Wave 6 - Mesh Consensus Foundations
 
 | # | Task | Description | Status |
 |---|------|-------------|--------|

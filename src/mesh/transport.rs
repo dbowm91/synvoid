@@ -58,6 +58,7 @@ use crate::mesh::protocol::{
 };
 use crate::mesh::session::SessionManager;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
+use crate::mesh::transport_types::MeshStreamPool;
 use crate::tunnel::quic::runtime::QuicRuntime;
 
 pub use crate::mesh::transports::MeshTransportManager;
@@ -1299,11 +1300,10 @@ impl MeshTransport {
             .get(peer_id)
             .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
 
-        let (mut send_stream, _) = peer
-            .connection
-            .open_bi()
-            .await
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, recv_stream) = {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.acquire().await
+        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let encoded = message
             .encode()
@@ -1317,6 +1317,11 @@ impl MeshTransport {
             .write_all(&encoded)
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.release((send_stream, recv_stream));
+        }
 
         tracing::debug!("Sent stream message to peer {}: {:?}", peer_id, message);
         Ok(())
@@ -1980,6 +1985,9 @@ impl MeshTransport {
             replay_protection: Arc::new(tokio::sync::RwLock::new(
                 crate::mesh::protocol::ReplayProtection::new(),
             )),
+            stream_pool: Arc::new(tokio::sync::Mutex::new(
+                crate::mesh::transport_types::MeshStreamPool::new(Some(connection.clone())),
+            )),
         };
 
         self.topology
@@ -2452,6 +2460,9 @@ impl MeshTransport {
                     is_trusted: trusted_status,
                     replay_protection: Arc::new(tokio::sync::RwLock::new(
                         crate::mesh::protocol::ReplayProtection::new(),
+                    )),
+                    stream_pool: Arc::new(tokio::sync::Mutex::new(
+                        MeshStreamPool::new(Some(connection.clone())),
                     )),
                 };
 
@@ -3075,11 +3086,10 @@ impl MeshTransport {
             }
         };
 
-        let (mut send_stream, mut recv_stream) = peer
-            .connection
-            .open_bi()
-            .await
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, mut recv_stream) = {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.acquire().await
+        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let method = request.method().to_string();
         let uri = request.uri().to_string();
@@ -3242,6 +3252,11 @@ impl MeshTransport {
         let response = response_builder
             .body(boxed_body)
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.release((send_stream, recv_stream));
+        }
 
         Ok(response)
     }

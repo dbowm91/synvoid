@@ -389,7 +389,10 @@ impl MeshTransport {
         for entry in peer_connections.iter() {
             let peer = entry.value();
             let result = async {
-                let (mut send_stream, mut recv_stream) = peer.connection.open_bi().await?;
+                let (mut send_stream, mut recv_stream) = {
+                    let mut pool = peer.stream_pool.lock().await;
+                    pool.acquire().await
+                }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
                 let msg = MeshMessage::KeepAlive;
                 let encoded = msg.encode()?;
@@ -408,6 +411,11 @@ impl MeshTransport {
                 }
                 let mut response_buf = vec![0u8; len];
                 recv_stream.read_exact(&mut response_buf).await?;
+
+                {
+                    let mut pool = peer.stream_pool.lock().await;
+                    pool.release((send_stream, recv_stream));
+                }
 
                 Ok::<_, MeshTransportError>(())
             }

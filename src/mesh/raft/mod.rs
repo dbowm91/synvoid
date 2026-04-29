@@ -25,9 +25,9 @@ pub use network::MeshRaftNetwork;
 pub use network::MeshRaftNetworkFactory;
 pub use state_machine::{
     GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage,
-    GlobalRegistryStateMachine,
+    GlobalRegistryStateMachine, GlobalRegistryTypeConfig,
     Namespace, OrgPublicKey, ThreatIntel, GlobalNodeRevocationList,
-    StateMachineValue, RaftCommand,
+    StateMachineValue, RaftCommand, NodeId,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -76,11 +76,10 @@ impl MeshTransport {
             nonce,
         };
 
-        let (mut send_stream, _) = peer
-            .connection
-            .open_bi()
-            .await
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, recv_stream) = {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.acquire().await
+        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let encoded = query
             .encode()
@@ -94,6 +93,11 @@ impl MeshTransport {
             .write_all(&encoded)
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.release((send_stream, recv_stream));
+        }
 
         tracing::debug!("Sent stream route query to peer {}: {}", peer_id, query_id);
         Ok(())
@@ -615,11 +619,10 @@ impl MeshTransport {
         query_id: &str,
         upstream_id: &str,
     ) -> Result<(), MeshTransportError> {
-        let (mut send_stream, _) = peer
-            .connection
-            .open_bi()
-            .await
-            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let (mut send_stream, recv_stream) = {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.acquire().await
+        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let sequence = self.config.routing.query_sequence.next();
         let timestamp = MeshMessage::generate_timestamp();
@@ -646,6 +649,11 @@ impl MeshTransport {
             .write_all(&encoded)
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.release((send_stream, recv_stream));
+        }
 
         Ok(())
     }

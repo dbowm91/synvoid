@@ -2605,7 +2605,10 @@ impl MeshTransport {
 
         if let Some(peer) = self.peer_connections.get(peer_id) {
             let result = async {
-                let (mut send_stream, mut recv_stream) = peer.connection.open_bi().await?;
+                let (mut send_stream, mut recv_stream) = {
+                    let mut pool = peer.stream_pool.lock().await;
+                    pool.acquire().await
+                }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
                 let msg = MeshMessage::PeerHealthCheck {
                     peer_id: self.config.node_id().into(),
@@ -2628,6 +2631,11 @@ impl MeshTransport {
                 }
                 let mut buf = vec![0u8; len];
                 recv_stream.read_exact(&mut buf).await?;
+
+                {
+                    let mut pool = peer.stream_pool.lock().await;
+                    pool.release((send_stream, recv_stream));
+                }
 
                 Ok::<_, MeshTransportError>(())
             }
