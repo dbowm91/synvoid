@@ -1,6 +1,9 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::main::MainConfig;
+use crate::mesh::protocol::MeshMessageSigner;
+use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::process::{CommandClient, MasterCommand, PidFileManager};
 
 pub fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
@@ -357,4 +360,86 @@ auto_scale = true
 
     println!("Config file updated: {:?}", main_config_path);
     println!("Admin token has been set in [admin] section");
+}
+
+pub fn handle_export_threat_feed(
+    sign_with: &Option<PathBuf>,
+    site_id: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_dir = PathBuf::from("config");
+    let main_config_path = config_dir.join("main.toml");
+
+    if !main_config_path.exists() {
+        return Err(format!("Config not found at {:?}", main_config_path).into());
+    }
+
+    let main_config = match MainConfig::from_file(&main_config_path) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to load config: {}", e).into()),
+    };
+
+    let mesh_config = match main_config.tunnel.mesh {
+        Some(m) => m,
+        None => return Err("Mesh is not enabled - cannot export threat feed".into()),
+    };
+
+    let node_id = mesh_config.node_id();
+    let node_role = mesh_config.role;
+
+    let (_signing_key, signer) = if let Some(ref key_path) = sign_with {
+        let key_data = std::fs::read(key_path)?;
+        if key_data.len() != 32 {
+            return Err("Signing key must be 32 bytes (Ed25519)".into());
+        }
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(&key_data);
+        let signer = MeshMessageSigner::new(key_array);
+        (Some(key_array), Some(signer))
+    } else if let Some(ref genesis) = mesh_config.genesis_key {
+        if let Some(private_key) = &genesis.private_key {
+            let signer = MeshMessageSigner::new(*private_key);
+            (Some(*private_key), Some(signer))
+        } else {
+            return Err("No signing key available. Use --sign-with to provide a key file.".into());
+        }
+    } else if let Some(signing_key_bytes) = mesh_config.signing_key() {
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(signing_key_bytes);
+        let signer = MeshMessageSigner::new(key_array);
+        (Some(key_array), Some(signer))
+    } else {
+        return Err("No signing key available. Use --sign-with to provide a key file.".into());
+    };
+
+    let threat_intel_config = mesh_config.threat_intel.clone();
+
+    let block_store = Arc::new(crate::block_store::BlockStore::new(
+        false,
+        None,
+        Default::default(),
+    ));
+    let internal_config = threat_intel_config.to_internal();
+
+    let threat_manager = ThreatIntelligenceManager::new(
+        internal_config,
+        block_store,
+        node_id.clone(),
+        node_role,
+        signer.as_ref().map(|s| Arc::new(s.clone())),
+    );
+
+    let signer = signer.as_ref().expect("Signer was validated above");
+    let signer_pk_bytes: [u8; 32] = signer
+        .get_public_key_bytes()
+        .as_slice()
+        .try_into()
+        .map_err(|_| "Invalid public key length")?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&signer_pk_bytes)
+        .map_err(|_| "Invalid Ed25519 public key")?;
+    let payload = threat_manager.create_signed_feed(site_id, &verifying_key);
+
+    let json = serde_json::to_string_pretty(&payload)?;
+    println!("{}", json);
+
+    Ok(())
 }
