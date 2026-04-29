@@ -283,6 +283,7 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | `wasm_components.md` | WASM component model patterns |
 | `dht_scoping.md` | DHT site isolation and scoping patterns |
 | `threat_feed_production.md` | Production and signing of threat intel feeds |
+| `raft_consensus.md` | Raft consensus integration for global control plane |
 
 ## Recently Completed Items
 
@@ -306,20 +307,42 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W5.2 | macOS Sandboxing | Implemented `SeatbeltSandbox` using macOS sandbox_init with dynamic Scheme profile generation. Basic/Strict modes supported. Enable `macos-sandbox` feature for actual enforcement. | 2026-04-29 |
 | W5.3 | Lock-Free BufferPool | Replaced `parking_lot::Mutex<VecDeque>` with Thread-Local Cache (16 buffers/tier) and Treiber Stack (lock-free). Hot path acquire checks TLS first, release pushes to TLS first. All 26 tests pass. | 2026-04-29 |
 | T1 | Threat Feed Production CLI | Implemented `ThreatIntelligenceManager::create_signed_feed()` for producing signed feeds, and `--export-threat-feed` CLI command with Ed25519 key loading (file, genesis, or config). Unit tests verify signable content format matches `ThreatFeedClient`. | 2026-04-29 |
+| W6.1 | Raft Foundation | Integrated openraft with MeshMessage::Raft variant. Created MeshRaftNetwork/Factory wrapping MeshBackendPool. | 2026-04-29 |
+| W6.2 | Raft State Machine | Implemented GlobalRegistryStateMachine and GlobalRegistryLogStorage with rusqlite persistence. Namespace: Org, Intel, Revocation. | 2026-04-29 |
+| W6.3 | Raft-Aware Client | Created RaftAwareClient with ConsistentRead RPC for Edge/Origin nodes. DHT fallback when Raft unreachable. | 2026-04-29 |
+| W6.4 | Trust Transition | Added RaftCommitNotification. Updated OrgKeyManager and peer_auth to accept either 2/3 signatures OR Raft attestation. | 2026-04-29 |
 
 ## Known Issues
 
 There are no known incomplete items. All items from `plans/future_work.md` have been verified and completed (or explicitly skipped where appropriate):
 
 - **D7 God module splits**: Skipped due to "no capability reversions" requirement
-- All W1.x, W2.x, W3.x, W4.x items: Verified and implemented
+- All W1.x, W2.x, W3.x, W4.x, W5.x, W6.x items: Verified and implemented
 
-## Branch Recovery Note
+## Architecture Notes
 
-During a previous session, several wave branches (W1.2, W2.1-W2.4, W3.2) were created but their changes were not merged to HEAD before the session ended. This branch (`wave-final`) recovered and verified the following implementations:
-- W1.2: `fuzz/fuzz_early_parse.rs`, `fuzz/fuzz_protocol_proto_decode.rs`
-- W2.1: Zero-copy HTTP proxying in `src/http/server.rs`
-- W2.2: Zero-copy HTTP/3 proxying in `src/http3/server.rs`
-- W2.3: LRU cache in `src/mesh/dht/routing/table.rs`
-- W2.4: QUIC stream pooling in `src/tunnel/quic/client.rs`
-- W3.2: WASM Component Model (`src/plugin/plugin.wit`, updated `wasm_runtime.rs`)
+### Overseer/Master/Worker IPC
+
+The overseer/master/worker architecture uses:
+- Unix domain sockets for IPC
+- `Message` enum in `src/process/ipc.rs` for communication
+- `ProcessManager` for worker lifecycle
+- Health checks via IPC heartbeat messages
+
+### Mesh Backend Pool
+
+`BackendType::Mesh` variant is dispatched in the HTTP server via `mesh_backend_pool`. Key files:
+- `src/mesh/backend.rs:109-303` — `MeshBackend`/`MeshBackendPool`
+- `src/mesh/proxy.rs` — `MeshProxy` for routing
+
+### Node Roles
+
+Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN).
+
+### Raft Consensus (Wave 6)
+
+Global nodes form a Raft cluster for strong consistency. Key files:
+- `src/mesh/raft/mod.rs` — Raft module exports
+- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory
+- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine and GlobalRegistryLogStorage
+- `src/mesh/raft/client.rs` — RaftAwareClient for ConsistentRead RPC
