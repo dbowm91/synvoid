@@ -305,6 +305,7 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W5.1 | Windows Sandboxing | Implemented `WindowsSandbox` using Windows Job Objects with memory limits (256MB process, 512MB job), KillOnJobClose, and DEP/ASLR mitigation policies via `src/platform/sandbox.rs:610-785`. | 2026-04-29 |
 | W5.2 | macOS Sandboxing | Implemented `SeatbeltSandbox` using macOS sandbox_init with dynamic Scheme profile generation. Basic/Strict modes supported. Enable `macos-sandbox` feature for actual enforcement. | 2026-04-29 |
 | W5.3 | Lock-Free BufferPool | Replaced `parking_lot::Mutex<VecDeque>` with Thread-Local Cache (16 buffers/tier) and Treiber Stack (lock-free). Hot path acquire checks TLS first, release pushes to TLS first. All 26 tests pass. | 2026-04-29 |
+| T1 | Threat Feed Production CLI | Implemented `ThreatIntelligenceManager::create_signed_feed()` for producing signed feeds, and `--export-threat-feed` CLI command with Ed25519 key loading (file, genesis, or config). Unit tests verify signable content format matches `ThreatFeedClient`. | 2026-04-29 |
 
 ## Known Issues
 

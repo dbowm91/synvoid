@@ -47,9 +47,23 @@ Before signing, the indicators must be hashed into a single string to prevent ta
 Global nodes can export their current threat database to a signed feed file.
 
 ```bash
-# Recommended implementation (WIP)
-maluwaf --export-threat-feed --site <site_id> --sign-with <path_to_private_key> --out feed.json
+# Export all indicators as signed JSON
+maluwaf --export-threat-feed
+
+# Export with a specific signing key (32-byte raw Ed25519 private key)
+maluwaf --export-threat-feed --sign-with /path/to/private_key
+
+# Export indicators filtered by site scope
+maluwaf --export-threat-feed --site-id mysite
+
+# Combine options
+maluwaf --export-threat-feed --sign-with /path/to/private_key --site-id mysite
 ```
+
+Key loading precedence:
+1. `--sign-with PATH` - Raw 32-byte Ed25519 private key file
+2. Genesis key from config
+3. Configured node signing key
 
 ### B. Automated Quorum Signing
 For high-integrity feeds, use the quorum system to require multiple global nodes to sign off on a feed before it is published.
