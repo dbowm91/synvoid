@@ -2,7 +2,7 @@
 
 ## Overview
 
-Wave 6 implemented Raft consensus for the MaluWAF Global Control Plane, replacing the previous quorum-based signature approach that required 2/3 of Global nodes to manually sign records.
+Wave 6-7 implemented Raft consensus for the MaluWAF Global Control Plane, replacing the previous quorum-based signature approach that required 2/3 of Global nodes to manually sign records.
 
 ## Architecture
 
@@ -14,8 +14,10 @@ Wave 6 implemented Raft consensus for the MaluWAF Global Control Plane, replacin
 | `MeshRaftNetworkFactory` | `src/mesh/raft/network.rs` | Creates `MeshRaftNetwork` instances per target |
 | `GlobalRegistryStateMachine` | `src/mesh/raft/state_machine.rs` | RaftStateMachine impl using rusqlite |
 | `GlobalRegistryLogStorage` | `src/mesh/raft/state_machine.rs` | RaftLogStorage impl for log persistence |
+| `GlobalRegistryTypeConfig` | `src/mesh/raft/state_machine.rs` | RaftTypeConfig impl for GlobalRegistry |
+| `RaftInstance` | `src/mesh/raft/instance.rs` | Wraps openraft::Raft with lifecycle management |
 | `RaftAwareClient` | `src/mesh/raft/client.rs` | ConsistentRead RPC for Edge/Origin nodes |
-| `RaftCommitNotification` | `src/mesh/raft/mod.rs` | Leader commit broadcast message |
+| `RaftSnapshotManager` | `src/mesh/raft/instance.rs` | Point-in-time snapshots using rusqlite backup API |
 
 ### Namespaces
 
@@ -26,6 +28,28 @@ pub enum Namespace {
     Org,        // Organization public keys
     Intel,      // Threat intelligence indicators
     Revocation, // Global node revocation list
+}
+```
+
+## RaftTypeConfig Implementation
+
+```rust
+pub struct GlobalRegistryTypeConfig;
+
+impl RaftTypeConfig for GlobalRegistryTypeConfig {
+    type D = RaftCommand;                            // Application data (Set/Delete commands)
+    type R = ();                                    // Response type (empty for now)
+    type NodeId = u64;                              // Node ID type
+    type Node = BasicNode;                          // Node with address info
+    type Term = u64;                                // Term number
+    type LeaderId = LeaderId<u64, NodeId>;          // Leader identification
+    type Vote = openraft::Vote<LeaderId<u64, NodeId>>;
+    type Entry = Entry<CommittedLeaderId<u64>, RaftCommand, NodeId, BasicNode>;
+    type SnapshotData = Cursor<Vec<u8>>;            // In-memory snapshot
+    type AsyncRuntime = openraft::impls::TokioRuntime;
+    type Responder<T> = OneshotResponder<GlobalRegistryTypeConfig, T>;
+    type Batch<T> = Vec<T>;
+    type ErrorSource = AnyError;
 }
 ```
 
@@ -45,7 +69,9 @@ where
     C::NodeId: std::fmt::Display + Send + 'static,
     C::Node: Send + 'static,
 {
-    // append_entries, vote, full_snapshot methods
+    async fn append_entries(...);
+    async fn vote(...);
+    async fn full_snapshot(...);  // Returns Unsupported error
 }
 ```
 
@@ -90,6 +116,7 @@ pub enum RaftMsgType {
     AppendEntriesResponse,
     InstallSnapshot,
     InstallSnapshotResponse,
+    ClientProposal,  // For client_write() calls
 }
 ```
 
@@ -102,6 +129,85 @@ pub struct RaftCommitNotification {
     pub namespace: Namespace,
     pub key_id: String,
     pub timestamp: u64,
+}
+```
+
+## RaftInstance - Cluster Lifecycle
+
+```rust
+pub struct RaftInstance {
+    pub raft: Arc<Raft<GlobalRegistryTypeConfig, GlobalRegistryStateMachine>>,
+    pub registry: GlobalRegistry,
+    pub network_factory: MeshRaftNetworkFactory,
+    node_id: u64,
+}
+
+impl RaftInstance {
+    pub async fn new(...) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>;
+    pub async fn initialize(&self, cluster_nodes: Vec<u64>) -> Result<(), ...>;
+    pub async fn add_node(&self, node_id: u64) -> Result<(), ...>;
+    pub async fn remove_node(&self, node_id: u64) -> Result<(), ...>;
+    pub async fn client_write(&self, command: RaftCommand) -> Result<u64, ...>;
+    pub async fn is_leader(&self) -> bool;
+    pub async fn wait_for_leader(&self, timeout: Duration) -> Result<u64, ...>;
+}
+```
+
+## Client Write Correction (W7.4)
+
+The RaftAwareClient now uses `client_write()` instead of raw `AppendEntries`:
+
+```rust
+impl RaftAwareClient {
+    pub async fn raft_write_local(&self, namespace: Namespace, key: String, value: Vec<u8>) -> Result<u64, RaftAwareClientError> {
+        let command = RaftCommand::Set { namespace, key, value };
+        let resp = self.raft_instance.as_ref().unwrap().raft.client_write(command).await?;
+        Ok(resp.log_id.index)
+    }
+}
+```
+
+## Global Registry State Machine
+
+Uses rusqlite for persistence with full `RaftStateMachine` trait implementation:
+
+```rust
+pub struct GlobalRegistryStateMachine {
+    db: Arc<Mutex<Connection>>,
+}
+
+#[add_async_trait]
+impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
+    async fn applied_state(&mut self) -> Result<(Option<LogIdOf<GlobalRegistryTypeConfig>>, StoredMembershipOf<GlobalRegistryTypeConfig>), io::Error>;
+    async fn apply<Strm>(&mut self, entries: Strm) -> Result<(), io::Error>;
+    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder;
+    async fn begin_receiving_snapshot(&mut self) -> Result<Cursor<Vec<u8>>, io::Error>;
+    async fn install_snapshot(&mut self, meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>, snapshot: Cursor<Vec<u8>>) -> Result<(), io::Error>;
+    async fn get_current_snapshot(&mut self) -> Result<Option<SnapshotOf<GlobalRegistryTypeConfig>>, io::Error>;
+}
+```
+
+## SQLite Snapshots (W7.5)
+
+Point-in-time snapshotting using rusqlite backup API:
+
+```rust
+pub struct RaftSnapshotManager {
+    db_path: PathBuf,
+}
+
+impl RaftSnapshotManager {
+    pub fn create_point_in_time_snapshot(&self, target_path: &PathBuf) -> Result<(), ...> {
+        let source = rusqlite::Connection::open(&self.db_path)?;
+        let mut target = rusqlite::Connection::open(target_path)?;
+        let backup = rusqlite::backup::Backup::new(&source, &mut target)?;
+        backup.run_to_completion(5, Duration::from_millis(250), None)?;
+        Ok(())
+    }
+
+    pub fn restore_from_snapshot(snapshot_path: &PathBuf, db_path: &PathBuf) -> Result<(), ...>;
+    pub fn compact_database(&self) -> Result<(), ...>;
+    pub fn get_snapshot_path(&self, snapshot_id: &str) -> PathBuf;
 }
 ```
 
@@ -150,7 +256,8 @@ cargo test --test integration_test
 |------|---------|
 | `src/mesh/raft/mod.rs` | Module exports and types |
 | `src/mesh/raft/network.rs` | MeshRaftNetwork and Factory |
-| `src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine and LogStorage |
+| `src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig |
 | `src/mesh/raft/client.rs` | RaftAwareClient for Edge/Origin |
+| `src/mesh/raft/instance.rs` | RaftInstance and RaftSnapshotManager |
 | `src/mesh/org_key_manager.rs` | Raft commit path in OrgKeyManager |
 | `src/mesh/peer_auth.rs` | Dual verification (quorum OR Raft) |

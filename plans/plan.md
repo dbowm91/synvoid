@@ -1,14 +1,14 @@
 # MaluWAF Implementation Plan
 
-**Status**: Wave 1-6 Complete (Wave 7 Active)
+**Status**: All Waves Complete
 **Last Updated**: 2026-04-29
-**Verification Completed**: 2026-04-29 (Wave 6)
+**Verification Completed**: 2026-04-29 (Wave 7)
 
 ---
 
 ## Overview
 
-Waves 1-6 are **COMPLETE**, providing a solid foundation for the Raft consensus layer. **Wave 7: Raft Integration & Hardening** is now active to fully wire the consensus layer into the Global Control Plane and replace the legacy DHT-based authority.
+All waves 1-7 are **COMPLETE**. The implementation provides a solid foundation for the Raft consensus layer fully wired into the Global Control Plane, replacing the legacy DHT-based authority.
 
 **Wave 1-7 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
@@ -16,41 +16,54 @@ Waves 1-6 are **COMPLETE**, providing a solid foundation for the Raft consensus 
 - Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
 - Wave 4: Security & Resilience (W4.1-W4.2)
 - Wave 5: OS Foundations & Core Optimization (W5.1-W5.3)
-- Wave 6: Mesh Consensus Foundations (W6.1-W6.4) [COMPLETE]
-- **Wave 7: Raft Integration & Hardening (W7.1-W7.5) [ACTIVE]**
+- Wave 6: Mesh Consensus Foundations (W6.1-W6.4)
+- **Wave 7: Raft Integration & Hardening (W7.1-W7.5) [COMPLETE]**
 
 ---
 
-## Active Plan: Wave 7 - Raft Integration & Hardening
+## Completed: Wave 7 - Raft Integration & Hardening
 
 | # | Task | Description | Status |
 |---|------|-------------|--------|
-| **W7.1** | **Storage Layer Traits** | Implement `openraft::RaftStateMachine` and `RaftLogStorage` for `rusqlite` backends. | **IN PROGRESS** |
-| **W7.2** | **RPC Handler Integration** | Wire `/raft` POST endpoint in `MeshProxy` to route messages to the internal `Raft` instance. | **PLANNED** |
-| **W7.3** | **Cluster Lifecycle & Init** | Implement Global node bootstrap, join logic, and leadership monitoring. | **PLANNED** |
-| **W7.4** | **Client Write Correction** | Update `RaftAwareClient` to use `client_write` (Proposals) instead of raw `AppendEntries`. | **PLANNED** |
-| **W7.5** | **SQLite Snapshots** | Implement point-in-time snapshotting using SQLite's backup API for log compaction. | **PLANNED** |
+| **W7.1** | **Storage Layer Traits** | Implement `openraft::RaftStateMachine` and `RaftLogStorage` for `rusqlite` backends. | **COMPLETE** |
+| **W7.2** | **RPC Handler Integration** | Wire `/raft` POST endpoint in `MeshProxy` to route messages to the internal `Raft` instance. | **COMPLETE** |
+| **W7.3** | **Cluster Lifecycle & Init** | Implement Global node bootstrap, join logic, and leadership monitoring. | **COMPLETE** |
+| **W7.4** | **Client Write Correction** | Update `RaftAwareClient` to use `client_write` (Proposals) instead of raw `AppendEntries`. | **COMPLETE** |
+| **W7.5** | **SQLite Snapshots** | Implement point-in-time snapshotting using SQLite's backup API for log compaction. | **COMPLETE** |
 
-### W7.1: Storage Layer Traits (IN PROGRESS)
-- Implement `RaftTypeConfig` for the `GlobalRegistry` types.
-- Map `GlobalRegistryStateMachine` methods to `RaftStateMachine` async trait.
-- Map `GlobalRegistryLogStorage` methods to `RaftLogStorage` async trait.
-- Ensure strict serializability of log entries in `rusqlite`.
+### W7.1: Storage Layer Traits (COMPLETE)
+- Implemented `GlobalRegistryTypeConfig` for `GlobalRegistry` types
+- `RaftLogReader` for log entry reading with rusqlite
+- `RaftLogStorage` with append, truncate_after, purge methods
+- `RaftSnapshotBuilder` for state machine snapshotting
+- `RaftStateMachine` with apply, install_snapshot, get_current_snapshot
+- Uses `#[add_async_trait]` macro from openraft_macros
 
-### W7.2: RPC Handler Integration (PLANNED)
-- Add `/raft` route to `src/mesh/proxy.rs`.
-- Implement `postcard` deserialization for `RaftPayload`.
-- Dispatch to `raft.append_entries()`, `raft.vote()`, etc. based on `RaftMsgType`.
+### W7.2: RPC Handler Integration (COMPLETE)
+- Added `/raft` POST endpoint handler in MeshTransport via RaftInstance
+- Added `ClientProposal` to `RaftMsgType` for client write operations
+- `handle_raft_message()` routes Raft RPCs to `RaftInstance.client_write()`
+- `MeshMessage::Raft` variant properly deserialized and dispatched
 
-### W7.3: Cluster Lifecycle & Init (PLANNED)
-- Update `src/mesh/backend.rs` to initialize `openraft::Raft` instance on Global nodes.
-- Implement genesis bootstrap (Node 1 initializes cluster).
-- Implement dynamic membership updates (Node N joins existing cluster).
+### W7.3: Cluster Lifecycle & Init (COMPLETE)
+- Created `RaftInstance` struct wrapping `openraft::Raft`
+- `initialize()` method for cluster bootstrap with nodes
+- `wait_for_leader()` for leadership detection
+- Node management methods (add_node, remove_node)
+- Leadership monitoring via `is_leader()` and `get_leader_id()`
 
-### W7.4: Client Write Correction (PLANNED)
-- Update `src/mesh/protocol.rs` to add `RaftMsgType::ClientWrite`.
-- Update `RaftAwareClient::raft_write` to send command proposals to the Leader.
-- Leader node calls `raft.client_write(command)` and returns commit index.
+### W7.4: Client Write Correction (COMPLETE)
+- `RaftAwareClient` now uses `client_write()` instead of raw `AppendEntries`
+- Added `raft_write_local()` and `raft_write_via_global()` methods
+- `set_raft_instance()` for Edge/Origin nodes to access Global Raft
+- `ClientProposal` variant added to `RaftMsgType` enum
+
+### W7.5: SQLite Snapshots (COMPLETE)
+- `RaftSnapshotManager` using rusqlite backup API
+- `create_point_in_time_snapshot()` for log compaction
+- `restore_from_snapshot()` for recovery
+- `compact_database()` using VACUUM
+- `get_snapshot_path()` for snapshot file management
 
 ---
 
@@ -88,12 +101,6 @@ Waves 1-6 are **COMPLETE**, providing a solid foundation for the Raft consensus 
 - Updated `OrgKeyManager` with `commit_key_to_raft()` method
 - `peer_auth.rs` now accepts either 2/3 quorum signatures OR Raft attestation
 - Raft commit IS the cryptographic proof of majority consensus
-
----
-
-## Active Plan: Wave 7 - Future Enhancements
-
-Wave 6 implementation is complete. Future enhancements will be documented in `plans/future_work.md`.
 
 ---
 
@@ -152,6 +159,11 @@ Wave 6 implementation is complete. Future enhancements will be documented in `pl
 | W6.2 | Raft State Machine | Implemented GlobalRegistryStateMachine and GlobalRegistryLogStorage with rusqlite. | 2026-04-29 |
 | W6.3 | Raft-Aware Client | Created RaftAwareClient with ConsistentRead RPC and DHT fallback. | 2026-04-29 |
 | W6.4 | Trust Transition | Added RaftCommitNotification, updated OrgKeyManager and peer_auth for dual verification. | 2026-04-29 |
+| W7.1 | Storage Layer Traits | Implemented RaftStateMachine and RaftLogStorage with GlobalRegistryTypeConfig. All storage traits use rusqlite backend. | 2026-04-29 |
+| W7.2 | RPC Handler Integration | Added /raft endpoint, ClientProposal to RaftMsgType, handle_raft_message() in MeshTransport. | 2026-04-29 |
+| W7.3 | Cluster Lifecycle | Created RaftInstance wrapping openraft::Raft with initialize(), wait_for_leader(), add_node(), remove_node(). | 2026-04-29 |
+| W7.4 | Client Write Correction | RaftAwareClient now uses client_write() instead of AppendEntries. Added raft_write_local(), raft_write_via_global(). | 2026-04-29 |
+| W7.5 | SQLite Snapshots | RaftSnapshotManager with point-in-time snapshots using backup API, VACUUM compaction. | 2026-04-29 |
 
 ---
 
@@ -216,4 +228,10 @@ cargo check --features post-quantum
 
 ## Historical Context
 
-All waves 1-4 were implemented and verified between 2026-04-27 and 2026-04-28. The full history of completed items is maintained in AGENTS.md under "Recently Completed Items."
+All waves 1-7 were implemented and verified between 2026-04-27 and 2026-04-29. The full history of completed items is maintained in AGENTS.md under "Recently Completed Items."
+
+---
+
+## Future Work
+
+All planned waves (1-7) are complete. For future enhancements, see `plans/future_work.md`.

@@ -311,13 +311,18 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W6.2 | Raft State Machine | Implemented GlobalRegistryStateMachine and GlobalRegistryLogStorage with rusqlite persistence. Namespace: Org, Intel, Revocation. | 2026-04-29 |
 | W6.3 | Raft-Aware Client | Created RaftAwareClient with ConsistentRead RPC for Edge/Origin nodes. DHT fallback when Raft unreachable. | 2026-04-29 |
 | W6.4 | Trust Transition | Added RaftCommitNotification. Updated OrgKeyManager and peer_auth to accept either 2/3 signatures OR Raft attestation. | 2026-04-29 |
+| W7.1 | Storage Layer Traits | Implemented GlobalRegistryTypeConfig, RaftStateMachine, RaftLogStorage, RaftLogReader, RaftSnapshotBuilder with rusqlite. Uses #[add_async_trait] macro. | 2026-04-29 |
+| W7.2 | RPC Handler Integration | Added /raft endpoint via RaftInstance, ClientProposal to RaftMsgType, handle_raft_message() in MeshTransport. | 2026-04-29 |
+| W7.3 | Cluster Lifecycle | Created RaftInstance wrapping openraft::Raft with initialize(), wait_for_leader(), add_node(), remove_node() methods. | 2026-04-29 |
+| W7.4 | Client Write Correction | RaftAwareClient uses client_write() instead of AppendEntries. Added raft_write_local(), raft_write_via_global(), set_raft_instance(). | 2026-04-29 |
+| W7.5 | SQLite Snapshots | RaftSnapshotManager with point-in-time snapshots using rusqlite backup API, VACUUM compaction, get_snapshot_path(). | 2026-04-29 |
 
 ## Known Issues
 
-There are no known incomplete items. All items from `plans/future_work.md` have been verified and completed (or explicitly skipped where appropriate):
+There are no known incomplete items. All items from `plans/plan.md` have been verified and completed (or explicitly skipped where appropriate):
 
 - **D7 God module splits**: Skipped due to "no capability reversions" requirement
-- All W1.x, W2.x, W3.x, W4.x, W5.x, W6.x items: Verified and implemented
+- All W1.x, W2.x, W3.x, W4.x, W5.x, W6.x, W7.x items: Verified and implemented
 
 ## Architecture Notes
 
@@ -339,10 +344,11 @@ The overseer/master/worker architecture uses:
 
 Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN).
 
-### Raft Consensus (Wave 6)
+### Raft Consensus (Wave 6-7)
 
 Global nodes form a Raft cluster for strong consistency. Key files:
 - `src/mesh/raft/mod.rs` — Raft module exports
 - `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory
-- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine and GlobalRegistryLogStorage
+- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine and GlobalRegistryLogStorage (with full RaftStateMachine/RaftLogStorage traits)
 - `src/mesh/raft/client.rs` — RaftAwareClient for ConsistentRead RPC
+- `src/mesh/raft/instance.rs` — RaftInstance wrapping openraft::Raft with client_write(), initialize(), wait_for_leader()
