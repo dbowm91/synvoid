@@ -1092,6 +1092,7 @@ pub enum RaftMsgType {
     AppendEntriesResponse,
     InstallSnapshot,
     InstallSnapshotResponse,
+    ClientProposal,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

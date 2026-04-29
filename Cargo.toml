@@ -138,7 +138,7 @@ brotli = "6"
 walkdir = "2"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 # TLS + Post-Quantum Cryptography
 tokio-rustls = "0.26"

@@ -12,7 +12,8 @@ use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::broadcast;
 
-use crate::mesh::protocol::{HealthStatus, MeshMessage};
+use crate::mesh::protocol::{HealthStatus, MeshMessage, ArcStr};
+use crate::mesh::raft::instance::RaftInstance;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
 impl MeshTransport {
@@ -2442,6 +2443,13 @@ impl MeshTransport {
                 );
                 self.handle_serverless_invoke_response(&response).await?;
             }
+            MeshMessage::Raft {
+                target_node_id,
+                payload,
+            } => {
+                tracing::debug!("Received Raft message for target {} via stream", target_node_id);
+                self.handle_raft_message(target_node_id.to_string(), payload, send_stream).await?;
+            }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");
             }
@@ -2597,6 +2605,80 @@ impl MeshTransport {
                 response.function_name
             );
         }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_raft_message(
+        &self,
+        target_node_id: String,
+        payload: crate::mesh::protocol::RaftPayload,
+        mut send_stream: &mut quinn::SendStream,
+    ) -> Result<(), MeshTransportError> {
+        let local_node_id = self.config.node_id();
+        if target_node_id != local_node_id {
+            tracing::warn!(
+                "Received Raft message for node {} but local node is {} - forwarding not implemented",
+                target_node_id,
+                local_node_id
+            );
+            return Ok(());
+        }
+
+        let instance = {
+            let guard = self.raft_instance.read();
+            guard.clone()
+        };
+
+        let response_data = match payload.msg_type {
+            crate::mesh::protocol::RaftMsgType::ClientProposal => {
+                let command: crate::mesh::raft::state_machine::RaftCommand = match postcard::from_bytes(&payload.data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize Raft command: {}", e);
+                        return Ok(());
+                    }
+                };
+
+                if let Some(ref inst) = instance {
+                    match inst.client_write(command).await {
+                        Ok(commit_index) => {
+                            let response = crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
+                                request_id: ArcStr::from(uuid::Uuid::new_v4().to_string()),
+                                value: Some(commit_index.to_le_bytes().to_vec()),
+                                leader_node_id: Some(ArcStr::from(local_node_id.to_string())),
+                                timestamp: crate::utils::safe_unix_timestamp(),
+                            };
+                            Some(response.encode().map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Raft client_write failed: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    tracing::warn!("Received Raft message but no Raft instance available");
+                    None
+                }
+            }
+            crate::mesh::protocol::RaftMsgType::AppendEntries
+            | crate::mesh::protocol::RaftMsgType::VoteRequest => {
+                tracing::debug!("Received internal Raft RPC type {:?} - dispatching via network factory", payload.msg_type);
+                None
+            }
+            _ => {
+                tracing::warn!("Unhandled Raft message type: {:?}", payload.msg_type);
+                None
+            }
+        };
+
+        if let Some(data) = response_data {
+            let len = (data.len() as u32).to_be_bytes();
+            send_stream.write_all(&len).await
+                .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
+            send_stream.write_all(&data).await
+                .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
+        }
+
         Ok(())
     }
 

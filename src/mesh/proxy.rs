@@ -1848,6 +1848,10 @@ impl MeshProxy {
         }
     }
 
+    pub fn get_transport(&self) -> Arc<RwLock<Option<Arc<MeshTransport>>>> {
+        self.transport.clone()
+    }
+
     pub async fn announce_upstream(
         &self,
         upstream_id: &str,

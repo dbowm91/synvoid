@@ -1,9 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::RwLock;
+
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::dht::RecordStoreManager;
 use crate::mesh::protocol::{MeshMessage, ArcStr};
+use crate::mesh::raft::instance::RaftInstance;
 use crate::mesh::raft::state_machine::{Namespace, RaftCommand};
 use crate::mesh::transport::MeshTransport;
 use crate::mesh::MeshConfig;
@@ -44,6 +47,7 @@ pub struct RaftAwareClient {
     transport: Arc<MeshTransport>,
     config: Arc<MeshConfig>,
     record_store: Option<Arc<RecordStoreManager>>,
+    raft_instance: Arc<RwLock<Option<Arc<RaftInstance>>>>,
 }
 
 impl RaftAwareClient {
@@ -58,10 +62,57 @@ impl RaftAwareClient {
             transport,
             config,
             record_store,
+            raft_instance: Arc::new(RwLock::new(None)),
         }
     }
 
+    pub async fn set_raft_instance(&mut self, instance: Arc<RaftInstance>) {
+        *self.raft_instance.write().await = Some(instance);
+    }
+
     pub async fn raft_write(
+        &self,
+        namespace: Namespace,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<u64, RaftAwareClientError> {
+        if self.config.role.is_global() {
+            return self.raft_write_local(namespace, key, value).await;
+        }
+        self.raft_write_via_global(namespace, key, value).await
+    }
+
+    async fn raft_write_local(
+        &self,
+        namespace: Namespace,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<u64, RaftAwareClientError> {
+        let raft_instance_guard = self.raft_instance.read().await;
+        let instance = match raft_instance_guard.as_ref() {
+            Some(i) => i,
+            None => {
+                return Err(RaftAwareClientError::RaftWriteFailed("No local Raft instance".to_string()));
+            }
+        };
+
+        if !instance.is_leader().await {
+            return Err(RaftAwareClientError::NotLeader);
+        }
+
+        let command = RaftCommand::Set {
+            namespace,
+            key,
+            value,
+        };
+
+        let commit_index = instance.client_write(command).await
+            .map_err(|e| RaftAwareClientError::RaftWriteFailed(e.to_string()))?;
+
+        Ok(commit_index)
+    }
+
+    async fn raft_write_via_global(
         &self,
         namespace: Namespace,
         key: String,
@@ -75,7 +126,6 @@ impl RaftAwareClient {
         let leader_node_id = self.find_leader_node_id().await
             .ok_or(RaftAwareClientError::RaftUnreachable)?;
 
-        let request_id = uuid::Uuid::new_v4().to_string();
         let timeout = Duration::from_secs(10);
 
         let command = RaftCommand::Set {
@@ -88,7 +138,7 @@ impl RaftAwareClient {
             .map_err(|e| RaftAwareClientError::RaftWriteFailed(e.to_string()))?;
 
         let raft_payload = crate::mesh::protocol::RaftPayload {
-            msg_type: crate::mesh::protocol::RaftMsgType::AppendEntries,
+            msg_type: crate::mesh::protocol::RaftMsgType::ClientProposal,
             data: command_bytes,
         };
 
@@ -102,7 +152,7 @@ impl RaftAwareClient {
         {
             let pending = self.transport.get_pending_consistent_read_responses().await;
             let mut guard = pending.lock().await;
-            guard.insert(request_id.clone(), response_tx);
+            guard.insert(uuid::Uuid::new_v4().to_string(), response_tx);
         }
 
         self.transport.send_message_to_peer(&leader_node_id, &raft_msg).await

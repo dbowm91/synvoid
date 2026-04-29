@@ -114,6 +114,12 @@ pub struct GlobalRegistryStateMachine {
     db: Arc<Mutex<Connection>>,
 }
 
+impl Clone for GlobalRegistryStateMachine {
+    fn clone(&self) -> Self {
+        Self { db: self.db.clone() }
+    }
+}
+
 unsafe impl Send for GlobalRegistryStateMachine {}
 unsafe impl Sync for GlobalRegistryStateMachine {}
 
@@ -240,6 +246,12 @@ impl GlobalRegistryStateMachine {
 
 pub struct GlobalRegistryLogStorage {
     db: Arc<Mutex<Connection>>,
+}
+
+impl Clone for GlobalRegistryLogStorage {
+    fn clone(&self) -> Self {
+        Self { db: self.db.clone() }
+    }
 }
 
 unsafe impl Send for GlobalRegistryLogStorage {}
@@ -375,11 +387,31 @@ pub struct GlobalRegistryConfig {
     pub db_path: PathBuf,
 }
 
+impl Clone for GlobalRegistryConfig {
+    fn clone(&self) -> Self {
+        Self {
+            node_id: self.node_id,
+            db_path: self.db_path.clone(),
+        }
+    }
+}
+
 pub struct GlobalRegistry {
     config: GlobalRegistryConfig,
     state_machine: GlobalRegistryStateMachine,
     log_storage: GlobalRegistryLogStorage,
     voting_nodes: std::sync::RwLock<Vec<NodeId>>,
+}
+
+impl Clone for GlobalRegistry {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            state_machine: self.state_machine.clone(),
+            log_storage: self.log_storage.clone(),
+            voting_nodes: std::sync::RwLock::new(self.voting_nodes.read().unwrap().clone()),
+        }
+    }
 }
 
 impl GlobalRegistry {

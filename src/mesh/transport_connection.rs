@@ -65,6 +65,7 @@ impl MeshTransport {
             serverless_manager: self.serverless_manager.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
+            raft_instance: self.raft_instance.clone(),
         }
     }
 

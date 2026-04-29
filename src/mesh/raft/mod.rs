@@ -17,10 +17,12 @@
 //! Edge and Origin nodes use ConsistentRead RPC to query the cluster.
 
 pub mod client;
+pub mod instance;
 pub mod network;
 pub mod state_machine;
 
 pub use client::{ConsistentReadResult, ConsistentReadSource, RaftAwareClient, RaftAwareClientError};
+pub use instance::{RaftInstance, RaftInitConfig, RaftSnapshotManager};
 pub use network::MeshRaftNetwork;
 pub use network::MeshRaftNetworkFactory;
 pub use state_machine::{

@@ -107,7 +107,7 @@ pub struct MeshTransport {
         Mutex<HashMap<String, oneshot::Sender<crate::mesh::protocol::ServerlessInvokeResponse>>>,
     >,
     pub(crate) pending_consistent_read_responses: Arc<
-        Mutex<HashMap<String, oneshot::Sender<crate::mesh::protocol::MeshMessage>>>,
+        Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::mesh::protocol::MeshMessage>>>,
     >,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -151,6 +151,7 @@ pub struct MeshTransport {
         Arc<RwLock<Option<Arc<crate::serverless::manager::ServerlessManager>>>>,
     #[cfg(feature = "dns")]
     pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
+    pub(crate) raft_instance: Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>>,
 }
 
 #[derive(Clone)]
@@ -264,6 +265,7 @@ impl Clone for MeshTransport {
             serverless_manager: self.serverless_manager.clone(),
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
+            raft_instance: self.raft_instance.clone(),
         }
     }
 }
@@ -492,6 +494,7 @@ impl MeshTransport {
             serverless_manager: Arc::new(RwLock::new(None)),
             #[cfg(feature = "dns")]
             ownership_challenge_store: Arc::new(RwLock::new(OwnershipChallengeStore::new())),
+            raft_instance: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -623,6 +626,14 @@ impl MeshTransport {
 
     pub fn set_mlkem_session_manager(&mut self, manager: Arc<SessionManager<MlKem768>>) {
         self.mlkem_session_manager = Some(manager);
+    }
+
+    pub fn set_raft_instance(&self, instance: Arc<crate::mesh::raft::instance::RaftInstance>) {
+        *self.raft_instance.write() = Some(instance);
+    }
+
+    pub fn get_raft_instance(&self) -> Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>> {
+        self.raft_instance.clone()
     }
 
     pub fn announce_edge_key(&self, edge_id: &str, public_key: &str) {

@@ -1,10 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
-
-use bytes::Bytes;
-use http_body_util::Full;
-use http::Request;
-use http_body_util::BodyExt;
+use std::time::Duration;
+use std::collections::HashMap;
 
 use openraft::RaftTypeConfig;
 use openraft::network::v2::RaftNetworkV2;
@@ -14,15 +11,17 @@ use openraft::raft::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, V
 use openraft::errors::{RPCError, Unreachable, StreamingError};
 use openraft::OptionalSend;
 use openraft::type_config::alias::{SnapshotOf, VoteOf};
+use tokio::sync::RwLock;
 
 use crate::mesh::backend::MeshBackendPool;
-use crate::mesh::protocol::{RaftMsgType, RaftPayload as MeshRaftPayload};
+use crate::mesh::protocol::{RaftMsgType, RaftPayload as MeshRaftPayload, MeshMessage, ArcStr};
 use crate::mesh::MeshProxy;
 
 pub struct MeshRaftNetwork<C: RaftTypeConfig> {
     backend: Arc<MeshBackendPool>,
     proxy: Arc<MeshProxy>,
     target: String,
+    pending_responses: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     _phantom: std::marker::PhantomData<C>,
 }
 
@@ -32,6 +31,7 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
             backend,
             proxy,
             target,
+            pending_responses: Arc::new(RwLock::new(HashMap::new())),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -46,27 +46,60 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
         let body = postcard::to_stdvec(&payload)
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
-        let request = Request::builder()
-            .method(http::Method::POST)
-            .uri("/raft")
-            .header(http::header::CONTENT_TYPE, "application/octet-stream")
-            .body(Full::<Bytes>::new(Bytes::from(body)))
+        let request_id = uuid::Uuid::new_v4().to_string();
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        {
+            let mut pending = self.pending_responses.write().await;
+            pending.insert(request_id.clone(), response_tx);
+        }
+
+        let raft_msg = MeshMessage::Raft {
+            target_node_id: ArcStr::from(self.target.clone()),
+            payload: MeshRaftPayload {
+                msg_type,
+                data: body,
+            },
+        };
+
+        let transport_arc = self.proxy.get_transport();
+        let transport = {
+            let guard = transport_arc.read();
+            guard.clone()
+        };
+
+        let transport = match transport {
+            Some(t) => t,
+            None => {
+                return Err(RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "Transport not available",
+                ))));
+            }
+        };
+
+        transport.send_message_to_peer(&self.target, &raft_msg).await
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
-        let resp = self
-            .proxy
-            .route_request(&self.target, request)
+        let timeout = Duration::from_secs(5);
+        tokio::time::timeout(timeout, response_rx)
             .await
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+            .map_err(|_| RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Raft RPC timeout",
+            ))))?
+            .map_err(|_| RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Response channel closed",
+            ))))
+    }
 
-        let body = resp
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
-            .to_bytes();
-
-        Ok(body.to_vec())
+    pub async fn handle_response(&self, request_id: &str, data: Vec<u8>) {
+        let mut pending = self.pending_responses.write().await;
+        if let Some(sender) = pending.remove(request_id) {
+            let _ = sender.send(data);
+        }
     }
 }
 
@@ -121,6 +154,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct MeshRaftNetworkFactory {
     backend: Arc<MeshBackendPool>,
     proxy: Arc<MeshProxy>,
