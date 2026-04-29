@@ -16,10 +16,11 @@ use crate::mesh::config::MeshNodeRole;
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::protocol::{
-    MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType,
+    MeshMessage, MeshPeerInfo, MESH_MESSAGE_VERSION, ThreatIndicator, ThreatSeverity, ThreatType,
 };
 use crate::mesh::reputation::{ReputationConfig, ReputationManager};
 use crate::metrics;
+use crate::waf::threat_intel::feed_client::{ThreatFeedIndicator, ThreatFeedPayload};
 
 const DEFAULT_SYNC_INTERVAL_SECS: u64 = 300;
 
@@ -1928,6 +1929,95 @@ impl ThreatIntelligenceManager {
             }
 
             self.publish_indicator_to_dht(&entry.indicator);
+        }
+    }
+
+    pub fn get_feed_signable_content(&self, indicators: &[ThreatIndicator]) -> String {
+        let indicator_hashes: Vec<String> = indicators
+            .iter()
+            .map(|i| {
+                format!(
+                    "{}:{}:{}",
+                    i.threat_type as u8,
+                    i.indicator_value,
+                    i.severity as u8
+                )
+            })
+            .collect();
+
+        format!(
+            "{}:{}:{}",
+            MESH_MESSAGE_VERSION,
+            indicators.len(),
+            indicator_hashes.join(",")
+        )
+    }
+
+    pub fn create_signed_feed(
+        &self,
+        site_id: Option<&str>,
+        _key: &ed25519_dalek::VerifyingKey,
+    ) -> ThreatFeedPayload {
+        let now = crate::mesh::safe_unix_timestamp();
+        let version = MESH_MESSAGE_VERSION as u64;
+
+        let indicators = self.indicators.read();
+        let filtered: Vec<ThreatIndicator> = if let Some(site) = site_id {
+            indicators
+                .values()
+                .filter(|entry| {
+                    entry.indicator.site_scope.is_empty()
+                        || entry.indicator.site_scope == site
+                })
+                .map(|entry| entry.indicator.clone())
+                .collect()
+        } else {
+            indicators.values().map(|entry| entry.indicator.clone()).collect()
+        };
+        drop(indicators);
+
+        let feed_indicators: Vec<ThreatFeedIndicator> = filtered
+            .iter()
+            .map(|i| ThreatFeedIndicator {
+                threat_type: i.threat_type as u8,
+                indicator_value: i.indicator_value.clone(),
+                severity: i.severity as u8,
+                reason: i.reason.clone(),
+                ttl_seconds: i.ttl_seconds,
+                source_node_id: i.source_node_id.clone(),
+                site_scope: if i.site_scope.is_empty() {
+                    None
+                } else {
+                    Some(i.site_scope.clone())
+                },
+                rate_limit_requests: i.rate_limit_requests,
+                rate_limit_window_secs: i.rate_limit_window_secs,
+                suspicious_pattern: i.suspicious_pattern.clone(),
+            })
+            .collect();
+
+        let signable_content = self.get_feed_signable_content(&filtered);
+
+        let (signature, signer_public_key) = if let Some(ref signer) = self.signer {
+            let sig = signer.sign(signable_content.as_bytes());
+            let pk = signer.get_public_key();
+            (sig, pk)
+        } else {
+            (Vec::new(), String::new())
+        };
+
+        let signature_b64 = if !signature.is_empty() {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&signature)
+        } else {
+            String::new()
+        };
+
+        ThreatFeedPayload {
+            version,
+            timestamp: now,
+            indicators: feed_indicators,
+            signature: signature_b64,
+            signer_public_key,
         }
     }
 
