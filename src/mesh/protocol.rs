@@ -1056,6 +1056,13 @@ pub enum MeshMessage {
         leader_node_id: Option<ArcStr>,
         current_term: Option<u64>,
     },
+    RaftCommitNotification {
+        leader_id: ArcStr,
+        commit_index: u64,
+        namespace: crate::mesh::raft::state_machine::Namespace,
+        key_id: ArcStr,
+        timestamp: u64,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

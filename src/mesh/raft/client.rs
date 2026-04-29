@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::dht::RecordStoreManager;
 use crate::mesh::protocol::{MeshMessage, ArcStr};
-use crate::mesh::raft::state_machine::Namespace;
+use crate::mesh::raft::state_machine::{Namespace, RaftCommand};
 use crate::mesh::transport::MeshTransport;
 use crate::mesh::MeshConfig;
 
@@ -33,6 +33,10 @@ pub enum RaftAwareClientError {
     DhtFailed,
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
+    #[error("Raft write failed: {0}")]
+    RaftWriteFailed(String),
+    #[error("Not the leader")]
+    NotLeader,
 }
 
 pub struct RaftAwareClient {
@@ -55,6 +59,81 @@ impl RaftAwareClient {
             config,
             record_store,
         }
+    }
+
+    pub async fn raft_write(
+        &self,
+        namespace: Namespace,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<u64, RaftAwareClientError> {
+        let global_nodes = self.get_global_node_ids().await;
+        if global_nodes.is_empty() {
+            return Err(RaftAwareClientError::NoGlobalNodes);
+        }
+
+        let leader_node_id = self.find_leader_node_id().await
+            .ok_or(RaftAwareClientError::RaftUnreachable)?;
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let timeout = Duration::from_secs(10);
+
+        let command = RaftCommand::Set {
+            namespace: namespace.clone(),
+            key: key.clone(),
+            value: value.clone(),
+        };
+
+        let command_bytes = crate::serialization::serialize(&command)
+            .map_err(|e| RaftAwareClientError::RaftWriteFailed(e.to_string()))?;
+
+        let raft_payload = crate::mesh::protocol::RaftPayload {
+            msg_type: crate::mesh::protocol::RaftMsgType::AppendEntries,
+            data: command_bytes,
+        };
+
+        let raft_msg = MeshMessage::Raft {
+            target_node_id: ArcStr::from(leader_node_id.clone()),
+            payload: raft_payload,
+        };
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        {
+            let pending = self.transport.get_pending_consistent_read_responses().await;
+            let mut guard = pending.lock().await;
+            guard.insert(request_id.clone(), response_tx);
+        }
+
+        self.transport.send_message_to_peer(&leader_node_id, &raft_msg).await
+            .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
+
+        let response = tokio::time::timeout(timeout, response_rx)
+            .await
+            .map_err(|_| RaftAwareClientError::Timeout(timeout))?
+            .map_err(|_| RaftAwareClientError::RaftUnreachable)?;
+
+        match response {
+            MeshMessage::ConsistentReadResponse { value: Some(v), .. } => {
+                let commit_index = u64::from_le_bytes(v.try_into()
+                    .map_err(|_| RaftAwareClientError::InvalidResponse("Invalid commit index".to_string()))?);
+                Ok(commit_index)
+            }
+            MeshMessage::NotLeader { .. } => {
+                Err(RaftAwareClientError::NotLeader)
+            }
+            _ => {
+                Err(RaftAwareClientError::InvalidResponse("Unexpected response".to_string()))
+            }
+        }
+    }
+
+    async fn find_leader_node_id(&self) -> Option<String> {
+        let peers = self.transport.get_topology().get_all_peers().await;
+        peers
+            .into_iter()
+            .find(|p| p.role.is_global())
+            .map(|p| p.node_id)
     }
 
     pub async fn consistent_read(

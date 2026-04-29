@@ -29,3 +29,29 @@ pub use state_machine::{
     Namespace, OrgPublicKey, ThreatIntel, GlobalNodeRevocationList,
     StateMachineValue, RaftCommand,
 };
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RaftCommitNotification {
+    pub leader_id: String,
+    pub commit_index: u64,
+    pub namespace: state_machine::Namespace,
+    pub key_id: String,
+    pub timestamp: u64,
+}
+
+impl RaftCommitNotification {
+    pub fn new(
+        leader_id: String,
+        commit_index: u64,
+        namespace: state_machine::Namespace,
+        key_id: String,
+    ) -> Self {
+        Self {
+            leader_id,
+            commit_index,
+            namespace,
+            key_id,
+            timestamp: crate::mesh::safe_unix_timestamp(),
+        }
+    }
+}

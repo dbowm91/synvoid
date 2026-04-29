@@ -3,6 +3,7 @@ use crate::mesh::config::MeshNodeRole;
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::record_store::RecordStoreManager;
 use crate::mesh::organization::{OrgKey, OrgPublicKey, Organization, QuorumSignature};
+use crate::mesh::raft::{Namespace, RaftAwareClient};
 use base64::Engine;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -39,6 +40,7 @@ pub struct OrgKeyManager {
     mesh_sender: RwLock<Option<Sender<MeshMessage>>>,
     transport: RwLock<Option<Arc<MeshTransport>>>,
     cert_manager: RwLock<Option<Arc<parking_lot::RwLock<MeshCertManager>>>>,
+    raft_client: RwLock<Option<Arc<RaftAwareClient>>>,
 }
 
 impl OrgKeyManager {
@@ -53,6 +55,7 @@ impl OrgKeyManager {
             mesh_sender: RwLock::new(None),
             transport: RwLock::new(None),
             cert_manager: RwLock::new(None),
+            raft_client: RwLock::new(None),
         }
     }
 
@@ -70,6 +73,10 @@ impl OrgKeyManager {
 
     pub fn set_cert_manager(&self, cert_manager: Arc<parking_lot::RwLock<MeshCertManager>>) {
         *self.cert_manager.write() = Some(cert_manager);
+    }
+
+    pub fn set_raft_client(&self, raft_client: Arc<RaftAwareClient>) {
+        *self.raft_client.write() = Some(raft_client);
     }
 
     pub async fn create_organization(
@@ -120,6 +127,97 @@ impl OrgKeyManager {
             timestamp: crate::mesh::safe_unix_timestamp(),
             sequence_number: 1,
             ttl_seconds: 3600,
+            source_node_id: self.node_id.clone(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+        };
+        record.content_hash = record.compute_content_hash();
+
+        store.store_record(record, 100);
+
+        Ok(())
+    }
+
+    pub async fn commit_key_to_raft(&self, org: &Organization) -> Result<(), OrgKeyError> {
+        if !self.node_role.is_global() {
+            return Err(OrgKeyError::NotAuthorized(
+                "Only global nodes can commit keys to Raft".to_string(),
+            ));
+        }
+
+        let raft_client = self.raft_client.read().clone()
+            .ok_or_else(|| OrgKeyError::NotAuthorized("Raft client not configured".to_string()))?;
+
+        let org_key = org.org_key.as_ref()
+            .ok_or_else(|| OrgKeyError::OrgKeyNotFound(org.org_id.clone()))?;
+
+        let pub_key = OrgPublicKey::new(org.org_id.clone(), org_key);
+        let key_id = pub_key.key_id.clone();
+
+        let value = crate::serialization::serialize(&pub_key)
+            .map_err(|e| OrgKeyError::SerializationError(e.to_string()))?;
+
+        match raft_client.raft_write(Namespace::Org, pub_key.key_id.clone(), value).await {
+            Ok(commit_index) => {
+                tracing::info!(
+                    "OrgPublicKey {} committed to Raft at index {}",
+                    key_id,
+                    commit_index
+                );
+
+                if let Some(transport) = self.transport.read().as_ref() {
+                    let leader_id = transport.get_node_id();
+                    let notification = crate::mesh::raft::RaftCommitNotification::new(
+                        leader_id,
+                        commit_index,
+                        Namespace::Org,
+                        key_id.clone(),
+                    );
+                    self.broadcast_raft_commit_notification(&notification).await?;
+                }
+
+                let mut keys = self.org_public_keys.write();
+                keys.insert(org.org_id.clone(), pub_key);
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to commit OrgPublicKey to Raft: {}", e);
+                Err(OrgKeyError::NotAuthorized(format!(
+                    "Raft commit failed: {}",
+                    e
+                )))
+            }
+        }
+    }
+
+    async fn broadcast_raft_commit_notification(
+        &self,
+        notification: &crate::mesh::raft::RaftCommitNotification,
+    ) -> Result<(), OrgKeyError> {
+        let store = self.record_store.read().clone()
+            .ok_or(OrgKeyError::RecordStoreNotSet)?;
+
+        let dht_key = format!(
+            "raft_commit:{}:{}",
+            match notification.namespace {
+                Namespace::Org => "org",
+                Namespace::Intel => "intel",
+                Namespace::Revocation => "revocation",
+            },
+            notification.key_id
+        );
+
+        let value = crate::serialization::serialize(notification)
+            .map_err(|e| OrgKeyError::SerializationError(e.to_string()))?;
+
+        let mut record = crate::mesh::protocol::DhtRecord {
+            key: dht_key,
+            value,
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 86400,
             source_node_id: self.node_id.clone(),
             signature: Vec::new(),
             signer_public_key: None,

@@ -139,7 +139,8 @@ impl MeshMessage {
             Self::Raft { .. } => MessageCategory::System,
             Self::ConsistentReadRequest { .. }
             | Self::ConsistentReadResponse { .. }
-            | Self::NotLeader { .. } => MessageCategory::System,
+            | Self::NotLeader { .. }
+            | Self::RaftCommitNotification { .. } => MessageCategory::System,
         }
     }
 

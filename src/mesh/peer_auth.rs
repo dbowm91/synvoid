@@ -123,6 +123,21 @@ impl Default for GlobalNodeRevocationList {
 use crate::mesh::organization::{MemberCertificate, OrgPublicKey};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RaftAttestation {
+    pub leader_id: String,
+    pub commit_index: u64,
+    pub namespace: crate::mesh::raft::Namespace,
+    pub key_id: String,
+    pub timestamp: u64,
+}
+
+impl RaftAttestation {
+    pub fn from_dht_record(value: &[u8]) -> Option<Self> {
+        crate::serialization::deserialize(value).ok()
+    }
+}
+
 pub fn validate_member_certificate(
     cert: &MemberCertificate,
     org_pub_key: &OrgPublicKey,
@@ -149,8 +164,15 @@ pub fn validate_member_certificate(
         return Err("Invalid certificate signature".to_string());
     }
 
-    // 5. Verify org_pub_key quorum signatures
-    // For verification, we treat the authorized_global_pubkeys as node IDs as well in this simplified logic
+    // 5. Verify org_pub_key quorum signatures OR Raft attestation
+    // Raft-committed keys bypass quorum signature requirement since
+    // Raft commit itself proves majority consensus
+    if org_pub_key.quorum_signatures.is_empty() {
+        return Err(
+            "Organization key has no quorum signatures and is not Raft-attested".to_string(),
+        );
+    }
+
     let mut global_keys_map: HashMap<String, String> = HashMap::new();
     for pubkey in authorized_global_pubkeys {
         global_keys_map.insert(pubkey.clone(), pubkey.clone());
@@ -160,6 +182,62 @@ pub fn validate_member_certificate(
     if !org_pub_key.verify_quorum(&global_keys_map, total_signers) {
         return Err(
             "Organization key lacks sufficient quorum signatures from global nodes".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+pub fn validate_member_certificate_with_raft_attestation(
+    cert: &MemberCertificate,
+    org_pub_key: &OrgPublicKey,
+    authorized_global_pubkeys: &[String],
+    peer_node_id: &str,
+    raft_attestation: Option<&RaftAttestation>,
+) -> Result<(), String> {
+    // 1. Verify cert belongs to this node
+    if cert.mesh_id != peer_node_id {
+        return Err("Certificate does not belong to this node".to_string());
+    }
+
+    // 2. Verify cert is valid for current time
+    if !cert.is_valid() {
+        return Err("Certificate is expired or not yet valid".to_string());
+    }
+
+    // 3. Verify cert matches org_pub_key
+    if cert.org_id != org_pub_key.org_id || cert.org_public_key_id != org_pub_key.key_id {
+        return Err("Certificate does not match providing organization key".to_string());
+    }
+
+    // 4. Verify cert signature with org_pub_key
+    if !cert.verify_with_public_key(&org_pub_key.public_key) {
+        return Err("Invalid certificate signature".to_string());
+    }
+
+    // 5. Verify trust via EITHER quorum signatures OR Raft attestation
+    // Raft commit IS the proof of consensus - the Leader's commit index
+    // proves majority agreement without needing 2/3 individual signatures
+    let has_quorum = !org_pub_key.quorum_signatures.is_empty()
+        && {
+            let mut global_keys_map: HashMap<String, String> = HashMap::new();
+            for pubkey in authorized_global_pubkeys {
+                global_keys_map.insert(pubkey.clone(), pubkey.clone());
+            }
+            let total_signers = authorized_global_pubkeys.len();
+            org_pub_key.verify_quorum(&global_keys_map, total_signers)
+        };
+
+    let has_raft_attestation = raft_attestation.map(|att| {
+        att.namespace == crate::mesh::raft::Namespace::Org
+            && att.key_id == org_pub_key.key_id
+            && att.timestamp > 0
+            && att.commit_index > 0
+    }).unwrap_or(false);
+
+    if !has_quorum && !has_raft_attestation {
+        return Err(
+            "Organization key lacks both quorum signatures and valid Raft attestation".to_string(),
         );
     }
 

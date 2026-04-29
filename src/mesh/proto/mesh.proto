@@ -285,6 +285,7 @@ message MeshMessage {
         ConsistentReadRequest consistent_read_request = 166;
         ConsistentReadResponse consistent_read_response = 167;
         NotLeader not_leader = 168;
+        RaftCommitNotification raft_commit_notification = 169;
     }
 }
 
@@ -1606,4 +1607,12 @@ message NotLeader {
     string request_id = 1;
     string leader_node_id = 2;
     uint64 current_term = 3;
+}
+
+message RaftCommitNotification {
+    string leader_id = 1;
+    uint64 commit_index = 2;
+    string namespace = 3;
+    string key_id = 4;
+    uint64 timestamp = 5;
 }

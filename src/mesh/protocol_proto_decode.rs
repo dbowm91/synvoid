@@ -1713,6 +1713,16 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     current_term: if r.current_term == 0 { None } else { Some(r.current_term) },
                 })
             }
+            proto::mesh_message::Payload::RaftCommitNotification(r) => {
+                Ok(MeshMessage::RaftCommitNotification {
+                    leader_id: r.leader_id.into(),
+                    commit_index: r.commit_index,
+                    namespace: crate::mesh::raft::state_machine::Namespace::from_str(&r.namespace)
+                        .unwrap_or(crate::mesh::raft::state_machine::Namespace::Org),
+                    key_id: r.key_id.into(),
+                    timestamp: r.timestamp,
+                })
+            }
         }
     }
 }

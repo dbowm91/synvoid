@@ -2620,6 +2620,24 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     current_term: current_term.unwrap_or(0),
                 })),
             },
+            MeshMessage::RaftCommitNotification {
+                leader_id,
+                commit_index,
+                namespace,
+                key_id,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 169,
+                payload: Some(proto::mesh_message::Payload::RaftCommitNotification(
+                    proto::RaftCommitNotification {
+                        leader_id: leader_id.to_string(),
+                        commit_index: *commit_index,
+                        namespace: namespace.as_str().to_string(),
+                        key_id: key_id.to_string(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
         }
     }
 }
