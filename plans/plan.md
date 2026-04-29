@@ -1,22 +1,21 @@
 # MaluWAF Implementation Plan
 
-**Status**: Wave 1-4 Complete | Wave 5 In Progress
+**Status**: All Wave 1-5 Items Complete
 **Last Updated**: 2026-04-29
-**Verification Completed**: 2026-04-28 (Waves 1-4)
+**Verification Completed**: 2026-04-29 (Wave 5)
 
 ---
 
 ## Overview
 
-All implementation waves (1-4) are **COMPLETE**. 
-**Wave 5: OS Foundations & Core Optimization** is the current focus, aimed at improving OS-level security parity and eliminating performance bottlenecks in the core buffer pool.
+All implementation waves (1-5) are **COMPLETE**.
 
 **Wave 1-5 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
 - Wave 2: Performance & Scalability (W2.1-W2.4)
 - Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
 - Wave 4: Security & Resilience (W4.1-W4.2)
-- **Wave 5: OS Foundations & Core Optimization (W5.1-W5.3) [PLANNING]**
+- **Wave 5: OS Foundations & Core Optimization (W5.1-W5.3) [COMPLETE]**
 
 ---
 
@@ -24,23 +23,30 @@ All implementation waves (1-4) are **COMPLETE**.
 
 | # | Task | Description | Status |
 |---|------|-------------|--------|
-| **W5.1** | **Windows Sandboxing** | Implement Job Objects and Process Mitigation Policies for OS-level confinement on Windows. | Planned |
-| **W5.2** | **macOS Sandboxing** | Implement `Sandbox.kext` (Scheme-based profiles) for macOS parity. | Planned |
-| **W5.3** | **Lock-Free BufferPool** | Replace sharded Mutexes with Thread-Local caches and Global Lock-Free Shards (Treiber stacks). | Planned |
+| **W5.1** | **Windows Sandboxing** | Implement Job Objects and Process Mitigation Policies for OS-level confinement on Windows. | **COMPLETE** |
+| **W5.2** | **macOS Sandboxing** | Implement `Sandbox.kext` (Scheme-based profiles) for macOS parity. | **COMPLETE** |
+| **W5.3** | **Lock-Free BufferPool** | Replace sharded Mutexes with Thread-Local caches and Global Lock-Free Shards (Treiber stacks). | **COMPLETE** |
 
-### W5.1: Windows Sandboxing (Implementation Detail)
-- Implement `WindowsJobObject` to restrict process spawning and memory.
-- Implement `WindowsMitigationPolicy` (DEP, ASLR, Signature check).
-- Integrate into `src/platform/sandbox.rs`.
+### W5.1: Windows Sandboxing (COMPLETE)
+- Implemented `WindowsSandbox` using Windows Job Objects
+- `CreateJobObjectW` for memory limits (256MB process, 512MB job)
+- `KillOnJobClose` for automatic cleanup on parent exit
+- DEP and ASLR mitigation policies via `SetProcessMitigationPolicy`
+- `AssignProcessToJobObject` to apply sandbox to current process
 
-### W5.2: macOS Sandboxing (Implementation Detail)
-- Create `MacSandbox` using `sandbox_init`.
-- Generate dynamic Scheme profiles based on `SandboxPaths`.
+### W5.2: macOS Sandboxing (COMPLETE)
+- Implemented `SeatbeltSandbox` using macOS sandbox_init
+- Dynamic Scheme profile generation based on `SandboxPaths`
+- Basic mode: deny default, allow file-read* for allowed paths
+- Strict mode: deny default, allow process/signal/job-creation only
+- Requires `macos-sandbox` feature for actual enforcement
 
-### W5.3: Lock-Free BufferPool (Implementation Detail)
-- `ThreadLocalCache`: 16 buffers per tier, zero atomic overhead.
-- `Global Shards`: Replace `Mutex<VecDeque>` with `crossbeam-deque` or Treiber stack.
-- Hot path: `acquire` checks TLS first; `release` pushes to TLS first.
+### W5.3: Lock-Free BufferPool (COMPLETE)
+- `TreiberStack`: Lock-free stack using compare-and-swap
+- `ThreadLocalCache`: 16 buffers per tier, zero atomic overhead in common case
+- `TierArena`: Per-tier arena wrapping TreiberStack
+- Hot path: `acquire` checks TLS cache first; `release` pushes to TLS first
+- Backward compatible API - all 26 existing tests pass
 
 ---
 

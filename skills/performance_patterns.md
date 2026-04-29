@@ -1172,3 +1172,146 @@ let (send, recv) = stream_pool.acquire().await?;
 let result = /* use streams */;
 stream_pool.release((send, recv));
 ```
+
+---
+
+## Lock-Free Buffer Pool (Treiber Stack + TLS Cache)
+
+For high-throughput HTTP proxying at 500K+ RPS, buffer allocation becomes a bottleneck. The lock-free buffer pool minimizes contention.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Thread 1                                 │
+│  ┌─────────────┐    ┌──────────────────────────────────┐   │
+│  │ TLS Cache   │───▶│ 16 slots per tier                │   │
+│  │ (hot path)  │    │ No atomics needed                │   │
+│  └─────────────┘    └──────────────────────────────────┘   │
+│         │                                                      │
+│         │ (if full)                                            │
+│         ▼                                                      │
+│  ┌─────────────┐    ┌──────────────────────────────────┐   │
+│  │ Global Pool │───▶│  Treiber Stack (lock-free)       │   │
+│  │             │    │  compare_exchange on AtomicPtr    │   │
+│  └─────────────┘    └──────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Treiber Stack Implementation
+
+```rust
+struct TreiberStack {
+    head: AtomicPtr<StackNode>,
+    len: AtomicUsize,
+}
+
+struct StackNode {
+    buf: BytesMut,
+    next: *mut StackNode,
+}
+
+impl TreiberStack {
+    fn push(&self, buf: BytesMut) {
+        let node = Box::into_raw(Box::new(StackNode {
+            buf,
+            next: std::ptr::null_mut(),
+        }));
+
+        let mut head = self.head.load(Ordering::Relaxed);
+        loop {
+            unsafe { (*node).next = head; }
+            match self.head.compare_exchange_weak(
+                head,
+                node,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                Err(h) => head = h,
+            }
+        }
+    }
+
+    fn pop(&self) -> Option<BytesMut> {
+        let mut head = self.head.load(Ordering::Acquire);
+        loop {
+            if head.is_null() { return None; }
+            match self.head.compare_exchange_weak(
+                head,
+                unsafe { (*head).next },
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_sub(1, Ordering::Relaxed);
+                    let node = unsafe { Box::from_raw(head) };
+                    return Some(node.buf);
+                }
+                Err(h) => head = h,
+            }
+        }
+    }
+}
+```
+
+### Hot Path Optimization
+
+**Acquire (fast path)**:
+```rust
+fn acquire_inner(&self, size: usize) -> PooledBuf {
+    // Check TLS cache first (zero atomics)
+    let tls_result = TLS_CACHE.with(|cache| {
+        if let Some(buf) = cache.pop(tier) {
+            let mut buf = buf;
+            buf.resize(size, 0);
+            self.metrics.record_acquire(tier, true);
+            return Some(PooledBuf { buf: Some(buf), tier, requested_size: size });
+        }
+        None
+    });
+
+    if let Some(buf) = tls_result {
+        return buf;
+    }
+
+    // Fall through to global Treiber stack
+    let (buf, tier) = shard.tier.arena.acquire(size);
+    // ...
+}
+```
+
+**Release (fast path)**:
+```rust
+impl Drop for PooledBuf {
+    fn drop(&mut self) {
+        if let Some(buf) = self.buf.take() {
+            TLS_CACHE.with(|cache| {
+                // Push to TLS first (no atomics)
+                if cache.len(self.tier) < TLS_CACHE_SIZE {
+                    cache.push(buf, self.tier);
+                } else {
+                    // Drain TLS to global when full
+                    POOL.with(|pool| pool.release_to_global(buf, self.tier));
+                }
+            });
+        }
+    }
+}
+```
+
+### Key Benefits
+
+1. **TLS cache hit**: ~2 pointer indirections, zero atomic operations
+2. **Global pool access**: Only when TLS is full, uses lock-free CAS
+3. **Reduced contention**: Different threads rarely hit same shard
+4. **Memory locality**: Threads tend to reuse their own buffers
+
+### Location
+
+`src/buffer/pool.rs:75-165` (TreiberStack)
+`src/buffer/pool.rs:187-264` (ThreadLocalCache)
+`src/buffer/pool.rs:385-435` (acquire_inner with TLS fast path)
