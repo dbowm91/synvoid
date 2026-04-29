@@ -2574,6 +2574,52 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     data: payload.data.clone(),
                 })),
             },
+            MeshMessage::ConsistentReadRequest {
+                request_id,
+                namespace,
+                key,
+                requesting_node_id,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 166,
+                payload: Some(proto::mesh_message::Payload::ConsistentReadRequest(
+                    proto::ConsistentReadRequest {
+                        request_id: request_id.to_string(),
+                        namespace: namespace.as_str().to_string(),
+                        key: key.to_string(),
+                        requesting_node_id: requesting_node_id.to_string(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
+            MeshMessage::ConsistentReadResponse {
+                request_id,
+                value,
+                leader_node_id,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 167,
+                payload: Some(proto::mesh_message::Payload::ConsistentReadResponse(
+                    proto::ConsistentReadResponse {
+                        request_id: request_id.to_string(),
+                        value: value.clone().unwrap_or_default(),
+                        leader_node_id: leader_node_id.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
+            MeshMessage::NotLeader {
+                request_id,
+                leader_node_id,
+                current_term,
+            } => proto::MeshMessage {
+                message_type: 168,
+                payload: Some(proto::mesh_message::Payload::NotLeader(proto::NotLeader {
+                    request_id: request_id.to_string(),
+                    leader_node_id: leader_node_id.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                    current_term: current_term.unwrap_or(0),
+                })),
+            },
         }
     }
 }

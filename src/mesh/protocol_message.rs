@@ -137,6 +137,9 @@ impl MeshMessage {
             | Self::AuthChallenge { .. }
             | Self::AuthResponse { .. } => MessageCategory::System,
             Self::Raft { .. } => MessageCategory::System,
+            Self::ConsistentReadRequest { .. }
+            | Self::ConsistentReadResponse { .. }
+            | Self::NotLeader { .. } => MessageCategory::System,
         }
     }
 
@@ -228,6 +231,7 @@ impl MeshMessage {
                 | Self::DhtSnapshotRequest { .. }
                 | Self::UpstreamOwnershipChallenge { .. }
                 | Self::UpstreamChallengeProof { .. }
+                | Self::ConsistentReadRequest { .. }
         )
     }
 

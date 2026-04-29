@@ -1688,6 +1688,31 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     },
                 })
             }
+            proto::mesh_message::Payload::ConsistentReadRequest(r) => {
+                Ok(MeshMessage::ConsistentReadRequest {
+                    request_id: r.request_id.into(),
+                    namespace: crate::mesh::raft::state_machine::Namespace::from_str(&r.namespace)
+                        .unwrap_or(crate::mesh::raft::state_machine::Namespace::Org),
+                    key: r.key.into(),
+                    requesting_node_id: r.requesting_node_id.into(),
+                    timestamp: r.timestamp,
+                })
+            }
+            proto::mesh_message::Payload::ConsistentReadResponse(r) => {
+                Ok(MeshMessage::ConsistentReadResponse {
+                    request_id: r.request_id.into(),
+                    value: if r.value.is_empty() { None } else { Some(r.value) },
+                    leader_node_id: if r.leader_node_id.is_empty() { None } else { Some(r.leader_node_id.into()) },
+                    timestamp: r.timestamp,
+                })
+            }
+            proto::mesh_message::Payload::NotLeader(r) => {
+                Ok(MeshMessage::NotLeader {
+                    request_id: r.request_id.into(),
+                    leader_node_id: if r.leader_node_id.is_empty() { None } else { Some(r.leader_node_id.into()) },
+                    current_term: if r.current_term == 0 { None } else { Some(r.current_term) },
+                })
+            }
         }
     }
 }

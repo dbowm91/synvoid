@@ -1038,6 +1038,24 @@ pub enum MeshMessage {
         target_node_id: ArcStr,
         payload: RaftPayload,
     },
+    ConsistentReadRequest {
+        request_id: ArcStr,
+        namespace: crate::mesh::raft::state_machine::Namespace,
+        key: ArcStr,
+        requesting_node_id: ArcStr,
+        timestamp: u64,
+    },
+    ConsistentReadResponse {
+        request_id: ArcStr,
+        value: Option<Vec<u8>>,
+        leader_node_id: Option<ArcStr>,
+        timestamp: u64,
+    },
+    NotLeader {
+        request_id: ArcStr,
+        leader_node_id: Option<ArcStr>,
+        current_term: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
