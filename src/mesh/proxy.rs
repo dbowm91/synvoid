@@ -385,8 +385,8 @@ impl MeshProxy {
                 v.split(',')
                     .find_map(|part| {
                         let part = part.trim();
-                        if part.starts_with("max-age=") {
-                            part[8..].parse::<u64>().ok().map(std::time::Duration::from_secs)
+                        if let Some(val) = part.strip_prefix("max-age=") {
+                            val.parse::<u64>().ok().map(std::time::Duration::from_secs)
                         } else {
                             None
                         }

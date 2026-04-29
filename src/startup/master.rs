@@ -520,7 +520,7 @@ async fn run_master(
 
     {
         let pm = process_manager.clone();
-        threat_feed_client.set_on_update_callback(move |timestamp, indicators| {
+        threat_feed_client.set_on_update_callback(move |_timestamp, indicators| {
             let pm_clone = pm.clone();
             let ipc_indicators: Vec<crate::process::ipc::ThreatIndicatorData> = indicators
                 .into_iter()

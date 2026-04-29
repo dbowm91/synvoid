@@ -15,7 +15,7 @@ pub mod windows;
 pub use windows::{windows_command_pipe_listener, windows_ipc_accept_loop};
 
 pub use commands::{
-    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
-    handle_stop,
+    handle_configtest, handle_export_threat_feed, handle_generatenewtoken, handle_generatetoken,
+    handle_rehash, handle_status, handle_stop,
 };
 pub use ipc::handle_worker_connection;

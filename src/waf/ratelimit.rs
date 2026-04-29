@@ -2,7 +2,7 @@ pub mod core;
 pub mod sliding;
 
 use indexmap::IndexMap;
-use metrics::{counter, gauge};
+use metrics::counter;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -22,7 +22,6 @@ pub use sliding::{
     SlidingWindowConfig, SlidingWindowLimiter,
 };
 
-const DEFAULT_SHARDS: usize = 64;
 use dashmap::DashMap;
 
 pub struct RateLimiterState {
@@ -303,7 +302,7 @@ impl RateLimiterManager {
         let site_id_str = site_id.unwrap_or("global");
 
         // Per-site IP limit check (Site Isolation)
-        let mut shards_entry = self.state.site_shards.entry(site_id_str.to_string()).or_insert_with(|| {
+        let shards_entry = self.state.site_shards.entry(site_id_str.to_string()).or_insert_with(|| {
             let num_shards = self.state.memory_config.num_shards.max(1);
             let mut shards = Vec::with_capacity(num_shards);
             for _ in 0..num_shards {

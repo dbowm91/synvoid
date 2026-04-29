@@ -84,6 +84,7 @@ pub struct ThreatFeedClient {
     http_client: crate::http_client::HttpClient,
     last_fetch: Arc<RwLock<u64>>,
     last_indicator_count: Arc<RwLock<usize>>,
+    #[allow(clippy::type_complexity)]
     on_update_callback: Arc<parking_lot::RwLock<Option<Box<dyn Fn(u64, Vec<ThreatIndicator>) + Send + Sync>>>>,
 }
 
@@ -392,20 +393,15 @@ impl ThreatFeedClient {
                     indicator.ttl_seconds,
                     indicator.site_scope.clone(),
                 );
-            } else {
+            } else if indicator.threat_type == ThreatType::DomainBlock {
                 let site_scope = indicator.site_scope.clone();
-                match indicator.threat_type {
-                    ThreatType::DomainBlock => {
-                        tracing::info!(
-                            "Feed domain block: {} (reason: {}, TTL: {}s, scope: {})",
-                            indicator.indicator_value,
-                            indicator.reason,
-                            indicator.ttl_seconds,
-                            site_scope
-                        );
-                    }
-                    _ => {}
-                }
+                tracing::info!(
+                    "Feed domain block: {} (reason: {}, TTL: {}s, scope: {})",
+                    indicator.indicator_value,
+                    indicator.reason,
+                    indicator.ttl_seconds,
+                    site_scope
+                );
             }
 
             threat_manager.add_feed_indicator(indicator);

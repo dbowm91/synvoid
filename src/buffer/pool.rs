@@ -132,6 +132,7 @@ impl TreiberStack {
         self.len.load(Ordering::Relaxed)
     }
 
+    #[cfg(test)]
     fn is_empty(&self) -> bool {
         self.head.load(Ordering::Acquire).is_null()
     }
@@ -298,6 +299,7 @@ impl BufferPool {
         (hasher.finish() as usize) % NUM_SHARDS
     }
 
+    #[allow(dead_code, clippy::needless_lifetimes)]
     fn get_tier<'a>(buf: &'a BytesMut, config: &BufferPoolConfig) -> BufferTier {
         let cap = buf.capacity();
         if cap <= config.small_buf_size {
