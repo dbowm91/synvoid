@@ -1,6 +1,6 @@
 # MaluWAF Implementation Plan
 
-**Status**: All Wave 1-5 Items Complete
+**Status**: Wave 1-5 Complete | Wave 6 In Progress
 **Last Updated**: 2026-04-29
 **Verification Completed**: 2026-04-29 (Wave 5)
 
@@ -9,17 +9,58 @@
 ## Overview
 
 All implementation waves (1-5) are **COMPLETE**.
+**Wave 6: Mesh Consensus & Trust Resiliency** is the current focus. It aims to incrementally migrate the global control plane from a complex Kademlia DHT to a more robust, Raft-based consensus model, while preserving existing, optimized mesh transports and avoiding immediate, disruptive replacement of the DHT.
 
-**Wave 1-5 Implementation Summary:**
+**Wave 1-6 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
 - Wave 2: Performance & Scalability (W2.1-W2.4)
 - Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
 - Wave 4: Security & Resilience (W4.1-W4.2)
-- **Wave 5: OS Foundations & Core Optimization (W5.1-W5.3) [COMPLETE]**
+- Wave 5: OS Foundations & Core Optimization (W5.1-W5.3)
+- **Wave 6: Mesh Consensus & Trust Resiliency (W6.1-W6.4) [PLANNING]**
 
 ---
 
-## Active Plan: Wave 5 - OS Foundations & Core Optimization
+## Active Plan: Wave 6 - Mesh Consensus & Trust Resiliency
+
+**Goal:** Incremental migration of the Global Control Plane from Kademlia DHT (eventual consistency) to Raft (strong consistency) to eliminate quorum deadlocks and simplify state management.
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| **W6.1** | **Raft Foundation (Parallel to DHT)** | Integrate `openraft` into the Global Node tier. Map Raft RPCs to existing PQC-secured QUIC mesh transports. | Planned |
+| **W6.2** | **Raft State Machine & Registry** | Implement the `GlobalRegistry` state machine for `OrgPublicKey` and `ThreatIntel`. | Planned |
+| **W6.3** | **Raft-Aware Client (Edge/Origin)** | Update non-Global nodes to query the Raft cluster for authoritative state. | Planned |
+| **W6.4** | **Consensus-Driven Trust Transition** | Transition from manual signature-hunting to Raft-commitment as the root of authority. | Planned |
+
+### W6.1: Raft Foundation & Transport Mapping
+- **Logic:** `openraft` requires a `RaftNetwork` implementation. Instead of a new port, we will multiplex Raft RPCs (AppendEntries, Vote, InstallSnapshot) over the existing `MeshMessage` protocol using a new `MeshMessage::Raft(RaftPayload)` variant.
+- **Context:** This preserves our investment in **ML-KEM-768 key exchange** and **Hybrid Ed25519+ML-DSA signatures**, as all Raft traffic will inherit these security properties automatically.
+- **Implementation:** Create `src/mesh/raft/network.rs` to wrap the `MeshBackendPool`.
+
+### W6.2: The Global Registry State Machine
+- **Logic:** The Raft state machine is a versioned key-value store where keys are structured as `(Namespace, ID)`. 
+- **Records:**
+  - `Namespace::Org`: Stores `OrgPublicKey`.
+  - `Namespace::Intel`: Stores signed threat indicators.
+  - `Namespace::Revocation`: Stores the `GlobalNodeRevocationList`.
+- **Storage:** Use `rusqlite` for the `RaftStorage` implementation (`src/mesh/raft/storage.rs`) to ensure the log and state machine survive process restarts (Master/Overseer lifecycle).
+
+### W6.3: Raft-Aware Clients (The "Observer" Role)
+- **Logic:** Edge and Origin nodes do **not** participate in the Raft consensus (they are not voters). However, they need "Strong Read" capabilities.
+- **Mechanism:** Implement a `ConsistentRead` RPC. An Edge node sends a query to any Global node; if that node is the Leader, it returns the value; if it's a Follower, it proxies to the Leader or returns a `NotLeader(LeaderId)` hint.
+- **Fallback:** If Raft is unreachable, nodes MUST fallback to the DHT, but marked as "Eventually Consistent/Potentially Stale."
+
+### W6.4: Quorum Deadlock & Trust Transition
+- **The Problem:** The current system requires 2/3 of Global nodes to manually sign a record and publish it to the DHT. If 1/3+1 nodes are partitioned, no new trust records can be created.
+- **The Solution:** In Raft, a record is "Authorized" the moment it is committed to the log. The Leader's commitment *is* the cryptographic proof of majority consensus.
+- **Transition Logic:**
+  1.  `OrgKeyManager` attempts to commit a new key to Raft.
+  2.  Once committed, the Leader broadcasts a `RaftCommitNotification` via the DHT (gossip) to notify nodes that a new authoritative record exists.
+  3.  Verification logic in `src/mesh/peer_auth.rs` is updated to accept **either** a 2/3 signature set (legacy) **or** a Raft-signed attestation from the current Leader.
+
+---
+
+## Completed: Wave 5 - OS Foundations & Core Optimization
 
 | # | Task | Description | Status |
 |---|------|-------------|--------|

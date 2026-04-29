@@ -231,6 +231,10 @@ tonic = { version = "0.14", features = ["gzip", "transport"] }
 tonic-reflection = "0.14"
 tonic-prost = "0.14"
 
+# Raft consensus for global nodes
+openraft = { version = "0.10.0-alpha.18", features = ["serde"] }
+openraft-legacy = "0.10.0-alpha.18"
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 chrono = "0.4"

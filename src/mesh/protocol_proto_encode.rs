@@ -2563,6 +2563,17 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::Raft {
+                target_node_id,
+                payload,
+            } => proto::MeshMessage {
+                message_type: 162,
+                payload: Some(proto::mesh_message::Payload::Raft(proto::RaftMessage {
+                    target_node_id: target_node_id.to_string(),
+                    msg_type: payload.msg_type as i32,
+                    data: payload.data.clone(),
+                })),
+            },
         }
     }
 }

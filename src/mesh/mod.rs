@@ -27,6 +27,7 @@ pub mod passover_key_exchange;
 pub mod peer_auth;
 pub mod protocol;
 pub mod proxy;
+pub mod raft;
 pub mod reputation;
 pub mod security;
 pub mod security_challenge;
@@ -114,6 +115,7 @@ pub use organization::{
 pub use passover_key_exchange::KeyExchangeService;
 pub use protocol::{MeshMessage, MessageCategory, ServerlessFunctionAnnounce};
 pub use proxy::MeshProxy;
+pub use raft::MeshRaftNetwork;
 pub use reputation::{
     PeerReputation, PeerReputationStats, ReputationConfig, ReputationEventType, ReputationManager,
     ThreatAcceptanceDecision,

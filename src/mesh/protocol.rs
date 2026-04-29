@@ -1034,6 +1034,10 @@ pub enum MeshMessage {
         signer_node_id: ArcStr,
         timestamp: u64,
     },
+    Raft {
+        target_node_id: ArcStr,
+        payload: RaftPayload,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1047,6 +1051,22 @@ pub enum OwnershipChallengeType {
         txt_record_name: String,
         txt_record_value: String,
     },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RaftPayload {
+    pub msg_type: RaftMsgType,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum RaftMsgType {
+    VoteRequest,
+    VoteResponse,
+    AppendEntries,
+    AppendEntriesResponse,
+    InstallSnapshot,
+    InstallSnapshotResponse,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

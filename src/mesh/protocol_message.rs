@@ -136,6 +136,7 @@ impl MeshMessage {
             | Self::Error { .. }
             | Self::AuthChallenge { .. }
             | Self::AuthResponse { .. } => MessageCategory::System,
+            Self::Raft { .. } => MessageCategory::System,
         }
     }
 

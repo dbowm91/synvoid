@@ -1670,6 +1670,24 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                 })
             }
+            proto::mesh_message::Payload::Raft(r) => {
+                let msg_type = match r.msg_type {
+                    0 => crate::mesh::protocol::RaftMsgType::VoteRequest,
+                    1 => crate::mesh::protocol::RaftMsgType::VoteResponse,
+                    2 => crate::mesh::protocol::RaftMsgType::AppendEntries,
+                    3 => crate::mesh::protocol::RaftMsgType::AppendEntriesResponse,
+                    4 => crate::mesh::protocol::RaftMsgType::InstallSnapshot,
+                    5 => crate::mesh::protocol::RaftMsgType::InstallSnapshotResponse,
+                    _ => crate::mesh::protocol::RaftMsgType::VoteRequest,
+                };
+                Ok(MeshMessage::Raft {
+                    target_node_id: r.target_node_id.into(),
+                    payload: crate::mesh::protocol::RaftPayload {
+                        msg_type,
+                        data: r.data,
+                    },
+                })
+            }
         }
     }
 }
