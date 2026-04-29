@@ -2047,3 +2047,126 @@ impl Clone for ThreatIntelligenceManager {
         self.clone_internal()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_indicator(value: &str, threat_type: ThreatType, severity: ThreatSeverity) -> ThreatIndicator {
+        ThreatIndicator {
+            threat_type,
+            indicator_value: value.to_string(),
+            severity,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: 1713523200,
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        }
+    }
+
+    fn create_test_manager() -> ThreatIntelligenceManager {
+        let config = ThreatIntelligenceConfigInternal {
+            enabled: true,
+            push_enabled: true,
+            sync_enabled: true,
+            sync_interval_secs: 300,
+            threat_sync_interval_secs: 60,
+            push_severity_threshold: ThreatSeverity::Medium,
+            min_ttl_seconds: 60,
+            max_indicators_per_message: 50,
+            hub_only_mode: false,
+            reputation_config: ReputationConfig::default(),
+            fanout_factor: 0.5,
+            re_announce_interval_secs: 300,
+            trusted_signers: Vec::new(),
+            behavioral_enabled: true,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
+        };
+        let block_store = Arc::new(BlockStore::new(false, None, Default::default()));
+        ThreatIntelligenceManager::new(
+            config,
+            block_store,
+            "test-node".to_string(),
+            MeshNodeRole::GLOBAL,
+            None,
+        )
+    }
+
+    #[test]
+    fn test_get_feed_signable_content_empty() {
+        let manager = create_test_manager();
+        let indicators: Vec<ThreatIndicator> = vec![];
+        let content = manager.get_feed_signable_content(&indicators, 1, 1713523200);
+        assert_eq!(content, "1:1713523200:0:");
+    }
+
+    #[test]
+    fn test_get_feed_signable_content_single_indicator() {
+        let manager = create_test_manager();
+        let indicators = vec![create_test_indicator("192.168.1.1", ThreatType::IpBlock, ThreatSeverity::High)];
+        let content = manager.get_feed_signable_content(&indicators, 1, 1713523200);
+        assert_eq!(content, "1:1713523200:1:1:192.168.1.1:3");
+    }
+
+    #[test]
+    fn test_get_feed_signable_content_multiple_indicators() {
+        let manager = create_test_manager();
+        let indicators = vec![
+            create_test_indicator("192.168.1.1", ThreatType::IpBlock, ThreatSeverity::High),
+            create_test_indicator("10.0.0.1", ThreatType::RateLimitViolation, ThreatSeverity::Medium),
+        ];
+        let content = manager.get_feed_signable_content(&indicators, 1, 1713523200);
+        assert_eq!(content, "1:1713523200:2:1:192.168.1.1:3,3:10.0.0.1:2");
+    }
+
+    #[test]
+    fn test_signable_content_matches_feed_client() {
+        use crate::waf::threat_intel::feed_client::ThreatFeedPayload;
+        use crate::waf::threat_intel::feed_client::ThreatFeedIndicator;
+
+        let manager = create_test_manager();
+        let indicators = vec![
+            create_test_indicator("192.168.1.1", ThreatType::IpBlock, ThreatSeverity::High),
+            create_test_indicator("10.0.0.1", ThreatType::RateLimitViolation, ThreatSeverity::Medium),
+        ];
+
+        let version = 1u64;
+        let timestamp = 1713523200u64;
+        let our_content = manager.get_feed_signable_content(&indicators, version, timestamp);
+
+        let feed_indicators: Vec<ThreatFeedIndicator> = indicators.iter().map(|i| {
+            ThreatFeedIndicator {
+                threat_type: i.threat_type as u8,
+                indicator_value: i.indicator_value.clone(),
+                severity: i.severity as u8,
+                reason: i.reason.clone(),
+                ttl_seconds: i.ttl_seconds,
+                source_node_id: i.source_node_id.clone(),
+                site_scope: None,
+                rate_limit_requests: None,
+                rate_limit_window_secs: None,
+                suspicious_pattern: None,
+            }
+        }).collect();
+
+        let payload = ThreatFeedPayload {
+            version,
+            timestamp,
+            indicators: feed_indicators,
+            signature: String::new(),
+            signer_public_key: String::new(),
+        };
+
+        let feed_client_content = crate::waf::threat_intel::feed_client::ThreatFeedClient::get_signable_content(&payload);
+
+        assert_eq!(our_content, feed_client_content, "Signable content must match ThreatFeedClient format");
+    }
+}

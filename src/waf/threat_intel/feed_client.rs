@@ -243,7 +243,7 @@ impl ThreatFeedClient {
         result
     }
 
-    fn get_signable_content(payload: &ThreatFeedPayload) -> String {
+    pub(crate) fn get_signable_content(payload: &ThreatFeedPayload) -> String {
         let indicator_hashes: Vec<String> = payload
             .indicators
             .iter()
