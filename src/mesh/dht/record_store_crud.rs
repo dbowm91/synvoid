@@ -36,45 +36,18 @@ impl RecordStoreManager {
         }
 
         if !record.signature.is_empty() {
-            if let Some(ref signer_pk) = record.signer_public_key {
-                if let Ok(pk_bytes) =
-                    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_pk)
-                {
-                    #[derive(serde::Serialize)]
-                    struct Signable<'a> {
-                        key: &'a str,
-                        source_node_id: &'a str,
-                        timestamp: u64,
-                    }
-                    let signable = crate::serialization::serialize(&Signable {
-                        key: &record.key,
-                        source_node_id: &record.source_node_id,
-                        timestamp: record.timestamp,
-                    })
-                    .unwrap_or_default();
-                    let signable_str = std::str::from_utf8(&signable).unwrap_or_default();
-                    if !crate::mesh::cert::verify_ed25519(
-                        signable_str,
-                        &record.signature,
-                        &pk_bytes,
-                    ) {
-                        tracing::warn!(
-                            "Record store: invalid signature for key {} from node {}",
-                            record.key,
-                            record.source_node_id
-                        );
-                        return false;
-                    }
-                } else {
+            if record.signer_public_key.is_none() || record.signer_public_key.as_ref().map(|s| s.is_empty()).unwrap_or(false) {
+                if !is_global {
                     tracing::warn!(
-                        "Record store: invalid public key format for key {}",
-                        record.key
+                        "Record store: missing signer public key for key {} from node {}",
+                        record.key,
+                        record.source_node_id
                     );
                     return false;
                 }
-            } else if !is_global {
+            } else if !crate::mesh::dht::signed::verify_dht_record_signature(&record) {
                 tracing::warn!(
-                    "Record store: missing signer public key for key {} from node {}",
+                    "Record store: invalid signature for key {} from node {}",
                     record.key,
                     record.source_node_id
                 );

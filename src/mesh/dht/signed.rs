@@ -380,6 +380,108 @@ impl SignedDhtRecord {
     }
 }
 
+pub fn dht_record_to_signed_record(record: &crate::mesh::protocol::DhtRecord) -> SignedDhtRecord {
+    let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
+    let record_type = dht_key
+        .to_signed_record_type()
+        .unwrap_or(SignedRecordType::NodeInfo);
+
+    let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
+
+    SignedDhtRecord {
+        key: record.key.clone(),
+        value: record.value.clone(),
+        publisher_id: record.source_node_id.clone(),
+        signature: record.signature.clone(),
+        created_at: record.timestamp,
+        expires_at: Some(expires_at),
+        record_type,
+        sequence_number: record.sequence_number,
+        source_node_id: record.source_node_id.clone(),
+        ttl_seconds: record.ttl_seconds,
+        signer_public_key: record.signer_public_key.clone(),
+    }
+}
+
+pub fn verify_dht_record_signature(record: &crate::mesh::protocol::DhtRecord) -> bool {
+    if record.signature.is_empty() {
+        tracing::warn!("Empty signature on record {}", record.key);
+        return false;
+    }
+
+    let signer_public_key = match &record.signer_public_key {
+        Some(pk) if !pk.is_empty() => pk.clone(),
+        _ => {
+            tracing::warn!("No signer public key on record {} - cannot verify", record.key);
+            return false;
+        }
+    };
+
+    let signed_record = dht_record_to_signed_record(record);
+
+    let _signer = RecordSigner::new(None);
+    let verifier = match Ed25519Verifier::from_base64(&signer_public_key) {
+        Some(v) => v,
+        None => {
+            tracing::warn!("Invalid public key format on record {}", record.key);
+            return false;
+        }
+    };
+
+    let content = signed_record.get_signable_content();
+    let signature_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
+
+    verifier.verify_bytes(&content, &signature_b64)
+}
+
+pub fn verify_dht_record_signature_for_key(
+    record: &crate::mesh::protocol::DhtRecord,
+    expected_record_type: SignedRecordType,
+) -> bool {
+    if record.signature.is_empty() {
+        tracing::warn!("Empty signature on record {}", record.key);
+        return false;
+    }
+
+    let signer_public_key = match &record.signer_public_key {
+        Some(pk) if !pk.is_empty() => pk.clone(),
+        _ => {
+            tracing::warn!("No signer public key on record {} - cannot verify", record.key);
+            return false;
+        }
+    };
+
+    let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
+
+    let signed_record = SignedDhtRecord {
+        key: record.key.clone(),
+        value: record.value.clone(),
+        publisher_id: record.source_node_id.clone(),
+        signature: record.signature.clone(),
+        created_at: record.timestamp,
+        expires_at: Some(expires_at),
+        record_type: expected_record_type,
+        sequence_number: record.sequence_number,
+        source_node_id: record.source_node_id.clone(),
+        ttl_seconds: record.ttl_seconds,
+        signer_public_key: record.signer_public_key.clone(),
+    };
+
+    let _signer = RecordSigner::new(None);
+    let verifier = match Ed25519Verifier::from_base64(&signer_public_key) {
+        Some(v) => v,
+        None => {
+            tracing::warn!("Invalid public key format on record {}", record.key);
+            return false;
+        }
+    };
+
+    let content = signed_record.get_signable_content();
+    let signature_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
+
+    verifier.verify_bytes(&content, &signature_b64)
+}
+
 #[derive(Clone)]
 pub struct RecordSigner {
     signing_key: Option<Ed25519Signer>,
@@ -594,5 +696,231 @@ mod tests {
         assert!(SignedRecordType::Organization.requires_global_node());
         assert!(SignedRecordType::TierKey.requires_global_node());
         assert!(!SignedRecordType::Upstream.requires_global_node());
+    }
+
+    #[test]
+    fn test_canonical_signature_rejects_tampered_value() {
+        use ed25519_dalek::SigningKey;
+
+        let signing_key = SigningKey::from_bytes(&[
+            0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
+            0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
+            0x5e, 0x41, 0x6e, 0x67,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+        let verifying_key_bytes = verifying_key.as_bytes();
+        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+
+        let mut record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"original_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(verifying_key_b64.clone()),
+            content_hash: Vec::new(),
+        };
+
+        let signed = dht_record_to_signed_record(&record);
+        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
+        let sig = signer.sign(&signed).unwrap();
+        record.signature = sig;
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(verified, "Original record should verify");
+
+        record.value = b"tampered_value".to_vec();
+        let verified_after_tamper = verify_dht_record_signature(&record);
+        assert!(!verified_after_tamper, "Tampered value should fail verification");
+    }
+
+    #[test]
+    fn test_canonical_signature_rejects_tampered_ttl() {
+        use ed25519_dalek::SigningKey;
+
+        let signing_key = SigningKey::from_bytes(&[
+            0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
+            0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
+            0x5e, 0x41, 0x6e, 0x67,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+        let verifying_key_bytes = verifying_key.as_bytes();
+        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+
+        let mut record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(verifying_key_b64.clone()),
+            content_hash: Vec::new(),
+        };
+
+        let signed = dht_record_to_signed_record(&record);
+        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
+        let sig = signer.sign(&signed).unwrap();
+        record.signature = sig;
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(verified, "Original record should verify");
+
+        record.ttl_seconds = 600;
+        let verified_after_tamper = verify_dht_record_signature(&record);
+        assert!(!verified_after_tamper, "Tampered TTL should fail verification");
+    }
+
+    #[test]
+    fn test_canonical_signature_rejects_tampered_sequence() {
+        use ed25519_dalek::SigningKey;
+
+        let signing_key = SigningKey::from_bytes(&[
+            0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
+            0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
+            0x5e, 0x41, 0x6e, 0x67,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+        let verifying_key_bytes = verifying_key.as_bytes();
+        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+
+        let mut record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(verifying_key_b64.clone()),
+            content_hash: Vec::new(),
+        };
+
+        let signed = dht_record_to_signed_record(&record);
+        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
+        let sig = signer.sign(&signed).unwrap();
+        record.signature = sig;
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(verified, "Original record should verify");
+
+        record.sequence_number = 999;
+        let verified_after_tamper = verify_dht_record_signature(&record);
+        assert!(!verified_after_tamper, "Tampered sequence should fail verification");
+    }
+
+    #[test]
+    fn test_canonical_signature_rejects_tampered_source_node() {
+        use ed25519_dalek::SigningKey;
+
+        let signing_key = SigningKey::from_bytes(&[
+            0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
+            0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
+            0x5e, 0x41, 0x6e, 0x67,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+        let verifying_key_bytes = verifying_key.as_bytes();
+        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+
+        let mut record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(verifying_key_b64.clone()),
+            content_hash: Vec::new(),
+        };
+
+        let signed = dht_record_to_signed_record(&record);
+        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
+        let sig = signer.sign(&signed).unwrap();
+        record.signature = sig;
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(verified, "Original record should verify");
+
+        record.source_node_id = "attacker_node".to_string();
+        let verified_after_tamper = verify_dht_record_signature(&record);
+        assert!(!verified_after_tamper, "Tampered source_node_id should fail verification");
+    }
+
+    #[test]
+    fn test_canonical_signature_rejects_tampered_record_type() {
+        use ed25519_dalek::SigningKey;
+
+        let signing_key = SigningKey::from_bytes(&[
+            0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
+            0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
+            0x5e, 0x41, 0x6e, 0x67,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+        let verifying_key_bytes = verifying_key.as_bytes();
+        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+
+        let mut record = crate::mesh::protocol::DhtRecord {
+            key: "upstream:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(verifying_key_b64.clone()),
+            content_hash: Vec::new(),
+        };
+
+        let signed = dht_record_to_signed_record(&record);
+        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
+        let sig = signer.sign(&signed).unwrap();
+        record.signature = sig;
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(verified, "Original record should verify");
+
+        record.key = "org:test".to_string();
+        let verified_after_tamper = verify_dht_record_signature(&record);
+        assert!(!verified_after_tamper, "Tampered key (implies different record type) should fail verification");
+    }
+
+    #[test]
+    fn test_verify_dht_record_signature_empty_signature() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+        };
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(!verified, "Empty signature should fail verification");
+    }
+
+    #[test]
+    fn test_verify_dht_record_signature_no_public_key() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: None,
+            content_hash: Vec::new(),
+        };
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(!verified, "Missing public key should fail verification");
     }
 }
