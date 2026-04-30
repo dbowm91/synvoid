@@ -1753,20 +1753,20 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 })
             }
             proto::mesh_message::Payload::DhtRecordCommit(r) => {
-                let record = r
-                    .record
-                    .map(|rec| rec.into())
-                    .unwrap_or(crate::mesh::protocol::DhtRecord {
-                        key: String::new(),
-                        value: Vec::new(),
-                        timestamp: 0,
-                        sequence_number: 0,
-                        ttl_seconds: 0,
-                        source_node_id: String::new(),
-                        signature: Vec::new(),
-                        signer_public_key: None,
-                        content_hash: Vec::new(),
-                    });
+                let record =
+                    r.record
+                        .map(|rec| rec.into())
+                        .unwrap_or(crate::mesh::protocol::DhtRecord {
+                            key: String::new(),
+                            value: Vec::new(),
+                            timestamp: 0,
+                            sequence_number: 0,
+                            ttl_seconds: 0,
+                            source_node_id: String::new(),
+                            signature: Vec::new(),
+                            signer_public_key: None,
+                            content_hash: Vec::new(),
+                        });
                 Ok(MeshMessage::DhtRecordCommit {
                     request_id: r.request_id.into(),
                     record,

@@ -97,9 +97,9 @@ impl CryptoVerificationPool {
         let ct_bytes = ciphertext_bytes.to_vec();
 
         let result = task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-            use crate::mesh::MlKem768SecretKey;
-            use crate::mesh::kem::MlKem768;
             use crate::mesh::kem::KemSession;
+            use crate::mesh::kem::MlKem768;
+            use crate::mesh::MlKem768SecretKey;
 
             let sk = MlKem768SecretKey::new(sk_bytes);
             MlKem768::decapsulate(&ct_bytes, &sk)
@@ -121,9 +121,9 @@ impl CryptoVerificationPool {
         let pk_bytes = public_key_bytes.to_vec();
 
         let result = task::spawn_blocking(move || -> Result<(Vec<u8>, Vec<u8>), String> {
-            use crate::mesh::MlKem768PublicKey;
-            use crate::mesh::kem::MlKem768;
             use crate::mesh::kem::KemSession;
+            use crate::mesh::kem::MlKem768;
+            use crate::mesh::MlKem768PublicKey;
 
             let pk = MlKem768PublicKey(pk_bytes);
             let (ct, ss) = MlKem768::encapsulate(&pk)
@@ -152,8 +152,8 @@ impl Default for CryptoVerificationPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
     use crate::mesh::kem::KemSession;
+    use base64::Engine;
 
     #[tokio::test]
     async fn test_verify_ml_dsa_success() {
@@ -168,9 +168,7 @@ mod tests {
             .decode(&vk_bytes)
             .unwrap();
 
-        let result = pool
-            .verify_ml_dsa(&vk_decoded, message, &signature)
-            .await;
+        let result = pool.verify_ml_dsa(&vk_decoded, message, &signature).await;
         assert!(result);
     }
 
@@ -215,7 +213,10 @@ mod tests {
         let (pk, sk) = crate::mesh::kem::MlKem768::generate_keypair().unwrap();
         let pk_bytes: Vec<u8> = pk.as_ref().to_vec();
 
-        let (ct, ss_send) = pool.ml_kem_encapsulate(&pk_bytes).await.expect("encapsulate failed");
+        let (ct, ss_send) = pool
+            .ml_kem_encapsulate(&pk_bytes)
+            .await
+            .expect("encapsulate failed");
 
         let ss_recv = pool
             .ml_kem_decapsulate(sk.as_ref(), &ct)
@@ -236,12 +237,9 @@ mod tests {
             .decode(&vk_bytes)
             .unwrap();
 
-        let result = CryptoVerificationPool::verify_ml_dsa_standalone(
-            &vk_decoded,
-            message,
-            &signature,
-        )
-        .await;
+        let result =
+            CryptoVerificationPool::verify_ml_dsa_standalone(&vk_decoded, message, &signature)
+                .await;
         assert!(result);
     }
 }

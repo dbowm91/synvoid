@@ -367,11 +367,10 @@ impl GlobalRegistryStateMachine {
                     "truncated entry length",
                 ));
             }
-            let entry_len = u32::from_le_bytes(
-                data[offset..offset + 4].try_into().map_err(|_| {
+            let entry_len =
+                u32::from_le_bytes(data[offset..offset + 4].try_into().map_err(|_| {
                     std::io::Error::new(std::io::ErrorKind::InvalidData, "bad entry len")
-                })?,
-            ) as usize;
+                })?) as usize;
             offset += 4;
 
             if offset + entry_len > data.len() {
@@ -381,8 +380,9 @@ impl GlobalRegistryStateMachine {
                 ));
             }
 
-            let entry: StreamingSnapshotEntry = postcard::from_bytes(&data[offset..offset + entry_len])
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            let entry: StreamingSnapshotEntry =
+                postcard::from_bytes(&data[offset..offset + entry_len])
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             offset += entry_len;
 
             db.execute(

@@ -258,10 +258,7 @@ impl RecordStoreManager {
                     },
                 );
                 rs.local_version += 1;
-                tracing::debug!(
-                    "Stored record as PendingQuorum for key: {}",
-                    record.key
-                );
+                tracing::debug!("Stored record as PendingQuorum for key: {}", record.key);
             }
 
             let record_store = self.clone();
@@ -274,7 +271,11 @@ impl RecordStoreManager {
                     .start_quorum_request(key_clone.clone(), value, ttl)
                     .await
                 {
-                    tracing::debug!("Started quorum request {} for key: {}", request_id, key_clone);
+                    tracing::debug!(
+                        "Started quorum request {} for key: {}",
+                        request_id,
+                        key_clone
+                    );
                     let cancelled = Arc::new(AtomicBool::new(false));
                     let cancelled_clone = cancelled.clone();
                     let mut attempts = 0;
@@ -299,10 +300,7 @@ impl RecordStoreManager {
                                         key_clone
                                     );
                                     if record_store
-                                        .commit_record_after_quorum(
-                                            &key_clone,
-                                            &quorum_signatures,
-                                        )
+                                        .commit_record_after_quorum(&key_clone, &quorum_signatures)
                                         .await
                                     {
                                         tracing::info!(
@@ -510,15 +508,11 @@ impl RecordStoreManager {
             let rs = self.record_state.read();
             match rs.records.get(key) {
                 Some(entry) => {
-                    let is_pending = entry.status
-                        == crate::mesh::protocol::DhtRecordStatus::PendingQuorum;
+                    let is_pending =
+                        entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum;
                     let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
-                    (
-                        Some(entry.record.clone()),
-                        now >= expires_at,
-                        is_pending,
-                    )
+                    (Some(entry.record.clone()), now >= expires_at, is_pending)
                 }
                 None => (None, false, false),
             }
@@ -587,8 +581,7 @@ impl RecordStoreManager {
             .filter(|entry| {
                 let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
-                now < expires_at
-                    && entry.status == crate::mesh::protocol::DhtRecordStatus::Live
+                now < expires_at && entry.status == crate::mesh::protocol::DhtRecordStatus::Live
             })
             .map(|e| e.record.clone())
             .collect()
@@ -602,8 +595,7 @@ impl RecordStoreManager {
             .filter(|(_, entry)| {
                 let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
-                now < expires_at
-                    && entry.status == crate::mesh::protocol::DhtRecordStatus::Live
+                now < expires_at && entry.status == crate::mesh::protocol::DhtRecordStatus::Live
             })
             .map(|(_, e)| e.record.clone())
             .collect()

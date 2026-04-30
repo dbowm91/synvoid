@@ -589,10 +589,7 @@ impl RecordStoreManager {
             crate::mesh::dht::quorum::QuorumMode::Full
         };
 
-        let all_node_ids: Vec<String> = global_nodes
-            .iter()
-            .map(|p| p.node_id.clone())
-            .collect();
+        let all_node_ids: Vec<String> = global_nodes.iter().map(|p| p.node_id.clone()).collect();
 
         let mut quorum_request = crate::mesh::dht::quorum::QuorumRequest::with_mode(
             request_id.clone(),
@@ -659,10 +656,7 @@ impl RecordStoreManager {
                 continue;
             }
 
-            if let Err(e) = transport
-                .send_datagram_to_peer(peer_id, &quorum_msg)
-                .await
-            {
+            if let Err(e) = transport.send_datagram_to_peer(peer_id, &quorum_msg).await {
                 tracing::warn!("Failed to send quorum request to {}: {}", peer_id, e);
             }
         }
@@ -889,13 +883,8 @@ impl RecordStoreManager {
             let mut rs = self.record_state.write();
             match rs.records.get(key) {
                 Some(entry) => {
-                    if entry.status
-                        != crate::mesh::protocol::DhtRecordStatus::PendingQuorum
-                    {
-                        tracing::debug!(
-                            "Record {} is not PendingQuorum, skipping commit",
-                            key
-                        );
+                    if entry.status != crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
+                        tracing::debug!("Record {} is not PendingQuorum, skipping commit", key);
                         return false;
                     }
                     let mut updated_entry = entry.clone();
@@ -906,10 +895,7 @@ impl RecordStoreManager {
                     Some(entry.record.clone())
                 }
                 None => {
-                    tracing::warn!(
-                        "Record {} not found for commit after quorum",
-                        key
-                    );
+                    tracing::warn!("Record {} not found for commit after quorum", key);
                     None
                 }
             }
@@ -924,8 +910,7 @@ impl RecordStoreManager {
 
             self.compute_merkle_tree();
 
-            self.send_commit_message(&record, quorum_signatures)
-                .await;
+            self.send_commit_message(&record, quorum_signatures).await;
 
             true
         } else {
@@ -979,10 +964,8 @@ impl RecordStoreManager {
             }
         }
 
-        let proto_sigs: Vec<crate::mesh::protocol::QuorumSignatureProto> = quorum_signatures
-            .iter()
-            .map(|s| s.into())
-            .collect();
+        let proto_sigs: Vec<crate::mesh::protocol::QuorumSignatureProto> =
+            quorum_signatures.iter().map(|s| s.into()).collect();
 
         let message = crate::mesh::protocol::MeshMessage::DhtRecordCommit {
             request_id: request_id.into(),
@@ -999,10 +982,7 @@ impl RecordStoreManager {
             let _ = transport.send_datagram_to_peer(peer_id, &message).await;
         }
 
-        tracing::debug!(
-            "Sent DhtRecordCommit for key {} to peers",
-            record.key
-        );
+        tracing::debug!("Sent DhtRecordCommit for key {} to peers", record.key);
     }
 
     pub fn handle_record_commit(

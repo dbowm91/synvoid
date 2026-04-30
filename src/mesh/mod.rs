@@ -84,6 +84,7 @@ pub use client_audit::{
 pub use config::{
     MeshConfig, MeshMlKemConfig, MeshNodeRole, MeshTransportPreference, NodeIdentityConfig,
 };
+pub use crypto_verification::CryptoVerificationPool;
 pub use dht::{
     CapabilityAttestation, DhtAccessControl, DhtConfig, DhtError, DhtKey, DhtRecordEntry,
     MerkleNode, MerkleProof, MerkleProofNode, MerkleTree, NodeInfo, ProofPosition,
@@ -98,7 +99,6 @@ pub use hybrid_signature::{
     ML_DSA_SIGNATURE_SIZE,
 };
 pub use kem::{KemSession, MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret};
-pub use crypto_verification::CryptoVerificationPool;
 pub use ml_dsa::{
     MeshHybridSigner, MeshMlDsaSigner, MeshMlDsaVerifier, MlDsaSigningKeyType,
     MlDsaVerifyingKeyType,

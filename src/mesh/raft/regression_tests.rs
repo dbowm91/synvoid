@@ -928,16 +928,11 @@ mod streaming_snapshot_tests {
     #[test]
     fn test_streaming_round_trip_with_entries() {
         let sm = in_memory_state_machine();
-        sm.set(&Namespace::Org, "key1", b"value1".to_vec())
-            .unwrap();
+        sm.set(&Namespace::Org, "key1", b"value1".to_vec()).unwrap();
         sm.set(&Namespace::Intel, "key2", b"value2".to_vec())
             .unwrap();
-        sm.set(
-            &Namespace::Revocation,
-            "key3",
-            b"value3_longer".to_vec(),
-        )
-        .unwrap();
+        sm.set(&Namespace::Revocation, "key3", b"value3_longer".to_vec())
+            .unwrap();
 
         let serialized = sm.streaming_serialize().unwrap();
 
@@ -947,14 +942,8 @@ mod streaming_snapshot_tests {
         let entries = sm2.get_all_entries();
         assert_eq!(entries.len(), 3);
 
-        assert_eq!(
-            sm2.get(&Namespace::Org, "key1"),
-            Some(b"value1".to_vec())
-        );
-        assert_eq!(
-            sm2.get(&Namespace::Intel, "key2"),
-            Some(b"value2".to_vec())
-        );
+        assert_eq!(sm2.get(&Namespace::Org, "key1"), Some(b"value1".to_vec()));
+        assert_eq!(sm2.get(&Namespace::Intel, "key2"), Some(b"value2".to_vec()));
         assert_eq!(
             sm2.get(&Namespace::Revocation, "key3"),
             Some(b"value3_longer".to_vec())
@@ -991,18 +980,14 @@ mod streaming_snapshot_tests {
     #[test]
     fn test_fallback_json_deserialization() {
         let sm = in_memory_state_machine();
-        sm.set(&Namespace::Org, "key1", b"value1".to_vec())
-            .unwrap();
+        sm.set(&Namespace::Org, "key1", b"value1".to_vec()).unwrap();
 
         let json_data = serde_json::to_vec(&sm.get_all_entries()).unwrap();
 
         let sm2 = in_memory_state_machine();
         sm2.streaming_deserialize_and_apply(&json_data).unwrap();
 
-        assert_eq!(
-            sm2.get(&Namespace::Org, "key1"),
-            Some(b"value1".to_vec())
-        );
+        assert_eq!(sm2.get(&Namespace::Org, "key1"), Some(b"value1".to_vec()));
     }
 
     #[test]

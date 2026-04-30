@@ -1127,11 +1127,7 @@ impl MeshTransport {
                 signer_public_key: _,
             } => {
                 if let Some(ref record_store) = self.record_store {
-                    record_store.handle_record_commit(
-                        record,
-                        quorum_signatures,
-                        &source_node_id,
-                    );
+                    record_store.handle_record_commit(record, quorum_signatures, &source_node_id);
                 }
             }
             MeshMessage::UpstreamAnnounce {

@@ -9,7 +9,10 @@ use tokio::sync::RwLock;
 pub enum QuorumMode {
     #[default]
     Full,
-    Regional { max_nodes: usize, min_nodes: usize },
+    Regional {
+        max_nodes: usize,
+        min_nodes: usize,
+    },
 }
 
 impl QuorumMode {
@@ -462,10 +465,7 @@ pub fn select_regional_nodes(
     });
 
     let count = max_nodes.max(min_nodes).min(sorted.len());
-    sorted[..count]
-        .iter()
-        .map(|n| n.node_id.clone())
-        .collect()
+    sorted[..count].iter().map(|n| n.node_id.clone()).collect()
 }
 
 #[cfg(test)]

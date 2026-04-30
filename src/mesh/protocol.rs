@@ -1517,13 +1517,7 @@ impl Default for DhtRecordStatus {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    Archive,
-    RkyvSerialize,
-    RkyvDeserialize,
+    Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
 )]
 pub struct QuorumSignatureProto {
     pub node_id: String,
