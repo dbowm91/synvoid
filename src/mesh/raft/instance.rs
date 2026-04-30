@@ -156,8 +156,15 @@ impl RaftInstance {
         Ok(resp.log_id.index)
     }
 
-    pub async fn read(&self, namespace: Namespace, key: &str) -> Option<Vec<u8>> {
-        self.registry.get_value(&namespace, key)
+    pub async fn read(
+        &self,
+        namespace: Namespace,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+        if !self.is_leader().await {
+            return Err("Not the leader".into());
+        }
+        Ok(self.registry.get_value(&namespace, key))
     }
 
     pub async fn is_leader(&self) -> bool {

@@ -206,18 +206,36 @@ impl RaftAwareClient {
 
     async fn consistent_read_local(
         &self,
-        _namespace: Namespace,
-        _key: &str,
+        namespace: Namespace,
+        key: &str,
     ) -> Result<ConsistentReadResult, RaftAwareClientError> {
-        let peers = self.transport.get_topology().get_all_peers().await;
-        if let Some(peer) = peers.iter().find(|p| p.role.is_global()) {
-            return Ok(ConsistentReadResult {
-                value: None,
-                source: ConsistentReadSource::RaftLeader,
-                leader_node_id: Some(peer.node_id.clone()),
-            });
+        let raft_instance_guard = self.raft_instance.read().await;
+        let instance = match raft_instance_guard.as_ref() {
+            Some(i) => i,
+            None => {
+                return Err(RaftAwareClientError::RaftWriteFailed(
+                    "No local Raft instance".to_string(),
+                ));
+            }
+        };
+
+        let leader_node_id = instance.get_leader_id().await;
+        let is_leader = instance.is_leader().await;
+
+        if !is_leader {
+            return Err(RaftAwareClientError::NotLeader);
         }
-        Err(RaftAwareClientError::RaftUnreachable)
+
+        let value = instance
+            .read(namespace, key)
+            .await
+            .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
+
+        Ok(ConsistentReadResult {
+            value,
+            source: ConsistentReadSource::RaftLeader,
+            leader_node_id: leader_node_id.map(|id| id.to_string()),
+        })
     }
 
     async fn consistent_read_via_global(
