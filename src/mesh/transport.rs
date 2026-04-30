@@ -1504,8 +1504,12 @@ impl MeshTransport {
         Ok(())
     }
 
+    const STREAM_RESPONSE_TIMEOUT_SECS: u64 = 30;
+
     /// Send a message to a peer and wait for a response on the same stream.
     /// This acquires a stream, writes the request, reads the response, then releases.
+    /// On any failure (timeout, decode error, oversized response), the stream is NOT
+    /// returned to the pool to prevent poisoning.
     pub async fn send_message_to_peer_with_response(
         &self,
         peer_id: &str,
@@ -1535,34 +1539,60 @@ impl MeshTransport {
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
-        let mut len_buf = [0u8; 4];
-        recv_stream
-            .read_exact(&mut len_buf)
-            .await
-            .map_err(|e| MeshTransportError::ReceiveFailed(format!("{:?}", e)))?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-        if resp_len > MAX_MESSAGE_SIZE {
-            return Err(MeshTransportError::ReceiveFailed(
-                "Response too large".into(),
-            ));
-        }
-        let mut response_buf = vec![0u8; resp_len];
-        recv_stream
-            .read_exact(&mut response_buf)
-            .await
-            .map_err(|e| MeshTransportError::ReceiveFailed(format!("{:?}", e)))?;
+        let timeout_duration = Duration::from_secs(Self::STREAM_RESPONSE_TIMEOUT_SECS);
+        let result = tokio::time::timeout(timeout_duration, async {
+            let mut len_buf = [0u8; 4];
+            recv_stream
+                .read_exact(&mut len_buf)
+                .await
+                .map_err(|e| MeshTransportError::ReceiveFailed(format!("{:?}", e)))?;
+            let resp_len = u32::from_be_bytes(len_buf) as usize;
+            if resp_len > MAX_MESSAGE_SIZE {
+                return Err(MeshTransportError::ReceiveFailed(
+                    "Response too large".into(),
+                ));
+            }
+            let mut response_buf = vec![0u8; resp_len];
+            recv_stream
+                .read_exact(&mut response_buf)
+                .await
+                .map_err(|e| MeshTransportError::ReceiveFailed(format!("{:?}", e)))?;
+            Ok(response_buf)
+        })
+        .await;
 
-        {
-            let mut pool = peer.stream_pool.lock().await;
-            pool.release((send_stream, recv_stream));
+        match result {
+            Ok(Ok(response_buf)) => {
+                {
+                    let mut pool = peer.stream_pool.lock().await;
+                    pool.release((send_stream, recv_stream));
+                }
+                tracing::debug!(
+                    "Sent stream message to peer {} and received response: {:?}",
+                    peer_id,
+                    message
+                );
+                Ok(response_buf)
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    "Stream response read failed for peer {}: {:?} - NOT returning stream to pool",
+                    peer_id,
+                    e
+                );
+                Err(e)
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Stream response timed out after {}s for peer {} - NOT returning stream to pool",
+                    Self::STREAM_RESPONSE_TIMEOUT_SECS,
+                    peer_id
+                );
+                Err(MeshTransportError::ReceiveFailed(
+                    "Response timeout".into(),
+                ))
+            }
         }
-
-        tracing::debug!(
-            "Sent stream message to peer {} and received response: {:?}",
-            peer_id,
-            message
-        );
-        Ok(response_buf)
     }
 
     /// Invoke a serverless function on a remote peer
