@@ -335,6 +335,19 @@ These use `SignedRecordType::is_immutable()` check in both `store_record_global(
 
 All DHT records are validated against future timestamps using `validate_record_timestamp()` with `DHT_RECORD_TIMESTAMP_WINDOW_SECS` (300 seconds). Records with timestamps too far in the future are rejected before storage.
 
+### DHT Regional Quorum (W11.1)
+
+DHT quorum supports two modes via `QuorumMode`:
+- **Full** (default): Requires 2/3+1 of ALL global nodes — doesn't scale beyond ~100 nodes.
+- **Regional**: Selects closest N global nodes by latency, computes quorum from that subset only.
+
+Key files:
+- `src/mesh/dht/quorum.rs` — `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo`
+- `src/mesh/dht/record_store.rs` — `RecordStoreConfig` fields: `regional_quorum_enabled`, `regional_quorum_max_nodes`, `regional_quorum_min_nodes`
+- `src/mesh/dht/record_store_message.rs` — `start_quorum_request()` uses regional mode when enabled
+
+Configuration: Set `regional_quorum_enabled = true` in `RecordStoreConfig` with `regional_quorum_max_nodes` (default 20) and `regional_quorum_min_nodes` (default 3). Disabled by default for backward compatibility.
+
 ## Known Issues
 
 | Issue | Reason | Workaround |

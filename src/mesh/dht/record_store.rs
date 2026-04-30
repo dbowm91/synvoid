@@ -155,6 +155,9 @@ pub struct RecordStoreConfig {
     pub neighborhood_cache_size: usize,
     pub persist_max_age_secs: u64,
     pub query_timeout_secs: u64,
+    pub regional_quorum_enabled: bool,
+    pub regional_quorum_max_nodes: usize,
+    pub regional_quorum_min_nodes: usize,
 }
 
 impl Default for RecordStoreConfig {
@@ -182,6 +185,9 @@ impl Default for RecordStoreConfig {
             neighborhood_cache_size: 1000,
             persist_max_age_secs: 604800,
             query_timeout_secs: 10,
+            regional_quorum_enabled: false,
+            regional_quorum_max_nodes: 20,
+            regional_quorum_min_nodes: 3,
         }
     }
 }

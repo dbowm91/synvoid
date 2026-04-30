@@ -862,6 +862,42 @@ Returns WASM response as HTTP response
 
 ---
 
+## DHT Regional Quorum (W11.1)
+
+### Overview
+
+DHT quorum supports two modes via `QuorumMode` in `src/mesh/dht/quorum.rs`:
+
+| Mode | Quorum Calculation | Use Case |
+|------|--------------------|----------|
+| **Full** (default) | 2/3+1 of ALL global nodes | Small clusters (< 100 global nodes) |
+| **Regional** | 2/3+1 of closest N global nodes by latency | Large clusters (100+ global nodes) |
+
+### Regional Mode
+
+When `regional_quorum_enabled = true` in `RecordStoreConfig`:
+1. `start_quorum_request()` calls `select_regional_nodes()` to pick closest nodes by latency
+2. Quorum messages are sent only to the regional subset (not all global nodes)
+3. Threshold is computed from the regional subset size, not total global count
+
+```rust
+// Enable regional quorum (20-node subset, minimum 3)
+let config = RecordStoreConfig {
+    regional_quorum_enabled: true,
+    regional_quorum_max_nodes: 20,
+    regional_quorum_min_nodes: 3,
+    ..Default::default()
+};
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/mesh/dht/quorum.rs` | `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo` |
+| `src/mesh/dht/record_store.rs` | `RecordStoreConfig` regional quorum fields |
+| `src/mesh/dht/record_store_message.rs` | `start_quorum_request()` regional node selection |
+
 ### Testing Verification
 
 ```bash
