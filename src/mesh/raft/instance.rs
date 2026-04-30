@@ -152,10 +152,7 @@ impl RaftInstance {
         tracing::info!("Initiating Raft membership change with retain={}", retain);
 
         let resp = self.raft.change_membership(new_members, retain).await?;
-        tracing::info!(
-            "Membership change committed at index {}",
-            resp.log_id.index
-        );
+        tracing::info!("Membership change committed at index {}", resp.log_id.index);
         Ok(resp.log_id.index)
     }
 
@@ -174,11 +171,11 @@ impl RaftInstance {
             None
         }
     }
-pub async fn wait_for_leader(
-    &self,
-    _node_id: u64,
-    timeout: Duration,
-) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn wait_for_leader(
+        &self,
+        _node_id: u64,
+        timeout: Duration,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let start = std::time::Instant::now();
         loop {
             if start.elapsed() > timeout {

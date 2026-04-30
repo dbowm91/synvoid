@@ -396,6 +396,8 @@ The fuzz directory (`fuzz/`) provides coverage-guided fuzzing for critical paths
 | `fuzz_serialization_new` | Extended serialization coverage |
 | `fuzz_early_parse` | Early request parsing |
 | `fuzz_protocol_proto_decode` | Mesh protocol decode |
+| `fuzz_raft_response` | RaftResponse message decoding |
+| `fuzz_raft_commit_notification` | RaftCommitNotification decoding |
 
 Fuzz targets use `libfuzzer-sys` and integrate with `cargo-fuzz`:
 

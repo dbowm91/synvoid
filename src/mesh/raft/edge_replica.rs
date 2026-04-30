@@ -37,10 +37,7 @@ impl EdgeReplicaManager {
             .time_to_live(Duration::from_secs(EDGE_REPLICA_CACHE_TTL_SECS))
             .build();
 
-        tracing::info!(
-            "EdgeReplicaManager initialized at {:?}",
-            db_path
-        );
+        tracing::info!("EdgeReplicaManager initialized at {:?}", db_path);
 
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -129,10 +126,13 @@ impl EdgeReplicaManager {
         match result {
             Ok(key) => {
                 let value = postcard::to_stdvec(&key).ok()?;
-                self.cache.insert(format!("org:{}", key_id), CachedRecord {
-                    value: value.clone(),
-                    timestamp: crate::mesh::safe_unix_timestamp(),
-                });
+                self.cache.insert(
+                    format!("org:{}", key_id),
+                    CachedRecord {
+                        value: value.clone(),
+                        timestamp: crate::mesh::safe_unix_timestamp(),
+                    },
+                );
                 Some(key)
             }
             Err(_) => None,
@@ -164,10 +164,13 @@ impl EdgeReplicaManager {
         match result {
             Ok(intel) => {
                 let value = postcard::to_stdvec(&intel).ok()?;
-                self.cache.insert(format!("intel:{}", indicator_id), CachedRecord {
-                    value: value.clone(),
-                    timestamp: crate::mesh::safe_unix_timestamp(),
-                });
+                self.cache.insert(
+                    format!("intel:{}", indicator_id),
+                    CachedRecord {
+                        value: value.clone(),
+                        timestamp: crate::mesh::safe_unix_timestamp(),
+                    },
+                );
                 Some(intel)
             }
             Err(_) => None,
@@ -199,7 +202,11 @@ impl EdgeReplicaManager {
         Ok(())
     }
 
-    pub fn update_threat_intel(&self, indicator_id: &str, value: &[u8]) -> Result<(), rusqlite::Error> {
+    pub fn update_threat_intel(
+        &self,
+        indicator_id: &str,
+        value: &[u8],
+    ) -> Result<(), rusqlite::Error> {
         let intel: ThreatIntel = postcard::from_bytes(value)
             .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
 
@@ -275,18 +282,28 @@ impl EdgeReplicaManager {
 
     pub fn delete_threat_intel(&self, indicator_id: &str) -> Result<(), rusqlite::Error> {
         let db = self.db.lock();
-        db.execute("DELETE FROM threat_intel WHERE indicator_id = ?1", params![indicator_id])?;
+        db.execute(
+            "DELETE FROM threat_intel WHERE indicator_id = ?1",
+            params![indicator_id],
+        )?;
         self.cache.remove(&format!("intel:{}", indicator_id));
         Ok(())
     }
 
     pub fn delete_revocation(&self, node_id: &str) -> Result<(), rusqlite::Error> {
         let db = self.db.lock();
-        db.execute("DELETE FROM revocation_list WHERE revoked_node_id = ?1", params![node_id])?;
+        db.execute(
+            "DELETE FROM revocation_list WHERE revoked_node_id = ?1",
+            params![node_id],
+        )?;
         Ok(())
     }
 
-    pub fn delete_from_notification(&self, namespace: &Namespace, key_id: &str) -> Result<(), rusqlite::Error> {
+    pub fn delete_from_notification(
+        &self,
+        namespace: &Namespace,
+        key_id: &str,
+    ) -> Result<(), rusqlite::Error> {
         match namespace {
             Namespace::Org => self.delete_org_key(key_id),
             Namespace::Intel => self.delete_threat_intel(key_id),
@@ -362,9 +379,7 @@ impl EdgeReplicaManager {
     }
 }
 
-pub fn create_edge_replica_manager(
-    data_dir: Option<PathBuf>,
-) -> Option<EdgeReplicaManager> {
+pub fn create_edge_replica_manager(data_dir: Option<PathBuf>) -> Option<EdgeReplicaManager> {
     let data_dir = data_dir?.join("edge_replica");
     EdgeReplicaManager::new(data_dir).ok()
 }
@@ -567,16 +582,17 @@ mod tests {
             return;
         }
         let db = db.unwrap();
-        let result = db.execute(
-            "CREATE TABLE test (id INTEGER PRIMARY KEY)",
-            [],
-        );
+        let result = db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)", []);
         match result {
             Err(rusqlite::Error::InvalidParameterName(_)) | Err(rusqlite::Error::InvalidQuery) => {}
             Ok(_) => {}
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("readonly") || msg.contains("permission") || msg.contains("disk") || msg.contains("space") {
+                if msg.contains("readonly")
+                    || msg.contains("permission")
+                    || msg.contains("disk")
+                    || msg.contains("space")
+                {
                     return;
                 }
             }
@@ -593,11 +609,7 @@ mod tests {
             return;
         }
         let db = db_result.unwrap();
-        let result = db.query_row(
-            "SELECT * FROM nonexistent",
-            [],
-            |_| Ok(()),
-        );
+        let result = db.query_row("SELECT * FROM nonexistent", [], |_| Ok(()));
         assert!(result.is_err());
     }
 
@@ -625,7 +637,9 @@ mod tests {
         let value = create_org_key_value("org1", "key1");
         manager.update_org_key("key1", &value).unwrap();
         let intel_value = create_threat_intel_value("indicator1");
-        manager.update_threat_intel("indicator1", &intel_value).unwrap();
+        manager
+            .update_threat_intel("indicator1", &intel_value)
+            .unwrap();
         let m1 = manager.clone();
         let m2 = manager.clone();
         let m3 = manager.clone();

@@ -1957,7 +1957,10 @@ impl YaraRulesManager {
                             timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
                         });
                     }
-                    tracing::debug!("YARA compiled rules checksum verified: {}", computed_checksum);
+                    tracing::debug!(
+                        "YARA compiled rules checksum verified: {}",
+                        computed_checksum
+                    );
                 }
 
                 if !signature.is_empty() && !signer_public_key.is_empty() {

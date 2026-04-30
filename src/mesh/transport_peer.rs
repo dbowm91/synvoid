@@ -2450,7 +2450,11 @@ impl MeshTransport {
                 key_id,
                 timestamp: _,
             } => {
-                tracing::debug!("Received RaftCommitNotification for namespace {:?} key {}", namespace, key_id);
+                tracing::debug!(
+                    "Received RaftCommitNotification for namespace {:?} key {}",
+                    namespace,
+                    key_id
+                );
                 if let Some(ref edge_replica) = *self.edge_replica_manager.read() {
                     if let Some(ref rclient) = self.org_key_manager.get_raft_client() {
                         let erm = edge_replica.clone();
@@ -2463,12 +2467,19 @@ impl MeshTransport {
                                     if let Err(e) = erm.update_from_notification(&ns, &key, &data) {
                                         tracing::error!("Failed to update edge replica: {}", e);
                                     } else {
-                                        tracing::info!("Edge replica updated for {:?} key {}", ns, key);
+                                        tracing::info!(
+                                            "Edge replica updated for {:?} key {}",
+                                            ns,
+                                            key
+                                        );
                                     }
                                 }
                                 Ok(None) => {
                                     if let Err(e) = erm.delete_from_notification(&ns, &key) {
-                                        tracing::error!("Failed to delete from edge replica: {}", e);
+                                        tracing::error!(
+                                            "Failed to delete from edge replica: {}",
+                                            e
+                                        );
                                     }
                                 }
                                 Err(e) => {

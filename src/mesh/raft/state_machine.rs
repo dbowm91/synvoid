@@ -600,8 +600,7 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
 
         let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
 
-        let last_log_id =
-            last_id.map(|id| openraft::log_id::LogId::new(committed_leader_id, id));
+        let last_log_id = last_id.map(|id| openraft::log_id::LogId::new(committed_leader_id, id));
         let last_purged_log_id =
             first_id.map(|id| openraft::log_id::LogId::new(committed_leader_id, id));
 
@@ -621,8 +620,7 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
         &mut self,
         vote: &<GlobalRegistryTypeConfig as RaftTypeConfig>::Vote,
     ) -> std::io::Result<()> {
-        let vote_bytes = postcard::to_stdvec(vote)
-            .map_err(std::io::Error::other)?;
+        let vote_bytes = postcard::to_stdvec(vote).map_err(std::io::Error::other)?;
         self.save_vote_to_storage(&vote_bytes)
             .map_err(std::io::Error::other)
     }
@@ -639,8 +637,7 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
         for entry in entries {
             let (leader_id, index) = entry.log_id_parts();
             let term = leader_id.term();
-            let payload = postcard::to_stdvec(&entry.payload)
-                .map_err(std::io::Error::other)?;
+            let payload = postcard::to_stdvec(&entry.payload).map_err(std::io::Error::other)?;
             self.append_log_entry(index, term, &payload, None)
                 .map_err(std::io::Error::other)?;
         }
@@ -699,8 +696,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
 
         let mut stream = entries;
         while let Some(result) = stream.next().await {
-            let (entry, resp) =
-                result.map_err(std::io::Error::other)?;
+            let (entry, resp) = result.map_err(std::io::Error::other)?;
             let (_leader_id, index) = entry.log_id_parts();
 
             if let EntryPayload::Normal(data) = &entry.payload {
@@ -714,8 +710,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
                             .map_err(std::io::Error::other)?;
                     }
                     RaftCommand::Delete { namespace, key } => {
-                        self.delete(namespace, key)
-                            .map_err(std::io::Error::other)?;
+                        self.delete(namespace, key).map_err(std::io::Error::other)?;
                     }
                 }
             }
@@ -767,8 +762,8 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
             ).map_err(std::io::Error::other)?;
         }
 
-        let membership_json = serde_json::to_string(&meta.last_membership)
-            .map_err(std::io::Error::other)?;
+        let membership_json =
+            serde_json::to_string(&meta.last_membership).map_err(std::io::Error::other)?;
         db.execute(
             "INSERT OR REPLACE INTO snapshot_metadata (key, value) VALUES ('last_membership', ?1)",
             params![membership_json],
@@ -786,8 +781,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
             return Ok(None);
         }
 
-        let snapshot_data = serde_json::to_vec(&entries)
-            .map_err(std::io::Error::other)?;
+        let snapshot_data = serde_json::to_vec(&entries).map_err(std::io::Error::other)?;
 
         let last_applied = self.get_last_applied_log_id().unwrap_or(0);
 
