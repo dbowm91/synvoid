@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use openraft::raft::ReadPolicy;
 use openraft::Raft;
 use openraft::type_config::alias::SnapshotMetaOf;
 use tokio::sync::broadcast;
@@ -182,7 +183,21 @@ impl RaftInstance {
         if !self.is_leader().await {
             return Err("Not the leader".into());
         }
-        Ok(self.registry.get_value(&namespace, key))
+
+        let linearizer = self
+            .raft
+            .get_read_linearizer(ReadPolicy::ReadIndex)
+            .await
+            .map_err(|e| format!("Failed to get read linearizer: {:?}", e))?;
+
+        let _ = linearizer
+            .try_await_ready(&self.raft, None)
+            .await
+            .map_err(|e| format!("Read linearization failed: {:?}", e))?
+            .unwrap();
+
+        let registry = self.registry.clone();
+        Ok(registry.get_value(&namespace, key))
     }
 
     pub async fn is_leader(&self) -> bool {
