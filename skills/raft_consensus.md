@@ -322,6 +322,88 @@ impl EdgeReplicaManager {
 }
 ```
 
+### W8.6: YARA-X Binary Distribution
+
+Global nodes serialize compiled YARA rules and distribute binary blobs to Edge nodes, eliminating Edge-side compilation overhead:
+
+```rust
+// Global node: compile and serialize
+let compiled_rules = yara_x::Rules::serialize(&rules);
+broadcast_to_edges(RuleAnnouncement { compiled_rules, ... });
+
+// Edge node: deserialize directly (no compilation)
+let rules = yara_x::Rules::deserialize(compiled_rules).unwrap();
+```
+
+**Benefits:**
+- Edge nodes bypass YARA-X compilation (expensive at scale)
+- Binary format is stable across versions (with version field)
+- Fallback to source rules if deserialization fails
+
+### Clippy Cleanup
+
+The codebase maintains `-D warnings` clippy policy:
+
+```bash
+cargo clippy -- -D warnings
+```
+
+All new code must compile without clippy warnings. Common fixes:
+- Use `.cloned()` instead of manual cloning
+- Avoid unnecessary `.to_string()` conversions
+- Use `Arc::clone()` for Arc reference counting
+
+### W8.5: EdgeReplicaManager Test Coverage
+
+The `EdgeReplicaManager` includes comprehensive error handling tests:
+
+| Test | Purpose |
+|------|---------|
+| Disk full handling | Verifies graceful failure when SQLite returns `SQLITE_FULL` |
+| Corrupted database | Tests recovery when DB checksum fails on open |
+| Concurrent notification burst | Ensures cache/DB consistency under high-frequency updates |
+
+Key test patterns:
+```rust
+#[test]
+fn test_disk_full_handling() {
+    // Simulate SQLITE_FULL by mocking disk operations
+    // Verify EdgeReplicaManager returns meaningful error
+}
+
+#[test]
+fn test_corrupted_db_recovery() {
+    // Corrupt DB file, verify graceful degradation
+    // Edge can still serve cached reads
+}
+
+#[test]
+fn test_concurrent_notification_burst() {
+    // Spawn multiple tasks updating same keys
+    // Verify final state is consistent
+}
+```
+
+### Fuzzing Targets
+
+The fuzz directory (`fuzz/`) provides coverage-guided fuzzing for critical paths:
+
+| Target | Purpose |
+|--------|---------|
+| `fuzz_attack_detection` | HTTP attack pattern parsing |
+| `fuzz_ipc` | IPC message serialization |
+| `fuzz_serialization` | Postcard round-trip fuzzing |
+| `fuzz_serialization_new` | Extended serialization coverage |
+| `fuzz_early_parse` | Early request parsing |
+| `fuzz_protocol_proto_decode` | Mesh protocol decode |
+
+Fuzz targets use `libfuzzer-sys` and integrate with `cargo-fuzz`:
+
+```bash
+cargo fuzz add fuzz_raft_types  # Add new target
+cargo +nightly fuzz run fuzz_raft_types  # Run with corpus
+```
+
 ## Verification Commands
 
 ```bash

@@ -43,7 +43,7 @@ pub enum RaftAwareClientError {
 }
 
 pub struct RaftAwareClient {
-    backend_pool: Arc<MeshBackendPool>,
+    _backend_pool: Arc<MeshBackendPool>,
     transport: Arc<MeshTransport>,
     config: Arc<MeshConfig>,
     record_store: Option<Arc<RecordStoreManager>>,
@@ -58,7 +58,7 @@ impl RaftAwareClient {
         record_store: Option<Arc<RecordStoreManager>>,
     ) -> Self {
         Self {
-            backend_pool,
+            _backend_pool: backend_pool,
             transport,
             config,
             record_store,

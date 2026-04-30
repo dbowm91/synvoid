@@ -13,7 +13,7 @@ use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::broadcast;
 
 use crate::mesh::protocol::{ArcStr, HealthStatus, MeshMessage};
-use crate::mesh::raft::instance::RaftInstance;
+
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
 impl MeshTransport {

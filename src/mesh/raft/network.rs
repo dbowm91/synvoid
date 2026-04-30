@@ -20,10 +20,10 @@ use crate::mesh::protocol::{ArcStr, MeshMessage, RaftMsgType, RaftPayload as Mes
 use crate::mesh::MeshProxy;
 
 pub struct MeshRaftNetwork<C: RaftTypeConfig> {
-    backend: Arc<MeshBackendPool>,
+    _backend: Arc<MeshBackendPool>,
     proxy: Arc<MeshProxy>,
     target: String,
-    observer_tags: Option<Vec<String>>,
+    _observer_tags: Option<Vec<String>>,
     pending_responses: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     _phantom: std::marker::PhantomData<C>,
 }
@@ -36,10 +36,10 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
         observer_tags: Option<Vec<String>>,
     ) -> Self {
         Self {
-            backend,
+            _backend: backend,
             proxy,
             target,
-            observer_tags,
+            _observer_tags: observer_tags,
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
             _phantom: std::marker::PhantomData,
         }

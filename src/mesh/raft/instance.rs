@@ -118,7 +118,7 @@ impl RaftInstance {
 
     pub async fn add_node(
         &self,
-        node_id: u64,
+        _node_id: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!("Node added to cluster (cluster management via external coordination)");
         Ok(())

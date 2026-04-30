@@ -177,8 +177,9 @@ impl OrgKeyManager {
                     commit_index
                 );
 
-                if let Some(transport) = self.transport.read().as_ref() {
-                    let leader_id = transport.get_node_id();
+                let leader_id = self.transport.read().as_ref().map(|t| t.get_node_id());
+
+                if let Some(leader_id) = leader_id {
                     let notification = crate::mesh::raft::RaftCommitNotification::new(
                         leader_id,
                         commit_index,
@@ -225,7 +226,9 @@ impl OrgKeyManager {
 
         let value_clone = value.clone();
 
-        if let Some(raft_client) = self.raft_client.read().clone() {
+        let raft_client = self.raft_client.read().clone();
+
+        if let Some(raft_client) = raft_client {
             match raft_client
                 .raft_write(
                     Namespace::Revocation,
@@ -241,8 +244,9 @@ impl OrgKeyManager {
                         commit_index
                     );
 
-                    if let Some(transport) = self.transport.read().as_ref() {
-                        let leader_id = transport.get_node_id();
+                    let leader_id = self.transport.read().as_ref().map(|t| t.get_node_id());
+
+                    if let Some(leader_id) = leader_id {
                         let notification = RaftCommitNotification::new(
                             leader_id,
                             commit_index,

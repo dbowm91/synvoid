@@ -37,5 +37,13 @@ path = "fuzz_early_parse.rs"
 name = "fuzz_protocol_proto_decode"
 path = "fuzz_protocol_proto_decode.rs"
 
+[[bin]]
+name = "fuzz_raft_response"
+path = "fuzz_raft_response.rs"
+
+[[bin]]
+name = "fuzz_raft_commit_notification"
+path = "fuzz_raft_commit_notification.rs"
+
 [profile.release]
 opt-level = 3

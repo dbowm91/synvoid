@@ -686,10 +686,7 @@ impl MeshTransport {
 
         let raft_instance = {
             let raft_guard = self.raft_instance.read();
-            match raft_guard.as_ref() {
-                Some(guard) => Some(guard.clone()),
-                None => None,
-            }
+            raft_guard.as_ref().map(|guard| guard.clone())
         };
 
         let Some(raft_instance) = raft_instance else {
@@ -757,10 +754,7 @@ impl MeshTransport {
 
         let raft_instance = {
             let raft_guard = self.raft_instance.read();
-            match raft_guard.as_ref() {
-                Some(guard) => Some(guard.clone()),
-                None => None,
-            }
+            raft_guard.as_ref().map(|guard| guard.clone())
         };
 
         let Some(raft_instance) = raft_instance else {
