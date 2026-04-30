@@ -22,6 +22,9 @@ pub mod instance;
 pub mod network;
 pub mod state_machine;
 
+#[cfg(test)]
+pub mod regression_tests;
+
 pub use client::{
     ConsistentReadResult, ConsistentReadSource, RaftAwareClient, RaftAwareClientError,
 };
