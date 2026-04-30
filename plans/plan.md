@@ -60,12 +60,15 @@ All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Moderni
     - Queues changes when not leader, processes when becoming leader
     - Integrated with `handle_global_node_announce` in transport_global.rs to trigger auto-add
 
-### W8.4: Edge State Mirroring (PLANNED)
+### W8.4: Edge State Mirroring (COMPLETE)
 - **Objective**: O(1) local lookups for Org Keys with Raft-grade consistency.
 - **Actions**:
-    - Edge nodes subscribe to `RaftCommitNotification` via DHT/Broadcast.
-    - On notification, Edge nodes query the Leader for the specific updated record.
-    - Store the record in a local `read_replica.db` for instant WAF policy checks.
+    - Created `EdgeReplicaManager` in `src/mesh/raft/edge_replica.rs` for local SQLite mirroring
+    - Uses moka cache (10K items, 5-min TTL) for O(1) hot record lookups
+    - Provides `get_org_key()` and `get_threat_intel()` for instant WAF policy checks
+    - `update_from_notification()` to apply updates from RaftCommitNotification
+    - Added `query_leader_for_record()` to RaftAwareClient for edge nodes to fetch specific records
+    - Global nodes excluded from mirroring (they use Raft directly)
 
 ### W8.5: YARA-X Modernization (PLANNED)
 - **Objective**: Full native Rust YARA engine without C dependencies.

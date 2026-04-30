@@ -368,6 +368,102 @@ impl RaftAwareClient {
             Namespace::Revocation => format!("revocation:{}", key),
         }
     }
+
+    pub async fn query_leader_for_record(
+        &self,
+        namespace: Namespace,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>, RaftAwareClientError> {
+        if self.config.role.is_global() {
+            return Err(RaftAwareClientError::InvalidResponse(
+                "Global nodes should not query leader for records".to_string(),
+            ));
+        }
+
+        let global_nodes = self.get_global_node_ids().await;
+        if global_nodes.is_empty() {
+            return Err(RaftAwareClientError::NoGlobalNodes);
+        }
+
+        let leader_node_id = self
+            .find_leader_node_id()
+            .await
+            .ok_or(RaftAwareClientError::RaftUnreachable)?;
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let timeout = Duration::from_secs(5);
+
+        let request = MeshMessage::ConsistentReadRequest {
+            request_id: ArcStr::from(request_id.clone()),
+            namespace: namespace.clone(),
+            key: ArcStr::from(key.to_string()),
+            requesting_node_id: ArcStr::from(self.config.node_id()),
+            timestamp: crate::utils::safe_unix_timestamp(),
+        };
+
+        let response = self
+            .send_message_and_wait_for_response(&leader_node_id, request, timeout)
+            .await;
+
+        match response {
+            Ok(MeshMessage::ConsistentReadResponse { value, .. }) => Ok(value),
+            Ok(MeshMessage::NotLeader { leader_node_id, .. }) => {
+                if let Some(leader) = leader_node_id {
+                    let leader_str = leader.to_string();
+                    let retry_request = MeshMessage::ConsistentReadRequest {
+                        request_id: ArcStr::from(uuid::Uuid::new_v4().to_string()),
+                        namespace: namespace.clone(),
+                        key: ArcStr::from(key.to_string()),
+                        requesting_node_id: ArcStr::from(self.config.node_id()),
+                        timestamp: crate::utils::safe_unix_timestamp(),
+                    };
+                    match self
+                        .send_message_and_wait_for_response(&leader_str, retry_request, timeout)
+                        .await
+                    {
+                        Ok(MeshMessage::ConsistentReadResponse { value, .. }) => Ok(value),
+                        Ok(other) => Err(RaftAwareClientError::InvalidResponse(format!(
+                            "Unexpected response type: {:?}",
+                            other
+                        ))),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    Err(RaftAwareClientError::RaftUnreachable)
+                }
+            }
+            Ok(other) => Err(RaftAwareClientError::InvalidResponse(format!(
+                "Unexpected response type: {:?}",
+                other
+            ))),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn query_leader_for_record_with_retry(
+        &self,
+        namespace: Namespace,
+        key: &str,
+        max_retries: u32,
+    ) -> Result<Option<Vec<u8>>, RaftAwareClientError> {
+        let mut last_error = RaftAwareClientError::RaftUnreachable;
+        let mut backoff_ms = 100;
+
+        for attempt in 0..max_retries {
+            match self.query_leader_for_record(namespace.clone(), key).await {
+                result @ Ok(_) => return result,
+                Err(e) => {
+                    last_error = e;
+                    if attempt < max_retries - 1 {
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(2000);
+                    }
+                }
+            }
+        }
+
+        Err(last_error)
+    }
 }
 
 impl Default for RaftAwareClient {
