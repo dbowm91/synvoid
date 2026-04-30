@@ -128,7 +128,7 @@ type CommittedLeaderIdOfConfig =
     openraft::type_config::alias::CommittedLeaderIdOf<GlobalRegistryTypeConfig>;
 
 pub struct GlobalRegistryStateMachine {
-    db: Arc<Mutex<Connection>>,
+    pub(crate) db: Arc<Mutex<Connection>>,
 }
 
 impl Clone for GlobalRegistryStateMachine {
@@ -145,13 +145,21 @@ unsafe impl Sync for GlobalRegistryStateMachine {}
 impl GlobalRegistryStateMachine {
     pub fn new(db_path: PathBuf) -> Result<Self, rusqlite::Error> {
         let db = Connection::open(db_path)?;
+        Self::new_with_connection(db)
+    }
+
+    pub fn new_with_connection(db: Connection) -> Result<Self, rusqlite::Error> {
         Self::init_schema(&db)?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
     }
 
-    fn init_schema(db: &Connection) -> Result<(), rusqlite::Error> {
+    pub fn db(&self) -> Arc<Mutex<Connection>> {
+        self.db.clone()
+    }
+
+    pub fn init_schema(db: &Connection) -> Result<(), rusqlite::Error> {
         db.execute(
             "CREATE TABLE IF NOT EXISTS state_machine (
                 namespace TEXT NOT NULL,
@@ -469,6 +477,10 @@ impl GlobalRegistry {
             log_storage,
             voting_nodes: std::sync::RwLock::new(Vec::new()),
         })
+    }
+
+    pub fn state_machine(&self) -> &GlobalRegistryStateMachine {
+        &self.state_machine
     }
 
     pub fn get_voting_nodes(&self) -> Vec<NodeId> {

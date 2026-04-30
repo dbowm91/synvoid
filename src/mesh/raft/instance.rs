@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use openraft::Raft;
+use openraft::type_config::alias::SnapshotMetaOf;
 use tokio::sync::broadcast;
 
 use crate::mesh::backend::MeshBackendPool;
@@ -212,6 +214,27 @@ impl RaftInstance {
 
     pub fn observer_tags(&self) -> &[String] {
         &self.observer_tags
+    }
+
+    pub async fn install_snapshot(
+        &self,
+        meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>,
+        snapshot: Bytes,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use openraft::storage::RaftStateMachine;
+        let state_machine = self.registry.state_machine();
+        let mut state_machine_clone = GlobalRegistryStateMachine {
+            db: state_machine.db.clone(),
+        };
+        state_machine_clone
+            .install_snapshot(meta, snapshot)
+            .await
+            .map_err(|e| format!("Failed to install snapshot: {}", e))?;
+        tracing::info!(
+            "Installed snapshot with last_log_id {:?}",
+            meta.last_log_id
+        );
+        Ok(())
     }
 }
 

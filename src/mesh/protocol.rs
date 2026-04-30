@@ -1096,6 +1096,20 @@ pub struct RaftPayload {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotHeader {
+    pub vote: Vec<u8>,
+    pub meta: Vec<u8>,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotChunk {
+    pub offset: u64,
+    pub is_last: bool,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum RaftMsgType {
     VoteRequest,

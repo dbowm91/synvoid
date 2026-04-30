@@ -9,10 +9,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use openraft::type_config::alias::SnapshotMetaOf;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::broadcast;
 
-use crate::mesh::protocol::{ArcStr, HealthStatus, MeshMessage};
+use crate::mesh::protocol::{HealthStatus, MeshMessage};
 
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
@@ -2663,7 +2664,7 @@ impl MeshTransport {
         &self,
         target_node_id: String,
         payload: crate::mesh::protocol::RaftPayload,
-        send_stream: &mut quinn::SendStream,
+        _send_stream: &mut quinn::SendStream,
     ) -> Result<(), MeshTransportError> {
         let local_node_id = self.config.node_id();
         if target_node_id != local_node_id {
@@ -2680,7 +2681,60 @@ impl MeshTransport {
             guard.clone()
         };
 
-        let response_data = match payload.msg_type {
+        match payload.msg_type {
+            crate::mesh::protocol::RaftMsgType::InstallSnapshot => {
+                if let Ok(header) = postcard::from_bytes::<crate::mesh::protocol::SnapshotHeader>(&payload.data) {
+                    tracing::debug!(
+                        "Received snapshot header: total_size={}, meta len={}",
+                        header.total_size,
+                        header.meta.len()
+                    );
+
+                    let pending = self.get_pending_snapshot_responses().await;
+                    let mut guard = pending.lock().await;
+                    let request_id = format!("snapshot-{}", uuid::Uuid::new_v4());
+                    let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
+                    guard.insert(request_id.clone(), response_tx);
+                    drop(guard);
+
+                    let meta: SnapshotMetaOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
+                        match postcard::from_bytes(&header.meta) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::warn!("Failed to deserialize snapshot meta: {}", e);
+                                return Ok(());
+                            }
+                        };
+
+                    if let Some(ref inst) = instance {
+                        match inst.install_snapshot(&meta, bytes::Bytes::new()).await {
+                            Ok(()) => {
+                                tracing::info!("Snapshot header processed, expecting chunks");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to process snapshot header: {}", e);
+                            }
+                        }
+                    }
+
+                    let response_bytes = Vec::new();
+
+                    let pending = self.get_pending_snapshot_responses().await;
+                    let mut guard = pending.lock().await;
+                    if let Some(response_tx) = guard.remove(&request_id) {
+                        let _ = response_tx.send(response_bytes);
+                    }
+                } else if let Ok(chunk) = postcard::from_bytes::<crate::mesh::protocol::SnapshotChunk>(&payload.data) {
+                    tracing::debug!(
+                        "Received snapshot chunk: offset={}, is_last={}, size={}",
+                        chunk.offset,
+                        chunk.is_last,
+                        chunk.data.len()
+                    );
+                } else {
+                    tracing::warn!("Failed to deserialize snapshot header or chunk");
+                }
+            }
             crate::mesh::protocol::RaftMsgType::ClientProposal => {
                 let command: crate::mesh::raft::state_machine::RaftCommand =
                     match postcard::from_bytes(&payload.data) {
@@ -2694,27 +2748,14 @@ impl MeshTransport {
                 if let Some(ref inst) = instance {
                     match inst.client_write(command).await {
                         Ok(commit_index) => {
-                            let response =
-                                crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
-                                    request_id: ArcStr::from(uuid::Uuid::new_v4().to_string()),
-                                    value: Some(commit_index.to_le_bytes().to_vec()),
-                                    leader_node_id: Some(ArcStr::from(local_node_id.to_string())),
-                                    timestamp: crate::utils::safe_unix_timestamp(),
-                                };
-                            Some(
-                                response.encode().map_err(|e| {
-                                    MeshTransportError::SendFailed(format!("{:?}", e))
-                                })?,
-                            )
+                            tracing::debug!("Raft client_write succeeded: commit_index={}", commit_index);
                         }
                         Err(e) => {
                             tracing::warn!("Raft client_write failed: {}", e);
-                            None
                         }
                     }
                 } else {
                     tracing::warn!("Received Raft message but no Raft instance available");
-                    None
                 }
             }
             crate::mesh::protocol::RaftMsgType::AppendEntries
@@ -2723,24 +2764,10 @@ impl MeshTransport {
                     "Received internal Raft RPC type {:?} - dispatching via network factory",
                     payload.msg_type
                 );
-                None
             }
             _ => {
                 tracing::warn!("Unhandled Raft message type: {:?}", payload.msg_type);
-                None
             }
-        };
-
-        if let Some(data) = response_data {
-            let len = (data.len() as u32).to_be_bytes();
-            send_stream
-                .write_all(&len)
-                .await
-                .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
-            send_stream
-                .write_all(&data)
-                .await
-                .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
         }
 
         Ok(())

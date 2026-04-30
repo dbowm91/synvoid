@@ -3,6 +3,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use openraft::errors::{RPCError, StreamingError, Unreachable};
 use openraft::network::v2::RaftNetworkV2;
 use openraft::network::Backoff;
@@ -18,6 +19,8 @@ use tokio::sync::RwLock;
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::protocol::{ArcStr, MeshMessage, RaftMsgType, RaftPayload as MeshRaftPayload};
 use crate::mesh::MeshProxy;
+
+const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
 
 pub struct MeshRaftNetwork<C: RaftTypeConfig> {
     _backend: Arc<MeshBackendPool>,
@@ -116,16 +119,14 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
     }
 }
 
-impl<C: RaftTypeConfig> RaftNetworkV2<C> for MeshRaftNetwork<C>
-where
-    C::NodeId: std::fmt::Display + Send + 'static,
-    C::Node: Send + 'static,
+impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
+    for MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
 {
     async fn append_entries(
         &mut self,
-        rpc: AppendEntriesRequest<C>,
+        rpc: AppendEntriesRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _option: RPCOption,
-    ) -> Result<AppendEntriesResponse<C>, RPCError<C>> {
+    ) -> Result<AppendEntriesResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
         let payload =
             postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
@@ -136,9 +137,9 @@ where
 
     async fn vote(
         &mut self,
-        rpc: VoteRequest<C>,
+        rpc: VoteRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _option: RPCOption,
-    ) -> Result<VoteResponse<C>, RPCError<C>> {
+    ) -> Result<VoteResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
         let payload =
             postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
@@ -149,17 +150,129 @@ where
 
     async fn full_snapshot(
         &mut self,
-        _vote: VoteOf<C>,
-        _snapshot: SnapshotOf<C>,
+        vote: VoteOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        snapshot: SnapshotOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _cancel: impl Future<Output = openraft::errors::ReplicationClosed> + OptionalSend + 'static,
         _option: RPCOption,
-    ) -> Result<SnapshotResponse<C>, StreamingError<C>> {
-        Err(StreamingError::Unreachable(Unreachable::new(
-            &std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "full_snapshot not implemented for mesh transport",
-            ),
-        )))
+    ) -> Result<SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, StreamingError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
+        let transport_arc = self.proxy.get_transport();
+        let transport = {
+            let guard = transport_arc.read();
+            guard.clone()
+        };
+
+        let transport = match transport {
+            Some(t) => t,
+            None => {
+                return Err(StreamingError::Unreachable(Unreachable::new(
+                    &std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "Transport not available",
+                    ),
+                )));
+            }
+        };
+
+        let target = self.target.clone();
+        let meta = postcard::to_stdvec(&snapshot.meta)
+            .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+        let vote_data = postcard::to_stdvec(&vote)
+            .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+        let snapshot_bytes: Bytes = snapshot.snapshot;
+        let snapshot_data = snapshot_bytes.as_ref().to_vec();
+        let total_size = snapshot_data.len() as u64;
+
+        #[derive(serde::Serialize)]
+        struct SnapshotHeader {
+            vote: Vec<u8>,
+            meta: Vec<u8>,
+            total_size: u64,
+        }
+
+        let header = SnapshotHeader {
+            vote: vote_data,
+            meta,
+            total_size,
+        };
+        let header_bytes =
+            postcard::to_stdvec(&header).map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        {
+            let mut pending = self.pending_responses.write().await;
+            let request_id = format!("snapshot-{}", uuid::Uuid::new_v4());
+            pending.insert(request_id, response_tx);
+        }
+
+        let raft_msg = MeshMessage::Raft {
+            target_node_id: ArcStr::from(target.clone()),
+            payload: MeshRaftPayload {
+                msg_type: RaftMsgType::InstallSnapshot,
+                data: header_bytes,
+            },
+        };
+
+        transport
+            .send_message_to_peer(&target, &raft_msg)
+            .await
+            .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+        let chunk_size = SNAPSHOT_CHUNK_SIZE;
+        let mut offset = 0u64;
+
+        while offset < total_size {
+            let chunk_end = ((offset as usize) + chunk_size).min(snapshot_data.len());
+            let chunk = snapshot_data[offset as usize..chunk_end].to_vec();
+
+            let is_last = chunk_end >= snapshot_data.len();
+
+            let chunk_info = crate::mesh::protocol::SnapshotChunk {
+                offset,
+                is_last,
+                data: chunk,
+            };
+            let chunk_bytes =
+                postcard::to_stdvec(&chunk_info).map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+            let chunk_msg = MeshMessage::Raft {
+                target_node_id: ArcStr::from(target.clone()),
+                payload: MeshRaftPayload {
+                    msg_type: RaftMsgType::InstallSnapshot,
+                    data: chunk_bytes,
+                },
+            };
+
+            transport
+                .send_message_to_peer(&target, &chunk_msg)
+                .await
+                .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+            offset = chunk_end as u64;
+        }
+
+        let timeout = Duration::from_secs(60);
+        let response_data = tokio::time::timeout(timeout, response_rx)
+            .await
+            .map_err(|_| {
+                StreamingError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Snapshot transfer timeout",
+                )))
+            })?
+            .map_err(|_| {
+                StreamingError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "Response channel closed",
+                )))
+            })?;
+
+        let response: SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
+            postcard::from_bytes(&response_data).map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+
+        Ok(response)
     }
 
     fn backoff(&self) -> Backoff {
@@ -189,15 +302,16 @@ impl MeshRaftNetworkFactory {
     }
 }
 
-impl<C> openraft::network::RaftNetworkFactory<C> for MeshRaftNetworkFactory
-where
-    C: RaftTypeConfig,
-    C::NodeId: std::fmt::Display + Send + 'static,
-    C::Node: Send + 'static,
+impl openraft::network::RaftNetworkFactory<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
+    for MeshRaftNetworkFactory
 {
-    type Network = MeshRaftNetwork<C>;
+    type Network = MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>;
 
-    async fn new_client(&mut self, target: C::NodeId, _node: &C::Node) -> Self::Network {
+    async fn new_client(
+        &mut self,
+        target: <crate::mesh::raft::state_machine::GlobalRegistryTypeConfig as openraft::RaftTypeConfig>::NodeId,
+        _node: &<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig as openraft::RaftTypeConfig>::Node,
+    ) -> Self::Network {
         tracing::debug!(
             "Creating Raft network client for target: {} with observer_tags: {:?}",
             target,

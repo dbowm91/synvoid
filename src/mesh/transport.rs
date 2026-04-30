@@ -109,6 +109,9 @@ pub struct MeshTransport {
     pub(crate) pending_consistent_read_responses: Arc<
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::mesh::protocol::MeshMessage>>>,
     >,
+    pub(crate) pending_snapshot_responses: Arc<
+        Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>,
+    >,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -248,6 +251,7 @@ impl Clone for MeshTransport {
             pending_dht_queries: self.pending_dht_queries.clone(),
             pending_serverless_invocations: self.pending_serverless_invocations.clone(),
             pending_consistent_read_responses: self.pending_consistent_read_responses.clone(),
+            pending_snapshot_responses: self.pending_snapshot_responses.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             snapshot_request_times: self.snapshot_request_times.clone(),
@@ -456,6 +460,7 @@ impl MeshTransport {
             pending_dht_queries: Arc::new(Mutex::new(HashMap::new())),
             pending_serverless_invocations: Arc::new(Mutex::new(HashMap::new())),
             pending_consistent_read_responses: Arc::new(Mutex::new(HashMap::new())),
+            pending_snapshot_responses: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: Arc::new(RwLock::new(HashMap::new())),
             peer_message_times: Arc::new(RwLock::new(HashMap::new())),
             snapshot_request_times: Arc::new(RwLock::new(HashMap::new())),
@@ -3493,6 +3498,12 @@ impl MeshTransport {
         &self,
     ) -> Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<MeshMessage>>>> {
         self.pending_consistent_read_responses.clone()
+    }
+
+    pub(crate) async fn get_pending_snapshot_responses(
+        &self,
+    ) -> Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>> {
+        self.pending_snapshot_responses.clone()
     }
 }
 
