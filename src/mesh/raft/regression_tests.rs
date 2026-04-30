@@ -333,6 +333,8 @@ mod raft_command_tests {
             namespace: crate::mesh::raft::state_machine::Namespace::Org,
             key: "test_key".to_string(),
             value: b"test_value".to_vec(),
+            source_node_id: None,
+            signature: None,
         };
 
         let serialized = crate::serialization::serialize(&cmd).unwrap();
@@ -343,6 +345,8 @@ mod raft_command_tests {
                 namespace,
                 key,
                 value,
+                source_node_id: _,
+                signature: _,
             } => {
                 assert_eq!(namespace, crate::mesh::raft::state_machine::Namespace::Org);
                 assert_eq!(key, "test_key");
@@ -357,13 +361,20 @@ mod raft_command_tests {
         let cmd = RaftCommand::Delete {
             namespace: crate::mesh::raft::state_machine::Namespace::Intel,
             key: "delete_key".to_string(),
+            source_node_id: None,
+            signature: None,
         };
 
         let serialized = crate::serialization::serialize(&cmd).unwrap();
         let deserialized: RaftCommand = crate::serialization::deserialize(&serialized).unwrap();
 
         match deserialized {
-            RaftCommand::Delete { namespace, key } => {
+            RaftCommand::Delete {
+                namespace,
+                key,
+                source_node_id: _,
+                signature: _,
+            } => {
                 assert_eq!(
                     namespace,
                     crate::mesh::raft::state_machine::Namespace::Intel
@@ -380,6 +391,8 @@ mod raft_command_tests {
             namespace: crate::mesh::raft::state_machine::Namespace::Org,
             key: "my_key".to_string(),
             value: vec![],
+            source_node_id: None,
+            signature: None,
         };
 
         let display = format!("{}", cmd);
@@ -392,6 +405,8 @@ mod raft_command_tests {
         let cmd = RaftCommand::Delete {
             namespace: crate::mesh::raft::state_machine::Namespace::Revocation,
             key: "revoke_key".to_string(),
+            source_node_id: None,
+            signature: None,
         };
 
         let display = format!("{}", cmd);

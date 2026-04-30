@@ -139,6 +139,8 @@ impl RaftAwareClient {
             namespace,
             key,
             value,
+            source_node_id: None,
+            signature: None,
         };
 
         let commit_index = instance
@@ -180,6 +182,8 @@ impl RaftAwareClient {
             namespace: namespace.clone(),
             key: key.clone(),
             value: value.clone(),
+            source_node_id: None,
+            signature: None,
         };
 
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -238,6 +242,8 @@ impl RaftAwareClient {
                             namespace,
                             key,
                             value,
+                            source_node_id: None,
+                            signature: None,
                         };
                         let request_id = uuid::Uuid::new_v4().to_string();
                         let command_bytes = crate::serialization::serialize(&command)
