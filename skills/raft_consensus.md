@@ -45,7 +45,7 @@ impl RaftTypeConfig for GlobalRegistryTypeConfig {
     type LeaderId = LeaderId<u64, NodeId>;          // Leader identification
     type Vote = openraft::Vote<LeaderId<u64, NodeId>>;
     type Entry = Entry<CommittedLeaderId<u64>, RaftCommand, NodeId, BasicNode>;
-    type SnapshotData = Cursor<Vec<u8>>;            // In-memory snapshot
+    type SnapshotData = bytes::Bytes;                     // Binary snapshot (streaming format since W11.2)
     type AsyncRuntime = openraft::impls::TokioRuntime;
     type Responder<T> = OneshotResponder<GlobalRegistryTypeConfig, T>;
     type Batch<T> = Vec<T>;
@@ -197,8 +197,8 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
     async fn applied_state(&mut self) -> Result<(Option<LogIdOf<GlobalRegistryTypeConfig>>, StoredMembershipOf<GlobalRegistryTypeConfig>), io::Error>;
     async fn apply<Strm>(&mut self, entries: Strm) -> Result<(), io::Error>;
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder;
-    async fn begin_receiving_snapshot(&mut self) -> Result<Cursor<Vec<u8>>, io::Error>;
-    async fn install_snapshot(&mut self, meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>, snapshot: Cursor<Vec<u8>>) -> Result<(), io::Error>;
+    async fn begin_receiving_snapshot(&mut self) -> Result<Bytes, io::Error>;
+    async fn install_snapshot(&mut self, meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>, snapshot: Bytes) -> Result<(), io::Error>;  // W11.2: streaming binary format
     async fn get_current_snapshot(&mut self) -> Result<Option<SnapshotOf<GlobalRegistryTypeConfig>>, io::Error>;
 }
 ```
@@ -483,3 +483,75 @@ cargo test --test integration_test
 | `src/mesh/dht/signed.rs` | `DhtSnapshotResponseSignable`, `DhtSyncResponseSignable`, `get_snapshot_signable_content()`, `get_sync_signable_content()` |
 | `src/mesh/dht/record_store_sync.rs` | Updated to use postcard-based signable content helpers |
 | `src/mesh/transport_dht.rs` | Updated DHT signature verification to use postcard-based signable content |
+
+## Wave 11 Changes Summary
+
+| Task | Key Changes |
+|------|-------------|
+| W11.2 | Streaming binary snapshot format replacing JSON materialization. `streaming_serialize()` and `streaming_deserialize_and_apply()` on `GlobalRegistryStateMachine`. Peak memory reduced from ~2x to ~1x state size. Backward-compatible JSON fallback. |
+
+### W11.2: Streaming Raft Snapshots
+
+#### Problem
+
+Previously, `build_snapshot()` called `get_all_entries()` which loaded ALL entries from SQLite into a `Vec<(Namespace, String, Vec<u8>)>`, then `serde_json::to_vec()` serialized them to another `Vec<u8>`. For a 1GB state machine, this meant ~2GB+ peak RAM usage during snapshot creation.
+
+Similarly, `install_snapshot()` used `serde_json::from_slice()` which deserialized all entries into a Vec before inserting them to SQLite.
+
+#### Solution
+
+A streaming binary format that processes entries one at a time:
+
+```
+[MAGIC u32 0x53524D53 ("SRMS")]
+[ENTRY_COUNT u64 LE]
+[ENTRY_1_LEN u32 LE][postcard-serialized StreamingSnapshotEntry]
+[ENTRY_2_LEN u32 LE][postcard-serialized StreamingSnapshotEntry]
+...
+```
+
+Where `StreamingSnapshotEntry` is:
+```rust
+#[derive(Serialize, Deserialize)]
+struct StreamingSnapshotEntry {
+    ns: String,    // namespace string ("org", "intel", "revocation")
+    key: String,
+    val: Vec<u8>,
+}
+```
+
+#### Key Methods
+
+```rust
+impl GlobalRegistryStateMachine {
+    /// Serialize all state machine entries to Bytes, processing one SQLite row at a time.
+    /// Never holds all entries in memory simultaneously.
+    pub fn streaming_serialize(&self) -> io::Result<Bytes>;
+
+    /// Deserialize and apply entries to the state machine, inserting one at a time.
+    /// Falls back to JSON deserialization if magic number is absent (rolling upgrades).
+    pub fn streaming_deserialize_and_apply(&self, data: &[u8]) -> io::Result<()>;
+}
+```
+
+#### Backward Compatibility
+
+The magic number `0x53524D53` is checked on deserialization. If absent, the data is assumed to be legacy JSON format and deserialized accordingly. This enables rolling upgrades where old nodes send JSON snapshots to new nodes.
+
+#### Memory Profile
+
+- **Before**: `get_all_entries()` (all entries Vec) + `serde_json::to_vec()` (serialized Vec) = ~2x state size
+- **After**: Output buffer only, entries iterated one at a time from SQLite = ~1x state size
+- Binary format also avoids JSON base64 encoding of binary values (~33% size reduction)
+
+#### Tests
+
+8 tests in `regression_tests::streaming_snapshot_tests`:
+- Empty state round-trip
+- Multi-namespace entry round-trip
+- Magic number verification
+- Entry count verification
+- JSON fallback deserialization
+- Data replacement on install
+- 10K-entry large dataset
+- Binary value (0x00-0xFF) preservation

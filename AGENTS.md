@@ -305,9 +305,16 @@ Global nodes form a Raft cluster for strong consistency. Key files:
 - `src/mesh/raft/instance.rs` — RaftInstance wrapping openraft::Raft
 - `src/mesh/raft/regression_tests.rs` — Regression tests for Raft messages and DHT signatures
 
-**Namespaces**: Org, Intel, Revocation (defined in `state_machine.rs:23-52`)
+**Namespaces**: Org, Intel, Revocation (defined in `state_machine.rs`)
 
 **DHT Fallback**: When Raft is unavailable, `RaftAwareClient::fallback_to_dht()` provides eventual consistency via DHT lookups.
+
+**Streaming Snapshots (W11.2)**: Raft snapshots use a streaming binary format to avoid OOM on large state. Key methods:
+- `GlobalRegistryStateMachine::streaming_serialize()` — iterates SQLite rows, serializes one entry at a time
+- `GlobalRegistryStateMachine::streaming_deserialize_and_apply()` — deserializes and inserts one entry at a time
+- Format: `[MAGIC u32 0x53524D53][COUNT u64][LEN u32][postcard entry]...`
+- Backward-compatible: falls back to JSON deserialization if magic number is absent (rolling upgrades)
+- Peak memory reduced from ~2x state size to ~1x state size
 
 ### Raft Command Authorization
 
