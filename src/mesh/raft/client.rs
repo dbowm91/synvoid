@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::dht::RecordStoreManager;
@@ -22,6 +22,36 @@ pub struct ConsistentReadResult {
     pub value: Option<Vec<u8>>,
     pub source: ConsistentReadSource,
     pub leader_node_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LeaderCache {
+    leader_node_id: Option<String>,
+    cached_at: Instant,
+    ttl: Duration,
+}
+
+impl LeaderCache {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            leader_node_id: None,
+            cached_at: Instant::now() - ttl - Duration::from_secs(1),
+            ttl,
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.cached_at.elapsed() < self.ttl
+    }
+
+    fn update(&mut self, leader_node_id: Option<String>) {
+        self.leader_node_id = leader_node_id;
+        self.cached_at = Instant::now();
+    }
+
+    fn invalidate(&mut self) {
+        self.cached_at = Instant::now() - self.ttl - Duration::from_secs(1);
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +78,7 @@ pub struct RaftAwareClient {
     config: Arc<MeshConfig>,
     record_store: Option<Arc<RecordStoreManager>>,
     raft_instance: Arc<RwLock<Option<Arc<RaftInstance>>>>,
+    leader_cache: Arc<Mutex<LeaderCache>>,
 }
 
 impl RaftAwareClient {
@@ -63,6 +94,7 @@ impl RaftAwareClient {
             config,
             record_store,
             raft_instance: Arc::new(RwLock::new(None)),
+            leader_cache: Arc::new(Mutex::new(LeaderCache::new(Duration::from_secs(5)))),
         }
     }
 
@@ -186,11 +218,48 @@ impl RaftAwareClient {
     }
 
     async fn find_leader_node_id(&self) -> Option<String> {
-        let peers = self.transport.get_topology().get_all_peers().await;
-        peers
-            .into_iter()
-            .find(|p| p.role.is_global())
-            .map(|p| p.node_id)
+        if let Some(leader) = self.try_get_local_leader().await {
+            return Some(leader);
+        }
+
+        {
+            let cache = self.leader_cache.lock().await;
+            if cache.is_valid() {
+                return cache.leader_node_id.clone();
+            }
+        }
+
+        self.refresh_leader_cache().await
+    }
+
+    async fn try_get_local_leader(&self) -> Option<String> {
+        let guard = self.raft_instance.read().await;
+        if let Some(instance) = guard.as_ref() {
+            if let Some(leader_id) = instance.get_current_leader().await {
+                return Some(leader_id.to_string());
+            }
+        }
+        None
+    }
+
+    async fn refresh_leader_cache(&self) -> Option<String> {
+        {
+            let guard = self.raft_instance.read().await;
+            if let Some(instance) = guard.as_ref() {
+                if let Some(leader_id) = instance.get_current_leader().await {
+                    let leader_str = leader_id.to_string();
+                    let mut cache = self.leader_cache.lock().await;
+                    cache.update(Some(leader_str.clone()));
+                    return Some(leader_str);
+                }
+            }
+        }
+        None
+    }
+
+    async fn invalidate_leader_cache(&self) {
+        let mut cache = self.leader_cache.lock().await;
+        cache.invalidate();
     }
 
     pub async fn consistent_read(
