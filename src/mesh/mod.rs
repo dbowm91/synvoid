@@ -14,6 +14,7 @@ pub mod cert_dist;
 pub mod cli;
 pub mod client_audit;
 pub mod config;
+pub mod crypto_verification;
 pub mod dht;
 pub mod hierarchical_routing;
 pub mod hybrid_signature;
@@ -97,6 +98,7 @@ pub use hybrid_signature::{
     ML_DSA_SIGNATURE_SIZE,
 };
 pub use kem::{KemSession, MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret};
+pub use crypto_verification::CryptoVerificationPool;
 pub use ml_dsa::{
     MeshHybridSigner, MeshMlDsaSigner, MeshMlDsaVerifier, MlDsaSigningKeyType,
     MlDsaVerifyingKeyType,
