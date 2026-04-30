@@ -172,11 +172,11 @@ impl RaftInstance {
     }
 
     pub async fn get_leader_id(&self) -> Option<u64> {
-        if self.is_leader().await {
-            Some(self.node_id)
-        } else {
-            None
-        }
+        self.raft.current_leader().await
+    }
+
+    pub async fn get_current_leader(&self) -> Option<u64> {
+        self.raft.current_leader().await
     }
     pub async fn wait_for_leader(
         &self,
