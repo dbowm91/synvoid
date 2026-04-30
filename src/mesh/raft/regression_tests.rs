@@ -1,0 +1,523 @@
+#[cfg(test)]
+mod signed_record_tests {
+    use base64::Engine;
+    use crate::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType};
+
+    fn create_valid_record() -> SignedDhtRecord {
+        SignedDhtRecord::new(
+            "test_key".to_string(),
+            b"test_value".to_vec(),
+            "publisher_1".to_string(),
+            SignedRecordType::Upstream,
+        )
+    }
+
+    #[test]
+    fn test_signed_record_empty_signature_rejected() {
+        let record = create_valid_record();
+        assert!(record.signature.is_empty());
+
+        let signer = RecordSigner::new(Some([0x42u8; 32]));
+        assert!(!signer.verify(&record));
+    }
+
+    #[test]
+    fn test_signed_record_wrong_public_key_rejected() {
+        let mut record = create_valid_record();
+        record.signature = vec![1, 2, 3, 4];
+        record.signer_public_key = Some("wrong_key".to_string());
+
+        let signer = RecordSigner::new(Some([0x42u8; 32]));
+        assert!(!signer.verify(&record));
+    }
+
+    #[test]
+    fn test_signed_record_invalid_signature_rejected() {
+        let mut record = create_valid_record();
+        record.signature = vec![1, 2, 3, 4];
+        record.signer_public_key = Some(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32])
+        );
+
+        let signer = RecordSigner::new(Some([0x99u8; 32]));
+        assert!(!signer.verify(&record));
+    }
+
+    #[test]
+    fn test_signed_record_tampered_value_rejected() {
+        let record = create_valid_record();
+
+        let signing_key = [0x42u8; 32];
+        let signer = RecordSigner::new(Some(signing_key));
+
+        let signature = signer.sign(&record);
+        assert!(signature.is_some());
+
+        let mut signed_record = record;
+        signed_record.value = b"tampered_value".to_vec();
+        signed_record.signature = signature.unwrap();
+        signed_record.signer_public_key = signer.get_verifying_key();
+
+        assert!(!signer.verify(&signed_record));
+    }
+
+    #[test]
+    fn test_signed_record_tampered_key_rejected() {
+        let record = create_valid_record();
+
+        let signing_key = [0x42u8; 32];
+        let signer = RecordSigner::new(Some(signing_key));
+
+        let signature = signer.sign(&record);
+        assert!(signature.is_some());
+
+        let mut signed_record = record;
+        signed_record.key = "tampered_key".to_string();
+        signed_record.signature = signature.unwrap();
+        signed_record.signer_public_key = signer.get_verifying_key();
+
+        assert!(!signer.verify(&signed_record));
+    }
+
+    #[test]
+    fn test_signed_record_tampered_publisher_rejected() {
+        let record = create_valid_record();
+
+        let signing_key = [0x42u8; 32];
+        let signer = RecordSigner::new(Some(signing_key));
+
+        let signature = signer.sign(&record);
+        assert!(signature.is_some());
+
+        let mut signed_record = record;
+        signed_record.publisher_id = "tampered_publisher".to_string();
+        signed_record.signature = signature.unwrap();
+        signed_record.signer_public_key = signer.get_verifying_key();
+
+        assert!(!signer.verify(&signed_record));
+    }
+
+    #[test]
+    fn test_signed_record_valid_signature_accepted() {
+        let record = create_valid_record();
+
+        let signing_key = [0x42u8; 32];
+        let signer = RecordSigner::new(Some(signing_key));
+
+        let signature = signer.sign(&record);
+        assert!(signature.is_some());
+
+        let mut signed_record = record;
+        signed_record.signature = signature.unwrap();
+        signed_record.signer_public_key = signer.get_verifying_key();
+
+        assert!(signer.verify(&signed_record));
+    }
+
+    #[test]
+    fn test_record_without_public_key_rejected() {
+        let mut record = create_valid_record();
+        record.signer_public_key = None;
+        record.signature = vec![1, 2, 3, 4];
+
+        let signer = RecordSigner::new(Some([0x42u8; 32]));
+        assert!(!signer.verify(&record));
+    }
+
+    #[test]
+    fn test_record_with_valid_signature_has_verifiable_content() {
+        let record = create_valid_record();
+        let signing_key = [0xABu8; 32];
+        let signer = RecordSigner::new(Some(signing_key));
+
+        let signature = signer.sign(&record);
+        assert!(signature.is_some());
+
+        let mut signed_record = record;
+        signed_record.signature = signature.unwrap();
+        signed_record.signer_public_key = signer.get_verifying_key();
+
+        let content = signed_record.get_signable_content();
+        assert!(!content.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod pending_entry_leak_tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn test_pending_response_timeout_cleanup() {
+        let pending_responses: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let (tx1, _rx1) = tokio::sync::oneshot::channel();
+        let (tx2, _rx2) = tokio::sync::oneshot::channel();
+
+        {
+            let mut guard = pending_responses.lock().await;
+            guard.insert("req1".to_string(), tx1);
+            guard.insert("req2".to_string(), tx2);
+        }
+
+        let mut guard = pending_responses.lock().await;
+        assert!(guard.contains_key("req1"));
+        assert!(guard.contains_key("req2"));
+
+        guard.remove("req1");
+
+        assert_eq!(guard.len(), 1);
+        assert!(guard.contains_key("req2"));
+    }
+
+    #[tokio::test]
+    async fn test_pending_response_map_maintains_entries_until_cleaned() {
+        let pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        for i in 0..5 {
+            let (tx, _rx) = tokio::sync::oneshot::channel();
+            let mut guard = pending.lock().await;
+            guard.insert(format!("req_{}", i), tx);
+        }
+
+        assert_eq!(pending.lock().await.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_orphaned_response_channels_can_be_detected() {
+        let pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let (tx1, rx1) = tokio::sync::oneshot::channel::<String>();
+        let (tx2, rx2) = tokio::sync::oneshot::channel::<String>();
+
+        {
+            let mut guard = pending.lock().await;
+            guard.insert("orphan1".to_string(), tx1);
+            guard.insert("orphan2".to_string(), tx2);
+        }
+
+        drop(rx1);
+        drop(rx2);
+
+        let mut guard = pending.lock().await;
+        let before = guard.len();
+        guard.retain(|_, sender| !sender.is_closed());
+        let after = guard.len();
+
+        assert!(before >= 2);
+        assert_eq!(after, 0);
+    }
+}
+
+#[cfg(test)]
+mod dht_adversarial_tests {
+    use crate::mesh::dht::signed::{validate_message_timestamp, SignedDhtRecord, SignedRecordType};
+    use crate::mesh::safe_unix_timestamp;
+
+    #[test]
+    fn test_expired_timestamp_rejected() {
+        let old_timestamp = safe_unix_timestamp() - 400;
+        assert!(!validate_message_timestamp(old_timestamp));
+    }
+
+    #[test]
+    fn test_future_timestamp_rejected() {
+        let future_timestamp = safe_unix_timestamp() + 400;
+        assert!(!validate_message_timestamp(future_timestamp));
+    }
+
+    #[test]
+    fn test_valid_timestamp_accepted() {
+        let now = safe_unix_timestamp();
+        assert!(validate_message_timestamp(now));
+    }
+
+    #[test]
+    fn test_margin_timestamp_accepted() {
+        let margin_timestamp = safe_unix_timestamp() - 299;
+        assert!(validate_message_timestamp(margin_timestamp));
+    }
+
+    #[test]
+    fn test_record_expired_check() {
+        let mut record = SignedDhtRecord::new(
+            "test_key".to_string(),
+            b"test_value".to_vec(),
+            "publisher".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        assert!(!record.is_expired());
+
+        record.created_at = safe_unix_timestamp() - 10000;
+        record.expires_at = Some(safe_unix_timestamp() - 5000);
+
+        assert!(record.is_expired());
+    }
+
+    #[test]
+    fn test_record_not_expired_with_future_expiry() {
+        let mut record = SignedDhtRecord::new(
+            "test_key".to_string(),
+            b"test_value".to_vec(),
+            "publisher".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        record.created_at = safe_unix_timestamp();
+        record.expires_at = Some(safe_unix_timestamp() + 3600);
+
+        assert!(!record.is_expired());
+    }
+
+    #[test]
+    fn test_record_without_expiry_not_expired() {
+        let record = SignedDhtRecord::new(
+            "test_key".to_string(),
+            b"test_value".to_vec(),
+            "publisher".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        assert!(!record.is_expired());
+    }
+
+    #[test]
+    fn test_privileged_record_type_requires_signature() {
+        let org_record = SignedDhtRecord::new(
+            "org_key".to_string(),
+            b"value".to_vec(),
+            "publisher".to_string(),
+            SignedRecordType::Organization,
+        );
+
+        assert!(org_record.requires_signature());
+
+        let upstream_record = SignedDhtRecord::new(
+            "upstream_key".to_string(),
+            b"value".to_vec(),
+            "publisher".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        assert!(upstream_record.requires_signature());
+    }
+
+    #[test]
+    fn test_record_needs_refresh_when_expiry_imminent() {
+        let mut record = SignedDhtRecord::new(
+            "test_key".to_string(),
+            b"test_value".to_vec(),
+            "publisher".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        record.created_at = safe_unix_timestamp() - 250;
+        record.expires_at = Some(safe_unix_timestamp() - 50);
+
+        assert!(record.is_expired());
+        assert!(record.needs_refresh());
+    }
+}
+
+#[cfg(test)]
+mod raft_command_tests {
+    use crate::mesh::raft::state_machine::RaftCommand;
+
+    #[test]
+    fn test_raft_command_set_serialization() {
+        let cmd = RaftCommand::Set {
+            namespace: crate::mesh::raft::state_machine::Namespace::Org,
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+        };
+
+        let serialized = crate::serialization::serialize(&cmd).unwrap();
+        let deserialized: RaftCommand = crate::serialization::deserialize(&serialized).unwrap();
+
+        match deserialized {
+            RaftCommand::Set { namespace, key, value } => {
+                assert_eq!(namespace, crate::mesh::raft::state_machine::Namespace::Org);
+                assert_eq!(key, "test_key");
+                assert_eq!(value, b"test_value");
+            }
+            _ => panic!("Expected Set command"),
+        }
+    }
+
+    #[test]
+    fn test_raft_command_delete_serialization() {
+        let cmd = RaftCommand::Delete {
+            namespace: crate::mesh::raft::state_machine::Namespace::Intel,
+            key: "delete_key".to_string(),
+        };
+
+        let serialized = crate::serialization::serialize(&cmd).unwrap();
+        let deserialized: RaftCommand = crate::serialization::deserialize(&serialized).unwrap();
+
+        match deserialized {
+            RaftCommand::Delete { namespace, key } => {
+                assert_eq!(namespace, crate::mesh::raft::state_machine::Namespace::Intel);
+                assert_eq!(key, "delete_key");
+            }
+            _ => panic!("Expected Delete command"),
+        }
+    }
+
+    #[test]
+    fn test_raft_command_set_display() {
+        let cmd = RaftCommand::Set {
+            namespace: crate::mesh::raft::state_machine::Namespace::Org,
+            key: "my_key".to_string(),
+            value: vec![],
+        };
+
+        let display = format!("{}", cmd);
+        assert!(display.contains("my_key"));
+        assert!(display.contains("org"));
+    }
+
+    #[test]
+    fn test_raft_command_delete_display() {
+        let cmd = RaftCommand::Delete {
+            namespace: crate::mesh::raft::state_machine::Namespace::Revocation,
+            key: "revoke_key".to_string(),
+        };
+
+        let display = format!("{}", cmd);
+        assert!(display.contains("revoke_key"));
+        assert!(display.contains("revocation"));
+    }
+}
+
+#[cfg(test)]
+mod edge_replica_tests {
+    use crate::mesh::raft::edge_replica::EdgeReplicaManager;
+    use crate::mesh::raft::state_machine::{Namespace, OrgPublicKey, ThreatIntel};
+    use tempfile::TempDir;
+
+    fn create_test_manager() -> (EdgeReplicaManager, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let manager = EdgeReplicaManager::new(temp_dir.path().to_path_buf()).unwrap();
+        (manager, temp_dir)
+    }
+
+    fn create_org_key_value(org_id: &str, _key_id: &str) -> Vec<u8> {
+        let key = OrgPublicKey {
+            org_id: org_id.to_string(),
+            public_key: vec![1, 2, 3, 4],
+            created_at: 1000,
+            signer_node_id: "node1".to_string(),
+        };
+        postcard::to_stdvec(&key).unwrap()
+    }
+
+    fn create_threat_intel_value(indicator_id: &str) -> Vec<u8> {
+        let intel = ThreatIntel {
+            indicator_id: indicator_id.to_string(),
+            indicator_type: "malware".to_string(),
+            pattern: "*.evil.com".to_string(),
+            severity: "high".to_string(),
+            created_at: 1000,
+            expires_at: Some(2000),
+            source_node_id: "node1".to_string(),
+        };
+        postcard::to_stdvec(&intel).unwrap()
+    }
+
+    #[test]
+    fn test_edge_replica_update_and_get() {
+        let (manager, _temp_dir) = create_test_manager();
+        let value = create_org_key_value("org1", "key1");
+        manager.update_org_key("key1", &value).unwrap();
+        let retrieved = manager.get_org_key("key1");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().org_id, "org1");
+    }
+
+    #[test]
+    fn test_edge_replica_cache_isolation() {
+        let (manager, _temp_dir) = create_test_manager();
+
+        let value1 = create_org_key_value("org1", "key1");
+        let value2 = create_org_key_value("org2", "key2");
+
+        manager.update_org_key("key1", &value1).unwrap();
+        manager.update_org_key("key2", &value2).unwrap();
+
+        assert_eq!(manager.get_org_key("key1").unwrap().org_id, "org1");
+        assert_eq!(manager.get_org_key("key2").unwrap().org_id, "org2");
+    }
+
+    #[test]
+    fn test_edge_replica_threat_intel() {
+        let (manager, _temp_dir) = create_test_manager();
+        let value = create_threat_intel_value("indicator1");
+        manager.update_threat_intel("indicator1", &value).unwrap();
+        let retrieved = manager.get_threat_intel("indicator1");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().severity, "high");
+    }
+
+    #[test]
+    fn test_edge_replica_update_from_notification() {
+        let (manager, _temp_dir) = create_test_manager();
+        let org_value = create_org_key_value("org1", "key1");
+        let intel_value = create_threat_intel_value("indicator1");
+
+        manager.update_from_notification(&Namespace::Org, "key1", &org_value).unwrap();
+        manager.update_from_notification(&Namespace::Intel, "indicator1", &intel_value).unwrap();
+
+        assert!(manager.get_org_key("key1").is_some());
+        assert!(manager.get_threat_intel("indicator1").is_some());
+    }
+
+    #[test]
+    fn test_edge_replica_delete() {
+        let (manager, _temp_dir) = create_test_manager();
+        let value = create_org_key_value("org1", "key1");
+        manager.update_org_key("key1", &value).unwrap();
+        assert!(manager.get_org_key("key1").is_some());
+
+        manager.delete_from_notification(&Namespace::Org, "key1").unwrap();
+        assert!(manager.get_org_key("key1").is_none());
+    }
+
+    #[test]
+    fn test_edge_replica_cache_invalidation_on_delete() {
+        let (manager, _temp_dir) = create_test_manager();
+        let value = create_org_key_value("org1", "key1");
+        manager.update_org_key("key1", &value).unwrap();
+
+        manager.get_org_key("key1");
+        assert!(manager.get_org_key("key1").is_some());
+
+        manager.delete_org_key("key1").unwrap();
+        assert!(manager.get_org_key("key1").is_none());
+    }
+
+    #[test]
+    fn test_edge_replica_sync_index_tracking() {
+        let (manager, _temp_dir) = create_test_manager();
+
+        assert!(manager.get_last_sync_index().is_none());
+
+        manager.set_last_sync_index(100).unwrap();
+        assert_eq!(manager.get_last_sync_index(), Some(100));
+
+        manager.set_last_sync_index(200).unwrap();
+        assert_eq!(manager.get_last_sync_index(), Some(200));
+    }
+
+    #[test]
+    fn test_edge_replica_cache_stats_initially_zero() {
+        let (manager, _temp_dir) = create_test_manager();
+        let (entries, size) = manager.get_cache_stats();
+        assert_eq!(entries, 0);
+        assert_eq!(size, 0);
+    }
+}
