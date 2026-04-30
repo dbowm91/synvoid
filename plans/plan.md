@@ -1,14 +1,14 @@
 # MaluWAF Implementation Plan
 
-**Status**: All Waves Complete
-**Last Updated**: 2026-04-29
+**Status**: Wave 8 In Progress
+**Last Updated**: 2026-04-30
 **Verification Completed**: 2026-04-29 (Wave 7)
 
 ---
 
 ## Overview
 
-All waves 1-7 are **COMPLETE**. The implementation provides a solid foundation for the Raft consensus layer fully wired into the Global Control Plane, replacing the legacy DHT-based authority.
+All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Modernization) is currently in progress.
 
 **Wave 1-7 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
@@ -17,7 +17,58 @@ All waves 1-7 are **COMPLETE**. The implementation provides a solid foundation f
 - Wave 4: Security & Resilience (W4.1-W4.2)
 - Wave 5: OS Foundations & Core Optimization (W5.1-W5.3)
 - Wave 6: Mesh Consensus Foundations (W6.1-W6.4)
-- **Wave 7: Raft Integration & Hardening (W7.1-W7.5) [COMPLETE]**
+- Wave 7: Raft Integration & Hardening (W7.1-W7.5)
+- **Wave 8: Control Plane Hardening & YARA-X Modernization (W8.1-W8.5) [IN PROGRESS]**
+
+---
+
+## Active Plan: Wave 8 - Control Plane Hardening & YARA-X Modernization
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| **W8.1** | **Raft-Backed CRL** | Move Global Node Revocation List into the Raft State Machine from legacy DHT. | **COMPLETE** |
+| **W8.2** | **Observer Nodes** | Support "Learner" nodes that replicate state but don't vote, for global read scaling. | **PLANNED** |
+| **W8.3** | **Genesis Membership** | Automate Raft membership changes upon Genesis Key authorized node announcements. | **PLANNED** |
+| **W8.4** | **Edge State Mirroring** | Implement background mirroring of Raft state to local SQLite on Edge nodes. | **PLANNED** |
+| **W8.5** | **YARA-X Modernization** | Complete transition to `yara-x` (official Rust) and remove all legacy `libyara` (C) logic. | **PLANNED** |
+
+### W8.1: Raft-Backed CRL (COMPLETE)
+- **Objective**: Instant network-wide node ejection.
+- **Actions**:
+    - Added `OrgKeyManager::revoke_global_node()` method that commits to `Namespace::Revocation` via Raft
+    - Uses `RaftAwareClient::raft_write()` with `postcard` serialization for binary stability
+    - Falls back to DHT-only storage if Raft is unavailable (backward compatibility)
+    - Broadcasts `RaftCommitNotification` after successful Raft commit
+    - Updated `transport_global.rs` to use OrgKeyManager for revocation
+
+### W8.2: Observer Nodes (PLANNED)
+- **Objective**: Scale read capacity without consensus overhead.
+- **Actions**:
+    - Update `RaftInitConfig` to support `is_observer` flag.
+    - Observers receive `AppendEntries` but do not participate in `VoteRequest`.
+    - Allows Global nodes in low-latency regions to serve consistent reads locally.
+
+### W8.3: Genesis Membership (PLANNED)
+- **Objective**: Zero-touch cluster expansion.
+- **Actions**:
+    - Integrate `transport_global.rs` with `RaftInstance`.
+    - When a new Global node is verified via Genesis signature, the Leader triggers a `change_membership`.
+    - Prevents split-brain by ensuring membership is handled as a committed Raft entry.
+
+### W8.4: Edge State Mirroring (PLANNED)
+- **Objective**: O(1) local lookups for Org Keys with Raft-grade consistency.
+- **Actions**:
+    - Edge nodes subscribe to `RaftCommitNotification` via DHT/Broadcast.
+    - On notification, Edge nodes query the Leader for the specific updated record.
+    - Store the record in a local `read_replica.db` for instant WAF policy checks.
+
+### W8.5: YARA-X Modernization (PLANNED)
+- **Objective**: Full native Rust YARA engine without C dependencies.
+- **Actions**:
+    - **Verification**: Ensure `yara-x` (v1.15+) is used exclusively in `yara_scanner.rs`.
+    - **Cleanup**: Remove any `extern crate yara` or `yara` (C wrapper) references from codebase.
+    - **Feature Mapping**: Update `src/mesh/yara_rules.rs` to support `yara-x` compiled rule formats for efficient mesh distribution.
+    - **Performance**: Optimize `yara_x::Scanner` reuse in `scan_bytes` to avoid per-request compilation overhead.
 
 ---
 

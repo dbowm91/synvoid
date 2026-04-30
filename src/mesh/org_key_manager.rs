@@ -3,7 +3,7 @@ use crate::mesh::config::MeshNodeRole;
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::record_store::RecordStoreManager;
 use crate::mesh::organization::{OrgKey, OrgPublicKey, Organization, QuorumSignature};
-use crate::mesh::raft::{Namespace, RaftAwareClient};
+use crate::mesh::raft::{Namespace, RaftAwareClient, RaftCommitNotification};
 use base64::Engine;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -190,6 +190,77 @@ impl OrgKeyManager {
                 )))
             }
         }
+    }
+
+    pub async fn revoke_global_node(
+        &self,
+        target_node_id: &str,
+        reason: &str,
+    ) -> Result<(), OrgKeyError> {
+        if !self.node_role.is_global() {
+            return Err(OrgKeyError::NotAuthorized(
+                "Only global nodes can revoke other global nodes".to_string(),
+            ));
+        }
+
+        let revocation_info = crate::mesh::peer_auth::RevocationInfo {
+            revoked_at: crate::mesh::safe_unix_timestamp(),
+            reason: reason.to_string(),
+        };
+
+        let value = crate::serialization::serialize(&revocation_info)
+            .map_err(|e| OrgKeyError::SerializationError(e.to_string()))?;
+
+        let value_clone = value.clone();
+
+        if let Some(raft_client) = self.raft_client.read().clone() {
+            match raft_client.raft_write(Namespace::Revocation, target_node_id.to_string(), value_clone).await {
+                Ok(commit_index) => {
+                    tracing::info!(
+                        "Global node {} revocation committed to Raft at index {}",
+                        target_node_id,
+                        commit_index
+                    );
+
+                    if let Some(transport) = self.transport.read().as_ref() {
+                        let leader_id = transport.get_node_id();
+                        let notification = RaftCommitNotification::new(
+                            leader_id,
+                            commit_index,
+                            Namespace::Revocation,
+                            target_node_id.to_string(),
+                        );
+                        self.broadcast_raft_commit_notification(&notification).await?;
+                    }
+
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to commit revocation to Raft, falling back to DHT: {}", e);
+                }
+            }
+        }
+
+        if let Some(store) = self.record_store.read().clone() {
+            let dht_key = crate::mesh::dht::keys::DhtKey::revoked_global_node(target_node_id);
+            let mut record = crate::mesh::protocol::DhtRecord {
+                key: dht_key.as_str(),
+                value,
+                timestamp: crate::mesh::safe_unix_timestamp(),
+                sequence_number: 1,
+                ttl_seconds: 86400,
+                source_node_id: self.node_id.clone(),
+                signature: Vec::new(),
+                signer_public_key: None,
+                content_hash: Vec::new(),
+            };
+            record.content_hash = record.compute_content_hash();
+            store.store_record(record, 100);
+            tracing::info!("Stored GlobalNodeRevocation in DHT (fallback)");
+            return Ok(());
+        }
+
+        Err(OrgKeyError::RecordStoreNotSet)
     }
 
     async fn broadcast_raft_commit_notification(
