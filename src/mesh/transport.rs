@@ -112,6 +112,9 @@ pub struct MeshTransport {
     pub(crate) pending_snapshot_responses: Arc<
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>,
     >,
+    pub(crate) pending_snapshot_transfers: Arc<
+        Mutex<HashMap<String, InProgressSnapshot>>,
+    >,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -165,6 +168,67 @@ pub struct PendingMembershipChange {
     pub node_id: u64,
     pub action: MembershipChangeAction,
     pub authorized_at: u64,
+}
+
+#[derive(Debug)]
+pub struct InProgressSnapshot {
+    pub request_id: String,
+    pub total_size: u64,
+    pub data: Vec<u8>,
+    pub vote: Vec<u8>,
+    pub meta: Vec<u8>,
+    pub offset: u64,
+    pub created_at: Instant,
+}
+
+impl InProgressSnapshot {
+    pub fn new(request_id: String, total_size: u64, vote: Vec<u8>, meta: Vec<u8>) -> Self {
+        Self {
+            request_id,
+            total_size,
+            data: Vec::with_capacity(total_size as usize),
+            vote,
+            meta,
+            offset: 0,
+            created_at: Instant::now(),
+        }
+    }
+
+    pub fn add_chunk(&mut self, chunk_offset: u64, chunk_data: Vec<u8>, is_last: bool) -> bool {
+        if chunk_offset != self.offset {
+            tracing::warn!(
+                "Chunk offset mismatch: expected {}, got {}",
+                self.offset,
+                chunk_offset
+            );
+            return false;
+        }
+        let chunk_len = chunk_data.len() as u64;
+        if self.data.len() as u64 + chunk_len > self.total_size {
+            tracing::warn!(
+                "Chunk would exceed total size: current {} + chunk {} > total {}",
+                self.data.len(),
+                chunk_len,
+                self.total_size
+            );
+            return false;
+        }
+        self.data.extend(chunk_data);
+        self.offset += chunk_len;
+        if is_last && self.offset != self.total_size {
+            tracing::warn!(
+                "Snapshot complete flag set but offset {} != total_size {}",
+                self.offset,
+                self.total_size
+            );
+            return false;
+        }
+        true
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.offset >= self.total_size
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -252,6 +316,7 @@ impl Clone for MeshTransport {
             pending_serverless_invocations: self.pending_serverless_invocations.clone(),
             pending_consistent_read_responses: self.pending_consistent_read_responses.clone(),
             pending_snapshot_responses: self.pending_snapshot_responses.clone(),
+            pending_snapshot_transfers: self.pending_snapshot_transfers.clone(),
             auth_failures: self.auth_failures.clone(),
             peer_message_times: self.peer_message_times.clone(),
             snapshot_request_times: self.snapshot_request_times.clone(),
@@ -461,6 +526,7 @@ impl MeshTransport {
             pending_serverless_invocations: Arc::new(Mutex::new(HashMap::new())),
             pending_consistent_read_responses: Arc::new(Mutex::new(HashMap::new())),
             pending_snapshot_responses: Arc::new(Mutex::new(HashMap::new())),
+            pending_snapshot_transfers: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: Arc::new(RwLock::new(HashMap::new())),
             peer_message_times: Arc::new(RwLock::new(HashMap::new())),
             snapshot_request_times: Arc::new(RwLock::new(HashMap::new())),
