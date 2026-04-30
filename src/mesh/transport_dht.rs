@@ -4,8 +4,8 @@
 use std::time::{Duration, Instant};
 
 use crate::mesh::transport::MeshTransport;
+use base64::Engine;
 use ed25519_dalek::Verifier;
-use hex;
 
 impl MeshTransport {
     pub(crate) async fn handle_dht_snapshot_request(
@@ -40,48 +40,54 @@ impl MeshTransport {
             peer_times.push(now);
         }
 
-        if !signature.is_empty() && !signer_public_key.is_empty() {
-            if let Some(ref stake_manager) = self.stake_manager {
-                if !stake_manager.can_read_dht(signer_public_key) {
-                    tracing::warn!(
-                        "DHT snapshot request from {} rejected: insufficient stake",
-                        from_peer
-                    );
-                    return;
-                }
-            }
+        if signature.is_empty() || signer_public_key.is_empty() {
+            tracing::warn!(
+                "DHT snapshot request from {} rejected: missing signature ({}) or public key ({})",
+                from_peer,
+                signature.is_empty(),
+                signer_public_key.is_empty()
+            );
+            return;
+        }
 
-            let signature_valid = if !signature.is_empty() && !signer_public_key.is_empty() {
-                let content = format!("{},{},{}", request_id, _node_id, from_version);
-                match hex::decode(signer_public_key) {
-                    Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
-                        let mut pk_array = [0u8; 32];
-                        pk_array.copy_from_slice(&pk_bytes);
-                        let mut sig_array = [0u8; 64];
-                        sig_array.copy_from_slice(signature);
-                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-                            Ok(pk) => pk
-                                .verify(
-                                    content.as_bytes(),
-                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
-                                )
-                                .is_ok(),
-                            Err(_) => false,
-                        }
-                    }
-                    _ => false,
-                }
-            } else {
-                false
-            };
-
-            if !signature_valid {
+        if let Some(ref stake_manager) = self.stake_manager {
+            if !stake_manager.can_read_dht(signer_public_key) {
                 tracing::warn!(
-                    "DHT snapshot request from {} rejected: invalid signature",
+                    "DHT snapshot request from {} rejected: insufficient stake",
                     from_peer
                 );
                 return;
             }
+        }
+
+        let signature_valid = {
+            let content = format!("{},{},{}", request_id, _node_id, from_version);
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+                    let mut pk_array = [0u8; 32];
+                    pk_array.copy_from_slice(&pk_bytes);
+                    let mut sig_array = [0u8; 64];
+                    sig_array.copy_from_slice(signature);
+                    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                        Ok(pk) => pk
+                            .verify(
+                                content.as_bytes(),
+                                &ed25519_dalek::Signature::from_bytes(&sig_array),
+                            )
+                            .is_ok(),
+                        Err(_) => false,
+                    }
+                }
+                _ => false,
+            }
+        };
+
+        if !signature_valid {
+            tracing::warn!(
+                "DHT snapshot request from {} rejected: invalid signature",
+                from_peer
+            );
+            return;
         }
 
         if let Some(ref record_store) = self.record_store {
@@ -108,6 +114,8 @@ impl MeshTransport {
         _request_id: &str,
         records: Vec<crate::mesh::protocol::DhtRecord>,
         version: u64,
+        signature: &[u8],
+        signer_public_key: &str,
     ) {
         tracing::debug!(
             "Received DHT snapshot response from {} ({} records, version: {})",
@@ -115,6 +123,46 @@ impl MeshTransport {
             records.len(),
             version
         );
+
+        if signature.is_empty() || signer_public_key.is_empty() {
+            tracing::warn!(
+                "DHT snapshot response from {} rejected: missing signature ({}) or public key ({})",
+                from_peer,
+                signature.is_empty(),
+                signer_public_key.is_empty()
+            );
+            return;
+        }
+
+        let signature_valid = {
+            let content = format!("snapshot,{},{}", version, records.len());
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+                    let mut pk_array = [0u8; 32];
+                    pk_array.copy_from_slice(&pk_bytes);
+                    let mut sig_array = [0u8; 64];
+                    sig_array.copy_from_slice(signature);
+                    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                        Ok(pk) => pk
+                            .verify(
+                                content.as_bytes(),
+                                &ed25519_dalek::Signature::from_bytes(&sig_array),
+                            )
+                            .is_ok(),
+                        Err(_) => false,
+                    }
+                }
+                _ => false,
+            }
+        };
+
+        if !signature_valid {
+            tracing::warn!(
+                "DHT snapshot response from {} rejected: invalid signature",
+                from_peer
+            );
+            return;
+        }
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
@@ -191,12 +239,54 @@ impl MeshTransport {
         &self,
         from_peer: &str,
         records: Vec<crate::mesh::protocol::DhtRecord>,
+        signature: &[u8],
+        signer_public_key: &str,
     ) {
         tracing::debug!(
             "Received DHT sync response from {} ({} records)",
             from_peer,
             records.len()
         );
+
+        if signature.is_empty() || signer_public_key.is_empty() {
+            tracing::warn!(
+                "DHT sync response from {} rejected: missing signature ({}) or public key ({})",
+                from_peer,
+                signature.is_empty(),
+                signer_public_key.is_empty()
+            );
+            return;
+        }
+
+        let signature_valid = {
+            let content = format!("sync,{},{}", from_peer, records.len());
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+                    let mut pk_array = [0u8; 32];
+                    pk_array.copy_from_slice(&pk_bytes);
+                    let mut sig_array = [0u8; 64];
+                    sig_array.copy_from_slice(signature);
+                    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                        Ok(pk) => pk
+                            .verify(
+                                content.as_bytes(),
+                                &ed25519_dalek::Signature::from_bytes(&sig_array),
+                            )
+                            .is_ok(),
+                        Err(_) => false,
+                    }
+                }
+                _ => false,
+            }
+        };
+
+        if !signature_valid {
+            tracing::warn!(
+                "DHT sync response from {} rejected: invalid signature",
+                from_peer
+            );
+            return;
+        }
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();

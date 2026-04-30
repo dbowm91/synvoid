@@ -580,10 +580,10 @@ impl MeshTransport {
                 records,
                 version,
                 timestamp: _,
-                signature: _,
-                ..
+                signature,
+                signer_public_key,
             } => {
-                self.handle_dht_snapshot_response(peer_id, &request_id, records, version)
+                self.handle_dht_snapshot_response(peer_id, &request_id, records, version, &signature, &signer_public_key)
                     .await;
             }
             MeshMessage::DhtRecordAnnounce {
@@ -655,10 +655,10 @@ impl MeshTransport {
                 records,
                 version: _,
                 timestamp: _,
-                signature: _,
-                ..
+                signature,
+                signer_public_key,
             } => {
-                self.handle_dht_sync_response(peer_id, records).await;
+                self.handle_dht_sync_response(peer_id, records, &signature, &signer_public_key).await;
             }
             MeshMessage::DhtAntiEntropyRequest {
                 request_id,
