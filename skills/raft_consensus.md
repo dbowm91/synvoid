@@ -455,3 +455,24 @@ cargo test --test integration_test
 | W9.7 | Default-deny for missing signature/public key, URL_SAFE_NO_PAD base64 decode |
 | W9.8 | DhtRecordSignable with SHA256 value_hash: key, value_hash, source, timestamp, ttl, sequence, record_type |
 | W9.9 | 33 regression tests: signed records, pending leaks, DHT adversarial, Raft commands, edge replica |
+
+## Wave 10 Changes Summary
+
+| Task | Key Changes |
+|------|-------------|
+| W10.1 | Fixed double-encoding: `send_raw()` no longer wraps payload in another `MeshRaftPayload` and re-serializes |
+| W10.2 | Added `send_message_to_peer_with_response()` in `transport.rs` that reads response before releasing stream |
+| W10.3 | Updated `raft_write_via_global()` to use new method; removed pending_responses oneshot machinery |
+| W10.4 | Added `request_id` to SnapshotHeader/SnapshotChunk; InstallSnapshot handling with chunk accumulation |
+| W10.5 | Canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` with postcard serialization |
+| W10.6 | OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()` for linearizable reads |
+| W10.7 | Added `mesh_message_raft_tests` and `dht_signable_bytes_tests` modules |
+
+## Key Files (Updated for Wave 10)
+
+| File | Purpose |
+|------|---------|
+| `src/mesh/raft/network.rs` | MeshRaftNetwork with `send_message_to_peer_with_response()` for inline response reading |
+| `src/mesh/raft/client.rs` | RaftAwareClient using `send_message_to_peer_with_response()` for RPC calls |
+| `src/mesh/raft/instance.rs` | RaftInstance with `get_read_linearizer()` for linearizable reads |
+| `src/mesh/transport.rs` | `send_message_to_peer_with_response()` method that reads response before releasing stream |
