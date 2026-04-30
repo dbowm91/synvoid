@@ -107,6 +107,7 @@ In Raft, a record is "Authorized" the moment it is committed to the log. The Lea
 pub struct RaftPayload {
     pub msg_type: RaftMsgType,
     pub data: Vec<u8>,
+    pub request_id: Option<String>,  // Added in W9.1 for RPC correlation
 }
 
 pub enum RaftMsgType {
@@ -140,16 +141,25 @@ pub struct RaftInstance {
     pub registry: GlobalRegistry,
     pub network_factory: MeshRaftNetworkFactory,
     node_id: u64,
+    is_observer: bool,
+    observer_tags: Vec<String>,
 }
 
 impl RaftInstance {
     pub async fn new(...) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>;
     pub async fn initialize(&self, cluster_nodes: Vec<u64>) -> Result<(), ...>;
+    pub async fn add_learner(&self, node_id: u64, tags: Vec<String>) -> Result<(), ...>;
     pub async fn add_node(&self, node_id: u64) -> Result<(), ...>;
     pub async fn remove_node(&self, node_id: u64) -> Result<(), ...>;
     pub async fn client_write(&self, command: RaftCommand) -> Result<u64, ...>;
+    pub async fn raft_append_entries(&self, rpc: AppendEntriesRequest<C>) -> Result<AppendEntriesResponse<C>, ...>;  // W9.1
+    pub async fn raft_vote(&self, rpc: VoteRequest<C>) -> Result<VoteResponse<C>, ...>;  // W9.1
+    pub async fn install_snapshot(&self, meta: &SnapshotMeta, snapshot: Bytes) -> Result<(), ...>;  // W9.6
     pub async fn is_leader(&self) -> bool;
+    pub async fn get_leader_id(&self) -> Option<u64>;  // Now uses raft.current_leader()
+    pub async fn get_current_leader(&self) -> Option<u64>;  // W9.4
     pub async fn wait_for_leader(&self, timeout: Duration) -> Result<u64, ...>;
+    pub async fn read(&self, namespace: Namespace, key: &str) -> Option<Vec<u8>>;  // W9.3: Linearizable read
 }
 ```
 
@@ -422,9 +432,26 @@ cargo test --test integration_test
 | File | Purpose |
 |------|---------|
 | `src/mesh/raft/mod.rs` | Module exports and types |
-| `src/mesh/raft/network.rs` | MeshRaftNetwork and Factory |
-| `src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig |
-| `src/mesh/raft/client.rs` | RaftAwareClient for Edge/Origin |
-| `src/mesh/raft/instance.rs` | RaftInstance and RaftSnapshotManager |
+| `src/mesh/raft/network.rs` | MeshRaftNetwork and Factory with full_snapshot() (W9.6) |
+| `src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig, LeaderCache (W9.4, W9.5) |
+| `src/mesh/raft/client.rs` | RaftAwareClient with LeaderCache, linearizable reads (W9.3, W9.4) |
+| `src/mesh/raft/instance.rs` | RaftInstance with raft_append_entries(), raft_vote(), install_snapshot() (W9.1, W9.6) |
+| `src/mesh/raft/regression_tests.rs` | 33 regression tests for distributed control plane (W9.9) |
+| `src/mesh/dht/signed.rs` | DhtRecordSignable canonical struct with SHA256 value hashing (W9.8) |
+| `src/mesh/transport_dht.rs` | DHT auth default-deny, signature verification (W9.7) |
 | `src/mesh/org_key_manager.rs` | Raft commit path in OrgKeyManager |
 | `src/mesh/peer_auth.rs` | Dual verification (quorum OR Raft) |
+
+## Wave 9 Changes Summary
+
+| Task | Key Changes |
+|------|-------------|
+| W9.1 | request_id in RaftPayload, raft_append_entries/raft_vote methods, proper AppendEntries/VoteRequest dispatch |
+| W9.2 | Response correlation with request_id, NotLeader handling with leader hints |
+| W9.3 | Real linearizable reads via instance.read(), NotLeader error if not leader |
+| W9.4 | LeaderCache (5s TTL), get_leader_id() uses raft.current_leader() |
+| W9.5 | Full LogId metadata (term+index), membership persistence, explicit last_purged_log_id |
+| W9.6 | full_snapshot() with 64KB chunks, SnapshotHeader/SnapshotChunk, install_snapshot() |
+| W9.7 | Default-deny for missing signature/public key, URL_SAFE_NO_PAD base64 decode |
+| W9.8 | DhtRecordSignable with SHA256 value_hash: key, value_hash, source, timestamp, ttl, sequence, record_type |
+| W9.9 | 33 regression tests: signed records, pending leaks, DHT adversarial, Raft commands, edge replica |

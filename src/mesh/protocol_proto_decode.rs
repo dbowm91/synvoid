@@ -1698,6 +1698,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     target_node_id: r.target_node_id.into(),
                     payload: crate::mesh::protocol::RaftPayload {
                         msg_type,
+                        request_id: r.request_id,
                         data: r.data,
                     },
                 })

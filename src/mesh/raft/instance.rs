@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use openraft::Raft;
+use openraft::type_config::alias::SnapshotMetaOf;
 use tokio::sync::broadcast;
 
 use crate::mesh::backend::MeshBackendPool;
@@ -140,6 +142,22 @@ impl RaftInstance {
         Ok(resp.log_id.index)
     }
 
+    pub async fn raft_append_entries(
+        &self,
+        rpc: openraft::raft::AppendEntriesRequest<GlobalRegistryTypeConfig>,
+    ) -> Result<openraft::raft::AppendEntriesResponse<GlobalRegistryTypeConfig>, Box<dyn std::error::Error + Send + Sync>> {
+        let resp = self.raft.append_entries(rpc).await?;
+        Ok(resp)
+    }
+
+    pub async fn raft_vote(
+        &self,
+        rpc: openraft::raft::VoteRequest<GlobalRegistryTypeConfig>,
+    ) -> Result<openraft::raft::VoteResponse<GlobalRegistryTypeConfig>, Box<dyn std::error::Error + Send + Sync>> {
+        let resp = self.raft.vote(rpc).await?;
+        Ok(resp)
+    }
+
     pub async fn change_membership(
         &self,
         new_members: impl Into<openraft::ChangeMembers<u64, ()>>,
@@ -156,8 +174,15 @@ impl RaftInstance {
         Ok(resp.log_id.index)
     }
 
-    pub async fn read(&self, namespace: Namespace, key: &str) -> Option<Vec<u8>> {
-        self.registry.get_value(&namespace, key)
+    pub async fn read(
+        &self,
+        namespace: Namespace,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+        if !self.is_leader().await {
+            return Err("Not the leader".into());
+        }
+        Ok(self.registry.get_value(&namespace, key))
     }
 
     pub async fn is_leader(&self) -> bool {
@@ -165,11 +190,11 @@ impl RaftInstance {
     }
 
     pub async fn get_leader_id(&self) -> Option<u64> {
-        if self.is_leader().await {
-            Some(self.node_id)
-        } else {
-            None
-        }
+        self.raft.current_leader().await
+    }
+
+    pub async fn get_current_leader(&self) -> Option<u64> {
+        self.raft.current_leader().await
     }
     pub async fn wait_for_leader(
         &self,
@@ -212,6 +237,27 @@ impl RaftInstance {
 
     pub fn observer_tags(&self) -> &[String] {
         &self.observer_tags
+    }
+
+    pub async fn install_snapshot(
+        &self,
+        meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>,
+        snapshot: Bytes,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use openraft::storage::RaftStateMachine;
+        let state_machine = self.registry.state_machine();
+        let mut state_machine_clone = GlobalRegistryStateMachine {
+            db: state_machine.db.clone(),
+        };
+        state_machine_clone
+            .install_snapshot(meta, snapshot)
+            .await
+            .map_err(|e| format!("Failed to install snapshot: {}", e))?;
+        tracing::info!(
+            "Installed snapshot with last_log_id {:?}",
+            meta.last_log_id
+        );
+        Ok(())
     }
 }
 

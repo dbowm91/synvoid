@@ -580,10 +580,10 @@ impl MeshTransport {
                 records,
                 version,
                 timestamp: _,
-                signature: _,
-                ..
+                signature,
+                signer_public_key,
             } => {
-                self.handle_dht_snapshot_response(peer_id, &request_id, records, version)
+                self.handle_dht_snapshot_response(peer_id, &request_id, records, version, &signature, &signer_public_key)
                     .await;
             }
             MeshMessage::DhtRecordAnnounce {
@@ -655,10 +655,10 @@ impl MeshTransport {
                 records,
                 version: _,
                 timestamp: _,
-                signature: _,
-                ..
+                signature,
+                signer_public_key,
             } => {
-                self.handle_dht_sync_response(peer_id, records).await;
+                self.handle_dht_sync_response(peer_id, records, &signature, &signer_public_key).await;
             }
             MeshMessage::DhtAntiEntropyRequest {
                 request_id,
@@ -2682,6 +2682,7 @@ impl MeshTransport {
 
         let response_data = match payload.msg_type {
             crate::mesh::protocol::RaftMsgType::ClientProposal => {
+                let request_id = payload.request_id.clone();
                 let command: crate::mesh::raft::state_machine::RaftCommand =
                     match postcard::from_bytes(&payload.data) {
                         Ok(c) => c,
@@ -2692,24 +2693,38 @@ impl MeshTransport {
                     };
 
                 if let Some(ref inst) = instance {
-                    match inst.client_write(command).await {
-                        Ok(commit_index) => {
-                            let response =
-                                crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
-                                    request_id: ArcStr::from(uuid::Uuid::new_v4().to_string()),
-                                    value: Some(commit_index.to_le_bytes().to_vec()),
-                                    leader_node_id: Some(ArcStr::from(local_node_id.to_string())),
-                                    timestamp: crate::utils::safe_unix_timestamp(),
-                                };
-                            Some(
-                                response.encode().map_err(|e| {
-                                    MeshTransportError::SendFailed(format!("{:?}", e))
-                                })?,
-                            )
-                        }
-                        Err(e) => {
-                            tracing::warn!("Raft client_write failed: {}", e);
-                            None
+                    if !inst.is_leader().await {
+                        let leader_hint = inst.get_leader_id().await.map(|id| id.to_string());
+                        let response = crate::mesh::protocol::MeshMessage::NotLeader {
+                            request_id: ArcStr::from(request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string())),
+                            leader_node_id: leader_hint.map(ArcStr::from),
+                            current_term: None,
+                        };
+                        Some(
+                            response.encode().map_err(|e| {
+                                MeshTransportError::SendFailed(format!("{:?}", e))
+                            })?,
+                        )
+                    } else {
+                        match inst.client_write(command).await {
+                            Ok(commit_index) => {
+                                let response =
+                                    crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
+                                        request_id: ArcStr::from(request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string())),
+                                        value: Some(commit_index.to_le_bytes().to_vec()),
+                                        leader_node_id: Some(ArcStr::from(local_node_id.to_string())),
+                                        timestamp: crate::utils::safe_unix_timestamp(),
+                                    };
+                                Some(
+                                    response.encode().map_err(|e| {
+                                        MeshTransportError::SendFailed(format!("{:?}", e))
+                                    })?,
+                                )
+                            }
+                            Err(e) => {
+                                tracing::warn!("Raft client_write failed: {}", e);
+                                None
+                            }
                         }
                     }
                 } else {
@@ -2717,13 +2732,63 @@ impl MeshTransport {
                     None
                 }
             }
-            crate::mesh::protocol::RaftMsgType::AppendEntries
-            | crate::mesh::protocol::RaftMsgType::VoteRequest => {
-                tracing::debug!(
-                    "Received internal Raft RPC type {:?} - dispatching via network factory",
-                    payload.msg_type
-                );
-                None
+            crate::mesh::protocol::RaftMsgType::AppendEntries => {
+                let _request_id = payload.request_id.clone();
+                let rpc: openraft::raft::AppendEntriesRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
+                    match postcard::from_bytes(&payload.data) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::warn!("Failed to deserialize AppendEntries request: {}", e);
+                            return Ok(());
+                        }
+                    };
+
+                if let Some(ref inst) = instance {
+                    match inst.raft_append_entries(rpc).await {
+                        Ok(resp) => {
+                            let encoded = postcard::to_stdvec(&resp).map_err(|e| {
+                                MeshTransportError::SendFailed(format!("Serialize error: {}", e))
+                            })?;
+                            Some(encoded)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Raft append_entries failed: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    tracing::warn!("Received AppendEntries but no Raft instance available");
+                    None
+                }
+            }
+            crate::mesh::protocol::RaftMsgType::VoteRequest => {
+                let _request_id = payload.request_id.clone();
+                let rpc: openraft::raft::VoteRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
+                    match postcard::from_bytes(&payload.data) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::warn!("Failed to deserialize VoteRequest: {}", e);
+                            return Ok(());
+                        }
+                    };
+
+                if let Some(ref inst) = instance {
+                    match inst.raft_vote(rpc).await {
+                        Ok(resp) => {
+                            let encoded = postcard::to_stdvec(&resp).map_err(|e| {
+                                MeshTransportError::SendFailed(format!("Serialize error: {}", e))
+                            })?;
+                            Some(encoded)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Raft vote failed: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    tracing::warn!("Received VoteRequest but no Raft instance available");
+                    None
+                }
             }
             _ => {
                 tracing::warn!("Unhandled Raft message type: {:?}", payload.msg_type);

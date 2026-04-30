@@ -356,13 +356,22 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W8.5 | YARA-X Modernization | Verified complete: codebase exclusively uses yara-x v1.15+. No libyara C dependencies. yara_x::compile(), Scanner, Rules used throughout. | 2026-04-30 |
 | W8.6 | YARA-X Binary Distribution | YaraCompiledRuleAnnounce variant with compiled_rules (Vec<u8>) and checksum. Global serializes with Rules::serialize(), Edge deserializes with Rules::deserialize(). SHA256 integrity verification. Backward compatible. | 2026-04-30 |
 | W8.7 | High-Volume Cleanup | Fixed all clippy issues (manual Option::map, redundant closures, io_other_error, await-holding-lock). Added 27 EdgeReplicaManager unit tests (disk full, corrupted DB, concurrent bursts). Added fuzz/fuzz_raft_response.rs and fuzz/fuzz_raft_commit_notification.rs. Updated skills/raft_consensus.md. | 2026-04-30 |
+| W9.1 | Raft RPC Correlation | Added request_id to RaftPayload, fixed AppendEntries/VoteRequest dispatch, added raft_append_entries/raft_vote methods to RaftInstance. | 2026-04-30 |
+| W9.2 | Client Proposal Response | Fixed response correlation with request_id, added NotLeader handling with leader hints. | 2026-04-30 |
+| W9.3 | Linearizable Read | Replaced placeholder consistent_read_local() with real implementation: check leadership, query state machine, return actual values. | 2026-04-30 |
+| W9.4 | Leader Discovery | Fixed get_leader_id() to use raft.current_leader(), added LeaderCache with 5s TTL. | 2026-04-30 |
+| W9.5 | Raft Storage Correctness | Store full LogId metadata, persist membership entries, store last_purged_log_id explicitly. | 2026-04-30 |
+| W9.6 | Snapshot Replication | Implemented full_snapshot() with chunked transfer (64KB chunks), added SnapshotHeader/SnapshotChunk types, install_snapshot() to RaftInstance. | 2026-04-30 |
+| W9.7 | DHT Auth Default-Deny | Reject DHT requests with missing signature/public key, use URL_SAFE_NO_PAD for base64 decode, added verification to snapshot/sync response handlers. | 2026-04-30 |
+| W9.8 | DHT Record Canonicalization | Defined canonical DhtRecordSignable with SHA256 value_hash, key, source_node_id, timestamp, ttl_seconds, sequence_number, record_type. | 2026-04-30 |
+| W9.9 | Regression Harness | Added 33 tests covering signed records, pending leaks, DHT adversarial, Raft commands, edge replica. | 2026-04-30 |
 
 ## Known Issues
 
 There are no known incomplete items. All items from `plans/plan.md` have been verified and completed (or explicitly skipped where appropriate):
 
 - **D7 God module splits**: Skipped due to "no capability reversions" requirement
-- All W1.x through W8.x items: Verified and implemented
+- All W1.x through W9.x items: Verified and implemented
 
 ## Architecture Notes
 
@@ -384,11 +393,18 @@ The overseer/master/worker architecture uses:
 
 Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN).
 
-### Raft Consensus (Wave 6-7)
+### Raft Consensus (Wave 6-9)
 
 Global nodes form a Raft cluster for strong consistency. Key files:
 - `src/mesh/raft/mod.rs` — Raft module exports
-- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory
-- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine and GlobalRegistryLogStorage (with full RaftStateMachine/RaftLogStorage traits)
-- `src/mesh/raft/client.rs` — RaftAwareClient for ConsistentRead RPC
-- `src/mesh/raft/instance.rs` — RaftInstance wrapping openraft::Raft with client_write(), initialize(), wait_for_leader()
+- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory with full_snapshot() support
+- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistrySnapshotBuilder
+- `src/mesh/raft/client.rs` — RaftAwareClient with LeaderCache (5s TTL), linearizable reads, consistent_read_local()
+- `src/mesh/raft/instance.rs` — RaftInstance with raft_append_entries(), raft_vote(), install_snapshot()
+- `src/mesh/raft/regression_tests.rs` — 33 regression tests for distributed control plane
+
+### DHT Security (Wave 9)
+
+DHT record signing uses canonical DhtRecordSignable struct with SHA256 value hashing:
+- `src/mesh/dht/signed.rs` — SignedDhtRecord, DhtRecordSignable, RecordSigner/Verifier
+- `src/mesh/transport_dht.rs` — handle_dht_snapshot_request/sync_response with default-deny authentication
