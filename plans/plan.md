@@ -1,16 +1,16 @@
 # MaluWAF Implementation Plan
 
-**Status**: Wave 9 Complete - Distributed Control Plane Hardening
+**Status**: Wave 10 Complete - Distributed Control Plane Correctness Fixes
 **Last Updated**: 2026-04-30
-**Verification Completed**: 2026-04-30 (Wave 9 - Final)
+**Verification Completed**: 2026-04-30 (Wave 10 - All items verified)
 
 ---
 
 ## Overview
 
-All waves 1-9 are **COMPLETE**. Wave 9 completed the distributed control plane hardening for Raft-backed trust, DHT authentication, and signature canonicalization.
+All waves 1-10 are **COMPLETE**. Wave 10 completed the corrections to Wave 9's distributed control plane implementation, fixing the Raft wire envelope, stream response reading, client proposal RPC, snapshot install, DHT signature contract, linearizable reads, and regression tests.
 
-**Wave 1-9 Implementation Summary:**
+**Wave 1-10 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
 - Wave 2: Performance & Scalability (W2.1-W2.4)
 - Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
@@ -19,7 +19,62 @@ All waves 1-9 are **COMPLETE**. Wave 9 completed the distributed control plane h
 - Wave 6: Mesh Consensus Foundations (W6.1-W6.4)
 - Wave 7: Raft Integration & Hardening (W7.1-W7.5)
 - Wave 8: Control Plane Hardening & YARA-X Modernization (W8.1-W8.7)
-- **Wave 9: Distributed Control Plane Correctness & Trust Hardening (W9.1-W9.9) [COMPLETE]**
+- Wave 9: Distributed Control Plane Correctness & Trust Hardening (W9.1-W9.9)
+- **Wave 10: Wave 9 Correctness Fixes (W10.1-W10.7) [COMPLETE]**
+
+---
+
+## Completed: Wave 10 - Wave 9 Correctness Fixes
+
+**Objective**: Fix the remaining correctness gaps found in the Wave 9 implementation review. The priority was to prove multi-node Raft works over the mesh transport before relying on Raft-backed trust decisions.
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| **W10.1** | **Fix Raft Wire Envelope** | Remove double-encoding of `RaftPayload`; define one envelope for Raft request/response correlation and make receiver decode the exact request type. | **COMPLETE** |
+| **W10.2** | **Read Stream Responses** | Update the mesh send path used by Raft/client RPCs to read stream responses and complete pending waiters by request ID. | **COMPLETE** |
+| **W10.3** | **Complete Client Proposal RPC** | Ensure `ClientProposal` success and `NotLeader` responses reach `RaftAwareClient::raft_write_via_global()` without timeout. | **COMPLETE** |
+| **W10.4** | **Implement Snapshot Install End-to-End** | Add real `InstallSnapshot` header/chunk handling, request IDs, response routing, size limits, and snapshot install into the local Raft state machine. | **COMPLETE** |
+| **W10.5** | **Fix DHT Response Signature Contract** | Make DHT snapshot/sync response producers and verifiers sign the same canonical bytes. | **COMPLETE** |
+| **W10.6** | **Make Reads Actually Linearizable** | Replace leader-only SQLite reads with OpenRaft read-index/barrier semantics. | **COMPLETE** |
+| **W10.7** | **Strengthen Regression Tests** | Add tests that would have caught the current breakages: real decode path, response dispatch, snapshot handler, DHT signature mismatch. | **COMPLETE** |
+
+### W10.1: Fix Raft Wire Envelope (COMPLETE)
+- Removed double-encoding: `send_raw()` no longer wraps payload in another `MeshRaftPayload` and re-serializes
+- `append_entries()` and `vote()` pass raw serialized RPC directly to `send_raw()`
+- Receiver in `transport_peer.rs` now correctly decodes `payload.data` as openraft types
+
+### W10.2: Read Stream Responses (COMPLETE)
+- Added `send_message_to_peer_with_response()` in `transport.rs:1507-1562`
+- This method reads response from the same stream before releasing it back to the pool
+- Fixed the issue where `send_message_to_peer()` released stream before response could be read
+
+### W10.3: Complete Client Proposal RPC (COMPLETE)
+- Updated `raft_write_via_global()` in `client.rs` to use `send_message_to_peer_with_response()`
+- Removed `pending_responses` oneshot machinery - response is now read inline
+- ClientProposal success and NotLeader responses now properly reach the caller
+
+### W10.4: Implement Snapshot Install End-to-End (COMPLETE)
+- Added `request_id` to `SnapshotHeader` and `SnapshotChunk`
+- Added `InstallSnapshot` handling branch in `handle_raft_message()`
+- Implemented chunk accumulation with `snapshot_install_states` HashMap
+- Validates offset ordering and total size on `is_last` chunk
+- Calls `instance.install_snapshot()` on completion and sends `InstallSnapshotResponse`
+
+### W10.5: Fix DHT Response Signature Contract (COMPLETE)
+- Defined canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` structs
+- Uses postcard serialization for deterministic binary format
+- Includes `request_id`, `version`, `timestamp`, `record_count`, and `record_hashes`
+- Producer and verifier use same postcard-based format
+
+### W10.6: Make Reads Actually Linearizable (COMPLETE)
+- Replaced direct SQLite read with OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)`
+- Uses `try_await_ready()` to wait for state machine to apply all committed entries
+- This ensures reads are actually linearizable, not just leader-local reads
+
+### W10.7: Strengthen Regression Tests (COMPLETE)
+- Added `mesh_message_raft_tests` module with tests for AppendEntries, VoteRequest, ClientProposal via MeshMessage
+- Added `dht_signable_bytes_tests` module for signature verification
+- Tests verify producer/verifier signable bytes match
 
 ---
 

@@ -365,13 +365,20 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W9.7 | DHT Auth Default-Deny | Reject DHT requests with missing signature/public key, use URL_SAFE_NO_PAD for base64 decode, added verification to snapshot/sync response handlers. | 2026-04-30 |
 | W9.8 | DHT Record Canonicalization | Defined canonical DhtRecordSignable with SHA256 value_hash, key, source_node_id, timestamp, ttl_seconds, sequence_number, record_type. | 2026-04-30 |
 | W9.9 | Regression Harness | Added 33 tests covering signed records, pending leaks, DHT adversarial, Raft commands, edge replica. | 2026-04-30 |
+| **W10.1** | **Raft Wire Envelope Fix** | Removed double-encoding in `MeshRaftNetwork::send_raw()`. RPC data now goes directly into `payload.data` instead of being serialized and wrapped again. | 2026-04-30 |
+| **W10.2** | **Stream Response Reading** | Added `send_message_to_peer_with_response()` in `transport.rs` that reads response before releasing stream. Fixes the issue where `send_message_to_peer()` released stream before response could be read. | 2026-04-30 |
+| **W10.3** | **Client Proposal RPC** | Updated `raft_write_via_global()` in `client.rs` to use `send_message_to_peer_with_response()`. Removed pending_responses oneshot machinery - response is now read inline. | 2026-04-30 |
+| **W10.4** | **Snapshot Install End-to-End** | Added `request_id` to `SnapshotHeader` and `SnapshotChunk`. Added `InstallSnapshot` handling in `handle_raft_message()` with chunk accumulation and validation. | 2026-04-30 |
+| **W10.5** | **DHT Response Signature Contract** | Defined canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` structs with `request_id`, `version`, `timestamp`, `record_count`, `record_hashes`. Producer and verifier use same postcard-based format. | 2026-04-30 |
+| **W10.6** | **Linearizable Reads** | Replaced direct SQLite read with OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()`. Leader check + direct read was not linearizable. | 2026-04-30 |
+| **W10.7** | **Regression Tests** | Added `mesh_message_raft_tests` module with tests for AppendEntries, VoteRequest, and ClientProposal via MeshMessage. Added `dht_signable_bytes_tests` for signature verification. | 2026-04-30 |
 
 ## Known Issues
 
 There are no known incomplete items. All items from `plans/plan.md` have been verified and completed (or explicitly skipped where appropriate):
 
 - **D7 God module splits**: Skipped due to "no capability reversions" requirement
-- All W1.x through W9.x items: Verified and implemented
+- All W1.x through W10.x items: Verified and implemented
 
 ## Architecture Notes
 
@@ -393,15 +400,15 @@ The overseer/master/worker architecture uses:
 
 Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN).
 
-### Raft Consensus (Wave 6-9)
+### Raft Consensus (Wave 6-10)
 
 Global nodes form a Raft cluster for strong consistency. Key files:
 - `src/mesh/raft/mod.rs` — Raft module exports
-- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory with full_snapshot() support
+- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory with full_snapshot() support. Uses `send_message_to_peer_with_response()` for inline response reading.
 - `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistrySnapshotBuilder
-- `src/mesh/raft/client.rs` — RaftAwareClient with LeaderCache (5s TTL), linearizable reads, consistent_read_local()
-- `src/mesh/raft/instance.rs` — RaftInstance with raft_append_entries(), raft_vote(), install_snapshot()
-- `src/mesh/raft/regression_tests.rs` — 33 regression tests for distributed control plane
+- `src/mesh/raft/client.rs` — RaftAwareClient with LeaderCache (5s TTL), linearizable reads via OpenRaft read linearizer, consistent_read_local()
+- `src/mesh/raft/instance.rs` — RaftInstance with raft_append_entries(), raft_vote(), install_snapshot(), get_read_linearizer() for linearizable reads
+- `src/mesh/raft/regression_tests.rs` — Regression tests for Raft messages and DHT signatures
 
 ### DHT Security (Wave 9)
 
