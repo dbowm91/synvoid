@@ -880,6 +880,169 @@ impl RecordStoreManager {
         true
     }
 
+    pub async fn commit_record_after_quorum(
+        &self,
+        key: &str,
+        quorum_signatures: &[crate::mesh::dht::quorum::QuorumSignature],
+    ) -> bool {
+        let record = {
+            let mut rs = self.record_state.write();
+            match rs.records.get_mut(key) {
+                Some(entry) => {
+                    if entry.status
+                        != crate::mesh::protocol::DhtRecordStatus::PendingQuorum
+                    {
+                        tracing::debug!(
+                            "Record {} is not PendingQuorum, skipping commit",
+                            key
+                        );
+                        return false;
+                    }
+                    entry.status = crate::mesh::protocol::DhtRecordStatus::Live;
+                    rs.local_version += 1;
+                    tracing::info!("Committed record {} from PendingQuorum to Live", key);
+                    Some(entry.record.clone())
+                }
+                None => {
+                    tracing::warn!(
+                        "Record {} not found for commit after quorum",
+                        key
+                    );
+                    None
+                }
+            }
+        };
+
+        if let Some(record) = record {
+            self.maybe_queue_for_announce(&record);
+
+            if self.is_global_node() {
+                self.record_change();
+            }
+
+            self.compute_merkle_tree();
+
+            self.send_commit_message(&record, quorum_signatures)
+                .await;
+
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn abort_pending_record(&self, key: &str) {
+        let mut rs = self.record_state.write();
+        if let Some(entry) = rs.records.get(key) {
+            if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
+                rs.records.remove(key);
+                tracing::info!("Aborted pending record for key: {}", key);
+            }
+        }
+    }
+
+    async fn send_commit_message(
+        &self,
+        record: &crate::mesh::protocol::DhtRecord,
+        quorum_signatures: &[crate::mesh::dht::quorum::QuorumSignature],
+    ) {
+        let transport = {
+            let routing = self.routing_state.read();
+            routing.transport.clone()
+        };
+
+        let Some(transport) = transport else {
+            tracing::debug!("No transport available for sending DhtRecordCommit");
+            return;
+        };
+
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let request_id = format!("commit-{}-{}", record.key, uuid::Uuid::new_v4());
+
+        let mut signature = Vec::new();
+        let mut signer_public_key = String::new();
+
+        {
+            let rs = self.record_state.read();
+            if let Some(ref signer) = rs.mesh_signer {
+                let content = format!(
+                    "{},{},{},{}",
+                    request_id,
+                    record.key,
+                    quorum_signatures.len(),
+                    timestamp
+                );
+                signature = signer.sign(&content);
+                signer_public_key = signer.get_public_key();
+            }
+        }
+
+        let proto_sigs: Vec<crate::mesh::protocol::QuorumSignatureProto> = quorum_signatures
+            .iter()
+            .map(|s| s.into())
+            .collect();
+
+        let message = crate::mesh::protocol::MeshMessage::DhtRecordCommit {
+            request_id: request_id.into(),
+            record: record.clone(),
+            quorum_signatures: proto_sigs,
+            timestamp,
+            source_node_id: self.node_id.clone().into(),
+            signature,
+            signer_public_key,
+        };
+
+        let peers = transport.get_connected_peers().await;
+        for peer_id in peers {
+            let _ = transport.send_datagram_to_peer(&peer_id, &message).await;
+        }
+
+        tracing::debug!(
+            "Sent DhtRecordCommit for key {} to peers",
+            record.key
+        );
+    }
+
+    pub fn handle_record_commit(
+        &self,
+        record: crate::mesh::protocol::DhtRecord,
+        quorum_signatures: Vec<crate::mesh::protocol::QuorumSignatureProto>,
+        source_node_id: &str,
+    ) -> bool {
+        if !self.config.enabled {
+            return false;
+        }
+
+        if !self.is_global_node() && !self.can_cache_on_edge(&record.key) {
+            tracing::debug!(
+                "Ignoring DhtRecordCommit for key {} from {}: not global and cannot cache",
+                record.key,
+                source_node_id
+            );
+            return false;
+        }
+
+        let existing = {
+            let rs = self.record_state.read();
+            rs.records.get(&record.key).cloned()
+        };
+
+        if let Some(entry) = existing {
+            if entry.status == crate::mesh::protocol::DhtRecordStatus::Live {
+                tracing::debug!(
+                    "Record {} already Live, ignoring commit from {}",
+                    record.key,
+                    source_node_id
+                );
+                return true;
+            }
+        }
+
+        let _ = quorum_signatures;
+
+        self.store_record(record, 100)
+    }
+
     pub async fn handle_quorum_signature_response(
         &self,
         request_id: &str,
