@@ -170,7 +170,13 @@ The RaftAwareClient now uses `client_write()` instead of raw `AppendEntries`:
 ```rust
 impl RaftAwareClient {
     pub async fn raft_write_local(&self, namespace: Namespace, key: String, value: Vec<u8>) -> Result<u64, RaftAwareClientError> {
-        let command = RaftCommand::Set { namespace, key, value };
+        let command = RaftCommand::Set {
+            namespace,
+            key,
+            value,
+            source_node_id: None,  // Set by handler if needed
+            signature: None,      // Set by handler if needed
+        };
         let resp = self.raft_instance.as_ref().unwrap().raft.client_write(command).await?;
         Ok(resp.log_id.index)
     }

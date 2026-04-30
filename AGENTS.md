@@ -309,6 +309,10 @@ Global nodes form a Raft cluster for strong consistency. Key files:
 
 **DHT Fallback**: When Raft is unavailable, `RaftAwareClient::fallback_to_dht()` provides eventual consistency via DHT lookups.
 
+### Raft Command Authorization
+
+`RaftCommand` variants (`Set`, `Delete`) include `source_node_id` and `signature` fields (Optional) to support authorization validation at the handler level before accepting proposals.
+
 ### DHT Security
 
 DHT record signing uses canonical `DhtRecordSignable` struct with SHA256 value hashing:
@@ -316,6 +320,20 @@ DHT record signing uses canonical `DhtRecordSignable` struct with SHA256 value h
 - `src/mesh/transport_dht.rs` — handle_dht_snapshot_request/sync_response with default-deny authentication
 
 **Default-Deny**: DHT snapshot/sync requests without valid signatures are rejected.
+
+### DHT Record Versioning
+
+Immutable record types cannot be replaced once stored:
+- `GenesisKeyTransition` — Genesis key rotation records
+- `RevokedGlobalNode` — Revocation records
+- `YaraRulesManifest` — YARA rule manifests
+- `YaraRuleContent` — YARA rule content
+
+These use `SignedRecordType::is_immutable()` check in both `store_record_global()` and `apply_sync()`.
+
+### DHT Timestamp Validation
+
+All DHT records are validated against future timestamps using `validate_record_timestamp()` with `DHT_RECORD_TIMESTAMP_WINDOW_SECS` (300 seconds). Records with timestamps too far in the future are rejected before storage.
 
 ## Known Issues
 
