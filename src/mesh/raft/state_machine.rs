@@ -131,6 +131,15 @@ openraft::declare_raft_types!(
 type CommittedLeaderIdOfConfig =
     openraft::type_config::alias::CommittedLeaderIdOf<GlobalRegistryTypeConfig>;
 
+const STREAMING_SNAPSHOT_MAGIC: u32 = 0x53524D53;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StreamingSnapshotEntry {
+    ns: String,
+    key: String,
+    val: Vec<u8>,
+}
+
 pub struct GlobalRegistryStateMachine {
     pub(crate) db: Arc<Mutex<Connection>>,
 }
@@ -283,6 +292,126 @@ impl GlobalRegistryStateMachine {
     pub fn get_applied_membership(&self) -> Option<StoredMembershipOf<GlobalRegistryTypeConfig>> {
         self.get_membership_raw()
             .and_then(|m| serde_json::from_str(&m).ok())
+    }
+
+    pub fn streaming_serialize(&self) -> std::io::Result<Bytes> {
+        let db_guard = self.db.lock().unwrap();
+        let mut stmt = db_guard
+            .prepare("SELECT namespace, key, value FROM state_machine")
+            .map_err(std::io::Error::other)?;
+
+        let entry_count: u64 = db_guard
+            .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
+            .map_err(std::io::Error::other)?;
+
+        let estimated_size = (entry_count as usize)
+            .saturating_mul(128)
+            .saturating_add(12);
+        let mut buf = Vec::with_capacity(estimated_size);
+
+        buf.extend_from_slice(&STREAMING_SNAPSHOT_MAGIC.to_le_bytes());
+        buf.extend_from_slice(&entry_count.to_le_bytes());
+
+        let rows = stmt
+            .query_map([], |row| {
+                let ns: String = row.get(0)?;
+                let key: String = row.get(1)?;
+                let val: Vec<u8> = row.get(2)?;
+                Ok((ns, key, val))
+            })
+            .map_err(std::io::Error::other)?;
+
+        for row_result in rows {
+            let (ns, key, val) = row_result.map_err(std::io::Error::other)?;
+            let entry = StreamingSnapshotEntry { ns, key, val };
+            let entry_bytes = postcard::to_stdvec(&entry).map_err(std::io::Error::other)?;
+            let len = entry_bytes.len() as u32;
+            buf.extend_from_slice(&len.to_le_bytes());
+            buf.extend_from_slice(&entry_bytes);
+        }
+
+        Ok(Bytes::from(buf))
+    }
+
+    pub fn streaming_deserialize_and_apply(&self, data: &[u8]) -> std::io::Result<()> {
+        if data.len() < 12 {
+            return self.fallback_json_install(data);
+        }
+
+        let magic = u32::from_le_bytes(
+            data[0..4]
+                .try_into()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad magic"))?,
+        );
+
+        if magic != STREAMING_SNAPSHOT_MAGIC {
+            return self.fallback_json_install(data);
+        }
+
+        let db = self.db.lock().unwrap();
+        db.execute("DELETE FROM state_machine", [])
+            .map_err(std::io::Error::other)?;
+
+        let entry_count = u64::from_le_bytes(
+            data[4..12]
+                .try_into()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad count"))?,
+        );
+
+        let mut offset: usize = 12;
+
+        for _ in 0..entry_count {
+            if offset + 4 > data.len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "truncated entry length",
+                ));
+            }
+            let entry_len = u32::from_le_bytes(
+                data[offset..offset + 4].try_into().map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "bad entry len")
+                })?,
+            ) as usize;
+            offset += 4;
+
+            if offset + entry_len > data.len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "truncated entry data",
+                ));
+            }
+
+            let entry: StreamingSnapshotEntry = postcard::from_bytes(&data[offset..offset + entry_len])
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            offset += entry_len;
+
+            db.execute(
+                "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
+                rusqlite::params![entry.ns, entry.key, entry.val],
+            )
+            .map_err(std::io::Error::other)?;
+        }
+
+        Ok(())
+    }
+
+    fn fallback_json_install(&self, data: &[u8]) -> std::io::Result<()> {
+        let entries: Vec<(Namespace, String, Vec<u8>)> = serde_json::from_slice(data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let db = self.db.lock().unwrap();
+        db.execute("DELETE FROM state_machine", [])
+            .map_err(std::io::Error::other)?;
+
+        for (namespace, key, value) in entries {
+            db.execute(
+                "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
+                rusqlite::params![namespace.as_str(), key, value],
+            )
+            .map_err(std::io::Error::other)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -581,8 +710,7 @@ impl GlobalRegistrySnapshotBuilder {
 
 impl RaftSnapshotBuilder<GlobalRegistryTypeConfig> for GlobalRegistrySnapshotBuilder {
     async fn build_snapshot(&mut self) -> std::io::Result<SnapshotOf<GlobalRegistryTypeConfig>> {
-        let snapshot_data = serde_json::to_vec(&self.state_machine.get_all_entries())
-            .map_err(std::io::Error::other)?;
+        let snapshot_data = self.state_machine.streaming_serialize()?;
 
         let last_applied = self.state_machine.get_last_applied_log_id().unwrap_or(0);
 
@@ -602,7 +730,7 @@ impl RaftSnapshotBuilder<GlobalRegistryTypeConfig> for GlobalRegistrySnapshotBui
 
         Ok(SnapshotOf::<GlobalRegistryTypeConfig> {
             meta,
-            snapshot: Bytes::from(snapshot_data),
+            snapshot: snapshot_data,
         })
     }
 }
@@ -763,20 +891,9 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
         meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>,
         snapshot: Bytes,
     ) -> std::io::Result<()> {
-        let entries: Vec<(Namespace, String, Vec<u8>)> = serde_json::from_slice(&snapshot)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        self.streaming_deserialize_and_apply(&snapshot)?;
 
         let db = self.db.lock().unwrap();
-        db.execute("DELETE FROM state_machine", [])
-            .map_err(std::io::Error::other)?;
-
-        for (namespace, key, value) in entries {
-            db.execute(
-                "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
-                params![namespace.as_str(), key, value],
-            )
-            .map_err(std::io::Error::other)?;
-        }
 
         if let Some(log_id) = meta.last_log_id {
             db.execute(
@@ -799,12 +916,17 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> std::io::Result<Option<SnapshotOf<GlobalRegistryTypeConfig>>> {
-        let entries = self.get_all_entries();
-        if entries.is_empty() {
+        let db_guard = self.db.lock().unwrap();
+        let count: u64 = db_guard
+            .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
+            .map_err(std::io::Error::other)?;
+        drop(db_guard);
+
+        if count == 0 {
             return Ok(None);
         }
 
-        let snapshot_data = serde_json::to_vec(&entries).map_err(std::io::Error::other)?;
+        let snapshot_data = self.streaming_serialize()?;
 
         let last_applied = self.get_last_applied_log_id().unwrap_or(0);
 
@@ -823,7 +945,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
 
         Ok(Some(SnapshotOf::<GlobalRegistryTypeConfig> {
             meta,
-            snapshot: Bytes::from(snapshot_data),
+            snapshot: snapshot_data,
         }))
     }
 }

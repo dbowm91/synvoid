@@ -902,3 +902,174 @@ mod dht_snapshot_signable_tests {
         assert_ne!(content1, content4);
     }
 }
+
+#[cfg(test)]
+mod streaming_snapshot_tests {
+    use crate::mesh::raft::state_machine::{GlobalRegistryStateMachine, Namespace};
+    use bytes::Bytes;
+    use rusqlite::Connection;
+
+    fn in_memory_state_machine() -> GlobalRegistryStateMachine {
+        let db = Connection::open_in_memory().unwrap();
+        GlobalRegistryStateMachine::new_with_connection(db).unwrap()
+    }
+
+    #[test]
+    fn test_streaming_round_trip_empty() {
+        let sm = in_memory_state_machine();
+        let serialized = sm.streaming_serialize().unwrap();
+        assert!(serialized.len() >= 12);
+
+        let sm2 = in_memory_state_machine();
+        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+        assert!(sm2.get_all_entries().is_empty());
+    }
+
+    #[test]
+    fn test_streaming_round_trip_with_entries() {
+        let sm = in_memory_state_machine();
+        sm.set(&Namespace::Org, "key1", b"value1".to_vec())
+            .unwrap();
+        sm.set(&Namespace::Intel, "key2", b"value2".to_vec())
+            .unwrap();
+        sm.set(
+            &Namespace::Revocation,
+            "key3",
+            b"value3_longer".to_vec(),
+        )
+        .unwrap();
+
+        let serialized = sm.streaming_serialize().unwrap();
+
+        let sm2 = in_memory_state_machine();
+        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+
+        let entries = sm2.get_all_entries();
+        assert_eq!(entries.len(), 3);
+
+        assert_eq!(
+            sm2.get(&Namespace::Org, "key1"),
+            Some(b"value1".to_vec())
+        );
+        assert_eq!(
+            sm2.get(&Namespace::Intel, "key2"),
+            Some(b"value2".to_vec())
+        );
+        assert_eq!(
+            sm2.get(&Namespace::Revocation, "key3"),
+            Some(b"value3_longer".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_streaming_format_has_magic() {
+        let sm = in_memory_state_machine();
+        sm.set(&Namespace::Org, "k", b"v".to_vec()).unwrap();
+
+        let serialized = sm.streaming_serialize().unwrap();
+        let magic = u32::from_le_bytes(serialized[..4].try_into().unwrap());
+        assert_eq!(magic, 0x53524D53);
+    }
+
+    #[test]
+    fn test_streaming_entry_count_matches() {
+        let sm = in_memory_state_machine();
+        for i in 0..50 {
+            sm.set(
+                &Namespace::Org,
+                &format!("key{}", i),
+                format!("val{}", i).into_bytes(),
+            )
+            .unwrap();
+        }
+
+        let serialized = sm.streaming_serialize().unwrap();
+        let count = u64::from_le_bytes(serialized[4..12].try_into().unwrap());
+        assert_eq!(count, 50);
+    }
+
+    #[test]
+    fn test_fallback_json_deserialization() {
+        let sm = in_memory_state_machine();
+        sm.set(&Namespace::Org, "key1", b"value1".to_vec())
+            .unwrap();
+
+        let json_data = serde_json::to_vec(&sm.get_all_entries()).unwrap();
+
+        let sm2 = in_memory_state_machine();
+        sm2.streaming_deserialize_and_apply(&json_data).unwrap();
+
+        assert_eq!(
+            sm2.get(&Namespace::Org, "key1"),
+            Some(b"value1".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_streaming_replaces_existing_data() {
+        let sm = in_memory_state_machine();
+        sm.set(&Namespace::Org, "old_key", b"old_value".to_vec())
+            .unwrap();
+
+        let sm2 = in_memory_state_machine();
+        sm2.set(&Namespace::Intel, "existing", b"data".to_vec())
+            .unwrap();
+
+        let serialized = sm.streaming_serialize().unwrap();
+        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+
+        assert!(sm2.get(&Namespace::Intel, "existing").is_none());
+        assert_eq!(
+            sm2.get(&Namespace::Org, "old_key"),
+            Some(b"old_value".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_streaming_large_dataset() {
+        let sm = in_memory_state_machine();
+        let entry_count: usize = 10_000;
+        for i in 0..entry_count {
+            sm.set(
+                &Namespace::Intel,
+                &format!("indicator:{}", i),
+                vec![0xABu8; 100],
+            )
+            .unwrap();
+        }
+
+        let serialized = sm.streaming_serialize().unwrap();
+        let count = u64::from_le_bytes(serialized[4..12].try_into().unwrap());
+        assert_eq!(count, entry_count as u64);
+
+        let sm2 = in_memory_state_machine();
+        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+
+        let entries = sm2.get_all_entries();
+        assert_eq!(entries.len(), entry_count);
+
+        assert_eq!(
+            sm2.get(&Namespace::Intel, "indicator:0"),
+            Some(vec![0xABu8; 100])
+        );
+        assert_eq!(
+            sm2.get(&Namespace::Intel, &format!("indicator:{}", entry_count - 1)),
+            Some(vec![0xABu8; 100])
+        );
+    }
+
+    #[test]
+    fn test_streaming_binary_values() {
+        let sm = in_memory_state_machine();
+        let binary_val: Vec<u8> = (0u8..=255).collect();
+        sm.set(&Namespace::Org, "binary_key", binary_val.clone())
+            .unwrap();
+
+        let serialized = sm.streaming_serialize().unwrap();
+
+        let sm2 = in_memory_state_machine();
+        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+
+        assert_eq!(sm2.get(&Namespace::Org, "binary_key"), Some(binary_val));
+    }
+}
