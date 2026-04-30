@@ -49,6 +49,7 @@ impl LeaderCache {
         self.cached_at = Instant::now();
     }
 
+    #[allow(dead_code)]
     fn invalidate(&mut self) {
         self.cached_at = Instant::now() - self.ttl - Duration::from_secs(1);
     }
@@ -257,6 +258,7 @@ impl RaftAwareClient {
         None
     }
 
+    #[allow(dead_code)]
     async fn invalidate_leader_cache(&self) {
         let mut cache = self.leader_cache.lock().await;
         cache.invalidate();
