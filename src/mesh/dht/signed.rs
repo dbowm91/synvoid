@@ -124,6 +124,10 @@ pub enum SignedRecordType {
     UpstreamCompression,
     UpstreamProxyCachePreferences,
     SiteImagePoisonConfig,
+    YaraRuleContent,
+    YaraRulesManifest,
+    GenesisKeyTransition,
+    RevokedGlobalNode,
 }
 
 impl SignedRecordType {
@@ -204,11 +208,19 @@ impl SignedRecordType {
             SignedRecordType::UpstreamCompression => Some(Duration::from_secs(3600)),
             SignedRecordType::UpstreamProxyCachePreferences => Some(Duration::from_secs(3600)),
             SignedRecordType::SiteImagePoisonConfig => Some(Duration::from_secs(3600)),
+            SignedRecordType::YaraRuleContent => Some(Duration::from_secs(3600)),
+            SignedRecordType::YaraRulesManifest => Some(Duration::from_secs(3600)),
+            SignedRecordType::GenesisKeyTransition => Some(Duration::from_secs(86400)),
+            SignedRecordType::RevokedGlobalNode => Some(Duration::from_secs(86400 * 7)),
         }
     }
 
     pub fn requires_announce_refresh(&self) -> bool {
-        matches!(self, SignedRecordType::Upstream)
+        matches!(
+            self,
+            SignedRecordType::Upstream
+                | SignedRecordType::YaraRuleContent
+        )
     }
 
     /// Returns true if this record type requires an origin node to announce it.
@@ -221,6 +233,28 @@ impl SignedRecordType {
                 | SignedRecordType::DnsZone
                 | SignedRecordType::DnsRecord
                 | SignedRecordType::VerifiedUpstream
+        )
+    }
+
+    pub fn is_immutable(&self) -> bool {
+        matches!(
+            self,
+            SignedRecordType::GenesisKeyTransition
+                | SignedRecordType::RevokedGlobalNode
+                | SignedRecordType::YaraRulesManifest
+                | SignedRecordType::YaraRuleContent
+        )
+    }
+
+    pub fn allows_older_version_replacement(&self) -> bool {
+        matches!(
+            self,
+            SignedRecordType::NodeInfo
+                | SignedRecordType::NodeHealth
+                | SignedRecordType::NodeLoad
+                | SignedRecordType::GlobalNodeHeartbeat
+                | SignedRecordType::Upstream
+                | SignedRecordType::ThreatIndicator
         )
     }
 }
@@ -366,6 +400,10 @@ impl SignedDhtRecord {
             SignedRecordType::UpstreamCompression => "UpstreamCompression",
             SignedRecordType::UpstreamProxyCachePreferences => "UpstreamProxyCachePreferences",
             SignedRecordType::SiteImagePoisonConfig => "SiteImagePoisonConfig",
+            SignedRecordType::YaraRuleContent => "YaraRuleContent",
+            SignedRecordType::YaraRulesManifest => "YaraRulesManifest",
+            SignedRecordType::GenesisKeyTransition => "GenesisKeyTransition",
+            SignedRecordType::RevokedGlobalNode => "RevokedGlobalNode",
         };
 
         let content = DhtRecordSignable {
@@ -482,6 +520,10 @@ pub struct TtlManager {
     upstream_compression_ttl: Duration,
     upstream_proxy_cache_preferences_ttl: Duration,
     site_image_poison_config_ttl: Duration,
+    yara_rule_content_ttl: Duration,
+    yara_rules_manifest_ttl: Duration,
+    genesis_key_transition_ttl: Duration,
+    revoked_global_node_ttl: Duration,
 }
 
 impl Default for TtlManager {
@@ -503,17 +545,17 @@ impl Default for TtlManager {
             upstream_image_protection_ttl: Duration::from_secs(3600),
             upstream_minification_ttl: Duration::from_secs(3600),
             upstream_compression_ttl: Duration::from_secs(3600),
-            upstream_proxy_cache_preferences_ttl: Duration::from_secs(3600),
+upstream_proxy_cache_preferences_ttl: Duration::from_secs(3600),
             site_image_poison_config_ttl: Duration::from_secs(3600),
+            yara_rule_content_ttl: Duration::from_secs(3600),
+            yara_rules_manifest_ttl: Duration::from_secs(3600),
+            genesis_key_transition_ttl: Duration::from_secs(86400),
+            revoked_global_node_ttl: Duration::from_secs(86400 * 7),
         }
-    }
+}
 }
 
 impl TtlManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn with_org_ttl(mut self, ttl: Duration) -> Self {
         self.org_ttl = ttl;
         self
@@ -558,6 +600,10 @@ impl TtlManager {
                 self.upstream_proxy_cache_preferences_ttl
             }
             SignedRecordType::SiteImagePoisonConfig => self.site_image_poison_config_ttl,
+            SignedRecordType::YaraRuleContent => self.yara_rule_content_ttl,
+            SignedRecordType::YaraRulesManifest => self.yara_rules_manifest_ttl,
+            SignedRecordType::GenesisKeyTransition => self.genesis_key_transition_ttl,
+            SignedRecordType::RevokedGlobalNode => self.revoked_global_node_ttl,
         }
     }
 
