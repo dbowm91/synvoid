@@ -23,31 +23,68 @@ pub const DHT_MESSAGE_TIMESTAMP_WINDOW_SECS: i64 = 300;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtSnapshotResponseSignable<'a> {
     pub request_id: &'a str,
+    pub responder_node_id: &'a str,
     pub version: u64,
     pub record_count: usize,
     pub timestamp: u64,
+    pub record_set_digest: &'a [u8],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtSyncResponseSignable<'a> {
     pub request_id: &'a str,
     pub from_peer: &'a str,
+    pub responder_node_id: &'a str,
     pub version: u64,
     pub record_count: usize,
     pub timestamp: u64,
+    pub record_set_digest: &'a [u8],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtAntiEntropyRequestSignable<'a> {
+    pub request_id: &'a str,
+    pub node_id: &'a str,
+    pub local_root_hash: &'a [u8],
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtAntiEntropyResponseSignable<'a> {
+    pub request_id: &'a str,
+    pub responder_node_id: &'a str,
+    pub root_hash: &'a [u8],
+    pub record_count: usize,
+    pub timestamp: u64,
+    pub record_set_digest: &'a [u8],
+}
+
+pub fn compute_record_set_digest(records: &[crate::mesh::protocol::DhtRecord]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for record in records {
+        let signed = dht_record_to_signed_record(record);
+        let signable_content = signed.get_signable_content();
+        hasher.update(&signable_content);
+    }
+    hasher.finalize().to_vec()
 }
 
 pub fn get_snapshot_signable_content(
     request_id: &str,
+    responder_node_id: &str,
     version: u64,
     record_count: usize,
     timestamp: u64,
+    record_set_digest: &[u8],
 ) -> Vec<u8> {
     crate::serialization::serialize(&DhtSnapshotResponseSignable {
         request_id,
+        responder_node_id,
         version,
         record_count,
         timestamp,
+        record_set_digest,
     })
     .unwrap_or_default()
 }
@@ -55,16 +92,54 @@ pub fn get_snapshot_signable_content(
 pub fn get_sync_signable_content(
     request_id: &str,
     from_peer: &str,
+    responder_node_id: &str,
     version: u64,
     record_count: usize,
     timestamp: u64,
+    record_set_digest: &[u8],
 ) -> Vec<u8> {
     crate::serialization::serialize(&DhtSyncResponseSignable {
         request_id,
         from_peer,
+        responder_node_id,
         version,
         record_count,
         timestamp,
+        record_set_digest,
+    })
+    .unwrap_or_default()
+}
+
+pub fn get_anti_entropy_request_signable_content(
+    request_id: &str,
+    node_id: &str,
+    local_root_hash: &[u8],
+    timestamp: u64,
+) -> Vec<u8> {
+    crate::serialization::serialize(&DhtAntiEntropyRequestSignable {
+        request_id,
+        node_id,
+        local_root_hash,
+        timestamp,
+    })
+    .unwrap_or_default()
+}
+
+pub fn get_anti_entropy_response_signable_content(
+    request_id: &str,
+    responder_node_id: &str,
+    root_hash: &[u8],
+    record_count: usize,
+    timestamp: u64,
+    record_set_digest: &[u8],
+) -> Vec<u8> {
+    crate::serialization::serialize(&DhtAntiEntropyResponseSignable {
+        request_id,
+        responder_node_id,
+        root_hash,
+        record_count,
+        timestamp,
+        record_set_digest,
     })
     .unwrap_or_default()
 }

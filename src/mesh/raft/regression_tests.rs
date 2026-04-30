@@ -849,41 +849,41 @@ mod dht_snapshot_signable_tests {
 
     #[test]
     fn test_snapshot_signable_content_deterministic() {
-        let content1 = get_snapshot_signable_content("req1", 100, 50, 1000);
-        let content2 = get_snapshot_signable_content("req1", 100, 50, 1000);
+        let content1 = get_snapshot_signable_content("req1", "node_a", 100, 50, 1000, &[]);
+        let content2 = get_snapshot_signable_content("req1", "node_a", 100, 50, 1000, &[]);
         assert_eq!(content1, content2);
     }
 
     #[test]
     fn test_snapshot_signable_content_differs_with_params() {
-        let content1 = get_snapshot_signable_content("req1", 100, 50, 1000);
-        let content2 = get_snapshot_signable_content("req2", 100, 50, 1000);
+        let content1 = get_snapshot_signable_content("req1", "node_a", 100, 50, 1000, &[]);
+        let content2 = get_snapshot_signable_content("req2", "node_a", 100, 50, 1000, &[]);
         assert_ne!(content1, content2);
 
-        let content3 = get_snapshot_signable_content("req1", 101, 50, 1000);
+        let content3 = get_snapshot_signable_content("req1", "node_a", 101, 50, 1000, &[]);
         assert_ne!(content1, content3);
 
-        let content4 = get_snapshot_signable_content("req1", 100, 51, 1000);
+        let content4 = get_snapshot_signable_content("req1", "node_a", 100, 51, 1000, &[]);
         assert_ne!(content1, content4);
     }
 
     #[test]
     fn test_sync_signable_content_deterministic() {
-        let content1 = get_sync_signable_content("req1", "peer_a", 100, 25, 1000);
-        let content2 = get_sync_signable_content("req1", "peer_a", 100, 25, 1000);
+        let content1 = get_sync_signable_content("req1", "peer_a", "node_a", 100, 25, 1000, &[]);
+        let content2 = get_sync_signable_content("req1", "peer_a", "node_a", 100, 25, 1000, &[]);
         assert_eq!(content1, content2);
     }
 
     #[test]
     fn test_sync_signable_content_differs_with_params() {
-        let content1 = get_sync_signable_content("req1", "peer_a", 100, 25, 1000);
-        let content2 = get_sync_signable_content("req2", "peer_a", 100, 25, 1000);
+        let content1 = get_sync_signable_content("req1", "peer_a", "node_a", 100, 25, 1000, &[]);
+        let content2 = get_sync_signable_content("req2", "peer_a", "node_a", 100, 25, 1000, &[]);
         assert_ne!(content1, content2);
 
-        let content3 = get_sync_signable_content("req1", "peer_b", 100, 25, 1000);
+        let content3 = get_sync_signable_content("req1", "peer_b", "node_a", 100, 25, 1000, &[]);
         assert_ne!(content1, content3);
 
-        let content4 = get_sync_signable_content("req1", "peer_a", 101, 25, 1000);
+        let content4 = get_sync_signable_content("req1", "peer_a", "node_a", 101, 25, 1000, &[]);
         assert_ne!(content1, content4);
     }
 }

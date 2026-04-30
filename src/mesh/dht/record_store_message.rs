@@ -372,20 +372,22 @@ impl RecordStoreManager {
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
+        let timestamp = MeshMessage::generate_timestamp();
+        let root_hash_value = my_root_hash.unwrap_or_default();
 
         {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.mesh_signer {
-                let timestamp = MeshMessage::generate_timestamp();
-                let content = format!(
-                    "{},{},{},{},{}",
+                let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
+                let content = crate::mesh::dht::signed::get_anti_entropy_response_signable_content(
                     request_id,
-                    proof_keys.len(),
+                    &self.node_id,
+                    &root_hash_value,
                     records.len(),
-                    self.node_role.bits(),
-                    timestamp
+                    timestamp,
+                    &record_set_digest,
                 );
-                signature = signer.sign(content.as_bytes());
+                signature = signer.sign(&content);
                 signer_public_key = signer.get_public_key();
             }
         }
@@ -398,11 +400,11 @@ impl RecordStoreManager {
 
         Some(MeshMessage::DhtAntiEntropyResponse {
             request_id: request_id.into(),
-            root_hash: my_root_hash.unwrap_or_default(),
+            root_hash: root_hash_value,
             proof_keys,
             proof_hashes,
             missing_records: records,
-            timestamp: MeshMessage::generate_timestamp(),
+            timestamp,
             signature,
             signer_public_key,
         })

@@ -135,12 +135,24 @@ impl MeshTransport {
             return;
         }
 
+        if !crate::mesh::dht::signed::validate_message_timestamp(timestamp) {
+            tracing::warn!(
+                "DHT snapshot response from {} rejected: timestamp too old or too far in future",
+                from_peer
+            );
+            return;
+        }
+
+        let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
+
         let signature_valid = {
             let content = crate::mesh::dht::signed::get_snapshot_signable_content(
                 request_id,
+                from_peer,
                 version,
                 records.len(),
                 timestamp,
+                &record_set_digest,
             );
             if content.is_empty() {
                 false
@@ -268,13 +280,25 @@ impl MeshTransport {
             return;
         }
 
+        if !crate::mesh::dht::signed::validate_message_timestamp(timestamp) {
+            tracing::warn!(
+                "DHT sync response from {} rejected: timestamp too old or too far in future",
+                from_peer
+            );
+            return;
+        }
+
+        let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
+
         let signature_valid = {
             let content = crate::mesh::dht::signed::get_sync_signable_content(
                 request_id,
                 from_peer,
+                from_peer,
                 version,
                 records.len(),
                 timestamp,
+                &record_set_digest,
             );
             if content.is_empty() {
                 false
@@ -318,13 +342,21 @@ impl MeshTransport {
         _node_id: &str,
         local_root_hash: &[u8],
         interested_keys: &[String],
-        _timestamp: u64,
+        timestamp: u64,
     ) {
         tracing::debug!(
             "Received DHT anti-entropy request from {} ({} interested keys)",
             from_peer,
             interested_keys.len()
         );
+
+        if !crate::mesh::dht::signed::validate_message_timestamp(timestamp) {
+            tracing::warn!(
+                "DHT anti-entropy request from {} rejected: timestamp too old or too far in future",
+                from_peer
+            );
+            return;
+        }
 
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.handle_anti_entropy_request(
@@ -406,7 +438,7 @@ impl MeshTransport {
         &self,
         from_peer: &str,
         missing_records: Vec<crate::mesh::protocol::DhtRecord>,
-        _timestamp: u64,
+        timestamp: u64,
         signature: &[u8],
     ) {
         tracing::debug!(
@@ -419,9 +451,23 @@ impl MeshTransport {
             return;
         }
 
-        if !signature.is_empty() {
-            tracing::debug!("DHT anti-entropy response from {} has signature", from_peer);
+        if !crate::mesh::dht::signed::validate_message_timestamp(timestamp) {
+            tracing::warn!(
+                "DHT anti-entropy response from {} rejected: timestamp too old or too far in future",
+                from_peer
+            );
+            return;
         }
+
+        if signature.is_empty() {
+            tracing::warn!(
+                "DHT anti-entropy response from {} rejected: missing envelope signature",
+                from_peer
+            );
+            return;
+        }
+
+        tracing::debug!("DHT anti-entropy response from {} has valid timestamp and signature", from_peer);
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();

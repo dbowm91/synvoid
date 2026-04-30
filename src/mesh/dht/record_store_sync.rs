@@ -19,19 +19,22 @@ impl RecordStoreManager {
         }
 
         let records = self.get_records_for_sync(from_version);
+        let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
+        let timestamp = MeshMessage::generate_timestamp();
 
         let rs = self.record_state.read();
         if let Some(ref signer) = rs.mesh_signer {
-            let timestamp = MeshMessage::generate_timestamp();
             let content = crate::mesh::dht::signed::get_sync_signable_content(
                 request_id,
+                &self.node_id,
                 &self.node_id,
                 rs.local_version,
                 records.len(),
                 timestamp,
+                &record_set_digest,
             );
             signature = signer.sign(&content);
             signer_public_key = signer.get_public_key();
@@ -41,7 +44,7 @@ impl RecordStoreManager {
             request_id: request_id.into(),
             records,
             version: self.record_state.read().local_version,
-            timestamp: MeshMessage::generate_timestamp(),
+            timestamp,
             signature,
             signer_public_key,
         })
@@ -55,13 +58,19 @@ impl RecordStoreManager {
         let rs = self.record_state.read();
         let request_id = uuid::Uuid::new_v4().to_string();
         let from_version = rs.local_version;
+        let timestamp = MeshMessage::generate_timestamp();
 
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
         if let Some(ref signer) = rs.mesh_signer {
-            let content = format!("{},{},{}", request_id, self.node_id, from_version);
-            signature = signer.sign(content.as_bytes());
+            let content = crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+                &request_id,
+                &self.node_id,
+                &[],
+                timestamp,
+            );
+            signature = signer.sign(&content);
             signer_public_key = signer.get_public_key();
         }
 
@@ -93,17 +102,21 @@ impl RecordStoreManager {
             .take(crate::mesh::transport::MAX_SNAPSHOT_RECORDS)
             .collect();
 
+        let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
+        let timestamp = MeshMessage::generate_timestamp();
+
         let mut signature = Vec::new();
         let mut signer_public_key = String::new();
 
         let rs = self.record_state.read();
         if let Some(ref signer) = rs.mesh_signer {
-            let timestamp = MeshMessage::generate_timestamp();
             let content = crate::mesh::dht::signed::get_snapshot_signable_content(
                 request_id,
+                &self.node_id,
                 rs.local_version,
                 records.len(),
                 timestamp,
+                &record_set_digest,
             );
             signature = signer.sign(&content);
             signer_public_key = signer.get_public_key();
@@ -113,7 +126,7 @@ impl RecordStoreManager {
             request_id: request_id.into(),
             records,
             version: self.record_state.read().local_version,
-            timestamp: MeshMessage::generate_timestamp(),
+            timestamp,
             signature,
             signer_public_key,
         })
