@@ -12,7 +12,7 @@ use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::broadcast;
 
-use crate::mesh::protocol::{HealthStatus, MeshMessage, ArcStr};
+use crate::mesh::protocol::{ArcStr, HealthStatus, MeshMessage};
 use crate::mesh::raft::instance::RaftInstance;
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
@@ -2447,8 +2447,12 @@ impl MeshTransport {
                 target_node_id,
                 payload,
             } => {
-                tracing::debug!("Received Raft message for target {} via stream", target_node_id);
-                self.handle_raft_message(target_node_id.to_string(), payload, send_stream).await?;
+                tracing::debug!(
+                    "Received Raft message for target {} via stream",
+                    target_node_id
+                );
+                self.handle_raft_message(target_node_id.to_string(), payload, send_stream)
+                    .await?;
             }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");
@@ -2631,24 +2635,30 @@ impl MeshTransport {
 
         let response_data = match payload.msg_type {
             crate::mesh::protocol::RaftMsgType::ClientProposal => {
-                let command: crate::mesh::raft::state_machine::RaftCommand = match postcard::from_bytes(&payload.data) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::warn!("Failed to deserialize Raft command: {}", e);
-                        return Ok(());
-                    }
-                };
+                let command: crate::mesh::raft::state_machine::RaftCommand =
+                    match postcard::from_bytes(&payload.data) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("Failed to deserialize Raft command: {}", e);
+                            return Ok(());
+                        }
+                    };
 
                 if let Some(ref inst) = instance {
                     match inst.client_write(command).await {
                         Ok(commit_index) => {
-                            let response = crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
-                                request_id: ArcStr::from(uuid::Uuid::new_v4().to_string()),
-                                value: Some(commit_index.to_le_bytes().to_vec()),
-                                leader_node_id: Some(ArcStr::from(local_node_id.to_string())),
-                                timestamp: crate::utils::safe_unix_timestamp(),
-                            };
-                            Some(response.encode().map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?)
+                            let response =
+                                crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
+                                    request_id: ArcStr::from(uuid::Uuid::new_v4().to_string()),
+                                    value: Some(commit_index.to_le_bytes().to_vec()),
+                                    leader_node_id: Some(ArcStr::from(local_node_id.to_string())),
+                                    timestamp: crate::utils::safe_unix_timestamp(),
+                                };
+                            Some(
+                                response.encode().map_err(|e| {
+                                    MeshTransportError::SendFailed(format!("{:?}", e))
+                                })?,
+                            )
                         }
                         Err(e) => {
                             tracing::warn!("Raft client_write failed: {}", e);
@@ -2662,7 +2672,10 @@ impl MeshTransport {
             }
             crate::mesh::protocol::RaftMsgType::AppendEntries
             | crate::mesh::protocol::RaftMsgType::VoteRequest => {
-                tracing::debug!("Received internal Raft RPC type {:?} - dispatching via network factory", payload.msg_type);
+                tracing::debug!(
+                    "Received internal Raft RPC type {:?} - dispatching via network factory",
+                    payload.msg_type
+                );
                 None
             }
             _ => {
@@ -2673,9 +2686,13 @@ impl MeshTransport {
 
         if let Some(data) = response_data {
             let len = (data.len() as u32).to_be_bytes();
-            send_stream.write_all(&len).await
+            send_stream
+                .write_all(&len)
+                .await
                 .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
-            send_stream.write_all(&data).await
+            send_stream
+                .write_all(&data)
+                .await
                 .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
         }
 
@@ -2690,7 +2707,8 @@ impl MeshTransport {
                 let (mut send_stream, mut recv_stream) = {
                     let mut pool = peer.stream_pool.lock().await;
                     pool.acquire().await
-                }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                }
+                .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
                 let msg = MeshMessage::PeerHealthCheck {
                     peer_id: self.config.node_id().into(),

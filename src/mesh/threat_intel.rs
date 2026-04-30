@@ -16,7 +16,7 @@ use crate::mesh::config::MeshNodeRole;
 use crate::mesh::dht::keys::DhtKey;
 use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::protocol::{
-    MeshMessage, MeshPeerInfo, MESH_MESSAGE_VERSION, ThreatIndicator, ThreatSeverity, ThreatType,
+    MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType, MESH_MESSAGE_VERSION,
 };
 use crate::mesh::reputation::{ReputationConfig, ReputationManager};
 use crate::metrics;
@@ -857,7 +857,10 @@ impl ThreatIntelligenceManager {
             indicator.site_scope.clone()
         };
 
-        let inner_key = DhtKey::threat_indicator(&indicator.indicator_value, &format!("{:?}", indicator.threat_type));
+        let inner_key = DhtKey::threat_indicator(
+            &indicator.indicator_value,
+            &format!("{:?}", indicator.threat_type),
+        );
         let scoped_key = DhtKey::site_scoped(&site_scope, inner_key);
         let key_str = scoped_key.as_str();
 
@@ -1932,15 +1935,18 @@ impl ThreatIntelligenceManager {
         }
     }
 
-    pub fn get_feed_signable_content(&self, indicators: &[ThreatIndicator], version: u64, timestamp: u64) -> String {
+    pub fn get_feed_signable_content(
+        &self,
+        indicators: &[ThreatIndicator],
+        version: u64,
+        timestamp: u64,
+    ) -> String {
         let indicator_hashes: Vec<String> = indicators
             .iter()
             .map(|i| {
                 format!(
                     "{}:{}:{}",
-                    i.threat_type as u8,
-                    i.indicator_value,
-                    i.severity as u8
+                    i.threat_type as u8, i.indicator_value, i.severity as u8
                 )
             })
             .collect();
@@ -1967,13 +1973,15 @@ impl ThreatIntelligenceManager {
             indicators
                 .values()
                 .filter(|entry| {
-                    entry.indicator.site_scope.is_empty()
-                        || entry.indicator.site_scope == site
+                    entry.indicator.site_scope.is_empty() || entry.indicator.site_scope == site
                 })
                 .map(|entry| entry.indicator.clone())
                 .collect()
         } else {
-            indicators.values().map(|entry| entry.indicator.clone()).collect()
+            indicators
+                .values()
+                .map(|entry| entry.indicator.clone())
+                .collect()
         };
         drop(indicators);
 
@@ -2052,7 +2060,11 @@ impl Clone for ThreatIntelligenceManager {
 mod tests {
     use super::*;
 
-    fn create_test_indicator(value: &str, threat_type: ThreatType, severity: ThreatSeverity) -> ThreatIndicator {
+    fn create_test_indicator(
+        value: &str,
+        threat_type: ThreatType,
+        severity: ThreatSeverity,
+    ) -> ThreatIndicator {
         ThreatIndicator {
             threat_type,
             indicator_value: value.to_string(),
@@ -2111,7 +2123,11 @@ mod tests {
     #[test]
     fn test_get_feed_signable_content_single_indicator() {
         let manager = create_test_manager();
-        let indicators = vec![create_test_indicator("192.168.1.1", ThreatType::IpBlock, ThreatSeverity::High)];
+        let indicators = vec![create_test_indicator(
+            "192.168.1.1",
+            ThreatType::IpBlock,
+            ThreatSeverity::High,
+        )];
         let content = manager.get_feed_signable_content(&indicators, 1, 1713523200);
         assert_eq!(content, "1:1713523200:1:1:192.168.1.1:3");
     }
@@ -2121,7 +2137,11 @@ mod tests {
         let manager = create_test_manager();
         let indicators = vec![
             create_test_indicator("192.168.1.1", ThreatType::IpBlock, ThreatSeverity::High),
-            create_test_indicator("10.0.0.1", ThreatType::RateLimitViolation, ThreatSeverity::Medium),
+            create_test_indicator(
+                "10.0.0.1",
+                ThreatType::RateLimitViolation,
+                ThreatSeverity::Medium,
+            ),
         ];
         let content = manager.get_feed_signable_content(&indicators, 1, 1713523200);
         assert_eq!(content, "1:1713523200:2:1:192.168.1.1:3,3:10.0.0.1:2");
@@ -2129,21 +2149,26 @@ mod tests {
 
     #[test]
     fn test_signable_content_matches_feed_client() {
-        use crate::waf::threat_intel::feed_client::ThreatFeedPayload;
         use crate::waf::threat_intel::feed_client::ThreatFeedIndicator;
+        use crate::waf::threat_intel::feed_client::ThreatFeedPayload;
 
         let manager = create_test_manager();
         let indicators = vec![
             create_test_indicator("192.168.1.1", ThreatType::IpBlock, ThreatSeverity::High),
-            create_test_indicator("10.0.0.1", ThreatType::RateLimitViolation, ThreatSeverity::Medium),
+            create_test_indicator(
+                "10.0.0.1",
+                ThreatType::RateLimitViolation,
+                ThreatSeverity::Medium,
+            ),
         ];
 
         let version = 1u64;
         let timestamp = 1713523200u64;
         let our_content = manager.get_feed_signable_content(&indicators, version, timestamp);
 
-        let feed_indicators: Vec<ThreatFeedIndicator> = indicators.iter().map(|i| {
-            ThreatFeedIndicator {
+        let feed_indicators: Vec<ThreatFeedIndicator> = indicators
+            .iter()
+            .map(|i| ThreatFeedIndicator {
                 threat_type: i.threat_type as u8,
                 indicator_value: i.indicator_value.clone(),
                 severity: i.severity as u8,
@@ -2154,8 +2179,8 @@ mod tests {
                 rate_limit_requests: None,
                 rate_limit_window_secs: None,
                 suspicious_pattern: None,
-            }
-        }).collect();
+            })
+            .collect();
 
         let payload = ThreatFeedPayload {
             version,
@@ -2165,8 +2190,12 @@ mod tests {
             signer_public_key: String::new(),
         };
 
-        let feed_client_content = crate::waf::threat_intel::feed_client::ThreatFeedClient::get_signable_content(&payload);
+        let feed_client_content =
+            crate::waf::threat_intel::feed_client::ThreatFeedClient::get_signable_content(&payload);
 
-        assert_eq!(our_content, feed_client_content, "Signable content must match ThreatFeedClient format");
+        assert_eq!(
+            our_content, feed_client_content,
+            "Signable content must match ThreatFeedClient format"
+        );
     }
 }

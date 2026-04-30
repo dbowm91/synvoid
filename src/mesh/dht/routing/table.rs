@@ -313,8 +313,7 @@ impl RoutingTable {
     fn cache_key(target: &NodeId) -> u64 {
         let bytes = target.as_bytes();
         u64::from_ne_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ])
     }
 

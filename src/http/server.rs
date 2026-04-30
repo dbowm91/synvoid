@@ -1962,7 +1962,8 @@ impl HttpServer {
                 // Spin WASM backend dispatch
                 if matches!(target.backend_type, crate::router::BackendType::Spin) {
                     if let Some(ref spin_app_name) = target.spin_app_name {
-                        let spin_apps_manager = crate::spin::handler::get_global_spin_apps_manager();
+                        let spin_apps_manager =
+                            crate::spin::handler::get_global_spin_apps_manager();
                         if let Some(runtime) = spin_apps_manager.get(spin_app_name) {
                             let handler = crate::spin::handler::SpinHttpHandler::new(runtime);
                             let spin_request = crate::spin::handler::SpinRequest::new(
@@ -1997,7 +1998,8 @@ impl HttpServer {
                                     );
                                     let mut response_builder = Response::builder().status(status);
                                     for (key, value) in spin_response.headers.iter() {
-                                        response_builder = response_builder.header(key.as_str(), value.to_str().unwrap_or(""));
+                                        response_builder = response_builder
+                                            .header(key.as_str(), value.to_str().unwrap_or(""));
                                     }
                                     return Ok(response_builder
                                         .body(Full::new(spin_response.body).boxed())
@@ -2919,8 +2921,8 @@ impl HttpServer {
 
                             builder = Self::apply_security_headers(builder, &target, &main_config);
 
-                            let should_zero_copy = body_len > ZERO_COPY_THRESHOLD
-                                || (body_len == 0 && is_chunked);
+                            let should_zero_copy =
+                                body_len > ZERO_COPY_THRESHOLD || (body_len == 0 && is_chunked);
 
                             if should_zero_copy {
                                 return Ok(builder

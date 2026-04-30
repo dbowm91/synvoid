@@ -1701,18 +1701,32 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
             proto::mesh_message::Payload::ConsistentReadResponse(r) => {
                 Ok(MeshMessage::ConsistentReadResponse {
                     request_id: r.request_id.into(),
-                    value: if r.value.is_empty() { None } else { Some(r.value) },
-                    leader_node_id: if r.leader_node_id.is_empty() { None } else { Some(r.leader_node_id.into()) },
+                    value: if r.value.is_empty() {
+                        None
+                    } else {
+                        Some(r.value)
+                    },
+                    leader_node_id: if r.leader_node_id.is_empty() {
+                        None
+                    } else {
+                        Some(r.leader_node_id.into())
+                    },
                     timestamp: r.timestamp,
                 })
             }
-            proto::mesh_message::Payload::NotLeader(r) => {
-                Ok(MeshMessage::NotLeader {
-                    request_id: r.request_id.into(),
-                    leader_node_id: if r.leader_node_id.is_empty() { None } else { Some(r.leader_node_id.into()) },
-                    current_term: if r.current_term == 0 { None } else { Some(r.current_term) },
-                })
-            }
+            proto::mesh_message::Payload::NotLeader(r) => Ok(MeshMessage::NotLeader {
+                request_id: r.request_id.into(),
+                leader_node_id: if r.leader_node_id.is_empty() {
+                    None
+                } else {
+                    Some(r.leader_node_id.into())
+                },
+                current_term: if r.current_term == 0 {
+                    None
+                } else {
+                    Some(r.current_term)
+                },
+            }),
             proto::mesh_message::Payload::RaftCommitNotification(r) => {
                 Ok(MeshMessage::RaftCommitNotification {
                     leader_id: r.leader_id.into(),

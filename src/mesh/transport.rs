@@ -632,7 +632,9 @@ impl MeshTransport {
         *self.raft_instance.write() = Some(instance);
     }
 
-    pub fn get_raft_instance(&self) -> Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>> {
+    pub fn get_raft_instance(
+        &self,
+    ) -> Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>> {
         self.raft_instance.clone()
     }
 
@@ -1314,7 +1316,8 @@ impl MeshTransport {
         let (mut send_stream, recv_stream) = {
             let mut pool = peer.stream_pool.lock().await;
             pool.acquire().await
-        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        }
+        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let encoded = message
             .encode()
@@ -2472,9 +2475,9 @@ impl MeshTransport {
                     replay_protection: Arc::new(tokio::sync::RwLock::new(
                         crate::mesh::protocol::ReplayProtection::new(),
                     )),
-                    stream_pool: Arc::new(tokio::sync::Mutex::new(
-                        MeshStreamPool::new(Some(connection.clone())),
-                    )),
+                    stream_pool: Arc::new(tokio::sync::Mutex::new(MeshStreamPool::new(Some(
+                        connection.clone(),
+                    )))),
                 };
 
                 self.topology
@@ -3100,7 +3103,8 @@ impl MeshTransport {
         let (mut send_stream, mut recv_stream) = {
             let mut pool = peer.stream_pool.lock().await;
             pool.acquire().await
-        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        }
+        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let method = request.method().to_string();
         let uri = request.uri().to_string();

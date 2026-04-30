@@ -2603,7 +2603,10 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     proto::ConsistentReadResponse {
                         request_id: request_id.to_string(),
                         value: value.clone().unwrap_or_default(),
-                        leader_node_id: leader_node_id.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                        leader_node_id: leader_node_id
+                            .as_ref()
+                            .map(|s| s.to_string())
+                            .unwrap_or_default(),
                         timestamp: *timestamp,
                     },
                 )),
@@ -2616,7 +2619,10 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 message_type: 168,
                 payload: Some(proto::mesh_message::Payload::NotLeader(proto::NotLeader {
                     request_id: request_id.to_string(),
-                    leader_node_id: leader_node_id.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                    leader_node_id: leader_node_id
+                        .as_ref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default(),
                     current_term: current_term.unwrap_or(0),
                 })),
             },

@@ -36,12 +36,18 @@ static RULE_PATTERN_STORE: LazyLock<DashMap<String, GlobalRulePatterns>> =
     LazyLock::new(DashMap::new);
 
 pub fn get_global_patterns() -> GlobalRulePatterns {
-    RULE_PATTERN_STORE.get("global").map(|r| r.value().clone()).unwrap_or_default()
+    RULE_PATTERN_STORE
+        .get("global")
+        .map(|r| r.value().clone())
+        .unwrap_or_default()
 }
 
 pub fn get_site_patterns(site_id: Option<&str>) -> GlobalRulePatterns {
     let site_id = site_id.unwrap_or("global");
-    RULE_PATTERN_STORE.get(site_id).map(|r| r.value().clone()).unwrap_or_else(get_global_patterns)
+    RULE_PATTERN_STORE
+        .get(site_id)
+        .map(|r| r.value().clone())
+        .unwrap_or_else(get_global_patterns)
 }
 
 #[derive(Default, Clone)]

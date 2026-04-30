@@ -1,15 +1,15 @@
 pub mod bandwidth;
-pub mod payloads;
 pub mod collection;
+pub mod payloads;
 pub mod types;
 
 pub use bandwidth::{
     get_global_bandwidth_tracker, BandwidthPayload, BandwidthProtocol, BandwidthTracker,
     EgressDirection,
 };
+pub use collection::*;
 pub use payloads::*;
 pub use types::*;
-pub use collection::*;
 
 #[cfg(test)]
 mod tests {
@@ -67,9 +67,22 @@ mod tests {
         metrics.record_blocked();
         metrics.record_error();
 
-        assert_eq!(metrics.total_requests.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert_eq!(metrics.request_count.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert_eq!(metrics.blocked.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            metrics
+                .total_requests
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            metrics
+                .request_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            metrics.blocked.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
         assert_eq!(metrics.errors.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
@@ -78,7 +91,7 @@ mod tests {
         let metrics = WorkerMetrics::default();
         metrics.record_request_start();
         metrics.record_request_end(150);
-        
+
         assert_eq!(metrics.total_requests(), 1);
         assert_eq!(metrics.avg_latency_ms(), 150.0);
     }

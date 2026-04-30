@@ -393,7 +393,8 @@ impl MeshTransport {
                 let (mut send_stream, mut recv_stream) = {
                     let mut pool = peer.stream_pool.lock().await;
                     pool.acquire().await
-                }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+                }
+                .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
                 let msg = MeshMessage::KeepAlive;
                 let encoded = msg.encode()?;

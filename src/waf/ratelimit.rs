@@ -219,7 +219,9 @@ impl RateLimiterManager {
                                     false
                                 } else {
                                     state.touch();
-                                    if let Some(lru) = lru_order.write().get_mut(&(site_id.clone(), *ip)) {
+                                    if let Some(lru) =
+                                        lru_order.write().get_mut(&(site_id.clone(), *ip))
+                                    {
                                         *lru = now;
                                     }
                                     true
@@ -302,17 +304,21 @@ impl RateLimiterManager {
         let site_id_str = site_id.unwrap_or("global");
 
         // Per-site IP limit check (Site Isolation)
-        let shards_entry = self.state.site_shards.entry(site_id_str.to_string()).or_insert_with(|| {
-            let num_shards = self.state.memory_config.num_shards.max(1);
-            let mut shards = Vec::with_capacity(num_shards);
-            for _ in 0..num_shards {
-                shards.push(RateLimiterShard {
-                    ip_requests: RwLock::new(HashMap::new()),
-                    last_cleanup: RwLock::new(Instant::now()),
-                });
-            }
-            shards
-        });
+        let shards_entry = self
+            .state
+            .site_shards
+            .entry(site_id_str.to_string())
+            .or_insert_with(|| {
+                let num_shards = self.state.memory_config.num_shards.max(1);
+                let mut shards = Vec::with_capacity(num_shards);
+                for _ in 0..num_shards {
+                    shards.push(RateLimiterShard {
+                        ip_requests: RwLock::new(HashMap::new()),
+                        last_cleanup: RwLock::new(Instant::now()),
+                    });
+                }
+                shards
+            });
 
         let shards = shards_entry.value();
         let shard_idx = (u64::from_be_bytes(match ip {
@@ -322,7 +328,10 @@ impl RateLimiterManager {
             }
             IpAddr::V6(a) => {
                 let octets = a.octets();
-                [octets[0], octets[1], octets[2], octets[3], octets[4], octets[5], octets[6], octets[7]]
+                [
+                    octets[0], octets[1], octets[2], octets[3], octets[4], octets[5], octets[6],
+                    octets[7],
+                ]
             }
         }) % shards.len() as u64) as usize;
 
@@ -333,20 +342,23 @@ impl RateLimiterManager {
             per_second: RingBuffer::with_capacity(self.state.config.ip.per_second as usize),
             last_access: Some(now),
         });
-        
+
         ip_state.remove_expired_windows(now);
         ip_state.touch();
-        
+
         if ip_state.per_second.len() >= self.state.config.ip.per_second as usize {
             return RateLimitResult::Limited {
                 limit_type: "site_ip_per_second".to_string(),
                 retry_after_millis: 1000,
             };
         }
-        
+
         ip_state.per_second.push(now);
-        self.state.lru_order.write().insert((site_id_str.to_string(), ip), now);
-        
+        self.state
+            .lru_order
+            .write()
+            .insert((site_id_str.to_string(), ip), now);
+
         RateLimitResult::Allowed
     }
 
@@ -399,14 +411,14 @@ mod tests {
     #[tokio::test]
     async fn test_site_isolation_ratelimit() {
         let manager = RateLimiterManager::new(
-            IpRateLimitConfig { 
-                per_second: 1, 
+            IpRateLimitConfig {
+                per_second: 1,
                 per_minute: 10,
                 per_5min: 50,
                 per_10min: 100,
                 per_hour: 500,
                 per_day: 1000,
-                burst: 0 
+                burst: 0,
             },
             GlobalRateLimitConfig {
                 per_second: 100,
@@ -421,11 +433,20 @@ mod tests {
         let ip: IpAddr = "1.1.1.1".parse().unwrap();
 
         // Site 1 allowed first request
-        assert!(matches!(manager.check_rate_limit(Some("site1"), ip).await, RateLimitResult::Allowed));
+        assert!(matches!(
+            manager.check_rate_limit(Some("site1"), ip).await,
+            RateLimitResult::Allowed
+        ));
         // Site 1 limited second request
-        assert!(matches!(manager.check_rate_limit(Some("site1"), ip).await, RateLimitResult::Limited { .. }));
+        assert!(matches!(
+            manager.check_rate_limit(Some("site1"), ip).await,
+            RateLimitResult::Limited { .. }
+        ));
 
         // Site 2 allowed first request for same IP (Isolation!)
-        assert!(matches!(manager.check_rate_limit(Some("site2"), ip).await, RateLimitResult::Allowed));
+        assert!(matches!(
+            manager.check_rate_limit(Some("site2"), ip).await,
+            RateLimitResult::Allowed
+        ));
     }
 }

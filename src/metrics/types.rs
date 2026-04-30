@@ -1,11 +1,11 @@
+use crate::metrics::bandwidth::BandwidthTracker;
+use crate::metrics::collection::LATENCY_SAMPLE_SIZE;
+use crate::metrics::payloads::*;
+use crate::waf::attack_detection::config::AttackType;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
-use crate::waf::attack_detection::config::AttackType;
-use crate::metrics::bandwidth::BandwidthTracker;
-use crate::metrics::payloads::*;
-use crate::metrics::collection::LATENCY_SAMPLE_SIZE;
 
 #[derive(Debug)]
 pub struct SiteMetrics {
@@ -92,7 +92,8 @@ impl SiteMetrics {
 
     pub fn record_request_end(&self, latency_ms: u64) {
         self.current_concurrent.fetch_sub(1, Ordering::Relaxed);
-        self.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
+        self.total_latency_ms
+            .fetch_add(latency_ms, Ordering::Relaxed);
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
         let mut samples = self.latency_samples.lock();
@@ -279,7 +280,8 @@ impl WorkerMetrics {
 
     pub fn record_request_end(&self, latency_ms: u64) {
         self.current_concurrent.fetch_sub(1, Ordering::Relaxed);
-        self.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
+        self.total_latency_ms
+            .fetch_add(latency_ms, Ordering::Relaxed);
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
         let mut samples = self.latency_samples.lock();
@@ -294,7 +296,9 @@ impl WorkerMetrics {
     pub fn record_blocked(&self, attack_type: AttackType) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
         let mut blocked_types = self.blocked_by_type.lock();
-        let counter = blocked_types.entry(attack_type).or_insert_with(|| AtomicU64::new(0));
+        let counter = blocked_types
+            .entry(attack_type)
+            .or_insert_with(|| AtomicU64::new(0));
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -470,7 +474,7 @@ impl WorkerMetrics {
             p95_latency_ms: p95,
             p99_latency_ms: p99,
             uptime_secs,
-            memory_bytes: 0, // TODO
+            memory_bytes: 0,  // TODO
             cpu_percent: 0.0, // TODO
             blocked_by_type: blocked_by_type_str,
             per_site,

@@ -79,7 +79,8 @@ impl MeshTransport {
         let (mut send_stream, recv_stream) = {
             let mut pool = peer.stream_pool.lock().await;
             pool.acquire().await
-        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        }
+        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let encoded = query
             .encode()
@@ -622,7 +623,8 @@ impl MeshTransport {
         let (mut send_stream, recv_stream) = {
             let mut pool = peer.stream_pool.lock().await;
             pool.acquire().await
-        }.map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        }
+        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
 
         let sequence = self.config.routing.query_sequence.next();
         let timestamp = MeshMessage::generate_timestamp();

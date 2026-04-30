@@ -730,7 +730,8 @@ impl WafCore {
         // Note: sqli and xss use libinjection and don't support custom_patterns
         macro_rules! merge_patterns {
             ($category:expr, $field:ident) => {
-                let patterns = crate::waf::rule_feed::get_custom_patterns_for_category($category, None);
+                let patterns =
+                    crate::waf::rule_feed::get_custom_patterns_for_category($category, None);
                 if !patterns.is_empty() {
                     new_config.$field.custom_patterns.extend(patterns);
                 }
@@ -1127,7 +1128,12 @@ impl WafCore {
         None
     }
 
-    async fn check_rate_limit(&self, site_id: Option<&str>, client_ip: IpAddr, path: &str) -> Option<WafDecision> {
+    async fn check_rate_limit(
+        &self,
+        site_id: Option<&str>,
+        client_ip: IpAddr,
+        path: &str,
+    ) -> Option<WafDecision> {
         if !self.test_mode.enabled || !self.test_mode.ratelimit_off {
             if self.rate_limiter.is_in_blackhole() {
                 return Some(WafDecision::Drop);

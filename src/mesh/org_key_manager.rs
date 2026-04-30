@@ -146,10 +146,14 @@ impl OrgKeyManager {
             ));
         }
 
-        let raft_client = self.raft_client.read().clone()
-            .ok_or_else(|| OrgKeyError::NotAuthorized("Raft client not configured".to_string()))?;
+        let raft_client =
+            self.raft_client.read().clone().ok_or_else(|| {
+                OrgKeyError::NotAuthorized("Raft client not configured".to_string())
+            })?;
 
-        let org_key = org.org_key.as_ref()
+        let org_key = org
+            .org_key
+            .as_ref()
             .ok_or_else(|| OrgKeyError::OrgKeyNotFound(org.org_id.clone()))?;
 
         let pub_key = OrgPublicKey::new(org.org_id.clone(), org_key);
@@ -158,7 +162,10 @@ impl OrgKeyManager {
         let value = crate::serialization::serialize(&pub_key)
             .map_err(|e| OrgKeyError::SerializationError(e.to_string()))?;
 
-        match raft_client.raft_write(Namespace::Org, pub_key.key_id.clone(), value).await {
+        match raft_client
+            .raft_write(Namespace::Org, pub_key.key_id.clone(), value)
+            .await
+        {
             Ok(commit_index) => {
                 tracing::info!(
                     "OrgPublicKey {} committed to Raft at index {}",
@@ -174,7 +181,8 @@ impl OrgKeyManager {
                         Namespace::Org,
                         key_id.clone(),
                     );
-                    self.broadcast_raft_commit_notification(&notification).await?;
+                    self.broadcast_raft_commit_notification(&notification)
+                        .await?;
                 }
 
                 let mut keys = self.org_public_keys.write();
@@ -214,7 +222,14 @@ impl OrgKeyManager {
         let value_clone = value.clone();
 
         if let Some(raft_client) = self.raft_client.read().clone() {
-            match raft_client.raft_write(Namespace::Revocation, target_node_id.to_string(), value_clone).await {
+            match raft_client
+                .raft_write(
+                    Namespace::Revocation,
+                    target_node_id.to_string(),
+                    value_clone,
+                )
+                .await
+            {
                 Ok(commit_index) => {
                     tracing::info!(
                         "Global node {} revocation committed to Raft at index {}",
@@ -230,13 +245,17 @@ impl OrgKeyManager {
                             Namespace::Revocation,
                             target_node_id.to_string(),
                         );
-                        self.broadcast_raft_commit_notification(&notification).await?;
+                        self.broadcast_raft_commit_notification(&notification)
+                            .await?;
                     }
 
                     return Ok(());
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to commit revocation to Raft, falling back to DHT: {}", e);
+                    tracing::warn!(
+                        "Failed to commit revocation to Raft, falling back to DHT: {}",
+                        e
+                    );
                 }
             }
         }
@@ -267,7 +286,10 @@ impl OrgKeyManager {
         &self,
         notification: &crate::mesh::raft::RaftCommitNotification,
     ) -> Result<(), OrgKeyError> {
-        let store = self.record_store.read().clone()
+        let store = self
+            .record_store
+            .read()
+            .clone()
             .ok_or(OrgKeyError::RecordStoreNotSet)?;
 
         let dht_key = format!(

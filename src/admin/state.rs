@@ -3,9 +3,9 @@ use super::audit::{AuditState, ConfigVersionManager};
 use super::ws::broadcaster::Broadcaster;
 use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
+use crate::metrics::SiteMetricsPayload;
 use crate::plugin::PluginManager;
 use crate::process::ProcessManager;
-use crate::metrics::SiteMetricsPayload;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,

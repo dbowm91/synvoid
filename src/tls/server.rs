@@ -794,7 +794,6 @@ impl HttpsServer {
             )
             .await;
 
-
         let site_id = target.site_id.clone();
 
         match waf_decision {

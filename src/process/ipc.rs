@@ -900,11 +900,27 @@ impl Message {
                 check_str("reason", reason, MAX_STRING_LENGTH)?;
                 check_str("site_scope", site_scope, MAX_STRING_LENGTH)
             }
-            Message::ThreatFeedUpdate { indicators, version, timestamp } => {
-                check_str("ThreatFeedUpdate.version", &version.to_string(), MAX_STRING_LENGTH)?;
-                check_str("ThreatFeedUpdate.timestamp", &timestamp.to_string(), MAX_STRING_LENGTH)?;
+            Message::ThreatFeedUpdate {
+                indicators,
+                version,
+                timestamp,
+            } => {
+                check_str(
+                    "ThreatFeedUpdate.version",
+                    &version.to_string(),
+                    MAX_STRING_LENGTH,
+                )?;
+                check_str(
+                    "ThreatFeedUpdate.timestamp",
+                    &timestamp.to_string(),
+                    MAX_STRING_LENGTH,
+                )?;
                 for indicator in indicators {
-                    check_str("indicator_value", &indicator.indicator_value, MAX_STRING_LENGTH)?;
+                    check_str(
+                        "indicator_value",
+                        &indicator.indicator_value,
+                        MAX_STRING_LENGTH,
+                    )?;
                     check_str("reason", &indicator.reason, MAX_STRING_LENGTH)?;
                     check_str("site_scope", &indicator.site_scope, MAX_STRING_LENGTH)?;
                 }

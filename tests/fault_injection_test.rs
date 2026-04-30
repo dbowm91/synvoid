@@ -10,7 +10,10 @@ mod tests {
         // We'll skip it if not running in a CI-like environment with the binary available.
         let binary_path = "./target/debug/maluwaf";
         if !std::path::Path::new(binary_path).exists() {
-            tracing::warn!("Skipping test_worker_crash_recovery: binary not found at {}", binary_path);
+            tracing::warn!(
+                "Skipping test_worker_crash_recovery: binary not found at {}",
+                binary_path
+            );
             return;
         }
 
@@ -32,7 +35,7 @@ mod tests {
             .arg("maluwaf.*--unified-server-worker")
             .output()
             .expect("Failed to run pgrep");
-        
+
         let pids = String::from_utf8_lossy(&output.stdout);
         let worker_pid = pids.lines().next().and_then(|l| l.parse::<i32>().ok());
 
@@ -56,7 +59,7 @@ mod tests {
                 .arg("maluwaf.*--unified-server-worker")
                 .output()
                 .expect("Failed to run pgrep");
-            
+
             let new_pids = String::from_utf8_lossy(&output.stdout);
             if !new_pids.is_empty() && !new_pids.contains(&worker_pid.to_string()) {
                 recovered = true;

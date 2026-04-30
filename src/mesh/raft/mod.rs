@@ -21,15 +21,16 @@ pub mod instance;
 pub mod network;
 pub mod state_machine;
 
-pub use client::{ConsistentReadResult, ConsistentReadSource, RaftAwareClient, RaftAwareClientError};
-pub use instance::{RaftInstance, RaftInitConfig, RaftSnapshotManager};
+pub use client::{
+    ConsistentReadResult, ConsistentReadSource, RaftAwareClient, RaftAwareClientError,
+};
+pub use instance::{RaftInitConfig, RaftInstance, RaftSnapshotManager};
 pub use network::MeshRaftNetwork;
 pub use network::MeshRaftNetworkFactory;
 pub use state_machine::{
-    GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage,
-    GlobalRegistryStateMachine, GlobalRegistryTypeConfig,
-    Namespace, OrgPublicKey, ThreatIntel, GlobalNodeRevocationList,
-    StateMachineValue, RaftCommand, NodeId,
+    GlobalNodeRevocationList, GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage,
+    GlobalRegistryStateMachine, GlobalRegistryTypeConfig, Namespace, NodeId, OrgPublicKey,
+    RaftCommand, StateMachineValue, ThreatIntel,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

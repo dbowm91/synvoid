@@ -91,12 +91,10 @@ impl TreiberStack {
             unsafe {
                 (*node).next = head;
             }
-            match self.head.compare_exchange_weak(
-                head,
-                node,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
+            match self
+                .head
+                .compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed)
+            {
                 Ok(_) => {
                     self.len.fetch_add(1, Ordering::Relaxed);
                     return;
@@ -240,7 +238,11 @@ impl ThreadLocalCache {
         }
     }
 
-    fn pop_from_array(&self, arr: &[Option<BytesMut>], len: &std::cell::Cell<usize>) -> Option<BytesMut> {
+    fn pop_from_array(
+        &self,
+        arr: &[Option<BytesMut>],
+        len: &std::cell::Cell<usize>,
+    ) -> Option<BytesMut> {
         let current_len = len.get();
         if current_len == 0 {
             return None;

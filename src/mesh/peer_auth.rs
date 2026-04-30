@@ -218,22 +218,23 @@ pub fn validate_member_certificate_with_raft_attestation(
     // 5. Verify trust via EITHER quorum signatures OR Raft attestation
     // Raft commit IS the proof of consensus - the Leader's commit index
     // proves majority agreement without needing 2/3 individual signatures
-    let has_quorum = !org_pub_key.quorum_signatures.is_empty()
-        && {
-            let mut global_keys_map: HashMap<String, String> = HashMap::new();
-            for pubkey in authorized_global_pubkeys {
-                global_keys_map.insert(pubkey.clone(), pubkey.clone());
-            }
-            let total_signers = authorized_global_pubkeys.len();
-            org_pub_key.verify_quorum(&global_keys_map, total_signers)
-        };
+    let has_quorum = !org_pub_key.quorum_signatures.is_empty() && {
+        let mut global_keys_map: HashMap<String, String> = HashMap::new();
+        for pubkey in authorized_global_pubkeys {
+            global_keys_map.insert(pubkey.clone(), pubkey.clone());
+        }
+        let total_signers = authorized_global_pubkeys.len();
+        org_pub_key.verify_quorum(&global_keys_map, total_signers)
+    };
 
-    let has_raft_attestation = raft_attestation.map(|att| {
-        att.namespace == crate::mesh::raft::Namespace::Org
-            && att.key_id == org_pub_key.key_id
-            && att.timestamp > 0
-            && att.commit_index > 0
-    }).unwrap_or(false);
+    let has_raft_attestation = raft_attestation
+        .map(|att| {
+            att.namespace == crate::mesh::raft::Namespace::Org
+                && att.key_id == org_pub_key.key_id
+                && att.timestamp > 0
+                && att.commit_index > 0
+        })
+        .unwrap_or(false);
 
     if !has_quorum && !has_raft_attestation {
         return Err(

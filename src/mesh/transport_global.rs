@@ -884,13 +884,20 @@ impl MeshTransport {
             return;
         }
 
-        match self.org_key_manager.revoke_global_node(target_node_id, reason).await {
+        match self
+            .org_key_manager
+            .revoke_global_node(target_node_id, reason)
+            .await
+        {
             Ok(_) => {
                 tracing::info!("Revoked global node {} via OrgKeyManager", target_node_id);
                 return;
             }
             Err(e) => {
-                tracing::warn!("OrgKeyManager revocation failed, trying legacy approach: {}", e);
+                tracing::warn!(
+                    "OrgKeyManager revocation failed, trying legacy approach: {}",
+                    e
+                );
             }
         }
 

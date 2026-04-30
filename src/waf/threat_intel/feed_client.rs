@@ -85,7 +85,8 @@ pub struct ThreatFeedClient {
     last_fetch: Arc<RwLock<u64>>,
     last_indicator_count: Arc<RwLock<usize>>,
     #[allow(clippy::type_complexity)]
-    on_update_callback: Arc<parking_lot::RwLock<Option<Box<dyn Fn(u64, Vec<ThreatIndicator>) + Send + Sync>>>>,
+    on_update_callback:
+        Arc<parking_lot::RwLock<Option<Box<dyn Fn(u64, Vec<ThreatIndicator>) + Send + Sync>>>>,
 }
 
 impl ThreatFeedClient {
@@ -119,7 +120,9 @@ impl ThreatFeedClient {
         }
 
         if self.config.trusted_signers.is_empty() {
-            tracing::warn!("No trusted signers configured for threat feed - deny-by-default active");
+            tracing::warn!(
+                "No trusted signers configured for threat feed - deny-by-default active"
+            );
         }
 
         let self_clone = Arc::clone(self);
@@ -211,15 +214,14 @@ impl ThreatFeedClient {
             return false;
         }
 
-        let signature_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(&payload.signature)
-        {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::warn!("Failed to decode signature: {}", e);
-                return false;
-            }
-        };
+        let signature_bytes =
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&payload.signature) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tracing::warn!("Failed to decode signature: {}", e);
+                    return false;
+                }
+            };
 
         if signature_bytes.len() != 64 {
             tracing::warn!(
@@ -355,7 +357,9 @@ impl ThreatFeedClient {
             indicator_value: indicator_data.indicator_value.clone(),
             severity,
             reason: indicator_data.reason.clone(),
-            ttl_seconds: indicator_data.ttl_seconds.max(self.config.min_indicator_ttl_seconds),
+            ttl_seconds: indicator_data
+                .ttl_seconds
+                .max(self.config.min_indicator_ttl_seconds),
             source_node_id: format!("feed:{}", indicator_data.source_node_id),
             timestamp: payload.timestamp,
             site_scope: indicator_data.site_scope.clone().unwrap_or_default(),
@@ -376,10 +380,9 @@ impl ThreatFeedClient {
                 indicator.indicator_value, indicator.threat_type
             );
 
-            if let Some(existing) = threat_manager.lookup_local_indicator(
-                &indicator.indicator_value,
-                indicator.threat_type,
-            ) {
+            if let Some(existing) = threat_manager
+                .lookup_local_indicator(&indicator.indicator_value, indicator.threat_type)
+            {
                 if existing.timestamp >= indicator.timestamp {
                     tracing::debug!("Duplicate or older indicator from feed, skipping: {}", key);
                     return;

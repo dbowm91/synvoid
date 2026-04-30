@@ -27,7 +27,7 @@ All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Moderni
 | # | Task | Description | Status |
 |---|------|-------------|--------|
 | **W8.1** | **Raft-Backed CRL** | Move Global Node Revocation List into the Raft State Machine from legacy DHT. | **COMPLETE** |
-| **W8.2** | **Observer Nodes** | Support "Learner" nodes that replicate state but don't vote, for global read scaling. | **PLANNED** |
+| **W8.2** | **Observer Nodes** | Support "Learner" nodes that replicate state but don't vote, for global read scaling. | **COMPLETE** |
 | **W8.3** | **Genesis Membership** | Automate Raft membership changes upon Genesis Key authorized node announcements. | **PLANNED** |
 | **W8.4** | **Edge State Mirroring** | Implement background mirroring of Raft state to local SQLite on Edge nodes. | **PLANNED** |
 | **W8.5** | **YARA-X Modernization** | Complete transition to `yara-x` (official Rust) and remove all legacy `libyara` (C) logic. | **PLANNED** |
@@ -41,12 +41,15 @@ All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Moderni
     - Broadcasts `RaftCommitNotification` after successful Raft commit
     - Updated `transport_global.rs` to use OrgKeyManager for revocation
 
-### W8.2: Observer Nodes (PLANNED)
+### W8.2: Observer Nodes (COMPLETE)
 - **Objective**: Scale read capacity without consensus overhead.
 - **Actions**:
-    - Update `RaftInitConfig` to support `is_observer` flag.
-    - Observers receive `AppendEntries` but do not participate in `VoteRequest`.
-    - Allows Global nodes in low-latency regions to serve consistent reads locally.
+    - Added `is_observer: bool` and `observer_tags: Vec<String>` to `RaftInitConfig`
+    - Added `is_observer` and `observer_tags` fields to `RaftInstance`
+    - Implemented `RaftInstance::add_learner(node_id, tags)` using openraft's `add_learner()` API
+    - Added observer support to `MeshRaftNetwork` and `MeshRaftNetworkFactory`
+    - Observers added via `raft.add_learner(node_id, (), false)` - non-blocking, non-voting
+    - Backward compatible with existing voter-only clusters
 
 ### W8.3: Genesis Membership (PLANNED)
 - **Objective**: Zero-touch cluster expansion.

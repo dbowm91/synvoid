@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::dht::RecordStoreManager;
-use crate::mesh::protocol::{MeshMessage, ArcStr};
+use crate::mesh::protocol::{ArcStr, MeshMessage};
 use crate::mesh::raft::instance::RaftInstance;
 use crate::mesh::raft::state_machine::{Namespace, RaftCommand};
 use crate::mesh::transport::MeshTransport;
@@ -92,7 +92,9 @@ impl RaftAwareClient {
         let instance = match raft_instance_guard.as_ref() {
             Some(i) => i,
             None => {
-                return Err(RaftAwareClientError::RaftWriteFailed("No local Raft instance".to_string()));
+                return Err(RaftAwareClientError::RaftWriteFailed(
+                    "No local Raft instance".to_string(),
+                ));
             }
         };
 
@@ -106,7 +108,9 @@ impl RaftAwareClient {
             value,
         };
 
-        let commit_index = instance.client_write(command).await
+        let commit_index = instance
+            .client_write(command)
+            .await
             .map_err(|e| RaftAwareClientError::RaftWriteFailed(e.to_string()))?;
 
         Ok(commit_index)
@@ -123,7 +127,9 @@ impl RaftAwareClient {
             return Err(RaftAwareClientError::NoGlobalNodes);
         }
 
-        let leader_node_id = self.find_leader_node_id().await
+        let leader_node_id = self
+            .find_leader_node_id()
+            .await
             .ok_or(RaftAwareClientError::RaftUnreachable)?;
 
         let timeout = Duration::from_secs(10);
@@ -155,7 +161,9 @@ impl RaftAwareClient {
             guard.insert(uuid::Uuid::new_v4().to_string(), response_tx);
         }
 
-        self.transport.send_message_to_peer(&leader_node_id, &raft_msg).await
+        self.transport
+            .send_message_to_peer(&leader_node_id, &raft_msg)
+            .await
             .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
 
         let response = tokio::time::timeout(timeout, response_rx)
@@ -165,16 +173,15 @@ impl RaftAwareClient {
 
         match response {
             MeshMessage::ConsistentReadResponse { value: Some(v), .. } => {
-                let commit_index = u64::from_le_bytes(v.try_into()
-                    .map_err(|_| RaftAwareClientError::InvalidResponse("Invalid commit index".to_string()))?);
+                let commit_index = u64::from_le_bytes(v.try_into().map_err(|_| {
+                    RaftAwareClientError::InvalidResponse("Invalid commit index".to_string())
+                })?);
                 Ok(commit_index)
             }
-            MeshMessage::NotLeader { .. } => {
-                Err(RaftAwareClientError::NotLeader)
-            }
-            _ => {
-                Err(RaftAwareClientError::InvalidResponse("Unexpected response".to_string()))
-            }
+            MeshMessage::NotLeader { .. } => Err(RaftAwareClientError::NotLeader),
+            _ => Err(RaftAwareClientError::InvalidResponse(
+                "Unexpected response".to_string(),
+            )),
         }
     }
 
@@ -237,8 +244,15 @@ impl RaftAwareClient {
                 timestamp: crate::utils::safe_unix_timestamp(),
             };
 
-            match self.send_message_and_wait_for_response(global_node_id, request, timeout).await {
-                Ok(MeshMessage::ConsistentReadResponse { value, leader_node_id, .. }) => {
+            match self
+                .send_message_and_wait_for_response(global_node_id, request, timeout)
+                .await
+            {
+                Ok(MeshMessage::ConsistentReadResponse {
+                    value,
+                    leader_node_id,
+                    ..
+                }) => {
                     let leader_str = leader_node_id.as_ref().map(|s| s.to_string());
                     return Ok(ConsistentReadResult {
                         value,
@@ -256,8 +270,9 @@ impl RaftAwareClient {
                             requesting_node_id: ArcStr::from(self.config.node_id()),
                             timestamp: crate::utils::safe_unix_timestamp(),
                         };
-                        if let Ok(MeshMessage::ConsistentReadResponse { value, .. }) =
-                            self.send_message_and_wait_for_response(&leader_str, retry_request, timeout).await
+                        if let Ok(MeshMessage::ConsistentReadResponse { value, .. }) = self
+                            .send_message_and_wait_for_response(&leader_str, retry_request, timeout)
+                            .await
                         {
                             return Ok(ConsistentReadResult {
                                 value,
@@ -291,14 +306,15 @@ impl RaftAwareClient {
         namespace: Namespace,
         key: &str,
     ) -> Result<ConsistentReadResult, RaftAwareClientError> {
-        let record_store = self.record_store.as_ref().ok_or(
-            RaftAwareClientError::DhtFailed,
-        )?;
+        let record_store = self
+            .record_store
+            .as_ref()
+            .ok_or(RaftAwareClientError::DhtFailed)?;
 
         let dht_key = self.build_dht_key(namespace, key);
-        let record = record_store.get_record(&dht_key).ok_or(
-            RaftAwareClientError::DhtFailed,
-        )?;
+        let record = record_store
+            .get_record(&dht_key)
+            .ok_or(RaftAwareClientError::DhtFailed)?;
 
         Ok(ConsistentReadResult {
             value: Some(record.value),
@@ -325,7 +341,9 @@ impl RaftAwareClient {
             guard.insert(request_id.clone(), response_tx);
         }
 
-        self.transport.send_message_to_peer(peer_id, &message).await
+        self.transport
+            .send_message_to_peer(peer_id, &message)
+            .await
             .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
 
         tokio::time::timeout(timeout, response_rx)

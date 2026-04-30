@@ -451,10 +451,7 @@ impl DhtKey {
             DhtKey::BehavioralFingerprint { fingerprint_id } => {
                 format!("behavior_fingerprint:{}", fingerprint_id)
             }
-            DhtKey::SiteScoped {
-                site_id,
-                inner_key,
-            } => {
+            DhtKey::SiteScoped { site_id, inner_key } => {
                 format!("site_scoped:{}:{}", site_id, inner_key)
             }
         }
@@ -842,7 +839,10 @@ mod tests {
     fn test_site_scoped_key() {
         let inner = DhtKey::upstream("api.example.com");
         let scoped = DhtKey::site_scoped("site1", inner.clone());
-        assert_eq!(scoped.as_str(), "site_scoped:site1:upstream:api.example.com");
+        assert_eq!(
+            scoped.as_str(),
+            "site_scoped:site1:upstream:api.example.com"
+        );
 
         let parsed = DhtKey::from_str("site_scoped:site1:upstream:api.example.com");
         assert_eq!(parsed, scoped);

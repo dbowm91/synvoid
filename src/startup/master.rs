@@ -513,10 +513,8 @@ async fn run_master(
         enabled: true, // TODO: Make configurable
         ..Default::default()
     };
-    let threat_feed_client = crate::waf::threat_intel::feed_client::ThreatFeedClient::new(
-        threat_feed_config,
-        None,
-    );
+    let threat_feed_client =
+        crate::waf::threat_intel::feed_client::ThreatFeedClient::new(threat_feed_config, None);
 
     {
         let pm = process_manager.clone();
@@ -526,17 +524,31 @@ async fn run_master(
                 .into_iter()
                 .map(|i| crate::process::ipc::ThreatIndicatorData {
                     threat_type: match i.threat_type {
-                        crate::mesh::protocol::ThreatType::IpBlock => crate::process::ipc::ThreatIndicatorType::IpBlock,
-                        crate::mesh::protocol::ThreatType::RateLimitViolation => crate::process::ipc::ThreatIndicatorType::RateLimitViolation,
-                        crate::mesh::protocol::ThreatType::SuspiciousActivity => crate::process::ipc::ThreatIndicatorType::SuspiciousActivity,
+                        crate::mesh::protocol::ThreatType::IpBlock => {
+                            crate::process::ipc::ThreatIndicatorType::IpBlock
+                        }
+                        crate::mesh::protocol::ThreatType::RateLimitViolation => {
+                            crate::process::ipc::ThreatIndicatorType::RateLimitViolation
+                        }
+                        crate::mesh::protocol::ThreatType::SuspiciousActivity => {
+                            crate::process::ipc::ThreatIndicatorType::SuspiciousActivity
+                        }
                         _ => crate::process::ipc::ThreatIndicatorType::IpBlock,
                     },
                     indicator_value: i.indicator_value,
                     severity: match i.severity {
-                        crate::mesh::protocol::ThreatSeverity::Low => crate::process::ipc::ThreatSeverityLevel::Low,
-                        crate::mesh::protocol::ThreatSeverity::Medium => crate::process::ipc::ThreatSeverityLevel::Medium,
-                        crate::mesh::protocol::ThreatSeverity::High => crate::process::ipc::ThreatSeverityLevel::High,
-                        crate::mesh::protocol::ThreatSeverity::Critical => crate::process::ipc::ThreatSeverityLevel::Critical,
+                        crate::mesh::protocol::ThreatSeverity::Low => {
+                            crate::process::ipc::ThreatSeverityLevel::Low
+                        }
+                        crate::mesh::protocol::ThreatSeverity::Medium => {
+                            crate::process::ipc::ThreatSeverityLevel::Medium
+                        }
+                        crate::mesh::protocol::ThreatSeverity::High => {
+                            crate::process::ipc::ThreatSeverityLevel::High
+                        }
+                        crate::mesh::protocol::ThreatSeverity::Critical => {
+                            crate::process::ipc::ThreatSeverityLevel::Critical
+                        }
                         _ => crate::process::ipc::ThreatSeverityLevel::Medium,
                     },
                     reason: i.reason,

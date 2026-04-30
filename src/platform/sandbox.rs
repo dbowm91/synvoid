@@ -106,13 +106,23 @@ impl ProcessSandbox {
             }
             #[cfg(target_os = "windows")]
             {
-                Box::new(crate::platform::sandbox::windows::WindowsSandbox::new(level))
+                Box::new(crate::platform::sandbox::windows::WindowsSandbox::new(
+                    level,
+                ))
             }
             #[cfg(target_os = "macos")]
             {
-                Box::new(crate::platform::sandbox::darwin::SeatbeltSandbox::new(level))
+                Box::new(crate::platform::sandbox::darwin::SeatbeltSandbox::new(
+                    level,
+                ))
             }
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "windows", target_os = "macos")))]
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "windows",
+                target_os = "macos"
+            )))]
             {
                 let feature = match level {
                     SandboxLevel::Off => "disabled",
@@ -399,9 +409,7 @@ pub mod capsicum {
         }
 
         fn limit_fd(&self, fd: i32, rights: &[libc::c_char]) -> Result<(), SandboxError> {
-            let result = unsafe {
-                libc::cap_rights_init(std::ptr::null_mut(), rights.as_ptr())
-            };
+            let result = unsafe { libc::cap_rights_init(std::ptr::null_mut(), rights.as_ptr()) };
 
             if result.is_null() {
                 return Err(SandboxError::Syscall("cap_rights_init failed".into()));
@@ -427,9 +435,7 @@ pub mod capsicum {
                     "Capsicum not available on this FreeBSD system. \
                      OS-level sandboxing is not active."
                 );
-                return Err(SandboxError::NotSupported(
-                    "Capsicum not available".into(),
-                ));
+                return Err(SandboxError::NotSupported("Capsicum not available".into()));
             }
 
             self.enter_sandbox()?;
@@ -478,13 +484,10 @@ pub mod pledge {
         }
 
         fn pledge(&self, promises: &str) -> Result<(), SandboxError> {
-            let promises_cstr =
-                CStr::from_bytes_with_nul(format!("{}\0", promises).as_bytes())
-                    .map_err(|_| SandboxError::Syscall("Invalid pledge promises".into()))?;
+            let promises_cstr = CStr::from_bytes_with_nul(format!("{}\0", promises).as_bytes())
+                .map_err(|_| SandboxError::Syscall("Invalid pledge promises".into()))?;
 
-            let result = unsafe {
-                libc::pledge(promises_cstr.as_ptr(), std::ptr::null())
-            };
+            let result = unsafe { libc::pledge(promises_cstr.as_ptr(), std::ptr::null()) };
 
             if result < 0 {
                 return Err(SandboxError::Syscall("pledge failed".into()));
@@ -497,13 +500,10 @@ pub mod pledge {
             let path_cstr = CStr::from_bytes_with_nul(format!("{}\0", path.display()).as_bytes())
                 .map_err(|_| SandboxError::Syscall("Invalid path".into()))?;
 
-            let perms_cstr =
-                CStr::from_bytes_with_nul(format!("{}\0", permissions).as_bytes())
-                    .map_err(|_| SandboxError::Syscall("Invalid permissions".into()))?;
+            let perms_cstr = CStr::from_bytes_with_nul(format!("{}\0", permissions).as_bytes())
+                .map_err(|_| SandboxError::Syscall("Invalid permissions".into()))?;
 
-            let result = unsafe {
-                libc::unveil(path_cstr.as_ptr(), perms_cstr.as_ptr())
-            };
+            let result = unsafe { libc::unveil(path_cstr.as_ptr(), perms_cstr.as_ptr()) };
 
             if result < 0 {
                 return Err(SandboxError::Syscall("unveil failed".into()));
@@ -528,9 +528,7 @@ pub mod pledge {
                     "Pledge not available on this OpenBSD system. \
                      OS-level sandboxing is not active."
                 );
-                return Err(SandboxError::NotSupported(
-                    "Pledge not available".into(),
-                ));
+                return Err(SandboxError::NotSupported("Pledge not available".into()));
             }
 
             for path in allowed_paths {
@@ -683,10 +681,13 @@ pub mod windows {
             };
 
             if set_info_result == 0 {
-                return Err(SandboxError::Syscall("SetInformationJobObject failed".into()));
+                return Err(SandboxError::Syscall(
+                    "SetInformationJobObject failed".into(),
+                ));
             }
 
-            let current_process = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+            let current_process =
+                unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
 
             let assign_result = unsafe {
                 windows_sys::Win32::System::Threading::AssignProcessToJobObject(
@@ -696,10 +697,15 @@ pub mod windows {
             };
 
             if assign_result == 0 {
-                return Err(SandboxError::Syscall("AssignProcessToJobObject failed".into()));
+                return Err(SandboxError::Syscall(
+                    "AssignProcessToJobObject failed".into(),
+                ));
             }
 
-            tracing::info!("Applied Windows Job Object sandbox (level: {:?})", self.level);
+            tracing::info!(
+                "Applied Windows Job Object sandbox (level: {:?})",
+                self.level
+            );
 
             Ok(())
         }
@@ -845,21 +851,28 @@ pub mod darwin {
             {
                 use std::ffi::CStr;
 
-                let profile_cstr = CStr::from_bytes_with_nul(format!("{}\0", profile).as_bytes())
-                    .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
+                let profile_cstr =
+                    CStr::from_bytes_with_nul(format!("{}\0", profile).as_bytes())
+                        .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
 
                 #[link(name = "sandbox")]
                 extern "C" {
-                    fn sandbox_init(profile: *const libc::c_char, flags: libc::c_int, error: *mut *mut libc::c_char) -> libc::c_int;
+                    fn sandbox_init(
+                        profile: *const libc::c_char,
+                        flags: libc::c_int,
+                        error: *mut *mut libc::c_char,
+                    ) -> libc::c_int;
                 }
 
-                let result = unsafe {
-                    sandbox_init(profile_cstr.as_ptr(), 0, std::ptr::null_mut())
-                };
+                let result =
+                    unsafe { sandbox_init(profile_cstr.as_ptr(), 0, std::ptr::null_mut()) };
 
                 if result != 0 {
                     let err_msg = std::io::Error::last_os_error().to_string();
-                    return Err(SandboxError::Syscall(format!("sandbox_init failed: {}", err_msg)));
+                    return Err(SandboxError::Syscall(format!(
+                        "sandbox_init failed: {}",
+                        err_msg
+                    )));
                 }
 
                 Ok(())

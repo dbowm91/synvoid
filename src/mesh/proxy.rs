@@ -327,10 +327,7 @@ impl MeshProxy {
 
         let proxy_cache = cache_config.as_ref().map(|settings| {
             let cache = ProxyCache::new(settings.clone());
-            let kb = CacheKeyBuilder::new(
-                settings.key_pattern.clone(),
-                settings.vary_by.clone(),
-            );
+            let kb = CacheKeyBuilder::new(settings.key_pattern.clone(), settings.vary_by.clone());
             (cache, kb)
         });
 
@@ -382,15 +379,14 @@ impl MeshProxy {
             .get("cache-control")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| {
-                v.split(',')
-                    .find_map(|part| {
-                        let part = part.trim();
-                        if let Some(val) = part.strip_prefix("max-age=") {
-                            val.parse::<u64>().ok().map(std::time::Duration::from_secs)
-                        } else {
-                            None
-                        }
-                    })
+                v.split(',').find_map(|part| {
+                    let part = part.trim();
+                    if let Some(val) = part.strip_prefix("max-age=") {
+                        val.parse::<u64>().ok().map(std::time::Duration::from_secs)
+                    } else {
+                        None
+                    }
+                })
             })
     }
 
@@ -1217,7 +1213,10 @@ impl MeshProxy {
                             let body_bytes = match resp.into_body().collect().await {
                                 Ok(collected) => collected.to_bytes(),
                                 Err(e) => {
-                                    tracing::warn!("Failed to collect response body for cache: {:?}", e);
+                                    tracing::warn!(
+                                        "Failed to collect response body for cache: {:?}",
+                                        e
+                                    );
                                     return Ok(HttpResponse::builder()
                                         .status(status)
                                         .body(Full::new(Bytes::new()).boxed())
@@ -1226,8 +1225,13 @@ impl MeshProxy {
                             };
                             let max_age = Self::get_cache_max_age(&headers);
 
-                            if let Err(e) = cache.insert(cache_key, body_bytes.clone(), status, headers, max_age)
-                            {
+                            if let Err(e) = cache.insert(
+                                cache_key,
+                                body_bytes.clone(),
+                                status,
+                                headers,
+                                max_age,
+                            ) {
                                 tracing::warn!(
                                     "Mesh proxy cache insert failed for {} {}: {}",
                                     request_method,

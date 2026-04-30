@@ -1,14 +1,15 @@
+use crate::metrics::payloads::{DroppedEventCounts, ServerlessMetrics};
+use dashmap::DashMap;
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
-use dashmap::DashMap;
-use parking_lot::Mutex;
-use crate::metrics::payloads::{DroppedEventCounts, ServerlessMetrics};
 
 pub(crate) const LATENCY_SAMPLE_SIZE: usize = 1000;
 pub(crate) const SERVERLESS_DURATION_SAMPLE_SIZE: usize = 100;
 
-pub(crate) static ATTACK_TYPE_COUNTER: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+pub(crate) static ATTACK_TYPE_COUNTER: LazyLock<DashMap<String, AtomicU64>> =
+    LazyLock::new(DashMap::new);
 
 pub(crate) static PROXY_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static PROXY_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
@@ -16,50 +17,80 @@ pub(crate) static PROXY_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| Ato
 pub(crate) static STATIC_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static STATIC_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static DROPPED_TLS_RELOAD_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static DROPPED_THREAT_LEVEL_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DROPPED_TLS_RELOAD_EVENTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DROPPED_THREAT_LEVEL_EVENTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DROPPED_PROCESS_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DROPPED_WORKER_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static TLS_PASSTHROUGH_REQUESTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static TLS_PASSTHROUGH_WAF_BYPASSED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static TLS_PASSTHROUGH_REQUESTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static TLS_PASSTHROUGH_WAF_BYPASSED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static HONEYPOT_INDICATORS_PUBLISHED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static HONEYPOT_RECORDS_PROCESSED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static HONEYPOT_HTTP_TRAPS_HIT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static PORT_HONEYPOT_CONNECTIONS_CAPTURED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static HONEYPOT_INDICATORS_PUBLISHED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static HONEYPOT_RECORDS_PROCESSED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static HONEYPOT_HTTP_TRAPS_HIT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static PORT_HONEYPOT_CONNECTIONS_CAPTURED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
 pub(crate) static DHT_THREAT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static DHT_THREAT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_THREAT_LOOKUP_MISSES: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static THREAT_INTEL_DHT_PUBLISH_TOTAL: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_PUBLISH_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_LOOKUP_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_LOOKUP_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_SYNC_TOTAL: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_SYNC_SUCCESS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_SYNC_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_SYNC_ADDED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static THREAT_INTEL_DHT_SYNC_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_PUBLISH_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_PUBLISH_FAILED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_LOOKUP_HITS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_LOOKUP_MISSES: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_SYNC_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_SYNC_SUCCESS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_SYNC_FAILED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_SYNC_ADDED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_DHT_SYNC_REMOVED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static BEHAVIORAL_FINGERPRINT_DHT_PUBLISH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static BEHAVIORAL_FINGERPRINT_RECEIVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static BEHAVIORAL_FINGERPRINT_MATCH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BEHAVIORAL_FINGERPRINT_DHT_PUBLISH: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BEHAVIORAL_FINGERPRINT_RECEIVED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BEHAVIORAL_FINGERPRINT_MATCH: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
 pub(crate) static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static DHT_QUERY_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
-pub(crate) static HTTP_REQUEST_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
-pub(crate) static WAF_CHECK_TIMINGS: LazyLock<Mutex<VecDeque<u64>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
+pub(crate) static DHT_QUERY_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+pub(crate) static HTTP_REQUEST_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+pub(crate) static WAF_CHECK_TIMINGS: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
-pub(crate) static DHT_BUCKET_PEER_COUNTS: LazyLock<DashMap<usize, AtomicU64>> = LazyLock::new(DashMap::new);
-pub(crate) static DHT_RECORDS_BY_TYPE: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+pub(crate) static DHT_BUCKET_PEER_COUNTS: LazyLock<DashMap<usize, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+pub(crate) static DHT_RECORDS_BY_TYPE: LazyLock<DashMap<String, AtomicU64>> =
+    LazyLock::new(DashMap::new);
 
-pub(crate) static DHT_ANNOUNCE_QUEUE_DEPTH: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_ANNOUNCE_QUEUE_DEPTH: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_STORE_OPERATIONS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_STORE_FAILURES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_RATE_LIMITED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
@@ -69,15 +100,22 @@ pub(crate) static DHT_ANNOUNCE_SENT: LazyLock<AtomicU64> = LazyLock::new(|| Atom
 pub(crate) static DHT_ANNOUNCE_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_PEER_DISCOVERED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_PEER_REMOVED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static DHT_PROPAGATION_HOPS: LazyLock<Mutex<VecDeque<u64>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
+pub(crate) static DHT_PROPAGATION_HOPS: LazyLock<Mutex<VecDeque<u64>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
-pub(crate) static GLOBAL_NODE_LIVENESS_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static GLOBAL_NODE_QUORUM_LOST_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static GLOBAL_NODE_LIVENESS_COUNT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static GLOBAL_NODE_QUORUM_LOST_EVENTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
-pub(crate) static SERVERLESS_INVOCATIONS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
-pub(crate) static SERVERLESS_ERRORS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
-pub(crate) static SERVERLESS_DURATIONS: LazyLock<Mutex<HashMap<String, Mutex<Vec<u64>>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub(crate) static SERVERLESS_ACTIVE_INSTANCES: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+pub(crate) static SERVERLESS_INVOCATIONS: LazyLock<DashMap<String, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+pub(crate) static SERVERLESS_ERRORS: LazyLock<DashMap<String, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+pub(crate) static SERVERLESS_DURATIONS: LazyLock<Mutex<HashMap<String, Mutex<Vec<u64>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+pub(crate) static SERVERLESS_ACTIVE_INSTANCES: LazyLock<DashMap<String, AtomicU64>> =
+    LazyLock::new(DashMap::new);
 
 pub fn record_proxy_cache_hit() {
     PROXY_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
@@ -393,12 +431,17 @@ pub fn get_dht_replica_count() -> u64 {
 }
 
 pub fn record_dht_bucket_peers(bucket_index: usize, count: u64) {
-    let counter = DHT_BUCKET_PEER_COUNTS.entry(bucket_index).or_insert_with(|| AtomicU64::new(0));
+    let counter = DHT_BUCKET_PEER_COUNTS
+        .entry(bucket_index)
+        .or_insert_with(|| AtomicU64::new(0));
     counter.store(count, Ordering::Relaxed);
 }
 
 pub fn get_dht_bucket_peers(bucket_index: usize) -> u64 {
-    DHT_BUCKET_PEER_COUNTS.get(&bucket_index).map(|c| c.load(Ordering::Relaxed)).unwrap_or(0)
+    DHT_BUCKET_PEER_COUNTS
+        .get(&bucket_index)
+        .map(|c| c.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }
 
 pub fn get_all_dht_bucket_peers() -> HashMap<usize, u64> {
@@ -410,17 +453,24 @@ pub fn get_all_dht_bucket_peers() -> HashMap<usize, u64> {
 }
 
 pub fn record_dht_record_by_type(record_type: &str, count: u64) {
-    let counter = DHT_RECORDS_BY_TYPE.entry(record_type.to_string()).or_insert_with(|| AtomicU64::new(0));
+    let counter = DHT_RECORDS_BY_TYPE
+        .entry(record_type.to_string())
+        .or_insert_with(|| AtomicU64::new(0));
     counter.store(count, Ordering::Relaxed);
 }
 
 pub fn increment_dht_records_by_type(record_type: &str) {
-    let counter = DHT_RECORDS_BY_TYPE.entry(record_type.to_string()).or_insert_with(|| AtomicU64::new(0));
+    let counter = DHT_RECORDS_BY_TYPE
+        .entry(record_type.to_string())
+        .or_insert_with(|| AtomicU64::new(0));
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn get_dht_records_by_type(record_type: &str) -> u64 {
-    DHT_RECORDS_BY_TYPE.get(record_type).map(|c| c.load(Ordering::Relaxed)).unwrap_or(0)
+    DHT_RECORDS_BY_TYPE
+        .get(record_type)
+        .map(|c| c.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }
 
 pub fn get_all_dht_records_by_type() -> HashMap<String, u64> {
@@ -560,7 +610,9 @@ pub fn get_dropped_event_counts() -> DroppedEventCounts {
 }
 
 pub fn record_attack_type(attack_type: &str) {
-    let counter = ATTACK_TYPE_COUNTER.entry(attack_type.to_string()).or_insert_with(|| AtomicU64::new(0));
+    let counter = ATTACK_TYPE_COUNTER
+        .entry(attack_type.to_string())
+        .or_insert_with(|| AtomicU64::new(0));
     counter.fetch_add(1, Ordering::Relaxed);
 }
 

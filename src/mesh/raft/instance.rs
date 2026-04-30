@@ -1,17 +1,17 @@
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use openraft::Raft;
 use tokio::sync::broadcast;
 
-use crate::mesh::raft::state_machine::{
-    GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig,
-    GlobalRegistryConfig, GlobalRegistry, Namespace, RaftCommand,
-};
-use crate::mesh::raft::network::MeshRaftNetworkFactory;
 use crate::mesh::backend::MeshBackendPool;
+use crate::mesh::raft::network::MeshRaftNetworkFactory;
+use crate::mesh::raft::state_machine::{
+    GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage, GlobalRegistryStateMachine,
+    GlobalRegistryTypeConfig, Namespace, RaftCommand,
+};
 use crate::mesh::MeshProxy;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -19,6 +19,10 @@ pub struct RaftInitConfig {
     pub node_id: u64,
     pub db_path: PathBuf,
     pub cluster_nodes: Vec<u64>,
+    #[serde(default)]
+    pub is_observer: bool,
+    #[serde(default)]
+    pub observer_tags: Vec<String>,
 }
 
 pub struct RaftInstance {
@@ -26,6 +30,8 @@ pub struct RaftInstance {
     pub registry: GlobalRegistry,
     pub network_factory: MeshRaftNetworkFactory,
     node_id: u64,
+    is_observer: bool,
+    observer_tags: Vec<String>,
     shutdown_tx: Arc<tokio::sync::RwLock<Option<broadcast::Sender<()>>>>,
 }
 
@@ -35,6 +41,8 @@ impl RaftInstance {
         db_path: PathBuf,
         backend_pool: Arc<MeshBackendPool>,
         proxy: Arc<MeshProxy>,
+        is_observer: bool,
+        observer_tags: Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = GlobalRegistryConfig {
             node_id,
@@ -54,18 +62,24 @@ impl RaftInstance {
             network_factory.clone(),
             log_storage,
             state_machine,
-        ).await?;
+        )
+        .await?;
 
         Ok(Self {
             raft: Arc::new(raft),
             registry,
             network_factory,
             node_id,
+            is_observer,
+            observer_tags,
             shutdown_tx: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
-    pub async fn initialize(&self, cluster_nodes: Vec<u64>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn initialize(
+        &self,
+        cluster_nodes: Vec<u64>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if cluster_nodes.is_empty() {
             return Err("Cannot initialize Raft cluster with no nodes".into());
         }
@@ -73,16 +87,47 @@ impl RaftInstance {
         let nodes: BTreeSet<u64> = cluster_nodes.iter().cloned().collect();
         self.raft.initialize(nodes).await?;
 
-        tracing::info!("Raft instance {} initialized with cluster nodes: {:?}", self.node_id, cluster_nodes);
+        tracing::info!(
+            "Raft instance {} initialized with cluster nodes: {:?}",
+            self.node_id,
+            cluster_nodes
+        );
         Ok(())
     }
 
-    pub async fn add_node(&self, _node_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn add_learner(
+        &self,
+        node_id: u64,
+        tags: Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        tracing::info!(
+            "Adding learner node {} with tags {:?} to cluster",
+            node_id,
+            tags
+        );
+
+        let node = ();
+        self.raft
+            .add_learner(node_id, node, false)
+            .await
+            .map_err(|e| format!("Failed to add learner: {}", e))?;
+
+        tracing::info!("Learner node {} added successfully", node_id);
+        Ok(())
+    }
+
+    pub async fn add_node(
+        &self,
+        node_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!("Node added to cluster (cluster management via external coordination)");
         Ok(())
     }
 
-    pub async fn remove_node(&self, _node_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn remove_node(
+        &self,
+        _node_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!("Node removed from cluster (cluster management via external coordination)");
         Ok(())
     }
@@ -95,11 +140,7 @@ impl RaftInstance {
         Ok(resp.log_id.index)
     }
 
-    pub async fn read(
-        &self,
-        namespace: Namespace,
-        key: &str,
-    ) -> Option<Vec<u8>> {
+    pub async fn read(&self, namespace: Namespace, key: &str) -> Option<Vec<u8>> {
         self.registry.get_value(&namespace, key)
     }
 
@@ -115,7 +156,10 @@ impl RaftInstance {
         }
     }
 
-    pub async fn wait_for_leader(&self, timeout: Duration) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn wait_for_leader(
+        &self,
+        timeout: Duration,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let start = std::time::Instant::now();
         loop {
             if start.elapsed() > timeout {
@@ -145,6 +189,14 @@ impl RaftInstance {
     pub fn registry(&self) -> &GlobalRegistry {
         &self.registry
     }
+
+    pub fn is_observer(&self) -> bool {
+        self.is_observer
+    }
+
+    pub fn observer_tags(&self) -> &[String] {
+        &self.observer_tags
+    }
 }
 
 impl Clone for RaftInstance {
@@ -154,6 +206,8 @@ impl Clone for RaftInstance {
             registry: self.registry.clone(),
             network_factory: self.network_factory.clone(),
             node_id: self.node_id,
+            is_observer: self.is_observer,
+            observer_tags: self.observer_tags.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
         }
     }
@@ -171,7 +225,10 @@ impl RaftSnapshotManager {
         Self { db_path }
     }
 
-    pub fn create_point_in_time_snapshot(&self, target_path: &PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn create_point_in_time_snapshot(
+        &self,
+        target_path: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let source = rusqlite::Connection::open(&self.db_path)?;
         let mut target = rusqlite::Connection::open(target_path)?;
 
@@ -182,7 +239,10 @@ impl RaftSnapshotManager {
         Ok(())
     }
 
-    pub fn restore_from_snapshot(snapshot_path: &PathBuf, db_path: &PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn restore_from_snapshot(
+        snapshot_path: &PathBuf,
+        db_path: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let snapshot = rusqlite::Connection::open(snapshot_path)?;
         let mut target = rusqlite::Connection::open(db_path)?;
 
@@ -201,6 +261,9 @@ impl RaftSnapshotManager {
     }
 
     pub fn get_snapshot_path(&self, snapshot_id: &str) -> PathBuf {
-        self.db_path.parent().unwrap().join(format!("snapshot_{}.db", snapshot_id))
+        self.db_path
+            .parent()
+            .unwrap()
+            .join(format!("snapshot_{}.db", snapshot_id))
     }
 }

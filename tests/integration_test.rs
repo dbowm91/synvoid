@@ -891,10 +891,8 @@ mod tests {
 #[cfg(test)]
 mod worker_crash_recovery_tests {
     use maluwaf::overseer::socket_handoff::SocketHandoffError;
-    use maluwaf::process::{
-        ErrorCode, ErrorSeverity, Message, WorkerId,
-    };
     use maluwaf::process::ipc::MessageCategory;
+    use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
     #[test]
     fn test_worker_crash_error_message() {
@@ -905,8 +903,20 @@ mod worker_crash_recovery_tests {
             error_code: ErrorCode::WorkerPanic,
         };
 
-        assert!(matches!(crash_error, Message::WorkerError { severity: ErrorSeverity::Critical, .. }));
-        if let Message::WorkerError { id, error, severity, error_code } = crash_error {
+        assert!(matches!(
+            crash_error,
+            Message::WorkerError {
+                severity: ErrorSeverity::Critical,
+                ..
+            }
+        ));
+        if let Message::WorkerError {
+            id,
+            error,
+            severity,
+            error_code,
+        } = crash_error
+        {
             assert_eq!(id, WorkerId(2));
             assert!(error.contains("panicked"));
             assert_eq!(severity, ErrorSeverity::Critical);
@@ -930,7 +940,12 @@ mod worker_crash_recovery_tests {
 
         let deserialized: Message = serde_json::from_str(&json).unwrap();
         match deserialized {
-            Message::WorkerError { id, error, severity, error_code } => {
+            Message::WorkerError {
+                id,
+                error,
+                severity,
+                error_code,
+            } => {
                 assert_eq!(id, WorkerId(5));
                 assert_eq!(error, "segmentation fault");
                 assert_eq!(severity, ErrorSeverity::Critical);
@@ -970,7 +985,9 @@ mod worker_crash_recovery_tests {
             ports: vec![8080, 8443],
         };
 
-        assert!(matches!(handoff_ready, Message::SocketHandoffReady { ports } if ports == vec![8080, 8443]));
+        assert!(
+            matches!(handoff_ready, Message::SocketHandoffReady { ports } if ports == vec![8080, 8443])
+        );
     }
 
     #[test]
@@ -980,7 +997,13 @@ mod worker_crash_recovery_tests {
             fd_count: 2,
         };
 
-        assert!(matches!(handoff_complete, Message::SocketHandoffComplete { success: true, fd_count: 2 }));
+        assert!(matches!(
+            handoff_complete,
+            Message::SocketHandoffComplete {
+                success: true,
+                fd_count: 2
+            }
+        ));
     }
 
     #[test]
@@ -989,7 +1012,10 @@ mod worker_crash_recovery_tests {
             error: "connection reset by peer".to_string(),
         };
 
-        assert!(matches!(handoff_failed, Message::SocketHandoffFailed { .. }));
+        assert!(matches!(
+            handoff_failed,
+            Message::SocketHandoffFailed { .. }
+        ));
         if let Message::SocketHandoffFailed { error } = handoff_failed {
             assert!(error.contains("reset"));
         }
@@ -1025,9 +1051,15 @@ mod worker_crash_recovery_tests {
         use maluwaf::process::ErrorCode;
 
         assert_eq!(ErrorCode::WorkerPanic.to_string(), "worker_panic");
-        assert_eq!(ErrorCode::ResourceExhausted.to_string(), "resource_exhausted");
+        assert_eq!(
+            ErrorCode::ResourceExhausted.to_string(),
+            "resource_exhausted"
+        );
         assert_eq!(ErrorCode::Timeout.to_string(), "timeout");
-        assert_eq!(ErrorCode::SocketBindFailed.to_string(), "socket_bind_failed");
+        assert_eq!(
+            ErrorCode::SocketBindFailed.to_string(),
+            "socket_bind_failed"
+        );
     }
 
     #[test]
@@ -1054,10 +1086,25 @@ mod worker_crash_recovery_tests {
             fd_count: 2,
         };
 
-        assert!(matches!(crash_error, Message::WorkerError { severity: ErrorSeverity::Critical, .. }));
-        assert!(matches!(socket_handoff_req, Message::SocketHandoffRequest { .. }));
-        assert!(matches!(socket_handoff_ready, Message::SocketHandoffReady { .. }));
-        assert!(matches!(socket_handoff_complete, Message::SocketHandoffComplete { success: true, .. }));
+        assert!(matches!(
+            crash_error,
+            Message::WorkerError {
+                severity: ErrorSeverity::Critical,
+                ..
+            }
+        ));
+        assert!(matches!(
+            socket_handoff_req,
+            Message::SocketHandoffRequest { .. }
+        ));
+        assert!(matches!(
+            socket_handoff_ready,
+            Message::SocketHandoffReady { .. }
+        ));
+        assert!(matches!(
+            socket_handoff_complete,
+            Message::SocketHandoffComplete { success: true, .. }
+        ));
     }
 
     #[test]
@@ -1107,14 +1154,20 @@ mod worker_crash_recovery_tests {
             success: true,
             error: None,
         };
-        assert!(matches!(restart_resp, Message::RestartWorkerResponse { success: true, .. }));
+        assert!(matches!(
+            restart_resp,
+            Message::RestartWorkerResponse { success: true, .. }
+        ));
 
         let restart_failed = Message::RestartWorkerResponse {
             id: WorkerId(2),
             success: false,
             error: Some("worker limit reached".to_string()),
         };
-        assert!(matches!(restart_failed, Message::RestartWorkerResponse { success: false, .. }));
+        assert!(matches!(
+            restart_failed,
+            Message::RestartWorkerResponse { success: false, .. }
+        ));
     }
 }
 
