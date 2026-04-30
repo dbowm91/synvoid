@@ -153,10 +153,7 @@ impl MeshTransport {
                         sig_array.copy_from_slice(signature);
                         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
                             Ok(pk) => pk
-                                .verify(
-                                    &content,
-                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
-                                )
+                                .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
                                 .is_ok(),
                             Err(_) => false,
                         }
@@ -290,10 +287,7 @@ impl MeshTransport {
                         sig_array.copy_from_slice(signature);
                         match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
                             Ok(pk) => pk
-                                .verify(
-                                    &content,
-                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
-                                )
+                                .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
                                 .is_ok(),
                             Err(_) => false,
                         }

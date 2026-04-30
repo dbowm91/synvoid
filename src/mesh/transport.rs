@@ -109,12 +109,9 @@ pub struct MeshTransport {
     pub(crate) pending_consistent_read_responses: Arc<
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::mesh::protocol::MeshMessage>>>,
     >,
-    pub(crate) pending_snapshot_responses: Arc<
-        Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>,
-    >,
-    pub(crate) pending_snapshot_transfers: Arc<
-        Mutex<HashMap<String, InProgressSnapshot>>,
-    >,
+    pub(crate) pending_snapshot_responses:
+        Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pub(crate) pending_snapshot_transfers: Arc<Mutex<HashMap<String, InProgressSnapshot>>>,
     pub(crate) auth_failures: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) peer_message_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
     pub(crate) snapshot_request_times: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -1654,9 +1651,7 @@ impl MeshTransport {
                     Self::STREAM_RESPONSE_TIMEOUT_SECS,
                     peer_id
                 );
-                Err(MeshTransportError::ReceiveFailed(
-                    "Response timeout".into(),
-                ))
+                Err(MeshTransportError::ReceiveFailed("Response timeout".into()))
             }
         }
     }

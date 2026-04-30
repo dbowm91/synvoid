@@ -103,8 +103,12 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         &mut self,
         rpc: AppendEntriesRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _option: RPCOption,
-    ) -> Result<AppendEntriesResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
-        let data = postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+    ) -> Result<
+        AppendEntriesResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+    > {
+        let data =
+            postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
         let data = self.send_raw(RaftMsgType::AppendEntries, data).await?;
 
@@ -115,8 +119,12 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         &mut self,
         rpc: VoteRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _option: RPCOption,
-    ) -> Result<VoteResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
-        let data = postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+    ) -> Result<
+        VoteResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+    > {
+        let data =
+            postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
         let data = self.send_raw(RaftMsgType::VoteRequest, data).await?;
 
@@ -129,7 +137,10 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         snapshot: SnapshotOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _cancel: impl Future<Output = openraft::errors::ReplicationClosed> + OptionalSend + 'static,
         _option: RPCOption,
-    ) -> Result<SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, StreamingError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
+    ) -> Result<
+        SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        StreamingError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+    > {
         let transport_arc = self.proxy.get_transport();
         let transport = {
             let guard = transport_arc.read();
@@ -166,8 +177,8 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
             meta,
             total_size,
         };
-        let header_bytes =
-            postcard::to_stdvec(&header).map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+        let header_bytes = postcard::to_stdvec(&header)
+            .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -205,8 +216,8 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
                 is_last,
                 data: chunk,
             };
-            let chunk_bytes =
-                postcard::to_stdvec(&chunk_info).map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+            let chunk_bytes = postcard::to_stdvec(&chunk_info)
+                .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
             let chunk_msg = MeshMessage::Raft {
                 target_node_id: ArcStr::from(target.clone()),
@@ -242,7 +253,8 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
             })?;
 
         let response: SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
-            postcard::from_bytes(&response_data).map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+            postcard::from_bytes(&response_data)
+                .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
         Ok(response)
     }
@@ -274,8 +286,10 @@ impl MeshRaftNetworkFactory {
     }
 }
 
-impl openraft::network::RaftNetworkFactory<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
-    for MeshRaftNetworkFactory
+impl
+    openraft::network::RaftNetworkFactory<
+        crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+    > for MeshRaftNetworkFactory
 {
     type Network = MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>;
 

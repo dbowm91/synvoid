@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::dht::RecordStoreManager;
@@ -165,7 +165,8 @@ impl RaftAwareClient {
             .await
             .ok_or(RaftAwareClientError::RaftUnreachable)?;
 
-        self.raft_write_to_leader(namespace, key, value, &leader_node_id).await
+        self.raft_write_to_leader(namespace, key, value, &leader_node_id)
+            .await
     }
 
     async fn raft_write_to_leader(
@@ -196,26 +197,30 @@ impl RaftAwareClient {
             payload: raft_payload,
         };
 
-        let response_data = self.transport
+        let response_data = self
+            .transport
             .send_message_to_peer_with_response(leader_node_id, &raft_msg)
             .await
             .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
 
         let response: crate::mesh::protocol::MeshMessage =
-            crate::mesh::protocol::MeshMessage::decode(&response_data)
-                .ok_or_else(|| RaftAwareClientError::InvalidResponse("Failed to decode response".to_string()))?;
+            crate::mesh::protocol::MeshMessage::decode(&response_data).ok_or_else(|| {
+                RaftAwareClientError::InvalidResponse("Failed to decode response".to_string())
+            })?;
 
         match response {
             crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
-                value: Some(v),
-                ..
+                value: Some(v), ..
             } => {
                 let commit_index = u64::from_le_bytes(v.try_into().map_err(|_| {
                     RaftAwareClientError::InvalidResponse("Invalid commit index".to_string())
                 })?);
                 Ok(commit_index)
             }
-            crate::mesh::protocol::MeshMessage::NotLeader { leader_node_id: hinted_leader, .. } => {
+            crate::mesh::protocol::MeshMessage::NotLeader {
+                leader_node_id: hinted_leader,
+                ..
+            } => {
                 tracing::warn!(
                     "Leader {} rejected proposal, received NotLeader hint: {:?}",
                     leader_node_id,
@@ -246,19 +251,28 @@ impl RaftAwareClient {
                             target_node_id: ArcStr::from(hinted_str.clone()),
                             payload: raft_payload,
                         };
-                        let response_data = self.transport
+                        let response_data = self
+                            .transport
                             .send_message_to_peer_with_response(&hinted_str, &raft_msg)
                             .await
                             .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
                         let response: crate::mesh::protocol::MeshMessage =
-                            crate::mesh::protocol::MeshMessage::decode(&response_data)
-                                .ok_or_else(|| RaftAwareClientError::InvalidResponse("Failed to decode response".to_string()))?;
+                            crate::mesh::protocol::MeshMessage::decode(&response_data).ok_or_else(
+                                || {
+                                    RaftAwareClientError::InvalidResponse(
+                                        "Failed to decode response".to_string(),
+                                    )
+                                },
+                            )?;
                         if let crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
                             value: Some(v),
                             ..
-                        } = response {
+                        } = response
+                        {
                             let commit_index = u64::from_le_bytes(v.try_into().map_err(|_| {
-                                RaftAwareClientError::InvalidResponse("Invalid commit index".to_string())
+                                RaftAwareClientError::InvalidResponse(
+                                    "Invalid commit index".to_string(),
+                                )
                             })?);
                             return Ok(commit_index);
                         }

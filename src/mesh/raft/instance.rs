@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use openraft::raft::ReadPolicy;
-use openraft::Raft;
 use openraft::type_config::alias::SnapshotMetaOf;
+use openraft::Raft;
 use tokio::sync::broadcast;
 
 use crate::mesh::backend::MeshBackendPool;
@@ -146,7 +146,10 @@ impl RaftInstance {
     pub async fn raft_append_entries(
         &self,
         rpc: openraft::raft::AppendEntriesRequest<GlobalRegistryTypeConfig>,
-    ) -> Result<openraft::raft::AppendEntriesResponse<GlobalRegistryTypeConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<
+        openraft::raft::AppendEntriesResponse<GlobalRegistryTypeConfig>,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let resp = self.raft.append_entries(rpc).await?;
         Ok(resp)
     }
@@ -154,7 +157,10 @@ impl RaftInstance {
     pub async fn raft_vote(
         &self,
         rpc: openraft::raft::VoteRequest<GlobalRegistryTypeConfig>,
-    ) -> Result<openraft::raft::VoteResponse<GlobalRegistryTypeConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<
+        openraft::raft::VoteResponse<GlobalRegistryTypeConfig>,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let resp = self.raft.vote(rpc).await?;
         Ok(resp)
     }
@@ -268,10 +274,7 @@ impl RaftInstance {
             .install_snapshot(meta, snapshot)
             .await
             .map_err(|e| format!("Failed to install snapshot: {}", e))?;
-        tracing::info!(
-            "Installed snapshot with last_log_id {:?}",
-            meta.last_log_id
-        );
+        tracing::info!("Installed snapshot with last_log_id {:?}", meta.last_log_id);
         Ok(())
     }
 }

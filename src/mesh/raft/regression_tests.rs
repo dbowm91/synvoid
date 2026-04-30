@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod signed_record_tests {
-    use base64::Engine;
     use crate::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType};
+    use base64::Engine;
 
     fn create_valid_record() -> SignedDhtRecord {
         SignedDhtRecord::new(
@@ -35,9 +35,8 @@ mod signed_record_tests {
     fn test_signed_record_invalid_signature_rejected() {
         let mut record = create_valid_record();
         record.signature = vec![1, 2, 3, 4];
-        record.signer_public_key = Some(
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32])
-        );
+        record.signer_public_key =
+            Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32]));
 
         let signer = RecordSigner::new(Some([0x99u8; 32]));
         assert!(!signer.verify(&record));
@@ -340,7 +339,11 @@ mod raft_command_tests {
         let deserialized: RaftCommand = crate::serialization::deserialize(&serialized).unwrap();
 
         match deserialized {
-            RaftCommand::Set { namespace, key, value } => {
+            RaftCommand::Set {
+                namespace,
+                key,
+                value,
+            } => {
                 assert_eq!(namespace, crate::mesh::raft::state_machine::Namespace::Org);
                 assert_eq!(key, "test_key");
                 assert_eq!(value, b"test_value");
@@ -361,7 +364,10 @@ mod raft_command_tests {
 
         match deserialized {
             RaftCommand::Delete { namespace, key } => {
-                assert_eq!(namespace, crate::mesh::raft::state_machine::Namespace::Intel);
+                assert_eq!(
+                    namespace,
+                    crate::mesh::raft::state_machine::Namespace::Intel
+                );
                 assert_eq!(key, "delete_key");
             }
             _ => panic!("Expected Delete command"),
@@ -469,8 +475,12 @@ mod edge_replica_tests {
         let org_value = create_org_key_value("org1", "key1");
         let intel_value = create_threat_intel_value("indicator1");
 
-        manager.update_from_notification(&Namespace::Org, "key1", &org_value).unwrap();
-        manager.update_from_notification(&Namespace::Intel, "indicator1", &intel_value).unwrap();
+        manager
+            .update_from_notification(&Namespace::Org, "key1", &org_value)
+            .unwrap();
+        manager
+            .update_from_notification(&Namespace::Intel, "indicator1", &intel_value)
+            .unwrap();
 
         assert!(manager.get_org_key("key1").is_some());
         assert!(manager.get_threat_intel("indicator1").is_some());
@@ -483,7 +493,9 @@ mod edge_replica_tests {
         manager.update_org_key("key1", &value).unwrap();
         assert!(manager.get_org_key("key1").is_some());
 
-        manager.delete_from_notification(&Namespace::Org, "key1").unwrap();
+        manager
+            .delete_from_notification(&Namespace::Org, "key1")
+            .unwrap();
         assert!(manager.get_org_key("key1").is_none());
     }
 
@@ -545,8 +557,14 @@ mod mesh_message_raft_tests {
         let decoded = MeshMessage::decode(&encoded).expect("Failed to decode MeshMessage");
 
         match decoded {
-            MeshMessage::Raft { payload: decoded_payload, .. } => {
-                assert!(matches!(decoded_payload.msg_type, RaftMsgType::AppendEntries));
+            MeshMessage::Raft {
+                payload: decoded_payload,
+                ..
+            } => {
+                assert!(matches!(
+                    decoded_payload.msg_type,
+                    RaftMsgType::AppendEntries
+                ));
             }
             _ => panic!("Expected Raft message"),
         }
@@ -569,7 +587,10 @@ mod mesh_message_raft_tests {
         let decoded = MeshMessage::decode(&encoded).expect("Failed to decode MeshMessage");
 
         match decoded {
-            MeshMessage::Raft { payload: decoded_payload, .. } => {
+            MeshMessage::Raft {
+                payload: decoded_payload,
+                ..
+            } => {
                 assert!(matches!(decoded_payload.msg_type, RaftMsgType::VoteRequest));
             }
             _ => panic!("Expected Raft message"),
@@ -650,12 +671,8 @@ mod snapshot_install_tests {
 
     #[test]
     fn test_in_progress_snapshot_add_chunk() {
-        let mut snapshot = InProgressSnapshot::new(
-            "test-snap".to_string(),
-            1024,
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-        );
+        let mut snapshot =
+            InProgressSnapshot::new("test-snap".to_string(), 1024, vec![1, 2, 3], vec![4, 5, 6]);
 
         assert_eq!(snapshot.offset, 0);
         assert_eq!(snapshot.total_size, 1024);
@@ -672,12 +689,7 @@ mod snapshot_install_tests {
 
     #[test]
     fn test_in_progress_snapshot_rejects_out_of_order() {
-        let mut snapshot = InProgressSnapshot::new(
-            "test-snap".to_string(),
-            1024,
-            vec![],
-            vec![],
-        );
+        let mut snapshot = InProgressSnapshot::new("test-snap".to_string(), 1024, vec![], vec![]);
 
         let chunk1 = vec![0u8; 512];
         assert!(snapshot.add_chunk(0, chunk1, false));
@@ -689,12 +701,7 @@ mod snapshot_install_tests {
 
     #[test]
     fn test_in_progress_snapshot_rejects_oversized() {
-        let mut snapshot = InProgressSnapshot::new(
-            "test-snap".to_string(),
-            512,
-            vec![],
-            vec![],
-        );
+        let mut snapshot = InProgressSnapshot::new("test-snap".to_string(), 512, vec![], vec![]);
 
         let oversized_chunk = vec![0u8; 1024];
         assert!(!snapshot.add_chunk(0, oversized_chunk, true));
@@ -731,7 +738,10 @@ mod dht_signable_bytes_tests {
         let content1 = record1.get_signable_content();
         let content2 = record2.get_signable_content();
 
-        assert_ne!(content1, content2, "Records with different keys should have different signable content");
+        assert_ne!(
+            content1, content2,
+            "Records with different keys should have different signable content"
+        );
 
         let signing_key = [0x42u8; 32];
         let signer = RecordSigner::new(Some(signing_key));
@@ -768,7 +778,10 @@ mod dht_signable_bytes_tests {
         record2.ttl_seconds = 3600;
         record2.sequence_number = 1;
 
-        assert_eq!(record1.get_signable_content(), record2.get_signable_content());
+        assert_eq!(
+            record1.get_signable_content(),
+            record2.get_signable_content()
+        );
     }
 
     #[test]
@@ -794,7 +807,10 @@ mod dht_signable_bytes_tests {
         record2.ttl_seconds = 3600;
         record2.sequence_number = 1;
 
-        assert_ne!(record1.get_signable_content(), record2.get_signable_content());
+        assert_ne!(
+            record1.get_signable_content(),
+            record2.get_signable_content()
+        );
     }
 
     #[test]
@@ -820,15 +836,16 @@ mod dht_signable_bytes_tests {
         record2.ttl_seconds = 3600;
         record2.sequence_number = 1;
 
-        assert_ne!(record1.get_signable_content(), record2.get_signable_content());
+        assert_ne!(
+            record1.get_signable_content(),
+            record2.get_signable_content()
+        );
     }
 }
 
 #[cfg(test)]
 mod dht_snapshot_signable_tests {
-    use crate::mesh::dht::signed::{
-        get_snapshot_signable_content, get_sync_signable_content,
-    };
+    use crate::mesh::dht::signed::{get_snapshot_signable_content, get_sync_signable_content};
 
     #[test]
     fn test_snapshot_signable_content_deterministic() {
