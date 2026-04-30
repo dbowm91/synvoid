@@ -91,10 +91,14 @@ pub enum RaftCommand {
         namespace: Namespace,
         key: String,
         value: Vec<u8>,
+        source_node_id: Option<String>,
+        signature: Option<Vec<u8>>,
     },
     Delete {
         namespace: Namespace,
         key: String,
+        source_node_id: Option<String>,
+        signature: Option<Vec<u8>>,
     },
 }
 
@@ -104,7 +108,7 @@ impl Display for RaftCommand {
             RaftCommand::Set { namespace, key, .. } => {
                 write!(f, "RaftCommand::Set({}, {})", namespace.as_str(), key)
             }
-            RaftCommand::Delete { namespace, key } => {
+            RaftCommand::Delete { namespace, key, .. } => {
                 write!(f, "RaftCommand::Delete({}, {})", namespace.as_str(), key)
             }
         }
@@ -717,11 +721,18 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
                         namespace,
                         key,
                         value,
+                        source_node_id: _,
+                        signature: _,
                     } => {
                         self.set(namespace, key, value.clone())
                             .map_err(std::io::Error::other)?;
                     }
-                    RaftCommand::Delete { namespace, key } => {
+                    RaftCommand::Delete {
+                        namespace,
+                        key,
+                        source_node_id: _,
+                        signature: _,
+                    } => {
                         self.delete(namespace, key).map_err(std::io::Error::other)?;
                     }
                 }
