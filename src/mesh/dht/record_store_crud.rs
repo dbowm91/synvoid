@@ -226,17 +226,55 @@ impl RecordStoreManager {
         let key_requires_quorum = self.access_control.requires_quorum(&record.key);
 
         if key_requires_quorum && is_local_record {
-            let record_store = self.clone();
+            if is_local_record {
+                let rs = self.record_state.read();
+                if let Some(ref signer) = rs.record_signer {
+                    let signed_record = crate::mesh::dht::SignedDhtRecord::new(
+                        record.key.clone(),
+                        record.value.clone(),
+                        record.source_node_id.clone(),
+                        crate::mesh::dht::SignedRecordType::NodeInfo,
+                    );
+
+                    if let Some(signature) = signer.sign(&signed_record) {
+                        record.signature = signature;
+                        record.signer_public_key = signer.get_verifying_key();
+                        tracing::debug!("Signed local record with Ed25519: {}", record.key);
+                    }
+                }
+            }
+
             let key = record.key.clone();
+            {
+                let mut rs = self.record_state.write();
+                let version = rs.local_version;
+                rs.records.insert(
+                    record.key.clone(),
+                    DhtRecordEntry {
+                        record: record.clone(),
+                        local_origin: true,
+                        version,
+                        status: crate::mesh::protocol::DhtRecordStatus::PendingQuorum,
+                    },
+                );
+                rs.local_version += 1;
+                tracing::debug!(
+                    "Stored record as PendingQuorum for key: {}",
+                    record.key
+                );
+            }
+
+            let record_store = self.clone();
+            let key_clone = key.clone();
             let value = record.value.clone();
             let ttl = record.ttl_seconds;
 
             tokio::spawn(async move {
                 if let Some(request_id) = record_store
-                    .start_quorum_request(key.clone(), value, ttl)
+                    .start_quorum_request(key_clone.clone(), value, ttl)
                     .await
                 {
-                    tracing::debug!("Started quorum request {} for key: {}", request_id, key);
+                    tracing::debug!("Started quorum request {} for key: {}", request_id, key_clone);
                     let cancelled = Arc::new(AtomicBool::new(false));
                     let cancelled_clone = cancelled.clone();
                     let mut attempts = 0;
@@ -253,25 +291,35 @@ impl RecordStoreManager {
                             record_store.check_quorum_completion(&request_id).await
                         {
                             match result {
-                                crate::mesh::dht::quorum::QuorumResult::Approved(_) => {
+                                crate::mesh::dht::quorum::QuorumResult::Approved(
+                                    quorum_signatures,
+                                ) => {
                                     tracing::info!(
-                                        "Quorum approved for key: {}, storing record",
-                                        key
+                                        "Quorum approved for key: {}, committing record",
+                                        key_clone
                                     );
-                                    if record_store.store_record_after_quorum(&record).await {
+                                    if record_store
+                                        .commit_record_after_quorum(
+                                            &key_clone,
+                                            &quorum_signatures,
+                                        )
+                                        .await
+                                    {
                                         tracing::info!(
-                                            "Record stored after quorum for key: {}",
-                                            key
+                                            "Record committed after quorum for key: {}",
+                                            key_clone
                                         );
                                     }
                                     break;
                                 }
                                 crate::mesh::dht::quorum::QuorumResult::Rejected { .. } => {
-                                    tracing::warn!("Quorum rejected for key: {}", key);
+                                    tracing::warn!("Quorum rejected for key: {}", key_clone);
+                                    record_store.abort_pending_record(&key_clone);
                                     break;
                                 }
                                 crate::mesh::dht::quorum::QuorumResult::Timeout { .. } => {
-                                    tracing::warn!("Quorum timeout for key: {}", key);
+                                    tracing::warn!("Quorum timeout for key: {}", key_clone);
+                                    record_store.abort_pending_record(&key_clone);
                                     break;
                                 }
                             }
@@ -458,17 +506,28 @@ impl RecordStoreManager {
             return None;
         }
 
-        let (record, is_expired) = {
+        let (record, is_expired, is_pending_quorum) = {
             let rs = self.record_state.read();
             match rs.records.get(key) {
                 Some(entry) => {
+                    let is_pending = entry.status
+                        == crate::mesh::protocol::DhtRecordStatus::PendingQuorum;
                     let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
-                    (Some(entry.record.clone()), now >= expires_at)
+                    (
+                        Some(entry.record.clone()),
+                        now >= expires_at,
+                        is_pending,
+                    )
                 }
-                None => (None, false),
+                None => (None, false, false),
             }
         };
+
+        if is_pending_quorum {
+            crate::metrics::record_dht_get_operation(false);
+            return None;
+        }
 
         if let Some(record) = record {
             if !is_expired {
@@ -529,6 +588,7 @@ impl RecordStoreManager {
                 let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                 now < expires_at
+                    && entry.status == crate::mesh::protocol::DhtRecordStatus::Live
             })
             .map(|e| e.record.clone())
             .collect()
@@ -543,6 +603,7 @@ impl RecordStoreManager {
                 let now = crate::mesh::safe_unix_timestamp();
                 let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                 now < expires_at
+                    && entry.status == crate::mesh::protocol::DhtRecordStatus::Live
             })
             .map(|(_, e)| e.record.clone())
             .collect()
