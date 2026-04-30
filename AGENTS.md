@@ -63,6 +63,39 @@ pub fn get_signable_content(&self) -> Vec<u8> {
 }
 ```
 
+## Dependency Policy
+
+### Rust-First Dependency Policy
+
+We prefer **pure Rust dependencies** over those with C bindings where possible. When selecting dependencies, consider:
+
+1. **Prefer pure Rust**: Libraries like `libinjectionrs` (SQL injection detection) and `bcrypt` (password hashing) are pure Rust implementations
+2. **Well-audited and maintained**: Ensure any C-binding library is battle-tested and actively maintained
+3. **No acceptable alternative**: Some dependencies are simply required (see exceptions below)
+
+### Known Exceptions (Required)
+
+| Dependency | Purpose | Why Acceptable |
+|------------|---------|----------------|
+| **aws-lc-rs** | TLS/crypto | Amazon's Rust crypto (Ring successor), battle-tested, no pure Rust alternative for post-quantum TLS |
+| **libc** | Unix syscalls | Thin Rust bindings to kernel - no alternative exists |
+| **windows-sys** | Windows API | Thin Rust bindings to Win32 API - no alternative exists |
+
+### Confirmed Pure Rust Libraries
+
+| Library | Purpose | Verification |
+|---------|---------|--------------|
+| `libinjectionrs` | SQL/XSS injection detection | 100% Rust port, no FFI |
+| `bcrypt` | Password hashing | Uses `blowfish` crate (pure Rust), `#![forbid(unsafe_code)]` |
+
+### Adding New Dependencies
+
+When adding dependencies:
+- Verify the crate is pure Rust (check for `build.rs` with C compilation, `extern` declarations, or FFI)
+- Check cargo registry for `unsafe_code` warnings
+- Prefer crates with `forbid(unsafe_code)` or clear `unsafe` boundaries
+- Document any exceptions in this file
+
 ## Running Tests
 
 ### Quick Test Commands
