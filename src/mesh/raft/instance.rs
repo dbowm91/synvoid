@@ -140,6 +140,25 @@ impl RaftInstance {
         Ok(resp.log_id.index)
     }
 
+    pub async fn change_membership(
+        &self,
+        new_members: impl Into<openraft::ChangeMembers<u64, ()>>,
+        retain: bool,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        if !self.is_leader().await {
+            return Err("Not the leader".into());
+        }
+
+        tracing::info!("Initiating Raft membership change with retain={}", retain);
+
+        let resp = self.raft.change_membership(new_members, retain).await?;
+        tracing::info!(
+            "Membership change committed at index {}",
+            resp.log_id.index
+        );
+        Ok(resp.log_id.index)
+    }
+
     pub async fn read(&self, namespace: Namespace, key: &str) -> Option<Vec<u8>> {
         self.registry.get_value(&namespace, key)
     }

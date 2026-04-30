@@ -66,6 +66,7 @@ impl MeshTransport {
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
             raft_instance: self.raft_instance.clone(),
+            pending_membership_changes: self.pending_membership_changes.clone(),
         }
     }
 

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 // SAFETY_REASON: Reserved for future global node protocol handling
 
-use crate::mesh::transport::MeshTransport;
+use crate::mesh::transport::{MembershipChangeAction, MeshTransport};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::Verifier;
 
@@ -99,6 +99,9 @@ impl MeshTransport {
                         record_store.store_and_announce(key, bytes, 86400);
                         tracing::info!("Stored global node key for {} in DHT", node_id);
                     }
+
+                    self.trigger_membership_change(node_id, MembershipChangeAction::Add)
+                        .await;
                 }
                 crate::mesh::protocol::GlobalNodeAction::Remove => {
                     let key = format!("global_node_key:{}", node_id);

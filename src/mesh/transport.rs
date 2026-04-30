@@ -152,6 +152,21 @@ pub struct MeshTransport {
     #[cfg(feature = "dns")]
     pub(crate) ownership_challenge_store: Arc<RwLock<OwnershipChallengeStore>>,
     pub(crate) raft_instance: Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>>,
+    pub(crate) pending_membership_changes:
+        Arc<tokio::sync::Mutex<Vec<PendingMembershipChange>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingMembershipChange {
+    pub node_id: u64,
+    pub action: MembershipChangeAction,
+    pub authorized_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MembershipChangeAction {
+    Add,
+    Remove,
 }
 
 #[derive(Clone)]
@@ -266,6 +281,7 @@ impl Clone for MeshTransport {
             #[cfg(feature = "dns")]
             ownership_challenge_store: self.ownership_challenge_store.clone(),
             raft_instance: self.raft_instance.clone(),
+            pending_membership_changes: self.pending_membership_changes.clone(),
         }
     }
 }
@@ -495,6 +511,7 @@ impl MeshTransport {
             #[cfg(feature = "dns")]
             ownership_challenge_store: Arc::new(RwLock::new(OwnershipChallengeStore::new())),
             raft_instance: Arc::new(RwLock::new(None)),
+            pending_membership_changes: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -636,6 +653,144 @@ impl MeshTransport {
         &self,
     ) -> Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>> {
         self.raft_instance.clone()
+    }
+
+    pub async fn trigger_membership_change(
+        &self,
+        node_id_str: &str,
+        action: MembershipChangeAction,
+    ) {
+        let Ok(node_id) = node_id_str.parse::<u64>() else {
+            tracing::warn!(
+                "Cannot parse node_id '{}' as u64 for Raft membership change",
+                node_id_str
+            );
+            return;
+        };
+
+        let pending = PendingMembershipChange {
+            node_id,
+            action: action.clone(),
+            authorized_at: crate::utils::safe_unix_timestamp(),
+        };
+
+        let raft_instance = {
+            let raft_guard = self.raft_instance.read();
+            match raft_guard.as_ref() {
+                Some(guard) => Some(guard.clone()),
+                None => None,
+            }
+        };
+
+        let Some(raft_instance) = raft_instance else {
+            let mut pending_changes = self.pending_membership_changes.lock().await;
+            pending_changes.retain(|p| p.node_id != node_id || p.action != action);
+            pending_changes.push(pending);
+            return;
+        };
+
+        let is_leader = raft_instance.is_leader().await;
+        if !is_leader {
+            let mut pending_changes = self.pending_membership_changes.lock().await;
+            pending_changes.retain(|p| p.node_id != node_id || p.action != action);
+            pending_changes.push(pending);
+            return;
+        }
+
+        match action {
+            MembershipChangeAction::Add => {
+                tracing::info!(
+                    "Leader triggering Raft membership add for node {}",
+                    node_id
+                );
+                let members = std::collections::BTreeSet::from([node_id]);
+                match raft_instance.change_membership(members, true).await {
+                    Ok(index) => {
+                        tracing::info!(
+                            "Node {} added to Raft cluster at index {}",
+                            node_id,
+                            index
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to add node {} to Raft: {}", node_id, e);
+                    }
+                }
+            }
+            MembershipChangeAction::Remove => {
+                tracing::info!(
+                    "Leader triggering Raft membership removal for node {}",
+                    node_id
+                );
+                let members = std::collections::BTreeSet::from([node_id]);
+                match raft_instance.change_membership(members, false).await {
+                    Ok(index) => {
+                        tracing::info!(
+                            "Node {} removed from Raft cluster at index {}",
+                            node_id,
+                            index
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to remove node {} from Raft: {}", node_id, e);
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn process_pending_membership_changes(&self) {
+        let mut pending_changes = self.pending_membership_changes.lock().await;
+        if pending_changes.is_empty() {
+            return;
+        }
+
+        let raft_instance = {
+            let raft_guard = self.raft_instance.read();
+            match raft_guard.as_ref() {
+                Some(guard) => Some(guard.clone()),
+                None => None,
+            }
+        };
+
+        let Some(raft_instance) = raft_instance else {
+            return;
+        };
+
+        let is_leader = raft_instance.is_leader().await;
+        if !is_leader {
+            return;
+        }
+
+        tracing::info!(
+            "Processing {} pending membership changes",
+            pending_changes.len()
+        );
+
+        let mut remaining = Vec::new();
+        for change in pending_changes.drain(..) {
+            let members = std::collections::BTreeSet::from([change.node_id]);
+            let retain = matches!(change.action, MembershipChangeAction::Add);
+
+            match raft_instance.change_membership(members, retain).await {
+                Ok(index) => {
+                    tracing::info!(
+                        "Processed pending membership change for node {} at index {}",
+                        change.node_id,
+                        index
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to process membership change for node {}: {}",
+                        change.node_id,
+                        e
+                    );
+                    remaining.push(change);
+                }
+            }
+        }
+        *pending_changes = remaining;
     }
 
     pub fn announce_edge_key(&self, edge_id: &str, public_key: &str) {

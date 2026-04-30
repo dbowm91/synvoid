@@ -28,7 +28,7 @@ All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Moderni
 |---|------|-------------|--------|
 | **W8.1** | **Raft-Backed CRL** | Move Global Node Revocation List into the Raft State Machine from legacy DHT. | **COMPLETE** |
 | **W8.2** | **Observer Nodes** | Support "Learner" nodes that replicate state but don't vote, for global read scaling. | **COMPLETE** |
-| **W8.3** | **Genesis Membership** | Automate Raft membership changes upon Genesis Key authorized node announcements. | **PLANNED** |
+| **W8.3** | **Genesis Membership** | Automate Raft membership changes upon Genesis Key authorized node announcements. | **COMPLETE** |
 | **W8.4** | **Edge State Mirroring** | Implement background mirroring of Raft state to local SQLite on Edge nodes. | **PLANNED** |
 | **W8.5** | **YARA-X Modernization** | Complete transition to `yara-x` (official Rust) and remove all legacy `libyara` (C) logic. | **PLANNED** |
 
@@ -51,12 +51,14 @@ All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Moderni
     - Observers added via `raft.add_learner(node_id, (), false)` - non-blocking, non-voting
     - Backward compatible with existing voter-only clusters
 
-### W8.3: Genesis Membership (PLANNED)
+### W8.3: Genesis Membership (COMPLETE)
 - **Objective**: Zero-touch cluster expansion.
 - **Actions**:
-    - Integrate `transport_global.rs` with `RaftInstance`.
-    - When a new Global node is verified via Genesis signature, the Leader triggers a `change_membership`.
-    - Prevents split-brain by ensuring membership is handled as a committed Raft entry.
+    - Added `RaftInstance::change_membership(members, block)` method wrapping openraft's API
+    - Added `PendingMembershipChange` struct and `MembershipChangeAction` enum to `transport.rs`
+    - Added `trigger_membership_change(node_id, action)` to automatically add Genesis-authorized nodes
+    - Queues changes when not leader, processes when becoming leader
+    - Integrated with `handle_global_node_announce` in transport_global.rs to trigger auto-add
 
 ### W8.4: Edge State Mirroring (PLANNED)
 - **Objective**: O(1) local lookups for Org Keys with Raft-grade consistency.
