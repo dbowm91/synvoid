@@ -183,9 +183,19 @@ impl RecordStoreManager {
     pub(crate) fn store_record_global(&self, mut record: DhtRecord) -> bool {
         let now = crate::mesh::safe_unix_timestamp();
 
-        let expires_at = record.timestamp + record.ttl_seconds;
+        let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
         if now > expires_at {
             tracing::warn!("Received expired record: {}", record.key);
+            crate::metrics::record_dht_store_operation(false);
+            return false;
+        }
+
+        if !crate::mesh::dht::signed::validate_record_timestamp(record.timestamp) {
+            tracing::warn!(
+                "Received record with timestamp too far in future: {} for key {}",
+                record.timestamp,
+                record.key
+            );
             crate::metrics::record_dht_store_operation(false);
             return false;
         }

@@ -20,6 +20,8 @@ pub struct DhtRecordSignable<'a> {
 
 pub const DHT_MESSAGE_TIMESTAMP_WINDOW_SECS: i64 = 300;
 
+pub const DHT_RECORD_TIMESTAMP_WINDOW_SECS: i64 = 300;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtSnapshotResponseSignable<'a> {
     pub request_id: &'a str,
@@ -450,6 +452,15 @@ pub fn validate_message_timestamp(timestamp: u64) -> bool {
     let diff = (now - msg_time).abs();
 
     diff <= DHT_MESSAGE_TIMESTAMP_WINDOW_SECS
+}
+
+pub fn validate_record_timestamp(timestamp: u64) -> bool {
+    let now = crate::mesh::safe_unix_timestamp() as i64;
+
+    let msg_time = timestamp as i64;
+    let diff = (now - msg_time).abs();
+
+    diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS
 }
 
 pub struct TtlManager {
