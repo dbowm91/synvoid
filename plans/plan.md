@@ -1,80 +1,75 @@
-# MaluWAF Implementation Plan
+# MaluWAF Wave 11 Implementation Plan: Distributed Layer Optimization & Stability
 
-**Status**: ALL WAVES COMPLETE (W1-W10) + PHASES 1-4 COMPLETE
+**Status**: WAVE 11 IN PROGRESS
 **Last Updated**: 2026-04-30
-**Verification**: All items verified via systematic code review
+**Objective**: Transition the distributed control plane from a research prototype to a production-grade, scalable, and memory-safe architecture.
 
 ---
 
-## Overview
+## Executive Summary of Previous Work
+- **Waves 1-10 (COMPLETE)**: Established core WAF, Mesh, Raft, and DHT foundations.
+- **Phases 1-4 (COMPLETE)**: Hardened DHT record envelopes, versioning, and Raft authorization.
+- *Note: Detailed logs of Waves 1-10 are archived in `plans/historical_waves.md` to save context.*
 
-All implementation waves 1-10 are **COMPLETE** and verified. The final Wave 10 corrected the remaining correctness issues in Wave 9's distributed control plane implementation.
+---
 
-Additional phases 1-4 (2026-04-30) completed:
-- **Phase 1**: Canonical DHT Record Envelope - signature verification for DHT records
-- **Phase 2**: Snapshot/Sync/Anti-Entropy Envelopes - bound record_set_digest for content-addressed integrity
-- **Phase 3**: DHT Versioning - immutable record types and namespace-aware replacement rules
-- **Phase 4**: Raft Authorization - source_node_id and signature fields added to RaftCommand
+## Wave 11: Distributed Layer Optimization & Stability
 
-## Completed Waves Summary
+### W11.1: Hierarchical / Regional Quorum (Scalability) — COMPLETE
+**Problem**: Current quorum requires $2/3$ majority of *all* global nodes, which doesn't scale beyond ~100 nodes due to network latency tail-end effects.
+**Task**:
+- Modify `src/mesh/dht/quorum.rs` and `RecordStoreConfig` to support "Regional Quorum".
+- Implement `QuorumRequest::required_signatures` to use a dynamic subset of nodes (e.g., closest 20 global nodes or specific regional hubs) instead of the entire global node list.
+- **Verification**: Simulate a 50-node cluster and verify that quorum completes using only the closest regional peers.
 
-| Wave | Focus | Items |
-|------|-------|-------|
-| **W1** | Codebase Health & Testing | W1.1-W1.3 |
-| **W2** | Performance & Scalability | W2.1-W2.4 |
-| **W3** | Multi-Tenancy & Plugins | W3.1-W3.2 |
-| **W4** | Security & Resilience | W4.1-W4.2 |
-| **W5** | OS Foundations & Core | W5.1-W5.3 |
-| **W6** | Mesh Consensus Foundations | W6.1-W6.4 |
-| **W7** | Raft Integration & Hardening | W7.1-W7.5 |
-| **W8** | Control Plane Hardening & YARA-X | W8.1-W8.7 |
-| **W9** | Distributed Control Plane Correctness | W9.1-W9.9 |
-| **W10** | Wave 9 Correctness Fixes | W10.1-W10.7 |
+**Implementation Notes**:
+- Added `QuorumMode` enum (`Full` | `Regional { max_nodes, min_nodes }`) to `quorum.rs`
+- Added `QuorumRequest::with_mode()` constructor and `set_regional_nodes()` for regional subset tracking
+- Added `select_regional_nodes()` function that sorts global nodes by latency and picks the closest subset
+- Added `effective_node_count_for()` which returns regional subset size in regional mode, total count in full mode
+- `start_quorum_request()` now constructs regional quorum when `config.regional_quorum_enabled = true`
+- Quorum messages are sent only to the regional subset, not all global nodes
+- `RecordStoreConfig` gained 3 new fields: `regional_quorum_enabled`, `regional_quorum_max_nodes`, `regional_quorum_min_nodes`
+- Full backward compatibility: default is `Full` mode (disabled by default)
+- 11 unit tests including 50-node regional quorum simulation
 
-### Phase 1-4 Summary (Distributed Control Plane Hardening - 2026-04-30)
+### W11.2: Streaming Raft Snapshots (Memory Safety)
+**Problem**: `src/mesh/raft/network.rs` reads the entire state machine into a `Vec<u8>`, causing OOM on large threat feeds.
+**Task**:
+- Refactor `MeshRaftNetwork::full_snapshot` and `GlobalRegistryStateMachine` to use a streaming `AsyncRead` interface.
+- Implement chunked serialization in `state_machine.rs` so the snapshot is never fully materialized in RAM.
+- **Verification**: Run a Raft snapshot test with a 1GB dummy state and verify RSS memory remains stable (< 256MB).
 
-| Phase | Focus | Key Changes |
-|-------|-------|-------------|
-| **Phase 1** | Canonical DHT Record Envelope | `dht_record_to_signed_record`, `verify_dht_record_signature`, `verify_dht_record_signature_for_key` |
-| **Phase 2** | Snapshot/Sync/Anti-Entropy Envelopes | `compute_record_set_digest`, `DhtSnapshotResponseSignable` with `record_set_digest`, timestamp validation |
-| **Phase 3** | DHT Versioning | Immutable record types (GenesisKeyTransition, RevokedGlobalNode, YaraRulesManifest, YaraRuleContent), future timestamp blocking |
-| **Phase 4** | Raft Authorization | `source_node_id` and `signature` fields added to `RaftCommand::Set` and `RaftCommand::Delete` |
+### W11.3: Two-Phase Commit for DHT Quorum (Consistency)
+**Problem**: Records are "leaked" via gossip before quorum is reached, leading to edge nodes acting on unconfirmed state.
+**Task**:
+- Introduce `DhtRecordStatus::PendingQuorum` in `src/mesh/protocol.rs`.
+- Update `store_record_global` to block gossip announcements for records requiring quorum until the `Approved` result is received.
+- Add a "Commit" message type to the DHT protocol to transition records from `Pending` to `Live`.
+- **Verification**: Test that a record requiring quorum is NOT visible to `get_record` on non-origin nodes until quorum is approved.
+
+### W11.4: Async PQC Verification Queue (Performance)
+**Problem**: Synchronous PQC signature verification in the network hot-path increases latency floor and is vulnerable to CPU-exhaustion DDoS.
+**Task**:
+- Implement a dedicated `VerificationPool` (using `tokio::task::spawn_blocking` or a separate thread pool) for `ml_dsa` and `ml_kem` operations.
+- Refactor `peer_auth.rs` and `record_store_crud.rs` to use this async verification.
+- **Verification**: Benchmark "Mesh Message Processing" latency under high signature churn; expect ~30% reduction in P99 latency.
+
+### W11.5: Disk-Backed DHT Storage (Persistence)
+**Problem**: `ShardedRecordStore` is purely in-memory; restarts require expensive full-syncs and RAM usage scales linearly with data.
+**Task**:
+- Replace `BTreeMap` shards in `src/mesh/dht/record_store.rs` with a disk-backed KV store (recommend `sled` for minimal dependencies or a simple LSM-tree implementation if already present).
+- Implement `record_store_persist.rs` to handle transparent recovery of DHT state on startup.
+- **Verification**: Store 10k records, restart the process, and verify all records are reachable without a network sync.
+
+---
 
 ## Verification Commands
-
 ```bash
-# Verify tests compile
-cargo test --lib --no-run
+# Verify Wave 11 implementation doesn't break existing consensus
+cargo test --package rustwaf --lib mesh::raft
+cargo test --package rustwaf --lib mesh::dht
 
-# Format and lint
-cargo fmt
-cargo clippy --lib -- -D warnings
-
-# Feature-specific checks
-cargo check --features dns
-cargo check --features post-quantum
+# Run specific scalability bench
+cargo bench --bench bench_broadcast
 ```
-
----
-
-## Deferred Items
-
-These items are intentionally deferred and do not block the current release:
-
-| # | Issue | Reason |
-|---|-------|--------|
-| D7 | God module splits | Skipped: module splits of 10k+ lines introduce too much regression risk for automated agents; keeping intact to ensure no capability reversions |
-
----
-
-## Historical Context
-
-For detailed implementation history and file/line references, see the commit log from 2026-04-27 to 2026-04-30, covering Waves 1-10 completion.
-
----
-
-## Future Work
-
-For recommended future enhancements, see `plans/future_work.md`.
-
-(End of file - total 55 lines)

@@ -580,21 +580,69 @@ impl RecordStoreManager {
 
         let request_id = format!("quorum-{}-{}", key, uuid::Uuid::new_v4());
 
-        let quorum_request = crate::mesh::dht::quorum::QuorumRequest::new(
+        let quorum_mode = if self.config.regional_quorum_enabled {
+            crate::mesh::dht::quorum::QuorumMode::regional(
+                self.config.regional_quorum_max_nodes,
+                self.config.regional_quorum_min_nodes,
+            )
+        } else {
+            crate::mesh::dht::quorum::QuorumMode::Full
+        };
+
+        let all_node_ids: Vec<String> = global_nodes
+            .iter()
+            .map(|p| p.node_id.clone())
+            .collect();
+
+        let mut quorum_request = crate::mesh::dht::quorum::QuorumRequest::with_mode(
             request_id.clone(),
             key.clone(),
             value.clone(),
             ttl_seconds,
             self.node_id.clone(),
             origin_signature.clone(),
-            &global_nodes
-                .iter()
-                .map(|p| p.node_id.clone())
-                .collect::<Vec<_>>(),
+            &all_node_ids,
             self.config.query_timeout_secs,
+            quorum_mode,
         );
 
+        if self.config.regional_quorum_enabled {
+            let global_node_infos: Vec<crate::mesh::dht::quorum::GlobalNodeInfo> = global_nodes
+                .iter()
+                .map(|p| crate::mesh::dht::quorum::GlobalNodeInfo {
+                    node_id: p.node_id.clone(),
+                    latency_ms: p.latency_ms,
+                })
+                .collect();
+
+            let regional = crate::mesh::dht::quorum::select_regional_nodes(
+                &global_node_infos,
+                self.config.regional_quorum_max_nodes,
+                self.config.regional_quorum_min_nodes,
+            );
+            tracing::info!(
+                "Regional quorum selected {} of {} global nodes for key {}",
+                regional.len(),
+                global_nodes.len(),
+                key
+            );
+            quorum_request.set_regional_nodes(regional);
+        }
+
         quorum_manager.start_request(quorum_request).await;
+
+        let target_node_ids = {
+            let pending = quorum_manager.get_request(&request_id).await;
+            if let Some(ref req) = pending {
+                if req.quorum_mode.is_regional() && !req.regional_nodes_contacted.is_empty() {
+                    req.regional_nodes_contacted.clone()
+                } else {
+                    global_nodes.iter().map(|p| p.node_id.clone()).collect()
+                }
+            } else {
+                global_nodes.iter().map(|p| p.node_id.clone()).collect()
+            }
+        };
 
         let quorum_msg = MeshMessage::QuorumStoreRequest {
             request_id: request_id.clone().into(),
@@ -606,23 +654,24 @@ impl RecordStoreManager {
             action: crate::mesh::protocol::AnnounceAction::Add,
         };
 
-        for peer in &global_nodes {
-            if peer.node_id == self.node_id {
+        for peer_id in &target_node_ids {
+            if peer_id == &self.node_id {
                 continue;
             }
 
             if let Err(e) = transport
-                .send_datagram_to_peer(&peer.node_id, &quorum_msg)
+                .send_datagram_to_peer(peer_id, &quorum_msg)
                 .await
             {
-                tracing::warn!("Failed to send quorum request to {}: {}", peer.node_id, e);
+                tracing::warn!("Failed to send quorum request to {}: {}", peer_id, e);
             }
         }
 
         tracing::info!(
-            "Started quorum request {} for key {} with {} global nodes",
+            "Started quorum request {} for key {} with {} target nodes (of {} total global)",
             request_id,
             key,
+            target_node_ids.len(),
             global_nodes.len()
         );
 
