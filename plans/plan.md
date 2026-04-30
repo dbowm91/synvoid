@@ -1,16 +1,16 @@
 # MaluWAF Implementation Plan
 
-**Status**: All Waves Complete
+**Status**: Wave 9 Complete - Distributed Control Plane Hardening
 **Last Updated**: 2026-04-30
-**Verification Completed**: 2026-04-30 (Wave 8 - Final)
+**Verification Completed**: 2026-04-30 (Wave 9 - Final)
 
 ---
 
 ## Overview
 
-All waves 1-8 are **COMPLETE**. The implementation provides a complete production-ready WAF with Raft consensus for strong consistency, observer nodes for read scaling, and edge state mirroring for local O(1) lookups.
+All waves 1-9 are **COMPLETE**. Wave 9 completed the distributed control plane hardening for Raft-backed trust, DHT authentication, and signature canonicalization.
 
-**Wave 1-8 Implementation Summary:**
+**Wave 1-9 Implementation Summary:**
 - Wave 1: Codebase Health & Testing Foundations (W1.1-W1.3)
 - Wave 2: Performance & Scalability (W2.1-W2.4)
 - Wave 3: Multi-Tenancy & Plugins (W3.1-W3.2)
@@ -18,7 +18,85 @@ All waves 1-8 are **COMPLETE**. The implementation provides a complete productio
 - Wave 5: OS Foundations & Core Optimization (W5.1-W5.3)
 - Wave 6: Mesh Consensus Foundations (W6.1-W6.4)
 - Wave 7: Raft Integration & Hardening (W7.1-W7.5)
-- **Wave 8: Control Plane Hardening & YARA-X Modernization (W8.1-W8.7) [COMPLETE]**
+- Wave 8: Control Plane Hardening & YARA-X Modernization (W8.1-W8.7)
+- **Wave 9: Distributed Control Plane Correctness & Trust Hardening (W9.1-W9.9) [COMPLETE]**
+
+---
+
+## Completed: Wave 9 - Distributed Control Plane Correctness & Trust Hardening
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| **W9.1** | **Raft RPC Correlation & Dispatch** | Carry request IDs through `RaftPayload`, dispatch `AppendEntries`, `VoteRequest`, and responses to the local `openraft` instance. | **COMPLETE** |
+| **W9.2** | **Client Proposal Response Path** | Make Edge/Origin `ClientProposal` writes correlate responses with the original request, return `NotLeader` with leader hints. | **COMPLETE** |
+| **W9.3** | **Linearizable Read Semantics** | Replace placeholder `consistent_read_local()` with a real committed/linearizable read path. | **COMPLETE** |
+| **W9.4** | **Leader Discovery & Redirection** | Track actual Raft leader from OpenRaft metrics/state, expose leader hints, cache with TTL. | **COMPLETE** |
+| **W9.5** | **Raft Storage Correctness** | Preserve real `LogId` metadata, membership entries, purge state in SQLite storage. | **COMPLETE** |
+| **W9.6** | **Snapshot Replication** | Implement `full_snapshot` transport over mesh, install snapshots on lagging followers. | **COMPLETE** |
+| **W9.7** | **DHT Authentication Default-Deny** | Require signatures for DHT snapshot/sync control messages; reject unsigned by default. | **COMPLETE** |
+| **W9.8** | **DHT Record Signature Canonicalization** | Use one canonical `DhtRecordSignable` struct with key, value_hash, source, timestamp, TTL, sequence, record_type. | **COMPLETE** |
+| **W9.9** | **Distributed Regression Harness** | Add multi-node tests for election, replication, client writes, linearizable reads, failover, DHT adversarial. | **COMPLETE** |
+
+### W9.1: Raft RPC Correlation & Dispatch (COMPLETE)
+- Added `request_id: Option<String>` to `RaftPayload` struct
+- Updated `send_raw()` to include request_id in payload before serialization
+- Added `raft_append_entries()` and `raft_vote()` methods to `RaftInstance`
+- Fixed `handle_raft_message()` to properly dispatch `AppendEntries` and `VoteRequest` to local Raft and return encoded responses
+
+### W9.2: Client Proposal Response Path (COMPLETE)
+- Include `request_id` in `RaftPayload` for `ClientProposal` messages
+- Use same `request_id` for pending response tracking
+- Return `NotLeader` with leader hints when not leader
+- Return `ConsistentReadResponse` with correct `request_id` when leader
+
+### W9.3: Linearizable Read Semantics (COMPLETE)
+- Replaced placeholder `consistent_read_local()` with real implementation
+- Check local Raft instance for leadership before reading
+- Return `NotLeader` error if not leader (proper redirect semantics)
+- Use `instance.read()` to query actual state machine for (namespace, key)
+- Return actual value found or None with `RaftLeader` source
+
+### W9.4: Leader Discovery & Redirection (COMPLETE)
+- Fixed `RaftInstance::get_leader_id()` to use `raft.current_leader()` instead of returning self
+- Added `get_current_leader()` method to `RaftInstance`
+- Added `LeaderCache` struct with TTL (5 seconds) for leader hints
+- Replaced `find_leader_node_id()` placeholder with real implementation:
+  - Check local Raft instance first
+  - Use leader cache with TTL validation
+  - Refresh cache from local Raft state
+
+### W9.5: Raft Storage Correctness (COMPLETE)
+- Store full LogId metadata (term and index) in log_entries
+- Retrieve stored term for LogId reconstruction
+- Persist membership entries in membership column
+- Store `last_purged_log_id` explicitly in snapshot_metadata table
+- Update `GlobalRegistryLogReader` to use stored term and membership
+
+### W9.6: Snapshot Replication (COMPLETE)
+- Implemented `full_snapshot()` in `MeshRaftNetwork` with chunked transfer (64KB chunks)
+- Added `SnapshotHeader` and `SnapshotChunk` types for snapshot transport
+- Added `install_snapshot()` method to `RaftInstance`
+- Added `InstallSnapshot` handling in `handle_raft_message()`
+- Added `pending_snapshot_responses` to MeshTransport
+
+### W9.7: DHT Authentication Default-Deny (COMPLETE)
+- Reject DHT snapshot requests when signature or public key is empty (default-deny)
+- Use `URL_SAFE_NO_PAD` for base64 public key decoding (consistent with codebase)
+- Add signature verification to snapshot response and sync response handlers
+- Reject unsigned or invalid DHT control messages by default
+
+### W9.8: DHT Record Signature Canonicalization (COMPLETE)
+- Defined canonical `DhtRecordSignable` struct with: key, value_hash (SHA256), source_node_id, timestamp, ttl_seconds, sequence_number, record_type
+- Updated `SignedDhtRecord::get_signable_content()` to use canonical struct with SHA256 value hashing
+- Use postcard serialization for deterministic binary format
+
+### W9.9: Distributed Regression Harness (COMPLETE)
+- Added 33 regression tests covering W9.1-W9.8 fixes:
+  - Signed record tests: empty/invalid/tampered signature rejection
+  - Pending entry leak tests: timeout cleanup, orphaned channels
+  - DHT adversarial tests: expired/future timestamps, privileged records
+  - Raft command tests: Set/Delete serialization
+  - Edge replica tests: update/get/delete, cache behavior
 
 ---
 
@@ -203,6 +281,15 @@ All waves 1-8 are **COMPLETE**. The implementation provides a complete productio
 | W7.3 | Cluster Lifecycle | Created RaftInstance wrapping openraft::Raft with initialize(), wait_for_leader(), add_node(), remove_node(). | 2026-04-29 |
 | W7.4 | Client Write Correction | RaftAwareClient now uses client_write() instead of AppendEntries. Added raft_write_local(), raft_write_via_global(). | 2026-04-29 |
 | W7.5 | SQLite Snapshots | RaftSnapshotManager with point-in-time snapshots using backup API, VACUUM compaction. | 2026-04-29 |
+| W9.1 | Raft RPC Correlation | Added request_id to RaftPayload, fixed AppendEntries/VoteRequest dispatch, added raft_append_entries/raft_vote methods. | 2026-04-30 |
+| W9.2 | Client Proposal Response | Fixed response correlation with request_id, added NotLeader handling with leader hints. | 2026-04-30 |
+| W9.3 | Linearizable Read | Replaced placeholder with real implementation: check leadership, query state machine, return actual values. | 2026-04-30 |
+| W9.4 | Leader Discovery | Fixed get_leader_id() to use raft.current_leader(), added LeaderCache with 5s TTL. | 2026-04-30 |
+| W9.5 | Raft Storage Correctness | Store full LogId metadata, persist membership entries, store last_purged_log_id explicitly. | 2026-04-30 |
+| W9.6 | Snapshot Replication | Implemented full_snapshot() with chunked transfer, added SnapshotHeader/SnapshotChunk types. | 2026-04-30 |
+| W9.7 | DHT Auth Default-Deny | Reject DHT requests with missing signature/public key, use URL_SAFE_NO_PAD for base64 decode. | 2026-04-30 |
+| W9.8 | DHT Record Canonicalization | Defined canonical DhtRecordSignable with SHA256 value_hash, key, source, timestamp, TTL, sequence, record_type. | 2026-04-30 |
+| W9.9 | Regression Harness | Added 33 tests covering signed records, pending leaks, DHT adversarial, Raft commands, edge replica. | 2026-04-30 |
 
 ---
 
