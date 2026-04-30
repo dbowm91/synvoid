@@ -5,16 +5,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuorumMode {
+    #[default]
     Full,
     Regional { max_nodes: usize, min_nodes: usize },
-}
-
-impl Default for QuorumMode {
-    fn default() -> Self {
-        QuorumMode::Full
-    }
 }
 
 impl QuorumMode {
