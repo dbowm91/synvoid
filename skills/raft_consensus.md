@@ -461,18 +461,19 @@ cargo test --test integration_test
 | Task | Key Changes |
 |------|-------------|
 | W10.1 | Fixed double-encoding: `send_raw()` no longer wraps payload in another `MeshRaftPayload` and re-serializes |
-| W10.2 | Added `send_message_to_peer_with_response()` in `transport.rs` that reads response before releasing stream |
-| W10.3 | Updated `raft_write_via_global()` to use new method; removed pending_responses oneshot machinery |
-| W10.4 | Added `request_id` to SnapshotHeader/SnapshotChunk; InstallSnapshot handling with chunk accumulation |
-| W10.5 | Canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` with postcard serialization |
-| W10.6 | OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()` for linearizable reads |
-| W10.7 | Added `mesh_message_raft_tests` and `dht_signable_bytes_tests` modules |
+| W10.2 | Added bounded 30s timeout to `send_message_to_peer_with_response()` in `transport.rs`. On timeout/error, stream NOT returned to pool to prevent poisoning |
+| W10.3 | Added `raft_write_to_leader()` helper with one retry against hinted leader on `NotLeader`. Invalidates leader cache on redirect |
+| W10.4 | Added `InProgressSnapshot` struct and `pending_snapshot_transfers` HashMap. `handle_raft_message()` handles `InstallSnapshot` header/chunks with offset validation |
+| W10.5 | Canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` with postcard serialization. Producer and verifier use same helpers |
+| W10.6 | OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()` ensures reads are linearizable |
+| W10.7 | Added `snapshot_install_tests` and `dht_snapshot_signable_tests` modules. Tests for InstallSnapshot header/chunk encode/decode, InProgressSnapshot chunk assembly |
 
 ## Key Files (Updated for Wave 10)
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/raft/network.rs` | MeshRaftNetwork with `send_message_to_peer_with_response()` for inline response reading |
-| `src/mesh/raft/client.rs` | RaftAwareClient using `send_message_to_peer_with_response()` for RPC calls |
-| `src/mesh/raft/instance.rs` | RaftInstance with `get_read_linearizer()` for linearizable reads |
-| `src/mesh/transport.rs` | `send_message_to_peer_with_response()` method that reads response before releasing stream |
+| `src/mesh/transport.rs` | `InProgressSnapshot` struct, `pending_snapshot_transfers` field, `send_message_to_peer_with_response()` with 30s timeout |
+| `src/mesh/transport_peer.rs` | `handle_raft_message()` with `InstallSnapshot` handling, `InProgressSnapshot` chunk assembly and validation |
+| `src/mesh/dht/signed.rs` | `DhtSnapshotResponseSignable`, `DhtSyncResponseSignable`, `get_snapshot_signable_content()`, `get_sync_signable_content()` |
+| `src/mesh/dht/record_store_sync.rs` | Updated to use postcard-based signable content helpers |
+| `src/mesh/transport_dht.rs` | Updated DHT signature verification to use postcard-based signable content |
