@@ -20,6 +20,42 @@ pub struct DhtRecordSignable<'a> {
 
 pub const DHT_MESSAGE_TIMESTAMP_WINDOW_SECS: i64 = 300;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtSnapshotResponseSignable<'a> {
+    pub request_id: &'a str,
+    pub version: u64,
+    pub record_count: usize,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtSyncResponseSignable<'a> {
+    pub request_id: &'a str,
+    pub from_peer: &'a str,
+    pub version: u64,
+    pub record_count: usize,
+    pub timestamp: u64,
+}
+
+pub fn get_snapshot_signable_content(request_id: &str, version: u64, record_count: usize, timestamp: u64) -> Vec<u8> {
+    crate::serialization::serialize(&DhtSnapshotResponseSignable {
+        request_id,
+        version,
+        record_count,
+        timestamp,
+    }).unwrap_or_default()
+}
+
+pub fn get_sync_signable_content(request_id: &str, from_peer: &str, version: u64, record_count: usize, timestamp: u64) -> Vec<u8> {
+    crate::serialization::serialize(&DhtSyncResponseSignable {
+        request_id,
+        from_peer,
+        version,
+        record_count,
+        timestamp,
+    }).unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct SignedDhtRecord {
     pub key: String,

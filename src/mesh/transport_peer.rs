@@ -3,7 +3,10 @@
 use crate::mesh::transport::{
     MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
 };
+use crate::mesh::raft::state_machine::GlobalRegistryTypeConfig;
 use hex;
+use openraft::raft::SnapshotResponse;
+use openraft::type_config::alias::{SnapshotMetaOf, VoteOf};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -579,11 +582,11 @@ impl MeshTransport {
                 request_id,
                 records,
                 version,
-                timestamp: _,
+                timestamp,
                 signature,
                 signer_public_key,
             } => {
-                self.handle_dht_snapshot_response(peer_id, &request_id, records, version, &signature, &signer_public_key)
+                self.handle_dht_snapshot_response(peer_id, &request_id, records, version, timestamp, &signature, &signer_public_key)
                     .await;
             }
             MeshMessage::DhtRecordAnnounce {
@@ -651,14 +654,14 @@ impl MeshTransport {
                     .await;
             }
             MeshMessage::DhtSyncResponse {
-                request_id: _,
+                request_id,
                 records,
-                version: _,
-                timestamp: _,
+                version,
+                timestamp,
                 signature,
                 signer_public_key,
             } => {
-                self.handle_dht_sync_response(peer_id, records, &signature, &signer_public_key).await;
+                self.handle_dht_sync_response(peer_id, &request_id, records, version, timestamp, &signature, &signer_public_key).await;
             }
             MeshMessage::DhtAntiEntropyRequest {
                 request_id,
@@ -2498,8 +2501,19 @@ impl MeshTransport {
                     "Received Raft message for target {} via stream",
                     target_node_id
                 );
-                self.handle_raft_message(target_node_id.to_string(), payload, send_stream)
+                let response_data = self.handle_raft_message(target_node_id.to_string(), payload, send_stream)
                     .await?;
+                if let Some(data) = response_data {
+                    let len = (data.len() as u32).to_be_bytes();
+                    send_stream
+                        .write_all(&len)
+                        .await
+                        .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
+                    send_stream
+                        .write_all(&data)
+                        .await
+                        .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
+                }
             }
             _ => {
                 tracing::trace!("Stream peer handler: unhandled message type received via stream");
@@ -2664,7 +2678,7 @@ impl MeshTransport {
         target_node_id: String,
         payload: crate::mesh::protocol::RaftPayload,
         send_stream: &mut quinn::SendStream,
-    ) -> Result<(), MeshTransportError> {
+    ) -> Result<Option<Vec<u8>>, MeshTransportError> {
         let local_node_id = self.config.node_id();
         if target_node_id != local_node_id {
             tracing::warn!(
@@ -2672,7 +2686,7 @@ impl MeshTransport {
                 target_node_id,
                 local_node_id
             );
-            return Ok(());
+            return Ok(None);
         }
 
         let instance = {
@@ -2688,7 +2702,7 @@ impl MeshTransport {
                         Ok(c) => c,
                         Err(e) => {
                             tracing::warn!("Failed to deserialize Raft command: {}", e);
-                            return Ok(());
+                            return Ok(None);
                         }
                     };
 
@@ -2739,7 +2753,7 @@ impl MeshTransport {
                         Ok(r) => r,
                         Err(e) => {
                             tracing::warn!("Failed to deserialize AppendEntries request: {}", e);
-                            return Ok(());
+                            return Ok(None);
                         }
                     };
 
@@ -2768,7 +2782,7 @@ impl MeshTransport {
                         Ok(r) => r,
                         Err(e) => {
                             tracing::warn!("Failed to deserialize VoteRequest: {}", e);
-                            return Ok(());
+                            return Ok(None);
                         }
                     };
 
@@ -2790,25 +2804,113 @@ impl MeshTransport {
                     None
                 }
             }
+            crate::mesh::protocol::RaftMsgType::InstallSnapshot => {
+                let request_id = payload.request_id.clone().unwrap_or_default();
+                if payload.data.len() < 100 {
+                    let header: crate::mesh::protocol::SnapshotHeader =
+                        match postcard::from_bytes(&payload.data) {
+                            Ok(h) => h,
+                            Err(e) => {
+                                tracing::warn!("Failed to deserialize SnapshotHeader: {}", e);
+                                return Ok(None);
+                            }
+                        };
+                    tracing::info!(
+                        "Received snapshot header: request_id={}, total_size={}",
+                        header.request_id,
+                        header.total_size
+                    );
+                    let mut pending = self.pending_snapshot_transfers.lock().await;
+                    pending.insert(header.request_id.clone(), crate::mesh::transport::InProgressSnapshot::new(
+                        header.request_id,
+                        header.total_size,
+                        header.vote,
+                        header.meta,
+                    ));
+                    None
+                } else {
+                    let chunk: crate::mesh::protocol::SnapshotChunk =
+                        match postcard::from_bytes(&payload.data) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!("Failed to deserialize SnapshotChunk: {}", e);
+                                return Ok(None);
+                            }
+                        };
+                    let mut pending = self.pending_snapshot_transfers.lock().await;
+                    let request_id = chunk.request_id.clone();
+                    let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
+                        if !snapshot.add_chunk(chunk.offset, chunk.data.clone(), chunk.is_last) {
+                            tracing::warn!(
+                                "Failed to add chunk at offset {} for request_id {}",
+                                chunk.offset,
+                                request_id
+                            );
+                            pending.remove(&request_id);
+                            false
+                        } else {
+                            snapshot.is_complete()
+                        }
+                    } else {
+                        false
+                    };
+                    drop(pending);
+                    if is_complete {
+                        tracing::info!(
+                            "Snapshot assembly complete for request_id {}, installing...",
+                            request_id
+                        );
+                        let mut pending = self.pending_snapshot_transfers.lock().await;
+                        let completed = pending.remove(&request_id);
+                        if let Some(snapshot) = completed {
+                            let vote: VoteOf<GlobalRegistryTypeConfig> =
+                                match postcard::from_bytes(&snapshot.vote) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        tracing::warn!("Failed to deserialize vote: {}", e);
+                                        return Ok(None);
+                                    }
+                                };
+                            let meta: SnapshotMetaOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
+                                match postcard::from_bytes(&snapshot.meta) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        tracing::warn!("Failed to deserialize snapshot meta: {}", e);
+                                        return Ok(None);
+                                    }
+                                };
+                            if let Some(ref inst) = instance {
+                                if let Err(e) = inst.install_snapshot(&meta, snapshot.data.into()).await {
+                                    tracing::error!("Failed to install snapshot: {}", e);
+                                } else {
+                                    tracing::info!("Snapshot installed successfully");
+                                    let response = SnapshotResponse::<GlobalRegistryTypeConfig> {
+                                        vote,
+                                    };
+                                    let encoded = postcard::to_stdvec(&response).map_err(|e| {
+                                        MeshTransportError::SendFailed(format!("Serialize error: {}", e))
+                                    })?;
+                                    return Ok(Some(encoded));
+                                }
+                            }
+                        }
+                        None
+                    } else {
+                        tracing::warn!(
+                            "Received chunk for unknown or completed request_id: {}",
+                            request_id
+                        );
+                        None
+                    }
+                }
+            }
             _ => {
                 tracing::warn!("Unhandled Raft message type: {:?}", payload.msg_type);
                 None
             }
         };
 
-        if let Some(data) = response_data {
-            let len = (data.len() as u32).to_be_bytes();
-            send_stream
-                .write_all(&len)
-                .await
-                .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
-            send_stream
-                .write_all(&data)
-                .await
-                .map_err(|e| MeshTransportError::SendFailed(format!("Write failed: {}", e)))?;
-        }
-
-        Ok(())
+        Ok(response_data)
     }
 
     pub(crate) async fn perform_health_check(&self, peer_id: &str) -> Option<u32> {

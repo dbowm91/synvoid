@@ -26,14 +26,14 @@ impl RecordStoreManager {
         let rs = self.record_state.read();
         if let Some(ref signer) = rs.mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
-            let content = format!(
-                "{},{},{},{}",
+            let content = crate::mesh::dht::signed::get_sync_signable_content(
                 request_id,
-                self.record_state.read().local_version,
+                &self.node_id,
+                rs.local_version,
                 records.len(),
-                timestamp
+                timestamp,
             );
-            signature = signer.sign(content.as_bytes());
+            signature = signer.sign(&content);
             signer_public_key = signer.get_public_key();
         }
 
@@ -99,14 +99,13 @@ impl RecordStoreManager {
         let rs = self.record_state.read();
         if let Some(ref signer) = rs.mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
-            let content = format!(
-                "{},{},{},{}",
+            let content = crate::mesh::dht::signed::get_snapshot_signable_content(
                 request_id,
-                self.record_state.read().local_version,
+                rs.local_version,
                 records.len(),
-                timestamp
+                timestamp,
             );
-            signature = signer.sign(content.as_bytes());
+            signature = signer.sign(&content);
             signer_public_key = signer.get_public_key();
         }
 

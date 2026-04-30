@@ -111,9 +111,10 @@ impl MeshTransport {
     pub(crate) async fn handle_dht_snapshot_response(
         &self,
         from_peer: &str,
-        _request_id: &str,
+        request_id: &str,
         records: Vec<crate::mesh::protocol::DhtRecord>,
         version: u64,
+        timestamp: u64,
         signature: &[u8],
         signer_public_key: &str,
     ) {
@@ -135,24 +136,33 @@ impl MeshTransport {
         }
 
         let signature_valid = {
-            let content = format!("snapshot,{},{}", version, records.len());
-            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
-                Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
-                    let mut pk_array = [0u8; 32];
-                    pk_array.copy_from_slice(&pk_bytes);
-                    let mut sig_array = [0u8; 64];
-                    sig_array.copy_from_slice(signature);
-                    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-                        Ok(pk) => pk
-                            .verify(
-                                content.as_bytes(),
-                                &ed25519_dalek::Signature::from_bytes(&sig_array),
-                            )
-                            .is_ok(),
-                        Err(_) => false,
+            let content = crate::mesh::dht::signed::get_snapshot_signable_content(
+                request_id,
+                version,
+                records.len(),
+                timestamp,
+            );
+            if content.is_empty() {
+                false
+            } else {
+                match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                    Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+                        let mut pk_array = [0u8; 32];
+                        pk_array.copy_from_slice(&pk_bytes);
+                        let mut sig_array = [0u8; 64];
+                        sig_array.copy_from_slice(signature);
+                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                            Ok(pk) => pk
+                                .verify(
+                                    &content,
+                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
+                                )
+                                .is_ok(),
+                            Err(_) => false,
+                        }
                     }
+                    _ => false,
                 }
-                _ => false,
             }
         };
 
@@ -238,7 +248,10 @@ impl MeshTransport {
     pub(crate) async fn handle_dht_sync_response(
         &self,
         from_peer: &str,
+        request_id: &str,
         records: Vec<crate::mesh::protocol::DhtRecord>,
+        version: u64,
+        timestamp: u64,
         signature: &[u8],
         signer_public_key: &str,
     ) {
@@ -259,24 +272,34 @@ impl MeshTransport {
         }
 
         let signature_valid = {
-            let content = format!("sync,{},{}", from_peer, records.len());
-            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
-                Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
-                    let mut pk_array = [0u8; 32];
-                    pk_array.copy_from_slice(&pk_bytes);
-                    let mut sig_array = [0u8; 64];
-                    sig_array.copy_from_slice(signature);
-                    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-                        Ok(pk) => pk
-                            .verify(
-                                content.as_bytes(),
-                                &ed25519_dalek::Signature::from_bytes(&sig_array),
-                            )
-                            .is_ok(),
-                        Err(_) => false,
+            let content = crate::mesh::dht::signed::get_sync_signable_content(
+                request_id,
+                from_peer,
+                version,
+                records.len(),
+                timestamp,
+            );
+            if content.is_empty() {
+                false
+            } else {
+                match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                    Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+                        let mut pk_array = [0u8; 32];
+                        pk_array.copy_from_slice(&pk_bytes);
+                        let mut sig_array = [0u8; 64];
+                        sig_array.copy_from_slice(signature);
+                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                            Ok(pk) => pk
+                                .verify(
+                                    &content,
+                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
+                                )
+                                .is_ok(),
+                            Err(_) => false,
+                        }
                     }
+                    _ => false,
                 }
-                _ => false,
             }
         };
 

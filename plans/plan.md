@@ -44,21 +44,23 @@ All waves 1-10 are **COMPLETE**. Wave 10 completed the corrections to Wave 9's d
 - Receiver in `transport_peer.rs` now correctly decodes `payload.data` as openraft types
 
 ### W10.2: Read Stream Responses (COMPLETE)
-- Added `send_message_to_peer_with_response()` in `transport.rs:1507-1562`
-- This method reads response from the same stream before releasing it back to the pool
-- Fixed the issue where `send_message_to_peer()` released stream before response could be read
+- Added bounded timeout (30s) to `send_message_to_peer_with_response()` in `transport.rs`
+- Wraps response reads in `tokio::time::timeout()` 
+- On timeout or error, stream is NOT returned to pool to prevent poisoning
+- Uses `MeshTransportError::ReceiveFailed` with timeout-specific message
 
 ### W10.3: Complete Client Proposal RPC (COMPLETE)
-- Updated `raft_write_via_global()` in `client.rs` to use `send_message_to_peer_with_response()`
-- Removed `pending_responses` oneshot machinery - response is now read inline
-- ClientProposal success and NotLeader responses now properly reach the caller
+- Updated `raft_write_via_global()` in `client.rs` to extract leader hint from `NotLeader` response
+- Added `raft_write_to_leader()` helper that performs one retry against hinted leader
+- Invalidates leader cache on `NotLeader` to force refresh
+- Total operation timeout remains bounded (via transport-level timeout)
 
 ### W10.4: Implement Snapshot Install End-to-End (COMPLETE)
-- Added `request_id` to `SnapshotHeader` and `SnapshotChunk`
-- Added `InstallSnapshot` handling branch in `handle_raft_message()`
-- Implemented chunk accumulation with `snapshot_install_states` HashMap
-- Validates offset ordering and total size on `is_last` chunk
-- Calls `instance.install_snapshot()` on completion and sends `InstallSnapshotResponse`
+- Added `pending_snapshot_transfers: Arc<Mutex<HashMap<String, InProgressSnapshot>>>` to MeshTransport
+- Added `InProgressSnapshot` struct for chunk accumulation and validation
+- `handle_raft_message()` now handles `RaftMsgType::InstallSnapshot` with header vs chunk detection
+- Validates chunk offset ordering, total size limits, and removes entry on completion
+- Installs snapshot via `RaftInstance::install_snapshot()` and sends `SnapshotResponse`
 
 ### W10.5: Fix DHT Response Signature Contract (COMPLETE)
 - Defined canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` structs

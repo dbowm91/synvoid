@@ -366,12 +366,12 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W9.8 | DHT Record Canonicalization | Defined canonical DhtRecordSignable with SHA256 value_hash, key, source_node_id, timestamp, ttl_seconds, sequence_number, record_type. | 2026-04-30 |
 | W9.9 | Regression Harness | Added 33 tests covering signed records, pending leaks, DHT adversarial, Raft commands, edge replica. | 2026-04-30 |
 | **W10.1** | **Raft Wire Envelope Fix** | Removed double-encoding in `MeshRaftNetwork::send_raw()`. RPC data now goes directly into `payload.data` instead of being serialized and wrapped again. | 2026-04-30 |
-| **W10.2** | **Stream Response Reading** | Added `send_message_to_peer_with_response()` in `transport.rs` that reads response before releasing stream. Fixes the issue where `send_message_to_peer()` released stream before response could be read. | 2026-04-30 |
-| **W10.3** | **Client Proposal RPC** | Updated `raft_write_via_global()` in `client.rs` to use `send_message_to_peer_with_response()`. Removed pending_responses oneshot machinery - response is now read inline. | 2026-04-30 |
-| **W10.4** | **Snapshot Install End-to-End** | Added `request_id` to `SnapshotHeader` and `SnapshotChunk`. Added `InstallSnapshot` handling in `handle_raft_message()` with chunk accumulation and validation. | 2026-04-30 |
-| **W10.5** | **DHT Response Signature Contract** | Defined canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` structs with `request_id`, `version`, `timestamp`, `record_count`, `record_hashes`. Producer and verifier use same postcard-based format. | 2026-04-30 |
-| **W10.6** | **Linearizable Reads** | Replaced direct SQLite read with OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()`. Leader check + direct read was not linearizable. | 2026-04-30 |
-| **W10.7** | **Regression Tests** | Added `mesh_message_raft_tests` module with tests for AppendEntries, VoteRequest, and ClientProposal via MeshMessage. Added `dht_signable_bytes_tests` for signature verification. | 2026-04-30 |
+| **W10.2** | **Stream Response Timeout** | Added bounded 30s timeout to `send_message_to_peer_with_response()` in `transport.rs`. On timeout or error, stream is NOT returned to pool to prevent poisoning. | 2026-04-30 |
+| **W10.3** | **Client Proposal Leader Retry** | Added `raft_write_to_leader()` with one retry against hinted leader on `NotLeader`. Invalidates leader cache on redirect. | 2026-04-30 |
+| **W10.4** | **Snapshot Install End-to-End** | Added `InProgressSnapshot` struct and `pending_snapshot_transfers` for chunk accumulation. `handle_raft_message()` handles `InstallSnapshot` header/chunks with validation. | 2026-04-30 |
+| **W10.5** | **DHT Response Signature Contract** | Defined canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` with postcard serialization. Producer and verifier use same helpers. | 2026-04-30 |
+| **W10.6** | **Linearizable Reads** | OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()` ensures reads are linearizable. | 2026-04-30 |
+| **W10.7** | **Regression Tests** | Added InstallSnapshot header/chunk encode/decode tests, InProgressSnapshot chunk assembly tests, DHT signable content determinism tests. | 2026-04-30 |
 
 ## Known Issues
 

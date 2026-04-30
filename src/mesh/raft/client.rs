@@ -165,6 +165,16 @@ impl RaftAwareClient {
             .await
             .ok_or(RaftAwareClientError::RaftUnreachable)?;
 
+        self.raft_write_to_leader(namespace, key, value, &leader_node_id).await
+    }
+
+    async fn raft_write_to_leader(
+        &self,
+        namespace: Namespace,
+        key: String,
+        value: Vec<u8>,
+        leader_node_id: &str,
+    ) -> Result<u64, RaftAwareClientError> {
         let command = RaftCommand::Set {
             namespace: namespace.clone(),
             key: key.clone(),
@@ -177,17 +187,17 @@ impl RaftAwareClient {
 
         let raft_payload = crate::mesh::protocol::RaftPayload {
             msg_type: crate::mesh::protocol::RaftMsgType::ClientProposal,
-            request_id: Some(request_id.clone()),
+            request_id: Some(request_id),
             data: command_bytes,
         };
 
-        let raft_msg = MeshMessage::Raft {
-            target_node_id: ArcStr::from(leader_node_id.clone()),
+        let raft_msg = crate::mesh::protocol::MeshMessage::Raft {
+            target_node_id: ArcStr::from(leader_node_id.to_string()),
             payload: raft_payload,
         };
 
         let response_data = self.transport
-            .send_message_to_peer_with_response(&leader_node_id, &raft_msg)
+            .send_message_to_peer_with_response(leader_node_id, &raft_msg)
             .await
             .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
 
@@ -205,7 +215,55 @@ impl RaftAwareClient {
                 })?);
                 Ok(commit_index)
             }
-            crate::mesh::protocol::MeshMessage::NotLeader { .. } => {
+            crate::mesh::protocol::MeshMessage::NotLeader { leader_node_id: hinted_leader, .. } => {
+                tracing::warn!(
+                    "Leader {} rejected proposal, received NotLeader hint: {:?}",
+                    leader_node_id,
+                    hinted_leader
+                );
+                self.invalidate_leader_cache().await;
+                if let Some(hinted) = hinted_leader {
+                    let hinted_str = hinted.to_string();
+                    if hinted_str != leader_node_id {
+                        tracing::info!(
+                            "Retrying ClientProposal against hinted leader {}",
+                            hinted_str
+                        );
+                        let command = RaftCommand::Set {
+                            namespace,
+                            key,
+                            value,
+                        };
+                        let request_id = uuid::Uuid::new_v4().to_string();
+                        let command_bytes = crate::serialization::serialize(&command)
+                            .map_err(|e| RaftAwareClientError::RaftWriteFailed(e.to_string()))?;
+                        let raft_payload = crate::mesh::protocol::RaftPayload {
+                            msg_type: crate::mesh::protocol::RaftMsgType::ClientProposal,
+                            request_id: Some(request_id),
+                            data: command_bytes,
+                        };
+                        let raft_msg = crate::mesh::protocol::MeshMessage::Raft {
+                            target_node_id: ArcStr::from(hinted_str.clone()),
+                            payload: raft_payload,
+                        };
+                        let response_data = self.transport
+                            .send_message_to_peer_with_response(&hinted_str, &raft_msg)
+                            .await
+                            .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
+                        let response: crate::mesh::protocol::MeshMessage =
+                            crate::mesh::protocol::MeshMessage::decode(&response_data)
+                                .ok_or_else(|| RaftAwareClientError::InvalidResponse("Failed to decode response".to_string()))?;
+                        if let crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
+                            value: Some(v),
+                            ..
+                        } = response {
+                            let commit_index = u64::from_le_bytes(v.try_into().map_err(|_| {
+                                RaftAwareClientError::InvalidResponse("Invalid commit index".to_string())
+                            })?);
+                            return Ok(commit_index);
+                        }
+                    }
+                }
                 Err(RaftAwareClientError::NotLeader)
             }
             _ => Err(RaftAwareClientError::InvalidResponse(
