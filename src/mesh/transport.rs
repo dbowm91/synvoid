@@ -154,6 +154,7 @@ pub struct MeshTransport {
     pub(crate) raft_instance: Arc<RwLock<Option<Arc<crate::mesh::raft::instance::RaftInstance>>>>,
     pub(crate) pending_membership_changes:
         Arc<tokio::sync::Mutex<Vec<PendingMembershipChange>>>,
+    pub(crate) edge_replica_manager: Arc<RwLock<Option<Arc<crate::mesh::raft::edge_replica::EdgeReplicaManager>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -282,6 +283,7 @@ impl Clone for MeshTransport {
             ownership_challenge_store: self.ownership_challenge_store.clone(),
             raft_instance: self.raft_instance.clone(),
             pending_membership_changes: self.pending_membership_changes.clone(),
+            edge_replica_manager: self.edge_replica_manager.clone(),
         }
     }
 }
@@ -512,7 +514,15 @@ impl MeshTransport {
             ownership_challenge_store: Arc::new(RwLock::new(OwnershipChallengeStore::new())),
             raft_instance: Arc::new(RwLock::new(None)),
             pending_membership_changes: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            edge_replica_manager: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub fn set_edge_replica_manager(
+        &self,
+        manager: Arc<crate::mesh::raft::edge_replica::EdgeReplicaManager>,
+    ) {
+        *self.edge_replica_manager.write() = Some(manager);
     }
 
     pub fn set_site_config_sync_callback(
@@ -704,7 +714,7 @@ impl MeshTransport {
                     node_id
                 );
                 let members = std::collections::BTreeSet::from([node_id]);
-                match raft_instance.change_membership(members, true).await {
+                match raft_instance.change_membership(openraft::ChangeMembers::AddVoterIds(members), true).await {
                     Ok(index) => {
                         tracing::info!(
                             "Node {} added to Raft cluster at index {}",
@@ -723,7 +733,7 @@ impl MeshTransport {
                     node_id
                 );
                 let members = std::collections::BTreeSet::from([node_id]);
-                match raft_instance.change_membership(members, false).await {
+                match raft_instance.change_membership(openraft::ChangeMembers::RemoveVoters(members), false).await {
                     Ok(index) => {
                         tracing::info!(
                             "Node {} removed from Raft cluster at index {}",

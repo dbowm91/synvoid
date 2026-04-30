@@ -2443,6 +2443,42 @@ impl MeshTransport {
                 );
                 self.handle_serverless_invoke_response(&response).await?;
             }
+            MeshMessage::RaftCommitNotification {
+                leader_id: _,
+                commit_index: _,
+                namespace,
+                key_id,
+                timestamp: _,
+            } => {
+                tracing::debug!("Received RaftCommitNotification for namespace {:?} key {}", namespace, key_id);
+                if let Some(ref edge_replica) = *self.edge_replica_manager.read() {
+                    if let Some(ref rclient) = self.org_key_manager.get_raft_client() {
+                        let erm = edge_replica.clone();
+                        let rclient = rclient.clone();
+                        let ns = namespace.clone();
+                        let key = key_id.clone();
+                        tokio::spawn(async move {
+                            match rclient.query_leader_for_record(ns.clone(), &key).await {
+                                Ok(Some(data)) => {
+                                    if let Err(e) = erm.update_from_notification(&ns, &key, &data) {
+                                        tracing::error!("Failed to update edge replica: {}", e);
+                                    } else {
+                                        tracing::info!("Edge replica updated for {:?} key {}", ns, key);
+                                    }
+                                }
+                                Ok(None) => {
+                                    if let Err(e) = erm.delete_from_notification(&ns, &key) {
+                                        tracing::error!("Failed to delete from edge replica: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to query leader for record: {}", e);
+                                }
+                            }
+                        });
+                    }
+                }
+            }
             MeshMessage::Raft {
                 target_node_id,
                 payload,
@@ -2616,7 +2652,7 @@ impl MeshTransport {
         &self,
         target_node_id: String,
         payload: crate::mesh::protocol::RaftPayload,
-        mut send_stream: &mut quinn::SendStream,
+        send_stream: &mut quinn::SendStream,
     ) -> Result<(), MeshTransportError> {
         let local_node_id = self.config.node_id();
         if target_node_id != local_node_id {

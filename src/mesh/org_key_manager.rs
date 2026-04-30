@@ -79,6 +79,10 @@ impl OrgKeyManager {
         *self.raft_client.write() = Some(raft_client);
     }
 
+    pub fn get_raft_client(&self) -> Option<Arc<RaftAwareClient>> {
+        self.raft_client.read().clone()
+    }
+
     pub async fn create_organization(
         &self,
         org_id: String,

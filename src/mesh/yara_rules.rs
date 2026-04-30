@@ -62,6 +62,12 @@ pub enum YaraRulesError {
     CompressionError(String),
     #[error("UTF-8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
+    #[error("YARA compiled rules checksum mismatch: expected {expected}, got {got}")]
+    ChecksumMismatch { expected: String, got: String },
+    #[error("Failed to deserialize compiled YARA rules: {0}")]
+    DeserializeError(String),
+    #[error("Failed to serialize YARA rules: {0}")]
+    SerializeError(String),
 }
 
 const MAX_PENDING_SUBMISSIONS: usize = 1000;
@@ -1528,22 +1534,50 @@ impl YaraRulesManager {
                 .map(|s| s.get_public_key())
                 .unwrap_or_default();
 
+            let compiled_rules = match yara_x::compile(rules.as_str()) {
+                Ok(compiled) => match compiled.serialize() {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize compiled YARA rules: {}, falling back to text-only broadcast", e);
+                        Vec::new()
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to compile YARA rules for serialization: {}, falling back to text-only broadcast", e);
+                    Vec::new()
+                }
+            };
+
+            let checksum = if !compiled_rules.is_empty() {
+                let mut hasher = Sha256::new();
+                hasher.update(&compiled_rules);
+                hex::encode(hasher.finalize())
+            } else {
+                String::new()
+            };
+
             let signature = if let Some(ref signer) = self.signer {
-                let sign_content = format!("{}:{}", version, rules);
+                let sign_content = if compiled_rules.is_empty() {
+                    format!("{}:{}", version, rules)
+                } else {
+                    format!("{}:{}:{}", version, checksum, rules.len())
+                };
                 signer.sign(sign_content.as_bytes())
             } else {
                 Vec::new()
             };
 
-            let message = MeshMessage::YaraRuleAnnounce {
+            let message = MeshMessage::YaraCompiledRuleAnnounce {
                 request_id: uuid::Uuid::new_v4().to_string().into(),
                 version: version.into(),
-                rules,
+                compiled_rules,
+                checksum,
                 timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
                 source_node_id: self.node_id.clone().into(),
                 source_role: self.node_role,
                 signature,
                 signer_public_key,
+                source_rules: rules,
             };
 
             let sender_clone = sender.clone();
@@ -1882,6 +1916,162 @@ impl YaraRulesManager {
                     node_id: self.node_id.clone().into(),
                     accepted: true,
                     reason: "Rules applied".into(),
+                    timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                })
+            }
+            MeshMessage::YaraCompiledRuleAnnounce {
+                request_id,
+                version,
+                compiled_rules,
+                checksum,
+                timestamp: _,
+                source_node_id: _,
+                source_role: _,
+                signature,
+                signer_public_key,
+                source_rules,
+            } => {
+                tracing::info!(
+                    "Received compiled YARA rule announce from {}: version {}, {} bytes",
+                    from_node,
+                    version,
+                    compiled_rules.len()
+                );
+
+                if !compiled_rules.is_empty() {
+                    let mut hasher = Sha256::new();
+                    hasher.update(compiled_rules);
+                    let computed_checksum = hex::encode(hasher.finalize());
+
+                    if computed_checksum != *checksum {
+                        tracing::warn!(
+                            "YARA compiled rules checksum mismatch: expected {}, got {}",
+                            checksum,
+                            computed_checksum
+                        );
+                        return Some(MeshMessage::YaraRuleAcknowledgement {
+                            original_request_id: request_id.clone(),
+                            node_id: self.node_id.clone().into(),
+                            accepted: false,
+                            reason: "Checksum mismatch".into(),
+                            timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                        });
+                    }
+                    tracing::debug!("YARA compiled rules checksum verified: {}", computed_checksum);
+                }
+
+                if !signature.is_empty() && !signer_public_key.is_empty() {
+                    if let Some(ref signer) = self.signer {
+                        let sign_content = if !compiled_rules.is_empty() {
+                            format!("{}:{}:{}", version, checksum, source_rules.len())
+                        } else {
+                            format!("{}:{}", version, source_rules)
+                        };
+                        let pk_bytes = URL_SAFE_NO_PAD
+                            .decode(signer_public_key)
+                            .unwrap_or_default();
+                        if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
+                            tracing::warn!(
+                                "YARA compiled rule signature verification failed from {}, rejecting rules",
+                                from_node
+                            );
+                            return Some(MeshMessage::YaraRuleAcknowledgement {
+                                original_request_id: request_id.clone(),
+                                node_id: self.node_id.clone().into(),
+                                accepted: false,
+                                reason: "Signature verification failed".into(),
+                                timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                            });
+                        }
+                        tracing::debug!("YARA compiled rule signature verified from {}", from_node);
+
+                        if !self.node_role.is_global() {
+                            if self.config.trusted_signers.is_empty() {
+                                tracing::warn!("No trusted signers configured - rejecting YARA rules from non-global node");
+                                return Some(MeshMessage::YaraRuleAcknowledgement {
+                                    original_request_id: request_id.clone(),
+                                    node_id: self.node_id.clone().into(),
+                                    accepted: false,
+                                    reason: "No trusted signers configured".into(),
+                                    timestamp:
+                                        crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                                });
+                            }
+                            if !self.check_trusted_signer(from_node, signer_public_key) {
+                                tracing::warn!(
+                                    "YARA compiled rule announce rejected: signer {} not in trusted_signers list",
+                                    signer_public_key
+                                );
+                                return Some(MeshMessage::YaraRuleAcknowledgement {
+                                    original_request_id: request_id.clone(),
+                                    node_id: self.node_id.clone().into(),
+                                    accepted: false,
+                                    reason: "Signer not in trusted_signers list".into(),
+                                    timestamp:
+                                        crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                                });
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Received signed compiled YARA rules from {} but no local signer configured, rejecting",
+                            from_node
+                        );
+                        return Some(MeshMessage::YaraRuleAcknowledgement {
+                            original_request_id: request_id.clone(),
+                            node_id: self.node_id.clone().into(),
+                            accepted: false,
+                            reason: "No local signer to verify signature".into(),
+                            timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                        });
+                    }
+                } else if self.config.require_signature && !compiled_rules.is_empty() {
+                    tracing::warn!(
+                        "Compiled YARA rule announce from {} has no signature but require_signature is enabled, rejecting",
+                        from_node
+                    );
+                    return Some(MeshMessage::YaraRuleAcknowledgement {
+                        original_request_id: request_id.clone(),
+                        node_id: self.node_id.clone().into(),
+                        accepted: false,
+                        reason: "Signature required but not provided".into(),
+                        timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
+                    });
+                }
+
+                let rules_to_apply = if !compiled_rules.is_empty() {
+                    match yara_x::Rules::deserialize(compiled_rules) {
+                        Ok(_rules) => {
+                            tracing::info!(
+                                "Deserialized compiled YARA rules successfully (version {})",
+                                version
+                            );
+                            source_rules.clone()
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to deserialize compiled YARA rules from {}: {}, falling back to source rules",
+                                from_node,
+                                e
+                            );
+                            source_rules.clone()
+                        }
+                    }
+                } else {
+                    source_rules.clone()
+                };
+
+                if let Err(e) =
+                    self.handle_incoming_rules(version.clone(), rules_to_apply, from_node)
+                {
+                    tracing::warn!("Failed to apply incoming compiled YARA rules: {}", e);
+                }
+
+                Some(MeshMessage::YaraRuleAcknowledgement {
+                    original_request_id: request_id.clone(),
+                    node_id: self.node_id.clone().into(),
+                    accepted: true,
+                    reason: "Compiled rules applied".into(),
                     timestamp: crate::mesh::protocol::MeshMessage::generate_timestamp(),
                 })
             }

@@ -31,53 +31,31 @@ All waves 1-8 are **COMPLETE**. The implementation provides a complete productio
 | **W8.3** | **Genesis Membership** | Automate Raft membership changes upon Genesis Key authorized node announcements. | **COMPLETE** |
 | **W8.4** | **Edge State Mirroring** | Implement background mirroring of Raft state to local SQLite on Edge nodes. | **COMPLETE** |
 | **W8.5** | **YARA-X Modernization** | Complete transition to `yara-x` (official Rust) and remove all legacy `libyara` (C) logic. | **COMPLETE** |
+| **W8.6** | **YARA-X Binary Distribution** | Implement binary serialization of compiled YARA rules for efficient mesh distribution. | **IN PROGRESS** |
+| **W8.7** | **High-Volume Cleanup** | Perform mass clippy/fmt cleanup and repetitive unit test expansion for Raft/Mirroring. | **IN PROGRESS** |
 
 ### W8.1: Raft-Backed CRL (COMPLETE)
-- **Objective**: Instant network-wide node ejection.
-- **Actions**:
-    - Added `OrgKeyManager::revoke_global_node()` method that commits to `Namespace::Revocation` via Raft
-    - Uses `RaftAwareClient::raft_write()` with `postcard` serialization for binary stability
-    - Falls back to DHT-only storage if Raft is unavailable (backward compatibility)
-    - Broadcasts `RaftCommitNotification` after successful Raft commit
-    - Updated `transport_global.rs` to use OrgKeyManager for revocation
-
-### W8.2: Observer Nodes (COMPLETE)
-- **Objective**: Scale read capacity without consensus overhead.
-- **Actions**:
-    - Added `is_observer: bool` and `observer_tags: Vec<String>` to `RaftInitConfig`
-    - Added `is_observer` and `observer_tags` fields to `RaftInstance`
-    - Implemented `RaftInstance::add_learner(node_id, tags)` using openraft's `add_learner()` API
-    - Added observer support to `MeshRaftNetwork` and `MeshRaftNetworkFactory`
-    - Observers added via `raft.add_learner(node_id, (), false)` - non-blocking, non-voting
-    - Backward compatible with existing voter-only clusters
-
-### W8.3: Genesis Membership (COMPLETE)
-- **Objective**: Zero-touch cluster expansion.
-- **Actions**:
-    - Added `RaftInstance::change_membership(members, block)` method wrapping openraft's API
-    - Added `PendingMembershipChange` struct and `MembershipChangeAction` enum to `transport.rs`
-    - Added `trigger_membership_change(node_id, action)` to automatically add Genesis-authorized nodes
-    - Queues changes when not leader, processes when becoming leader
-    - Integrated with `handle_global_node_announce` in transport_global.rs to trigger auto-add
-
-### W8.4: Edge State Mirroring (COMPLETE)
-- **Objective**: O(1) local lookups for Org Keys with Raft-grade consistency.
-- **Actions**:
-    - Created `EdgeReplicaManager` in `src/mesh/raft/edge_replica.rs` for local SQLite mirroring
-    - Uses moka cache (10K items, 5-min TTL) for O(1) hot record lookups
-    - Provides `get_org_key()` and `get_threat_intel()` for instant WAF policy checks
-    - `update_from_notification()` to apply updates from RaftCommitNotification
-    - Added `query_leader_for_record()` to RaftAwareClient for edge nodes to fetch specific records
-    - Global nodes excluded from mirroring (they use Raft directly)
-
+...
 ### W8.5: YARA-X Modernization (COMPLETE)
 - **Objective**: Full native Rust YARA engine without C dependencies.
-- **Status**: Already verified complete - codebase exclusively uses `yara-x` v1.15+
-- **Verification**:
-    - No `extern crate yara` or legacy `libyara` references in codebase
-    - `yara-x` crate used exclusively (verified in Cargo.toml and source)
-    - `yara_x::compile()`, `yara_x::Scanner`, `yara_x::Rules` used throughout
-    - No C FFI or wrapper code present
+- **Status**: Verified complete. Codebase exclusively uses `yara-x` v1.15+.
+- **Validation**: No `extern crate yara` or legacy `libyara` references remain.
+
+### W8.6: YARA-X Binary Distribution (IN PROGRESS)
+- **Objective**: Eliminate Edge-side compilation overhead.
+- **Actions**:
+    - Update `src/mesh/yara_rules.rs` to use `yara_x::Rules::serialize()` on the Global/Leader side.
+    - Update `MeshMessage` to carry `YaraCompiledRules` as a byte vector.
+    - Update Edge nodes to use `yara_x::Rules::deserialize()` for instant loading.
+    - Implement versioning/checksumming for binary rule blobs.
+
+### W8.7: High-Volume / Repetitive Tasks (DELEGATED)
+- **Objective**: Offload mechanical maintenance and test expansion.
+- **Tasks**:
+    - **Lint Cleanup**: Run `cargo clippy --fix` across all crates and resolve 100+ "dead_code" and "unused" warnings introduced during Raft migration.
+    - **Test Expansion**: Generate 20+ unit tests for `EdgeReplicaManager` covering edge cases (disk full, corrupted SQLite, concurrent notification bursts).
+    - **Doc Sync**: Synchronize `docs/` and `skills/` with the new Layer 5 Raft/Mirroring architecture.
+    - **Fuzzing Targets**: Add new fuzzing targets in `fuzz/` for `MeshMessage::RaftResponse` and `RaftCommitNotification` decoding.
 
 ---
 

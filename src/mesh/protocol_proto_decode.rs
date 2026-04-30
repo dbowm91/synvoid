@@ -750,6 +750,20 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signer_public_key: r.signer_public_key,
                 })
             }
+            proto::mesh_message::Payload::YaraCompiledRuleAnnounce(r) => {
+                Ok(MeshMessage::YaraCompiledRuleAnnounce {
+                    request_id: r.request_id.into(),
+                    version: r.version.clone(),
+                    compiled_rules: r.compiled_rules.clone(),
+                    checksum: r.checksum.clone(),
+                    timestamp: r.timestamp,
+                    source_node_id: r.source_node_id.into(),
+                    source_role: MeshNodeRole::from_u8(r.source_role as u8),
+                    signature: r.signature,
+                    signer_public_key: r.signer_public_key,
+                    source_rules: r.source_rules.clone(),
+                })
+            }
             proto::mesh_message::Payload::YaraRuleSyncRequest(r) => {
                 Ok(MeshMessage::YaraRuleSyncRequest {
                     request_id: r.request_id.into(),

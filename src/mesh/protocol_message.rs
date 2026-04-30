@@ -98,6 +98,7 @@ impl MeshMessage {
             | Self::BehavioralFingerprintSyncRequest { .. }
             | Self::BehavioralFingerprintSyncResponse { .. } => MessageCategory::ThreatIntel,
             Self::YaraRuleAnnounce { .. }
+            | Self::YaraCompiledRuleAnnounce { .. }
             | Self::YaraRuleSyncRequest { .. }
             | Self::YaraRuleSyncResponse { .. }
             | Self::YaraRuleAcknowledgement { .. }
@@ -157,6 +158,7 @@ impl MeshMessage {
             Self::ThreatAnnounce { request_id, .. } => Some(request_id.as_str().into()),
             Self::ThreatSyncRequest { request_id, .. } => Some(request_id.as_str().into()),
             Self::YaraRuleAnnounce { request_id, .. } => Some(request_id.as_str().into()),
+            Self::YaraCompiledRuleAnnounce { request_id, .. } => Some(request_id.as_str().into()),
             Self::YaraRuleSyncRequest { request_id, .. } => Some(request_id.as_str().into()),
             Self::YaraRuleAcknowledgement {
                 original_request_id,

@@ -633,6 +633,18 @@ pub enum MeshMessage {
         status: ArcStr,
         timestamp: u64,
     },
+    YaraCompiledRuleAnnounce {
+        request_id: ArcStr,
+        version: String,
+        compiled_rules: Vec<u8>,
+        checksum: String,
+        timestamp: u64,
+        source_node_id: ArcStr,
+        source_role: MeshNodeRole,
+        signature: Vec<u8>,
+        signer_public_key: String,
+        source_rules: String,
+    },
     BehavioralFingerprintAnnounce {
         request_id: ArcStr,
         fingerprints: Vec<crate::mesh::behavioral::BehavioralFingerprint>,

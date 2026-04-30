@@ -286,6 +286,7 @@ message MeshMessage {
         ConsistentReadResponse consistent_read_response = 167;
         NotLeader not_leader = 168;
         RaftCommitNotification raft_commit_notification = 169;
+        YaraCompiledRuleAnnounce yara_compiled_rule_announce = 170;
     }
 }
 
@@ -1615,4 +1616,17 @@ message RaftCommitNotification {
     string namespace = 3;
     string key_id = 4;
     uint64 timestamp = 5;
+}
+
+message YaraCompiledRuleAnnounce {
+    string request_id = 1;
+    string version = 2;
+    bytes compiled_rules = 3;
+    string checksum = 4;
+    uint64 timestamp = 5;
+    string source_node_id = 6;
+    uint32 source_role = 7;
+    bytes signature = 8;
+    string signer_public_key = 9;
+    string source_rules = 10;
 }
