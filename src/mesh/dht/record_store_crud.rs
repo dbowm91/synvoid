@@ -433,7 +433,7 @@ impl RecordStoreManager {
         true
     }
 
-    fn maybe_queue_for_announce(&self, record: &DhtRecord) {
+    pub(crate) fn maybe_queue_for_announce(&self, record: &DhtRecord) {
         let dht_key = DhtKey::from_str(&record.key);
 
         if dht_key.is_public() && !dht_key.requires_confirmation() {

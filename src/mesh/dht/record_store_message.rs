@@ -887,7 +887,7 @@ impl RecordStoreManager {
     ) -> bool {
         let record = {
             let mut rs = self.record_state.write();
-            match rs.records.get_mut(key) {
+            match rs.records.get(key) {
                 Some(entry) => {
                     if entry.status
                         != crate::mesh::protocol::DhtRecordStatus::PendingQuorum
@@ -898,7 +898,9 @@ impl RecordStoreManager {
                         );
                         return false;
                     }
-                    entry.status = crate::mesh::protocol::DhtRecordStatus::Live;
+                    let mut updated_entry = entry.clone();
+                    updated_entry.status = crate::mesh::protocol::DhtRecordStatus::Live;
+                    rs.records.insert(key.to_string(), updated_entry);
                     rs.local_version += 1;
                     tracing::info!("Committed record {} from PendingQuorum to Live", key);
                     Some(entry.record.clone())
@@ -932,7 +934,7 @@ impl RecordStoreManager {
     }
 
     pub fn abort_pending_record(&self, key: &str) {
-        let mut rs = self.record_state.write();
+        let rs = self.record_state.write();
         if let Some(entry) = rs.records.get(key) {
             if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
                 rs.records.remove(key);
@@ -972,7 +974,7 @@ impl RecordStoreManager {
                     quorum_signatures.len(),
                     timestamp
                 );
-                signature = signer.sign(&content);
+                signature = signer.sign(content.as_bytes());
                 signer_public_key = signer.get_public_key();
             }
         }
@@ -992,9 +994,9 @@ impl RecordStoreManager {
             signer_public_key,
         };
 
-        let peers = transport.get_connected_peers().await;
-        for peer_id in peers {
-            let _ = transport.send_datagram_to_peer(&peer_id, &message).await;
+        let peers = transport.get_connected_peers();
+        for peer_id in &peers {
+            let _ = transport.send_datagram_to_peer(peer_id, &message).await;
         }
 
         tracing::debug!(
@@ -1024,7 +1026,7 @@ impl RecordStoreManager {
 
         let existing = {
             let rs = self.record_state.read();
-            rs.records.get(&record.key).cloned()
+            rs.records.get(&record.key)
         };
 
         if let Some(entry) = existing {
@@ -1314,5 +1316,35 @@ impl RecordStoreManager {
             .collect();
 
         futures::future::join_all(anti_entropy_futures).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dht_record_status_default_is_live() {
+        let status = crate::mesh::protocol::DhtRecordStatus::default();
+        assert_eq!(status, crate::mesh::protocol::DhtRecordStatus::Live);
+    }
+
+    #[test]
+    fn test_dht_record_status_pending_quorum_is_not_live() {
+        let status = crate::mesh::protocol::DhtRecordStatus::PendingQuorum;
+        assert_ne!(status, crate::mesh::protocol::DhtRecordStatus::Live);
+    }
+
+    #[test]
+    fn test_quorum_signature_proto_from_quorum_signature() {
+        let sig = crate::mesh::dht::quorum::QuorumSignature {
+            node_id: "node1".to_string(),
+            signature: vec![1, 2, 3],
+            timestamp: 12345,
+        };
+        let proto: crate::mesh::protocol::QuorumSignatureProto = (&sig).into();
+        assert_eq!(proto.node_id, "node1");
+        assert_eq!(proto.signature, vec![1, 2, 3]);
+        assert_eq!(proto.timestamp, 12345);
     }
 }
