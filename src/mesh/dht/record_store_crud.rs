@@ -361,6 +361,7 @@ impl RecordStoreManager {
                 record: record.clone(),
                 local_origin: is_local_record,
                 version,
+                status: Default::default(),
             },
         );
 
@@ -435,6 +436,7 @@ impl RecordStoreManager {
                 record: cache_ttl_record,
                 local_origin: false,
                 version,
+                status: Default::default(),
             },
         );
 
@@ -672,6 +674,7 @@ impl RecordStoreManager {
                         record,
                         local_origin: false,
                         version,
+                        status: Default::default(),
                     },
                 );
             }

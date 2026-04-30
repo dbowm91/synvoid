@@ -293,6 +293,7 @@ pub struct DhtRecordEntry {
     pub record: DhtRecord,
     pub local_origin: bool,
     pub version: u64,
+    pub status: crate::mesh::protocol::DhtRecordStatus,
 }
 
 impl RecordStoreManager {

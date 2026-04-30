@@ -417,6 +417,15 @@ pub enum MeshMessage {
         reason: ArcStr,
         evidence: Option<Vec<u8>>,
     },
+    DhtRecordCommit {
+        request_id: ArcStr,
+        record: DhtRecord,
+        quorum_signatures: Vec<QuorumSignatureProto>,
+        timestamp: u64,
+        source_node_id: ArcStr,
+        signature: Vec<u8>,
+        signer_public_key: String,
+    },
     KeyForward {
         session_id: ArcStr,
         key_id: ArcStr,
@@ -1481,6 +1490,54 @@ impl DhtRecord {
             return true;
         }
         self.compute_content_hash() == self.content_hash
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
+pub enum DhtRecordStatus {
+    PendingQuorum,
+    Live,
+}
+
+impl Default for DhtRecordStatus {
+    fn default() -> Self {
+        Self::Live
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
+pub struct QuorumSignatureProto {
+    pub node_id: String,
+    pub signature: Vec<u8>,
+    pub timestamp: u64,
+}
+
+impl From<&crate::mesh::dht::quorum::QuorumSignature> for QuorumSignatureProto {
+    fn from(s: &crate::mesh::dht::quorum::QuorumSignature) -> Self {
+        Self {
+            node_id: s.node_id.clone(),
+            signature: s.signature.clone(),
+            timestamp: s.timestamp,
+        }
     }
 }
 

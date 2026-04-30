@@ -872,6 +872,7 @@ impl RecordStoreManager {
                 record: record.clone(),
                 local_origin: true,
                 version,
+                status: Default::default(),
             },
         );
         rs.local_version += 1;

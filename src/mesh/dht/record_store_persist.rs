@@ -117,6 +117,7 @@ impl RecordStoreManager {
                 record,
                 local_origin: false,
                 version: persisted.timestamp,
+                status: Default::default(),
             };
 
             self.record_state
