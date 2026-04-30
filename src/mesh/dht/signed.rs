@@ -3,8 +3,20 @@ use std::time::Duration;
 use base64::Engine;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DhtRecordSignable<'a> {
+    pub key: &'a str,
+    pub value_hash: &'a [u8],
+    pub source_node_id: &'a str,
+    pub timestamp: u64,
+    pub ttl_seconds: u64,
+    pub sequence_number: u64,
+    pub record_type: &'a str,
+}
 
 pub const DHT_MESSAGE_TIMESTAMP_WINDOW_SECS: i64 = 300;
 
@@ -274,26 +286,45 @@ impl SignedDhtRecord {
         crate::serialization::deserialize(data).ok()
     }
 
-    /// Get signable content for signature verification
-    /// Uses postcard for stable binary serialization
     pub fn get_signable_content(&self) -> Vec<u8> {
-        #[derive(Serialize)]
-        struct SignableContent<'a> {
-            key: &'a str,
-            value: &'a [u8],
-            publisher_id: &'a str,
-            created_at: u64,
-            sequence_number: u64,
-            source_node_id: &'a str,
-        }
+        let value_hash = Sha256::digest(&self.value);
 
-        let content = SignableContent {
+        let record_type_str = match &self.record_type {
+            SignedRecordType::Organization => "Organization",
+            SignedRecordType::OrgPublicKey => "OrgPublicKey",
+            SignedRecordType::TierKey => "TierKey",
+            SignedRecordType::MemberCertificate => "MemberCertificate",
+            SignedRecordType::Upstream => "Upstream",
+            SignedRecordType::NodeInfo => "NodeInfo",
+            SignedRecordType::GlobalNodeList => "GlobalNodeList",
+            SignedRecordType::TierClaim => "TierClaim",
+            SignedRecordType::GlobalNodePublicKey => "GlobalNodePublicKey",
+            SignedRecordType::NodeHealth => "NodeHealth",
+            SignedRecordType::NodeLoad => "NodeLoad",
+            SignedRecordType::GlobalNodeHeartbeat => "GlobalNodeHeartbeat",
+            SignedRecordType::VerifiedUpstream => "VerifiedUpstream",
+            SignedRecordType::OrgNameReservation => "OrgNameReservation",
+            SignedRecordType::DnsZone => "DnsZone",
+            SignedRecordType::DnsRecord => "DnsRecord",
+            SignedRecordType::DnsDomainRegistration => "DnsDomainRegistration",
+            SignedRecordType::GlobalAiBotList => "GlobalAiBotList",
+            SignedRecordType::AnycastNode => "AnycastNode",
+            SignedRecordType::ThreatIndicator => "ThreatIndicator",
+            SignedRecordType::UpstreamImageProtection => "UpstreamImageProtection",
+            SignedRecordType::UpstreamMinification => "UpstreamMinification",
+            SignedRecordType::UpstreamCompression => "UpstreamCompression",
+            SignedRecordType::UpstreamProxyCachePreferences => "UpstreamProxyCachePreferences",
+            SignedRecordType::SiteImagePoisonConfig => "SiteImagePoisonConfig",
+        };
+
+        let content = DhtRecordSignable {
             key: &self.key,
-            value: &self.value,
-            publisher_id: &self.publisher_id,
-            created_at: self.created_at,
-            sequence_number: self.sequence_number,
+            value_hash: &value_hash,
             source_node_id: &self.source_node_id,
+            timestamp: self.created_at,
+            ttl_seconds: self.ttl_seconds,
+            sequence_number: self.sequence_number,
+            record_type: record_type_str,
         };
 
         crate::serialization::serialize(&content).unwrap_or_default()
