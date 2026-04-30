@@ -3500,6 +3500,7 @@ impl MeshTransport {
         self.pending_consistent_read_responses.clone()
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn get_pending_snapshot_responses(
         &self,
     ) -> Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>> {

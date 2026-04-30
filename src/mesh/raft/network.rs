@@ -217,6 +217,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
             payload: MeshRaftPayload {
                 msg_type: RaftMsgType::InstallSnapshot,
                 data: header_bytes,
+                request_id: None,
             },
         };
 
@@ -247,6 +248,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
                 payload: MeshRaftPayload {
                     msg_type: RaftMsgType::InstallSnapshot,
                     data: chunk_bytes,
+                    request_id: None,
                 },
             };
 
