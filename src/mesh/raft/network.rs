@@ -45,13 +45,17 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
         }
     }
 
-    async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>, RPCError<C>> {
-        let payload = MeshRaftPayload { msg_type, data };
+async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>, RPCError<C>> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+
+        let payload = MeshRaftPayload {
+            msg_type,
+            data,
+            request_id: Some(request_id.clone()),
+        };
 
         let body = postcard::to_stdvec(&payload)
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-
-        let request_id = uuid::Uuid::new_v4().to_string();
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -64,6 +68,7 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
             target_node_id: ArcStr::from(self.target.clone()),
             payload: MeshRaftPayload {
                 msg_type,
+                request_id: Some(request_id),
                 data: body,
             },
         };

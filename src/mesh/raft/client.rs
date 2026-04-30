@@ -140,11 +140,13 @@ impl RaftAwareClient {
             value: value.clone(),
         };
 
+        let request_id = uuid::Uuid::new_v4().to_string();
         let command_bytes = crate::serialization::serialize(&command)
             .map_err(|e| RaftAwareClientError::RaftWriteFailed(e.to_string()))?;
 
         let raft_payload = crate::mesh::protocol::RaftPayload {
             msg_type: crate::mesh::protocol::RaftMsgType::ClientProposal,
+            request_id: Some(request_id.clone()),
             data: command_bytes,
         };
 
@@ -158,7 +160,7 @@ impl RaftAwareClient {
         {
             let pending = self.transport.get_pending_consistent_read_responses().await;
             let mut guard = pending.lock().await;
-            guard.insert(uuid::Uuid::new_v4().to_string(), response_tx);
+            guard.insert(request_id.clone(), response_tx);
         }
 
         self.transport

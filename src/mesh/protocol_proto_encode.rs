@@ -2600,6 +2600,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     target_node_id: target_node_id.to_string(),
                     msg_type: payload.msg_type as i32,
                     data: payload.data.clone(),
+                    request_id: payload.request_id.clone(),
                 })),
             },
             MeshMessage::ConsistentReadRequest {

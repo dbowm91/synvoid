@@ -140,6 +140,22 @@ impl RaftInstance {
         Ok(resp.log_id.index)
     }
 
+    pub async fn raft_append_entries(
+        &self,
+        rpc: openraft::raft::AppendEntriesRequest<GlobalRegistryTypeConfig>,
+    ) -> Result<openraft::raft::AppendEntriesResponse<GlobalRegistryTypeConfig>, Box<dyn std::error::Error + Send + Sync>> {
+        let resp = self.raft.append_entries(rpc).await?;
+        Ok(resp)
+    }
+
+    pub async fn raft_vote(
+        &self,
+        rpc: openraft::raft::VoteRequest<GlobalRegistryTypeConfig>,
+    ) -> Result<openraft::raft::VoteResponse<GlobalRegistryTypeConfig>, Box<dyn std::error::Error + Send + Sync>> {
+        let resp = self.raft.vote(rpc).await?;
+        Ok(resp)
+    }
+
     pub async fn change_membership(
         &self,
         new_members: impl Into<openraft::ChangeMembers<u64, ()>>,

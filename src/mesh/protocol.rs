@@ -1094,6 +1094,7 @@ pub enum OwnershipChallengeType {
 pub struct RaftPayload {
     pub msg_type: RaftMsgType,
     pub data: Vec<u8>,
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]

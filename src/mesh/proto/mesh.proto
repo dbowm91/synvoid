@@ -1587,6 +1587,7 @@ message RaftMessage {
     string target_node_id = 1;
     int32 msg_type = 2;
     bytes data = 3;
+    optional string request_id = 4;
 }
 
 message ConsistentReadRequest {
