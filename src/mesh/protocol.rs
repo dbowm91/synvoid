@@ -1099,6 +1099,7 @@ pub struct RaftPayload {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotHeader {
+    pub request_id: String,
     pub vote: Vec<u8>,
     pub meta: Vec<u8>,
     pub total_size: u64,
@@ -1106,6 +1107,7 @@ pub struct SnapshotHeader {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotChunk {
+    pub request_id: String,
     pub offset: u64,
     pub is_last: bool,
     pub data: Vec<u8>,

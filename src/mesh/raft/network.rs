@@ -159,14 +159,9 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         let snapshot_data = snapshot_bytes.as_ref().to_vec();
         let total_size = snapshot_data.len() as u64;
 
-        #[derive(serde::Serialize)]
-        struct SnapshotHeader {
-            vote: Vec<u8>,
-            meta: Vec<u8>,
-            total_size: u64,
-        }
-
-        let header = SnapshotHeader {
+        let request_id = format!("snapshot-{}", uuid::Uuid::new_v4());
+        let header = crate::mesh::protocol::SnapshotHeader {
+            request_id: request_id.clone(),
             vote: vote_data,
             meta,
             total_size,
@@ -178,8 +173,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
 
         {
             let mut pending = self.pending_responses.write().await;
-            let request_id = format!("snapshot-{}", uuid::Uuid::new_v4());
-            pending.insert(request_id, response_tx);
+            pending.insert(request_id.clone(), response_tx);
         }
 
         let raft_msg = MeshMessage::Raft {
@@ -187,7 +181,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
             payload: MeshRaftPayload {
                 msg_type: RaftMsgType::InstallSnapshot,
                 data: header_bytes,
-                request_id: None,
+                request_id: Some(request_id.clone()),
             },
         };
 
@@ -206,6 +200,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
             let is_last = chunk_end >= snapshot_data.len();
 
             let chunk_info = crate::mesh::protocol::SnapshotChunk {
+                request_id: request_id.clone(),
                 offset,
                 is_last,
                 data: chunk,
@@ -218,7 +213,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
                 payload: MeshRaftPayload {
                     msg_type: RaftMsgType::InstallSnapshot,
                     data: chunk_bytes,
-                    request_id: None,
+                    request_id: Some(request_id.clone()),
                 },
             };
 
