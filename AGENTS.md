@@ -376,6 +376,34 @@ Key methods:
 
 All 84 `mesh::dht` tests pass with this implementation.
 
+### Async PQC Verification Pool (W11.4)
+
+CPU-intensive PQC operations (ML-DSA verification, ML-KEM encapsulation/decapsulation) can offload to a blocking thread pool to avoid blocking the async executor:
+
+Key file: `src/mesh/crypto_verification.rs` — `CryptoVerificationPool`
+
+```rust
+use crate::mesh::CryptoVerificationPool;
+
+let pool = CryptoVerificationPool::default_pool();
+
+// Async ML-DSA verification
+let result = pool.verify_ml_dsa(&vk_bytes, message, &signature).await;
+
+// With Arc<MeshMlDsaSigner>
+let result = pool.verify_ml_dsa_with_signer(signer_arc, message, &signature).await;
+
+// Async ML-KEM operations
+let (ct, ss) = pool.ml_kem_encapsulate(&pk_bytes).await?;
+let ss = pool.ml_kem_decapsulate(&sk_bytes, &ct).await?;
+```
+
+Pool characteristics:
+- Uses `tokio::task::spawn_blocking` for CPU-intensive crypto
+- Default size: `available_parallelism().max(4)` threads
+- Non-blocking async interface over blocking crypto operations
+- Available for integration with `MeshMessageSigner::verify_hybrid()` when ML-DSA is used in hot paths
+
 ## Known Issues
 
 | Issue | Reason | Workaround |

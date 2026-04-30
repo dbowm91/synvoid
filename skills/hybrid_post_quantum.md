@@ -108,3 +108,37 @@ cargo test --features pqc-mesh --lib -- ml_dsa
 2. **Base64 encoding**: Always use `URL_SAFE_NO_PAD` for mesh/DHT data
 3. **Fail-open for Ed25519**: Verify Ed25519 first; ML-DSA is optional
 4. **Serialization**: Use `HybridSignature::to_bytes()` / `from_bytes()` for stable wire format
+
+## Async Verification Pool
+
+For CPU-intensive ML-DSA verification (1-5ms per operation), use `CryptoVerificationPool`:
+
+```rust
+use crate::mesh::CryptoVerificationPool;
+
+// Create pool (defaults to available parallelism, min 4 threads)
+let pool = CryptoVerificationPool::default_pool();
+
+// Async verification via spawn_blocking
+let result = pool.verify_ml_dsa(&vk_bytes, message, &signature).await;
+
+// With pre-wrapped signer
+let result = pool.verify_ml_dsa_with_signer(signer_arc, message, &signature).await;
+```
+
+Key characteristics:
+- Uses `tokio::task::spawn_blocking` to avoid blocking async executor
+- Pool size: `available_parallelism().max(4)` for proper CPU utilization
+- Provides both low-level (raw bytes) and high-level (Arc<MeshMlDsaSigner>) APIs
+- ML-KEM encapsulation/decapsulation also available async
+
+Integration with `MeshMessageSigner::verify_hybrid()`:
+```rust
+// Current sync path (blocks async thread for ~1-5ms):
+if signer.verify_hybrid(content, &hybrid_sig) { ... }
+
+// Future async path (non-blocking):
+if pool.verify_ml_dsa_with_signer(signer.arc_clone(), content, &hybrid_sig.ml_dsa_signature).await {
+    // ML-DSA valid
+}
+```
