@@ -89,7 +89,7 @@ mod signed_record_tests {
         assert!(signature.is_some());
 
         let mut signed_record = record;
-        signed_record.publisher_id = "tampered_publisher".to_string();
+        signed_record.source_node_id = "tampered_node".to_string();
         signed_record.signature = signature.unwrap();
         signed_record.signer_public_key = signer.get_verifying_key();
 
