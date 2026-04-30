@@ -354,6 +354,8 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W8.3 | Genesis Membership | RaftInstance::change_membership() wrapping openraft API. PendingMembershipChange queue for non-leader scenarios. Auto-add via handle_global_node_announce. | 2026-04-30 |
 | W8.4 | Edge State Mirroring | EdgeReplicaManager in src/mesh/raft/edge_replica.rs with moka cache (10K, 5-min TTL). get_org_key(), get_threat_intel() for O(1) lookups. RaftAwareClient::query_leader_for_record(). | 2026-04-30 |
 | W8.5 | YARA-X Modernization | Verified complete: codebase exclusively uses yara-x v1.15+. No libyara C dependencies. yara_x::compile(), Scanner, Rules used throughout. | 2026-04-30 |
+| W8.6 | YARA-X Binary Distribution | YaraCompiledRuleAnnounce variant with compiled_rules (Vec<u8>) and checksum. Global serializes with Rules::serialize(), Edge deserializes with Rules::deserialize(). SHA256 integrity verification. Backward compatible. | 2026-04-30 |
+| W8.7 | High-Volume Cleanup | Fixed all clippy issues (manual Option::map, redundant closures, io_other_error, await-holding-lock). Added 27 EdgeReplicaManager unit tests (disk full, corrupted DB, concurrent bursts). Added fuzz/fuzz_raft_response.rs and fuzz/fuzz_raft_commit_notification.rs. Updated skills/raft_consensus.md. | 2026-04-30 |
 
 ## Known Issues
 
