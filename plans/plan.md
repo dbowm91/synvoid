@@ -52,13 +52,35 @@
 - 8 unit tests including 10K-entry large dataset round-trip, binary value preservation, JSON fallback, and empty state handling
 - **Diversions from plan**: The plan mentioned `AsyncRead` interface, but since openraft's `SnapshotData = bytes::Bytes` type config requires materialized bytes, we implemented streaming at the serialization layer instead. The snapshot bytes are still `Bytes` but are now produced without holding intermediate data structures in RAM.
 
-### W11.3: Two-Phase Commit for DHT Quorum (Consistency)
+### W11.3: Two-Phase Commit for DHT Quorum (Consistency) — COMPLETE
 **Problem**: Records are "leaked" via gossip before quorum is reached, leading to edge nodes acting on unconfirmed state.
 **Task**:
 - Introduce `DhtRecordStatus::PendingQuorum` in `src/mesh/protocol.rs`.
 - Update `store_record_global` to block gossip announcements for records requiring quorum until the `Approved` result is received.
 - Add a "Commit" message type to the DHT protocol to transition records from `Pending` to `Live`.
 - **Verification**: Test that a record requiring quorum is NOT visible to `get_record` on non-origin nodes until quorum is approved.
+
+**Implementation Notes**:
+- Added `DhtRecordStatus` enum (`PendingQuorum`, `Live`) to `protocol.rs` with `Default::default()` returning `Live`
+- Added `QuorumSignatureProto` struct for serializing quorum signatures in messages, with `From<&QuorumSignature>` conversion
+- Added `DhtRecordCommit` variant to `MeshMessage` enum (proto field 171) to signal record commitment from origin to peers
+- Added `status: DhtRecordStatus` field to `DhtRecordEntry` in `record_store.rs`, defaulting to `Live` for backward compat
+- `store_record_global()` quorum path now:
+  - Signs the record locally before storing
+  - Stores record with `PendingQuorum` status immediately
+  - On quorum approval: transitions to `Live` via `commit_record_after_quorum()`, queues for announce, sends `DhtRecordCommit` to peers
+  - On rejection/timeout: calls `abort_pending_record()` to remove from store
+- `get_record()` returns `None` for `PendingQuorum` records (consistent hiding from reads)
+- `get_all_records()` and `get_by_prefix()` filter out `PendingQuorum` records from sync/export
+- `commit_record_after_quorum()` transitions record to `Live`, calls `maybe_queue_for_announce()`, `record_change()`, `compute_merkle_tree()`, and `send_commit_message()`
+- `send_commit_message()` sends `DhtRecordCommit` to all connected peers
+- `handle_record_commit()` handles incoming `DhtRecordCommit` messages on receiving nodes, storing as `Live`
+- Proto definitions: `QuorumSignatureEntry` (node_id, signature, timestamp) and `DhtRecordCommit` (request_id, record, quorum_signatures, timestamp, source_node_id, signature, signer_public_key) added to `mesh.proto`
+- Added encode/decode for `DhtRecordCommit` (message_type 170) in `protocol_proto_encode.rs` and `protocol_proto_decode.rs`
+- Added `DhtRecordCommit` to `Dht` message category and `message_id()` in `protocol_message.rs`
+- Added dispatch for `DhtRecordCommit` in `transport_peer.rs` calling `handle_record_commit()`
+- 3 unit tests: `test_dht_record_status_default_is_live`, `test_dht_record_status_pending_quorum_is_not_live`, `test_quorum_signature_proto_from_quorum_signature`
+- All 84 `mesh::dht` tests pass
 
 ### W11.4: Async PQC Verification Queue (Performance)
 **Problem**: Synchronous PQC signature verification in the network hot-path increases latency floor and is vulnerable to CPU-exhaustion DDoS.

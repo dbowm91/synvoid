@@ -173,3 +173,33 @@ Verification functions in `src/mesh/dht/signed.rs`:
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 ```
+
+## DHT Two-Phase Commit (W11.3)
+
+Records requiring quorum use a two-phase commit to prevent gossip of unconfirmed state:
+
+1. **Phase 1 (Pending)**: Record stored with `DhtRecordStatus::PendingQuorum` in `DhtRecordEntry.status`. Hidden from `get_record()` and `get_all_records()` but exists locally.
+2. **Phase 2 (Commit)**: On quorum approval, `commit_record_after_quorum()` transitions to `Live`, queues for announce, sends `DhtRecordCommit` to peers.
+
+Key types:
+- `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `src/mesh/protocol.rs` with `Default::default()` = `Live`
+- `DhtRecordCommit` message (proto field 171) — sent to peers after commit
+- `QuorumSignatureProto` — serializes signatures in commit messages
+
+Key methods:
+- `store_record_global()` — stores quorum-requiring records as `PendingQuorum` before starting quorum
+- `commit_record_after_quorum()` — transitions to `Live`, announces, sends `DhtRecordCommit`
+- `abort_pending_record()` — removes record on rejection/timeout
+- `get_record()` / `get_all_records()` — filter out `PendingQuorum` records
+- `handle_record_commit()` — handles incoming `DhtRecordCommit` on receiving nodes
+
+```rust
+// DhtRecordEntry now includes status
+pub struct DhtRecordEntry {
+    pub record: DhtRecord,
+    pub local_origin: bool,
+    pub version: u64,
+    pub status: DhtRecordStatus,  // Default is Live for backward compat
+}
+```
+```

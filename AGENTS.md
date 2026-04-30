@@ -355,6 +355,27 @@ Key files:
 
 Configuration: Set `regional_quorum_enabled = true` in `RecordStoreConfig` with `regional_quorum_max_nodes` (default 20) and `regional_quorum_min_nodes` (default 3). Disabled by default for backward compatibility.
 
+### DHT Two-Phase Commit (W11.3)
+
+DHT records requiring quorum use a two-phase commit to prevent gossip of unconfirmed state:
+
+1. **Phase 1 (Pending)**: Record is stored with `DhtRecordStatus::PendingQuorum` status immediately when `store_record_global()` is called. The record is hidden from `get_record()` and `get_all_records()` but exists locally.
+2. **Phase 2 (Commit)**: When quorum approves, `commit_record_after_quorum()` transitions status to `Live`, queues for announce, and sends `DhtRecordCommit` to peers.
+
+Key types:
+- `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `src/mesh/protocol.rs`
+- `DhtRecordCommit` message variant in `MeshMessage` for signaling commitment to peers
+- `QuorumSignatureProto` for serializing quorum signatures in commit messages
+
+Key methods:
+- `store_record_global()` — stores quorum-requiring records as `PendingQuorum` before starting quorum request
+- `commit_record_after_quorum()` — transitions to `Live`, announces, sends `DhtRecordCommit` to peers
+- `abort_pending_record()` — removes record on rejection/timeout
+- `get_record()` / `get_all_records()` — filter out `PendingQuorum` records
+- `handle_record_commit()` — handles incoming `DhtRecordCommit` messages on receiving nodes
+
+All 84 `mesh::dht` tests pass with this implementation.
+
 ## Known Issues
 
 | Issue | Reason | Workaround |
