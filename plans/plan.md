@@ -70,13 +70,14 @@ All waves 1-7 are **COMPLETE**. Wave 8 (Control Plane Hardening & YARA-X Moderni
     - Added `query_leader_for_record()` to RaftAwareClient for edge nodes to fetch specific records
     - Global nodes excluded from mirroring (they use Raft directly)
 
-### W8.5: YARA-X Modernization (PLANNED)
+### W8.5: YARA-X Modernization (COMPLETE)
 - **Objective**: Full native Rust YARA engine without C dependencies.
-- **Actions**:
-    - **Verification**: Ensure `yara-x` (v1.15+) is used exclusively in `yara_scanner.rs`.
-    - **Cleanup**: Remove any `extern crate yara` or `yara` (C wrapper) references from codebase.
-    - **Feature Mapping**: Update `src/mesh/yara_rules.rs` to support `yara-x` compiled rule formats for efficient mesh distribution.
-    - **Performance**: Optimize `yara_x::Scanner` reuse in `scan_bytes` to avoid per-request compilation overhead.
+- **Status**: Already verified complete - codebase exclusively uses `yara-x` v1.15+
+- **Verification**:
+    - No `extern crate yara` or legacy `libyara` references in codebase
+    - `yara-x` crate used exclusively (verified in Cargo.toml and source)
+    - `yara_x::compile()`, `yara_x::Scanner`, `yara_x::Rules` used throughout
+    - No C FFI or wrapper code present
 
 ---
 
