@@ -316,13 +316,18 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | W7.3 | Cluster Lifecycle | Created RaftInstance wrapping openraft::Raft with initialize(), wait_for_leader(), add_node(), remove_node() methods. | 2026-04-29 |
 | W7.4 | Client Write Correction | RaftAwareClient uses client_write() instead of AppendEntries. Added raft_write_local(), raft_write_via_global(), set_raft_instance(). | 2026-04-29 |
 | W7.5 | SQLite Snapshots | RaftSnapshotManager with point-in-time snapshots using rusqlite backup API, VACUUM compaction, get_snapshot_path(). | 2026-04-29 |
+| W8.1 | Raft-Backed CRL | OrgKeyManager::revoke_global_node() commits to Namespace::Revocation via Raft. Falls back to DHT when Raft unavailable. Broadcasts RaftCommitNotification. | 2026-04-30 |
+| W8.2 | Observer Nodes | Added is_observer and observer_tags to RaftInitConfig/RaftInstance. RaftInstance::add_learner() using openraft API. Observers use add_learner(node_id, (), false). | 2026-04-30 |
+| W8.3 | Genesis Membership | RaftInstance::change_membership() wrapping openraft API. PendingMembershipChange queue for non-leader scenarios. Auto-add via handle_global_node_announce. | 2026-04-30 |
+| W8.4 | Edge State Mirroring | EdgeReplicaManager in src/mesh/raft/edge_replica.rs with moka cache (10K, 5-min TTL). get_org_key(), get_threat_intel() for O(1) lookups. RaftAwareClient::query_leader_for_record(). | 2026-04-30 |
+| W8.5 | YARA-X Modernization | Verified complete: codebase exclusively uses yara-x v1.15+. No libyara C dependencies. yara_x::compile(), Scanner, Rules used throughout. | 2026-04-30 |
 
 ## Known Issues
 
 There are no known incomplete items. All items from `plans/plan.md` have been verified and completed (or explicitly skipped where appropriate):
 
 - **D7 God module splits**: Skipped due to "no capability reversions" requirement
-- All W1.x, W2.x, W3.x, W4.x, W5.x, W6.x, W7.x items: Verified and implemented
+- All W1.x through W8.x items: Verified and implemented
 
 ## Architecture Notes
 

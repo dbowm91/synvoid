@@ -239,6 +239,89 @@ impl RaftStateMachine for GlobalRegistryStateMachine {
 }
 ```
 
+## Wave 8 - Control Plane Hardening
+
+### W8.1: Raft-Backed CRL
+
+Global node revocation now goes through Raft:
+
+```rust
+impl OrgKeyManager {
+    pub async fn revoke_global_node(
+        &self,
+        target_node_id: &str,
+        reason: &str,
+    ) -> Result<(), OrgKeyError> {
+        // Commit revocation to Namespace::Revocation via Raft
+        let revocation_info = RevocationInfo {
+            revoked_at: crate::mesh::safe_unix_timestamp(),
+            reason: reason.to_string(),
+        };
+        let value = crate::serialization::serialize(&revocation_info)?;
+        if let Some(raft_client) = self.raft_client.read().clone() {
+            raft_client.raft_write(Namespace::Revocation, target_node_id.to_string(), value).await?;
+        }
+        // Broadcast RaftCommitNotification after commit
+    }
+}
+```
+
+### W8.2: Observer Nodes
+
+Learner nodes that replicate but don't vote:
+
+```rust
+pub struct RaftInitConfig {
+    pub node_id: u64,
+    pub db_path: PathBuf,
+    pub cluster_nodes: Vec<u64>,
+    pub is_observer: bool,           // NEW
+    pub observer_tags: Vec<String>,   // NEW
+}
+
+impl RaftInstance {
+    pub async fn add_learner(&self, node_id: u64, tags: Vec<String>) -> Result<(), ...> {
+        self.raft.add_learner(node_id, (), false).await?;
+    }
+}
+```
+
+### W8.3: Genesis Membership
+
+Auto-add Genesis-authorized nodes to Raft cluster:
+
+```rust
+pub struct PendingMembershipChange {
+    pub node_id: u64,
+    pub action: MembershipChangeAction,
+    pub authorized_at: u64,
+}
+
+impl MeshTransport {
+    pub async fn trigger_membership_change(&self, node_id_str: &str, action: MembershipChangeAction) {
+        // If leader: call raft_instance.change_membership()
+        // If not leader: queue for later processing
+    }
+}
+```
+
+### W8.4: Edge State Mirroring
+
+Edge nodes mirror Raft state locally for O(1) lookups:
+
+```rust
+pub struct EdgeReplicaManager {
+    db: Arc<Mutex<Connection>>,
+    cache: moka::sync::Cache<String, Vec<u8>>,
+}
+
+impl EdgeReplicaManager {
+    pub fn get_org_key(&self, org_id: &str) -> Option<OrgPublicKey>;
+    pub fn get_threat_intel(&self, indicator_id: &str) -> Option<ThreatIntel>;
+    pub fn update_from_notification(&self, notification: &RaftCommitNotification) -> Result<(), ...>;
+}
+```
+
 ## Verification Commands
 
 ```bash
