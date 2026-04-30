@@ -57,9 +57,6 @@ async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>
             request_id: Some(request_id.clone()),
         };
 
-        let body = postcard::to_stdvec(&payload)
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
         {
@@ -69,11 +66,7 @@ async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>
 
         let raft_msg = MeshMessage::Raft {
             target_node_id: ArcStr::from(self.target.clone()),
-            payload: MeshRaftPayload {
-                msg_type,
-                request_id: Some(request_id),
-                data: body,
-            },
+            payload,
         };
 
         let transport_arc = self.proxy.get_transport();
@@ -132,10 +125,9 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         rpc: AppendEntriesRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
-        let payload =
-            postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+        let data = postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
-        let data = self.send_raw(RaftMsgType::AppendEntries, payload).await?;
+        let data = self.send_raw(RaftMsgType::AppendEntries, data).await?;
 
         postcard::from_bytes(&data).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))
     }
@@ -145,10 +137,9 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         rpc: VoteRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
         _option: RPCOption,
     ) -> Result<VoteResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>, RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>> {
-        let payload =
-            postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+        let data = postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
-        let data = self.send_raw(RaftMsgType::VoteRequest, payload).await?;
+        let data = self.send_raw(RaftMsgType::VoteRequest, data).await?;
 
         postcard::from_bytes(&data).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))
     }
