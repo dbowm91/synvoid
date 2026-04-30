@@ -48,7 +48,7 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
         }
     }
 
-async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>, RPCError<C>> {
+    async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>, RPCError<C>> {
         let request_id = uuid::Uuid::new_v4().to_string();
 
         let payload = MeshRaftPayload {
@@ -56,13 +56,6 @@ async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>
             data,
             request_id: Some(request_id.clone()),
         };
-
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-
-        {
-            let mut pending = self.pending_responses.write().await;
-            pending.insert(request_id.clone(), response_tx);
-        }
 
         let raft_msg = MeshMessage::Raft {
             target_node_id: ArcStr::from(self.target.clone()),
@@ -87,26 +80,12 @@ async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>
             }
         };
 
-        transport
-            .send_message_to_peer(&self.target, &raft_msg)
+        let response_data = transport
+            .send_message_to_peer_with_response(&self.target, &raft_msg)
             .await
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
-        let timeout = Duration::from_secs(5);
-        tokio::time::timeout(timeout, response_rx)
-            .await
-            .map_err(|_| {
-                RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "Raft RPC timeout",
-                )))
-            })?
-            .map_err(|_| {
-                RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "Response channel closed",
-                )))
-            })
+        Ok(response_data)
     }
 
     pub async fn handle_response(&self, request_id: &str, data: Vec<u8>) {

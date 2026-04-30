@@ -521,3 +521,211 @@ mod edge_replica_tests {
         assert_eq!(size, 0);
     }
 }
+
+#[cfg(test)]
+mod mesh_message_raft_tests {
+    use crate::mesh::protocol::{ArcStr, MeshMessage, RaftMsgType, RaftPayload};
+
+    #[test]
+    fn test_append_entries_via_mesh_message() {
+        let data = postcard::to_stdvec(&()).unwrap();
+
+        let payload = RaftPayload {
+            msg_type: RaftMsgType::AppendEntries,
+            data,
+            request_id: Some("test_append".into()),
+        };
+
+        let mesh_msg = MeshMessage::Raft {
+            target_node_id: ArcStr::from("node1"),
+            payload,
+        };
+
+        let encoded = mesh_msg.encode().expect("Failed to encode MeshMessage");
+        let decoded = MeshMessage::decode(&encoded).expect("Failed to decode MeshMessage");
+
+        match decoded {
+            MeshMessage::Raft { payload: decoded_payload, .. } => {
+                assert!(matches!(decoded_payload.msg_type, RaftMsgType::AppendEntries));
+            }
+            _ => panic!("Expected Raft message"),
+        }
+    }
+
+    #[test]
+    fn test_vote_request_via_mesh_message() {
+        let payload = RaftPayload {
+            msg_type: RaftMsgType::VoteRequest,
+            data: postcard::to_stdvec(&()).unwrap(),
+            request_id: Some("test_vote".into()),
+        };
+
+        let mesh_msg = MeshMessage::Raft {
+            target_node_id: ArcStr::from("node1"),
+            payload,
+        };
+
+        let encoded = mesh_msg.encode().expect("Failed to encode MeshMessage");
+        let decoded = MeshMessage::decode(&encoded).expect("Failed to decode MeshMessage");
+
+        match decoded {
+            MeshMessage::Raft { payload: decoded_payload, .. } => {
+                assert!(matches!(decoded_payload.msg_type, RaftMsgType::VoteRequest));
+            }
+            _ => panic!("Expected Raft message"),
+        }
+    }
+
+    #[test]
+    fn test_raft_message_roundtrip_all_msg_types() {
+        let msg_types = vec![
+            RaftMsgType::VoteRequest,
+            RaftMsgType::AppendEntries,
+            RaftMsgType::ClientProposal,
+        ];
+
+        for msg_type in msg_types {
+            let payload = RaftPayload {
+                msg_type,
+                data: vec![],
+                request_id: Some("roundtrip_test".into()),
+            };
+
+            let mesh_msg = MeshMessage::Raft {
+                target_node_id: ArcStr::from("node1"),
+                payload,
+            };
+
+            let encoded = mesh_msg.encode().expect("Failed to encode");
+            let decoded = MeshMessage::decode(&encoded).expect("Failed to decode");
+
+            match decoded {
+                MeshMessage::Raft { .. } => {}
+                _ => panic!("Expected Raft message"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod dht_signable_bytes_tests {
+    use crate::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType};
+
+    #[test]
+    fn test_dht_signable_content_key_difference_detected() {
+        let mut record1 = SignedDhtRecord::new(
+            "key_a".to_string(),
+            b"same_value".to_vec(),
+            "node_x".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        let mut record2 = SignedDhtRecord::new(
+            "key_b".to_string(),
+            b"same_value".to_vec(),
+            "node_x".to_string(),
+            SignedRecordType::Upstream,
+        );
+
+        record1.created_at = 1000;
+        record1.ttl_seconds = 3600;
+        record1.sequence_number = 1;
+        record2.created_at = 1000;
+        record2.ttl_seconds = 3600;
+        record2.sequence_number = 1;
+
+        let content1 = record1.get_signable_content();
+        let content2 = record2.get_signable_content();
+
+        assert_ne!(content1, content2, "Records with different keys should have different signable content");
+
+        let signing_key = [0x42u8; 32];
+        let signer = RecordSigner::new(Some(signing_key));
+
+        let sig1 = signer.sign(&record1);
+        let sig2 = signer.sign(&record2);
+
+        assert!(sig1.is_some());
+        assert!(sig2.is_some());
+
+        assert_ne!(sig1.unwrap(), sig2.unwrap());
+    }
+
+    #[test]
+    fn test_dht_record_signable_content_is_deterministic() {
+        let mut record1 = SignedDhtRecord::new(
+            "org:test".to_string(),
+            b"value123".to_vec(),
+            "node_a".to_string(),
+            SignedRecordType::OrgPublicKey,
+        );
+
+        let mut record2 = SignedDhtRecord::new(
+            "org:test".to_string(),
+            b"value123".to_vec(),
+            "node_a".to_string(),
+            SignedRecordType::OrgPublicKey,
+        );
+
+        record1.created_at = 1000;
+        record1.ttl_seconds = 3600;
+        record1.sequence_number = 1;
+        record2.created_at = 1000;
+        record2.ttl_seconds = 3600;
+        record2.sequence_number = 1;
+
+        assert_eq!(record1.get_signable_content(), record2.get_signable_content());
+    }
+
+    #[test]
+    fn test_dht_record_signable_content_changes_with_value() {
+        let mut record1 = SignedDhtRecord::new(
+            "org:test".to_string(),
+            b"value123".to_vec(),
+            "node_a".to_string(),
+            SignedRecordType::OrgPublicKey,
+        );
+
+        let mut record2 = SignedDhtRecord::new(
+            "org:test".to_string(),
+            b"value456".to_vec(),
+            "node_a".to_string(),
+            SignedRecordType::OrgPublicKey,
+        );
+
+        record1.created_at = 1000;
+        record1.ttl_seconds = 3600;
+        record1.sequence_number = 1;
+        record2.created_at = 1000;
+        record2.ttl_seconds = 3600;
+        record2.sequence_number = 1;
+
+        assert_ne!(record1.get_signable_content(), record2.get_signable_content());
+    }
+
+    #[test]
+    fn test_dht_record_signable_content_changes_with_key() {
+        let mut record1 = SignedDhtRecord::new(
+            "org:key1".to_string(),
+            b"value".to_vec(),
+            "node_a".to_string(),
+            SignedRecordType::OrgPublicKey,
+        );
+
+        let mut record2 = SignedDhtRecord::new(
+            "org:key2".to_string(),
+            b"value".to_vec(),
+            "node_a".to_string(),
+            SignedRecordType::OrgPublicKey,
+        );
+
+        record1.created_at = 1000;
+        record1.ttl_seconds = 3600;
+        record1.sequence_number = 1;
+        record2.created_at = 1000;
+        record2.ttl_seconds = 3600;
+        record2.sequence_number = 1;
+
+        assert_ne!(record1.get_signable_content(), record2.get_signable_content());
+    }
+}

@@ -165,8 +165,6 @@ impl RaftAwareClient {
             .await
             .ok_or(RaftAwareClientError::RaftUnreachable)?;
 
-        let timeout = Duration::from_secs(10);
-
         let command = RaftCommand::Set {
             namespace: namespace.clone(),
             key: key.clone(),
@@ -188,32 +186,28 @@ impl RaftAwareClient {
             payload: raft_payload,
         };
 
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-
-        {
-            let pending = self.transport.get_pending_consistent_read_responses().await;
-            let mut guard = pending.lock().await;
-            guard.insert(request_id.clone(), response_tx);
-        }
-
-        self.transport
-            .send_message_to_peer(&leader_node_id, &raft_msg)
+        let response_data = self.transport
+            .send_message_to_peer_with_response(&leader_node_id, &raft_msg)
             .await
             .map_err(|e| RaftAwareClientError::InvalidResponse(e.to_string()))?;
 
-        let response = tokio::time::timeout(timeout, response_rx)
-            .await
-            .map_err(|_| RaftAwareClientError::Timeout(timeout))?
-            .map_err(|_| RaftAwareClientError::RaftUnreachable)?;
+        let response: crate::mesh::protocol::MeshMessage =
+            crate::mesh::protocol::MeshMessage::decode(&response_data)
+                .ok_or_else(|| RaftAwareClientError::InvalidResponse("Failed to decode response".to_string()))?;
 
         match response {
-            MeshMessage::ConsistentReadResponse { value: Some(v), .. } => {
+            crate::mesh::protocol::MeshMessage::ConsistentReadResponse {
+                value: Some(v),
+                ..
+            } => {
                 let commit_index = u64::from_le_bytes(v.try_into().map_err(|_| {
                     RaftAwareClientError::InvalidResponse("Invalid commit index".to_string())
                 })?);
                 Ok(commit_index)
             }
-            MeshMessage::NotLeader { .. } => Err(RaftAwareClientError::NotLeader),
+            crate::mesh::protocol::MeshMessage::NotLeader { .. } => {
+                Err(RaftAwareClientError::NotLeader)
+            }
             _ => Err(RaftAwareClientError::InvalidResponse(
                 "Unexpected response".to_string(),
             )),

@@ -1504,6 +1504,67 @@ impl MeshTransport {
         Ok(())
     }
 
+    /// Send a message to a peer and wait for a response on the same stream.
+    /// This acquires a stream, writes the request, reads the response, then releases.
+    pub async fn send_message_to_peer_with_response(
+        &self,
+        peer_id: &str,
+        message: &MeshMessage,
+    ) -> Result<Vec<u8>, MeshTransportError> {
+        let peer = self
+            .peer_connections
+            .get(peer_id)
+            .ok_or_else(|| MeshTransportError::PeerNotFound(peer_id.to_string()))?;
+
+        let (mut send_stream, mut recv_stream) = {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.acquire().await
+        }
+        .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        let encoded = message
+            .encode()
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        let len = (encoded.len() as u32).to_be_bytes();
+        send_stream
+            .write_all(&len)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+        send_stream
+            .write_all(&encoded)
+            .await
+            .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?;
+
+        let mut len_buf = [0u8; 4];
+        recv_stream
+            .read_exact(&mut len_buf)
+            .await
+            .map_err(|e| MeshTransportError::ReceiveFailed(format!("{:?}", e)))?;
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+        if resp_len > MAX_MESSAGE_SIZE {
+            return Err(MeshTransportError::ReceiveFailed(
+                "Response too large".into(),
+            ));
+        }
+        let mut response_buf = vec![0u8; resp_len];
+        recv_stream
+            .read_exact(&mut response_buf)
+            .await
+            .map_err(|e| MeshTransportError::ReceiveFailed(format!("{:?}", e)))?;
+
+        {
+            let mut pool = peer.stream_pool.lock().await;
+            pool.release((send_stream, recv_stream));
+        }
+
+        tracing::debug!(
+            "Sent stream message to peer {} and received response: {:?}",
+            peer_id,
+            message
+        );
+        Ok(response_buf)
+    }
+
     /// Invoke a serverless function on a remote peer
     /// Returns a future that resolves to the invocation response
     pub async fn invoke_serverless_remote(
