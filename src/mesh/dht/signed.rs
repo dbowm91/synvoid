@@ -293,8 +293,7 @@ impl SignedRecordType {
     pub fn requires_announce_refresh(&self) -> bool {
         matches!(
             self,
-            SignedRecordType::Upstream
-                | SignedRecordType::YaraRuleContent
+            SignedRecordType::Upstream | SignedRecordType::YaraRuleContent
         )
     }
 
@@ -527,7 +526,10 @@ pub fn verify_dht_record_signature(record: &crate::mesh::protocol::DhtRecord) ->
     let signer_public_key = match &record.signer_public_key {
         Some(pk) if !pk.is_empty() => pk.clone(),
         _ => {
-            tracing::warn!("No signer public key on record {} - cannot verify", record.key);
+            tracing::warn!(
+                "No signer public key on record {} - cannot verify",
+                record.key
+            );
             return false;
         }
     };
@@ -561,7 +563,10 @@ pub fn verify_dht_record_signature_for_key(
     let signer_public_key = match &record.signer_public_key {
         Some(pk) if !pk.is_empty() => pk.clone(),
         _ => {
-            tracing::warn!("No signer public key on record {} - cannot verify", record.key);
+            tracing::warn!(
+                "No signer public key on record {} - cannot verify",
+                record.key
+            );
             return false;
         }
     };
@@ -722,14 +727,14 @@ impl Default for TtlManager {
             upstream_image_protection_ttl: Duration::from_secs(3600),
             upstream_minification_ttl: Duration::from_secs(3600),
             upstream_compression_ttl: Duration::from_secs(3600),
-upstream_proxy_cache_preferences_ttl: Duration::from_secs(3600),
+            upstream_proxy_cache_preferences_ttl: Duration::from_secs(3600),
             site_image_poison_config_ttl: Duration::from_secs(3600),
             yara_rule_content_ttl: Duration::from_secs(3600),
             yara_rules_manifest_ttl: Duration::from_secs(3600),
             genesis_key_transition_ttl: Duration::from_secs(86400),
             revoked_global_node_ttl: Duration::from_secs(86400 * 7),
         }
-}
+    }
 }
 
 impl TtlManager {
@@ -841,7 +846,8 @@ mod tests {
         ]);
         let verifying_key = signing_key.verifying_key();
         let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        let verifying_key_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -865,7 +871,10 @@ mod tests {
 
         record.value = b"tampered_value".to_vec();
         let verified_after_tamper = verify_dht_record_signature(&record);
-        assert!(!verified_after_tamper, "Tampered value should fail verification");
+        assert!(
+            !verified_after_tamper,
+            "Tampered value should fail verification"
+        );
     }
 
     #[test]
@@ -879,7 +888,8 @@ mod tests {
         ]);
         let verifying_key = signing_key.verifying_key();
         let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        let verifying_key_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -903,7 +913,10 @@ mod tests {
 
         record.ttl_seconds = 600;
         let verified_after_tamper = verify_dht_record_signature(&record);
-        assert!(!verified_after_tamper, "Tampered TTL should fail verification");
+        assert!(
+            !verified_after_tamper,
+            "Tampered TTL should fail verification"
+        );
     }
 
     #[test]
@@ -917,7 +930,8 @@ mod tests {
         ]);
         let verifying_key = signing_key.verifying_key();
         let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        let verifying_key_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -941,7 +955,10 @@ mod tests {
 
         record.sequence_number = 999;
         let verified_after_tamper = verify_dht_record_signature(&record);
-        assert!(!verified_after_tamper, "Tampered sequence should fail verification");
+        assert!(
+            !verified_after_tamper,
+            "Tampered sequence should fail verification"
+        );
     }
 
     #[test]
@@ -955,7 +972,8 @@ mod tests {
         ]);
         let verifying_key = signing_key.verifying_key();
         let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        let verifying_key_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -979,7 +997,10 @@ mod tests {
 
         record.source_node_id = "attacker_node".to_string();
         let verified_after_tamper = verify_dht_record_signature(&record);
-        assert!(!verified_after_tamper, "Tampered source_node_id should fail verification");
+        assert!(
+            !verified_after_tamper,
+            "Tampered source_node_id should fail verification"
+        );
     }
 
     #[test]
@@ -993,7 +1014,8 @@ mod tests {
         ]);
         let verifying_key = signing_key.verifying_key();
         let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        let verifying_key_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "upstream:test".to_string(),
@@ -1017,7 +1039,10 @@ mod tests {
 
         record.key = "org:test".to_string();
         let verified_after_tamper = verify_dht_record_signature(&record);
-        assert!(!verified_after_tamper, "Tampered key (implies different record type) should fail verification");
+        assert!(
+            !verified_after_tamper,
+            "Tampered key (implies different record type) should fail verification"
+        );
     }
 
     #[test]

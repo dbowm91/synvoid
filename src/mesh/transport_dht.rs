@@ -467,7 +467,10 @@ impl MeshTransport {
             return;
         }
 
-        tracing::debug!("DHT anti-entropy response from {} has valid timestamp and signature", from_peer);
+        tracing::debug!(
+            "DHT anti-entropy response from {} has valid timestamp and signature",
+            from_peer
+        );
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();

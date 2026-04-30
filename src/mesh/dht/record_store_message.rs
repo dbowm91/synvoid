@@ -378,7 +378,8 @@ impl RecordStoreManager {
         {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.mesh_signer {
-                let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
+                let record_set_digest =
+                    crate::mesh::dht::signed::compute_record_set_digest(&records);
                 let content = crate::mesh::dht::signed::get_anti_entropy_response_signable_content(
                     request_id,
                     &self.node_id,

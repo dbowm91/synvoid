@@ -121,5 +121,55 @@ pub fn validate_record_timestamp(timestamp: u64) -> bool {
 ```
 
 Records with timestamps too far in the future are rejected before storage.
+
+## Content-Addressed Integrity (record_set_digest)
+
+Snapshot/Sync/Anti-Entropy responses include a `record_set_digest` for content-integrity verification:
+
+```rust
+pub fn compute_record_set_digest(records: &[DhtRecord]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for record in records {
+        let signed = dht_record_to_signed_record(record);
+        let signable_content = signed.get_signable_content();
+        hasher.update(&signable_content);
+    }
+    hasher.finalize().to_vec()
+}
+```
+
+Signable content structs for each message type:
+- `DhtSnapshotResponseSignable` — includes `responder_node_id`, `version`, `record_count`, `timestamp`, `record_set_digest`
+- `DhtSyncResponseSignable` — includes `request_id`, `from_peer`, `responder_node_id`, `version`, `record_count`, `timestamp`, `record_set_digest`
+- `DhtAntiEntropyRequestSignable` — includes `request_id`, `node_id`, `local_root_hash`, `timestamp`
+- `DhtAntiEntropyResponseSignable` — includes `request_id`, `responder_node_id`, `root_hash`, `record_count`, `timestamp`, `record_set_digest`
+
+## Canonical DHT Record Signing
+
+DHT records use canonical signing via `SignedDhtRecord.get_signable_content()`:
+
+```rust
+pub fn get_signable_content(&self) -> Vec<u8> {
+    let value_hash = Sha256::digest(&self.value);
+    let content = DhtRecordSignable {
+        key: &self.key,
+        value_hash: &value_hash,
+        source_node_id: &self.source_node_id,
+        timestamp: self.created_at,
+        ttl_seconds: self.ttl_seconds,
+        sequence_number: self.sequence_number,
+        record_type: record_type_str,
+    };
+    crate::serialization::serialize(&content).unwrap_or_default()
+}
+```
+
+**Important**: Only `source_node_id` is part of the signable content, NOT `publisher_id`. Tampering with `publisher_id` will NOT be detected by signature verification.
+
+Verification functions in `src/mesh/dht/signed.rs`:
+- `verify_dht_record_signature()` — verifies signature on a DhtRecord
+- `verify_dht_record_signature_for_key()` — verifies with expected record type
+
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 ```

@@ -36,7 +36,13 @@ impl RecordStoreManager {
         }
 
         if !record.signature.is_empty() {
-            if record.signer_public_key.is_none() || record.signer_public_key.as_ref().map(|s| s.is_empty()).unwrap_or(false) {
+            if record.signer_public_key.is_none()
+                || record
+                    .signer_public_key
+                    .as_ref()
+                    .map(|s| s.is_empty())
+                    .unwrap_or(false)
+            {
                 if !is_global {
                     tracing::warn!(
                         "Record store: missing signer public key for key {} from node {}",
