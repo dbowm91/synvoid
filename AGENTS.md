@@ -268,7 +268,7 @@ cargo test --test integration_test
 
 # Format and lint
 cargo fmt
-cargo clippy -- -D warnings
+cargo clippy --lib -- -D warnings
 
 # Feature-specific checks
 cargo check --features dns
@@ -295,6 +295,34 @@ The overseer/master/worker architecture uses:
 
 Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN).
 
+### Raft Consensus
+
+Global nodes form a Raft cluster for strong consistency. Key files:
+- `src/mesh/raft/mod.rs` — Raft module exports
+- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory with full_snapshot() support
+- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistrySnapshotBuilder
+- `src/mesh/raft/client.rs` — RaftAwareClient with LeaderCache (5s TTL), linearizable reads, DHT fallback
+- `src/mesh/raft/instance.rs` — RaftInstance wrapping openraft::Raft
+- `src/mesh/raft/regression_tests.rs` — Regression tests for Raft messages and DHT signatures
+
+**Namespaces**: Org, Intel, Revocation (defined in `state_machine.rs:23-52`)
+
+**DHT Fallback**: When Raft is unavailable, `RaftAwareClient::fallback_to_dht()` provides eventual consistency via DHT lookups.
+
+### DHT Security
+
+DHT record signing uses canonical `DhtRecordSignable` struct with SHA256 value hashing:
+- `src/mesh/dht/signed.rs` — SignedDhtRecord, DhtRecordSignable, RecordSigner/Verifier
+- `src/mesh/transport_dht.rs` — handle_dht_snapshot_request/sync_response with default-deny authentication
+
+**Default-Deny**: DHT snapshot/sync requests without valid signatures are rejected.
+
+## Known Issues
+
+| Issue | Reason | Workaround |
+|-------|--------|------------|
+| **D7 God module splits** | Skipped due to "no capability reversions" requirement | Manual refactor needed if desired |
+
 ## Skills Reference
 
 The `skills/` directory contains detailed documentation for various subsystems:
@@ -317,101 +345,8 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | `dht_scoping.md` | DHT site isolation and scoping patterns |
 | `threat_feed_production.md` | Production and signing of threat intel feeds |
 | `raft_consensus.md` | Raft consensus integration for global control plane |
+| `sandboxing.md` | OS sandboxing (Windows/macOS) |
 
-## Recently Completed Items
+## Future Work
 
-| # | Issue | Fix | Date |
-|---|-------|-----|------|
-| P1.8 | `proxy_cache` not wired in `MeshProxy::route_request()` | Wired cache lookup/insert in `proxy_to_peer_with_fallback()` at `src/mesh/proxy.rs:1169-1259`. Added cache key builder, `is_cacheable_method`, `should_bypass_cache`, `is_response_cacheable`, `get_cache_max_age` helpers. | 2026-04-28 |
-| P11.1 | Spin WASM HTTP routing not integrated | Added `BackendType::Spin` to router.rs, `spin_app_name` to RouteTarget, `BackendConfig::Spin` to config/site/backend.rs, and HTTP dispatch in server.rs at lines 1961-2048. | 2026-04-28 |
-| P7A | WireGuard mesh transport enum not fully removed | Removed deprecated `WireGuard` variant from `MeshTransportPreference` in `src/mesh/config.rs:616-620`. Cleaned up `src/mesh/backend.rs:354-357` and `src/mesh/protocol.rs:1181-1185`. | 2026-04-28 |
-| W1.1 | Strategic metrics module split | Split `src/metrics/mod.rs` into `src/metrics/payloads.rs` (structs) and `src/metrics/collection.rs` (atomic counters). Re-exports maintained for public API compatibility. | 2026-04-28 |
-| W1.2 | Continuous fuzzing integration | Added `fuzz/fuzz_early_parse.rs` and `fuzz/fuzz_protocol_proto_decode.rs` targets to fuzz/Cargo.toml. | 2026-04-28 |
-| W1.3 | E2E fault injection test | Added test simulating worker crash mid-request in `tests/integration_test.rs` for Overseer recovery verification. | 2026-04-28 |
-| W2.1 | Zero-copy HTTP proxying | Implemented streaming body pipe for large responses (>1MB) in `src/http/server.rs` to reduce allocations at 500K RPS. | 2026-04-28 |
-| W2.2 | HTTP/3 zero-copy proxying | Applied streaming body optimization to QUIC proxy paths in `src/http3/server.rs`. | 2026-04-28 |
-| W2.3 | DHT routing LRU cache | Added moka-based LRU cache to `RoutingTable::find_closest` for O(1) hot path lookups. | 2026-04-28 |
-| W2.4 | QUIC stream pooling | Implemented `StreamPool` in `src/tunnel/quic/client.rs` to reuse streams per peer instead of opening/closing per message. | 2026-04-28 |
-| W3.1 | Site isolation audit | Audited `ratelimit.rs`, `rule_feed.rs`, and `WorkerMetrics` - found already properly isolated per site. | 2026-04-28 |
-| W3.2 | WASM Component Model support | Created `src/plugin/plugin.wit` WIT file, added `load_component` implementation using wasmtime Component API. | 2026-04-28 |
-| W4.1 | Automated threat feed ingestion | Created `src/waf/threat_intel/feed_client.rs` with Ed25519 signature verification and background fetch task. | 2026-04-28 |
-| W4.2 | Threat feed DHT distribution | Added `ThreatFeedUpdate` IPC message, `broadcast_threat_feed_update`, and `publish_feed_indicator_to_dht` using SiteScoped keys. | 2026-04-28 |
-| W5.1 | Windows Sandboxing | Implemented `WindowsSandbox` using Windows Job Objects with memory limits (256MB process, 512MB job), KillOnJobClose, and DEP/ASLR mitigation policies via `src/platform/sandbox.rs:610-785`. | 2026-04-29 |
-| W5.2 | macOS Sandboxing | Implemented `SeatbeltSandbox` using macOS sandbox_init with dynamic Scheme profile generation. Basic/Strict modes supported. Enable `macos-sandbox` feature for actual enforcement. | 2026-04-29 |
-| W5.3 | Lock-Free BufferPool | Replaced `parking_lot::Mutex<VecDeque>` with Thread-Local Cache (16 buffers/tier) and Treiber Stack (lock-free). Hot path acquire checks TLS first, release pushes to TLS first. All 26 tests pass. | 2026-04-29 |
-| T1 | Threat Feed Production CLI | Implemented `ThreatIntelligenceManager::create_signed_feed()` for producing signed feeds, and `--export-threat-feed` CLI command with Ed25519 key loading (file, genesis, or config). Unit tests verify signable content format matches `ThreatFeedClient`. | 2026-04-29 |
-| W6.1 | Raft Foundation | Integrated openraft with MeshMessage::Raft variant. Created MeshRaftNetwork/Factory wrapping MeshBackendPool. | 2026-04-29 |
-| W6.2 | Raft State Machine | Implemented GlobalRegistryStateMachine and GlobalRegistryLogStorage with rusqlite persistence. Namespace: Org, Intel, Revocation. | 2026-04-29 |
-| W6.3 | Raft-Aware Client | Created RaftAwareClient with ConsistentRead RPC for Edge/Origin nodes. DHT fallback when Raft unreachable. | 2026-04-29 |
-| W6.4 | Trust Transition | Added RaftCommitNotification. Updated OrgKeyManager and peer_auth to accept either 2/3 signatures OR Raft attestation. | 2026-04-29 |
-| W7.1 | Storage Layer Traits | Implemented GlobalRegistryTypeConfig, RaftStateMachine, RaftLogStorage, RaftLogReader, RaftSnapshotBuilder with rusqlite. Uses #[add_async_trait] macro. | 2026-04-29 |
-| W7.2 | RPC Handler Integration | Added /raft endpoint via RaftInstance, ClientProposal to RaftMsgType, handle_raft_message() in MeshTransport. | 2026-04-29 |
-| W7.3 | Cluster Lifecycle | Created RaftInstance wrapping openraft::Raft with initialize(), wait_for_leader(), add_node(), remove_node() methods. | 2026-04-29 |
-| W7.4 | Client Write Correction | RaftAwareClient uses client_write() instead of AppendEntries. Added raft_write_local(), raft_write_via_global(), set_raft_instance(). | 2026-04-29 |
-| W7.5 | SQLite Snapshots | RaftSnapshotManager with point-in-time snapshots using rusqlite backup API, VACUUM compaction, get_snapshot_path(). | 2026-04-29 |
-| W8.1 | Raft-Backed CRL | OrgKeyManager::revoke_global_node() commits to Namespace::Revocation via Raft. Falls back to DHT when Raft unavailable. Broadcasts RaftCommitNotification. | 2026-04-30 |
-| W8.2 | Observer Nodes | Added is_observer and observer_tags to RaftInitConfig/RaftInstance. RaftInstance::add_learner() using openraft API. Observers use add_learner(node_id, (), false). | 2026-04-30 |
-| W8.3 | Genesis Membership | RaftInstance::change_membership() wrapping openraft API. PendingMembershipChange queue for non-leader scenarios. Auto-add via handle_global_node_announce. | 2026-04-30 |
-| W8.4 | Edge State Mirroring | EdgeReplicaManager in src/mesh/raft/edge_replica.rs with moka cache (10K, 5-min TTL). get_org_key(), get_threat_intel() for O(1) lookups. RaftAwareClient::query_leader_for_record(). | 2026-04-30 |
-| W8.5 | YARA-X Modernization | Verified complete: codebase exclusively uses yara-x v1.15+. No libyara C dependencies. yara_x::compile(), Scanner, Rules used throughout. | 2026-04-30 |
-| W8.6 | YARA-X Binary Distribution | YaraCompiledRuleAnnounce variant with compiled_rules (Vec<u8>) and checksum. Global serializes with Rules::serialize(), Edge deserializes with Rules::deserialize(). SHA256 integrity verification. Backward compatible. | 2026-04-30 |
-| W8.7 | High-Volume Cleanup | Fixed all clippy issues (manual Option::map, redundant closures, io_other_error, await-holding-lock). Added 27 EdgeReplicaManager unit tests (disk full, corrupted DB, concurrent bursts). Added fuzz/fuzz_raft_response.rs and fuzz/fuzz_raft_commit_notification.rs. Updated skills/raft_consensus.md. | 2026-04-30 |
-| W9.1 | Raft RPC Correlation | Added request_id to RaftPayload, fixed AppendEntries/VoteRequest dispatch, added raft_append_entries/raft_vote methods to RaftInstance. | 2026-04-30 |
-| W9.2 | Client Proposal Response | Fixed response correlation with request_id, added NotLeader handling with leader hints. | 2026-04-30 |
-| W9.3 | Linearizable Read | Replaced placeholder consistent_read_local() with real implementation: check leadership, query state machine, return actual values. | 2026-04-30 |
-| W9.4 | Leader Discovery | Fixed get_leader_id() to use raft.current_leader(), added LeaderCache with 5s TTL. | 2026-04-30 |
-| W9.5 | Raft Storage Correctness | Store full LogId metadata, persist membership entries, store last_purged_log_id explicitly. | 2026-04-30 |
-| W9.6 | Snapshot Replication | Implemented full_snapshot() with chunked transfer (64KB chunks), added SnapshotHeader/SnapshotChunk types, install_snapshot() to RaftInstance. | 2026-04-30 |
-| W9.7 | DHT Auth Default-Deny | Reject DHT requests with missing signature/public key, use URL_SAFE_NO_PAD for base64 decode, added verification to snapshot/sync response handlers. | 2026-04-30 |
-| W9.8 | DHT Record Canonicalization | Defined canonical DhtRecordSignable with SHA256 value_hash, key, source_node_id, timestamp, ttl_seconds, sequence_number, record_type. | 2026-04-30 |
-| W9.9 | Regression Harness | Added 33 tests covering signed records, pending leaks, DHT adversarial, Raft commands, edge replica. | 2026-04-30 |
-| **W10.1** | **Raft Wire Envelope Fix** | Removed double-encoding in `MeshRaftNetwork::send_raw()`. RPC data now goes directly into `payload.data` instead of being serialized and wrapped again. | 2026-04-30 |
-| **W10.2** | **Stream Response Timeout** | Added bounded 30s timeout to `send_message_to_peer_with_response()` in `transport.rs`. On timeout or error, stream is NOT returned to pool to prevent poisoning. | 2026-04-30 |
-| **W10.3** | **Client Proposal Leader Retry** | Added `raft_write_to_leader()` with one retry against hinted leader on `NotLeader`. Invalidates leader cache on redirect. | 2026-04-30 |
-| **W10.4** | **Snapshot Install End-to-End** | Added `InProgressSnapshot` struct and `pending_snapshot_transfers` for chunk accumulation. `handle_raft_message()` handles `InstallSnapshot` header/chunks with validation. | 2026-04-30 |
-| **W10.5** | **DHT Response Signature Contract** | Defined canonical `DhtSnapshotResponseSignable` and `DhtSyncResponseSignable` with postcard serialization. Producer and verifier use same helpers. | 2026-04-30 |
-| **W10.6** | **Linearizable Reads** | OpenRaft `get_read_linearizer(ReadPolicy::ReadIndex)` and `try_await_ready()` ensures reads are linearizable. | 2026-04-30 |
-| **W10.7** | **Regression Tests** | Added InstallSnapshot header/chunk encode/decode tests, InProgressSnapshot chunk assembly tests, DHT signable content determinism tests. | 2026-04-30 |
-
-## Known Issues
-
-There are no known incomplete items. All items from `plans/plan.md` have been verified and completed (or explicitly skipped where appropriate):
-
-- **D7 God module splits**: Skipped due to "no capability reversions" requirement
-- All W1.x through W10.x items: Verified and implemented
-
-## Architecture Notes
-
-### Overseer/Master/Worker IPC
-
-The overseer/master/worker architecture uses:
-- Unix domain sockets for IPC
-- `Message` enum in `src/process/ipc.rs` for communication
-- `ProcessManager` for worker lifecycle
-- Health checks via IPC heartbeat messages
-
-### Mesh Backend Pool
-
-`BackendType::Mesh` variant is dispatched in the HTTP server via `mesh_backend_pool`. Key files:
-- `src/mesh/backend.rs:109-303` — `MeshBackend`/`MeshBackendPool`
-- `src/mesh/proxy.rs` — `MeshProxy` for routing
-
-### Node Roles
-
-Node roles defined at `src/mesh/config.rs:23-33`: Global, Edge, Origin, plus composites (GLOBAL_EDGE, EDGE_ORIGIN, GLOBAL_ORIGIN, GLOBAL_EDGE_ORIGIN).
-
-### Raft Consensus (Wave 6-10)
-
-Global nodes form a Raft cluster for strong consistency. Key files:
-- `src/mesh/raft/mod.rs` — Raft module exports
-- `src/mesh/raft/network.rs` — MeshRaftNetwork and MeshRaftNetworkFactory with full_snapshot() support. Uses `send_message_to_peer_with_response()` for inline response reading.
-- `src/mesh/raft/state_machine.rs` — GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistrySnapshotBuilder
-- `src/mesh/raft/client.rs` — RaftAwareClient with LeaderCache (5s TTL), linearizable reads via OpenRaft read linearizer, consistent_read_local()
-- `src/mesh/raft/instance.rs` — RaftInstance with raft_append_entries(), raft_vote(), install_snapshot(), get_read_linearizer() for linearizable reads
-- `src/mesh/raft/regression_tests.rs` — Regression tests for Raft messages and DHT signatures
-
-### DHT Security (Wave 9)
-
-DHT record signing uses canonical DhtRecordSignable struct with SHA256 value hashing:
-- `src/mesh/dht/signed.rs` — SignedDhtRecord, DhtRecordSignable, RecordSigner/Verifier
-- `src/mesh/transport_dht.rs` — handle_dht_snapshot_request/sync_response with default-deny authentication
+For recommended future enhancements, see `plans/future_work.md`.
