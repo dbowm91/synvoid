@@ -1752,6 +1752,39 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                 })
             }
+            proto::mesh_message::Payload::DhtRecordCommit(r) => {
+                let record = r
+                    .record
+                    .map(|rec| rec.into())
+                    .unwrap_or(crate::mesh::protocol::DhtRecord {
+                        key: String::new(),
+                        value: Vec::new(),
+                        timestamp: 0,
+                        sequence_number: 0,
+                        ttl_seconds: 0,
+                        source_node_id: String::new(),
+                        signature: Vec::new(),
+                        signer_public_key: None,
+                        content_hash: Vec::new(),
+                    });
+                Ok(MeshMessage::DhtRecordCommit {
+                    request_id: r.request_id.into(),
+                    record,
+                    quorum_signatures: r
+                        .quorum_signatures
+                        .into_iter()
+                        .map(|s| crate::mesh::protocol::QuorumSignatureProto {
+                            node_id: s.node_id,
+                            signature: s.signature,
+                            timestamp: s.timestamp,
+                        })
+                        .collect(),
+                    timestamp: r.timestamp,
+                    source_node_id: r.source_node_id.into(),
+                    signature: r.signature,
+                    signer_public_key: r.signer_public_key,
+                })
+            }
         }
     }
 }

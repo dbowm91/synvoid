@@ -2673,6 +2673,35 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::DhtRecordCommit {
+                request_id,
+                record,
+                quorum_signatures,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+            } => proto::MeshMessage {
+                message_type: 170,
+                payload: Some(proto::mesh_message::Payload::DhtRecordCommit(
+                    proto::DhtRecordCommit {
+                        request_id: request_id.to_string(),
+                        record: Some(record.clone().into()),
+                        quorum_signatures: quorum_signatures
+                            .iter()
+                            .map(|s| proto::QuorumSignatureEntry {
+                                node_id: s.node_id.clone(),
+                                signature: s.signature.clone(),
+                                timestamp: s.timestamp,
+                            })
+                            .collect(),
+                        timestamp: *timestamp,
+                        source_node_id: source_node_id.to_string(),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.clone(),
+                    },
+                )),
+            },
         }
     }
 }

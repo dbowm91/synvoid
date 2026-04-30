@@ -287,6 +287,7 @@ message MeshMessage {
         NotLeader not_leader = 168;
         RaftCommitNotification raft_commit_notification = 169;
         YaraCompiledRuleAnnounce yara_compiled_rule_announce = 170;
+        DhtRecordCommit dht_record_commit = 171;
     }
 }
 
@@ -914,6 +915,22 @@ message DhtRecordPushAck {
     bool accepted = 4;
     repeated string missing_keys = 5;
     uint64 timestamp = 6;
+}
+
+message QuorumSignatureEntry {
+    string node_id = 1;
+    bytes signature = 2;
+    uint64 timestamp = 3;
+}
+
+message DhtRecordCommit {
+    string request_id = 1;
+    DhtRecord record = 2;
+    repeated QuorumSignatureEntry quorum_signatures = 3;
+    uint64 timestamp = 4;
+    string source_node_id = 5;
+    bytes signature = 6;
+    string signer_public_key = 7;
 }
 
 message UpstreamVerificationQuery {

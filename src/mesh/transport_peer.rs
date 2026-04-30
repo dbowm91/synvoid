@@ -1117,6 +1117,23 @@ impl MeshTransport {
                         .await;
                 }
             }
+            MeshMessage::DhtRecordCommit {
+                request_id: _,
+                record,
+                quorum_signatures,
+                timestamp: _,
+                source_node_id,
+                signature: _,
+                signer_public_key: _,
+            } => {
+                if let Some(ref record_store) = self.record_store {
+                    record_store.handle_record_commit(
+                        record,
+                        quorum_signatures,
+                        &source_node_id,
+                    );
+                }
+            }
             MeshMessage::UpstreamAnnounce {
                 upstream_id,
                 action,

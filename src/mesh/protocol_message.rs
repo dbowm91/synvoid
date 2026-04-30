@@ -50,6 +50,7 @@ impl MeshMessage {
             | Self::DhtAntiEntropyResponse { .. }
             | Self::DhtRecordPush { .. }
             | Self::DhtRecordPushAck { .. }
+            | Self::DhtRecordCommit { .. }
             | Self::FindNode { .. }
             | Self::FindNodeResponse { .. }
             | Self::Ping { .. }
@@ -193,6 +194,7 @@ impl MeshMessage {
             Self::DhtAntiEntropyResponse { request_id, .. } => Some(request_id.as_str().into()),
             Self::DhtRecordPush { request_id, .. } => Some(request_id.as_str().into()),
             Self::DhtRecordPushAck { request_id, .. } => Some(request_id.as_str().into()),
+            Self::DhtRecordCommit { request_id, .. } => Some(request_id.as_str().into()),
             Self::NetworkPolicyUpdate { source_node_id, .. } => {
                 Some(source_node_id.as_str().into())
             }
