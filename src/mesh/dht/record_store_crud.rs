@@ -156,9 +156,19 @@ impl RecordStoreManager {
     pub(crate) fn store_record_global(&self, mut record: DhtRecord) -> bool {
         let now = crate::mesh::safe_unix_timestamp();
 
-        let expires_at = record.timestamp + record.ttl_seconds;
+        let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
         if now > expires_at {
             tracing::warn!("Received expired record: {}", record.key);
+            crate::metrics::record_dht_store_operation(false);
+            return false;
+        }
+
+        if !crate::mesh::dht::signed::validate_record_timestamp(record.timestamp) {
+            tracing::warn!(
+                "Received record with timestamp too far in future: {} for key {}",
+                record.timestamp,
+                record.key
+            );
             crate::metrics::record_dht_store_operation(false);
             return false;
         }
@@ -288,21 +298,40 @@ impl RecordStoreManager {
 
         let mut rs = self.record_state.write();
 
-        let should_replace = match rs.records.get(&record.key) {
-            None => true,
-            Some(existing_entry) => {
-                let existing_key = (
-                    existing_entry.record.timestamp,
-                    existing_entry.record.sequence_number,
-                    existing_entry.record.source_node_id.clone(),
-                );
-                let new_key = (
-                    record.timestamp,
-                    record.sequence_number,
-                    record.source_node_id.clone(),
-                );
-                new_key > existing_key
+        let dht_key = DhtKey::from_str(&record.key);
+        let record_type = dht_key.to_signed_record_type();
+
+        let should_replace = match record_type {
+            Some(crate::mesh::dht::SignedRecordType::GenesisKeyTransition)
+            | Some(crate::mesh::dht::SignedRecordType::RevokedGlobalNode)
+            | Some(crate::mesh::dht::SignedRecordType::YaraRulesManifest)
+            | Some(crate::mesh::dht::SignedRecordType::YaraRuleContent) => {
+                if rs.records.get(&record.key).is_some() {
+                    tracing::debug!(
+                        "Rejected immutable record type for key {} - records of this type cannot be replaced",
+                        record.key
+                    );
+                    crate::metrics::record_dht_store_operation(false);
+                    return false;
+                }
+                true
             }
+            _ => match rs.records.get(&record.key) {
+                None => true,
+                Some(existing_entry) => {
+                    let existing_key = (
+                        existing_entry.record.timestamp,
+                        existing_entry.record.sequence_number,
+                        existing_entry.record.source_node_id.clone(),
+                    );
+                    let new_key = (
+                        record.timestamp,
+                        record.sequence_number,
+                        record.source_node_id.clone(),
+                    );
+                    new_key > existing_key
+                }
+            },
         };
 
         if !should_replace {
@@ -578,27 +607,54 @@ impl RecordStoreManager {
         for record in records {
             let now = crate::mesh::safe_unix_timestamp();
 
-            let expires_at = record.timestamp + record.ttl_seconds;
+            let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
             if now > expires_at {
                 continue;
             }
 
-            let existing = rs.records.get(&record.key);
-            let should_replace = match existing {
-                None => true,
-                Some(existing_entry) => {
-                    let existing_key = (
-                        existing_entry.record.timestamp,
-                        existing_entry.record.sequence_number,
-                        existing_entry.record.source_node_id.clone(),
-                    );
-                    let new_key = (
-                        record.timestamp,
-                        record.sequence_number,
-                        record.source_node_id.clone(),
-                    );
-                    new_key > existing_key
+            if !crate::mesh::dht::signed::validate_record_timestamp(record.timestamp) {
+                tracing::debug!(
+                    "Skipping sync record with future timestamp: {} for key {}",
+                    record.timestamp,
+                    record.key
+                );
+                continue;
+            }
+
+            let dht_key = DhtKey::from_str(&record.key);
+            let record_type = dht_key.to_signed_record_type();
+
+            let should_replace = match record_type {
+                Some(crate::mesh::dht::SignedRecordType::GenesisKeyTransition)
+                | Some(crate::mesh::dht::SignedRecordType::RevokedGlobalNode)
+                | Some(crate::mesh::dht::SignedRecordType::YaraRulesManifest)
+                | Some(crate::mesh::dht::SignedRecordType::YaraRuleContent) => {
+                    if rs.records.get(&record.key).is_some() {
+                        tracing::debug!(
+                            "Skipping immutable record type for key {} - cannot be replaced via sync",
+                            record.key
+                        );
+                        false
+                    } else {
+                        true
+                    }
                 }
+                _ => match rs.records.get(&record.key) {
+                    None => true,
+                    Some(existing_entry) => {
+                        let existing_key = (
+                            existing_entry.record.timestamp,
+                            existing_entry.record.sequence_number,
+                            existing_entry.record.source_node_id.clone(),
+                        );
+                        let new_key = (
+                            record.timestamp,
+                            record.sequence_number,
+                            record.source_node_id.clone(),
+                        );
+                        new_key > existing_key
+                    }
+                },
             };
 
             if should_replace {

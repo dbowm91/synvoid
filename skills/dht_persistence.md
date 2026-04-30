@@ -97,5 +97,29 @@ cargo test --test dht_integration_test
 ## Schema Version
 Always include schema version for forward compatibility:
 ```rust
+
+## DHT Record Versioning
+
+Immutable record types cannot be replaced once stored:
+- `GenesisKeyTransition` — Genesis key rotation records
+- `RevokedGlobalNode` — Revocation records
+- `YaraRulesManifest` — YARA rule manifests
+- `YaraRuleContent` — YARA rule content
+
+These types use `SignedRecordType::is_immutable()` check before allowing replacement.
+
+### Timestamp Validation
+
+All DHT records are validated against future timestamps using `validate_record_timestamp()`:
+```rust
+pub fn validate_record_timestamp(timestamp: u64) -> bool {
+    let now = crate::mesh::safe_unix_timestamp() as i64;
+    let msg_time = timestamp as i64;
+    let diff = (now - msg_time).abs();
+    diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS  // 300 seconds
+}
+```
+
+Records with timestamps too far in the future are rejected before storage.
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 ```
