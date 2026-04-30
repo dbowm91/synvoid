@@ -582,6 +582,7 @@ mod mesh_message_raft_tests {
             RaftMsgType::VoteRequest,
             RaftMsgType::AppendEntries,
             RaftMsgType::ClientProposal,
+            RaftMsgType::InstallSnapshot,
         ];
 
         for msg_type in msg_types {
@@ -604,6 +605,99 @@ mod mesh_message_raft_tests {
                 _ => panic!("Expected Raft message"),
             }
         }
+    }
+
+    #[test]
+    fn test_installsnapshot_header_encode_decode() {
+        let header = crate::mesh::protocol::SnapshotHeader {
+            request_id: "snap-123".to_string(),
+            vote: vec![1, 2, 3],
+            meta: vec![4, 5, 6],
+            total_size: 1024,
+        };
+
+        let bytes = postcard::to_stdvec(&header).expect("Failed to serialize");
+        let decoded: crate::mesh::protocol::SnapshotHeader =
+            postcard::from_bytes(&bytes).expect("Failed to deserialize");
+
+        assert_eq!(decoded.request_id, "snap-123");
+        assert_eq!(decoded.total_size, 1024);
+    }
+
+    #[test]
+    fn test_installsnapshot_chunk_encode_decode() {
+        let chunk = crate::mesh::protocol::SnapshotChunk {
+            request_id: "snap-456".to_string(),
+            offset: 512,
+            is_last: false,
+            data: vec![7u8; 256],
+        };
+
+        let bytes = postcard::to_stdvec(&chunk).expect("Failed to serialize");
+        let decoded: crate::mesh::protocol::SnapshotChunk =
+            postcard::from_bytes(&bytes).expect("Failed to deserialize");
+
+        assert_eq!(decoded.request_id, "snap-456");
+        assert_eq!(decoded.offset, 512);
+        assert_eq!(decoded.is_last, false);
+        assert_eq!(decoded.data.len(), 256);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_install_tests {
+    use crate::mesh::transport::InProgressSnapshot;
+
+    #[test]
+    fn test_in_progress_snapshot_add_chunk() {
+        let mut snapshot = InProgressSnapshot::new(
+            "test-snap".to_string(),
+            1024,
+            vec![1, 2, 3],
+            vec![4, 5, 6],
+        );
+
+        assert_eq!(snapshot.offset, 0);
+        assert_eq!(snapshot.total_size, 1024);
+
+        let chunk1 = vec![0u8; 512];
+        assert!(snapshot.add_chunk(0, chunk1, false));
+        assert_eq!(snapshot.offset, 512);
+
+        let chunk2 = vec![0u8; 512];
+        assert!(snapshot.add_chunk(512, chunk2, true));
+        assert_eq!(snapshot.offset, 1024);
+        assert!(snapshot.is_complete());
+    }
+
+    #[test]
+    fn test_in_progress_snapshot_rejects_out_of_order() {
+        let mut snapshot = InProgressSnapshot::new(
+            "test-snap".to_string(),
+            1024,
+            vec![],
+            vec![],
+        );
+
+        let chunk1 = vec![0u8; 512];
+        assert!(snapshot.add_chunk(0, chunk1, false));
+        assert_eq!(snapshot.offset, 512);
+
+        let chunk_wrong_offset = vec![0u8; 512];
+        assert!(!snapshot.add_chunk(256, chunk_wrong_offset, false));
+    }
+
+    #[test]
+    fn test_in_progress_snapshot_rejects_oversized() {
+        let mut snapshot = InProgressSnapshot::new(
+            "test-snap".to_string(),
+            512,
+            vec![],
+            vec![],
+        );
+
+        let oversized_chunk = vec![0u8; 1024];
+        assert!(!snapshot.add_chunk(0, oversized_chunk, true));
     }
 }
 
@@ -727,5 +821,52 @@ mod dht_signable_bytes_tests {
         record2.sequence_number = 1;
 
         assert_ne!(record1.get_signable_content(), record2.get_signable_content());
+    }
+}
+
+#[cfg(test)]
+mod dht_snapshot_signable_tests {
+    use crate::mesh::dht::signed::{
+        get_snapshot_signable_content, get_sync_signable_content,
+    };
+
+    #[test]
+    fn test_snapshot_signable_content_deterministic() {
+        let content1 = get_snapshot_signable_content("req1", 100, 50, 1000);
+        let content2 = get_snapshot_signable_content("req1", 100, 50, 1000);
+        assert_eq!(content1, content2);
+    }
+
+    #[test]
+    fn test_snapshot_signable_content_differs_with_params() {
+        let content1 = get_snapshot_signable_content("req1", 100, 50, 1000);
+        let content2 = get_snapshot_signable_content("req2", 100, 50, 1000);
+        assert_ne!(content1, content2);
+
+        let content3 = get_snapshot_signable_content("req1", 101, 50, 1000);
+        assert_ne!(content1, content3);
+
+        let content4 = get_snapshot_signable_content("req1", 100, 51, 1000);
+        assert_ne!(content1, content4);
+    }
+
+    #[test]
+    fn test_sync_signable_content_deterministic() {
+        let content1 = get_sync_signable_content("req1", "peer_a", 100, 25, 1000);
+        let content2 = get_sync_signable_content("req1", "peer_a", 100, 25, 1000);
+        assert_eq!(content1, content2);
+    }
+
+    #[test]
+    fn test_sync_signable_content_differs_with_params() {
+        let content1 = get_sync_signable_content("req1", "peer_a", 100, 25, 1000);
+        let content2 = get_sync_signable_content("req2", "peer_a", 100, 25, 1000);
+        assert_ne!(content1, content2);
+
+        let content3 = get_sync_signable_content("req1", "peer_b", 100, 25, 1000);
+        assert_ne!(content1, content3);
+
+        let content4 = get_sync_signable_content("req1", "peer_a", 101, 25, 1000);
+        assert_ne!(content1, content4);
     }
 }
