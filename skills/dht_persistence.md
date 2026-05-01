@@ -459,3 +459,134 @@ Runs hourly in `start_background_tasks()`:
 - Update existing key: O(log N) hash operations (~17 for 100K records)
 - Insert new key: O(N) full rebuild
 - Target: < 1ms per update with 100K records (verified by `test_benchmark_incremental_update_100k`)
+
+## Raft/SQLite Storage Optimization (W12.3)
+
+### Key Improvements
+1. **WAL Mode**: Both `GlobalRegistryLogStorage` and `GlobalRegistryStateMachine` enable WAL mode
+2. **busy_timeout=5000**: Prevents lock contention on concurrent access
+3. **Composite Index**: `idx_log_entries_id_term` on `log_entries(id, term)` for efficient range queries
+4. **Paged Log Reads**: Uses SQL `LIMIT` instead of loading entire log table
+
+### Implementation
+In `GlobalRegistryStateMachine::init_schema()` and `GlobalRegistryLogStorage::init_schema()`:
+```rust
+db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+```
+
+In `GlobalRegistryLogStorage::init_schema()`:
+```rust
+db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_log_entries_id_term ON log_entries(id, term)",
+    [],
+)?;
+```
+
+### Paged Log Reads
+```rust
+pub fn get_log_entries_paged(
+    &self,
+    start_id: u64,
+    limit: usize,
+) -> Result<Vec<(u64, u64, Vec<u8>)>, rusqlite::Error> {
+    let db_guard = self.db.lock().unwrap();
+    let mut stmt = db_guard.prepare(
+        "SELECT id, term, payload FROM log_entries WHERE id >= ?1 ORDER BY id LIMIT ?2",
+    )?;
+    // ...
+}
+```
+
+## Durable Quorum Recovery (W12.4)
+
+### Purpose
+Records marked `PendingQuorum` are lost on restart because the ephemeral polling tasks in `store_record_global` do not persist. The `RecoveryWorker` recovers these records on startup.
+
+### Implementation
+```rust
+pub fn start_recovery_worker(&self) {
+    let self_arc = Arc::new(self.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        // Scan disk store for PendingQuorum records
+        let pending_records = {
+            let rs = self_arc.record_state.read();
+            if let Some(ref disk_store) = rs.disk_store {
+                disk_store.get_pending_quorum_records()
+            } else {
+                Vec::new()
+            }
+        };
+
+        // Re-initialize quorum requests for non-expired records
+        for (key, entry) in pending_records {
+            // Check TTL, remove if expired, otherwise restart quorum
+        }
+    });
+}
+```
+
+### Disk Store Query
+```rust
+pub fn get_pending_quorum_records(&self) -> Vec<(String, DhtRecordEntry)> {
+    let conn = self.conn.lock();
+    let mut stmt = conn.prepare(
+        "SELECT ... FROM dht_records WHERE status = ?"
+    ).unwrap();
+    // Uses DhtRecordStatus::PendingQuorum as query parameter
+}
+```
+
+Called from `start_background_tasks()` in `record_store_message.rs`.
+
+## Trust-Rooted Immutability (W12.5)
+
+### Purpose
+Prevents "Race to Poison" attacks on immutable records (genesis keys, revocations, YARA manifests). Remote records in immutable namespaces must have a signer in `authorized_genesis_keys`.
+
+### Configuration
+In `DhtAccessControl`:
+```rust
+pub struct DhtAccessControl {
+    // ...
+    pub authorized_genesis_keys: Vec<String>,
+}
+```
+
+Loaded from `mesh_config.dht_access_control.authorized_genesis_keys`.
+
+### Trust Anchor Check
+```rust
+pub fn requires_immutability_trust_anchor(&self, key: &str) -> bool {
+    for prefix in &self.immutability_required_keys {
+        if key.starts_with(prefix) {
+            return true;
+        }
+    }
+    false
+}
+```
+
+### Enforcement in store_record_global()
+For remote records (non-local origin) in immutable namespaces:
+```rust
+if self.access_control.requires_immutability_trust_anchor(&record.key) && !is_local_record {
+    if self.access_control.authorized_genesis_keys.is_empty() {
+        // Reject - no trust anchors configured
+        return false;
+    }
+    if !self.access_control.authorized_genesis_keys.contains(signer_pk) {
+        // Reject - signer not in trust anchor list
+        return false;
+    }
+}
+```
+
+### Immutable Record Types
+- `GenesisKeyTransition` — Genesis key rotation records
+- `RevokedGlobalNode` — Revocation records
+- `YaraRulesManifest` — YARA rule manifests
+- `YaraRuleContent` — YARA rule content
+
+Local records bypass this check (already validated by local signing).

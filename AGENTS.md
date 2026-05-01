@@ -486,6 +486,45 @@ Key files:
 - `src/mesh/dht/record_store_crud.rs` — Quorum-proof enforcement in `store_record_global()` and `apply_sync()`
 - `src/mesh/dht/record_store_message.rs` — `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies it
 
+### Raft/SQLite Storage Optimization (W12.3)
+
+Raft log storage uses SQLite with WAL mode and paged reads for high throughput:
+
+- **WAL Mode**: Both `GlobalRegistryLogStorage` and `GlobalRegistryStateMachine` enable WAL mode and `busy_timeout=5000` via `PRAGMA` in `init_schema()`
+- **Log Indexing**: Composite index `idx_log_entries_id_term` on `log_entries(id, term)` for efficient range queries
+- **Paged Log Reads**: `get_log_entries_paged(start_id, limit)` uses SQL `LIMIT` instead of loading entire table
+
+Key file:
+- `src/mesh/raft/state_machine.rs` — `GlobalRegistryLogStorage::init_schema()`, `GlobalRegistryLogReader::try_get_log_entries()`
+
+### Durable Quorum Recovery (W12.4)
+
+`RecoveryWorker` scans for `PendingQuorum` records on startup and re-initializes quorum requests:
+
+- Scans disk store for records with `status == PendingQuorum` via `get_pending_quorum_records()`
+- Re-initializes quorum requests for non-expired records
+- Removes expired records during recovery
+
+Key files:
+- `src/mesh/dht/record_store_persist.rs` — `start_recovery_worker()`
+- `src/mesh/dht/record_store_disk.rs:230` — `get_pending_quorum_records()`
+- `src/mesh/dht/record_store_message.rs:482` — Called from `start_background_tasks()`
+
+### Trust-Rooted Immutability (W12.5)
+
+Immutable records (genesis keys, revocations, YARA manifests) require authorization from a configured Trust Anchor:
+
+- `authorized_genesis_keys: Vec<String>` in `DhtAccessControl` — list of authorized public keys
+- `requires_immutability_trust_anchor(key)` — checks if key prefix requires trust anchor
+- Remote records in immutable namespaces must have signer in `authorized_genesis_keys`
+- Local records bypass this check (already validated by local signing)
+
+Key files:
+- `src/mesh/dht/mod.rs:669` — `authorized_genesis_keys` field
+- `src/mesh/dht/mod.rs:821` — `requires_immutability_trust_anchor()` method
+- `src/mesh/dht/record_store_crud.rs:184-220` — Trust anchor verification in `store_record_global()`
+- `src/mesh/dht/record_store_crud.rs:810-834` — Trust anchor verification in `apply_sync()`
+
 ## Known Issues
 
 | Issue | Reason | Workaround |
