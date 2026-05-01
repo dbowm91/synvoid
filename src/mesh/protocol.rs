@@ -88,7 +88,10 @@ impl MeshMessageSigner {
             .as_ref()
             .and_then(|s| s.sign(content))
             .unwrap_or_default();
-        let ml_dsa_pk = self.ml_dsa_signer.as_ref().and_then(|s| s.verifying_key_base64());
+        let ml_dsa_pk = self
+            .ml_dsa_signer
+            .as_ref()
+            .and_then(|s| s.verifying_key_base64());
         HybridSignature::new(ed25519_sig, ml_dsa_sig, self.get_public_key(), ml_dsa_pk)
     }
 
@@ -127,7 +130,8 @@ impl MeshMessageSigner {
 
         if hybrid.has_ml_dsa() {
             if let Some(ref ml_pk_b64) = hybrid.ml_dsa_public_key {
-                let verifier = match crate::mesh::ml_dsa::MeshMlDsaVerifier::from_base64(ml_pk_b64) {
+                let verifier = match crate::mesh::ml_dsa::MeshMlDsaVerifier::from_base64(ml_pk_b64)
+                {
                     Ok(v) => v,
                     Err(_) => return false,
                 };
@@ -156,12 +160,20 @@ impl MeshMessageSigner {
         }
 
         if hybrid.has_ml_dsa() {
-            if let (Some(ref ml_pk_b64), Some(ref pool)) = (&hybrid.ml_dsa_public_key, &self.verification_pool) {
-                let ml_pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(ml_pk_b64) {
-                    Ok(b) => b,
-                    Err(_) => return false,
-                };
-                CryptoVerificationPool::verify_ml_dsa_standalone(&ml_pk_bytes, content, &hybrid.ml_dsa_signature).await
+            if let (Some(ref ml_pk_b64), Some(ref pool)) =
+                (&hybrid.ml_dsa_public_key, &self.verification_pool)
+            {
+                let ml_pk_bytes =
+                    match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(ml_pk_b64) {
+                        Ok(b) => b,
+                        Err(_) => return false,
+                    };
+                CryptoVerificationPool::verify_ml_dsa_standalone(
+                    &ml_pk_bytes,
+                    content,
+                    &hybrid.ml_dsa_signature,
+                )
+                .await
             } else {
                 self.verify_hybrid(content, hybrid)
             }
@@ -179,7 +191,12 @@ impl MeshMessageSigner {
         self.verify(content, signature, public_key)
     }
 
-    pub async fn verify_auto_async(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+    pub async fn verify_auto_async(
+        &self,
+        content: &[u8],
+        signature: &[u8],
+        public_key: &[u8],
+    ) -> bool {
         if signature.len() > 64 {
             if let Ok(hybrid) = HybridSignature::from_bytes(signature) {
                 return self.verify_hybrid_async(content, &hybrid).await;

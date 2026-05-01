@@ -239,7 +239,6 @@ openraft::declare_raft_types!(
         AsyncRuntime = openraft::impls::TokioRuntime,
 );
 
-
 type CommittedLeaderIdOfConfig =
     openraft::type_config::alias::CommittedLeaderIdOf<GlobalRegistryTypeConfig>;
 
@@ -452,7 +451,10 @@ impl GlobalRegistryStateMachine {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
     }
 
-    pub async fn streaming_deserialize_and_apply(&self, data: RaftSnapshotData) -> std::io::Result<()> {
+    pub async fn streaming_deserialize_and_apply(
+        &self,
+        data: RaftSnapshotData,
+    ) -> std::io::Result<()> {
         let db = self.db.clone();
         let std_data = data.into_std().await?;
 
@@ -474,7 +476,8 @@ impl GlobalRegistryStateMachine {
             let entry_count = u64::from_le_bytes(count_buf);
 
             let db_guard = db.lock().unwrap();
-            db_guard.execute("DELETE FROM state_machine", [])
+            db_guard
+                .execute("DELETE FROM state_machine", [])
                 .map_err(std::io::Error::other)?;
 
             for _ in 0..entry_count {
@@ -488,11 +491,12 @@ impl GlobalRegistryStateMachine {
                 let entry: StreamingSnapshotEntry = postcard::from_bytes(&entry_buf)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-                db_guard.execute(
-                    "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![entry.ns, entry.key, entry.val],
-                )
-                .map_err(std::io::Error::other)?;
+                db_guard
+                    .execute(
+                        "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![entry.ns, entry.key, entry.val],
+                    )
+                    .map_err(std::io::Error::other)?;
             }
 
             Ok(())
@@ -501,26 +505,34 @@ impl GlobalRegistryStateMachine {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
     }
 
-    fn fallback_json_install_from_reader(db: Arc<Mutex<Connection>>, mut reader: Box<dyn ReadSeek>) -> std::io::Result<()> {
+    fn fallback_json_install_from_reader(
+        db: Arc<Mutex<Connection>>,
+        mut reader: Box<dyn ReadSeek>,
+    ) -> std::io::Result<()> {
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf)?;
         Self::fallback_json_install_static(db, &buf)
     }
 
-    fn fallback_json_install_static(db: Arc<Mutex<Connection>>, data: &[u8]) -> std::io::Result<()> {
+    fn fallback_json_install_static(
+        db: Arc<Mutex<Connection>>,
+        data: &[u8],
+    ) -> std::io::Result<()> {
         let entries: Vec<(Namespace, String, Vec<u8>)> = serde_json::from_slice(data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
         let db_guard = db.lock().unwrap();
-        db_guard.execute("DELETE FROM state_machine", [])
+        db_guard
+            .execute("DELETE FROM state_machine", [])
             .map_err(std::io::Error::other)?;
 
         for (ns, key, val) in entries {
-            db_guard.execute(
-                "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
-                rusqlite::params![ns.as_str(), key, val],
-            )
-            .map_err(std::io::Error::other)?;
+            db_guard
+                .execute(
+                    "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![ns.as_str(), key, val],
+                )
+                .map_err(std::io::Error::other)?;
         }
         Ok(())
     }
@@ -688,11 +700,7 @@ impl GlobalRegistryLogStorage {
         }
     }
 
-    pub fn get_log_entries_paged(
-        &self,
-        start: u64,
-        limit: u64,
-    ) -> Vec<(u64, u64, Vec<u8>)> {
+    pub fn get_log_entries_paged(&self, start: u64, limit: u64) -> Vec<(u64, u64, Vec<u8>)> {
         let db_guard = self.db.lock().unwrap();
         let mut stmt = match db_guard.prepare(
             "SELECT id, term, payload FROM log_entries WHERE id >= ?1 ORDER BY id LIMIT ?2",

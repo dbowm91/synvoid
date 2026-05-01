@@ -107,14 +107,17 @@ impl ShardedPeerStore {
 
     pub fn update_peer_latency(&self, node_id: &str, latency_ms: u32) {
         let mut shard = self.shard(node_id).write();
-        let avg_latency = shard.latency_history.get(node_id).map_or(latency_ms, |history| {
-            if history.is_empty() {
-                latency_ms
-            } else {
-                let sum: u64 = history.iter().map(|(_, l)| *l as u64).sum::<u64>();
-                (sum / history.len() as u64) as u32
-            }
-        });
+        let avg_latency = shard
+            .latency_history
+            .get(node_id)
+            .map_or(latency_ms, |history| {
+                if history.is_empty() {
+                    latency_ms
+                } else {
+                    let sum: u64 = history.iter().map(|(_, l)| *l as u64).sum::<u64>();
+                    (sum / history.len() as u64) as u32
+                }
+            });
         if let Some(peer) = shard.peers.get_mut(node_id) {
             peer.latency_ms = Some(avg_latency);
         }

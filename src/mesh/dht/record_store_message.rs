@@ -108,7 +108,10 @@ impl RecordStoreManager {
                                 .decode(signer_public_key)
                                 .unwrap_or_default()
                         };
-                        if !signer.verify_auto_async(content.as_bytes(), signature, &pk_bytes).await {
+                        if !signer
+                            .verify_auto_async(content.as_bytes(), signature, &pk_bytes)
+                            .await
+                        {
                             tracing::warn!(
                                 "DhtRecordAnnounce signature verification failed from {}",
                                 from_node
@@ -1057,7 +1060,10 @@ impl RecordStoreManager {
 
         let peers = transport.get_connected_peers();
         if peers.is_empty() {
-            tracing::debug!("No peers connected to send DhtRecordCommit for key {}", record.key);
+            tracing::debug!(
+                "No peers connected to send DhtRecordCommit for key {}",
+                record.key
+            );
             return;
         }
 
@@ -1065,7 +1071,11 @@ impl RecordStoreManager {
         for peer_id in &peers {
             let _ = transport.send_datagram_to_peer(peer_id, &message).await;
         }
-        tracing::debug!("Sent initial DhtRecordCommit for key {} to {} peers", record.key, peers.len());
+        tracing::debug!(
+            "Sent initial DhtRecordCommit for key {} to {} peers",
+            record.key,
+            peers.len()
+        );
 
         // Spawn retry task
         let transport_clone = transport.clone();
@@ -1083,9 +1093,15 @@ impl RecordStoreManager {
                 tokio::time::sleep(interval).await;
                 let current_peers = transport_clone.get_connected_peers();
                 for peer_id in &current_peers {
-                    let _ = transport_clone.send_datagram_to_peer(peer_id, &message_clone).await;
+                    let _ = transport_clone
+                        .send_datagram_to_peer(peer_id, &message_clone)
+                        .await;
                 }
-                tracing::debug!("Retried DhtRecordCommit for key {} to {} peers", key_clone, current_peers.len());
+                tracing::debug!(
+                    "Retried DhtRecordCommit for key {} to {} peers",
+                    key_clone,
+                    current_peers.len()
+                );
             }
         });
     }
@@ -1135,7 +1151,10 @@ impl RecordStoreManager {
 
         let is_pending = {
             let rs = self.record_state.read();
-            rs.records.get(&record.key).map(|e| e.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum).unwrap_or(false)
+            rs.records
+                .get(&record.key)
+                .map(|e| e.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum)
+                .unwrap_or(false)
         };
 
         if is_pending {

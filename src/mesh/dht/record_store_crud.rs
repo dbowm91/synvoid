@@ -181,7 +181,11 @@ impl RecordStoreManager {
 
         let is_local_record = record.source_node_id == self.node_id;
 
-        if self.access_control.requires_immutability_trust_anchor(&record.key) && !is_local_record {
+        if self
+            .access_control
+            .requires_immutability_trust_anchor(&record.key)
+            && !is_local_record
+        {
             let signer_valid = if let Some(ref signer_pk) = record.signer_public_key {
                 if self.access_control.authorized_genesis_keys.is_empty() {
                     tracing::warn!(
@@ -192,7 +196,11 @@ impl RecordStoreManager {
                     crate::metrics::record_dht_store_operation(false);
                     return false;
                 }
-                if !self.access_control.authorized_genesis_keys.contains(signer_pk) {
+                if !self
+                    .access_control
+                    .authorized_genesis_keys
+                    .contains(signer_pk)
+                {
                     tracing::warn!(
                         "Rejected immutable record {}: signer {} is not an authorized genesis key",
                         record.key,
@@ -432,7 +440,10 @@ impl RecordStoreManager {
             _ => match rs.records.get(&record.key) {
                 None => true,
                 Some(existing_entry) => {
-                    if existing_entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum && !is_local_record {
+                    if existing_entry.status
+                        == crate::mesh::protocol::DhtRecordStatus::PendingQuorum
+                        && !is_local_record
+                    {
                         if key_requires_quorum_proof && record.quorum_proof.is_empty() {
                             tracing::warn!(
                                 "Rejected passive confirmation for PendingQuorum record {}: quorum proof required but missing from gossip",
@@ -496,12 +507,15 @@ impl RecordStoreManager {
 
         if self.is_global_node() {
             if let Some(ref disk_store) = self.record_state.read().disk_store {
-                disk_store.insert(record.key.clone(), DhtRecordEntry {
-                    record: record.clone(),
-                    local_origin: is_local_record,
-                    version,
-                    status: Default::default(),
-                });
+                disk_store.insert(
+                    record.key.clone(),
+                    DhtRecordEntry {
+                        record: record.clone(),
+                        local_origin: is_local_record,
+                        version,
+                        status: Default::default(),
+                    },
+                );
             }
         }
 
@@ -807,7 +821,10 @@ impl RecordStoreManager {
                 }
             }
 
-            if self.access_control.requires_immutability_trust_anchor(&record.key) {
+            if self
+                .access_control
+                .requires_immutability_trust_anchor(&record.key)
+            {
                 if let Some(ref signer_pk) = record.signer_public_key {
                     if self.access_control.authorized_genesis_keys.is_empty() {
                         tracing::warn!(
@@ -816,7 +833,11 @@ impl RecordStoreManager {
                         );
                         continue;
                     }
-                    if !self.access_control.authorized_genesis_keys.contains(signer_pk) {
+                    if !self
+                        .access_control
+                        .authorized_genesis_keys
+                        .contains(signer_pk)
+                    {
                         tracing::warn!(
                             "Skipping immutable record {}: signer {} is not an authorized genesis key",
                             record.key,

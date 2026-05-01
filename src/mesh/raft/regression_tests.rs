@@ -17,7 +17,9 @@ mod signed_record_tests {
         let record = create_valid_record();
         assert!(record.signature.is_empty());
 
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            [0x42u8; 32],
+        )));
         assert!(!signer.verify(&record));
     }
 
@@ -27,7 +29,9 @@ mod signed_record_tests {
         record.signature = vec![1, 2, 3, 4];
         record.signer_public_key = Some("wrong_key".to_string());
 
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            [0x42u8; 32],
+        )));
         assert!(!signer.verify(&record));
     }
 
@@ -38,7 +42,9 @@ mod signed_record_tests {
         record.signer_public_key =
             Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32]));
 
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x99u8; 32])));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            [0x99u8; 32],
+        )));
         assert!(!signer.verify(&record));
     }
 
@@ -47,7 +53,9 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -65,7 +73,9 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -83,7 +93,9 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -101,7 +113,9 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -119,7 +133,9 @@ mod signed_record_tests {
         record.signer_public_key = None;
         record.signature = vec![1, 2, 3, 4];
 
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            [0x42u8; 32],
+        )));
         assert!(!signer.verify(&record));
     }
 
@@ -127,7 +143,9 @@ mod signed_record_tests {
     fn test_record_with_valid_signature_has_verifiable_content() {
         let record = create_valid_record();
         let signing_key = [0xABu8; 32];
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -759,7 +777,9 @@ mod dht_signable_bytes_tests {
         );
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
 
         let sig1 = signer.sign(&record1);
         let sig2 = signer.sign(&record2);
@@ -905,7 +925,9 @@ mod dht_snapshot_signable_tests {
 
 #[cfg(test)]
 mod streaming_snapshot_tests {
-    use crate::mesh::raft::state_machine::{GlobalRegistryStateMachine, Namespace, RaftSnapshotData};
+    use crate::mesh::raft::state_machine::{
+        GlobalRegistryStateMachine, Namespace, RaftSnapshotData,
+    };
     use rusqlite::Connection;
     use tokio::io::AsyncReadExt;
 
@@ -924,9 +946,11 @@ mod streaming_snapshot_tests {
     async fn test_streaming_round_trip_empty() {
         let sm = in_memory_state_machine();
         let serialized = sm.streaming_serialize().await.unwrap();
-        
+
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
+        sm2.streaming_deserialize_and_apply(serialized)
+            .await
+            .unwrap();
         assert!(sm2.get_all_entries().is_empty());
     }
 
@@ -942,7 +966,9 @@ mod streaming_snapshot_tests {
         let serialized = sm.streaming_serialize().await.unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
+        sm2.streaming_deserialize_and_apply(serialized)
+            .await
+            .unwrap();
 
         let entries = sm2.get_all_entries();
         assert_eq!(entries.len(), 3);
@@ -992,7 +1018,11 @@ mod streaming_snapshot_tests {
         let json_data = serde_json::to_vec(&sm.get_all_entries()).unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(RaftSnapshotData::from_bytes(bytes::Bytes::from(json_data))).await.unwrap();
+        sm2.streaming_deserialize_and_apply(RaftSnapshotData::from_bytes(bytes::Bytes::from(
+            json_data,
+        )))
+        .await
+        .unwrap();
 
         assert_eq!(sm2.get(&Namespace::Org, "key1"), Some(b"value1".to_vec()));
     }
@@ -1008,7 +1038,9 @@ mod streaming_snapshot_tests {
             .unwrap();
 
         let serialized = sm.streaming_serialize().await.unwrap();
-        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
+        sm2.streaming_deserialize_and_apply(serialized)
+            .await
+            .unwrap();
 
         assert!(sm2.get(&Namespace::Intel, "existing").is_none());
         assert_eq!(
@@ -1033,7 +1065,9 @@ mod streaming_snapshot_tests {
         let serialized = sm.streaming_serialize().await.unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
+        sm2.streaming_deserialize_and_apply(serialized)
+            .await
+            .unwrap();
 
         let entries = sm2.get_all_entries();
         assert_eq!(entries.len(), entry_count);
@@ -1058,7 +1092,9 @@ mod streaming_snapshot_tests {
         let serialized = sm.streaming_serialize().await.unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
+        sm2.streaming_deserialize_and_apply(serialized)
+            .await
+            .unwrap();
 
         assert_eq!(sm2.get(&Namespace::Org, "binary_key"), Some(binary_val));
     }

@@ -535,7 +535,8 @@ pub fn verify_dht_record_signature(record: &crate::mesh::protocol::DhtRecord) ->
         }
     };
 
-    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&signer_public_key) {
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&signer_public_key)
+    {
         Ok(b) => b,
         Err(_) => return false,
     };
@@ -568,7 +569,8 @@ pub fn verify_dht_record_signature_for_key(
         }
     };
 
-    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&signer_public_key) {
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&signer_public_key)
+    {
         Ok(b) => b,
         Err(_) => return false,
     };
@@ -626,7 +628,8 @@ impl RecordSigner {
             return false;
         };
 
-        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(public_key_b64) {
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(public_key_b64)
+        {
             Ok(b) => b,
             Err(_) => return false,
         };
@@ -1245,8 +1248,8 @@ mod tests {
     #[test]
     fn test_malicious_node_gossip_without_quorum_proof_rejected() {
         use crate::mesh::config::MeshConfig;
-        use crate::mesh::dht::DhtAccessControl;
         use crate::mesh::config::MeshNodeRole;
+        use crate::mesh::dht::DhtAccessControl;
 
         let mesh_config = MeshConfig::default();
         let access_control = DhtAccessControl::new(&mesh_config);

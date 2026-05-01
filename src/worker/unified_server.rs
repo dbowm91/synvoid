@@ -610,10 +610,15 @@ pub async fn run_unified_server_worker(
             };
 
             // Create verification pool for PQC offloading
-            let verification_pool = Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
+            let verification_pool =
+                Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
 
             // Create DHT record store if DHT is enabled
-            let record_store = create_record_store(mesh_config, routing_manager, Some(verification_pool.clone()));
+            let record_store = create_record_store(
+                mesh_config,
+                routing_manager,
+                Some(verification_pool.clone()),
+            );
 
             // Create mesh transport manager with config, topology, and record_store
             let transport_manager = Arc::new(MeshTransportManager::new(

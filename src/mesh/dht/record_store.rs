@@ -620,7 +620,8 @@ impl RecordStoreManager {
             None => return 0,
         };
 
-        let keys_on_disk: Vec<String> = disk_store.iter()
+        let keys_on_disk: Vec<String> = disk_store
+            .iter()
             .into_iter()
             .map(|(k, _): (String, DhtRecordEntry)| k)
             .collect();
@@ -643,7 +644,10 @@ impl RecordStoreManager {
         let mut rs = self.record_state.write();
         rs.merkle_tree = Some(tree);
 
-        tracing::info!("Warmed up Merkle tree with {} keys from disk storage", keys_on_disk.len());
+        tracing::info!(
+            "Warmed up Merkle tree with {} keys from disk storage",
+            keys_on_disk.len()
+        );
         keys_on_disk.len()
     }
 
@@ -669,7 +673,6 @@ impl RecordStoreManager {
         Ok(count)
     }
 }
-
 
 #[path = "record_store_crud.rs"]
 mod record_store_crud;

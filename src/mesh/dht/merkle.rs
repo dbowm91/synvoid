@@ -260,10 +260,7 @@ impl MerkleTree {
     }
 
     pub fn root_hash(&self) -> Option<Vec<u8>> {
-        self.levels
-            .last()
-            .and_then(|l| l.first())
-            .cloned()
+        self.levels.last().and_then(|l| l.first()).cloned()
     }
 
     pub fn height(&self) -> u32 {
@@ -543,7 +540,10 @@ mod tests {
         let mut expected_records = records.clone();
         expected_records.insert("key2".to_string(), b"value2".to_vec());
         let expected_tree = MerkleTree::from_records(&expected_records);
-        assert_eq!(tree.root_hash().unwrap(), expected_tree.root_hash().unwrap());
+        assert_eq!(
+            tree.root_hash().unwrap(),
+            expected_tree.root_hash().unwrap()
+        );
     }
 
     #[test]
@@ -562,7 +562,10 @@ mod tests {
         expected_records.insert("key1".to_string(), b"value1".to_vec());
         expected_records.insert("key3".to_string(), b"value3".to_vec());
         let expected_tree = MerkleTree::from_records(&expected_records);
-        assert_eq!(tree.root_hash().unwrap(), expected_tree.root_hash().unwrap());
+        assert_eq!(
+            tree.root_hash().unwrap(),
+            expected_tree.root_hash().unwrap()
+        );
     }
 
     #[test]
@@ -593,7 +596,11 @@ mod tests {
         for key in &["a", "b", "c", "d"] {
             let proof = tree.generate_proof(&[key.to_string()]).unwrap();
             let value = format!("v{}", key);
-            assert!(proof.verify(key, value.as_bytes()), "Proof failed for key {}", key);
+            assert!(
+                proof.verify(key, value.as_bytes()),
+                "Proof failed for key {}",
+                key
+            );
         }
     }
 
@@ -626,7 +633,11 @@ mod tests {
         for key in &["a", "b", "c"] {
             let proof = tree.generate_proof(&[key.to_string()]).unwrap();
             let value = format!("v{}", key);
-            assert!(proof.verify(key, value.as_bytes()), "Proof failed for key {}", key);
+            assert!(
+                proof.verify(key, value.as_bytes()),
+                "Proof failed for key {}",
+                key
+            );
         }
     }
 
@@ -643,7 +654,10 @@ mod tests {
         tree.insert_or_update("key3".to_string(), b"updated");
 
         let hash_key5_after = tree.get_leaf_hash("key5").unwrap();
-        assert_eq!(hash_key5_before, hash_key5_after, "Unrelated key hash should not change");
+        assert_eq!(
+            hash_key5_before, hash_key5_after,
+            "Unrelated key hash should not change"
+        );
     }
 
     #[test]

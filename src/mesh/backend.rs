@@ -387,9 +387,14 @@ pub async fn initialize_mesh_transports(
         None
     };
 
-    let verification_pool = Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
+    let verification_pool =
+        Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
 
-    let record_store = create_record_store(&config, routing_manager.clone(), Some(verification_pool.clone()));
+    let record_store = create_record_store(
+        &config,
+        routing_manager.clone(),
+        Some(verification_pool.clone()),
+    );
 
     let stake_manager = config.stake.as_ref().map(|stake_config| {
         let is_global = config.role.is_global();

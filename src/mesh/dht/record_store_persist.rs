@@ -49,7 +49,10 @@ impl RecordStoreManager {
                 return;
             }
 
-            tracing::warn!("RecoveryWorker: found {} PendingQuorum records, re-initializing quorum requests", pending_records.len());
+            tracing::warn!(
+                "RecoveryWorker: found {} PendingQuorum records, re-initializing quorum requests",
+                pending_records.len()
+            );
 
             for (key, entry) in pending_records {
                 let now = crate::mesh::safe_unix_timestamp();
@@ -57,7 +60,12 @@ impl RecordStoreManager {
                 let ttl = entry.record.ttl_seconds;
 
                 if entry.record.timestamp + entry.record.ttl_seconds < now {
-                    tracing::warn!("RecoveryWorker: record {} is expired (age {}s, ttl {}s), removing", key, record_age, ttl);
+                    tracing::warn!(
+                        "RecoveryWorker: record {} is expired (age {}s, ttl {}s), removing",
+                        key,
+                        record_age,
+                        ttl
+                    );
                     let mut rs = self_arc.record_state.write();
                     rs.records.remove(&key);
                     if let Some(ref disk_store) = rs.disk_store {
@@ -66,17 +74,30 @@ impl RecordStoreManager {
                     continue;
                 }
 
-                tracing::info!("RecoveryWorker: re-initializing quorum request for key: {}", key);
+                tracing::info!(
+                    "RecoveryWorker: re-initializing quorum request for key: {}",
+                    key
+                );
                 let key_clone = key.clone();
                 let value_clone = entry.record.value.clone();
                 let ttl_clone = entry.record.ttl_seconds;
 
                 let self_clone = self_arc.clone();
                 tokio::spawn(async move {
-                    if let Some(request_id) = self_clone.start_quorum_request(key_clone.clone(), value_clone.clone(), ttl_clone).await {
-                        tracing::info!("RecoveryWorker: restarted quorum request {} for key: {}", request_id, key_clone);
+                    if let Some(request_id) = self_clone
+                        .start_quorum_request(key_clone.clone(), value_clone.clone(), ttl_clone)
+                        .await
+                    {
+                        tracing::info!(
+                            "RecoveryWorker: restarted quorum request {} for key: {}",
+                            request_id,
+                            key_clone
+                        );
                     } else {
-                        tracing::warn!("RecoveryWorker: failed to restart quorum request for key: {}", key_clone);
+                        tracing::warn!(
+                            "RecoveryWorker: failed to restart quorum request for key: {}",
+                            key_clone
+                        );
                     }
                 });
             }
@@ -168,7 +189,7 @@ impl RecordStoreManager {
                 signature: Vec::new(),
                 signer_public_key: None,
                 content_hash: persisted.content_hash,
-            quorum_proof: Vec::new(),
+                quorum_proof: Vec::new(),
             };
 
             let entry = DhtRecordEntry {

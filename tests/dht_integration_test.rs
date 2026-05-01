@@ -255,7 +255,9 @@ fn test_signed_record_roundtrip() {
         SignedRecordType::Upstream,
     );
 
-    let signer = RecordSigner::new(Some(maluwaf::mesh::protocol::MeshMessageSigner::new([0u8; 32])));
+    let signer = RecordSigner::new(Some(maluwaf::mesh::protocol::MeshMessageSigner::new(
+        [0u8; 32],
+    )));
     let verifying_key = signer.get_verifying_key();
 
     if let Some(key) = verifying_key {
@@ -1275,7 +1277,9 @@ fn test_record_signer_produces_valid_signature() {
         SignedRecordType::Upstream,
     );
 
-    let signer = RecordSigner::new(Some(maluwaf::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
+    let signer = RecordSigner::new(Some(maluwaf::mesh::protocol::MeshMessageSigner::new(
+        [0x42u8; 32],
+    )));
     let verifying_key = signer.get_verifying_key();
 
     if let Some(key) = verifying_key {

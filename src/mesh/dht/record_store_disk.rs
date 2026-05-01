@@ -48,25 +48,25 @@ impl DiskRecordStore {
             .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE key = ?")
             .ok()?;
         stmt.query_row(params![key], |row| {
-                Ok(DhtRecordEntry {
-                    record: DhtRecord {
-                        key: row.get(0)?,
-                        value: row.get(1)?,
-                        timestamp: row.get(2)?,
-                        sequence_number: row.get(3)?,
-                        ttl_seconds: row.get(4)?,
-                        source_node_id: row.get(5)?,
-                        signature: Vec::new(),
-                        signer_public_key: None,
-                        content_hash: row.get(6)?,
-                        quorum_proof: Vec::new(),
-                    },
-                    local_origin: row.get::<_, i32>(7)? != 0,
-                    version: row.get::<_, i64>(8)? as u64,
-                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
-                })
+            Ok(DhtRecordEntry {
+                record: DhtRecord {
+                    key: row.get(0)?,
+                    value: row.get(1)?,
+                    timestamp: row.get(2)?,
+                    sequence_number: row.get(3)?,
+                    ttl_seconds: row.get(4)?,
+                    source_node_id: row.get(5)?,
+                    signature: Vec::new(),
+                    signer_public_key: None,
+                    content_hash: row.get(6)?,
+                    quorum_proof: Vec::new(),
+                },
+                local_origin: row.get::<_, i32>(7)? != 0,
+                version: row.get::<_, i64>(8)? as u64,
+                status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
             })
-            .ok()
+        })
+        .ok()
     }
 
     pub fn insert(&self, key: String, value: DhtRecordEntry) -> Option<DhtRecordEntry> {
@@ -190,34 +190,30 @@ impl DiskRecordStore {
         result
     }
 
-    fn get_internal(
-        &self,
-        conn: &Connection,
-        key: &str,
-    ) -> Option<DhtRecordEntry> {
+    fn get_internal(&self, conn: &Connection, key: &str) -> Option<DhtRecordEntry> {
         let mut stmt = conn
             .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE key = ?")
             .ok()?;
         stmt.query_row(params![key], |row| {
-                Ok(DhtRecordEntry {
-                    record: DhtRecord {
-                        key: row.get(0)?,
-                        value: row.get(1)?,
-                        timestamp: row.get(2)?,
-                        sequence_number: row.get(3)?,
-                        ttl_seconds: row.get(4)?,
-                        source_node_id: row.get(5)?,
-                        signature: Vec::new(),
-                        signer_public_key: None,
-                        content_hash: row.get(6)?,
-                        quorum_proof: Vec::new(),
-                    },
-                    local_origin: row.get::<_, i32>(7)? != 0,
-                    version: row.get::<_, i64>(8)? as u64,
-                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
-                })
+            Ok(DhtRecordEntry {
+                record: DhtRecord {
+                    key: row.get(0)?,
+                    value: row.get(1)?,
+                    timestamp: row.get(2)?,
+                    sequence_number: row.get(3)?,
+                    ttl_seconds: row.get(4)?,
+                    source_node_id: row.get(5)?,
+                    signature: Vec::new(),
+                    signer_public_key: None,
+                    content_hash: row.get(6)?,
+                    quorum_proof: Vec::new(),
+                },
+                local_origin: row.get::<_, i32>(7)? != 0,
+                version: row.get::<_, i64>(8)? as u64,
+                status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
             })
-            .ok()
+        })
+        .ok()
     }
 
     pub fn checkpoint(&self) -> Result<(), String> {
@@ -271,7 +267,6 @@ impl DiskRecordStore {
     }
 }
 
-
 fn increment_string_prefix(prefix: &str) -> String {
     let bytes = prefix.as_bytes();
     let mut result = bytes.to_vec();
@@ -293,7 +288,6 @@ fn increment_string_prefix(prefix: &str) -> String {
     result.push(0);
     String::from_utf8(result).unwrap_or_default()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -393,7 +387,9 @@ mod tests {
         };
 
         store.insert("test_key".to_string(), entry1.clone());
-        let old = store.insert("test_key".to_string(), entry2.clone()).unwrap();
+        let old = store
+            .insert("test_key".to_string(), entry2.clone())
+            .unwrap();
         assert_eq!(old.record.value, vec![1]);
 
         let retrieved = store.get("test_key").unwrap();

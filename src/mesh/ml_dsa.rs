@@ -159,7 +159,10 @@ impl MeshHybridSigner {
         let ed_pk_base64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(&self.ed25519_verifying_key_bytes);
 
-        let ml_pk_base64 = self.ml_dsa_signer.as_ref().and_then(|s| s.verifying_key_base64());
+        let ml_pk_base64 = self
+            .ml_dsa_signer
+            .as_ref()
+            .and_then(|s| s.verifying_key_base64());
 
         HybridSignature::new(ed25519_sig, ml_dsa_sig, ed_pk_base64, ml_pk_base64)
     }
@@ -202,11 +205,11 @@ impl MeshHybridSigner {
 
         if signature.has_ml_dsa() {
             if let Some(ref ml_pk_b64) = signature.ml_dsa_public_key {
-                 let verifier = match MeshMlDsaVerifier::from_base64(ml_pk_b64) {
-                     Ok(v) => v,
-                     Err(_) => return false,
-                 };
-                 verifier.verify(content, &signature.ml_dsa_signature)
+                let verifier = match MeshMlDsaVerifier::from_base64(ml_pk_b64) {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                verifier.verify(content, &signature.ml_dsa_signature)
             } else {
                 false
             }

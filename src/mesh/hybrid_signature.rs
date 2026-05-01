@@ -57,7 +57,11 @@ impl HybridSignature {
             + 4
             + self.ed25519_public_key.len()
             + 4
-            + self.ml_dsa_public_key.as_ref().map(|s| s.len()).unwrap_or(0)
+            + self
+                .ml_dsa_public_key
+                .as_ref()
+                .map(|s| s.len())
+                .unwrap_or(0)
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
