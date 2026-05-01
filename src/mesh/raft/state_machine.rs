@@ -285,6 +285,8 @@ impl GlobalRegistryStateMachine {
     }
 
     pub fn init_schema(db: &Connection) -> Result<(), rusqlite::Error> {
+        let _ = db.execute("PRAGMA journal_mode=WAL", []);
+        let _ = db.execute("PRAGMA busy_timeout=5000", []);
         db.execute(
             "CREATE TABLE IF NOT EXISTS state_machine (
                 namespace TEXT NOT NULL,
@@ -553,6 +555,8 @@ impl GlobalRegistryLogStorage {
     }
 
     fn init_schema(db: &Connection) -> Result<(), rusqlite::Error> {
+        let _ = db.execute("PRAGMA journal_mode=WAL", []);
+        let _ = db.execute("PRAGMA busy_timeout=5000", []);
         db.execute(
             "CREATE TABLE IF NOT EXISTS log_entries (
                 id INTEGER PRIMARY KEY,
@@ -560,6 +564,10 @@ impl GlobalRegistryLogStorage {
                 payload BLOB NOT NULL,
                 membership TEXT
             )",
+            [],
+        )?;
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_log_entries_id_term ON log_entries(id, term)",
             [],
         )?;
         db.execute(
@@ -679,6 +687,30 @@ impl GlobalRegistryLogStorage {
             Err(_) => Vec::new(),
         }
     }
+
+    pub fn get_log_entries_paged(
+        &self,
+        start: u64,
+        limit: u64,
+    ) -> Vec<(u64, u64, Vec<u8>)> {
+        let db_guard = self.db.lock().unwrap();
+        let mut stmt = match db_guard.prepare(
+            "SELECT id, term, payload FROM log_entries WHERE id >= ?1 ORDER BY id LIMIT ?2",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map(params![start as i64, limit as i64], |row| {
+            let id: i64 = row.get(0)?;
+            let term: i64 = row.get(1)?;
+            let payload: Vec<u8> = row.get(2)?;
+            Ok((id as u64, term as u64, payload))
+        });
+        match rows {
+            Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
 pub struct GlobalRegistryConfig {
@@ -781,7 +813,8 @@ impl RaftLogReader<GlobalRegistryTypeConfig> for GlobalRegistryLogReader {
             std::ops::Bound::Unbounded => u64::MAX,
         };
 
-        let entries = self.storage.get_all_entries();
+        let limit = end.saturating_sub(start);
+        let entries = self.storage.get_log_entries_paged(start, limit);
         let mut result = Vec::new();
 
         let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
