@@ -461,7 +461,10 @@ impl NormalizedInputs {
             }
         }
 
-        let body = body.and_then(|b| std::str::from_utf8(b).ok().map(|s| normalizer.normalize(s)));
+        let body = body.map(|b| {
+            let s = String::from_utf8_lossy(b);
+            normalizer.normalize(&s)
+        });
 
         Self {
             path,
