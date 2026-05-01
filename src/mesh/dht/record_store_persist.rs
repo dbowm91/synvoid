@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::mesh::dht::record_store::{DhtRecordEntry, RecordStoreManager};
 use crate::mesh::protocol::DhtRecord;
@@ -28,6 +29,62 @@ struct PersistedRecord {
 }
 
 impl RecordStoreManager {
+    pub fn start_recovery_worker(&self) {
+        let self_arc = Arc::new(self.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            tracing::info!("RecoveryWorker: scanning for PendingQuorum records");
+            let pending_records = {
+                let rs = self_arc.record_state.read();
+                if let Some(ref disk_store) = rs.disk_store {
+                    disk_store.get_pending_quorum_records()
+                } else {
+                    Vec::new()
+                }
+            };
+
+            if pending_records.is_empty() {
+                tracing::info!("RecoveryWorker: no PendingQuorum records found");
+                return;
+            }
+
+            tracing::warn!("RecoveryWorker: found {} PendingQuorum records, re-initializing quorum requests", pending_records.len());
+
+            for (key, entry) in pending_records {
+                let now = crate::mesh::safe_unix_timestamp();
+                let record_age = now.saturating_sub(entry.record.timestamp);
+                let ttl = entry.record.ttl_seconds;
+
+                if entry.record.timestamp + entry.record.ttl_seconds < now {
+                    tracing::warn!("RecoveryWorker: record {} is expired (age {}s, ttl {}s), removing", key, record_age, ttl);
+                    let mut rs = self_arc.record_state.write();
+                    rs.records.remove(&key);
+                    if let Some(ref disk_store) = rs.disk_store {
+                        let _ = disk_store.remove(&key);
+                    }
+                    continue;
+                }
+
+                tracing::info!("RecoveryWorker: re-initializing quorum request for key: {}", key);
+                let key_clone = key.clone();
+                let value_clone = entry.record.value.clone();
+                let ttl_clone = entry.record.ttl_seconds;
+
+                let self_clone = self_arc.clone();
+                tokio::spawn(async move {
+                    if let Some(request_id) = self_clone.start_quorum_request(key_clone.clone(), value_clone.clone(), ttl_clone).await {
+                        tracing::info!("RecoveryWorker: restarted quorum request {} for key: {}", request_id, key_clone);
+                    } else {
+                        tracing::warn!("RecoveryWorker: failed to restart quorum request for key: {}", key_clone);
+                    }
+                });
+            }
+        });
+
+        tracing::info!("RecoveryWorker started");
+    }
+
     pub fn persist_neighborhood(&self, storage_path: &Path) -> Result<(), String> {
         let records = self.get_neighborhood_records();
         if records.is_empty() {

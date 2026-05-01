@@ -478,6 +478,9 @@ impl RecordStoreManager {
     }
 
     pub fn start_background_tasks(&self) {
+        let self_arc = Arc::new(self.clone());
+        self_arc.start_recovery_worker();
+
         let config = self.config.clone();
         let node_id = self.node_id.clone();
         let node_role = self.node_role;

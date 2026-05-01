@@ -227,6 +227,42 @@ impl DiskRecordStore {
         Ok(())
     }
 
+    pub fn get_pending_quorum_records(&self) -> Vec<(String, DhtRecordEntry)> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE status = ?")
+            .unwrap();
+        let rows = stmt
+            .query_map(params![DhtRecordStatus::PendingQuorum as i32], |row| {
+                Ok(DhtRecordEntry {
+                    record: DhtRecord {
+                        key: row.get(0)?,
+                        value: row.get(1)?,
+                        timestamp: row.get(2)?,
+                        sequence_number: row.get(3)?,
+                        ttl_seconds: row.get(4)?,
+                        source_node_id: row.get(5)?,
+                        signature: Vec::new(),
+                        signer_public_key: None,
+                        content_hash: row.get(6)?,
+                        quorum_proof: Vec::new(),
+                    },
+                    local_origin: row.get::<_, i32>(7)? != 0,
+                    version: row.get::<_, i64>(8)? as u64,
+                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
+                })
+            })
+            .unwrap();
+
+        let mut result = Vec::new();
+        for row in rows {
+            if let Ok(entry) = row {
+                result.push((entry.record.key.clone(), entry));
+            }
+        }
+        result
+    }
+
     pub fn vacuum(&self) -> Result<(), String> {
         let conn = self.conn.lock();
         conn.execute_batch("VACUUM")
