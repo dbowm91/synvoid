@@ -1427,13 +1427,13 @@ impl HttpServer {
         let method_str = method.to_string();
 
         // ============================================================================
-        // SECTION 13: WAF Full Request Check (skip for serverless_only sites with Serverless backend)
+        // SECTION 13: WAF Full Request Check
         // ============================================================================
         let waf_decision = if matches!(target.backend_type, crate::router::BackendType::Serverless)
-            && target.site_config.serverless_only
+            && target.site_config.serverless.as_ref().is_some_and(|s| s.waf_mode == crate::config::serverless::ServerlessWafMode::Off)
         {
             tracing::debug!(
-                "serverless_only site - skipping WAF check for {} {}",
+                "serverless route with waf_mode=off - skipping WAF check for {} {}",
                 method_str,
                 path
             );
