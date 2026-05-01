@@ -181,6 +181,44 @@ impl RecordStoreManager {
 
         let is_local_record = record.source_node_id == self.node_id;
 
+        if self.access_control.requires_immutability_trust_anchor(&record.key) && !is_local_record {
+            let signer_valid = if let Some(ref signer_pk) = record.signer_public_key {
+                if self.access_control.authorized_genesis_keys.is_empty() {
+                    tracing::warn!(
+                        "Rejected immutable record {}: no authorized genesis keys configured - rejecting from {}",
+                        record.key,
+                        record.source_node_id
+                    );
+                    crate::metrics::record_dht_store_operation(false);
+                    return false;
+                }
+                if !self.access_control.authorized_genesis_keys.contains(signer_pk) {
+                    tracing::warn!(
+                        "Rejected immutable record {}: signer {} is not an authorized genesis key",
+                        record.key,
+                        signer_pk
+                    );
+                    crate::metrics::record_dht_store_operation(false);
+                    return false;
+                }
+                tracing::debug!(
+                    "Trust anchor verification passed for immutable record: {}",
+                    record.key
+                );
+                true
+            } else {
+                tracing::warn!(
+                    "Rejected immutable record {} from {}: no signer public key provided",
+                    record.key,
+                    record.source_node_id
+                );
+                crate::metrics::record_dht_store_operation(false);
+                return false;
+            };
+
+            let _ = signer_valid;
+        }
+
         if !is_local_record {
             if record.signature.is_empty() {
                 tracing::warn!(
@@ -763,6 +801,32 @@ impl RecordStoreManager {
                 if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
                     tracing::warn!(
                         "Skipping sync record in quorum-required namespace {}: quorum proof verification failed",
+                        record.key
+                    );
+                    continue;
+                }
+            }
+
+            if self.access_control.requires_immutability_trust_anchor(&record.key) {
+                if let Some(ref signer_pk) = record.signer_public_key {
+                    if self.access_control.authorized_genesis_keys.is_empty() {
+                        tracing::warn!(
+                            "Skipping immutable record {}: no authorized genesis keys configured",
+                            record.key
+                        );
+                        continue;
+                    }
+                    if !self.access_control.authorized_genesis_keys.contains(signer_pk) {
+                        tracing::warn!(
+                            "Skipping immutable record {}: signer {} is not an authorized genesis key",
+                            record.key,
+                            signer_pk
+                        );
+                        continue;
+                    }
+                } else {
+                    tracing::warn!(
+                        "Skipping immutable record {}: no signer public key provided",
                         record.key
                     );
                     continue;

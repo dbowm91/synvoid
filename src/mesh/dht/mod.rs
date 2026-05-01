@@ -665,6 +665,8 @@ pub struct DhtAccessControl {
     allowed_keys_for_edge: Vec<String>,
     global_signature_required_keys: Vec<String>,
     self_only_keys: Vec<String>,
+    immutability_required_keys: Vec<String>,
+    authorized_genesis_keys: Vec<String>,
     min_reputation_for_write: i64,
 }
 
@@ -692,11 +694,24 @@ impl DhtAccessControl {
             "capability_attestation:".to_string(),
         ];
 
+        let immutability_required_keys = vec![
+            "genesis_key_transition:".to_string(),
+            "revoked_global_node:".to_string(),
+        ];
+
+        let authorized_genesis_keys = mesh_config
+            .genesis_key
+            .as_ref()
+            .map(|g| g.authorized_genesis_keys.clone())
+            .unwrap_or_default();
+
         Self {
             require_global_for_privileged: true,
             allowed_keys_for_edge,
             global_signature_required_keys,
             self_only_keys,
+            immutability_required_keys,
+            authorized_genesis_keys,
             min_reputation_for_write: mesh_config
                 .dht
                 .as_ref()
@@ -801,6 +816,15 @@ impl DhtAccessControl {
 
     pub fn min_reputation_for_write(&self) -> i64 {
         self.min_reputation_for_write
+    }
+
+    pub fn requires_immutability_trust_anchor(&self, key: &str) -> bool {
+        for prefix in &self.immutability_required_keys {
+            if key.starts_with(prefix) {
+                return true;
+            }
+        }
+        false
     }
 }
 
