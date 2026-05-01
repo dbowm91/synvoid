@@ -13,7 +13,7 @@ use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::raft::network::MeshRaftNetworkFactory;
 use crate::mesh::raft::state_machine::{
     GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage, GlobalRegistryStateMachine,
-    GlobalRegistryTypeConfig, Namespace, RaftCommand,
+    GlobalRegistryTypeConfig, Namespace, RaftCommand, RaftSnapshotData,
 };
 use crate::mesh::MeshProxy;
 
@@ -271,7 +271,7 @@ impl RaftInstance {
             db: state_machine.db.clone(),
         };
         state_machine_clone
-            .install_snapshot(meta, snapshot)
+            .install_snapshot(meta, RaftSnapshotData::from_bytes(snapshot))
             .await
             .map_err(|e| format!("Failed to install snapshot: {}", e))?;
         tracing::info!("Installed snapshot with last_log_id {:?}", meta.last_log_id);

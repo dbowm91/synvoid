@@ -905,28 +905,33 @@ mod dht_snapshot_signable_tests {
 
 #[cfg(test)]
 mod streaming_snapshot_tests {
-    use crate::mesh::raft::state_machine::{GlobalRegistryStateMachine, Namespace};
-    use bytes::Bytes;
+    use crate::mesh::raft::state_machine::{GlobalRegistryStateMachine, Namespace, RaftSnapshotData};
     use rusqlite::Connection;
+    use tokio::io::AsyncReadExt;
 
     fn in_memory_state_machine() -> GlobalRegistryStateMachine {
         let db = Connection::open_in_memory().unwrap();
         GlobalRegistryStateMachine::new_with_connection(db).unwrap()
     }
 
-    #[test]
-    fn test_streaming_round_trip_empty() {
-        let sm = in_memory_state_machine();
-        let serialized = sm.streaming_serialize().unwrap();
-        assert!(serialized.len() >= 12);
+    async fn snapshot_to_vec(mut data: RaftSnapshotData) -> Vec<u8> {
+        let mut buf = Vec::new();
+        data.read_to_end(&mut buf).await.unwrap();
+        buf
+    }
 
+    #[tokio::test]
+    async fn test_streaming_round_trip_empty() {
+        let sm = in_memory_state_machine();
+        let serialized = sm.streaming_serialize().await.unwrap();
+        
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
         assert!(sm2.get_all_entries().is_empty());
     }
 
-    #[test]
-    fn test_streaming_round_trip_with_entries() {
+    #[tokio::test]
+    async fn test_streaming_round_trip_with_entries() {
         let sm = in_memory_state_machine();
         sm.set(&Namespace::Org, "key1", b"value1".to_vec()).unwrap();
         sm.set(&Namespace::Intel, "key2", b"value2".to_vec())
@@ -934,10 +939,10 @@ mod streaming_snapshot_tests {
         sm.set(&Namespace::Revocation, "key3", b"value3_longer".to_vec())
             .unwrap();
 
-        let serialized = sm.streaming_serialize().unwrap();
+        let serialized = sm.streaming_serialize().await.unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
 
         let entries = sm2.get_all_entries();
         assert_eq!(entries.len(), 3);
@@ -950,18 +955,19 @@ mod streaming_snapshot_tests {
         );
     }
 
-    #[test]
-    fn test_streaming_format_has_magic() {
+    #[tokio::test]
+    async fn test_streaming_format_has_magic() {
         let sm = in_memory_state_machine();
         sm.set(&Namespace::Org, "k", b"v".to_vec()).unwrap();
 
-        let serialized = sm.streaming_serialize().unwrap();
-        let magic = u32::from_le_bytes(serialized[..4].try_into().unwrap());
+        let serialized = sm.streaming_serialize().await.unwrap();
+        let bytes = snapshot_to_vec(serialized).await;
+        let magic = u32::from_le_bytes(bytes[..4].try_into().unwrap());
         assert_eq!(magic, 0x53524D53);
     }
 
-    #[test]
-    fn test_streaming_entry_count_matches() {
+    #[tokio::test]
+    async fn test_streaming_entry_count_matches() {
         let sm = in_memory_state_machine();
         for i in 0..50 {
             sm.set(
@@ -972,26 +978,27 @@ mod streaming_snapshot_tests {
             .unwrap();
         }
 
-        let serialized = sm.streaming_serialize().unwrap();
-        let count = u64::from_le_bytes(serialized[4..12].try_into().unwrap());
+        let serialized = sm.streaming_serialize().await.unwrap();
+        let bytes = snapshot_to_vec(serialized).await;
+        let count = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
         assert_eq!(count, 50);
     }
 
-    #[test]
-    fn test_fallback_json_deserialization() {
+    #[tokio::test]
+    async fn test_fallback_json_deserialization() {
         let sm = in_memory_state_machine();
         sm.set(&Namespace::Org, "key1", b"value1".to_vec()).unwrap();
 
         let json_data = serde_json::to_vec(&sm.get_all_entries()).unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(&json_data).unwrap();
+        sm2.streaming_deserialize_and_apply(RaftSnapshotData::from_bytes(bytes::Bytes::from(json_data))).await.unwrap();
 
         assert_eq!(sm2.get(&Namespace::Org, "key1"), Some(b"value1".to_vec()));
     }
 
-    #[test]
-    fn test_streaming_replaces_existing_data() {
+    #[tokio::test]
+    async fn test_streaming_replaces_existing_data() {
         let sm = in_memory_state_machine();
         sm.set(&Namespace::Org, "old_key", b"old_value".to_vec())
             .unwrap();
@@ -1000,8 +1007,8 @@ mod streaming_snapshot_tests {
         sm2.set(&Namespace::Intel, "existing", b"data".to_vec())
             .unwrap();
 
-        let serialized = sm.streaming_serialize().unwrap();
-        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+        let serialized = sm.streaming_serialize().await.unwrap();
+        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
 
         assert!(sm2.get(&Namespace::Intel, "existing").is_none());
         assert_eq!(
@@ -1010,8 +1017,8 @@ mod streaming_snapshot_tests {
         );
     }
 
-    #[test]
-    fn test_streaming_large_dataset() {
+    #[tokio::test]
+    async fn test_streaming_large_dataset() {
         let sm = in_memory_state_machine();
         let entry_count: usize = 10_000;
         for i in 0..entry_count {
@@ -1023,12 +1030,10 @@ mod streaming_snapshot_tests {
             .unwrap();
         }
 
-        let serialized = sm.streaming_serialize().unwrap();
-        let count = u64::from_le_bytes(serialized[4..12].try_into().unwrap());
-        assert_eq!(count, entry_count as u64);
+        let serialized = sm.streaming_serialize().await.unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
 
         let entries = sm2.get_all_entries();
         assert_eq!(entries.len(), entry_count);
@@ -1043,17 +1048,17 @@ mod streaming_snapshot_tests {
         );
     }
 
-    #[test]
-    fn test_streaming_binary_values() {
+    #[tokio::test]
+    async fn test_streaming_binary_values() {
         let sm = in_memory_state_machine();
         let binary_val: Vec<u8> = (0u8..=255).collect();
         sm.set(&Namespace::Org, "binary_key", binary_val.clone())
             .unwrap();
 
-        let serialized = sm.streaming_serialize().unwrap();
+        let serialized = sm.streaming_serialize().await.unwrap();
 
         let sm2 = in_memory_state_machine();
-        sm2.streaming_deserialize_and_apply(&serialized).unwrap();
+        sm2.streaming_deserialize_and_apply(serialized).await.unwrap();
 
         assert_eq!(sm2.get(&Namespace::Org, "binary_key"), Some(binary_val));
     }

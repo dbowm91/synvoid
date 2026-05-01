@@ -902,6 +902,14 @@ impl RecordStoreManager {
         };
 
         if let Some(record) = record {
+            if self.is_global_node() {
+                if let Some(ref disk_store) = self.record_state.read().disk_store {
+                    if let Some(entry) = self.record_state.read().records.get(&record.key) {
+                        disk_store.insert(record.key.clone(), entry.clone());
+                    }
+                }
+            }
+
             self.maybe_queue_for_announce(&record);
 
             if self.is_global_node() {
@@ -924,6 +932,10 @@ impl RecordStoreManager {
             if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
                 rs.records.remove(key);
                 tracing::info!("Aborted pending record for key: {}", key);
+                drop(rs);
+                if let Some(ref disk_store) = self.record_state.read().disk_store {
+                    disk_store.remove(key);
+                }
             }
         }
     }
@@ -978,11 +990,38 @@ impl RecordStoreManager {
         };
 
         let peers = transport.get_connected_peers();
+        if peers.is_empty() {
+            tracing::debug!("No peers connected to send DhtRecordCommit for key {}", record.key);
+            return;
+        }
+
+        // Send initial commit
         for peer_id in &peers {
             let _ = transport.send_datagram_to_peer(peer_id, &message).await;
         }
+        tracing::debug!("Sent initial DhtRecordCommit for key {} to {} peers", record.key, peers.len());
 
-        tracing::debug!("Sent DhtRecordCommit for key {} to peers", record.key);
+        // Spawn retry task
+        let transport_clone = transport.clone();
+        let key_clone = record.key.clone();
+        let message_clone = message.clone();
+
+        tokio::spawn(async move {
+            let retry_intervals = [
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(5),
+            ];
+
+            for interval in retry_intervals {
+                tokio::time::sleep(interval).await;
+                let current_peers = transport_clone.get_connected_peers();
+                for peer_id in &current_peers {
+                    let _ = transport_clone.send_datagram_to_peer(peer_id, &message_clone).await;
+                }
+                tracing::debug!("Retried DhtRecordCommit for key {} to {} peers", key_clone, current_peers.len());
+            }
+        });
     }
 
     pub fn handle_record_commit(
@@ -1002,6 +1041,30 @@ impl RecordStoreManager {
                 source_node_id
             );
             return false;
+        }
+
+        // Passive confirmation: if we have it as PendingQuorum, transition to Live
+        let is_pending = {
+            let rs = self.record_state.read();
+            rs.records.get(&record.key).map(|e| e.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum).unwrap_or(false)
+        };
+
+        if is_pending {
+            let mut rs = self.record_state.write();
+            if let Some(entry) = rs.records.get(&record.key) {
+                if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
+                    let mut updated = entry.clone();
+                    updated.status = crate::mesh::protocol::DhtRecordStatus::Live;
+                    updated.record = record.clone(); // Update with possibly newer/signed record
+                    rs.records.insert(record.key.clone(), updated);
+                    rs.local_version += 1;
+                    tracing::info!("Passively committed record {} from PendingQuorum to Live via Commit message", record.key);
+                    drop(rs);
+                    self.record_change();
+                    self.compute_merkle_tree();
+                    return true;
+                }
+            }
         }
 
         let existing = {

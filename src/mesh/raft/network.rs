@@ -14,6 +14,7 @@ use openraft::raft::{
 use openraft::type_config::alias::{SnapshotOf, VoteOf};
 use openraft::OptionalSend;
 use openraft::RaftTypeConfig;
+use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
 
 use crate::mesh::backend::MeshBackendPool;
@@ -166,9 +167,11 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         let vote_data = postcard::to_stdvec(&vote)
             .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
-        let snapshot_bytes: Bytes = snapshot.snapshot;
-        let snapshot_data = snapshot_bytes.as_ref().to_vec();
-        let total_size = snapshot_data.len() as u64;
+        let mut snapshot_data = snapshot.snapshot;
+        let total_size = snapshot_data
+            .len()
+            .await
+            .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
         let request_id = format!("snapshot-{}", uuid::Uuid::new_v4());
         let header = crate::mesh::protocol::SnapshotHeader {
@@ -205,10 +208,14 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
         let mut offset = 0u64;
 
         while offset < total_size {
-            let chunk_end = ((offset as usize) + chunk_size).min(snapshot_data.len());
-            let chunk = snapshot_data[offset as usize..chunk_end].to_vec();
+            let this_chunk_size = (total_size - offset).min(chunk_size as u64) as usize;
+            let mut chunk = vec![0u8; this_chunk_size];
+            snapshot_data
+                .read_exact(&mut chunk)
+                .await
+                .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
-            let is_last = chunk_end >= snapshot_data.len();
+            let is_last = offset + (this_chunk_size as u64) >= total_size;
 
             let chunk_info = crate::mesh::protocol::SnapshotChunk {
                 request_id: request_id.clone(),
@@ -233,7 +240,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
                 .await
                 .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
-            offset = chunk_end as u64;
+            offset += this_chunk_size as u64;
         }
 
         let timeout = Duration::from_secs(60);

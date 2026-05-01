@@ -371,17 +371,24 @@ impl RecordStoreManager {
             _ => match rs.records.get(&record.key) {
                 None => true,
                 Some(existing_entry) => {
-                    let existing_key = (
-                        existing_entry.record.timestamp,
-                        existing_entry.record.sequence_number,
-                        existing_entry.record.source_node_id.clone(),
-                    );
-                    let new_key = (
-                        record.timestamp,
-                        record.sequence_number,
-                        record.source_node_id.clone(),
-                    );
-                    new_key > existing_key
+                    // Passive confirmation: if we have it as PendingQuorum, but it's received from another node,
+                    // mark it as Live.
+                    if existing_entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum && !is_local_record {
+                        tracing::info!("Passively confirming record {} from PendingQuorum to Live via Sync/Gossip", record.key);
+                        true // Allow replacement to update status to Live (default)
+                    } else {
+                        let existing_key = (
+                            existing_entry.record.timestamp,
+                            existing_entry.record.sequence_number,
+                            existing_entry.record.source_node_id.clone(),
+                        );
+                        let new_key = (
+                            record.timestamp,
+                            record.sequence_number,
+                            record.source_node_id.clone(),
+                        );
+                        new_key > existing_key
+                    }
                 }
             },
         };
@@ -416,6 +423,17 @@ impl RecordStoreManager {
         tracing::debug!("Stored global record: {}", record.key);
 
         drop(rs);
+
+        if self.is_global_node() {
+            if let Some(ref disk_store) = self.record_state.read().disk_store {
+                disk_store.insert(record.key.clone(), DhtRecordEntry {
+                    record: record.clone(),
+                    local_origin: is_local_record,
+                    version,
+                    status: Default::default(),
+                });
+            }
+        }
 
         self.maybe_queue_for_announce(&record);
 
@@ -543,6 +561,25 @@ impl RecordStoreManager {
         if !self.is_global_node() {
             self.metrics_state.write().cache_misses += 1;
         }
+
+        if self.is_global_node() {
+            if let Some(ref disk_store) = self.record_state.read().disk_store {
+                if let Some(entry) = disk_store.get(key) {
+                    if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
+                        return None;
+                    }
+                    let now = crate::mesh::safe_unix_timestamp();
+                    let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
+                    if now < expires_at {
+                        let mut rs = self.record_state.write();
+                        rs.records.insert(key.to_string(), entry.clone());
+                        crate::metrics::record_dht_get_operation(true);
+                        return Some(entry.record);
+                    }
+                }
+            }
+        }
+
         crate::metrics::record_dht_get_operation(false);
         None
     }

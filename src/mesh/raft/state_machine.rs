@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Display};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -17,8 +17,9 @@ use openraft::EntryPayload;
 use openraft::OptionalSend;
 use openraft::RaftTypeConfig;
 use rusqlite::{params, Connection};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
-pub type NodeId = u64;
+use std::io::{Read, Seek, Write};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub enum Namespace {
@@ -115,6 +116,116 @@ impl Display for RaftCommand {
     }
 }
 
+pub type NodeId = u64;
+
+#[derive(Debug)]
+pub enum RaftSnapshotData {
+    Memory(std::io::Cursor<Bytes>),
+    File(tokio::fs::File),
+}
+
+impl RaftSnapshotData {
+    pub fn from_bytes(bytes: Bytes) -> Self {
+        Self::Memory(std::io::Cursor::new(bytes))
+    }
+
+    pub async fn from_file(file: tokio::fs::File) -> Self {
+        Self::File(file)
+    }
+
+    pub async fn len(&mut self) -> std::io::Result<u64> {
+        match self {
+            Self::Memory(c) => Ok(c.get_ref().len() as u64),
+            Self::File(f) => {
+                let meta = f.metadata().await?;
+                Ok(meta.len())
+            }
+        }
+    }
+
+    /// Helper to convert to std::io::Read + Seek for synchronous blocking tasks
+    pub async fn into_std(self) -> std::io::Result<Box<dyn ReadSeek>> {
+        match self {
+            Self::Memory(c) => Ok(Box::new(c)),
+            Self::File(f) => Ok(Box::new(f.into_std().await)),
+        }
+    }
+}
+
+pub trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+
+impl AsyncRead for RaftSnapshotData {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Memory(c) => std::pin::Pin::new(c).poll_read(cx, buf),
+            Self::File(f) => std::pin::Pin::new(f).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for RaftSnapshotData {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Self::Memory(_) => std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Memory snapshot data is read-only",
+            ))),
+            Self::File(f) => std::pin::Pin::new(f).poll_write(_cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Memory(_) => std::task::Poll::Ready(Ok(())),
+            Self::File(f) => std::pin::Pin::new(f).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Memory(_) => std::task::Poll::Ready(Ok(())),
+            Self::File(f) => std::pin::Pin::new(f).poll_shutdown(cx),
+        }
+    }
+}
+
+impl AsyncSeek for RaftSnapshotData {
+    fn start_seek(
+        self: std::pin::Pin<&mut Self>,
+        position: std::io::SeekFrom,
+    ) -> std::io::Result<()> {
+        match self.get_mut() {
+            Self::Memory(c) => std::pin::Pin::new(c).start_seek(position),
+            Self::File(f) => std::pin::Pin::new(f).start_seek(position),
+        }
+    }
+
+    fn poll_complete(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<u64>> {
+        match self.get_mut() {
+            Self::Memory(c) => std::pin::Pin::new(c).poll_complete(cx),
+            Self::File(f) => std::pin::Pin::new(f).poll_complete(cx),
+        }
+    }
+}
+
 openraft::declare_raft_types!(
     pub GlobalRegistryTypeConfig:
         D = RaftCommand,
@@ -124,9 +235,10 @@ openraft::declare_raft_types!(
         Term = u64,
         LeaderId = openraft::impls::leader_id_adv::LeaderId<u64, u64>,
         Vote = openraft::impls::Vote<openraft::impls::leader_id_adv::LeaderId<u64, u64>>,
-        SnapshotData = bytes::Bytes,
+        SnapshotData = RaftSnapshotData,
         AsyncRuntime = openraft::impls::TokioRuntime,
 );
+
 
 type CommittedLeaderIdOfConfig =
     openraft::type_config::alias::CommittedLeaderIdOf<GlobalRegistryTypeConfig>;
@@ -294,124 +406,125 @@ impl GlobalRegistryStateMachine {
             .and_then(|m| serde_json::from_str(&m).ok())
     }
 
-    pub fn streaming_serialize(&self) -> std::io::Result<Bytes> {
-        let db_guard = self.db.lock().unwrap();
-        let mut stmt = db_guard
-            .prepare("SELECT namespace, key, value FROM state_machine")
-            .map_err(std::io::Error::other)?;
+    pub async fn streaming_serialize(&self) -> std::io::Result<RaftSnapshotData> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut file = tempfile::tempfile()?;
 
-        let entry_count: u64 = db_guard
-            .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
-            .map_err(std::io::Error::other)?;
+            let db_guard = db.lock().unwrap();
+            let mut stmt = db_guard
+                .prepare("SELECT namespace, key, value FROM state_machine")
+                .map_err(std::io::Error::other)?;
 
-        let estimated_size = (entry_count as usize)
-            .saturating_mul(128)
-            .saturating_add(12);
-        let mut buf = Vec::with_capacity(estimated_size);
+            let entry_count: u64 = db_guard
+                .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
+                .map_err(std::io::Error::other)?;
 
-        buf.extend_from_slice(&STREAMING_SNAPSHOT_MAGIC.to_le_bytes());
-        buf.extend_from_slice(&entry_count.to_le_bytes());
+            file.write_all(&STREAMING_SNAPSHOT_MAGIC.to_le_bytes())?;
+            file.write_all(&entry_count.to_le_bytes())?;
 
-        let rows = stmt
-            .query_map([], |row| {
-                let ns: String = row.get(0)?;
-                let key: String = row.get(1)?;
-                let val: Vec<u8> = row.get(2)?;
-                Ok((ns, key, val))
-            })
-            .map_err(std::io::Error::other)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let ns: String = row.get(0)?;
+                    let key: String = row.get(1)?;
+                    let val: Vec<u8> = row.get(2)?;
+                    Ok((ns, key, val))
+                })
+                .map_err(std::io::Error::other)?;
 
-        for row_result in rows {
-            let (ns, key, val) = row_result.map_err(std::io::Error::other)?;
-            let entry = StreamingSnapshotEntry { ns, key, val };
-            let entry_bytes = postcard::to_stdvec(&entry).map_err(std::io::Error::other)?;
-            let len = entry_bytes.len() as u32;
-            buf.extend_from_slice(&len.to_le_bytes());
-            buf.extend_from_slice(&entry_bytes);
-        }
+            for row_result in rows {
+                let (ns, key, val) = row_result.map_err(std::io::Error::other)?;
+                let entry = StreamingSnapshotEntry { ns, key, val };
+                let entry_bytes = postcard::to_stdvec(&entry).map_err(std::io::Error::other)?;
+                let len = entry_bytes.len() as u32;
+                file.write_all(&len.to_le_bytes())?;
+                file.write_all(&entry_bytes)?;
+            }
 
-        Ok(Bytes::from(buf))
+            file.flush()?;
+            file.seek(std::io::SeekFrom::Start(0))?;
+
+            Ok(RaftSnapshotData::File(tokio::fs::File::from_std(file)))
+        })
+        .await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
     }
 
-    pub fn streaming_deserialize_and_apply(&self, data: &[u8]) -> std::io::Result<()> {
-        if data.len() < 12 {
-            return self.fallback_json_install(data);
-        }
+    pub async fn streaming_deserialize_and_apply(&self, data: RaftSnapshotData) -> std::io::Result<()> {
+        let db = self.db.clone();
+        let std_data = data.into_std().await?;
 
-        let magic = u32::from_le_bytes(
-            data[0..4]
-                .try_into()
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad magic"))?,
-        );
+        tokio::task::spawn_blocking(move || {
+            let mut data = std_data;
+            let mut magic_buf = [0u8; 4];
+            if data.read_exact(&mut magic_buf).is_err() {
+                return Self::fallback_json_install_from_reader(db, data);
+            }
 
-        if magic != STREAMING_SNAPSHOT_MAGIC {
-            return self.fallback_json_install(data);
-        }
+            let magic = u32::from_le_bytes(magic_buf);
+            if magic != STREAMING_SNAPSHOT_MAGIC {
+                data.seek(std::io::SeekFrom::Start(0))?;
+                return Self::fallback_json_install_from_reader(db, data);
+            }
 
-        let db = self.db.lock().unwrap();
-        db.execute("DELETE FROM state_machine", [])
+            let mut count_buf = [0u8; 8];
+            data.read_exact(&mut count_buf)?;
+            let entry_count = u64::from_le_bytes(count_buf);
+
+            let db_guard = db.lock().unwrap();
+            db_guard.execute("DELETE FROM state_machine", [])
+                .map_err(std::io::Error::other)?;
+
+            for _ in 0..entry_count {
+                let mut len_buf = [0u8; 4];
+                data.read_exact(&mut len_buf)?;
+                let entry_len = u32::from_le_bytes(len_buf) as usize;
+
+                let mut entry_buf = vec![0u8; entry_len];
+                data.read_exact(&mut entry_buf)?;
+
+                let entry: StreamingSnapshotEntry = postcard::from_bytes(&entry_buf)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+                db_guard.execute(
+                    "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![entry.ns, entry.key, entry.val],
+                )
+                .map_err(std::io::Error::other)?;
+            }
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+    }
+
+    fn fallback_json_install_from_reader(db: Arc<Mutex<Connection>>, mut reader: Box<dyn ReadSeek>) -> std::io::Result<()> {
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        Self::fallback_json_install_static(db, &buf)
+    }
+
+    fn fallback_json_install_static(db: Arc<Mutex<Connection>>, data: &[u8]) -> std::io::Result<()> {
+        let entries: Vec<(Namespace, String, Vec<u8>)> = serde_json::from_slice(data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let db_guard = db.lock().unwrap();
+        db_guard.execute("DELETE FROM state_machine", [])
             .map_err(std::io::Error::other)?;
 
-        let entry_count = u64::from_le_bytes(
-            data[4..12]
-                .try_into()
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad count"))?,
-        );
-
-        let mut offset: usize = 12;
-
-        for _ in 0..entry_count {
-            if offset + 4 > data.len() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "truncated entry length",
-                ));
-            }
-            let entry_len =
-                u32::from_le_bytes(data[offset..offset + 4].try_into().map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "bad entry len")
-                })?) as usize;
-            offset += 4;
-
-            if offset + entry_len > data.len() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "truncated entry data",
-                ));
-            }
-
-            let entry: StreamingSnapshotEntry =
-                postcard::from_bytes(&data[offset..offset + entry_len])
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            offset += entry_len;
-
-            db.execute(
+        for (ns, key, val) in entries {
+            db_guard.execute(
                 "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
-                rusqlite::params![entry.ns, entry.key, entry.val],
+                rusqlite::params![ns.as_str(), key, val],
             )
             .map_err(std::io::Error::other)?;
         }
-
         Ok(())
     }
 
     fn fallback_json_install(&self, data: &[u8]) -> std::io::Result<()> {
-        let entries: Vec<(Namespace, String, Vec<u8>)> = serde_json::from_slice(data)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-        let db = self.db.lock().unwrap();
-        db.execute("DELETE FROM state_machine", [])
-            .map_err(std::io::Error::other)?;
-
-        for (namespace, key, value) in entries {
-            db.execute(
-                "INSERT INTO state_machine (namespace, key, value) VALUES (?1, ?2, ?3)",
-                rusqlite::params![namespace.as_str(), key, value],
-            )
-            .map_err(std::io::Error::other)?;
-        }
-
-        Ok(())
+        Self::fallback_json_install_static(self.db.clone(), data)
     }
 }
 
@@ -710,7 +823,7 @@ impl GlobalRegistrySnapshotBuilder {
 
 impl RaftSnapshotBuilder<GlobalRegistryTypeConfig> for GlobalRegistrySnapshotBuilder {
     async fn build_snapshot(&mut self) -> std::io::Result<SnapshotOf<GlobalRegistryTypeConfig>> {
-        let snapshot_data = self.state_machine.streaming_serialize()?;
+        let snapshot_data = self.state_machine.streaming_serialize().await?;
 
         let last_applied = self.state_machine.get_last_applied_log_id().unwrap_or(0);
 
@@ -882,16 +995,18 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
         })
     }
 
-    async fn begin_receiving_snapshot(&mut self) -> std::io::Result<Bytes> {
-        Ok(Bytes::new())
+    async fn begin_receiving_snapshot(&mut self) -> std::io::Result<RaftSnapshotData> {
+        let std_file = tokio::task::spawn_blocking(|| tempfile::tempfile()).await??;
+        let file = tokio::fs::File::from_std(std_file);
+        Ok(RaftSnapshotData::File(file))
     }
 
     async fn install_snapshot(
         &mut self,
         meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>,
-        snapshot: Bytes,
+        snapshot: RaftSnapshotData,
     ) -> std::io::Result<()> {
-        self.streaming_deserialize_and_apply(&snapshot)?;
+        self.streaming_deserialize_and_apply(snapshot).await?;
 
         let db = self.db.lock().unwrap();
 
@@ -916,17 +1031,18 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> std::io::Result<Option<SnapshotOf<GlobalRegistryTypeConfig>>> {
-        let db_guard = self.db.lock().unwrap();
-        let count: u64 = db_guard
-            .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
-            .map_err(std::io::Error::other)?;
-        drop(db_guard);
+        let count: u64 = {
+            let db_guard = self.db.lock().unwrap();
+            db_guard
+                .query_row("SELECT COUNT(*) FROM state_machine", [], |row| row.get(0))
+                .map_err(std::io::Error::other)?
+        };
 
         if count == 0 {
             return Ok(None);
         }
 
-        let snapshot_data = self.streaming_serialize()?;
+        let snapshot_data = self.streaming_serialize().await?;
 
         let last_applied = self.get_last_applied_log_id().unwrap_or(0);
 

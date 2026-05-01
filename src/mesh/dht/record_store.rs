@@ -610,6 +610,40 @@ impl RecordStoreManager {
         rs.records.len()
     }
 
+    pub fn warmup_from_disk(&self) -> usize {
+        let binding = self.record_state.read();
+        let disk_store = match binding.disk_store.as_ref() {
+            Some(ds) => ds,
+            None => return 0,
+        };
+
+        let keys_on_disk: Vec<String> = disk_store.iter()
+            .into_iter()
+            .map(|(k, _): (String, DhtRecordEntry)| k)
+            .collect();
+        drop(binding);
+
+        if keys_on_disk.is_empty() {
+            return 0;
+        }
+
+        let mut record_map = std::collections::HashMap::new();
+        let rs = self.record_state.read();
+        for key in &keys_on_disk {
+            if let Some(entry) = rs.records.get(key) {
+                record_map.insert(key.clone(), entry.record.value.clone());
+            }
+        }
+        drop(rs);
+
+        let tree = crate::mesh::dht::merkle::MerkleTree::from_records(&record_map);
+        let mut rs = self.record_state.write();
+        rs.merkle_tree = Some(tree);
+
+        tracing::info!("Warmed up Merkle tree with {} keys from disk storage", keys_on_disk.len());
+        keys_on_disk.len()
+    }
+
     pub fn persist_to_disk(&self) -> Result<usize, String> {
         let binding = self.record_state.read();
         let disk_store = match binding.disk_store.as_ref() {

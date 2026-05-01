@@ -132,6 +132,49 @@
 - Disk store is additive (optional via config) rather than fully replacing in-memory store - in-memory BTreeMap shards remain the primary working store, disk provides persistence
 - The plan mentioned "replace BTreeMap shards" but implementation is a hybrid: in-memory for hot path, disk for persistence. This preserves existing behavior while adding persistence capability.
 
+## Wave 11: Distributed Layer Refinement (In Progress)
+
+### W11.6: Transparent DHT Persistence (L1/L2 Cache) [High Volume]
+**Goal**: Make `DiskRecordStore` a transparent L2 cache for the `ShardedRecordStore`.
+- **Tasks**:
+  - Update `RecordStoreManager::get_record` to check `disk_store` if record is not in `records` (memory).
+  - Update `RecordStoreManager::store_record_global` to write to `disk_store` immediately after memory insertion.
+  - Implement a "Startup Warmup" in `record_store_persist.rs` that indexes keys from disk into the Merkle tree without loading all values into RAM.
+- **Verification**: Restart node, ensure `get_record` returns existing records without network sync.
+
+### W11.7: Async PQC Integration [High Volume]
+**Goal**: Integrate `CryptoVerificationPool` into mesh hot-paths.
+- **Tasks**:
+  - Replace blocking `ml_dsa::verify` calls in `src/mesh/peer_auth.rs` with `pool.verify_ml_dsa_standalone`.
+  - Replace blocking verification in `src/mesh/dht/record_store_crud.rs`.
+  - Ensure `MeshProxy` holds an `Arc<CryptoVerificationPool>`.
+- **Verification**: Benchmark `handle_raft_message` and verify no long-running synchronous crypto calls on the main executor threads.
+
+### W11.8: Real-world Latency Tracking for Quorum [High Volume]
+**Goal**: Populate `GlobalNodeInfo.latency_ms` with actual mesh metrics.
+- **Tasks**:
+  - Update `MeshTopology` to track rolling average RTT for each `PeerState`.
+  - Bridge these RTT metrics into the `QuorumManager` node selection logic.
+- **Verification**: Logs should show `select_regional_nodes` picking different nodes as network conditions change.
+
+### W11.9: True Streaming Raft Snapshots — COMPLETE
+**Goal**: Eliminate memory buffering during Raft snapshot transfers.
+- **Implementation**:
+  - Implemented `RaftSnapshotData` enum (Memory/File) supporting `AsyncRead`, `AsyncWrite`, `AsyncSeek`.
+  - Changed Raft type config to use `RaftSnapshotData`.
+  - `GlobalRegistryStateMachine::streaming_serialize()` now uses `spawn_blocking` to serialize directly to a `tempfile` and returns a file-backed stream.
+  - `MeshRaftNetwork::full_snapshot()` streams from this data in 64KB chunks, never materializing the full state in RAM.
+  - `install_snapshot()` uses `spawn_blocking` to deserialize and apply from the stream.
+- **Verification**: All 84 Raft tests passed, including `test_streaming_large_dataset` and `test_streaming_binary_values`.
+
+### W11.10: DHT Quorum Robustness — COMPLETE
+**Goal**: Ensure `PendingQuorum` -> `Live` transition is resilient to message loss.
+- **Implementation**:
+  - Added a background retry task to `send_commit_message()` that retries `DhtRecordCommit` at 1s, 3s, and 8s intervals.
+  - Implemented "Passive Confirmation" in `handle_record_commit()` and `store_record_global()`: nodes observing a record from a peer that matches a local `PendingQuorum` record will promote the local record to `Live` immediately.
+- **Verification**: All 92 DHT tests passed.
+
+
 ---
 
 ## Verification Commands
