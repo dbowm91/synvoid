@@ -135,6 +135,7 @@ impl OrgKeyManager {
             signature: Vec::new(),
             signer_public_key: None,
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
         record.content_hash = record.compute_content_hash();
 
@@ -280,6 +281,7 @@ impl OrgKeyManager {
                 signature: Vec::new(),
                 signer_public_key: None,
                 content_hash: Vec::new(),
+                quorum_proof: Vec::new(),
             };
             record.content_hash = record.compute_content_hash();
             store.store_record(record, 100);
@@ -323,6 +325,7 @@ impl OrgKeyManager {
             signature: Vec::new(),
             signer_public_key: None,
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
         record.content_hash = record.compute_content_hash();
 
@@ -577,6 +580,7 @@ impl OrgKeyManager {
             signature: Vec::new(),
             signer_public_key: None,
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
         record.content_hash = record.compute_content_hash();
 

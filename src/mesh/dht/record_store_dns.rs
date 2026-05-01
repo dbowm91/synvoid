@@ -49,6 +49,7 @@ impl RecordStoreManager {
                 hasher.update(&value);
                 hasher.finalize().to_vec()
             },
+            quorum_proof: Vec::new(),
         };
 
         // Sign the DNS domain registration record with the record signer
@@ -174,6 +175,7 @@ impl RecordStoreManager {
             signature: Vec::new(),
             signer_public_key: None,
             content_hash,
+            quorum_proof: Vec::new(),
         };
 
         // Sign the anycast record with the record signer

@@ -937,6 +937,9 @@ impl RecordStoreManager {
         key: &str,
         quorum_signatures: &[crate::mesh::dht::quorum::QuorumSignature],
     ) -> bool {
+        let proto_sigs: Vec<crate::mesh::protocol::QuorumSignatureProto> =
+            quorum_signatures.iter().map(|s| s.into()).collect();
+
         let record = {
             let mut rs = self.record_state.write();
             match rs.records.get(key) {
@@ -947,9 +950,10 @@ impl RecordStoreManager {
                     }
                     let mut updated_entry = entry.clone();
                     updated_entry.status = crate::mesh::protocol::DhtRecordStatus::Live;
+                    updated_entry.record.quorum_proof = proto_sigs;
                     rs.records.insert(key.to_string(), updated_entry);
                     rs.local_version += 1;
-                    tracing::info!("Committed record {} from PendingQuorum to Live", key);
+                    tracing::info!("Committed record {} from PendingQuorum to Live with {} quorum proof signatures", key, quorum_signatures.len());
                     Some(entry.record.clone())
                 }
                 None => {
@@ -959,7 +963,8 @@ impl RecordStoreManager {
             }
         };
 
-        if let Some(record) = record {
+        if let Some(mut record) = record {
+            record.quorum_proof = quorum_signatures.iter().map(|s| s.into()).collect();
             if self.is_global_node() {
                 if let Some(ref disk_store) = self.record_state.read().disk_store {
                     if let Some(entry) = self.record_state.read().records.get(&record.key) {
@@ -1084,7 +1089,7 @@ impl RecordStoreManager {
 
     pub fn handle_record_commit(
         &self,
-        record: crate::mesh::protocol::DhtRecord,
+        mut record: crate::mesh::protocol::DhtRecord,
         quorum_signatures: Vec<crate::mesh::protocol::QuorumSignatureProto>,
         source_node_id: &str,
     ) -> bool {
@@ -1101,22 +1106,53 @@ impl RecordStoreManager {
             return false;
         }
 
-        // Passive confirmation: if we have it as PendingQuorum, transition to Live
+        record.quorum_proof = quorum_signatures;
+
+        let key_requires_quorum_proof = self.access_control.requires_quorum_proof(&record.key);
+
+        if key_requires_quorum_proof && !record.quorum_proof.is_empty() {
+            if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
+                tracing::warn!(
+                    "Rejected DhtRecordCommit for key {} from {}: quorum proof verification failed",
+                    record.key,
+                    source_node_id
+                );
+                return false;
+            }
+        }
+
+        if key_requires_quorum_proof && record.quorum_proof.is_empty() {
+            tracing::warn!(
+                "Rejected DhtRecordCommit for key {} from {}: quorum proof required but missing",
+                record.key,
+                source_node_id
+            );
+            return false;
+        }
+
         let is_pending = {
             let rs = self.record_state.read();
             rs.records.get(&record.key).map(|e| e.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum).unwrap_or(false)
         };
 
         if is_pending {
+            if key_requires_quorum_proof && record.quorum_proof.is_empty() {
+                tracing::warn!(
+                    "Rejected passive commit for key {} from PendingQuorum: quorum proof required but missing",
+                    record.key
+                );
+                return false;
+            }
+
             let mut rs = self.record_state.write();
             if let Some(entry) = rs.records.get(&record.key) {
                 if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
                     let mut updated = entry.clone();
                     updated.status = crate::mesh::protocol::DhtRecordStatus::Live;
-                    updated.record = record.clone(); // Update with possibly newer/signed record
+                    updated.record = record.clone();
                     rs.records.insert(record.key.clone(), updated);
                     rs.local_version += 1;
-                    tracing::info!("Passively committed record {} from PendingQuorum to Live via Commit message", record.key);
+                    tracing::info!("Committed record {} from PendingQuorum to Live via Commit message (quorum-enforced)", record.key);
                     drop(rs);
                     self.record_change();
                     self.update_merkle_incremental(&record.key, &record.value);
@@ -1140,8 +1176,6 @@ impl RecordStoreManager {
                 return true;
             }
         }
-
-        let _ = quorum_signatures;
 
         self.store_record(record, 100)
     }

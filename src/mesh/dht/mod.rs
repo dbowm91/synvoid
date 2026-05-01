@@ -786,6 +786,10 @@ impl DhtAccessControl {
         false
     }
 
+    pub fn requires_quorum_proof(&self, key: &str) -> bool {
+        self.requires_quorum(key)
+    }
+
     pub fn is_self_only(&self, key: &str) -> bool {
         for prefix in &self.self_only_keys {
             if key.starts_with(prefix) {

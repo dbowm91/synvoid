@@ -910,3 +910,56 @@ curl -s http://localhost:8080/api/mesh/dht/records | jq '.[] | select(.key | sta
 # Verify ThreatIntel in DHT
 curl -s http://localhost:8080/api/mesh/dht/records | jq '.[] | select(.key | startswith("threat_indicator"))'
 ```
+
+## Cryptographically-Enforced Quorum Gossip (W12.2)
+
+Records in sensitive namespaces require a `quorum_proof` to be accepted via gossip/sync/commit. This prevents a single compromised node from promoting a `PendingQuorum` record to `Live` without quorum approval.
+
+### Sensitive Namespaces
+
+The following key prefixes require quorum proof for gossip/sync acceptance:
+- `verified_upstream:` — Verified upstream registration records
+- `tier_claim:` — Organization tier claims
+
+Configured in `DhtAccessControl::global_signature_required_keys`.
+
+### Quorum Proof Flow
+
+1. **Origin**: `store_record_global()` stores record as `PendingQuorum`, starts quorum request
+2. **Quorum**: Global nodes sign and return quorum signatures
+3. **Commit**: `commit_record_after_quorum()` attaches `quorum_proof` (the collected signatures) to the record
+4. **Propagation**: `DhtRecordCommit` message carries the proof; receiving nodes verify it
+5. **Sync/Gossip**: Records in sensitive namespaces carry `quorum_proof` via sync responses
+
+### Key APIs
+
+```rust
+// Verify quorum proof (in src/mesh/dht/signed.rs)
+use crate::mesh::dht::signed::{verify_quorum_proof, MIN_QUORUM_PROOF_SIGNATURES};
+
+// Check if namespace requires proof (in DhtAccessControl)
+let requires = access_control.requires_quorum_proof("verified_upstream:example.com");
+
+// Record now has quorum_proof field
+let record = DhtRecord {
+    // ... standard fields ...
+    quorum_proof: vec![QuorumSignatureProto { node_id, signature, timestamp }],
+};
+```
+
+### Enforcement Points
+
+| Location | Enforcement |
+|----------|------------|
+| `store_record_global()` | Rejects remote records in sensitive namespaces without valid proof |
+| `apply_sync()` | Skips sync records in sensitive namespaces without valid proof |
+| `handle_record_commit()` | Verifies quorum proof before accepting commit for sensitive namespaces |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/mesh/protocol.rs` | `DhtRecord.quorum_proof` field, `QuorumSignatureProto` |
+| `src/mesh/dht/signed.rs` | `verify_quorum_proof()`, `MIN_QUORUM_PROOF_SIGNATURES` |
+| `src/mesh/dht/record_store_crud.rs` | Quorum-proof enforcement in `store_record_global()`, `apply_sync()` |
+| `src/mesh/dht/record_store_message.rs` | `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies |

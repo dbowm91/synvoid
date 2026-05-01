@@ -470,6 +470,22 @@ Key files:
 - `src/mesh/dht/record_store_message.rs` — `update_merkle_incremental()`, integrity worker in `start_background_tasks()`
 - `src/mesh/dht/record_store_crud.rs` — Uses incremental updates in `store_record_global()`, `store_record_edge_cache()`
 
+### Cryptographically-Enforced Quorum Gossip (W12.2)
+
+Records in sensitive namespaces (`verified_upstream:`, `tier_claim:`) require a `quorum_proof` to be accepted via gossip/sync/commit. This prevents a single compromised node from promoting a `PendingQuorum` record to `Live` without quorum approval.
+
+Key concepts:
+- `DhtRecord.quorum_proof: Vec<QuorumSignatureProto>` — Attached during `commit_record_after_quorum()`, propagated via `DhtRecordCommit` and sync
+- `DhtAccessControl::requires_quorum_proof(key)` — Returns true for `verified_upstream:*` and `tier_claim:*`
+- `signed::verify_quorum_proof(record, global_node_count)` — Checks distinct signer count >= 2/3+1 threshold (min 2)
+- Passive confirmation (`PendingQuorum` → `Live` via gossip) is now quorum-proof-enforced for sensitive namespaces
+
+Key files:
+- `src/mesh/protocol.rs:1541` — `DhtRecord.quorum_proof` field
+- `src/mesh/dht/signed.rs` — `verify_quorum_proof()`, `MIN_QUORUM_PROOF_SIGNATURES`
+- `src/mesh/dht/record_store_crud.rs` — Quorum-proof enforcement in `store_record_global()` and `apply_sync()`
+- `src/mesh/dht/record_store_message.rs` — `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies it
+
 ## Known Issues
 
 | Issue | Reason | Workaround |

@@ -646,6 +646,52 @@ impl RecordSigner {
     }
 }
 
+pub const MIN_QUORUM_PROOF_SIGNATURES: usize = 2;
+
+pub fn verify_quorum_proof(
+    record: &crate::mesh::protocol::DhtRecord,
+    total_known_global_nodes: usize,
+) -> bool {
+    if record.quorum_proof.is_empty() {
+        tracing::warn!(
+            "Quorum proof verification failed for key {}: no proof attached",
+            record.key
+        );
+        return false;
+    }
+
+    let node_ids: std::collections::HashSet<&str> = record
+        .quorum_proof
+        .iter()
+        .map(|s| s.node_id.as_str())
+        .collect();
+
+    let required = if total_known_global_nodes == 0 {
+        MIN_QUORUM_PROOF_SIGNATURES
+    } else {
+        crate::mesh::dht::quorum::QuorumRequest::required_signatures_for(total_known_global_nodes)
+            .max(MIN_QUORUM_PROOF_SIGNATURES)
+    };
+
+    if node_ids.len() < required {
+        tracing::warn!(
+            "Quorum proof verification failed for key {}: {} distinct signers < {} required",
+            record.key,
+            node_ids.len(),
+            required
+        );
+        return false;
+    }
+
+    tracing::debug!(
+        "Quorum proof verified for key {}: {} distinct signers >= {} required",
+        record.key,
+        node_ids.len(),
+        required
+    );
+    true
+}
+
 pub fn validate_message_timestamp(timestamp: u64) -> bool {
     let now = crate::mesh::safe_unix_timestamp() as i64;
 
@@ -836,6 +882,7 @@ mod tests {
             signature: Vec::new(),
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -874,6 +921,7 @@ mod tests {
             signature: Vec::new(),
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -912,6 +960,7 @@ mod tests {
             signature: Vec::new(),
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -950,6 +999,7 @@ mod tests {
             signature: Vec::new(),
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -988,6 +1038,7 @@ mod tests {
             signature: Vec::new(),
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -1018,6 +1069,7 @@ mod tests {
             signature: Vec::new(),
             signer_public_key: Some("some_key".to_string()),
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let verified = verify_dht_record_signature(&record);
@@ -1036,9 +1088,202 @@ mod tests {
             signature: vec![1; 64],
             signer_public_key: None,
             content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
         };
 
         let verified = verify_dht_record_signature(&record);
         assert!(!verified, "Missing public key should fail verification");
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_empty_proof_rejected() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "malicious_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+        };
+
+        assert!(
+            !verify_quorum_proof(&record, 3),
+            "Empty quorum proof should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_insufficient_signatures_rejected() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "malicious_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![crate::mesh::protocol::QuorumSignatureProto {
+                node_id: "global1".to_string(),
+                signature: vec![1, 2, 3],
+                timestamp: 1000,
+            }],
+        };
+
+        assert!(
+            !verify_quorum_proof(&record, 5),
+            "Single signature should not meet quorum threshold for 5 nodes"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_valid_proof_accepted() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: vec![1, 2, 3],
+                    timestamp: 1000,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: vec![4, 5, 6],
+                    timestamp: 1001,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global3".to_string(),
+                    signature: vec![7, 8, 9],
+                    timestamp: 1002,
+                },
+            ],
+        };
+
+        assert!(
+            verify_quorum_proof(&record, 3),
+            "3 distinct signatures should meet quorum for 3 nodes (need 3)"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_duplicate_node_ids_count_once() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "malicious_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: vec![1, 2, 3],
+                    timestamp: 1000,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: vec![4, 5, 6],
+                    timestamp: 1001,
+                },
+            ],
+        };
+
+        assert!(
+            !verify_quorum_proof(&record, 3),
+            "Duplicate node_ids should count as 1 distinct signer"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_zero_global_nodes_uses_minimum() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: vec![1, 2, 3],
+                    timestamp: 1000,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: vec![4, 5, 6],
+                    timestamp: 1001,
+                },
+            ],
+        };
+
+        assert!(
+            verify_quorum_proof(&record, 0),
+            "With 0 known global nodes, MIN_QUORUM_PROOF_SIGNATURES=2 should be the threshold"
+        );
+    }
+
+    #[test]
+    fn test_malicious_node_gossip_without_quorum_proof_rejected() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::config::MeshNodeRole;
+
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        assert!(
+            access_control.requires_quorum_proof("verified_upstream:example.com"),
+            "verified_upstream keys should require quorum proof"
+        );
+        assert!(
+            access_control.requires_quorum_proof("tier_claim:my-org"),
+            "tier_claim keys should require quorum proof"
+        );
+        assert!(
+            !access_control.requires_quorum_proof("upstream:example.com"),
+            "upstream keys should NOT require quorum proof"
+        );
+        assert!(
+            !access_control.requires_quorum_proof("node_info:node1"),
+            "node_info keys should NOT require quorum proof"
+        );
+
+        let malicious_record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:malicious.example.com".to_string(),
+            value: b"evil_upstream_data".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "malicious_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("fake_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+        };
+
+        assert!(
+            !verify_quorum_proof(&malicious_record, 3),
+            "Malicious node gossiping Live record without quorum proof must be rejected"
+        );
     }
 }

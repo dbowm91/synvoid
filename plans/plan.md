@@ -1,6 +1,6 @@
 # MaluWAF Wave 12 Implementation Plan: Distributed Layer Hardening & High-Performance Consistency
 
-**Status**: W12.1 COMPLETE, W12.2-W12.5 PLANNED
+**Status**: W12.1-W12.2 COMPLETE, W12.3-W12.5 PLANNED
 **Last Updated**: 2026-05-01
 **Objective**: Hardened DHT consistency, scalable Merkle state management, and production-grade Raft storage stability.
 
@@ -33,13 +33,25 @@
 - Benchmark test `test_benchmark_incremental_update_100k` verifies < 1ms per update with 100K records.
 - All 99 DHT unit tests pass, 322 mesh tests pass.
 
-### W12.2: Cryptographically-Enforced Quorum Gossip [AGENT-PRECISION]
+### W12.2: Cryptographically-Enforced Quorum Gossip [COMPLETE]
 **Problem**: The "Passive Confirmation" logic in W11.10 allows a single compromised node to gossip unverified records into the "Live" state of peers.
 **Task**:
 - Update `DhtRecord` in `src/mesh/protocol.rs` to include an optional `quorum_proof` field.
 - Modify `store_record_global` to REJECT records in sensitive namespaces (e.g., `verified_upstream:`) if they lack a valid quorum proof, even during sync/gossip.
 - Ensure `DhtRecordCommit` and `DhtSyncResponse` properly propagate these proofs.
 - **Verification**: Simulate a malicious node gossiping a "Live" record without a quorum proof; verify that honest nodes reject it.
+
+**Implementation Notes**:
+- Added `quorum_proof: Vec<QuorumSignatureProto>` field to `DhtRecord` in `src/mesh/protocol.rs:1541`.
+- Added `requires_quorum_proof()` method to `DhtAccessControl` (delegates to `requires_quorum()`).
+- Added `verify_quorum_proof()` in `src/mesh/dht/signed.rs` — checks distinct node_ids in proof >= required threshold (2/3+1 of known global nodes, minimum 2).
+- Modified `commit_record_after_quorum()` in `record_store_message.rs` to embed quorum_proof on the committed record before storing and announcing.
+- Modified `handle_record_commit()` to attach quorum_signatures as quorum_proof and verify it for sensitive namespaces. Passive confirmation now requires quorum proof for sensitive namespaces.
+- Modified `store_record_global()` in `record_store_crud.rs` to reject remote records in sensitive namespaces (`verified_upstream:`, `tier_claim:`) without a valid quorum_proof.
+- Modified `apply_sync()` to skip records in sensitive namespaces that lack quorum_proof.
+- Sensitive namespaces: `verified_upstream:` and `tier_claim:` (via `global_signature_required_keys` in `DhtAccessControl`).
+- All 105 DHT tests pass, including 6 new quorum-proof verification tests.
+- All 30 `DhtRecord` construction sites across 12 files updated with `quorum_proof: Vec::new()`.
 
 ### W12.3: Raft/SQLite Storage Optimization (Stability)
 **Problem**: Raft log reads and state machine apply operations are bottlenecked by unoptimized SQLite queries and global lock contention.

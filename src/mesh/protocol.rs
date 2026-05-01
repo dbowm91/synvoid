@@ -1538,6 +1538,7 @@ pub struct DhtRecord {
     pub signature: Vec<u8>,
     pub signer_public_key: Option<String>,
     pub content_hash: Vec<u8>,
+    pub quorum_proof: Vec<QuorumSignatureProto>,
 }
 
 impl DhtRecord {

@@ -348,6 +348,29 @@ impl RecordStoreManager {
             }
         }
 
+        let key_requires_quorum_proof = self.access_control.requires_quorum_proof(&record.key);
+
+        if key_requires_quorum_proof && !is_local_record {
+            if record.quorum_proof.is_empty() {
+                tracing::warn!(
+                    "Rejected record in quorum-required namespace {} from node {}: no quorum proof attached",
+                    record.key,
+                    record.source_node_id
+                );
+                crate::metrics::record_dht_store_operation(false);
+                return false;
+            }
+            if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
+                tracing::warn!(
+                    "Rejected record in quorum-required namespace {} from node {}: quorum proof verification failed",
+                    record.key,
+                    record.source_node_id
+                );
+                crate::metrics::record_dht_store_operation(false);
+                return false;
+            }
+        }
+
         let mut rs = self.record_state.write();
 
         let dht_key = DhtKey::from_str(&record.key);
@@ -371,11 +394,20 @@ impl RecordStoreManager {
             _ => match rs.records.get(&record.key) {
                 None => true,
                 Some(existing_entry) => {
-                    // Passive confirmation: if we have it as PendingQuorum, but it's received from another node,
-                    // mark it as Live.
                     if existing_entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum && !is_local_record {
-                        tracing::info!("Passively confirming record {} from PendingQuorum to Live via Sync/Gossip", record.key);
-                        true // Allow replacement to update status to Live (default)
+                        if key_requires_quorum_proof && record.quorum_proof.is_empty() {
+                            tracing::warn!(
+                                "Rejected passive confirmation for PendingQuorum record {}: quorum proof required but missing from gossip",
+                                record.key
+                            );
+                            return false;
+                        }
+                        tracing::info!(
+                            "Confirming record {} from PendingQuorum to Live via Sync/Gossip (quorum_proof={})",
+                            record.key,
+                            if record.quorum_proof.is_empty() { "none" } else { "present" }
+                        );
+                        true
                     } else {
                         let existing_key = (
                             existing_entry.record.timestamp,
@@ -480,6 +512,7 @@ impl RecordStoreManager {
             signature: record.signature.clone(),
             signer_public_key: record.signer_public_key.clone(),
             content_hash: record.content_hash.clone(),
+            quorum_proof: Vec::new(),
         };
 
         let mut rs = self.record_state.write();
@@ -571,7 +604,7 @@ impl RecordStoreManager {
                     let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                     if now < expires_at {
-                        let mut rs = self.record_state.write();
+                        let rs = self.record_state.write();
                         rs.records.insert(key.to_string(), entry.clone());
                         crate::metrics::record_dht_get_operation(true);
                         return Some(entry.record);
@@ -717,6 +750,23 @@ impl RecordStoreManager {
                     record.key
                 );
                 continue;
+            }
+
+            if self.access_control.requires_quorum_proof(&record.key) {
+                if record.quorum_proof.is_empty() {
+                    tracing::warn!(
+                        "Skipping sync record in quorum-required namespace {}: no quorum proof",
+                        record.key
+                    );
+                    continue;
+                }
+                if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
+                    tracing::warn!(
+                        "Skipping sync record in quorum-required namespace {}: quorum proof verification failed",
+                        record.key
+                    );
+                    continue;
+                }
             }
 
             let dht_key = DhtKey::from_str(&record.key);
@@ -900,6 +950,7 @@ impl RecordStoreManager {
                 hasher.update(&value);
                 hasher.finalize().to_vec()
             },
+            quorum_proof: Vec::new(),
         };
 
         let stored = self.store_record(record.clone(), 100);
@@ -953,6 +1004,7 @@ impl RecordStoreManager {
                 hasher.update(&value);
                 hasher.finalize().to_vec()
             },
+            quorum_proof: Vec::new(),
         };
 
         let stored = self.store_record(record.clone(), 100);

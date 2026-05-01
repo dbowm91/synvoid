@@ -649,6 +649,7 @@ impl MeshTransport {
                             hasher.update(&value);
                             hasher.finalize().to_vec()
                         },
+                        quorum_proof: Vec::new(),
                     };
                     let _ = self.complete_dht_query(&request_id, record).await;
                 }
@@ -1073,6 +1074,7 @@ impl MeshTransport {
                             hasher.update(&value);
                             hasher.finalize().to_vec()
                         },
+                        quorum_proof: Vec::new(),
                     };
 
                     if record_store

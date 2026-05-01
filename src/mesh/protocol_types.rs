@@ -586,7 +586,8 @@ impl From<proto::DhtRecord> for DhtRecord {
                 Some(pb.signer_public_key)
             },
             content_hash: pb.content_hash,
-        }
+            quorum_proof: Vec::new(),
+            }
     }
 }
 

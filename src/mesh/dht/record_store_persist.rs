@@ -111,6 +111,7 @@ impl RecordStoreManager {
                 signature: Vec::new(),
                 signer_public_key: None,
                 content_hash: persisted.content_hash,
+            quorum_proof: Vec::new(),
             };
 
             let entry = DhtRecordEntry {

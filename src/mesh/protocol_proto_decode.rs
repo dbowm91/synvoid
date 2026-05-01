@@ -1766,6 +1766,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             signature: Vec::new(),
                             signer_public_key: None,
                             content_hash: Vec::new(),
+                            quorum_proof: Vec::new(),
                         });
                 Ok(MeshMessage::DhtRecordCommit {
                     request_id: r.request_id.into(),
