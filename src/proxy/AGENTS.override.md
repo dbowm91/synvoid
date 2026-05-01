@@ -21,3 +21,27 @@ Specialized guidance for proxy routing and cache key construction.
 
 - Upstream connections should be pooled and reused
 - Connection lifetime management impacts performance
+
+### Retry Policy Honesty
+
+`forward_with_pool()` must check:
+1. `config.enabled` - retries must be disabled by default
+2. Method safety - only retry GET/HEAD/OPTIONS/TRACE or POST/PATCH when `retry_non_idempotent=true`
+3. Use `is_idempotent_method()` and `should_retry_request()` from `retry.rs`
+
+### Header Forwarding
+
+Default behavior forwards all end-to-end headers:
+- Strip hop-by-hop headers (Connection, Keep-Alive, TE, Trailer, Upgrade)
+- Sanitize spoofable forwarded headers from client (X-Real-IP, X-Forwarded-For, X-Forwarded-Proto)
+- Apply `clear`/`hide` config for explicit removals
+- Use `set` overrides for header values
+
+### Security: Constant-Time Comparison
+
+Always use `subtle::ConstantTimeEq` for secrets, tokens, and cache purge keys:
+```rust
+use subtle::ConstantTimeEq;
+// For cache purge token comparison:
+required_token.as_bytes().ct_eq(token.as_bytes()).into()
+```
