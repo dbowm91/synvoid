@@ -40,6 +40,7 @@ use crate::proxy::cache::{
 use crate::proxy::retry::{
     calculate_backoff as calculate_backoff_impl, is_connection_error as is_connection_error_impl,
     is_retryable_status as is_retryable_status_impl, is_timeout_error as is_timeout_error_impl,
+    should_retry_request as should_retry_request_impl,
 };
 use crate::proxy_cache::{
     CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry, ProxyCacheSettings,
@@ -830,7 +831,11 @@ impl ProxyServer {
         body: Option<bytes::Bytes>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let retry_config = self.retry_config.as_ref();
+        let retry_enabled = retry_config.map(|c| c.enabled).unwrap_or(false);
         let max_retries = retry_config.map(|c| c.max_retries).unwrap_or(3);
+        let should_retry_method = retry_config
+            .map(|c| should_retry_request_impl(&method, c))
+            .unwrap_or(true);
 
         let mut current_backend: Option<Backend> = None;
         let mut last_error: Option<String> = None;
@@ -880,21 +885,23 @@ impl ProxyServer {
                 Ok(response) => {
                     let status = response.status().as_u16();
 
-                    if let Some(config) = retry_config {
-                        if is_retryable_status_impl(status, config) && attempt < max_retries {
-                            if let Some(ref be) = current_backend {
-                                pool.mark_failed(&be.url);
-                            }
-
-                            if let Some(timeout) = config.timeout_ms {
-                                tokio::time::sleep(std::time::Duration::from_millis(
-                                    calculate_backoff_impl(attempt, timeout),
-                                ))
-                                .await;
-                            }
-
-                            continue;
+                    if retry_enabled
+                        && should_retry_method
+                        && is_retryable_status_impl(status, retry_config.unwrap())
+                        && attempt <= max_retries
+                    {
+                        if let Some(ref be) = current_backend {
+                            pool.mark_failed(&be.url);
                         }
+
+                        if let Some(timeout) = retry_config.unwrap().timeout_ms {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                calculate_backoff_impl(attempt, timeout),
+                            ))
+                            .await;
+                        }
+
+                        continue;
                     }
 
                     return Ok(response);
@@ -903,16 +910,18 @@ impl ProxyServer {
                     let error_str = e.to_string();
                     last_error = Some(error_str.clone());
 
-                    if let Some(config) = retry_config {
-                        let should_retry = (config.retry_on_error && is_connection_error_impl(&*e))
-                            || (config.retry_on_timeout && is_timeout_error_impl(&*e));
+                    if retry_enabled && should_retry_method {
+                        let should_retry = (retry_config.unwrap().retry_on_error
+                            && is_connection_error_impl(&*e))
+                            || (retry_config.unwrap().retry_on_timeout
+                                && is_timeout_error_impl(&*e));
 
-                        if should_retry && attempt < max_retries {
+                        if should_retry && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
                                 pool.mark_failed(&be.url);
                             }
 
-                            if let Some(timeout) = config.timeout_ms {
+                            if let Some(timeout) = retry_config.unwrap().timeout_ms {
                                 tokio::time::sleep(std::time::Duration::from_millis(
                                     calculate_backoff_impl(attempt, timeout),
                                 ))
@@ -927,7 +936,7 @@ impl ProxyServer {
                         pool.mark_failed(&be.url);
                     }
 
-                    if attempt < max_retries {
+                    if attempt <= max_retries {
                         continue;
                     }
 
