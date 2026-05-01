@@ -590,3 +590,73 @@ if self.access_control.requires_immutability_trust_anchor(&record.key) && !is_lo
 - `YaraRuleContent` — YARA rule content
 
 Local records bypass this check (already validated by local signing).
+
+## Wave 15: Distributed Layer Hardening Follow-Up (W15)
+
+### Authorization-Aware Quorum Proof Verification (W15-P1)
+
+Quorum proofs are now verified against authorized global-node identity, not embedded self-asserted public keys:
+
+```rust
+pub struct QuorumVerifierContext<'a> {
+    pub total_known_global_nodes: usize,
+    pub regional_voter_set: Option<&'a HashSet<String>>,
+    pub request_id: &'a str,
+    pub action: &'a str,
+    pub authorized_global_keys: &'a dyn Fn(&str) -> Option<String>,
+}
+```
+
+Key behaviors:
+- `verify_quorum_proof_with_context()` validates `proof.node_id` is an authorized global node
+- `proof.signer_public_key` must match the trusted key for `proof.node_id`
+- Regional voter set filtering rejects signatures from nodes outside the selected set
+- `verify_quorum_proof_authoritative()` gets actual global node count from topology
+
+Call sites in `store_record_global()`, `apply_sync()`, `handle_record_commit()` now use `verify_quorum_proof_authoritative()` instead of passing `0` for global node count.
+
+### SQLite Schema Migration (W15-P2)
+
+`DiskRecordStore::new()` performs schema migration for existing databases:
+
+```rust
+// Migration-based initialization
+let migrations_run = disk_store.run_migrations().unwrap();
+// Adds missing columns: signature, signer_public_key, quorum_proof, request_id
+// Sets PRAGMA user_version = 1 for future migrations
+```
+
+Legacy row handling:
+- `is_legacy_row()` detects rows without auth metadata
+- Legacy sensitive records are quarantined (skipped during `load_from_disk()`)
+- Legacy public records are loaded with debug logging
+
+SQLite schema now includes security metadata columns:
+```sql
+ALTER TABLE dht_records ADD COLUMN signature BLOB;
+ALTER TABLE dht_records ADD COLUMN signer_public_key TEXT;
+ALTER TABLE dht_records ADD COLUMN quorum_proof BLOB;
+ALTER TABLE dht_records ADD COLUMN request_id TEXT;
+```
+
+### Legacy Snapshot Framing (W15-P3)
+
+`ALLOW_LEGACY_RAFT_SNAPSHOT_FRAMES` controls the legacy length heuristic:
+
+```rust
+pub const ALLOW_LEGACY_RAFT_SNAPSHOT_FRAMES: bool = false;  // Default: strict
+```
+
+When `false` (default): `InstallSnapshot` decode failure results in rejection
+When `true`: Falls back to `payload.data.len() < 100` heuristic with LEGACY-prefixed logging
+
+### Network Ingress Identity Binding (W15-P4)
+
+`DhtRecord::verify_for_ingress()` binds signer public key to `source_node_id`:
+
+```rust
+// Derives node ID from signer's public key and compares to record.source_node_id
+// Rejects with InvalidSourceNodeId if they don't match
+```
+
+This prevents remote attackers from claiming to be a different node by setting `source_node_id` to a victim node.
