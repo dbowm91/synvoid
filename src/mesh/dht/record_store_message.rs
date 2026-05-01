@@ -534,6 +534,34 @@ impl RecordStoreManager {
                 }
             }
         });
+
+        let integrity_self = Arc::downgrade(&Arc::new(self.clone()));
+        let integrity_config = self.config.clone();
+        let integrity_role = self.node_role;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+
+            loop {
+                interval.tick().await;
+
+                if !integrity_config.enabled || !integrity_role.is_global() {
+                    continue;
+                }
+
+                if let Some(record_store) = integrity_self.upgrade() {
+                    let old_root = record_store.get_merkle_root_hash();
+                    record_store.compute_merkle_tree();
+                    let new_root = record_store.get_merkle_root_hash();
+                    if old_root != new_root {
+                        tracing::warn!(
+                            "Merkle Integrity Worker: root hash drift detected, rebuilt tree"
+                        );
+                    } else {
+                        tracing::debug!("Merkle Integrity Worker: tree verified, no drift");
+                    }
+                }
+            }
+        });
     }
 
     pub async fn start_quorum_request(
