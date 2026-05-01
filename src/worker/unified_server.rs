@@ -609,8 +609,11 @@ pub async fn run_unified_server_worker(
                 None
             };
 
+            // Create verification pool for PQC offloading
+            let verification_pool = Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
+
             // Create DHT record store if DHT is enabled
-            let record_store = create_record_store(mesh_config, routing_manager);
+            let record_store = create_record_store(mesh_config, routing_manager, Some(verification_pool.clone()));
 
             // Create mesh transport manager with config, topology, and record_store
             let transport_manager = Arc::new(MeshTransportManager::new(
@@ -669,7 +672,8 @@ pub async fn run_unified_server_worker(
             };
 
             // Create signer for threat intel
-            let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::new(signer_key);
+            let signer_for_threat = crate::mesh::protocol::MeshMessageSigner::new(signer_key)
+                .with_verification_pool(verification_pool.clone());
 
             // Create signer for returning (we need to create another one since we can't clone)
             let signer_key_clone = signer_key;
@@ -685,7 +689,8 @@ pub async fn run_unified_server_worker(
             // Initialize mesh transports (WireGuard/QUIC)
             // This connects to other WAF nodes in the mesh
             // Pass threat_intel so transport can update global nodes in threat intel
-            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone);
+            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
+                .with_verification_pool(verification_pool.clone());
             #[cfg(feature = "dns")]
             {
                 // Get DNS config for mesh registry

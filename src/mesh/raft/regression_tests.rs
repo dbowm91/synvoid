@@ -17,7 +17,7 @@ mod signed_record_tests {
         let record = create_valid_record();
         assert!(record.signature.is_empty());
 
-        let signer = RecordSigner::new(Some([0x42u8; 32]));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
         assert!(!signer.verify(&record));
     }
 
@@ -27,7 +27,7 @@ mod signed_record_tests {
         record.signature = vec![1, 2, 3, 4];
         record.signer_public_key = Some("wrong_key".to_string());
 
-        let signer = RecordSigner::new(Some([0x42u8; 32]));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
         assert!(!signer.verify(&record));
     }
 
@@ -38,7 +38,7 @@ mod signed_record_tests {
         record.signer_public_key =
             Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32]));
 
-        let signer = RecordSigner::new(Some([0x99u8; 32]));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x99u8; 32])));
         assert!(!signer.verify(&record));
     }
 
@@ -47,7 +47,7 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(signing_key));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -65,7 +65,7 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(signing_key));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -83,7 +83,7 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(signing_key));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -101,7 +101,7 @@ mod signed_record_tests {
         let record = create_valid_record();
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(signing_key));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -119,7 +119,7 @@ mod signed_record_tests {
         record.signer_public_key = None;
         record.signature = vec![1, 2, 3, 4];
 
-        let signer = RecordSigner::new(Some([0x42u8; 32]));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new([0x42u8; 32])));
         assert!(!signer.verify(&record));
     }
 
@@ -127,7 +127,7 @@ mod signed_record_tests {
     fn test_record_with_valid_signature_has_verifiable_content() {
         let record = create_valid_record();
         let signing_key = [0xABu8; 32];
-        let signer = RecordSigner::new(Some(signing_key));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
 
         let signature = signer.sign(&record);
         assert!(signature.is_some());
@@ -759,7 +759,7 @@ mod dht_signable_bytes_tests {
         );
 
         let signing_key = [0x42u8; 32];
-        let signer = RecordSigner::new(Some(signing_key));
+        let signer = RecordSigner::new(Some(crate::mesh::protocol::MeshMessageSigner::new(signing_key)));
 
         let sig1 = signer.sign(&record1);
         let sig2 = signer.sign(&record2);

@@ -131,6 +131,8 @@ impl Default for ShardedRecordStore {
     }
 }
 
+use super::record_store_disk::DiskRecordStore;
+
 #[derive(Debug, Clone)]
 pub struct RecordStoreConfig {
     pub enabled: bool,
@@ -378,7 +380,8 @@ impl RecordStoreManager {
 
     pub fn set_record_signer(&self, signing_key: Option<[u8; 32]>) {
         let mut state = self.record_state.write();
-        state.record_signer = Some(crate::mesh::dht::RecordSigner::new(signing_key));
+        let mesh_signer = signing_key.map(crate::mesh::protocol::MeshMessageSigner::new);
+        state.record_signer = Some(crate::mesh::dht::RecordSigner::new(mesh_signer));
     }
 
     pub fn get_record_verifier(&self) -> Option<crate::mesh::dht::RecordSigner> {
@@ -672,8 +675,6 @@ impl RecordStoreManager {
 mod record_store_crud;
 #[path = "record_store_dns.rs"]
 mod record_store_dns;
-#[path = "record_store_disk.rs"]
-mod record_store_disk;
 #[path = "record_store_message.rs"]
 mod record_store_message;
 #[path = "record_store_persist.rs"]

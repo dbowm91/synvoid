@@ -17,22 +17,24 @@ pub mod proto {
 }
 
 use crate::mesh::config::MeshNodeRole;
+use crate::mesh::crypto_verification::CryptoVerificationPool;
 use crate::mesh::hybrid_signature::HybridSignature;
 use crate::mesh::ml_dsa::MeshMlDsaSigner;
 use crate::mesh::organization::TierClaim;
 use crate::mesh::transports::MeshTransportType;
 
 pub const MESH_MESSAGE_VERSION: u8 = 1;
-const COMPRESSION_THRESHOLD: usize = 512;
-const NONCE_SIZE: usize = 16;
-const REPLAY_WINDOW_SECS: u64 = 60;
-const MAX_REPLAY_CACHE_SIZE: usize = 10000;
+pub const COMPRESSION_THRESHOLD: usize = 512;
+pub const NONCE_SIZE: usize = 16;
+pub const REPLAY_WINDOW_SECS: u64 = 60;
+pub const MAX_REPLAY_CACHE_SIZE: usize = 10000;
 
 #[derive(Clone)]
 pub struct MeshMessageSigner {
     signing_key: ed25519_dalek::SigningKey,
     verifying_key_bytes: Vec<u8>,
     ml_dsa_signer: Option<Arc<MeshMlDsaSigner>>,
+    verification_pool: Option<Arc<CryptoVerificationPool>>,
 }
 
 impl MeshMessageSigner {
@@ -43,6 +45,7 @@ impl MeshMessageSigner {
             signing_key,
             verifying_key_bytes: verifying_key.as_bytes().to_vec(),
             ml_dsa_signer: None,
+            verification_pool: None,
         }
     }
 
@@ -53,11 +56,17 @@ impl MeshMessageSigner {
             signing_key,
             verifying_key_bytes: verifying_key.as_bytes().to_vec(),
             ml_dsa_signer: None,
+            verification_pool: None,
         }
     }
 
     pub fn with_ml_dsa_signer(mut self, signer: Arc<MeshMlDsaSigner>) -> Self {
         self.ml_dsa_signer = Some(signer);
+        self
+    }
+
+    pub fn with_verification_pool(mut self, pool: Arc<CryptoVerificationPool>) -> Self {
+        self.verification_pool = Some(pool);
         self
     }
 
@@ -79,7 +88,8 @@ impl MeshMessageSigner {
             .as_ref()
             .and_then(|s| s.sign(content))
             .unwrap_or_default();
-        HybridSignature::new(ed25519_sig, ml_dsa_sig, self.get_public_key())
+        let ml_dsa_pk = self.ml_dsa_signer.as_ref().and_then(|s| s.verifying_key_base64());
+        HybridSignature::new(ed25519_sig, ml_dsa_sig, self.get_public_key(), ml_dsa_pk)
     }
 
     pub fn verify(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
@@ -103,7 +113,7 @@ impl MeshMessageSigner {
 
     pub fn verify_hybrid(&self, content: &[u8], hybrid: &HybridSignature) -> bool {
         let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(&hybrid.signer_public_key)
+            .decode(&hybrid.ed25519_public_key)
         {
             Ok(bytes) => bytes,
             Err(_) => return false,
@@ -116,13 +126,66 @@ impl MeshMessageSigner {
         }
 
         if hybrid.has_ml_dsa() {
-            match &self.ml_dsa_signer {
-                Some(signer) => signer.verify(content, &hybrid.ml_dsa_signature),
-                None => false,
+            if let Some(ref ml_pk_b64) = hybrid.ml_dsa_public_key {
+                let verifier = match crate::mesh::ml_dsa::MeshMlDsaVerifier::from_base64(ml_pk_b64) {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                verifier.verify(content, &hybrid.ml_dsa_signature)
+            } else {
+                false
             }
         } else {
             true
         }
+    }
+
+    pub async fn verify_hybrid_async(&self, content: &[u8], hybrid: &HybridSignature) -> bool {
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&hybrid.ed25519_public_key)
+        {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
+
+        // Ed25519 is fast enough to do inline
+        let ed25519_valid = self.verify(content, &hybrid.ed25519_signature, &pk_bytes);
+
+        if !ed25519_valid {
+            return false;
+        }
+
+        if hybrid.has_ml_dsa() {
+            if let (Some(ref ml_pk_b64), Some(ref pool)) = (&hybrid.ml_dsa_public_key, &self.verification_pool) {
+                let ml_pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(ml_pk_b64) {
+                    Ok(b) => b,
+                    Err(_) => return false,
+                };
+                CryptoVerificationPool::verify_ml_dsa_standalone(&ml_pk_bytes, content, &hybrid.ml_dsa_signature).await
+            } else {
+                self.verify_hybrid(content, hybrid)
+            }
+        } else {
+            true
+        }
+    }
+
+    pub fn verify_auto(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if signature.len() > 64 {
+            if let Ok(hybrid) = HybridSignature::from_bytes(signature) {
+                return self.verify_hybrid(content, &hybrid);
+            }
+        }
+        self.verify(content, signature, public_key)
+    }
+
+    pub async fn verify_auto_async(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if signature.len() > 64 {
+            if let Ok(hybrid) = HybridSignature::from_bytes(signature) {
+                return self.verify_hybrid_async(content, &hybrid).await;
+            }
+        }
+        self.verify(content, signature, public_key)
     }
 
     pub fn has_ml_dsa(&self) -> bool {

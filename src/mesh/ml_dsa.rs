@@ -156,10 +156,12 @@ impl MeshHybridSigner {
             .and_then(|s| s.sign(content))
             .unwrap_or_default();
 
-        let pk_base64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        let ed_pk_base64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(&self.ed25519_verifying_key_bytes);
 
-        HybridSignature::new(ed25519_sig, ml_dsa_sig, pk_base64)
+        let ml_pk_base64 = self.ml_dsa_signer.as_ref().and_then(|s| s.verifying_key_base64());
+
+        HybridSignature::new(ed25519_sig, ml_dsa_sig, ed_pk_base64, ml_pk_base64)
     }
 
     pub fn verify_ed25519(&self, content: &[u8], signature: &[u8]) -> bool {
@@ -186,19 +188,49 @@ impl MeshHybridSigner {
         content: &[u8],
         signature: &crate::mesh::hybrid_signature::HybridSignature,
     ) -> bool {
-        let ed25519_valid = self.verify_ed25519(content, &signature.ed25519_signature);
+        // Verify Ed25519 first
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&signature.ed25519_public_key)
+        {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
 
-        if !ed25519_valid {
+        if !self.verify_ed25519_explicit(content, &signature.ed25519_signature, &pk_bytes) {
             return false;
         }
 
         if signature.has_ml_dsa() {
-            match &self.ml_dsa_signer {
-                Some(signer) => signer.verify(content, &signature.ml_dsa_signature),
-                None => false,
+            if let Some(ref ml_pk_b64) = signature.ml_dsa_public_key {
+                 let verifier = match MeshMlDsaVerifier::from_base64(ml_pk_b64) {
+                     Ok(v) => v,
+                     Err(_) => return false,
+                 };
+                 verifier.verify(content, &signature.ml_dsa_signature)
+            } else {
+                false
             }
         } else {
             true
+        }
+    }
+
+    fn verify_ed25519_explicit(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if signature.len() != 64 || public_key.len() != 32 {
+            return false;
+        }
+
+        let mut sig_array = [0u8; 64];
+        sig_array.copy_from_slice(signature);
+
+        let mut pk_array = [0u8; 32];
+        pk_array.copy_from_slice(public_key);
+
+        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+            Ok(pk) => pk
+                .verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+                .is_ok(),
+            Err(_) => false,
         }
     }
 

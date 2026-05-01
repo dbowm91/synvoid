@@ -17,6 +17,7 @@ use crate::mesh::transports::{MeshTransportManager, QuicMeshTransport};
 pub fn create_record_store(
     config: &MeshConfig,
     routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
+    verification_pool: Option<Arc<crate::mesh::crypto_verification::CryptoVerificationPool>>,
 ) -> Option<Arc<RecordStoreManager>> {
     if !config.dht.as_ref().map(|d| d.enabled).unwrap_or(false) {
         tracing::info!("DHT RecordStore disabled");
@@ -59,7 +60,18 @@ pub fn create_record_store(
 
     let access_control = DhtAccessControl::new(config);
 
-    let signer = None;
+    let mut signer = None;
+    if let Some(key) = config.global_node_key.as_ref() {
+        let mut key_bytes = [0u8; 32];
+        let bytes = key.as_bytes();
+        let len = bytes.len().min(32);
+        key_bytes[..len].copy_from_slice(&bytes[..len]);
+        let mut s = crate::mesh::protocol::MeshMessageSigner::new(key_bytes);
+        if let Some(ref pool) = verification_pool {
+            s = s.with_verification_pool(pool.clone());
+        }
+        signer = Some(s);
+    }
 
     let verifier = crate::mesh::dht::capability_access::CapabilityAccessVerifier::new(
         |node_id, capability| {
@@ -375,7 +387,9 @@ pub async fn initialize_mesh_transports(
         None
     };
 
-    let record_store = create_record_store(&config, routing_manager.clone());
+    let verification_pool = Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
+
+    let record_store = create_record_store(&config, routing_manager.clone(), Some(verification_pool.clone()));
 
     let stake_manager = config.stake.as_ref().map(|stake_config| {
         let is_global = config.role.is_global();

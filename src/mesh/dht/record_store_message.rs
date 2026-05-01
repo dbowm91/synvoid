@@ -108,7 +108,7 @@ impl RecordStoreManager {
                                 .decode(signer_public_key)
                                 .unwrap_or_default()
                         };
-                        if !signer.verify(content.as_bytes(), signature, &pk_bytes) {
+                        if !signer.verify_auto_async(content.as_bytes(), signature, &pk_bytes).await {
                             tracing::warn!(
                                 "DhtRecordAnnounce signature verification failed from {}",
                                 from_node

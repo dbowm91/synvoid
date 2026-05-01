@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
+use crate::mesh::protocol::MeshMessageSigner;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DhtRecordSignable<'a> {
@@ -534,21 +535,17 @@ pub fn verify_dht_record_signature(record: &crate::mesh::protocol::DhtRecord) ->
         }
     };
 
-    let signed_record = dht_record_to_signed_record(record);
-
-    let _signer = RecordSigner::new(None);
-    let verifier = match Ed25519Verifier::from_base64(&signer_public_key) {
-        Some(v) => v,
-        None => {
-            tracing::warn!("Invalid public key format on record {}", record.key);
-            return false;
-        }
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&signer_public_key) {
+        Ok(b) => b,
+        Err(_) => return false,
     };
 
+    let signed_record = dht_record_to_signed_record(record);
     let content = signed_record.get_signable_content();
-    let signature_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
 
-    verifier.verify_bytes(&content, &signature_b64)
+    // Hybrid auto-detection
+    let default_signer = MeshMessageSigner::new([0u8; 32]);
+    default_signer.verify_auto(&content, &record.signature, &pk_bytes)
 }
 
 pub fn verify_dht_record_signature_for_key(
@@ -571,6 +568,11 @@ pub fn verify_dht_record_signature_for_key(
         }
     };
 
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&signer_public_key) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
     let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
 
     let signed_record = SignedDhtRecord {
@@ -587,51 +589,30 @@ pub fn verify_dht_record_signature_for_key(
         signer_public_key: record.signer_public_key.clone(),
     };
 
-    let _signer = RecordSigner::new(None);
-    let verifier = match Ed25519Verifier::from_base64(&signer_public_key) {
-        Some(v) => v,
-        None => {
-            tracing::warn!("Invalid public key format on record {}", record.key);
-            return false;
-        }
-    };
-
     let content = signed_record.get_signable_content();
-    let signature_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
-
-    verifier.verify_bytes(&content, &signature_b64)
+    let default_signer = MeshMessageSigner::new([0u8; 32]);
+    default_signer.verify_auto(&content, &record.signature, &pk_bytes)
 }
 
 #[derive(Clone)]
 pub struct RecordSigner {
-    signing_key: Option<Ed25519Signer>,
-    verifying_key: Option<String>,
+    mesh_signer: Option<MeshMessageSigner>,
 }
 
 impl RecordSigner {
-    pub fn new(signing_key: Option<[u8; 32]>) -> Self {
-        let signer = signing_key.map(Ed25519Signer::new);
-        let verifying_key = signer.as_ref().map(|s| s.verifying_key());
-        Self {
-            signing_key: signer,
-            verifying_key,
-        }
+    pub fn new(mesh_signer: Option<MeshMessageSigner>) -> Self {
+        Self { mesh_signer }
     }
 
     pub fn sign(&self, record: &SignedDhtRecord) -> Option<Vec<u8>> {
-        let signer = match self.signing_key.as_ref() {
-            Some(s) => s,
-            None => {
-                tracing::warn!("No signing key configured - record will be stored unsigned");
-                return None;
-            }
-        };
-
+        let signer = self.mesh_signer.as_ref()?;
         let content = record.get_signable_content();
-        let signature = signer.sign_bytes(&content);
-        base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(&signature)
-            .ok()
+
+        if signer.has_ml_dsa() {
+            Some(signer.sign_hybrid(&content).to_bytes())
+        } else {
+            Some(signer.sign(&content))
+        }
     }
 
     pub fn verify(&self, record: &SignedDhtRecord) -> bool {
@@ -645,23 +626,23 @@ impl RecordSigner {
             return false;
         };
 
-        let verifier = match Ed25519Verifier::from_base64(public_key_b64) {
-            Some(v) => v,
-            None => {
-                tracing::warn!("Invalid public key format on record {}", record.key);
-                return false;
-            }
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(public_key_b64) {
+            Ok(b) => b,
+            Err(_) => return false,
         };
 
         let content = record.get_signable_content();
-        let signature_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&record.signature);
 
-        verifier.verify_bytes(&content, &signature_b64)
+        if let Some(ref signer) = self.mesh_signer {
+            signer.verify_auto(&content, &record.signature, &pk_bytes)
+        } else {
+            let default_signer = MeshMessageSigner::new([0u8; 32]);
+            default_signer.verify_auto(&content, &record.signature, &pk_bytes)
+        }
     }
 
     pub fn get_verifying_key(&self) -> Option<String> {
-        self.verifying_key.clone()
+        self.mesh_signer.as_ref().map(|s| s.get_public_key())
     }
 }
 
@@ -837,17 +818,13 @@ mod tests {
 
     #[test]
     fn test_canonical_signature_rejects_tampered_value() {
-        use ed25519_dalek::SigningKey;
-
-        let signing_key = SigningKey::from_bytes(&[
+        let secret = [
             0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
             0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
             0x5e, 0x41, 0x6e, 0x67,
-        ]);
-        let verifying_key = signing_key.verifying_key();
-        let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        ];
+        let signer = MeshMessageSigner::new(secret);
+        let verifying_key_b64 = signer.get_public_key();
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -862,8 +839,8 @@ mod tests {
         };
 
         let signed = dht_record_to_signed_record(&record);
-        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
-        let sig = signer.sign(&signed).unwrap();
+        let record_signer = RecordSigner::new(Some(signer));
+        let sig = record_signer.sign(&signed).unwrap();
         record.signature = sig;
 
         let verified = verify_dht_record_signature(&record);
@@ -879,17 +856,13 @@ mod tests {
 
     #[test]
     fn test_canonical_signature_rejects_tampered_ttl() {
-        use ed25519_dalek::SigningKey;
-
-        let signing_key = SigningKey::from_bytes(&[
+        let secret = [
             0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
             0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
             0x5e, 0x41, 0x6e, 0x67,
-        ]);
-        let verifying_key = signing_key.verifying_key();
-        let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        ];
+        let signer = MeshMessageSigner::new(secret);
+        let verifying_key_b64 = signer.get_public_key();
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -904,8 +877,8 @@ mod tests {
         };
 
         let signed = dht_record_to_signed_record(&record);
-        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
-        let sig = signer.sign(&signed).unwrap();
+        let record_signer = RecordSigner::new(Some(signer));
+        let sig = record_signer.sign(&signed).unwrap();
         record.signature = sig;
 
         let verified = verify_dht_record_signature(&record);
@@ -921,17 +894,13 @@ mod tests {
 
     #[test]
     fn test_canonical_signature_rejects_tampered_sequence() {
-        use ed25519_dalek::SigningKey;
-
-        let signing_key = SigningKey::from_bytes(&[
+        let secret = [
             0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
             0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
             0x5e, 0x41, 0x6e, 0x67,
-        ]);
-        let verifying_key = signing_key.verifying_key();
-        let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        ];
+        let signer = MeshMessageSigner::new(secret);
+        let verifying_key_b64 = signer.get_public_key();
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -946,8 +915,8 @@ mod tests {
         };
 
         let signed = dht_record_to_signed_record(&record);
-        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
-        let sig = signer.sign(&signed).unwrap();
+        let record_signer = RecordSigner::new(Some(signer));
+        let sig = record_signer.sign(&signed).unwrap();
         record.signature = sig;
 
         let verified = verify_dht_record_signature(&record);
@@ -963,17 +932,13 @@ mod tests {
 
     #[test]
     fn test_canonical_signature_rejects_tampered_source_node() {
-        use ed25519_dalek::SigningKey;
-
-        let signing_key = SigningKey::from_bytes(&[
+        let secret = [
             0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
             0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
             0x5e, 0x41, 0x6e, 0x67,
-        ]);
-        let verifying_key = signing_key.verifying_key();
-        let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        ];
+        let signer = MeshMessageSigner::new(secret);
+        let verifying_key_b64 = signer.get_public_key();
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "org:test".to_string(),
@@ -988,8 +953,8 @@ mod tests {
         };
 
         let signed = dht_record_to_signed_record(&record);
-        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
-        let sig = signer.sign(&signed).unwrap();
+        let record_signer = RecordSigner::new(Some(signer));
+        let sig = record_signer.sign(&signed).unwrap();
         record.signature = sig;
 
         let verified = verify_dht_record_signature(&record);
@@ -1005,17 +970,13 @@ mod tests {
 
     #[test]
     fn test_canonical_signature_rejects_tampered_record_type() {
-        use ed25519_dalek::SigningKey;
-
-        let signing_key = SigningKey::from_bytes(&[
+        let secret = [
             0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
             0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
             0x5e, 0x41, 0x6e, 0x67,
-        ]);
-        let verifying_key = signing_key.verifying_key();
-        let verifying_key_bytes = verifying_key.as_bytes();
-        let verifying_key_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key_bytes);
+        ];
+        let signer = MeshMessageSigner::new(secret);
+        let verifying_key_b64 = signer.get_public_key();
 
         let mut record = crate::mesh::protocol::DhtRecord {
             key: "upstream:test".to_string(),
@@ -1030,8 +991,8 @@ mod tests {
         };
 
         let signed = dht_record_to_signed_record(&record);
-        let signer = RecordSigner::new(Some(signing_key.to_bytes()));
-        let sig = signer.sign(&signed).unwrap();
+        let record_signer = RecordSigner::new(Some(signer));
+        let sig = record_signer.sign(&signed).unwrap();
         record.signature = sig;
 
         let verified = verify_dht_record_signature(&record);
