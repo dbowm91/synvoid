@@ -354,64 +354,68 @@ pub fn build_forward_headers(
     let mut forward_headers = http::HeaderMap::new();
 
     let headers_to_forward: Vec<&str> = if config.forward.is_empty() {
-        vec!["X-Real-IP", "X-Forwarded-For", "X-Forwarded-Proto", "Host"]
+        vec!["*"]
     } else {
         config.forward.iter().map(|s| s.as_str()).collect()
     };
 
-    for header_name in headers_to_forward {
-        match header_name {
-            "X-Real-IP" => {
-                if let Ok(value) = client_ip.to_string().parse::<http::HeaderValue>() {
-                    let name = http::header::HeaderName::from_static("x-real-ip");
-                    forward_headers.insert(name, value);
-                }
-            }
-            "X-Forwarded-For" => {
-                let existing = original_headers
-                    .get("x-forwarded-for")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("");
-                let new_value = validate_and_truncate_xff(existing, &client_ip.to_string());
-                if let Ok(value) = new_value.parse::<http::HeaderValue>() {
-                    let name = http::header::HeaderName::from_static("x-forwarded-for");
-                    forward_headers.insert(name, value);
-                }
-            }
-            "X-Forwarded-Proto" => {
-                let proto = if is_tls { "https" } else { "http" };
-                if let Ok(value) = proto.parse::<http::HeaderValue>() {
-                    let name = http::header::HeaderName::from_static("x-forwarded-proto");
-                    forward_headers.insert(name, value);
-                }
-            }
-            "X-Forwarded-Host" => {
-                if let Some(host) = original_headers.get("host") {
-                    if let Ok(host_str) = host.to_str() {
-                        if let Ok(value) = host_str.parse::<http::HeaderValue>() {
-                            let name = http::header::HeaderName::from_static("x-forwarded-host");
-                            forward_headers.insert(name, value);
-                        }
-                    }
-                }
-            }
-            "Host" | "host" => {
-                if let Some(host) = original_headers.get("host") {
-                    if let Ok(host_str) = host.to_str() {
-                        if let Ok(value) = host_str.parse::<http::HeaderValue>() {
-                            let name = http::header::HeaderName::from_static("host");
-                            forward_headers.insert(name, value);
-                        }
-                    }
-                }
-            }
-            _ => {
-                if let Some(value) = original_headers.get(header_name) {
-                    if let Ok(name) = header_name.parse::<http::header::HeaderName>() {
-                        forward_headers.insert(name, value.clone());
-                    }
-                }
-            }
+    let forward_all = headers_to_forward.contains(&"*");
+
+    for (name, value) in original_headers.iter() {
+        let name_str = name.as_str();
+
+        if is_hop_by_hop_header(name_str) {
+            continue;
+        }
+
+        if name_str.eq_ignore_ascii_case("x-forwarded-for")
+            || name_str.eq_ignore_ascii_case("x-real-ip")
+            || name_str.eq_ignore_ascii_case("forwarded")
+        {
+            continue;
+        }
+
+        if config.hide.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
+            continue;
+        }
+
+        if config.clear.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
+            continue;
+        }
+
+        if forward_all {
+            forward_headers.insert(name, value.clone());
+        } else if headers_to_forward.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
+            forward_headers.insert(name, value.clone());
+        }
+    }
+
+    let xff_value = {
+        let existing = original_headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        validate_and_truncate_xff(existing, &client_ip.to_string())
+    };
+    if let Ok(value) = xff_value.parse::<http::HeaderValue>() {
+        forward_headers.insert(http::header::HeaderName::from_static("x-forwarded-for"), value);
+    }
+
+    if let Ok(value) = client_ip.to_string().parse::<http::HeaderValue>() {
+        forward_headers.insert(http::header::HeaderName::from_static("x-real-ip"), value);
+    }
+
+    let proto = if is_tls { "https" } else { "http" };
+    if let Ok(value) = proto.parse::<http::HeaderValue>() {
+        forward_headers.insert(http::header::HeaderName::from_static("x-forwarded-proto"), value);
+    }
+
+    for override_hdr in &config.set {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(override_hdr.name.as_bytes()),
+            override_hdr.value.parse(),
+        ) {
+            forward_headers.insert(name, value);
         }
     }
 
@@ -604,5 +608,106 @@ mod tests {
     fn filter_headers_buf_empty_headers() {
         let result = filter_response_headers_buf(&http::HeaderMap::new(), &AHashSet::new());
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn forward_headers_preserves_auth_by_default() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("authorization", "Bearer token123".parse().unwrap());
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("accept", "application/json".parse().unwrap());
+        headers.insert("cookie", "session=abc".parse().unwrap());
+
+        let config = ProxyHeadersConfig::default();
+        let result = build_forward_headers(client_ip, &headers, &config, true);
+
+        assert_eq!(result.get("authorization").unwrap(), "Bearer token123");
+        assert_eq!(result.get("content-type").unwrap(), "application/json");
+        assert_eq!(result.get("accept").unwrap(), "application/json");
+        assert_eq!(result.get("cookie").unwrap(), "session=abc");
+    }
+
+    #[test]
+    fn forward_headers_strips_hop_by_hop() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("connection", "keep-alive".parse().unwrap());
+        headers.insert("keep-alive", "timeout=5".parse().unwrap());
+        headers.insert("transfer-encoding", "chunked".parse().unwrap());
+        headers.insert("upgrade", "websocket".parse().unwrap());
+        headers.insert("authorization", "Bearer token".parse().unwrap());
+
+        let config = ProxyHeadersConfig::default();
+        let result = build_forward_headers(client_ip, &headers, &config, true);
+
+        assert!(result.get("connection").is_none());
+        assert!(result.get("keep-alive").is_none());
+        assert!(result.get("transfer-encoding").is_none());
+        assert!(result.get("upgrade").is_none());
+        assert_eq!(result.get("authorization").unwrap(), "Bearer token");
+    }
+
+    #[test]
+    fn forward_headers_sanitizes_xff() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
+
+        let config = ProxyHeadersConfig::default();
+        let result = build_forward_headers(client_ip, &headers, &config, true);
+
+        let xff = result.get("x-forwarded-for").unwrap().to_str().unwrap();
+        assert!(xff.contains("192.168.1.1"));
+    }
+
+    #[test]
+    fn forward_headers_uses_explicit_forward_list() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("authorization", "Bearer token".parse().unwrap());
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("x-custom", "value".parse().unwrap());
+
+        let mut config = ProxyHeadersConfig::default();
+        config.forward = vec!["content-type".to_string()];
+
+        let result = build_forward_headers(client_ip, &headers, &config, true);
+
+        assert!(result.get("authorization").is_none());
+        assert_eq!(result.get("content-type").unwrap(), "application/json");
+        assert!(result.get("x-custom").is_none());
+    }
+
+    #[test]
+    fn forward_headers_clear_removes_headers() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("authorization", "Bearer token".parse().unwrap());
+        headers.insert("x-custom", "value".parse().unwrap());
+
+        let mut config = ProxyHeadersConfig::default();
+        config.clear = vec!["x-custom".to_string()];
+
+        let result = build_forward_headers(client_ip, &headers, &config, true);
+
+        assert_eq!(result.get("authorization").unwrap(), "Bearer token");
+        assert!(result.get("x-custom").is_none());
+    }
+
+    #[test]
+    fn forward_headers_hide_removes_headers() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let mut headers = http::HeaderMap::new();
+        headers.insert("authorization", "Bearer token".parse().unwrap());
+        headers.insert("x-sensitive", "secret".parse().unwrap());
+
+        let mut config = ProxyHeadersConfig::default();
+        config.hide = vec!["x-sensitive".to_string()];
+
+        let result = build_forward_headers(client_ip, &headers, &config, true);
+
+        assert_eq!(result.get("authorization").unwrap(), "Bearer token");
+        assert!(result.get("x-sensitive").is_none());
     }
 }
