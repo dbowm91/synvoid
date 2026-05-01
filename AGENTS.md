@@ -426,6 +426,35 @@ Methods:
 
 SQLite schema uses WAL mode for concurrent read access. See `skills/dht_persistence.md` for full details.
 
+### DHT L1/L2 Cache (W11.6)
+
+`DiskRecordStore` acts as a transparent L2 cache layered over `ShardedRecordStore` L1 (in-memory):
+
+Key files:
+- `src/mesh/dht/record_store_crud.rs` — `get_record()`, `store_record_global()`
+- `src/mesh/dht/record_store.rs` — `warmup_from_disk()`
+- `src/mesh/dht/record_store_message.rs` — `commit_record_after_quorum()`, `abort_pending_record()`
+
+L1 read-through: `get_record()` checks disk if record not in memory (global nodes only)
+Write-through: `store_record_global()` writes to both L1 and L2
+Quorum sync: `commit_record_after_quorum()` promotes to Live in both stores; `abort_pending_record()` removes from both
+
+Startup: `warmup_from_disk()` rebuilds Merkle tree from disk keys without loading all values into RAM.
+
+### Real-world Latency Tracking (W11.8)
+
+Regional quorum now uses rolling average RTT instead of last measurement:
+
+- `ShardedPeerStore::record_latency()` maintains last 20 RTT samples per node
+- `update_peer_latency()` computes rolling average and updates `PeerState.latency_ms`
+- `MeshTopology::get_average_latency_for_node()` exposes rolling average
+- `start_quorum_request()` uses average latency for `select_regional_nodes()` when available
+
+Key files:
+- `src/mesh/topology/types.rs` — `ShardedPeerStore::update_peer_latency()`, `get_average_latency()`
+- `src/mesh/topology.rs` — `MeshTopology::get_average_latency_for_node()`
+- `src/mesh/dht/record_store_message.rs` — Regional node selection uses average latency
+
 ## Known Issues
 
 | Issue | Reason | Workaround |
