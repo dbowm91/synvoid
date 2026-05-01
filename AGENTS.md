@@ -455,6 +455,21 @@ Key files:
 - `src/mesh/topology.rs` — `MeshTopology::get_average_latency_for_node()`
 - `src/mesh/dht/record_store_message.rs` — Regional node selection uses average latency
 
+### Incremental Merkle Updates (W12.1)
+
+`MerkleTree` uses level-ordered hash arrays for O(log N) point updates on existing keys. Key methods:
+- `MerkleTree::insert_or_update(key, value)` — O(log N) if key exists, full rebuild for new keys
+- `MerkleTree::remove_key(key)` — Removes key and rebuilds tree
+- `RecordStoreManager::update_merkle_incremental(key, value)` — Updates tree for single record changes
+- `RecordStoreManager::remove_merkle_key(key)` — Removes key from tree
+
+Single-record paths use incremental updates; bulk operations (sync, snapshot, anti-entropy) retain full `compute_merkle_tree()`. A Merkle Integrity Worker runs hourly in `start_background_tasks` to detect and correct drift.
+
+Key files:
+- `src/mesh/dht/merkle.rs` — Level-based MerkleTree with incremental updates
+- `src/mesh/dht/record_store_message.rs` — `update_merkle_incremental()`, integrity worker in `start_background_tasks()`
+- `src/mesh/dht/record_store_crud.rs` — Uses incremental updates in `store_record_global()`, `store_record_edge_cache()`
+
 ## Known Issues
 
 | Issue | Reason | Workaround |

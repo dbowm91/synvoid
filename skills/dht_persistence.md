@@ -421,3 +421,41 @@ if self.config.regional_quorum_enabled {
 - `PeerShard::latency_history: HashMap<String, Vec<(Instant, u32)>>`
 - Older measurements naturally deprioritize stale nodes in regional selection
 ```
+
+## Incremental Merkle Updates (W12.1)
+
+### Architecture
+`MerkleTree` uses level-ordered hash arrays (`levels: Vec<Vec<Vec<u8>>>`) instead of HashMaps:
+- `levels[0]` = leaf hashes sorted by key
+- `levels[l]` = internal node hashes at level l
+- `levels[h-1]` = `[root_hash]`
+
+### Key Methods
+```rust
+// O(log N) update for existing key, full rebuild for new key
+tree.insert_or_update(key.to_string(), value);
+
+// Remove key (full rebuild)
+tree.remove_key(&key);
+
+// On RecordStoreManager - single record incremental update
+record_store.update_merkle_incremental(&record.key, &record.value);
+
+// On RecordStoreManager - remove key from tree
+record_store.remove_merkle_key(&key);
+```
+
+### When to Use Each
+- **`update_merkle_incremental`**: Single record store/update/commit paths
+- **`compute_merkle_tree`**: Bulk operations (sync, snapshot, anti-entropy, integrity worker)
+
+### Merkle Integrity Worker
+Runs hourly in `start_background_tasks()`:
+- Performs full `compute_merkle_tree()` rebuild
+- Compares old and new root hashes
+- Logs warning if drift detected
+
+### Performance Characteristics
+- Update existing key: O(log N) hash operations (~17 for 100K records)
+- Insert new key: O(N) full rebuild
+- Target: < 1ms per update with 100K records (verified by `test_benchmark_incremental_update_100k`)
