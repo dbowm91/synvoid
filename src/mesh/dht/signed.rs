@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use base64::Engine;
@@ -7,6 +8,37 @@ use sha2::{Digest, Sha256};
 
 use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
 use crate::mesh::protocol::MeshMessageSigner;
+
+#[derive(Clone)]
+pub struct QuorumVerifierContext<'a> {
+    pub total_known_global_nodes: usize,
+    pub regional_voter_set: Option<&'a HashSet<String>>,
+    pub request_id: &'a str,
+    pub action: &'a str,
+    pub authorized_global_keys: &'a dyn Fn(&str) -> Option<String>,
+}
+
+impl<'a> QuorumVerifierContext<'a> {
+    pub fn new(
+        total_known_global_nodes: usize,
+        regional_voter_set: Option<&'a HashSet<String>>,
+        request_id: &'a str,
+        action: &'a str,
+        authorized_global_keys: &'a dyn Fn(&str) -> Option<String>,
+    ) -> Self {
+        Self {
+            total_known_global_nodes,
+            regional_voter_set,
+            request_id,
+            action,
+            authorized_global_keys,
+        }
+    }
+
+    pub fn get_trusted_key(&self, node_id: &str) -> Option<String> {
+        (self.authorized_global_keys)(node_id)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngressPath {
@@ -903,6 +935,137 @@ pub fn verify_quorum_proof(
         record.quorum_proof.len()
     );
     true
+}
+
+pub fn verify_quorum_proof_with_context(
+    record: &crate::mesh::protocol::DhtRecord,
+    ctx: &QuorumVerifierContext<'_>,
+) -> bool {
+    if record.quorum_proof.is_empty() {
+        tracing::warn!(
+            "Quorum proof verification failed for key {}: no proof attached",
+            record.key
+        );
+        return false;
+    }
+
+    let quorum_nodes = ctx
+        .regional_voter_set
+        .map(|rs| rs.len())
+        .unwrap_or(ctx.total_known_global_nodes);
+
+    let required = if quorum_nodes == 0 {
+        MIN_QUORUM_PROOF_SIGNATURES
+    } else {
+        crate::mesh::dht::quorum::QuorumRequest::required_signatures_for(quorum_nodes)
+            .max(MIN_QUORUM_PROOF_SIGNATURES)
+    };
+
+    let signable_content = get_quorum_proof_signable_content(ctx.request_id, record, ctx.action);
+    let default_signer = crate::mesh::protocol::MeshMessageSigner::new([0u8; 32]);
+
+    let mut verified_signers: HashSet<&str> = HashSet::new();
+
+    for proof in &record.quorum_proof {
+        if let Some(ref regional_set) = ctx.regional_voter_set {
+            if !regional_set.contains(&proof.node_id) {
+                tracing::debug!(
+                    "Skipping signature from {} - not in regional voter set",
+                    proof.node_id
+                );
+                continue;
+            }
+        }
+
+        let Some(ref signer_pk) = proof.signer_public_key else {
+            tracing::debug!(
+                "Skipping signature from {} - no signer_public_key in proof",
+                proof.node_id
+            );
+            continue;
+        };
+
+        let trusted_key = ctx.get_trusted_key(&proof.node_id);
+        let Some(expected_key_b64) = trusted_key else {
+            tracing::debug!(
+                "Skipping signature from {} - node_id not in authorized global nodes",
+                proof.node_id
+            );
+            continue;
+        };
+
+        if signer_pk != &expected_key_b64 {
+            tracing::warn!(
+                "Skipping signature from {} - signer_public_key does not match trusted key for node",
+                proof.node_id
+            );
+            continue;
+        }
+
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_pk) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                tracing::debug!(
+                    "Skipping signature from {} - failed to decode public key",
+                    proof.node_id
+                );
+                continue;
+            }
+        };
+
+        if pk_bytes.len() != 32 {
+            tracing::debug!(
+                "Skipping signature from {} - invalid public key length {}",
+                proof.node_id,
+                pk_bytes.len()
+            );
+            continue;
+        }
+
+        if default_signer.verify_auto(&signable_content, &proof.signature, &pk_bytes) {
+            verified_signers.insert(proof.node_id.as_str());
+        } else {
+            tracing::debug!(
+                "Signature verification failed for node {} on key {}",
+                proof.node_id,
+                record.key
+            );
+        }
+    }
+
+    if verified_signers.len() < required {
+        tracing::warn!(
+            "Quorum proof verification failed for key {}: {} verified signers < {} required ({} total signatures)",
+            record.key,
+            verified_signers.len(),
+            required,
+            record.quorum_proof.len()
+        );
+        return false;
+    }
+
+    tracing::debug!(
+        "Quorum proof verified for key {}: {} verified signers >= {} required ({} total signatures)",
+        record.key,
+        verified_signers.len(),
+        required,
+        record.quorum_proof.len()
+    );
+    true
+}
+
+#[cfg(test)]
+pub fn verify_quorum_proof_minimum_threshold(
+    record: &crate::mesh::protocol::DhtRecord,
+    total_known_global_nodes: usize,
+    request_id: &str,
+    action: &str,
+) -> bool {
+    let ctx =
+        QuorumVerifierContext::new(total_known_global_nodes, None, request_id, action, &|_| {
+            None
+        });
+    verify_quorum_proof_with_context(record, &ctx)
 }
 
 pub fn validate_message_freshness(timestamp: u64) -> bool {
@@ -2019,5 +2182,405 @@ mod tests {
 
         let result = record.verify_for_ingress(&ctx, &access_control);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_rejects_unknown_key_claiming_known_node() {
+        let secret1 = [0x11u8; 32];
+        let secret2 = [0x22u8; 32];
+        let signer1 = crate::mesh::protocol::MeshMessageSigner::new(secret1);
+        let signer2 = crate::mesh::protocol::MeshMessageSigner::new(secret2);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig1 = signer1.sign(&signable_content);
+        let sig2 = signer2.sign(&signable_content);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global-A".to_string(),
+                    signature: sig1,
+                    timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global-B".to_string(),
+                    signature: sig2,
+                    timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
+                },
+            ],
+            request_id: None,
+        };
+
+        let authorized_keys: std::collections::HashMap<String, String> = [
+            ("global-A".to_string(), signer1.get_public_key()),
+            ("global-B".to_string(), signer2.get_public_key()),
+        ]
+        .into_iter()
+        .collect();
+
+        let get_keys = |node_id: &str| authorized_keys.get(node_id).cloned();
+        let ctx = QuorumVerifierContext::new(2, None, "", "add", &get_keys);
+
+        let verified = verify_quorum_proof_with_context(&record, &ctx);
+        assert!(verified, "Valid proof with authorized keys should pass");
+
+        let mut tampered_record = record.clone();
+        tampered_record.quorum_proof[0].node_id = "global-C".to_string();
+
+        let ctx2 = QuorumVerifierContext::new(2, None, "", "add", &get_keys);
+
+        let verified_tampered = verify_quorum_proof_with_context(&tampered_record, &ctx2);
+        assert!(
+            !verified_tampered,
+            "Proof claiming global-C but signed by global-A's key should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_rejects_valid_key_wrong_node_id() {
+        let secret = [0x11u8; 32];
+        let signer = crate::mesh::protocol::MeshMessageSigner::new(secret);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig = signer.sign(&signable_content);
+
+        let mut malicious_record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global-A".to_string(),
+                    signature: sig,
+                    timestamp: 1000,
+                    signer_public_key: Some(signer.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global-B".to_string(),
+                    signature: vec![2; 64],
+                    timestamp: 1001,
+                    signer_public_key: Some("fake_key".to_string()),
+                },
+            ],
+            request_id: None,
+        };
+
+        let authorized_keys: std::collections::HashMap<String, String> =
+            [("global-A".to_string(), signer.get_public_key())]
+                .into_iter()
+                .collect();
+
+        let get_keys = |node_id: &str| authorized_keys.get(node_id).cloned();
+        let ctx = QuorumVerifierContext::new(2, None, "", "add", &get_keys);
+
+        let result = verify_quorum_proof_with_context(&malicious_record, &ctx);
+        assert!(
+            !result,
+            "Proof with node_id=global-A but signed with global-B's key should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_rejects_below_threshold() {
+        let secret1 = [0x11u8; 32];
+        let secret2 = [0x22u8; 32];
+        let secret3 = [0x33u8; 32];
+        let signer1 = crate::mesh::protocol::MeshMessageSigner::new(secret1);
+        let signer2 = crate::mesh::protocol::MeshMessageSigner::new(secret2);
+        let signer3 = crate::mesh::protocol::MeshMessageSigner::new(secret3);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig1 = signer1.sign(&signable_content);
+        let sig2 = signer2.sign(&signable_content);
+        let sig3 = signer3.sign(&signable_content);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: sig1,
+                    timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: sig2,
+                    timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
+                },
+            ],
+            request_id: None,
+        };
+
+        let authorized_keys: std::collections::HashMap<String, String> = [
+            ("global1".to_string(), signer1.get_public_key()),
+            ("global2".to_string(), signer2.get_public_key()),
+            ("global3".to_string(), signer3.get_public_key()),
+        ]
+        .into_iter()
+        .collect();
+
+        let get_keys = |node_id: &str| authorized_keys.get(node_id).cloned();
+        let ctx = QuorumVerifierContext::new(3, None, "", "add", &get_keys);
+
+        let result = verify_quorum_proof_with_context(&record, &ctx);
+        assert!(
+            !result,
+            "With 3 global nodes, need 3 signatures (2/3+1). Only 2 provided should fail."
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_regional_voter_set_rejects_outside_nodes() {
+        let secret1 = [0x11u8; 32];
+        let secret2 = [0x22u8; 32];
+        let secret3 = [0x33u8; 32];
+        let signer1 = crate::mesh::protocol::MeshMessageSigner::new(secret1);
+        let signer2 = crate::mesh::protocol::MeshMessageSigner::new(secret2);
+        let signer3 = crate::mesh::protocol::MeshMessageSigner::new(secret3);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig1 = signer1.sign(&signable_content);
+        let sig2 = signer2.sign(&signable_content);
+        let sig3 = signer3.sign(&signable_content);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: sig1,
+                    timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: sig2,
+                    timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global3".to_string(),
+                    signature: sig3,
+                    timestamp: 1002,
+                    signer_public_key: Some(signer3.get_public_key()),
+                },
+            ],
+            request_id: None,
+        };
+
+        let authorized_keys: std::collections::HashMap<String, String> = [
+            ("global1".to_string(), signer1.get_public_key()),
+            ("global2".to_string(), signer2.get_public_key()),
+            ("global3".to_string(), signer3.get_public_key()),
+        ]
+        .into_iter()
+        .collect();
+
+        let regional_voters: std::collections::HashSet<String> = ["global1", "global2"]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let get_keys = |node_id: &str| authorized_keys.get(node_id).cloned();
+        let ctx = QuorumVerifierContext::new(3, Some(&regional_voters), "", "add", &get_keys);
+
+        let result = verify_quorum_proof_with_context(&record, &ctx);
+        assert!(
+            result,
+            "global3 is filtered but global1+global2 meet quorum threshold in regional set"
+        );
+
+        let sig1_2 = signer1.sign(&signable_content);
+        let sig2_2 = signer2.sign(&signable_content);
+
+        let record2 = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: sig1_2,
+                    timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: sig2_2,
+                    timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
+                },
+            ],
+            request_id: None,
+        };
+
+        let result2 = verify_quorum_proof_with_context(&record2, &ctx);
+        assert!(
+            result2,
+            "global1 and global2 are both in regional voter set, should pass"
+        );
+    }
+
+    #[test]
+    fn test_verify_quorum_proof_with_valid_trusted_keys_passes() {
+        let secret1 = [0x11u8; 32];
+        let secret2 = [0x22u8; 32];
+        let signer1 = crate::mesh::protocol::MeshMessageSigner::new(secret1);
+        let signer2 = crate::mesh::protocol::MeshMessageSigner::new(secret2);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig1 = signer1.sign(&signable_content);
+        let sig2 = signer2.sign(&signable_content);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global-A".to_string(),
+                    signature: sig1,
+                    timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global-B".to_string(),
+                    signature: sig2,
+                    timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
+                },
+            ],
+            request_id: None,
+        };
+
+        let authorized_keys: std::collections::HashMap<String, String> = [
+            ("global-A".to_string(), signer1.get_public_key()),
+            ("global-B".to_string(), signer2.get_public_key()),
+        ]
+        .into_iter()
+        .collect();
+
+        let get_keys = |node_id: &str| authorized_keys.get(node_id).cloned();
+        let ctx = QuorumVerifierContext::new(2, None, "", "add", &get_keys);
+
+        let result = verify_quorum_proof_with_context(&record, &ctx);
+        assert!(result, "Valid proof with correct trusted keys should pass");
     }
 }

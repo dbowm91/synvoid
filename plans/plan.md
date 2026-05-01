@@ -1,353 +1,300 @@
-# MaluWAF Wave 13 Plan: Mesh/DHT/Raft Correctness Hardening
+# MaluWAF Wave 15 Plan: Distributed Layer Hardening Follow-Up
 
-**Status**: COMPLETED
+**Status**: READY FOR IMPLEMENTATION
 **Last Updated**: 2026-05-01
-**Scope**: `src/mesh/`, especially DHT quorum/proof validation, DHT sync/snapshot/authentication, disk-backed DHT persistence, and Raft snapshot/log correctness.
+**Scope**: Residual mesh/DHT/Raft hardening after Wave 13 and Wave 14.
 
-## Implementation Summary
+## Current State
 
-All priorities 0-8 have been completed:
+Wave 13 and Wave 14 have been implemented and committed:
 
-| Priority | Description | Status |
-|---------|-------------|--------|
-| 0 | Regression tests proving current failures | ✅ 8 tests added |
-| 1 | Cryptographic quorum proof verification | ✅ `verify_quorum_proof` now verifies signatures |
-| 2 | Bind DHT payload identity to transport identity | ✅ Added `is_local_origin` parameter |
-| 3 | Fix DHT snapshot/sync authentication compatibility | ✅ Unified signable content, fixed record type |
-| 4 | Persist full DHT security metadata | ✅ Schema now includes all fields |
-| 5 | Correct timestamp semantics | ✅ Split `validate_record_timestamp` and `validate_message_freshness` |
-| 6 | Make Raft snapshot framing explicit | ✅ Added `RaftSnapshotFrame` enum |
-| 7 | Preserve Raft log terms on replay | ✅ Now uses actual persisted term |
-| 8 | Reduce verification drift across ingress paths | ✅ Centralized verification |
+- `d6535e85` - Wave 13: Mesh/DHT/Raft correctness hardening
+- `956c7f19` - Wave 14: DHT Ingress Verification Centralization
 
-## Context
+Targeted test results from the current tree:
 
-Wave 12 is complete and has been pruned from this file to save context. The next agent should treat this as the active plan.
+- `cargo test --lib mesh::dht` passed: 127 tests.
+- `cargo test --lib mesh::raft` passed: 87 tests.
+- `cargo clippy --lib -- -D warnings` could not complete because `utoipa-swagger-ui` attempted to download Swagger UI from GitHub and DNS/network access failed.
 
-Recent read-only review of the distributed layer found several correctness and security risks:
-
-- `verify_quorum_proof()` currently counts distinct `node_id`s but does not cryptographically verify the quorum signatures.
-- DHT ingress decides whether a record is local from payload-controlled `source_node_id`.
-- DHT snapshot request signing and verification use different signable payloads.
-- Verified snapshot/sync replay reconstructs records as the wrong `SignedRecordType`.
-- Disk-backed DHT storage drops signatures, signer keys, and quorum proofs.
-- Record timestamp validation rejects old-but-still-live records.
-- Raft snapshot transfer distinguishes header vs chunk by payload length.
-- Raft log replay appears to reconstruct stored log IDs with term `0` instead of persisted terms.
-
-The goal is to make the distributed layer fail closed, converge after restarts/partitions, and have adversarial regression tests for each issue.
+This plan intentionally prunes the completed Wave 13/Wave 14 task list. The next agent should focus only on the residual concerns below.
 
 ## Ground Rules
 
 - Read `AGENTS.md` and `src/mesh/AGENTS.override.md` before editing.
-- Keep changes scoped to mesh/DHT/Raft unless a test helper requires small adjacent changes.
-- Preserve hot-path performance. Avoid extra allocation in per-request proxy paths.
-- Use typed/canonical signable structs and postcard or the repo's `crate::serialization` helper for distributed signatures. Do not add JSON to distributed state paths.
-- Do not trust payload identity when transport identity is available.
-- Add regression tests before or alongside fixes. A fix without an adversarial test is incomplete.
+- Keep changes scoped to `src/mesh/` and tests unless a build-system change is required for verification.
+- Do not weaken default-deny behavior for sensitive DHT namespaces.
+- Do not trust node IDs or public keys carried inside untrusted records/proofs unless they are checked against an authenticated registry, certificate manager, topology, or configured trust anchor.
+- Add or update regression tests for each fixed issue.
+- Keep distributed signable payloads typed and canonical; use postcard or `crate::serialization`, not ad hoc strings.
 
-## Priority 0: Prove Current Failures With Tests
+## Priority 1: Bind Quorum Proofs To Authorized Global Nodes
 
-Create focused tests that fail on current behavior before broad refactors.
+### Problem
 
-Suggested locations:
+`src/mesh/dht/signed.rs` now verifies quorum proof signature bytes, which is progress. However, verification currently uses the `signer_public_key` embedded in each proof. That proves possession of some key, not that the signer is an authorized global node for the claimed `node_id`.
 
-- `src/mesh/dht/signed.rs` for low-level quorum proof tests.
-- `src/mesh/dht/record_store_sync.rs` or existing DHT test modules for snapshot/sync tests.
-- `src/mesh/dht/record_store_disk.rs` for disk round-trip tests.
-- `src/mesh/raft/regression_tests.rs` for Raft snapshot/log tests.
-
-Required tests:
-
-1. Forged quorum proof with two arbitrary `node_id`s and fake signatures must be rejected for `verified_upstream:*` and `tier_claim:*`.
-2. Quorum proof signatures must fail if replayed onto a different key, value hash, TTL, sequence number, origin node, or request ID.
-3. A remote DHT record whose `source_node_id` equals the local node ID must be rejected unless the authenticated sender is actually local.
-4. Snapshot request signature round trip: `create_snapshot_request()` output must verify in `handle_dht_snapshot_request()`.
-5. Verified snapshot/sync must accept valid non-`Organization` record types such as `NodeInfo`, `DnsRecord`, and immutable/YARA records when correctly signed.
-6. Disk persistence must round-trip `signature`, `signer_public_key`, `content_hash`, `quorum_proof`, `sequence_number`, status, and local origin.
-7. Old-but-live records, for example timestamp `now - 600` with TTL `3600`, must be accepted during sync/storage; future-skewed records beyond the configured window must still be rejected.
-8. Raft snapshot transfer must handle small snapshots and short final chunks without confusing chunks for headers.
-9. Raft log reload must preserve mixed terms across restart/reopen.
-
-## Priority 1: Cryptographic Quorum Proof Verification
-
-Problem files:
-
-- `src/mesh/dht/signed.rs`
-- `src/mesh/dht/quorum.rs`
-- `src/mesh/dht/record_store_crud.rs`
-- `src/mesh/dht/record_store_message.rs`
-- `src/mesh/protocol.rs`
-
-Current risk:
-
-`verify_quorum_proof(record, total_known_global_nodes)` only counts distinct `node_id`s in `record.quorum_proof`. It does not verify the signature bytes, confirm that the signer is an authorized global node, or bind signatures to the specific record content.
-
-Implementation requirements:
-
-- Define one canonical quorum-proof signable payload. It should include at least:
-  - `request_id`
-  - `key`
-  - `value_hash` or content hash
-  - `ttl_seconds`
-  - `sequence_number`
-  - `origin_node_id`
-  - action/add-delete semantic if relevant
-  - protocol version/domain separator such as `"maluwaf:dht-quorum:v1"`
-- Ensure `QuorumSignatureProto` carries enough data to verify:
-  - signer node ID
-  - signature
-  - signer public key or a resolvable reference to the global-node public key
-  - timestamp if replay windows are enforced
-- Verify each signature against the known public key for that global node.
-- Count only verified, distinct, authorized global-node signatures.
-- Pass actual known global-node count or selected regional quorum size into verification. Do not call verification with `0` unless that is explicitly the two-node test mode.
-- Ensure regional quorum proofs encode or derive the selected regional voter set. Otherwise a small regional proof can be replayed as if it represented full quorum.
-- Reject proofs signed for a different record, request, origin, or action.
-
-Acceptance criteria:
-
-- Forged proofs with fake signatures are rejected.
-- Duplicate signer IDs are counted once.
-- Valid proofs survive commit, gossip, sync, and disk reload.
-- Sensitive namespaces still require proof by default.
-
-## Priority 2: Bind DHT Payload Identity To Transport Identity
-
-Problem files:
+Known call sites still pass `0` as the global-node count in at least:
 
 - `src/mesh/dht/record_store_crud.rs`
 - `src/mesh/dht/record_store_message.rs`
-- `src/mesh/transport_dht.rs`
-- `src/mesh/transport_peer.rs`
 
-Current risk:
+That falls back to the minimum threshold and can undercount real quorum requirements.
 
-`store_record_global()` sets `is_local_record` from `record.source_node_id == self.node_id`. Remote senders can set that field. Some ingress paths pass records onward without first proving that `from_node`, `source_node_id`, and signer identity are consistent.
+### Required Work
 
-Implementation requirements:
+1. Introduce an authorization-aware quorum verifier.
 
-- Add an ingress-level identity check before calling local/global store logic:
-  - remote sender identity must match `record.source_node_id`, or
-  - the record must carry an explicit delegation/cross-signature that authorizes the sender to publish for `source_node_id`.
-- For records arriving from the network, never classify as local based only on payload fields.
-- Split the concept of local origin from record publisher:
-  - local process-created records can bypass remote signature requirements only at creation time.
-  - network-received records must always be treated as remote.
-- Reject DHT announces, pushes, commits, sync records, and anti-entropy records when transport sender, source node, and signer identity conflict.
+   Suggested shape:
 
-Acceptance criteria:
+   ```rust
+   pub struct QuorumVerifierContext<'a> {
+       pub total_known_global_nodes: usize,
+       pub regional_voter_set: Option<&'a HashSet<String>>,
+       pub request_id: &'a str,
+       pub action: &'a str,
+       pub authorized_global_keys: &'a dyn Fn(&str) -> Option<String>,
+   }
+   ```
 
-- Spoofed `source_node_id == self.node_id` from a remote peer cannot bypass signature checks or start local quorum flow.
-- Tests cover announce, sync, commit, and push paths where practical.
+   Exact API can differ, but the verifier must have access to trusted node-id to public-key mapping.
 
-## Priority 3: Fix DHT Snapshot/Sync Authentication Compatibility
+2. Verify all of the following before counting a signature:
 
-Problem files:
+   - `proof.node_id` is a known authorized global node.
+   - `proof.signer_public_key` matches the trusted public key for `proof.node_id`, or the proof omits embedded keys and resolves them from trusted state.
+   - the signature verifies over the canonical quorum-proof payload for this exact record/request/action.
+   - duplicate `node_id`s count once.
+   - in regional quorum mode, `proof.node_id` is in the selected voter set.
 
+3. Replace `total_known_global_nodes = 0` call sites with actual topology/cert-manager/global-node counts. If the count is unavailable for a security-sensitive path, fail closed.
+
+4. Preserve a clearly named test-only helper if minimum-threshold behavior is needed for unit tests.
+
+### Tests
+
+Add tests proving:
+
+- A proof signed by an unknown key but claiming a known global `node_id` is rejected.
+- A proof signed by a valid key for `global-A` but labelled as `global-B` is rejected.
+- A valid proof with fewer than full or regional quorum threshold is rejected.
+- Regional quorum rejects signatures from global nodes outside the selected regional voter set.
+- Existing valid proof tests still pass when the trusted key map is provided.
+
+### Acceptance Criteria
+
+- No production verification path accepts quorum proof signatures solely because the embedded public key verifies.
+- No sensitive DHT path calls quorum verification with `0` total nodes unless explicitly documented as a test-only or bootstrap-only path.
+- `verified_upstream:*` and `tier_claim:*` records require an authorized quorum proof.
+
+## Priority 2: Add Real SQLite Migration Handling For Disk DHT Storage
+
+### Problem
+
+`src/mesh/dht/record_store_disk.rs` now creates new columns for `signature`, `signer_public_key`, `quorum_proof`, and `request_id`, but `CREATE TABLE IF NOT EXISTS` does not migrate existing databases. Current `SELECT` statements expect those columns, so old databases can fail at runtime.
+
+### Required Work
+
+1. Add a schema migration path in `DiskRecordStore::new()`.
+
+   Minimum viable approach:
+
+   - inspect `PRAGMA table_info(dht_records)`;
+   - `ALTER TABLE` missing columns one by one;
+   - use nullable/default-safe columns for legacy rows;
+   - set a `PRAGMA user_version` for future migrations.
+
+2. Decide and implement legacy-row semantics:
+
+   - legacy rows without signatures/proofs must not be treated as verified sensitive records;
+   - public cacheable records may be loaded if policy allows;
+   - privileged/sensitive legacy rows should be rejected, quarantined, or ignored with a clear log message.
+
+3. Ensure all read paths tolerate missing/null auth metadata after migration.
+
+4. Add a small helper to detect whether a row came from legacy auth metadata if needed.
+
+### Tests
+
+Add tests that create an old-schema SQLite DB manually, then open it with `DiskRecordStore::new()`:
+
+- old schema migrates without panic;
+- new columns exist after open;
+- old public record can be read if allowed;
+- old sensitive record is not silently promoted as verified/live;
+- new records round-trip all security metadata.
+
+### Acceptance Criteria
+
+- Existing on-disk databases do not break after upgrade.
+- Full security metadata round-trips for new rows.
+- Legacy sensitive rows fail closed.
+
+## Priority 3: Finish Raft Snapshot Framing Cleanup
+
+### Problem
+
+`RaftSnapshotFrame` exists and new snapshot messages decode explicitly, but `src/mesh/transport_peer.rs` still falls back to the old `payload.data.len() < 100` heuristic when frame decode fails.
+
+That may be acceptable temporarily for rolling upgrades, but the current plan and tests should make the intended compatibility window explicit.
+
+### Required Work
+
+Choose one path:
+
+1. **Strict path**: remove the legacy length heuristic entirely.
+
+2. **Compatibility path**: keep fallback but gate it behind a config flag or clearly named constant, for example `ALLOW_LEGACY_RAFT_SNAPSHOT_FRAMES`, defaulting to false for new deployments.
+
+If keeping fallback:
+
+- add telemetry/logging that identifies legacy snapshot frame usage;
+- add a TODO/removal version;
+- ensure malformed short chunks cannot be accepted as headers unless legacy mode is explicitly enabled.
+
+### Tests
+
+Add tests for:
+
+- valid explicit header frame;
+- valid explicit short chunk frame;
+- malformed/non-frame payload is rejected when legacy mode is disabled;
+- legacy fallback only works when explicitly enabled, if compatibility path is chosen.
+
+### Acceptance Criteria
+
+- Production default does not rely on payload length to identify snapshot frame type.
+- Short final chunks cannot be misclassified as headers in the default path.
+
+## Priority 4: Audit Network Ingress Identity Binding End-To-End
+
+### Problem
+
+Wave 14 added centralized verification and `is_local_origin` handling, but the network ingress surface is broad. We still need a path-by-path audit proving remote payloads cannot influence local-origin classification or bypass signer checks.
+
+### Required Work
+
+Audit and document each ingress path:
+
+- `DhtRecordAnnounce`
+- `DhtRecordPush`
+- `DhtRecordCommit`
+- `DhtSyncResponse`
+- `DhtSnapshotResponse`
+- `DhtAntiEntropyResponse`
+- quorum store/signature/rejection messages
+
+For each path, confirm:
+
+- authenticated transport peer ID is available;
+- record `source_node_id` is compared to peer identity or validated through explicit delegation;
+- local-origin bypass is impossible for network-originated records;
+- signer public key is bound to source node or trusted registry where required;
+- sensitive namespace policy runs after source classification and before storage mutation.
+
+If any path cannot prove these properties, fix it or make it fail closed.
+
+### Tests
+
+Add at least one adversarial test per ingress class where practical:
+
+- remote peer sends record with `source_node_id == local_node_id`;
+- remote peer sends record with mismatched signer and source;
+- remote peer sends valid signature for a different source node;
+- remote sync/anti-entropy path attempts to promote a local-looking sensitive record.
+
+### Acceptance Criteria
+
+- The code has no network path where remote records are treated as local based only on payload fields.
+- Tests cover the highest-risk announce, commit, and sync/anti-entropy paths.
+
+## Priority 5: Make Verification Gate Reproducible Without Network
+
+### Problem
+
+`cargo clippy --lib -- -D warnings` failed because `utoipa-swagger-ui` attempted to download Swagger UI during build. This blocks the repository's own verification command in offline/restricted environments.
+
+### Required Work
+
+Investigate the intended project pattern for Swagger UI assets. Options:
+
+- vendor the required Swagger UI archive/assets in the repository or a local build cache;
+- configure `utoipa-swagger-ui` to use local assets;
+- gate Swagger UI build features so `cargo clippy --lib` does not require network;
+- document an environment variable or setup step if a local asset already exists.
+
+Do not add a build path that silently fetches network resources during normal verification.
+
+### Tests
+
+Run in a network-restricted environment:
+
+```bash
+cargo clippy --lib -- -D warnings
+```
+
+If the command still requires an external artifact, the task is not complete.
+
+### Acceptance Criteria
+
+- `cargo clippy --lib -- -D warnings` can run without downloading from GitHub.
+- Any remaining warnings in touched mesh/DHT/Raft areas are fixed.
+
+## Priority 6: Clean Up Warnings Introduced Or Exposed By The Hardening Work
+
+### Problem
+
+Targeted tests pass, but current builds emit warnings from mesh/DHT/Raft-related files, including unused imports and unused variables.
+
+Known examples seen during test builds:
+
+- `src/mesh/dht/record_store.rs`
+- `src/mesh/dht/record_store_message.rs`
 - `src/mesh/dht/record_store_sync.rs`
-- `src/mesh/transport_dht.rs`
 - `src/mesh/dht/signed.rs`
-
-Current risks:
-
-- Snapshot requests are signed with anti-entropy request content but verified as a comma-formatted string.
-- Sync/snapshot response verification paths are duplicated and easy to drift.
-- Verified snapshot/sync replay reconstructs records with hard-coded `SignedRecordType::Organization` in at least one path.
-
-Implementation requirements:
-
-- Add a dedicated `DhtSnapshotRequestSignable` struct in `signed.rs`.
-- Use the same function for snapshot request signing and verification.
-- Include timestamp in snapshot requests if replay protection is needed. If wire type currently lacks timestamp, either add one with backward-compatible decode handling or explicitly document why request ID and transport layer are enough.
-- Replace hard-coded record type reconstruction with key-derived type:
-  - use `DhtKey::from_str(&record.key).to_signed_record_type()`
-  - reject unknown privileged/signed namespaces by default
-  - handle public unsigned cacheable records only where policy allows
-- Prefer a single `verify_dht_record_signature()` helper for all record replay paths.
-
-Acceptance criteria:
-
-- Snapshot request round-trip test passes.
-- Valid signed non-organization records apply from snapshot/sync.
-- Invalid record signatures are rejected consistently in snapshot, sync, anti-entropy, and announce paths.
-
-## Priority 4: Persist Full DHT Security Metadata
-
-Problem file:
-
-- `src/mesh/dht/record_store_disk.rs`
-- also check `src/mesh/dht/record_store.rs` and `src/mesh/dht/record_store_persist.rs`
-
-Current risk:
-
-SQLite disk storage persists only partial `DhtRecord` fields. Reloaded records have empty `signature`, `signer_public_key`, and `quorum_proof`, so restarted global nodes lose the authenticity metadata required for safe sync/gossip/reverification.
-
-Implementation options:
-
-Preferred:
-
-- Store a full canonical serialized `DhtRecord` blob plus indexed metadata columns needed for lookup, expiry, status, and version.
-
-Acceptable:
-
-- Add explicit columns for all missing fields:
-  - `signature BLOB`
-  - `signer_public_key TEXT NULL`
-  - `quorum_proof BLOB`
-  - any future auth metadata introduced by Priority 1
-
-Implementation requirements:
-
-- Add migration handling for existing DBs missing the new columns.
-- Preserve backward compatibility by treating legacy rows as unverifiable remote records. Do not silently promote them into sensitive live records.
-- Verify loaded records before warming the in-memory cache when they are in privileged/sensitive namespaces.
-- Ensure `PendingQuorum` records retain enough proof/request metadata for recovery.
-
-Acceptance criteria:
-
-- Disk round-trip preserves all `DhtRecord` fields.
-- Restarted nodes can still verify and reannounce valid records.
-- Legacy rows without auth metadata are denied for sensitive namespaces or quarantined.
-
-## Priority 5: Correct Timestamp Semantics
-
-Problem file:
-
-- `src/mesh/dht/signed.rs`
-- callers in `record_store_crud.rs`, sync, snapshot, anti-entropy paths
-
-Current risk:
-
-`validate_record_timestamp()` rejects records whose timestamp differs from local clock by more than 300 seconds in either direction. That rejects old-but-live records during sync/recovery even when TTL has not expired.
-
-Implementation requirements:
-
-- Split validation into two helpers:
-  - message freshness: reject too old and too far future for replay-prone envelope messages.
-  - record timestamp: reject only timestamps too far in the future; expiry is handled by `timestamp + ttl_seconds`.
-- Use `saturating_add` and `saturating_sub` consistently.
-- Audit all callers and choose the correct helper.
-
-Acceptance criteria:
-
-- Old-but-live records sync successfully.
-- Expired records are still rejected.
-- Future-skewed records beyond the window are still rejected.
-
-## Priority 6: Make Raft Snapshot Framing Explicit
-
-Problem files:
-
 - `src/mesh/raft/network.rs`
-- `src/mesh/transport_peer.rs`
-- `src/mesh/protocol.rs`
-- proto encode/decode files if the frame is part of wire protocol
-
-Current risk:
-
-`transport_peer.rs` decides whether an `InstallSnapshot` payload is a header or chunk with `payload.data.len() < 100`. Small chunks or short final chunks can be misparsed as headers.
-
-Implementation requirements:
-
-- Add explicit framing, for example:
-  - `RaftSnapshotFrame::Header(SnapshotHeader)`
-  - `RaftSnapshotFrame::Chunk(SnapshotChunk)`
-- Encode/decode that frame instead of guessing by length.
-- Keep backward compatibility if rolling upgrades are required:
-  - attempt new frame decode first
-  - optionally fall back to old heuristic only for a limited compatibility window
-  - add logging when fallback is used
-- Ensure pending snapshot transfer state is cleaned up on timeout, decode error, or failed install.
-
-Acceptance criteria:
-
-- Small snapshot and short-final-chunk regression tests pass.
-- No `len() < N` framing heuristic remains for snapshot header/chunk selection.
-
-## Priority 7: Preserve Raft Log Terms On Replay
-
-Problem file:
-
 - `src/mesh/raft/state_machine.rs`
+- `src/mesh/raft/edge_replica.rs`
 
-Current risk:
+### Required Work
 
-Raft log reader/log-state reconstruction appears to rebuild `LogId` with `CommittedLeaderIdOfConfig::new(0, 0)` rather than the persisted term. That can violate OpenRaft log matching after restart.
+- Remove unused imports and variables where straightforward.
+- Prefix intentionally unused variables with `_`.
+- Do not hide meaningful dead code with broad `allow` attributes unless there is a concrete reason.
 
-Implementation requirements:
+### Acceptance Criteria
 
-- Inspect the `log_entries` schema and persisted fields.
-- Rebuild `LogId` using the stored term and node/leader ID information required by the configured OpenRaft version.
-- If node ID was not persisted, add schema support or confirm OpenRaft's expected `LeaderId` representation for this type config.
-- Add a restart/reopen test with entries from multiple terms.
-
-Acceptance criteria:
-
-- Mixed-term logs reload with correct `LogId`s.
-- OpenRaft storage tests and mesh raft regression tests pass after restart.
-
-## Priority 8: Reduce Verification Drift Across Ingress Paths
-
-Problem files:
-
-- `src/mesh/dht/record_store_crud.rs`
-- `src/mesh/dht/record_store_message.rs`
-- `src/mesh/dht/record_store_sync.rs`
-- `src/mesh/transport_dht.rs`
-
-Current risk:
-
-Trust-anchor checks, quorum-proof checks, timestamp checks, and signature checks are duplicated across several paths. Future fixes can easily harden one ingress path while leaving another bypassable.
-
-Implementation requirements:
-
-- Introduce a small internal verifier API, for example:
-  - `DhtRecordIngressContext { source: Local | Remote { peer_id }, path, verified_envelope, reputation }`
-  - `verify_record_for_store(record, context) -> Result<VerifiedDhtRecord, RejectReason>`
-- Centralize:
-  - content hash check
-  - timestamp/TTL check
-  - signer/public-key check
-  - trust-anchor check
-  - quorum-proof check
-  - local-vs-remote classification
-  - sensitive namespace policy
-- Keep storage mutation separate from verification.
-
-Acceptance criteria:
-
-- Announce, push, sync, snapshot, anti-entropy, and commit paths share the same verification logic or have explicit documented exceptions.
-- Tests verify each ingress path rejects the same malformed record class.
+- `cargo test --lib mesh::dht` and `cargo test --lib mesh::raft` run without warnings from touched code, or every remaining warning is documented as pre-existing and outside this scope.
+- `cargo clippy --lib -- -D warnings` passes after Priority 5.
 
 ## Verification Commands
 
-Run targeted tests during development:
+Run during implementation:
 
 ```bash
 cargo test --lib mesh::dht
 cargo test --lib mesh::raft
 cargo test --lib verify_quorum_proof
-cargo test --lib snapshot
 cargo test --lib record_store_disk
+cargo test --lib snapshot
 ```
 
-Before handoff or PR:
+Final verification:
 
 ```bash
 cargo test --lib --no-run
 cargo test --lib mesh::dht
 cargo test --lib mesh::raft
-cargo fmt
 cargo clippy --lib -- -D warnings
+cargo fmt --check
 ```
 
 ## Done Criteria
 
-- All Priority 0 tests exist and pass.
-- Priorities 1 through 7 are implemented.
-- Priority 8 is implemented or at least started enough that new verification logic is not duplicated further.
-- Sensitive DHT records cannot be accepted without verified quorum proof.
-- Disk persistence preserves security metadata.
-- DHT sync/snapshot paths recover correctly after restart.
-- Raft snapshot and log replay have deterministic regression coverage.
+- Quorum proofs are verified against authorized global-node identity, not embedded self-asserted public keys.
+- Sensitive DHT records use actual full/regional quorum thresholds.
+- Existing disk DHT databases migrate safely.
+- Legacy rows without auth metadata fail closed for sensitive namespaces.
+- Default Raft snapshot handling no longer relies on payload length heuristics.
+- Network DHT ingress identity binding is audited, tested, and fail-closed.
+- The repository's verification commands can run without network downloads.

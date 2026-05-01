@@ -411,12 +411,9 @@ impl RecordStoreManager {
                 crate::metrics::record_dht_store_operation(false);
                 return false;
             }
-            if !crate::mesh::dht::signed::verify_quorum_proof(
-                &record,
-                0,
-                record.request_id.as_deref().unwrap_or(""),
-                "add",
-            ) {
+
+            let (verified, total_global_nodes) = self.verify_quorum_proof_authoritative(&record);
+            if !verified {
                 tracing::warn!(
                     "Rejected record in quorum-required namespace {} from node {}: quorum proof verification failed",
                     record.key,
@@ -425,6 +422,11 @@ impl RecordStoreManager {
                 crate::metrics::record_dht_store_operation(false);
                 return false;
             }
+            tracing::debug!(
+                "Quorum proof verified for key {} ({} global nodes)",
+                record.key,
+                total_global_nodes
+            );
         }
 
         let mut rs = self.record_state.write();
@@ -823,18 +825,21 @@ impl RecordStoreManager {
                     );
                     continue;
                 }
-                if !crate::mesh::dht::signed::verify_quorum_proof(
-                    &record,
-                    0,
-                    record.request_id.as_deref().unwrap_or(""),
-                    "add",
-                ) {
+                let (verified, total_global_nodes) =
+                    self.verify_quorum_proof_authoritative(&record);
+                if !verified {
                     tracing::warn!(
-                        "Skipping sync record in quorum-required namespace {}: quorum proof verification failed",
-                        record.key
+                        "Skipping sync record in quorum-required namespace {}: quorum proof verification failed ({} global nodes)",
+                        record.key,
+                        total_global_nodes
                     );
                     continue;
                 }
+                tracing::debug!(
+                    "Quorum proof verified for sync record key {} ({} global nodes)",
+                    record.key,
+                    total_global_nodes
+                );
             }
 
             if self

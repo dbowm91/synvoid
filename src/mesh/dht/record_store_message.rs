@@ -1146,19 +1146,21 @@ impl RecordStoreManager {
         let key_requires_quorum_proof = self.access_control.requires_quorum_proof(&record.key);
 
         if key_requires_quorum_proof && !record.quorum_proof.is_empty() {
-            if !crate::mesh::dht::signed::verify_quorum_proof(
-                &record,
-                0,
-                record.request_id.as_deref().unwrap_or(""),
-                "add",
-            ) {
+            let (verified, total_global_nodes) = self.verify_quorum_proof_authoritative(&record);
+            if !verified {
                 tracing::warn!(
-                    "Rejected DhtRecordCommit for key {} from {}: quorum proof verification failed",
+                    "Rejected DhtRecordCommit for key {} from {}: quorum proof verification failed ({} global nodes)",
                     record.key,
-                    source_node_id
+                    source_node_id,
+                    total_global_nodes
                 );
                 return false;
             }
+            tracing::debug!(
+                "Quorum proof verified for DhtRecordCommit key {} ({} global nodes)",
+                record.key,
+                total_global_nodes
+            );
         }
 
         if key_requires_quorum_proof && record.quorum_proof.is_empty() {
