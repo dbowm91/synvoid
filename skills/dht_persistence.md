@@ -269,4 +269,155 @@ CREATE INDEX idx_source ON dht_records(source_node_id);
 `DhtRecordStatus` provides `to_u8()` and `from_u8()` for SQLite storage:
 - `Live` = 0
 - `PendingQuorum` = 1
+
+## DHT L1/L2 Cache (W11.6)
+
+The `DiskRecordStore` can act as an L2 cache transparent to the `ShardedRecordStore` L1 (in-memory):
+
+### Key Files
+- `src/mesh/dht/record_store_crud.rs` - Modified `get_record()`, `store_record_global()`
+- `src/mesh/dht/record_store.rs` - Added `warmup_from_disk()` method
+- `src/mesh/dht/record_store_message.rs` - Modified `commit_record_after_quorum()`, `abort_pending_record()`
+
+### L1 Read-Through Cache
+When `get_record()` finds a record not in memory (L1), it checks disk (L2):
+```rust
+pub fn get_record(&self, key: &str) -> Option<DhtRecord> {
+    // First check L1 (memory)
+    let record = self.record_state.read().records.get(key).cloned();
+    
+    // If not found and global node with disk store, check L2 (disk)
+    if record.is_none() && self.is_global_node() {
+        if let Some(ref disk_store) = self.record_state.read().disk_store {
+            if let Some(entry) = disk_store.get(key) {
+                // Promote to L1 by inserting into records
+                let mut rs = self.record_state.write();
+                rs.records.insert(key.to_string(), entry.clone());
+                return Some(entry.record);
+            }
+        }
+    }
+    record
+}
+```
+
+### Write-Through Cache
+On `store_record_global()`, the record is written to both L1 and L2:
+```rust
+// In store_record_global() after memory insert:
+if self.is_global_node() {
+    if let Some(ref disk_store) = self.record_state.read().disk_store {
+        disk_store.insert(record.key.clone(), entry);
+    }
+}
+```
+
+### Quorum Commit/Aborт
+When quorum commits or aborts, disk store is updated:
+```rust
+// On commit_record_after_quorum():
+if self.is_global_node() {
+    if let Some(ref disk_store) = self.record_state.read().disk_store {
+        if let Some(entry) = self.record_state.read().records.get(&record.key) {
+            disk_store.insert(record.key.clone(), entry.clone());
+        }
+    }
+}
+
+// On abort_pending_record():
+if let Some(ref disk_store) = self.record_state.read().disk_store {
+    disk_store.remove(key);
+}
+```
+
+### Startup Warmup
+`warmup_from_disk()` rebuilds Merkle tree from disk keys without loading all values:
+```rust
+pub fn warmup_from_disk(&self) -> usize {
+    let keys_on_disk: Vec<String> = disk_store.iter()
+        .into_iter()
+        .map(|(k, _): (String, DhtRecordEntry)| k)
+        .collect();
+    
+    // Build record_map from memory only (records already loaded via load_from_disk)
+    let mut record_map = std::collections::HashMap::new();
+    for key in &keys_on_disk {
+        if let Some(entry) = self.record_state.read().records.get(key) {
+            record_map.insert(key.clone(), entry.record.value.clone());
+        }
+    }
+    
+    // Rebuild Merkle tree from disk keys
+    let tree = MerkleTree::from_records(&record_map);
+    let mut rs = self.record_state.write();
+    rs.merkle_tree = Some(tree);
+    
+    keys_on_disk.len()
+}
+```
+
+## DHT Regional Quorum Latency Tracking (W11.8)
+
+Regional quorum uses actual measured latency for node selection:
+
+### Latency Data Flow
+1. Health checks record RTT → `ShardedPeerStore::record_latency()` → `latency_history`
+2. `update_peer_latency()` computes rolling average and updates `PeerState.latency_ms`
+3. `MeshTopology::get_average_latency_for_node()` returns rolling average
+4. `start_quorum_request()` builds `GlobalNodeInfo` with average latency for `select_regional_nodes()`
+
+### Rolling Average Computation
+In `ShardedPeerStore`:
+```rust
+pub fn update_peer_latency(&self, node_id: &str, latency_ms: u32) {
+    let mut shard = self.shard(node_id).write();
+    let avg_latency = shard.latency_history.get(node_id).map_or(latency_ms, |history| {
+        if history.is_empty() { latency_ms }
+        else {
+            let sum: u64 = history.iter().map(|(_, l)| *l as u64).sum::<u64>();
+            (sum / history.len() as u64) as u32
+        }
+    });
+    if let Some(peer) = shard.peers.get_mut(node_id) {
+        peer.latency_ms = Some(avg_latency);
+    }
+}
+
+pub fn get_average_latency(&self, node_id: &str) -> Option<u32> {
+    let shard = self.shard(node_id).read();
+    shard.latency_history.get(node_id).map(|history| {
+        if history.is_empty() { return 0u32; }
+        let sum: u64 = history.iter().map(|(_, l)| *l as u64).sum::<u64>();
+        (sum / history.len() as u64) as u32
+    })
+}
+```
+
+### Regional Node Selection
+In `start_quorum_request()`:
+```rust
+if self.config.regional_quorum_enabled {
+    let node_ids: Vec<String> = global_nodes.iter().map(|p| p.node_id.clone()).collect();
+    let mut global_node_infos: Vec<GlobalNodeInfo> = Vec::new();
+    
+    for (i, node_id) in node_ids.into_iter().enumerate() {
+        // Use average latency if available, fallback to last known
+        let avg_latency = topology
+            .get_average_latency_for_node(&node_id)
+            .await
+            .or(global_nodes[i].latency_ms);
+        global_node_infos.push(GlobalNodeInfo {
+            node_id,
+            latency_ms: avg_latency,
+        });
+    }
+    
+    let regional = select_regional_nodes(&global_node_infos, ...);
+}
+```
+
+### Latency History Management
+- History stores last 20 measurements per node (see `record_latency()`)
+- `PeerShard::latency_history: HashMap<String, Vec<(Instant, u32)>>`
+- Older measurements naturally deprioritize stale nodes in regional selection
 ```
