@@ -134,28 +134,49 @@
 
 ## Wave 11: Distributed Layer Refinement (In Progress)
 
-### W11.6: Transparent DHT Persistence (L1/L2 Cache) [High Volume]
+### W11.6: Transparent DHT Persistence (L1/L2 Cache) [COMPLETE]
 **Goal**: Make `DiskRecordStore` a transparent L2 cache for the `ShardedRecordStore`.
 - **Tasks**:
-  - Update `RecordStoreManager::get_record` to check `disk_store` if record is not in `records` (memory).
-  - Update `RecordStoreManager::store_record_global` to write to `disk_store` immediately after memory insertion.
-  - Implement a "Startup Warmup" in `record_store_persist.rs` that indexes keys from disk into the Merkle tree without loading all values into RAM.
+  - Update `RecordStoreManager::get_record` to check `disk_store` if record is not in `records` (memory). ✓
+  - Update `RecordStoreManager::store_record_global` to write to `disk_store` immediately after memory insertion. ✓
+  - Implement a "Startup Warmup" in `record_store_persist.rs` that indexes keys from disk into the Merkle tree without loading all values into RAM. ✓
 - **Verification**: Restart node, ensure `get_record` returns existing records without network sync.
+- **Implementation Notes**:
+  - Modified `get_record()` to check disk_store if record not in memory (global nodes only)
+  - Modified `store_record_global()` to write to disk_store immediately after memory insertion
+  - Modified `commit_record_after_quorum()` to update disk_store when transitioning PendingQuorum->Live
+  - Modified `abort_pending_record()` to remove from disk_store when aborting
+  - Added `warmup_from_disk()` to `RecordStoreManager` for startup Merkle tree indexing
 
-### W11.7: Async PQC Integration [High Volume]
+### W11.7: Async PQC Integration [NOT IMPLEMENTED]
 **Goal**: Integrate `CryptoVerificationPool` into mesh hot-paths.
 - **Tasks**:
   - Replace blocking `ml_dsa::verify` calls in `src/mesh/peer_auth.rs` with `pool.verify_ml_dsa_standalone`.
   - Replace blocking verification in `src/mesh/dht/record_store_crud.rs`.
   - Ensure `MeshProxy` holds an `Arc<CryptoVerificationPool>`.
 - **Verification**: Benchmark `handle_raft_message` and verify no long-running synchronous crypto calls on the main executor threads.
+- **Analysis Findings**:
+  - `HybridSignature` is NOT currently used in any message handling paths
+  - All signature verification in message handlers uses raw `Vec<u8>` Ed25519 signatures
+  - `MeshMessageSigner::verify()` performs plain Ed25519 verification, never deserializes HybridSignature
+  - To integrate async PQC verification, would need to:
+    1. Change message types to use `HybridSignature` instead of `Vec<u8>` for signatures
+    2. Add `HybridSignature::from_bytes()` deserialization in message handlers
+    3. Use `verify_hybrid()` instead of `verify()` for hybrid signature verification
+  - This would be a significant protocol change affecting wire format
 
-### W11.8: Real-world Latency Tracking for Quorum [High Volume]
+### W11.8: Real-world Latency Tracking for Quorum [COMPLETE]
 **Goal**: Populate `GlobalNodeInfo.latency_ms` with actual mesh metrics.
 - **Tasks**:
-  - Update `MeshTopology` to track rolling average RTT for each `PeerState`.
-  - Bridge these RTT metrics into the `QuorumManager` node selection logic.
+  - Update `MeshTopology` to track rolling average RTT for each `PeerState`. ✓
+  - Bridge these RTT metrics into the `QuorumManager` node selection logic. ✓
 - **Verification**: Logs should show `select_regional_nodes` picking different nodes as network conditions change.
+- **Implementation Notes**:
+  - Added `get_average_latency()` to `ShardedPeerStore` - computes rolling average from latency_history
+  - Modified `update_peer_latency()` to store rolling average instead of raw measurement
+  - Added `get_average_latency_for_node()` async method to `MeshTopology`
+  - Modified `start_quorum_request()` to use average latency for regional node selection when available
+  - Falls back to peer latency_ms if no history available
 
 ### W11.9: True Streaming Raft Snapshots — COMPLETE
 **Goal**: Eliminate memory buffering during Raft snapshot transfers.
