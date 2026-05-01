@@ -169,7 +169,11 @@ fully merge all code in one patch, but there must be no silent split where confi
 
 ## Priority 2: Fix Host Validation and Route Matching Semantics
 
-**Status**: OPEN
+**Status**: COMPLETED (wave16-2026-05-01)
+
+- Fixed `route_to_target()` passing site_id instead of cleaned host to `is_host_valid_for_site()`
+- Optimized `LocationMatcher::match_uri()` to use scalar best-match tracking instead of 4 vectors
+- Commit: `17f251eb`
 
 ### Problem
 
@@ -241,7 +245,12 @@ must preserve current matching semantics while avoiding per-request allocation f
 
 ## Priority 3: Correct Request Header Forwarding
 
-**Status**: OPEN
+**Status**: COMPLETED (wave16-2026-05-01)
+
+- Changed `build_forward_headers()` to forward all end-to-end headers by default
+- Strip hop-by-hop headers and sanitize spoofable forwarded headers
+- Respect clear/hide config and apply set overrides
+- Commits: `fff18d5a`
 
 ### Problem
 
