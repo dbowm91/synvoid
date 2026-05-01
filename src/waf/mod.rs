@@ -1439,7 +1439,16 @@ impl WafCore {
                     tl.record_attack();
                 }
 
-                return Some(WafDecision::Stall);
+                let action_str = match self.attack_detection_config.load().as_ref() {
+                    Some(config) => config.action.clone(),
+                    None => "stall".to_string(),
+                };
+
+                match action_str.as_str() {
+                    "block" => return Some(WafDecision::Block(403, "Forbidden".to_string())),
+                    "log" => return None,
+                    _ => return Some(WafDecision::Stall),
+                }
             }
         }
         None
