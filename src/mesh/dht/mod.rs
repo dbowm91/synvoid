@@ -6,6 +6,7 @@ pub mod merkle;
 pub mod network_policy;
 pub mod quorum;
 pub mod record_store;
+pub mod record_store_disk;
 pub mod routing;
 pub mod signed;
 pub mod stake;
@@ -33,6 +34,7 @@ pub use record_store::{
     DhtRecordEntry, RecordStoreConfig, RecordStoreManager, RecordStoreStats,
     DEFAULT_GET_BY_PREFIX_LIMIT,
 };
+pub use record_store_disk::DiskRecordStore;
 pub use signed::{
     validate_message_timestamp, RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager,
     DHT_MESSAGE_TIMESTAMP_WINDOW_SECS,

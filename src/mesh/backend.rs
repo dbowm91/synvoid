@@ -51,6 +51,7 @@ pub fn create_record_store(
         neighborhood_persistence_enabled: false,
         neighborhood_cache_size: 1000,
         persist_max_age_secs: 604800,
+        disk_storage_path: None,
         regional_quorum_enabled: false,
         regional_quorum_max_nodes: 20,
         regional_quorum_min_nodes: 3,

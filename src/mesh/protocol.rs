@@ -1516,6 +1516,22 @@ impl Default for DhtRecordStatus {
     }
 }
 
+impl DhtRecordStatus {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            DhtRecordStatus::Live => 0,
+            DhtRecordStatus::PendingQuorum => 1,
+        }
+    }
+
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => DhtRecordStatus::PendingQuorum,
+            _ => DhtRecordStatus::Live,
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
 )]

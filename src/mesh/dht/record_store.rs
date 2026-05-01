@@ -155,6 +155,7 @@ pub struct RecordStoreConfig {
     pub neighborhood_cache_size: usize,
     pub persist_max_age_secs: u64,
     pub query_timeout_secs: u64,
+    pub disk_storage_path: Option<String>,
     pub regional_quorum_enabled: bool,
     pub regional_quorum_max_nodes: usize,
     pub regional_quorum_min_nodes: usize,
@@ -185,6 +186,7 @@ impl Default for RecordStoreConfig {
             neighborhood_cache_size: 1000,
             persist_max_age_secs: 604800,
             query_timeout_secs: 10,
+            disk_storage_path: None,
             regional_quorum_enabled: false,
             regional_quorum_max_nodes: 20,
             regional_quorum_min_nodes: 3,
@@ -240,6 +242,7 @@ pub struct RecordStoreState {
     pub record_signer: Option<crate::mesh::dht::RecordSigner>,
     pub local_version: u64,
     pub records: ShardedRecordStore,
+    pub disk_store: Option<Arc<crate::mesh::dht::record_store_disk::DiskRecordStore>>,
     pub pending_announces: VecDeque<DhtRecord>,
     pub last_snapshot_version: u64,
     pub merkle_tree: Option<MerkleTree>,
@@ -309,6 +312,14 @@ impl RecordStoreManager {
         let convergence_threshold = config.convergence_threshold;
         let fanout_factor = config.fanout_factor;
         let replication_factor = config.replication_factor;
+
+        let disk_store = config.disk_storage_path.as_ref().map(|path| {
+            Arc::new(
+                crate::mesh::dht::record_store_disk::DiskRecordStore::new(path)
+                    .expect("Failed to open disk record store"),
+            )
+        });
+
         Self {
             config: Arc::new(config),
             node_id,
@@ -321,6 +332,7 @@ impl RecordStoreManager {
                 record_signer: None,
                 local_version: 1,
                 records: ShardedRecordStore::new(),
+                disk_store,
                 pending_announces: VecDeque::new(),
                 last_snapshot_version: 0,
                 merkle_tree: None,
@@ -489,6 +501,7 @@ impl Clone for RecordStoreManager {
             record_signer: rs.record_signer.clone(),
             local_version: rs.local_version,
             records,
+            disk_store: rs.disk_store.clone(),
             pending_announces: rs.pending_announces.clone(),
             last_snapshot_version: rs.last_snapshot_version,
             merkle_tree: rs.merkle_tree.clone(),
@@ -556,7 +569,7 @@ impl RecordStoreManager {
             node_id: self.node_id.clone(),
             node_role: self.node_role,
             version: rs.local_version,
-            record_count: rs.records.len(),
+            record_count: rs.records.len() + rs.disk_store.as_ref().map(|d| d.len()).unwrap_or(0),
             pending_announce_count: rs.pending_announces.len(),
             cache_hits: ms.cache_hits,
             cache_misses: ms.cache_misses,
@@ -564,12 +577,69 @@ impl RecordStoreManager {
             last_snapshot_version: rs.last_snapshot_version,
         }
     }
+
+    pub fn load_from_disk(&self) -> usize {
+        let binding = self.record_state.read();
+        let disk_store = match binding.disk_store.as_ref() {
+            Some(ds) => ds,
+            None => return 0,
+        };
+
+        let entries: Vec<(String, DhtRecordEntry)> = disk_store.iter();
+        drop(binding);
+
+        if entries.is_empty() {
+            return 0;
+        }
+
+        let mut max_version = 0u64;
+        for (_, entry) in &entries {
+            max_version = max_version.max(entry.version);
+        }
+
+        let mut rs = self.record_state.write();
+        for (key, entry) in entries {
+            rs.records.insert(key, entry);
+        }
+
+        if max_version > rs.local_version {
+            rs.local_version = max_version + 1;
+        }
+        tracing::info!("Loaded {} records from disk storage", rs.records.len());
+
+        rs.records.len()
+    }
+
+    pub fn persist_to_disk(&self) -> Result<usize, String> {
+        let binding = self.record_state.read();
+        let disk_store = match binding.disk_store.as_ref() {
+            Some(ds) => ds.clone(),
+            None => return Ok(0),
+        };
+
+        let count = binding.records.len();
+        drop(binding);
+
+        if count > 0 {
+            let all_records = self.record_state.read().records.iter();
+            for (key, entry) in all_records {
+                disk_store.insert(key.clone(), entry.clone());
+            }
+            disk_store.checkpoint()?;
+        }
+
+        tracing::info!("Persisted {} records to disk storage", count);
+        Ok(count)
+    }
 }
+
 
 #[path = "record_store_crud.rs"]
 mod record_store_crud;
 #[path = "record_store_dns.rs"]
 mod record_store_dns;
+#[path = "record_store_disk.rs"]
+mod record_store_disk;
 #[path = "record_store_message.rs"]
 mod record_store_message;
 #[path = "record_store_persist.rs"]

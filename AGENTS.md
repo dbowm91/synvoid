@@ -404,6 +404,28 @@ Pool characteristics:
 - Non-blocking async interface over blocking crypto operations
 - Available for integration with `MeshMessageSigner::verify_hybrid()` when ML-DSA is used in hot paths
 
+### DHT Disk-Backed Storage (W11.5)
+
+`ShardedRecordStore` uses in-memory BTreeMap shards. For persistent storage across restarts, configure `disk_storage_path`:
+
+Key files:
+- `src/mesh/dht/record_store_disk.rs` — SQLite-backed `DiskRecordStore`
+- `src/mesh/dht/record_store.rs` — `load_from_disk()`, `persist_to_disk()` methods
+
+Configuration:
+```rust
+let store_config = RecordStoreConfig {
+    disk_storage_path: Some("/path/to/dht.db".to_string()),
+    ..Default::default()
+};
+```
+
+Methods:
+- `load_from_disk()` — Load all records from SQLite into in-memory store on startup
+- `persist_to_disk()` — Persist all in-memory records to SQLite
+
+SQLite schema uses WAL mode for concurrent read access. See `skills/dht_persistence.md` for full details.
+
 ## Known Issues
 
 | Issue | Reason | Workaround |

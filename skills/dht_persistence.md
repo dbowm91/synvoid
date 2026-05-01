@@ -202,4 +202,71 @@ pub struct DhtRecordEntry {
     pub status: DhtRecordStatus,  // Default is Live for backward compat
 }
 ```
+
+## DHT Disk-Backed Storage (W11.5)
+
+For full-disk persistence of DHT records (not just neighborhood subset), use `DiskRecordStore`:
+
+### Key Files
+- `src/mesh/dht/record_store_disk.rs` - SQLite-backed disk storage
+- `src/mesh/dht/record_store.rs` - `load_from_disk()`, `persist_to_disk()` methods
+
+### Configuration
+In `RecordStoreConfig`, set `disk_storage_path`:
+```rust
+pub struct RecordStoreConfig {
+    // ...
+    pub disk_storage_path: Option<String>,
+}
+```
+
+### Usage
+```rust
+// Initialize with disk storage (when path is Some)
+let store_config = RecordStoreConfig {
+    disk_storage_path: Some("/path/to/dht.db".to_string()),
+    ..Default::default()
+};
+
+// Load records from disk on startup
+let loaded = record_store_manager.load_from_disk();
+tracing::info!("Loaded {} records from disk", loaded);
+
+// Persist all in-memory records to disk
+let count = record_store_manager.persist_to_disk()?;
+```
+
+### SQLite Schema
+The disk store uses a single table:
+```sql
+CREATE TABLE dht_records (
+    key TEXT PRIMARY KEY,
+    value BLOB NOT NULL,
+    timestamp INTEGER NOT NULL,
+    sequence_number INTEGER NOT NULL,
+    ttl_seconds INTEGER NOT NULL,
+    source_node_id TEXT NOT NULL,
+    content_hash BLOB NOT NULL,
+    local_origin INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    status INTEGER NOT NULL
+);
+CREATE INDEX idx_timestamp ON dht_records(timestamp);
+CREATE INDEX idx_source ON dht_records(source_node_id);
+```
+
+### Disk Store Methods
+- `get(key)` - Retrieve a single record
+- `insert(key, entry)` - Insert or replace a record
+- `remove(key)` - Remove a record
+- `len()` / `is_empty()` - Count records
+- `iter()` - Iterate all records
+- `get_by_prefix(prefix, limit)` - Prefix search
+- `checkpoint()` - WAL checkpoint
+- `vacuum()` - VACUUM the database
+
+### DhtRecordStatus Serialization
+`DhtRecordStatus` provides `to_u8()` and `from_u8()` for SQLite storage:
+- `Live` = 0
+- `PendingQuorum` = 1
 ```
