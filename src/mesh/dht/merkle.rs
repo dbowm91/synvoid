@@ -686,4 +686,36 @@ mod tests {
 
         assert_eq!(tree1.root_hash(), tree2.root_hash());
     }
+
+    #[test]
+    fn test_benchmark_incremental_update_100k() {
+        let n = 100_000;
+        let mut records = HashMap::new();
+        for i in 0..n {
+            records.insert(
+                format!("key{:08}", i),
+                format!("value{:08}", i).into_bytes(),
+            );
+        }
+
+        let mut tree = MerkleTree::from_records(&records);
+        assert!(!tree.is_empty());
+
+        let update_count = 100;
+        let start = std::time::Instant::now();
+        for i in 0..update_count {
+            let key = format!("key{:08}", (i * 997) % n);
+            let value = format!("updated{}", i);
+            tree.insert_or_update(key, value.as_bytes());
+        }
+        let elapsed = start.elapsed();
+        let per_update = elapsed / update_count;
+
+        assert!(
+            per_update < std::time::Duration::from_millis(1),
+            "Per-update time {:?} exceeds 1ms target for {} records",
+            per_update,
+            n,
+        );
+    }
 }
