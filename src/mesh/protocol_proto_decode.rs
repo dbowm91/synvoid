@@ -471,6 +471,11 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     request_id: q.request_id.into(),
                     key: q.key.into(),
                     signature: q.signature.clone(),
+                    signer_public_key: if q.signer_public_key.is_empty() {
+                        None
+                    } else {
+                        Some(q.signer_public_key.clone())
+                    },
                 })
             }
             proto::mesh_message::Payload::QuorumRejectionResponse(q) => {
@@ -1767,6 +1772,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             signer_public_key: None,
                             content_hash: Vec::new(),
                             quorum_proof: Vec::new(),
+                            request_id: None,
                         });
                 Ok(MeshMessage::DhtRecordCommit {
                     request_id: r.request_id.into(),
@@ -1778,6 +1784,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             node_id: s.node_id,
                             signature: s.signature,
                             timestamp: s.timestamp,
+                            signer_public_key: None,
                         })
                         .collect(),
                     timestamp: r.timestamp,

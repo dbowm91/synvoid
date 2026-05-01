@@ -61,7 +61,13 @@ impl MeshTransport {
         }
 
         let signature_valid = {
-            let content = format!("{},{},{}", request_id, _node_id, from_version);
+            let timestamp = crate::mesh::protocol::MeshMessage::generate_timestamp();
+            let content = crate::mesh::dht::signed::get_snapshot_request_signable_content(
+                request_id,
+                _node_id,
+                from_version,
+                timestamp,
+            );
             match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
                 Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
                     let mut pk_array = [0u8; 32];
@@ -70,10 +76,7 @@ impl MeshTransport {
                     sig_array.copy_from_slice(signature);
                     match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
                         Ok(pk) => pk
-                            .verify(
-                                content.as_bytes(),
-                                &ed25519_dalek::Signature::from_bytes(&sig_array),
-                            )
+                            .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
                             .is_ok(),
                         Err(_) => false,
                     }

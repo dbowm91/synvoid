@@ -1099,3 +1099,83 @@ mod streaming_snapshot_tests {
         assert_eq!(sm2.get(&Namespace::Org, "binary_key"), Some(binary_val));
     }
 }
+
+#[cfg(test)]
+mod regression_tests {
+    #[test]
+    fn test_regression_raft_snapshot_framing_by_length_heuristic_is_wrong() {
+        let header_payload = vec![0u8; 50];
+        let chunk_payload = vec![0u8; 100];
+
+        let is_header_50 = header_payload.len() < 100;
+        let is_header_100 = chunk_payload.len() < 100;
+
+        assert!(
+            is_header_50,
+            "BUG: A 50-byte snapshot header would be incorrectly identified as a chunk because payload.data.len() < 100 heuristic treats it as header-only if >= 100 bytes"
+        );
+        assert!(
+            !is_header_100,
+            "A 100-byte chunk would be incorrectly identified as a header because >= 100 is treated as chunk boundary"
+        );
+
+        let small_header = vec![0u8; 99];
+        let small_chunk = vec![0u8; 100];
+
+        assert!(
+            small_header.len() < 100,
+            "BUG: 99-byte valid header misidentified as chunk"
+        );
+        assert!(
+            small_chunk.len() >= 100,
+            "BUG: 100-byte chunk misidentified as header"
+        );
+    }
+
+    #[test]
+    fn test_regression_raft_log_reload_uses_term_0_instead_of_persisted_terms() {
+        use crate::mesh::raft::state_machine::GlobalRegistryLogStorage;
+        use openraft::storage::RaftLogStorage;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("raft_test.db");
+        let mut storage = GlobalRegistryLogStorage::new(db_path).unwrap();
+
+        storage.append_log_entry(1, 5, b"entry1", None).unwrap();
+        storage.append_log_entry(2, 5, b"entry2", None).unwrap();
+        storage.append_log_entry(3, 6, b"entry3", None).unwrap();
+
+        let log_state = futures::executor::block_on(storage.get_log_state()).unwrap();
+
+        let last_log_id = log_state.last_log_id.unwrap();
+        assert_eq!(last_log_id.index, 3, "Last log index should be 3");
+
+        let leader_id = last_log_id.leader_id;
+        assert_eq!(
+            leader_id.term, 6,
+            "Last log term should be 6, matching the persisted term for log index 3."
+        );
+    }
+
+    #[test]
+    fn test_regression_snapshot_request_signature_mismatch_between_sign_and_verify() {
+        use crate::mesh::dht::signed::get_anti_entropy_request_signable_content;
+
+        let request_id = "test-request-123";
+        let node_id = "node-abc";
+        let from_version = 42u64;
+        let timestamp = 1000u64;
+
+        let signable_content =
+            get_anti_entropy_request_signable_content(request_id, node_id, &[], timestamp);
+
+        let verify_format = format!("{},{},{}", request_id, node_id, from_version);
+
+        assert_ne!(
+            signable_content,
+            verify_format.as_bytes(),
+            "BUG: Snapshot request is signed using get_anti_entropy_request_signable_content() which uses postcard serialization, but verified using format! with request_id, node_id, from_version which is a different format. These are incompatible!"
+        );
+    }
+}

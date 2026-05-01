@@ -64,10 +64,10 @@ impl RecordStoreManager {
         let mut signer_public_key = String::new();
 
         if let Some(ref signer) = rs.mesh_signer {
-            let content = crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+            let content = crate::mesh::dht::signed::get_snapshot_request_signable_content(
                 &request_id,
                 &self.node_id,
-                &[],
+                from_version,
                 timestamp,
             );
             signature = signer.sign(&content);
@@ -145,7 +145,7 @@ impl RecordStoreManager {
         let reputation = if is_verified { 100 } else { 0 };
         let mut applied = 0;
         for record in records {
-            if self.store_record(record, reputation) {
+            if self.store_record(record, reputation, false) {
                 applied += 1;
             }
         }
@@ -183,6 +183,11 @@ impl RecordStoreManager {
         let mut applied = 0;
 
         for record in records {
+            let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
+            let record_type = dht_key
+                .to_signed_record_type()
+                .unwrap_or(crate::mesh::dht::signed::SignedRecordType::NodeInfo);
+
             let signed_record = crate::mesh::dht::signed::SignedDhtRecord {
                 key: record.key.clone(),
                 value: record.value.clone(),
@@ -190,7 +195,7 @@ impl RecordStoreManager {
                 signature: record.signature.clone(),
                 created_at: record.timestamp,
                 expires_at: Some(record.timestamp + record.ttl_seconds),
-                record_type: crate::mesh::dht::signed::SignedRecordType::Organization,
+                record_type,
                 sequence_number: 0,
                 source_node_id: record.source_node_id.clone(),
                 ttl_seconds: record.ttl_seconds,
@@ -224,7 +229,7 @@ impl RecordStoreManager {
             };
 
             if verified {
-                if self.store_record(record, 100) {
+                if self.store_record(record, 100, false) {
                     applied += 1;
                 }
             } else {
@@ -333,7 +338,7 @@ impl RecordStoreManager {
             }
 
             if self.is_global_node() || self.can_cache_on_edge(&record.key) {
-                if self.store_record(record, source_reputation) {
+                if self.store_record(record, source_reputation, false) {
                     stored_count += 1;
                 }
             } else {
@@ -468,6 +473,11 @@ impl RecordStoreManager {
         let mut verified_records = Vec::new();
 
         for record in records {
+            let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
+            let record_type = dht_key
+                .to_signed_record_type()
+                .unwrap_or(crate::mesh::dht::signed::SignedRecordType::NodeInfo);
+
             let signed_record = crate::mesh::dht::signed::SignedDhtRecord {
                 key: record.key.clone(),
                 value: record.value.clone(),
@@ -475,7 +485,7 @@ impl RecordStoreManager {
                 signature: record.signature.clone(),
                 created_at: record.timestamp,
                 expires_at: Some(record.timestamp + record.ttl_seconds),
-                record_type: crate::mesh::dht::signed::SignedRecordType::Organization,
+                record_type,
                 sequence_number: 0,
                 source_node_id: record.source_node_id.clone(),
                 ttl_seconds: record.ttl_seconds,
@@ -550,6 +560,11 @@ impl RecordStoreManager {
                 continue;
             }
 
+            let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
+            let record_type = dht_key
+                .to_signed_record_type()
+                .unwrap_or(crate::mesh::dht::signed::SignedRecordType::NodeInfo);
+
             let signed_record = crate::mesh::dht::signed::SignedDhtRecord {
                 key: record.key.clone(),
                 value: record.value.clone(),
@@ -557,7 +572,7 @@ impl RecordStoreManager {
                 signature: record.signature.clone(),
                 created_at: record.timestamp,
                 expires_at: Some(record.timestamp + record.ttl_seconds),
-                record_type: crate::mesh::dht::signed::SignedRecordType::Organization,
+                record_type,
                 sequence_number: 0,
                 source_node_id: record.source_node_id.clone(),
                 ttl_seconds: record.ttl_seconds,
@@ -609,7 +624,7 @@ impl RecordStoreManager {
 
             let record_key = record.key.clone();
 
-            if self.store_record(record, 100) {
+            if self.store_record(record, 100, false) {
                 tracing::debug!("Stored record {} from {} (verified)", record_key, from_node);
                 accepted_count += 1;
             }
@@ -876,5 +891,108 @@ impl RecordStoreManager {
             .filter(|s| !s.completed)
             .map(|s| s.key.clone())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_record_type_derivation_from_dht_key() {
+        let test_cases = vec![
+            (
+                "node_info:my-node",
+                crate::mesh::dht::signed::SignedRecordType::NodeInfo,
+            ),
+            (
+                "org:test",
+                crate::mesh::dht::signed::SignedRecordType::Organization,
+            ),
+            (
+                "upstream:example.com",
+                crate::mesh::dht::signed::SignedRecordType::Upstream,
+            ),
+            (
+                "verified_upstream:example.com",
+                crate::mesh::dht::signed::SignedRecordType::VerifiedUpstream,
+            ),
+            (
+                "dns_record:example.com:www",
+                crate::mesh::dht::signed::SignedRecordType::DnsRecord,
+            ),
+            (
+                "tier_claim:my-org",
+                crate::mesh::dht::signed::SignedRecordType::TierClaim,
+            ),
+            (
+                "global_node_heartbeat:node1",
+                crate::mesh::dht::signed::SignedRecordType::GlobalNodeHeartbeat,
+            ),
+            (
+                "node_health:node1",
+                crate::mesh::dht::signed::SignedRecordType::NodeHealth,
+            ),
+        ];
+
+        for (key, expected_type) in test_cases {
+            let dht_key = crate::mesh::dht::keys::DhtKey::from_str(key);
+            let actual_type = dht_key
+                .to_signed_record_type()
+                .unwrap_or(crate::mesh::dht::signed::SignedRecordType::NodeInfo);
+            assert_eq!(
+                actual_type, expected_type,
+                "Record type mismatch for key {}: expected {:?}, got {:?}",
+                key, expected_type, actual_type
+            );
+        }
+    }
+
+    #[test]
+    fn test_sync_response_verified_uses_correct_record_type() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "node_info:my-node".to_string(),
+            value: b"node_data".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 3600,
+            source_node_id: "node1".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("fake_key".to_string()),
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
+        let record_type = dht_key
+            .to_signed_record_type()
+            .unwrap_or(crate::mesh::dht::signed::SignedRecordType::NodeInfo);
+
+        assert_eq!(
+            record_type,
+            crate::mesh::dht::signed::SignedRecordType::NodeInfo,
+            "BUG: The record type for node_info:my-node should be NodeInfo"
+        );
+
+        let signed_record = crate::mesh::dht::signed::SignedDhtRecord {
+            key: record.key.clone(),
+            value: record.value.clone(),
+            publisher_id: record.source_node_id.clone(),
+            signature: record.signature.clone(),
+            created_at: record.timestamp,
+            expires_at: Some(record.timestamp + record.ttl_seconds),
+            record_type,
+            sequence_number: 0,
+            source_node_id: record.source_node_id.clone(),
+            ttl_seconds: record.ttl_seconds,
+            signer_public_key: record.signer_public_key.clone(),
+        };
+
+        assert_eq!(
+            signed_record.record_type,
+            crate::mesh::dht::signed::SignedRecordType::NodeInfo,
+            "SignedDhtRecord should use NodeInfo type derived from DHT key, not hardcoded Organization"
+        );
     }
 }

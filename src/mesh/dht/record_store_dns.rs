@@ -50,6 +50,7 @@ impl RecordStoreManager {
                 hasher.finalize().to_vec()
             },
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         // Sign the DNS domain registration record with the record signer
@@ -72,7 +73,7 @@ impl RecordStoreManager {
         }
         drop(rs);
 
-        let stored = self.store_record_global(record);
+        let stored = self.store_record_global(record, true);
         if stored {
             tracing::info!("Stored DNS domain registration for {} in DHT", domain);
         }
@@ -176,6 +177,7 @@ impl RecordStoreManager {
             signer_public_key: None,
             content_hash,
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         // Sign the anycast record with the record signer
@@ -195,7 +197,7 @@ impl RecordStoreManager {
         }
         drop(rs);
 
-        let stored = self.store_record_global(record);
+        let stored = self.store_record_global(record, true);
         if stored {
             tracing::info!("Stored anycast node {} in DHT", node_id);
         }

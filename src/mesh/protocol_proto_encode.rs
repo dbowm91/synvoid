@@ -658,6 +658,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 request_id,
                 key,
                 signature,
+                signer_public_key,
             } => proto::MeshMessage {
                 message_type: 101,
                 payload: Some(proto::mesh_message::Payload::QuorumSignatureResponse(
@@ -665,6 +666,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         request_id: request_id.to_string(),
                         key: key.to_string(),
                         signature: signature.clone(),
+                        signer_public_key: signer_public_key.clone().unwrap_or_default(),
                     },
                 )),
             },

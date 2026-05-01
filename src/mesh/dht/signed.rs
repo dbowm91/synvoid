@@ -52,6 +52,33 @@ pub struct DhtAntiEntropyRequestSignable<'a> {
     pub timestamp: u64,
 }
 
+pub const SNAPSHOT_REQUEST_PROTOCOL_VERSION: &str = "maluwaf:dht-snapshot:v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtSnapshotRequestSignable<'a> {
+    pub request_id: &'a str,
+    pub node_id: &'a str,
+    pub from_version: u64,
+    pub timestamp: u64,
+    pub protocol_version: &'a str,
+}
+
+pub fn get_snapshot_request_signable_content(
+    request_id: &str,
+    node_id: &str,
+    from_version: u64,
+    timestamp: u64,
+) -> Vec<u8> {
+    crate::serialization::serialize(&DhtSnapshotRequestSignable {
+        request_id,
+        node_id,
+        from_version,
+        timestamp,
+        protocol_version: SNAPSHOT_REQUEST_PROTOCOL_VERSION,
+    })
+    .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtAntiEntropyResponseSignable<'a> {
     pub request_id: &'a str,
@@ -143,6 +170,39 @@ pub fn get_anti_entropy_response_signable_content(
         record_count,
         timestamp,
         record_set_digest,
+    })
+    .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumProofSignable<'a> {
+    pub request_id: &'a str,
+    pub key: &'a str,
+    pub value_hash: &'a [u8],
+    pub ttl_seconds: u64,
+    pub sequence_number: u64,
+    pub origin_node_id: &'a str,
+    pub action: &'a str,
+    pub protocol_version: &'a str,
+}
+
+pub const QUORUM_PROOF_PROTOCOL_VERSION: &str = "maluwaf:dht-quorum:v1";
+
+pub fn get_quorum_proof_signable_content(
+    request_id: &str,
+    record: &crate::mesh::protocol::DhtRecord,
+    action: &str,
+) -> Vec<u8> {
+    let value_hash = record.compute_content_hash();
+    crate::serialization::serialize(&QuorumProofSignable {
+        request_id,
+        key: &record.key,
+        value_hash: &value_hash,
+        ttl_seconds: record.ttl_seconds,
+        sequence_number: record.sequence_number,
+        origin_node_id: &record.source_node_id,
+        action,
+        protocol_version: QUORUM_PROOF_PROTOCOL_VERSION,
     })
     .unwrap_or_default()
 }
@@ -654,6 +714,8 @@ pub const MIN_QUORUM_PROOF_SIGNATURES: usize = 2;
 pub fn verify_quorum_proof(
     record: &crate::mesh::protocol::DhtRecord,
     total_known_global_nodes: usize,
+    request_id: &str,
+    action: &str,
 ) -> bool {
     if record.quorum_proof.is_empty() {
         tracing::warn!(
@@ -663,12 +725,6 @@ pub fn verify_quorum_proof(
         return false;
     }
 
-    let node_ids: std::collections::HashSet<&str> = record
-        .quorum_proof
-        .iter()
-        .map(|s| s.node_id.as_str())
-        .collect();
-
     let required = if total_known_global_nodes == 0 {
         MIN_QUORUM_PROOF_SIGNATURES
     } else {
@@ -676,41 +732,91 @@ pub fn verify_quorum_proof(
             .max(MIN_QUORUM_PROOF_SIGNATURES)
     };
 
-    if node_ids.len() < required {
+    let signable_content = get_quorum_proof_signable_content(request_id, record, action);
+    let default_signer = crate::mesh::protocol::MeshMessageSigner::new([0u8; 32]);
+
+    let mut verified_signers: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    for proof in &record.quorum_proof {
+        let Some(ref signer_pk) = proof.signer_public_key else {
+            tracing::debug!(
+                "Skipping signature from {} - no signer_public_key in proof",
+                proof.node_id
+            );
+            continue;
+        };
+
+        let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_pk) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                tracing::debug!(
+                    "Skipping signature from {} - failed to decode public key",
+                    proof.node_id
+                );
+                continue;
+            }
+        };
+
+        if pk_bytes.len() != 32 {
+            tracing::debug!(
+                "Skipping signature from {} - invalid public key length {}",
+                proof.node_id,
+                pk_bytes.len()
+            );
+            continue;
+        }
+
+        if default_signer.verify_auto(&signable_content, &proof.signature, &pk_bytes) {
+            verified_signers.insert(proof.node_id.as_str());
+        } else {
+            tracing::debug!(
+                "Signature verification failed for node {} on key {}",
+                proof.node_id,
+                record.key
+            );
+        }
+    }
+
+    if verified_signers.len() < required {
         tracing::warn!(
-            "Quorum proof verification failed for key {}: {} distinct signers < {} required",
+            "Quorum proof verification failed for key {}: {} verified signers < {} required ({} total signatures)",
             record.key,
-            node_ids.len(),
-            required
+            verified_signers.len(),
+            required,
+            record.quorum_proof.len()
         );
         return false;
     }
 
     tracing::debug!(
-        "Quorum proof verified for key {}: {} distinct signers >= {} required",
+        "Quorum proof verified for key {}: {} verified signers >= {} required ({} total signatures)",
         record.key,
-        node_ids.len(),
-        required
+        verified_signers.len(),
+        required,
+        record.quorum_proof.len()
     );
     true
 }
 
-pub fn validate_message_timestamp(timestamp: u64) -> bool {
+pub fn validate_message_freshness(timestamp: u64) -> bool {
     let now = crate::mesh::safe_unix_timestamp() as i64;
-
     let msg_time = timestamp as i64;
     let diff = (now - msg_time).abs();
-
     diff <= DHT_MESSAGE_TIMESTAMP_WINDOW_SECS
 }
 
+pub fn validate_message_timestamp(timestamp: u64) -> bool {
+    validate_message_freshness(timestamp)
+}
+
+/// Validates that a record's timestamp is not too far in the future.
+/// This prevents clock skew attacks but allows old records that are still live.
+/// Note: Actual expiry is determined by timestamp + ttl_seconds, not by record age.
 pub fn validate_record_timestamp(timestamp: u64) -> bool {
     let now = crate::mesh::safe_unix_timestamp() as i64;
-
-    let msg_time = timestamp as i64;
-    let diff = (now - msg_time).abs();
-
-    diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS
+    let record_time = timestamp as i64;
+    let future_diff = record_time.saturating_sub(now);
+    future_diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS
 }
 
 pub struct TtlManager {
@@ -886,6 +992,7 @@ mod tests {
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -925,6 +1032,7 @@ mod tests {
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -964,6 +1072,7 @@ mod tests {
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -1003,6 +1112,7 @@ mod tests {
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -1042,6 +1152,7 @@ mod tests {
             signer_public_key: Some(verifying_key_b64.clone()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let signed = dht_record_to_signed_record(&record);
@@ -1073,6 +1184,7 @@ mod tests {
             signer_public_key: Some("some_key".to_string()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let verified = verify_dht_record_signature(&record);
@@ -1092,6 +1204,7 @@ mod tests {
             signer_public_key: None,
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let verified = verify_dht_record_signature(&record);
@@ -1111,10 +1224,11 @@ mod tests {
             signer_public_key: Some("some_key".to_string()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         assert!(
-            !verify_quorum_proof(&record, 3),
+            !verify_quorum_proof(&record, 3, "", "add"),
             "Empty quorum proof should be rejected"
         );
     }
@@ -1135,17 +1249,45 @@ mod tests {
                 node_id: "global1".to_string(),
                 signature: vec![1, 2, 3],
                 timestamp: 1000,
+                signer_public_key: None,
             }],
+            request_id: None,
         };
 
         assert!(
-            !verify_quorum_proof(&record, 5),
+            !verify_quorum_proof(&record, 5, "", "add"),
             "Single signature should not meet quorum threshold for 5 nodes"
         );
     }
 
     #[test]
     fn test_verify_quorum_proof_valid_proof_accepted() {
+        let secret1 = [0x11u8; 32];
+        let secret2 = [0x22u8; 32];
+        let secret3 = [0x33u8; 32];
+        let signer1 = crate::mesh::protocol::MeshMessageSigner::new(secret1);
+        let signer2 = crate::mesh::protocol::MeshMessageSigner::new(secret2);
+        let signer3 = crate::mesh::protocol::MeshMessageSigner::new(secret3);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig1 = signer1.sign(&signable_content);
+        let sig2 = signer2.sign(&signable_content);
+        let sig3 = signer3.sign(&signable_content);
+
         let record = crate::mesh::protocol::DhtRecord {
             key: "verified_upstream:example.com".to_string(),
             value: b"test_value".to_vec(),
@@ -1159,24 +1301,28 @@ mod tests {
             quorum_proof: vec![
                 crate::mesh::protocol::QuorumSignatureProto {
                     node_id: "global1".to_string(),
-                    signature: vec![1, 2, 3],
+                    signature: sig1,
                     timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
                 },
                 crate::mesh::protocol::QuorumSignatureProto {
                     node_id: "global2".to_string(),
-                    signature: vec![4, 5, 6],
+                    signature: sig2,
                     timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
                 },
                 crate::mesh::protocol::QuorumSignatureProto {
                     node_id: "global3".to_string(),
-                    signature: vec![7, 8, 9],
+                    signature: sig3,
                     timestamp: 1002,
+                    signer_public_key: Some(signer3.get_public_key()),
                 },
             ],
+            request_id: None,
         };
 
         assert!(
-            verify_quorum_proof(&record, 3),
+            verify_quorum_proof(&record, 3, "", "add"),
             "3 distinct signatures should meet quorum for 3 nodes (need 3)"
         );
     }
@@ -1198,23 +1344,49 @@ mod tests {
                     node_id: "global1".to_string(),
                     signature: vec![1, 2, 3],
                     timestamp: 1000,
+                    signer_public_key: None,
                 },
                 crate::mesh::protocol::QuorumSignatureProto {
                     node_id: "global1".to_string(),
                     signature: vec![4, 5, 6],
                     timestamp: 1001,
+                    signer_public_key: None,
                 },
             ],
+            request_id: None,
         };
 
         assert!(
-            !verify_quorum_proof(&record, 3),
+            !verify_quorum_proof(&record, 3, "", "add"),
             "Duplicate node_ids should count as 1 distinct signer"
         );
     }
 
     #[test]
     fn test_verify_quorum_proof_zero_global_nodes_uses_minimum() {
+        let secret1 = [0x11u8; 32];
+        let secret2 = [0x22u8; 32];
+        let signer1 = crate::mesh::protocol::MeshMessageSigner::new(secret1);
+        let signer2 = crate::mesh::protocol::MeshMessageSigner::new(secret2);
+
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("some_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signable_content = get_quorum_proof_signable_content("", &record, "add");
+        let sig1 = signer1.sign(&signable_content);
+        let sig2 = signer2.sign(&signable_content);
+
         let record = crate::mesh::protocol::DhtRecord {
             key: "verified_upstream:example.com".to_string(),
             value: b"test_value".to_vec(),
@@ -1228,19 +1400,22 @@ mod tests {
             quorum_proof: vec![
                 crate::mesh::protocol::QuorumSignatureProto {
                     node_id: "global1".to_string(),
-                    signature: vec![1, 2, 3],
+                    signature: sig1,
                     timestamp: 1000,
+                    signer_public_key: Some(signer1.get_public_key()),
                 },
                 crate::mesh::protocol::QuorumSignatureProto {
                     node_id: "global2".to_string(),
-                    signature: vec![4, 5, 6],
+                    signature: sig2,
                     timestamp: 1001,
+                    signer_public_key: Some(signer2.get_public_key()),
                 },
             ],
+            request_id: None,
         };
 
         assert!(
-            verify_quorum_proof(&record, 0),
+            verify_quorum_proof(&record, 0, "", "add"),
             "With 0 known global nodes, MIN_QUORUM_PROOF_SIGNATURES=2 should be the threshold"
         );
     }
@@ -1282,11 +1457,246 @@ mod tests {
             signer_public_key: Some("fake_key".to_string()),
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         assert!(
-            !verify_quorum_proof(&malicious_record, 3),
+            !verify_quorum_proof(&malicious_record, 3, "", "add"),
             "Malicious node gossiping Live record without quorum proof must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_regression_forged_quorum_proof_with_fake_signatures_rejected() {
+        let fake_signatures_record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:attacker.com".to_string(),
+            value: b"fake_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "attacker_node".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("fake_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: vec![0xFF; 64],
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                    signer_public_key: None,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: vec![0xFE; 64],
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                    signer_public_key: None,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global3".to_string(),
+                    signature: vec![0xFD; 64],
+                    timestamp: crate::mesh::safe_unix_timestamp(),
+                    signer_public_key: None,
+                },
+            ],
+            request_id: None,
+        };
+
+        let result = verify_quorum_proof(&fake_signatures_record, 3, "", "add");
+        assert!(
+            !result,
+            "BUG: verify_quorum_proof() currently accepts forged signatures! It only counts distinct node_ids without verifying any signatures."
+        );
+    }
+
+    #[test]
+    fn test_regression_quorum_proof_signature_replay_to_different_content_rejected() {
+        let secret = [
+            0x9c, 0xef, 0x61, 0x2a, 0xf2, 0x74, 0x23, 0x32, 0x1e, 0x3e, 0x8e, 0x1a, 0x7a, 0x06,
+            0x51, 0x4f, 0x4c, 0x3a, 0x38, 0xc4, 0x8c, 0x4f, 0x8c, 0x18, 0x7a, 0x16, 0x32, 0x7d,
+            0x5e, 0x41, 0x6e, 0x67,
+        ];
+        let signer = MeshMessageSigner::new(secret);
+
+        let record1 = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example1.com".to_string(),
+            value: b"value_for_record1".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let signed_record1 = dht_record_to_signed_record(&record1);
+        let sig1 = signer.sign(&signed_record1.get_signable_content());
+
+        let record2 = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example2.com".to_string(),
+            value: b"different_value".to_vec(),
+            timestamp: 1000,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "honest_node".to_string(),
+            signature: sig1,
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: Vec::new(),
+            quorum_proof: vec![
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global1".to_string(),
+                    signature: vec![1; 64],
+                    timestamp: 1000,
+                    signer_public_key: None,
+                },
+                crate::mesh::protocol::QuorumSignatureProto {
+                    node_id: "global2".to_string(),
+                    signature: vec![2; 64],
+                    timestamp: 1001,
+                    signer_public_key: None,
+                },
+            ],
+            request_id: None,
+        };
+
+        let verified = verify_dht_record_signature(&record2);
+        assert!(
+            !verified,
+            "BUG: Quorum proof signatures must be bound to specific record content. A proof created for record1 should NOT verify for record2."
+        );
+    }
+
+    #[test]
+    fn test_regression_validate_record_timestamp_rejects_old_but_live_records() {
+        let now = crate::mesh::safe_unix_timestamp() as i64;
+        let old_timestamp = (now - 600) as u64;
+        let ttl_seconds: u64 = 3600;
+
+        let expires_at = old_timestamp.saturating_add(ttl_seconds);
+        let is_expired = now > expires_at as i64;
+
+        let timestamp_valid = validate_record_timestamp(old_timestamp);
+
+        assert!(
+            !is_expired,
+            "Record with timestamp {} and TTL {} should NOT be expired (expires at {})",
+            old_timestamp, ttl_seconds, expires_at
+        );
+
+        assert!(
+            timestamp_valid,
+            "BUG: validate_record_timestamp() rejects records with timestamp diff > 300 seconds, even though this record is still LIVE (expires in {} seconds). The validation should check if the record is EXPIRED, not just OLD.",
+            expires_at as i64 - now
+        );
+    }
+
+    #[test]
+    fn test_ingress_paths_reject_invalid_signatures() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "org:test".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: Some("invalid_key".to_string()),
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let verified = verify_dht_record_signature(&record);
+        assert!(
+            !verified,
+            "Record with invalid signature should be rejected by verify_dht_record_signature()"
+        );
+    }
+
+    #[test]
+    fn test_ingress_paths_reject_missing_quorum_proof_for_sensitive_namespaces() {
+        let record = crate::mesh::protocol::DhtRecord {
+            key: "verified_upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node1".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let verified = verify_quorum_proof(&record, 3, "", "add");
+        assert!(
+            !verified,
+            "Record in quorum-required namespace missing quorum proof should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_ingress_paths_reject_future_timestamps() {
+        let now = crate::mesh::safe_unix_timestamp() as i64;
+        let future_timestamp = (now + 600) as u64;
+
+        let timestamp_valid = validate_record_timestamp(future_timestamp);
+        assert!(
+            !timestamp_valid,
+            "Record with timestamp 600 seconds in future should be rejected by validate_record_timestamp()"
+        );
+    }
+
+    #[test]
+    fn test_ingress_paths_reject_expired_ttl() {
+        let now = crate::mesh::safe_unix_timestamp();
+        let old_timestamp = now - 7200;
+        let ttl_seconds: u64 = 300;
+        let expires_at = old_timestamp.saturating_add(ttl_seconds);
+
+        assert!(
+            now > expires_at,
+            "Record with timestamp {} and TTL {} should be expired",
+            old_timestamp,
+            ttl_seconds
+        );
+    }
+
+    #[test]
+    fn test_validate_record_timestamp_allows_reasonable_past_timestamps() {
+        let now = crate::mesh::safe_unix_timestamp() as i64;
+        let past_timestamp = (now - 299) as u64;
+
+        let timestamp_valid = validate_record_timestamp(past_timestamp);
+        assert!(
+            timestamp_valid,
+            "Record with timestamp 299 seconds in past should be valid"
+        );
+    }
+
+    #[test]
+    fn test_validate_record_timestamp_rejects_far_future_timestamps() {
+        let now = crate::mesh::safe_unix_timestamp() as i64;
+        let far_future = (now + 301) as u64;
+
+        let timestamp_valid = validate_record_timestamp(far_future);
+        assert!(
+            !timestamp_valid,
+            "Record with timestamp 301 seconds in future should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_validate_record_timestamp_allows_current_time() {
+        let now = crate::mesh::safe_unix_timestamp();
+
+        let timestamp_valid = validate_record_timestamp(now);
+        assert!(
+            timestamp_valid,
+            "Record with current timestamp should be valid"
         );
     }
 }

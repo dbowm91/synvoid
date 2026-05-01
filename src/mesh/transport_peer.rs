@@ -15,7 +15,7 @@ use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::broadcast;
 
-use crate::mesh::protocol::{ArcStr, HealthStatus, MeshMessage};
+use crate::mesh::protocol::{ArcStr, HealthStatus, MeshMessage, RaftSnapshotFrame};
 
 use crate::mesh::topology::{MeshTopology, PeerStatus};
 
@@ -650,6 +650,7 @@ impl MeshTransport {
                             hasher.finalize().to_vec()
                         },
                         quorum_proof: Vec::new(),
+                        request_id: None,
                     };
                     let _ = self.complete_dht_query(&request_id, record).await;
                 }
@@ -1075,6 +1076,7 @@ impl MeshTransport {
                             hasher.finalize().to_vec()
                         },
                         quorum_proof: Vec::new(),
+                        request_id: None,
                     };
 
                     if record_store
@@ -1091,6 +1093,7 @@ impl MeshTransport {
                 request_id,
                 key: _,
                 signature,
+                signer_public_key,
             } => {
                 if let Some(ref record_store) = self.record_store {
                     let _ = record_store
@@ -1098,6 +1101,7 @@ impl MeshTransport {
                             &request_id.to_string(),
                             peer_id,
                             signature,
+                            signer_public_key,
                         )
                         .await;
                 }
@@ -2845,109 +2849,235 @@ impl MeshTransport {
             }
             crate::mesh::protocol::RaftMsgType::InstallSnapshot => {
                 let _request_id = payload.request_id.clone().unwrap_or_default();
-                if payload.data.len() < 100 {
-                    let header: crate::mesh::protocol::SnapshotHeader =
-                        match postcard::from_bytes(&payload.data) {
-                            Ok(h) => h,
-                            Err(e) => {
-                                tracing::warn!("Failed to deserialize SnapshotHeader: {}", e);
-                                return Ok(None);
-                            }
-                        };
-                    tracing::info!(
-                        "Received snapshot header: request_id={}, total_size={}",
-                        header.request_id,
-                        header.total_size
-                    );
-                    let mut pending = self.pending_snapshot_transfers.lock().await;
-                    pending.insert(
-                        header.request_id.clone(),
-                        crate::mesh::transport::InProgressSnapshot::new(
-                            header.request_id,
-                            header.total_size,
-                            header.vote,
-                            header.meta,
-                        ),
-                    );
-                    None
-                } else {
-                    let chunk: crate::mesh::protocol::SnapshotChunk =
-                        match postcard::from_bytes(&payload.data) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                tracing::warn!("Failed to deserialize SnapshotChunk: {}", e);
-                                return Ok(None);
-                            }
-                        };
-                    let mut pending = self.pending_snapshot_transfers.lock().await;
-                    let request_id = chunk.request_id.clone();
-                    let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
-                        if !snapshot.add_chunk(chunk.offset, chunk.data.clone(), chunk.is_last) {
-                            tracing::warn!(
-                                "Failed to add chunk at offset {} for request_id {}",
-                                chunk.offset,
-                                request_id
+                match postcard::from_bytes::<RaftSnapshotFrame>(&payload.data) {
+                    Ok(frame) => match frame {
+                        RaftSnapshotFrame::Header(header) => {
+                            tracing::info!(
+                                "Received snapshot header: request_id={}, total_size={}",
+                                header.request_id,
+                                header.total_size
                             );
-                            pending.remove(&request_id);
-                            false
-                        } else {
-                            snapshot.is_complete()
+                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            pending.insert(
+                                header.request_id.clone(),
+                                crate::mesh::transport::InProgressSnapshot::new(
+                                    header.request_id,
+                                    header.total_size,
+                                    header.vote,
+                                    header.meta,
+                                ),
+                            );
+                            None
                         }
-                    } else {
-                        false
-                    };
-                    drop(pending);
-                    if is_complete {
-                        tracing::info!(
-                            "Snapshot assembly complete for request_id {}, installing...",
-                            request_id
+                        RaftSnapshotFrame::Chunk(chunk) => {
+                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            let request_id = chunk.request_id.clone();
+                            let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
+                                if !snapshot.add_chunk(
+                                    chunk.offset,
+                                    chunk.data.clone(),
+                                    chunk.is_last,
+                                ) {
+                                    tracing::warn!(
+                                        "Failed to add chunk at offset {} for request_id {}",
+                                        chunk.offset,
+                                        request_id
+                                    );
+                                    pending.remove(&request_id);
+                                    false
+                                } else {
+                                    snapshot.is_complete()
+                                }
+                            } else {
+                                false
+                            };
+                            drop(pending);
+                            if is_complete {
+                                tracing::info!(
+                                    "Snapshot assembly complete for request_id {}, installing...",
+                                    request_id
+                                );
+                                let mut pending = self.pending_snapshot_transfers.lock().await;
+                                let completed = pending.remove(&request_id);
+                                if let Some(snapshot) = completed {
+                                    let vote: VoteOf<GlobalRegistryTypeConfig> =
+                                        match postcard::from_bytes(&snapshot.vote) {
+                                            Ok(v) => v,
+                                            Err(e) => {
+                                                tracing::warn!("Failed to deserialize vote: {}", e);
+                                                return Ok(None);
+                                            }
+                                        };
+                                    let meta: SnapshotMetaOf<
+                                        crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+                                    > = match postcard::from_bytes(&snapshot.meta) {
+                                        Ok(m) => m,
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Failed to deserialize snapshot meta: {}",
+                                                e
+                                            );
+                                            return Ok(None);
+                                        }
+                                    };
+                                    if let Some(ref inst) = instance {
+                                        if let Err(e) =
+                                            inst.install_snapshot(&meta, snapshot.data.into()).await
+                                        {
+                                            tracing::error!("Failed to install snapshot: {}", e);
+                                        } else {
+                                            tracing::info!("Snapshot installed successfully");
+                                            let response =
+                                                SnapshotResponse::<GlobalRegistryTypeConfig> {
+                                                    vote,
+                                                };
+                                            let encoded =
+                                                postcard::to_stdvec(&response).map_err(|e| {
+                                                    MeshTransportError::SendFailed(format!(
+                                                        "Serialize error: {}",
+                                                        e
+                                                    ))
+                                                })?;
+                                            return Ok(Some(encoded));
+                                        }
+                                    }
+                                }
+                                None
+                            } else {
+                                tracing::warn!(
+                                    "Received chunk for unknown or completed request_id: {}",
+                                    request_id
+                                );
+                                None
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to decode RaftSnapshotFrame, using legacy length heuristic: {}",
+                            e
                         );
-                        let mut pending = self.pending_snapshot_transfers.lock().await;
-                        let completed = pending.remove(&request_id);
-                        if let Some(snapshot) = completed {
-                            let vote: VoteOf<GlobalRegistryTypeConfig> =
-                                match postcard::from_bytes(&snapshot.vote) {
-                                    Ok(v) => v,
+                        if payload.data.len() < 100 {
+                            let header: crate::mesh::protocol::SnapshotHeader =
+                                match postcard::from_bytes(&payload.data) {
+                                    Ok(h) => h,
                                     Err(e) => {
-                                        tracing::warn!("Failed to deserialize vote: {}", e);
+                                        tracing::warn!(
+                                            "Failed to deserialize SnapshotHeader: {}",
+                                            e
+                                        );
                                         return Ok(None);
                                     }
                                 };
-                            let meta: SnapshotMetaOf<
-                                crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
-                            > = match postcard::from_bytes(&snapshot.meta) {
-                                Ok(m) => m,
-                                Err(e) => {
-                                    tracing::warn!("Failed to deserialize snapshot meta: {}", e);
-                                    return Ok(None);
-                                }
-                            };
-                            if let Some(ref inst) = instance {
-                                if let Err(e) =
-                                    inst.install_snapshot(&meta, snapshot.data.into()).await
-                                {
-                                    tracing::error!("Failed to install snapshot: {}", e);
-                                } else {
-                                    tracing::info!("Snapshot installed successfully");
-                                    let response =
-                                        SnapshotResponse::<GlobalRegistryTypeConfig> { vote };
-                                    let encoded = postcard::to_stdvec(&response).map_err(|e| {
-                                        MeshTransportError::SendFailed(format!(
-                                            "Serialize error: {}",
+                            tracing::info!(
+                                "Received snapshot header: request_id={}, total_size={}",
+                                header.request_id,
+                                header.total_size
+                            );
+                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            pending.insert(
+                                header.request_id.clone(),
+                                crate::mesh::transport::InProgressSnapshot::new(
+                                    header.request_id,
+                                    header.total_size,
+                                    header.vote,
+                                    header.meta,
+                                ),
+                            );
+                            None
+                        } else {
+                            let chunk: crate::mesh::protocol::SnapshotChunk =
+                                match postcard::from_bytes(&payload.data) {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to deserialize SnapshotChunk: {}",
                                             e
-                                        ))
-                                    })?;
-                                    return Ok(Some(encoded));
+                                        );
+                                        return Ok(None);
+                                    }
+                                };
+                            let mut pending = self.pending_snapshot_transfers.lock().await;
+                            let request_id = chunk.request_id.clone();
+                            let is_complete = if let Some(snapshot) = pending.get_mut(&request_id) {
+                                if !snapshot.add_chunk(
+                                    chunk.offset,
+                                    chunk.data.clone(),
+                                    chunk.is_last,
+                                ) {
+                                    tracing::warn!(
+                                        "Failed to add chunk at offset {} for request_id {}",
+                                        chunk.offset,
+                                        request_id
+                                    );
+                                    pending.remove(&request_id);
+                                    false
+                                } else {
+                                    snapshot.is_complete()
                                 }
+                            } else {
+                                false
+                            };
+                            drop(pending);
+                            if is_complete {
+                                tracing::info!(
+                                    "Snapshot assembly complete for request_id {}, installing...",
+                                    request_id
+                                );
+                                let mut pending = self.pending_snapshot_transfers.lock().await;
+                                let completed = pending.remove(&request_id);
+                                if let Some(snapshot) = completed {
+                                    let vote: VoteOf<GlobalRegistryTypeConfig> =
+                                        match postcard::from_bytes(&snapshot.vote) {
+                                            Ok(v) => v,
+                                            Err(e) => {
+                                                tracing::warn!("Failed to deserialize vote: {}", e);
+                                                return Ok(None);
+                                            }
+                                        };
+                                    let meta: SnapshotMetaOf<
+                                        crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+                                    > = match postcard::from_bytes(&snapshot.meta) {
+                                        Ok(m) => m,
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Failed to deserialize snapshot meta: {}",
+                                                e
+                                            );
+                                            return Ok(None);
+                                        }
+                                    };
+                                    if let Some(ref inst) = instance {
+                                        if let Err(e) =
+                                            inst.install_snapshot(&meta, snapshot.data.into()).await
+                                        {
+                                            tracing::error!("Failed to install snapshot: {}", e);
+                                        } else {
+                                            tracing::info!("Snapshot installed successfully");
+                                            let response =
+                                                SnapshotResponse::<GlobalRegistryTypeConfig> {
+                                                    vote,
+                                                };
+                                            let encoded =
+                                                postcard::to_stdvec(&response).map_err(|e| {
+                                                    MeshTransportError::SendFailed(format!(
+                                                        "Serialize error: {}",
+                                                        e
+                                                    ))
+                                                })?;
+                                            return Ok(Some(encoded));
+                                        }
+                                    }
+                                }
+                                None
+                            } else {
+                                tracing::warn!(
+                                    "Received chunk for unknown or completed request_id: {}",
+                                    request_id
+                                );
+                                None
                             }
                         }
-                        None
-                    } else {
-                        tracing::warn!(
-                            "Received chunk for unknown or completed request_id: {}",
-                            request_id
-                        );
-                        None
                     }
                 }
             }

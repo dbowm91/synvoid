@@ -18,7 +18,9 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
 
 use crate::mesh::backend::MeshBackendPool;
-use crate::mesh::protocol::{ArcStr, MeshMessage, RaftMsgType, RaftPayload as MeshRaftPayload};
+use crate::mesh::protocol::{
+    ArcStr, MeshMessage, RaftMsgType, RaftPayload as MeshRaftPayload, RaftSnapshotFrame,
+};
 use crate::mesh::MeshProxy;
 
 const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
@@ -180,7 +182,8 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
             meta,
             total_size,
         };
-        let header_bytes = postcard::to_stdvec(&header)
+        let header_frame = RaftSnapshotFrame::Header(header);
+        let header_bytes = postcard::to_stdvec(&header_frame)
             .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -223,7 +226,8 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
                 is_last,
                 data: chunk,
             };
-            let chunk_bytes = postcard::to_stdvec(&chunk_info)
+            let chunk_frame = crate::mesh::protocol::RaftSnapshotFrame::Chunk(chunk_info);
+            let chunk_bytes = postcard::to_stdvec(&chunk_frame)
                 .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
             let chunk_msg = MeshMessage::Raft {

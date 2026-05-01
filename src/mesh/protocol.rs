@@ -490,6 +490,7 @@ pub enum MeshMessage {
         request_id: ArcStr,
         key: ArcStr,
         signature: Vec<u8>,
+        signer_public_key: Option<String>,
     },
     QuorumRejectionResponse {
         request_id: ArcStr,
@@ -1202,6 +1203,12 @@ pub struct SnapshotChunk {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum RaftSnapshotFrame {
+    Header(SnapshotHeader),
+    Chunk(SnapshotChunk),
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum RaftMsgType {
     VoteRequest,
@@ -1543,7 +1550,14 @@ pub struct ThreatIndicator {
 }
 
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
 )]
 pub struct DhtRecord {
     pub key: String,
@@ -1556,6 +1570,7 @@ pub struct DhtRecord {
     pub signer_public_key: Option<String>,
     pub content_hash: Vec<u8>,
     pub quorum_proof: Vec<QuorumSignatureProto>,
+    pub request_id: Option<String>,
 }
 
 impl DhtRecord {
@@ -1614,12 +1629,20 @@ impl DhtRecordStatus {
 }
 
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
 )]
 pub struct QuorumSignatureProto {
     pub node_id: String,
     pub signature: Vec<u8>,
     pub timestamp: u64,
+    pub signer_public_key: Option<String>,
 }
 
 impl From<&crate::mesh::dht::quorum::QuorumSignature> for QuorumSignatureProto {
@@ -1628,6 +1651,7 @@ impl From<&crate::mesh::dht::quorum::QuorumSignature> for QuorumSignatureProto {
             node_id: s.node_id.clone(),
             signature: s.signature.clone(),
             timestamp: s.timestamp,
+            signer_public_key: s.signer_public_key.clone(),
         }
     }
 }

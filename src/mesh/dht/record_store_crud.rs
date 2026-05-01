@@ -10,7 +10,12 @@ impl RecordStoreManager {
         dht_key.is_public()
     }
 
-    pub fn store_record(&self, record: DhtRecord, source_reputation: i64) -> bool {
+    pub fn store_record(
+        &self,
+        record: DhtRecord,
+        source_reputation: i64,
+        is_local_origin: bool,
+    ) -> bool {
         if !self.config.enabled {
             return false;
         }
@@ -81,7 +86,7 @@ impl RecordStoreManager {
         }
 
         if self.is_global_node() {
-            return self.store_record_global(record);
+            return self.store_record_global(record, is_local_origin);
         }
 
         let dht_key = DhtKey::from_str(&record.key);
@@ -159,7 +164,7 @@ impl RecordStoreManager {
         false
     }
 
-    pub(crate) fn store_record_global(&self, mut record: DhtRecord) -> bool {
+    pub(crate) fn store_record_global(&self, mut record: DhtRecord, is_local_origin: bool) -> bool {
         let now = crate::mesh::safe_unix_timestamp();
 
         let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
@@ -179,7 +184,7 @@ impl RecordStoreManager {
             return false;
         }
 
-        let is_local_record = record.source_node_id == self.node_id;
+        let is_local_record = is_local_origin && record.source_node_id == self.node_id;
 
         if self
             .access_control
@@ -406,7 +411,12 @@ impl RecordStoreManager {
                 crate::metrics::record_dht_store_operation(false);
                 return false;
             }
-            if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
+            if !crate::mesh::dht::signed::verify_quorum_proof(
+                &record,
+                0,
+                record.request_id.as_deref().unwrap_or(""),
+                "add",
+            ) {
                 tracing::warn!(
                     "Rejected record in quorum-required namespace {} from node {}: quorum proof verification failed",
                     record.key,
@@ -565,6 +575,7 @@ impl RecordStoreManager {
             signer_public_key: record.signer_public_key.clone(),
             content_hash: record.content_hash.clone(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
         let mut rs = self.record_state.write();
@@ -812,7 +823,12 @@ impl RecordStoreManager {
                     );
                     continue;
                 }
-                if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
+                if !crate::mesh::dht::signed::verify_quorum_proof(
+                    &record,
+                    0,
+                    record.request_id.as_deref().unwrap_or(""),
+                    "add",
+                ) {
                     tracing::warn!(
                         "Skipping sync record in quorum-required namespace {}: quorum proof verification failed",
                         record.key
@@ -1036,9 +1052,10 @@ impl RecordStoreManager {
                 hasher.finalize().to_vec()
             },
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
-        let stored = self.store_record(record.clone(), 100);
+        let stored = self.store_record(record.clone(), 100, true);
         if stored {
             self.queue_for_announce(record);
             tracing::info!("Published global node public key for node {}", self.node_id);
@@ -1090,9 +1107,10 @@ impl RecordStoreManager {
                 hasher.finalize().to_vec()
             },
             quorum_proof: Vec::new(),
+            request_id: None,
         };
 
-        let stored = self.store_record(record.clone(), 100);
+        let stored = self.store_record(record.clone(), 100, true);
         if stored {
             self.queue_for_announce(record.clone());
             tracing::debug!("Stored and queued record for announce: {}", key);

@@ -587,6 +587,7 @@ impl From<proto::DhtRecord> for DhtRecord {
             },
             content_hash: pb.content_hash,
             quorum_proof: Vec::new(),
+            request_id: None,
         }
     }
 }

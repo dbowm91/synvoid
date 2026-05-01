@@ -28,6 +28,10 @@ impl DiskRecordStore {
                  ttl_seconds INTEGER NOT NULL,
                  source_node_id TEXT NOT NULL,
                  content_hash BLOB NOT NULL,
+                 signature BLOB,
+                 signer_public_key TEXT,
+                 quorum_proof BLOB,
+                 request_id TEXT,
                  local_origin INTEGER NOT NULL,
                  version INTEGER NOT NULL,
                  status INTEGER NOT NULL
@@ -45,9 +49,13 @@ impl DiskRecordStore {
     pub fn get(&self, key: &str) -> Option<DhtRecordEntry> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE key = ?")
+            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status FROM dht_records WHERE key = ?")
             .ok()?;
         stmt.query_row(params![key], |row| {
+            let quorum_proof_bytes: Option<Vec<u8>> = row.get(9)?;
+            let quorum_proof = quorum_proof_bytes
+                .map(|b| crate::serialization::deserialize(&b).unwrap_or_default())
+                .unwrap_or_default();
             Ok(DhtRecordEntry {
                 record: DhtRecord {
                     key: row.get(0)?,
@@ -56,14 +64,15 @@ impl DiskRecordStore {
                     sequence_number: row.get(3)?,
                     ttl_seconds: row.get(4)?,
                     source_node_id: row.get(5)?,
-                    signature: Vec::new(),
-                    signer_public_key: None,
+                    signature: row.get::<_, Option<Vec<u8>>>(7)?.unwrap_or_default(),
+                    signer_public_key: row.get(8)?,
                     content_hash: row.get(6)?,
-                    quorum_proof: Vec::new(),
+                    quorum_proof,
+                    request_id: row.get(10)?,
                 },
-                local_origin: row.get::<_, i32>(7)? != 0,
-                version: row.get::<_, i64>(8)? as u64,
-                status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
+                local_origin: row.get::<_, i32>(11)? != 0,
+                version: row.get::<_, i64>(12)? as u64,
+                status: DhtRecordStatus::from_u8(row.get::<_, i32>(13)? as u8),
             })
         })
         .ok()
@@ -74,7 +83,7 @@ impl DiskRecordStore {
         let old = self.get_internal(&conn, &key);
 
         conn.execute(
-            "INSERT OR REPLACE INTO dht_records (key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO dht_records (key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 key,
                 value.record.value,
@@ -83,6 +92,14 @@ impl DiskRecordStore {
                 value.record.ttl_seconds as i64,
                 value.record.source_node_id,
                 value.record.content_hash,
+                value.record.signature,
+                value.record.signer_public_key,
+                if let Ok(encoded) = crate::serialization::serialize(&value.record.quorum_proof) {
+                    Some(encoded)
+                } else {
+                    None
+                },
+                value.record.request_id,
                 if value.local_origin { 1 } else { 0 },
                 value.version as i64,
                 value.status.to_u8() as i32,
@@ -114,10 +131,14 @@ impl DiskRecordStore {
     pub fn iter(&self) -> Vec<(String, DhtRecordEntry)> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records")
+            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status FROM dht_records")
             .unwrap();
         let rows = stmt
             .query_map([], |row| {
+                let quorum_proof_bytes: Option<Vec<u8>> = row.get(9)?;
+                let quorum_proof = quorum_proof_bytes
+                    .map(|b| crate::serialization::deserialize(&b).unwrap_or_default())
+                    .unwrap_or_default();
                 Ok(DhtRecordEntry {
                     record: DhtRecord {
                         key: row.get(0)?,
@@ -126,14 +147,15 @@ impl DiskRecordStore {
                         sequence_number: row.get(3)?,
                         ttl_seconds: row.get(4)?,
                         source_node_id: row.get(5)?,
-                        signature: Vec::new(),
-                        signer_public_key: None,
+                        signature: row.get::<_, Option<Vec<u8>>>(7)?.unwrap_or_default(),
+                        signer_public_key: row.get(8)?,
                         content_hash: row.get(6)?,
-                        quorum_proof: Vec::new(),
+                        quorum_proof,
+                        request_id: row.get(10)?,
                     },
-                    local_origin: row.get::<_, i32>(7)? != 0,
-                    version: row.get::<_, i64>(8)? as u64,
-                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
+                    local_origin: row.get::<_, i32>(11)? != 0,
+                    version: row.get::<_, i64>(12)? as u64,
+                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(13)? as u8),
                 })
             })
             .unwrap();
@@ -150,12 +172,16 @@ impl DiskRecordStore {
     pub fn get_by_prefix(&self, prefix: &str, limit: usize) -> Vec<(String, DhtRecordEntry)> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE key >= ? AND key < ? ORDER BY key")
+            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status FROM dht_records WHERE key >= ? AND key < ? ORDER BY key")
             .unwrap();
 
         let next_prefix = increment_string_prefix(prefix);
         let rows = stmt
             .query_map(params![prefix, next_prefix], |row| {
+                let quorum_proof_bytes: Option<Vec<u8>> = row.get(9)?;
+                let quorum_proof = quorum_proof_bytes
+                    .map(|b| crate::serialization::deserialize(&b).unwrap_or_default())
+                    .unwrap_or_default();
                 Ok(DhtRecordEntry {
                     record: DhtRecord {
                         key: row.get(0)?,
@@ -164,14 +190,15 @@ impl DiskRecordStore {
                         sequence_number: row.get(3)?,
                         ttl_seconds: row.get(4)?,
                         source_node_id: row.get(5)?,
-                        signature: Vec::new(),
-                        signer_public_key: None,
+                        signature: row.get::<_, Option<Vec<u8>>>(7)?.unwrap_or_default(),
+                        signer_public_key: row.get(8)?,
                         content_hash: row.get(6)?,
-                        quorum_proof: Vec::new(),
+                        quorum_proof,
+                        request_id: row.get(10)?,
                     },
-                    local_origin: row.get::<_, i32>(7)? != 0,
-                    version: row.get::<_, i64>(8)? as u64,
-                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
+                    local_origin: row.get::<_, i32>(11)? != 0,
+                    version: row.get::<_, i64>(12)? as u64,
+                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(13)? as u8),
                 })
             })
             .unwrap();
@@ -192,9 +219,13 @@ impl DiskRecordStore {
 
     fn get_internal(&self, conn: &Connection, key: &str) -> Option<DhtRecordEntry> {
         let mut stmt = conn
-            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE key = ?")
+            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status FROM dht_records WHERE key = ?")
             .ok()?;
         stmt.query_row(params![key], |row| {
+            let quorum_proof_bytes: Option<Vec<u8>> = row.get(9)?;
+            let quorum_proof = quorum_proof_bytes
+                .map(|b| crate::serialization::deserialize(&b).unwrap_or_default())
+                .unwrap_or_default();
             Ok(DhtRecordEntry {
                 record: DhtRecord {
                     key: row.get(0)?,
@@ -203,14 +234,15 @@ impl DiskRecordStore {
                     sequence_number: row.get(3)?,
                     ttl_seconds: row.get(4)?,
                     source_node_id: row.get(5)?,
-                    signature: Vec::new(),
-                    signer_public_key: None,
+                    signature: row.get::<_, Option<Vec<u8>>>(7)?.unwrap_or_default(),
+                    signer_public_key: row.get(8)?,
                     content_hash: row.get(6)?,
-                    quorum_proof: Vec::new(),
+                    quorum_proof,
+                    request_id: row.get(10)?,
                 },
-                local_origin: row.get::<_, i32>(7)? != 0,
-                version: row.get::<_, i64>(8)? as u64,
-                status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
+                local_origin: row.get::<_, i32>(11)? != 0,
+                version: row.get::<_, i64>(12)? as u64,
+                status: DhtRecordStatus::from_u8(row.get::<_, i32>(13)? as u8),
             })
         })
         .ok()
@@ -226,10 +258,14 @@ impl DiskRecordStore {
     pub fn get_pending_quorum_records(&self) -> Vec<(String, DhtRecordEntry)> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, local_origin, version, status FROM dht_records WHERE status = ?")
+            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status FROM dht_records WHERE status = ?")
             .unwrap();
         let rows = stmt
             .query_map(params![DhtRecordStatus::PendingQuorum as i32], |row| {
+                let quorum_proof_bytes: Option<Vec<u8>> = row.get(9)?;
+                let quorum_proof = quorum_proof_bytes
+                    .map(|b| crate::serialization::deserialize(&b).unwrap_or_default())
+                    .unwrap_or_default();
                 Ok(DhtRecordEntry {
                     record: DhtRecord {
                         key: row.get(0)?,
@@ -238,14 +274,15 @@ impl DiskRecordStore {
                         sequence_number: row.get(3)?,
                         ttl_seconds: row.get(4)?,
                         source_node_id: row.get(5)?,
-                        signature: Vec::new(),
-                        signer_public_key: None,
+                        signature: row.get::<_, Option<Vec<u8>>>(7)?.unwrap_or_default(),
+                        signer_public_key: row.get(8)?,
                         content_hash: row.get(6)?,
-                        quorum_proof: Vec::new(),
+                        quorum_proof,
+                        request_id: row.get(10)?,
                     },
-                    local_origin: row.get::<_, i32>(7)? != 0,
-                    version: row.get::<_, i64>(8)? as u64,
-                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(9)? as u8),
+                    local_origin: row.get::<_, i32>(11)? != 0,
+                    version: row.get::<_, i64>(12)? as u64,
+                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(13)? as u8),
                 })
             })
             .unwrap();
@@ -320,6 +357,7 @@ mod tests {
                 signer_public_key: None,
                 content_hash: vec![],
                 quorum_proof: Vec::new(),
+                request_id: None,
             },
             local_origin: true,
             version: 1,
@@ -362,6 +400,7 @@ mod tests {
                 signer_public_key: None,
                 content_hash: vec![],
                 quorum_proof: Vec::new(),
+                request_id: None,
             },
             local_origin: true,
             version: 1,
@@ -380,6 +419,7 @@ mod tests {
                 signer_public_key: None,
                 content_hash: vec![],
                 quorum_proof: Vec::new(),
+                request_id: None,
             },
             local_origin: true,
             version: 2,
@@ -420,6 +460,7 @@ mod tests {
                     signer_public_key: None,
                     content_hash: vec![],
                     quorum_proof: Vec::new(),
+                    request_id: None,
                 },
                 local_origin: false,
                 version: i as u64,
@@ -457,6 +498,7 @@ mod tests {
                 signer_public_key: None,
                 content_hash: vec![],
                 quorum_proof: Vec::new(),
+                request_id: None,
             },
             local_origin: true,
             version: 1,
@@ -465,6 +507,76 @@ mod tests {
 
         store.insert("test_key".to_string(), entry);
         store.checkpoint().unwrap();
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_regression_disk_persistence_drops_security_metadata() {
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_dht_security_metadata.db");
+        cleanup_db(&db_path);
+
+        let store = DiskRecordStore::new(&db_path).unwrap();
+
+        let signature = vec![0xDEu8; 64];
+        let signer_pk = "fake_public_key_base64".to_string();
+        let quorum_proof = vec![
+            crate::mesh::protocol::QuorumSignatureProto {
+                node_id: "global1".to_string(),
+                signature: vec![1u8; 64],
+                timestamp: 1000,
+                signer_public_key: None,
+            },
+            crate::mesh::protocol::QuorumSignatureProto {
+                node_id: "global2".to_string(),
+                signature: vec![2u8; 64],
+                timestamp: 1001,
+                signer_public_key: None,
+            },
+        ];
+        let content_hash = vec![0xABu8; 32];
+
+        let entry = DhtRecordEntry {
+            record: DhtRecord {
+                key: "verified_upstream:test.com".to_string(),
+                value: b"test_value".to_vec(),
+                timestamp: 1000,
+                sequence_number: 1,
+                ttl_seconds: 3600,
+                source_node_id: "node_1".to_string(),
+                signature: signature.clone(),
+                signer_public_key: Some(signer_pk.clone()),
+                content_hash: content_hash.clone(),
+                quorum_proof: quorum_proof.clone(),
+                request_id: None,
+            },
+            local_origin: false,
+            version: 1,
+            status: DhtRecordStatus::Live,
+        };
+
+        store.insert("verified_upstream:test.com".to_string(), entry);
+
+        let retrieved = store.get("verified_upstream:test.com").unwrap();
+
+        assert_eq!(
+            retrieved.record.signature, signature,
+            "Signature should be persisted and retrieved correctly"
+        );
+        assert_eq!(
+            retrieved.record.signer_public_key,
+            Some(signer_pk),
+            "signer_public_key should be persisted and retrieved correctly"
+        );
+        assert_eq!(
+            retrieved.record.quorum_proof, quorum_proof,
+            "quorum_proof should be persisted and retrieved correctly"
+        );
+        assert_eq!(
+            retrieved.record.content_hash, content_hash,
+            "Content hash is persisted correctly"
+        );
 
         let _ = fs::remove_file(db_path);
     }

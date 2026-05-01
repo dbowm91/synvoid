@@ -483,6 +483,7 @@ message QuorumSignatureResponse {
     string request_id = 1;
     string key = 2;
     bytes signature = 3;
+    string signer_public_key = 4;
 }
 
 message QuorumRejectionResponse {

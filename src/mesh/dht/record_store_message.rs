@@ -239,7 +239,7 @@ impl RecordStoreManager {
 
                 let reputation = self.get_sender_reputation(from_node, signer).await;
                 for record in records {
-                    self.store_record(record.clone(), reputation);
+                    self.store_record(record.clone(), reputation, false);
                     self.init_propagation_state(&record.key);
                 }
                 self.compute_merkle_tree();
@@ -466,7 +466,7 @@ impl RecordStoreManager {
         let reputation = self.get_sender_reputation(from_node, None).await;
 
         for record in missing_records {
-            if self.store_record(record.clone(), reputation) {
+            if self.store_record(record.clone(), reputation, false) {
                 stored_count += 1;
             }
         }
@@ -863,19 +863,9 @@ impl RecordStoreManager {
         let (signature, signer_public_key) = {
             let rs = self.record_state.read();
             if let Some(ref signer) = rs.mesh_signer {
-                #[derive(serde::Serialize)]
-                struct Signable<'a> {
-                    key: &'a str,
-                    value: &'a [u8],
-                    timestamp: u64,
-                }
-                let signed_content = crate::serialization::serialize(&Signable {
-                    key: &record.key,
-                    value: record.value.as_slice(),
-                    timestamp: crate::mesh::safe_unix_timestamp(),
-                })
-                .unwrap_or_default();
-
+                let signed_content = crate::mesh::dht::signed::get_quorum_proof_signable_content(
+                    request_id, &record, "add",
+                );
                 let sig = signer.sign(&signed_content);
                 let pk = signer.get_public_key();
                 (sig, pk)
@@ -897,13 +887,19 @@ impl RecordStoreManager {
         }
 
         quorum_manager
-            .add_signature(request_id, self.node_id.clone(), signature.clone())
+            .add_signature(
+                request_id,
+                self.node_id.clone(),
+                signature.clone(),
+                Some(signer_public_key.clone()),
+            )
             .await;
 
         let response = MeshMessage::QuorumSignatureResponse {
             request_id: request_id.into(),
             key: record.key.clone().into(),
             signature,
+            signer_public_key: Some(signer_public_key.clone()),
         };
         let _ = transport
             .send_datagram_to_peer(from_node_id, &response)
@@ -1125,12 +1121,37 @@ impl RecordStoreManager {
             return false;
         }
 
+        let now = crate::mesh::safe_unix_timestamp();
+        let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
+        if now > expires_at {
+            tracing::warn!(
+                "Rejected DhtRecordCommit for expired record: {} from {}",
+                record.key,
+                source_node_id
+            );
+            return false;
+        }
+
+        if !crate::mesh::dht::signed::validate_record_timestamp(record.timestamp) {
+            tracing::warn!(
+                "Rejected DhtRecordCommit for key {} from {}: timestamp too far in future",
+                record.key,
+                source_node_id
+            );
+            return false;
+        }
+
         record.quorum_proof = quorum_signatures;
 
         let key_requires_quorum_proof = self.access_control.requires_quorum_proof(&record.key);
 
         if key_requires_quorum_proof && !record.quorum_proof.is_empty() {
-            if !crate::mesh::dht::signed::verify_quorum_proof(&record, 0) {
+            if !crate::mesh::dht::signed::verify_quorum_proof(
+                &record,
+                0,
+                record.request_id.as_deref().unwrap_or(""),
+                "add",
+            ) {
                 tracing::warn!(
                     "Rejected DhtRecordCommit for key {} from {}: quorum proof verification failed",
                     record.key,
@@ -1199,7 +1220,7 @@ impl RecordStoreManager {
             }
         }
 
-        self.store_record(record, 100)
+        self.store_record(record, 100, false)
     }
 
     pub async fn handle_quorum_signature_response(
@@ -1207,6 +1228,7 @@ impl RecordStoreManager {
         request_id: &str,
         node_id: &str,
         signature: Vec<u8>,
+        signer_public_key: Option<String>,
     ) -> bool {
         let manager_opt = {
             let qm = self.quorum_manager.read();
@@ -1214,7 +1236,12 @@ impl RecordStoreManager {
         };
         if let Some(manager) = manager_opt {
             manager
-                .add_signature(request_id, node_id.to_string(), signature)
+                .add_signature(
+                    request_id,
+                    node_id.to_string(),
+                    signature,
+                    signer_public_key,
+                )
                 .await
         } else {
             false
@@ -1498,10 +1525,12 @@ mod tests {
             node_id: "node1".to_string(),
             signature: vec![1, 2, 3],
             timestamp: 12345,
+            signer_public_key: Some("test_pk".to_string()),
         };
         let proto: crate::mesh::protocol::QuorumSignatureProto = (&sig).into();
         assert_eq!(proto.node_id, "node1");
         assert_eq!(proto.signature, vec![1, 2, 3]);
         assert_eq!(proto.timestamp, 12345);
+        assert_eq!(proto.signer_public_key, Some("test_pk".to_string()));
     }
 }

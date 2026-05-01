@@ -351,6 +351,30 @@ impl GlobalRegistryStateMachine {
             .and_then(|s| s.split(':').next_back()?.parse().ok())
     }
 
+    pub fn get_first_log_term(&self) -> Option<u64> {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT MIN(term) FROM log_entries", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .ok()
+            .flatten()
+            .map(|v| v as u64)
+    }
+
+    pub fn get_last_log_term(&self) -> Option<u64> {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT MAX(term) FROM log_entries", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .ok()
+            .flatten()
+            .map(|v| v as u64)
+    }
+
     pub fn set_last_applied_log_id(&self, index: u64) -> Result<(), rusqlite::Error> {
         self.db.lock().unwrap().execute(
             "INSERT OR REPLACE INTO snapshot_metadata (key, value) VALUES ('last_applied_log_id', ?1)",
@@ -671,6 +695,30 @@ impl GlobalRegistryLogStorage {
             .map(|v| v as u64)
     }
 
+    pub fn get_first_log_term(&self) -> Option<u64> {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT MIN(term) FROM log_entries", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .ok()
+            .flatten()
+            .map(|v| v as u64)
+    }
+
+    pub fn get_last_log_term(&self) -> Option<u64> {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT MAX(term) FROM log_entries", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
+            .ok()
+            .flatten()
+            .map(|v| v as u64)
+    }
+
     pub fn delete_range(&self, start: u64, end: u64) -> Result<(), rusqlite::Error> {
         self.db.lock().unwrap().execute(
             "DELETE FROM log_entries WHERE id >= ?1 AND id < ?2",
@@ -825,11 +873,10 @@ impl RaftLogReader<GlobalRegistryTypeConfig> for GlobalRegistryLogReader {
         let entries = self.storage.get_log_entries_paged(start, limit);
         let mut result = Vec::new();
 
-        let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
-
         for (index, _term, payload) in entries {
             if index >= start && index < end {
-                let log_id = openraft::log_id::LogId::new(committed_leader_id, index);
+                let log_id =
+                    openraft::log_id::LogId::new(CommittedLeaderIdOfConfig::new(_term, 0), index);
                 let payload_parsed: EntryPayload<RaftCommand, NodeId, ()> =
                     postcard::from_bytes(&payload).unwrap_or(EntryPayload::Blank);
                 let entry = EntryOf::<GlobalRegistryTypeConfig>::new(log_id, payload_parsed);
@@ -868,7 +915,8 @@ impl RaftSnapshotBuilder<GlobalRegistryTypeConfig> for GlobalRegistrySnapshotBui
 
         let last_applied = self.state_machine.get_last_applied_log_id().unwrap_or(0);
 
-        let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
+        let last_log_term = self.state_machine.get_last_log_term().unwrap_or(0);
+        let committed_leader_id = CommittedLeaderIdOfConfig::new(last_log_term, 0);
         let log_id = openraft::log_id::LogId::new(committed_leader_id, last_applied);
 
         let last_membership = self
@@ -896,11 +944,15 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
         let first_id = self.get_first_id();
         let last_id = self.get_last_id();
 
-        let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
+        let first_log_term = self.get_first_log_term().unwrap_or(0);
+        let last_log_term = self.get_last_log_term().unwrap_or(0);
+        let first_committed_leader_id = CommittedLeaderIdOfConfig::new(first_log_term, 0);
+        let last_committed_leader_id = CommittedLeaderIdOfConfig::new(last_log_term, 0);
 
-        let last_log_id = last_id.map(|id| openraft::log_id::LogId::new(committed_leader_id, id));
+        let last_log_id =
+            last_id.map(|id| openraft::log_id::LogId::new(last_committed_leader_id, id));
         let last_purged_log_id =
-            first_id.map(|id| openraft::log_id::LogId::new(committed_leader_id, id));
+            first_id.map(|id| openraft::log_id::LogId::new(first_committed_leader_id, id));
 
         Ok(LogState {
             last_purged_log_id,
@@ -971,11 +1023,11 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
         Option<LogIdOf<GlobalRegistryTypeConfig>>,
         StoredMembershipOf<GlobalRegistryTypeConfig>,
     )> {
-        let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
-
-        let last_applied = self
-            .get_last_applied_log_id()
-            .map(|index| openraft::log_id::LogId::new(committed_leader_id, index));
+        let last_applied = self.get_last_applied_log_id().map(|index| {
+            let last_log_term = self.get_last_log_term().unwrap_or(0);
+            let leader_id = CommittedLeaderIdOfConfig::new(last_log_term, 0);
+            openraft::log_id::LogId::new(leader_id, index)
+        });
 
         let membership = self
             .get_applied_membership()
@@ -1087,7 +1139,8 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
 
         let last_applied = self.get_last_applied_log_id().unwrap_or(0);
 
-        let committed_leader_id = CommittedLeaderIdOfConfig::new(0, 0);
+        let last_log_term = self.get_last_log_term().unwrap_or(0);
+        let committed_leader_id = CommittedLeaderIdOfConfig::new(last_log_term, 0);
         let log_id = openraft::log_id::LogId::new(committed_leader_id, last_applied);
 
         let last_membership = self

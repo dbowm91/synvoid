@@ -190,6 +190,7 @@ impl RecordStoreManager {
                 signer_public_key: None,
                 content_hash: persisted.content_hash,
                 quorum_proof: Vec::new(),
+                request_id: None,
             };
 
             let entry = DhtRecordEntry {

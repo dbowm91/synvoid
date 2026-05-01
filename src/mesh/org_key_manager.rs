@@ -136,10 +136,11 @@ impl OrgKeyManager {
             signer_public_key: None,
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
         record.content_hash = record.compute_content_hash();
 
-        store.store_record(record, 100);
+        store.store_record(record, 100, true);
 
         Ok(())
     }
@@ -282,9 +283,10 @@ impl OrgKeyManager {
                 signer_public_key: None,
                 content_hash: Vec::new(),
                 quorum_proof: Vec::new(),
+                request_id: None,
             };
             record.content_hash = record.compute_content_hash();
-            store.store_record(record, 100);
+            store.store_record(record, 100, true);
             tracing::info!("Stored GlobalNodeRevocation in DHT (fallback)");
             return Ok(());
         }
@@ -326,10 +328,11 @@ impl OrgKeyManager {
             signer_public_key: None,
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
         record.content_hash = record.compute_content_hash();
 
-        store.store_record(record, 100);
+        store.store_record(record, 100, true);
 
         Ok(())
     }
@@ -581,10 +584,11 @@ impl OrgKeyManager {
             signer_public_key: None,
             content_hash: Vec::new(),
             quorum_proof: Vec::new(),
+            request_id: None,
         };
         record.content_hash = record.compute_content_hash();
 
-        store.store_record(record, 100);
+        store.store_record(record, 100, true);
         Ok(())
     }
 

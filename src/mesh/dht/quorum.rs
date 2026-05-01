@@ -87,6 +87,7 @@ pub struct QuorumSignature {
     pub node_id: String,
     pub signature: Vec<u8>,
     pub timestamp: u64,
+    pub signer_public_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,12 +202,18 @@ impl QuorumRequest {
         }
     }
 
-    pub fn add_signature(&mut self, node_id: String, signature: Vec<u8>) {
+    pub fn add_signature(
+        &mut self,
+        node_id: String,
+        signature: Vec<u8>,
+        signer_public_key: Option<String>,
+    ) {
         if !self.signatures.iter().any(|s| s.node_id == node_id) {
             self.signatures.push(QuorumSignature {
                 node_id,
                 signature,
                 timestamp: safe_unix_timestamp(),
+                signer_public_key,
             });
         }
     }
@@ -335,10 +342,11 @@ impl QuorumManager {
         request_id: &str,
         node_id: String,
         signature: Vec<u8>,
+        signer_public_key: Option<String>,
     ) -> bool {
         let mut pending = self.pending_requests.write().await;
         if let Some(request) = pending.get_mut(request_id) {
-            request.add_signature(node_id, signature);
+            request.add_signature(node_id, signature, signer_public_key);
             true
         } else {
             false
@@ -497,10 +505,10 @@ mod tests {
             10,
         );
 
-        request.add_signature("global1".to_string(), vec![1, 2, 3]);
+        request.add_signature("global1".to_string(), vec![1, 2, 3], None);
         assert_eq!(request.signatures.len(), 1);
 
-        request.add_signature("global1".to_string(), vec![4, 5, 6]);
+        request.add_signature("global1".to_string(), vec![4, 5, 6], None);
         assert_eq!(request.signatures.len(), 1);
     }
 
@@ -545,13 +553,13 @@ mod tests {
 
         assert!(!request.threshold_met(3));
 
-        request.add_signature("global1".to_string(), vec![1]);
+        request.add_signature("global1".to_string(), vec![1], None);
         assert!(!request.threshold_met(3));
 
-        request.add_signature("global2".to_string(), vec![2]);
+        request.add_signature("global2".to_string(), vec![2], None);
         assert!(!request.threshold_met(3));
 
-        request.add_signature("global3".to_string(), vec![3]);
+        request.add_signature("global3".to_string(), vec![3], None);
         assert!(request.threshold_met(3));
     }
 
@@ -580,11 +588,11 @@ mod tests {
         assert_eq!(required, 14);
 
         for i in 0..13 {
-            request.add_signature(format!("global{}", i), vec![i as u8]);
+            request.add_signature(format!("global{}", i), vec![i as u8], None);
         }
         assert!(!request.threshold_met(50));
 
-        request.add_signature("global13".to_string(), vec![13]);
+        request.add_signature("global13".to_string(), vec![13], None);
         assert!(request.threshold_met(50));
     }
 
@@ -680,7 +688,7 @@ mod tests {
         assert_eq!(required, 14);
 
         for node_id in &regional[..14] {
-            request.add_signature(node_id.clone(), vec![1]);
+            request.add_signature(node_id.clone(), vec![1], None);
         }
 
         assert!(request.threshold_met(50));
