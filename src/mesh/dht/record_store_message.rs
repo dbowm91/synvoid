@@ -300,6 +300,30 @@ impl RecordStoreManager {
         rs.merkle_tree = Some(tree);
     }
 
+    pub fn update_merkle_incremental(&self, key: &str, value: &[u8]) {
+        let mut rs = self.record_state.write();
+        match rs.merkle_tree.as_mut() {
+            Some(tree) => {
+                tree.insert_or_update(key.to_string(), value);
+            }
+            None => {
+                let mut record_map = HashMap::new();
+                for (k, entry) in rs.records.iter() {
+                    record_map.insert(k.clone(), entry.record.value.clone());
+                }
+                record_map.insert(key.to_string(), value.to_vec());
+                rs.merkle_tree = Some(MerkleTree::from_records(&record_map));
+            }
+        }
+    }
+
+    pub fn remove_merkle_key(&self, key: &str) {
+        let mut rs = self.record_state.write();
+        if let Some(tree) = rs.merkle_tree.as_mut() {
+            tree.remove_key(key);
+        }
+    }
+
     pub fn get_merkle_root_hash(&self) -> Option<Vec<u8>> {
         let rs = self.record_state.read();
         rs.merkle_tree.as_ref().and_then(|t| t.root_hash())
@@ -922,7 +946,7 @@ impl RecordStoreManager {
                 self.record_change();
             }
 
-            self.compute_merkle_tree();
+            self.update_merkle_incremental(&record.key, &record.value);
 
             self.send_commit_message(&record, quorum_signatures).await;
 
@@ -1067,7 +1091,7 @@ impl RecordStoreManager {
                     tracing::info!("Passively committed record {} from PendingQuorum to Live via Commit message", record.key);
                     drop(rs);
                     self.record_change();
-                    self.compute_merkle_tree();
+                    self.update_merkle_incremental(&record.key, &record.value);
                     return true;
                 }
             }

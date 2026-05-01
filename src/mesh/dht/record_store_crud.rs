@@ -441,7 +441,7 @@ impl RecordStoreManager {
             self.record_change();
         }
 
-        self.compute_merkle_tree();
+        self.update_merkle_incremental(&record.key, &record.value);
 
         let record_type = crate::mesh::dht::keys::DhtKey::from_str(&record.key).key_type();
         crate::metrics::increment_dht_records_by_type(record_type);
@@ -510,7 +510,7 @@ impl RecordStoreManager {
 
         if self.is_global_node() {
             drop(rs);
-            self.compute_merkle_tree();
+            self.update_merkle_incremental(&record.key, &record.value);
         }
 
         crate::metrics::record_dht_store_operation(true);
