@@ -596,6 +596,27 @@ impl MeshTopology {
         self.peer_store.update_peer_latency(node_id, latency_ms);
     }
 
+    pub async fn get_average_latency_for_node(&self, node_id: &str) -> Option<u32> {
+        self.peer_store.get_average_latency(node_id)
+    }
+
+    pub async fn get_global_nodes_with_avg_latency(&self) -> Vec<(String, u32)> {
+        let mut result = Vec::new();
+        let global = self.global_nodes.read().await;
+        for node_id in global.iter() {
+            if let Some(avg) = self.peer_store.get_average_latency(node_id) {
+                result.push((node_id.clone(), avg));
+            } else {
+                if let Some(peer) = self.peer_store.get_peer(node_id) {
+                    if let Some(latency) = peer.latency_ms {
+                        result.push((node_id.clone(), latency));
+                    }
+                }
+            }
+        }
+        result
+    }
+
     pub async fn remove_peer(&self, node_id: &str) {
         if let Some(mut peer) = self.peer_store.remove_peer(node_id) {
             peer.save_reputation_before_disconnect();

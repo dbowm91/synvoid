@@ -604,13 +604,19 @@ impl RecordStoreManager {
         );
 
         if self.config.regional_quorum_enabled {
-            let global_node_infos: Vec<crate::mesh::dht::quorum::GlobalNodeInfo> = global_nodes
-                .iter()
-                .map(|p| crate::mesh::dht::quorum::GlobalNodeInfo {
-                    node_id: p.node_id.clone(),
-                    latency_ms: p.latency_ms,
-                })
-                .collect();
+            let node_ids: Vec<String> = global_nodes.iter().map(|p| p.node_id.clone()).collect();
+            let mut global_node_infos: Vec<crate::mesh::dht::quorum::GlobalNodeInfo> = Vec::new();
+
+            for (i, node_id) in node_ids.into_iter().enumerate() {
+                let avg_latency = topology
+                    .get_average_latency_for_node(&node_id)
+                    .await
+                    .or(global_nodes[i].latency_ms);
+                global_node_infos.push(crate::mesh::dht::quorum::GlobalNodeInfo {
+                    node_id,
+                    latency_ms: avg_latency,
+                });
+            }
 
             let regional = crate::mesh::dht::quorum::select_regional_nodes(
                 &global_node_infos,
