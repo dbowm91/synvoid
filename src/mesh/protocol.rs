@@ -160,7 +160,7 @@ impl MeshMessageSigner {
         }
 
         if hybrid.has_ml_dsa() {
-            if let (Some(ref ml_pk_b64), Some(ref pool)) =
+            if let (Some(ref ml_pk_b64), Some(ref _pool)) =
                 (&hybrid.ml_dsa_public_key, &self.verification_pool)
             {
                 let ml_pk_bytes =
@@ -1654,6 +1654,7 @@ pub enum DhtRecordVerificationError {
     Copy,
     PartialEq,
     Eq,
+    Default,
     serde::Serialize,
     serde::Deserialize,
     Archive,
@@ -1661,14 +1662,9 @@ pub enum DhtRecordVerificationError {
     RkyvDeserialize,
 )]
 pub enum DhtRecordStatus {
-    PendingQuorum,
+    #[default]
     Live,
-}
-
-impl Default for DhtRecordStatus {
-    fn default() -> Self {
-        Self::Live
-    }
+    PendingQuorum,
 }
 
 impl DhtRecordStatus {

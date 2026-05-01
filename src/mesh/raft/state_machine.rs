@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Display};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -17,7 +17,7 @@ use openraft::EntryPayload;
 use openraft::OptionalSend;
 use openraft::RaftTypeConfig;
 use rusqlite::{params, Connection};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use std::io::{Read, Seek, Write};
 
@@ -472,7 +472,7 @@ impl GlobalRegistryStateMachine {
             Ok(RaftSnapshotData::File(tokio::fs::File::from_std(file)))
         })
         .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .map_err(std::io::Error::other)?
     }
 
     pub async fn streaming_deserialize_and_apply(
@@ -526,7 +526,7 @@ impl GlobalRegistryStateMachine {
             Ok(())
         })
         .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .map_err(std::io::Error::other)?
     }
 
     fn fallback_json_install_from_reader(
@@ -561,6 +561,7 @@ impl GlobalRegistryStateMachine {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn fallback_json_install(&self, data: &[u8]) -> std::io::Result<()> {
         Self::fallback_json_install_static(self.db.clone(), data)
     }
@@ -1089,7 +1090,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
     }
 
     async fn begin_receiving_snapshot(&mut self) -> std::io::Result<RaftSnapshotData> {
-        let std_file = tokio::task::spawn_blocking(|| tempfile::tempfile()).await??;
+        let std_file = tokio::task::spawn_blocking(tempfile::tempfile).await??;
         let file = tokio::fs::File::from_std(std_file);
         Ok(RaftSnapshotData::File(file))
     }

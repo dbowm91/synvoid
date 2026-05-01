@@ -94,11 +94,7 @@ impl DiskRecordStore {
                 value.record.content_hash,
                 value.record.signature,
                 value.record.signer_public_key,
-                if let Ok(encoded) = crate::serialization::serialize(&value.record.quorum_proof) {
-                    Some(encoded)
-                } else {
-                    None
-                },
+                crate::serialization::serialize(&value.record.quorum_proof).ok(),
                 value.record.request_id,
                 if value.local_origin { 1 } else { 0 },
                 value.version as i64,
@@ -161,10 +157,8 @@ impl DiskRecordStore {
             .unwrap();
 
         let mut result = Vec::new();
-        for row in rows {
-            if let Ok(entry) = row {
-                result.push((entry.record.key.clone(), entry));
-            }
+        for row in rows.flatten() {
+            result.push((row.record.key.clone(), row));
         }
         result
     }
@@ -204,14 +198,12 @@ impl DiskRecordStore {
             .unwrap();
 
         let mut result = Vec::new();
-        for row in rows {
-            if let Ok(entry) = row {
-                if result.len() >= limit {
-                    break;
-                }
-                if entry.record.key.starts_with(prefix) {
-                    result.push((entry.record.key.clone(), entry));
-                }
+        for row in rows.flatten() {
+            if result.len() >= limit {
+                break;
+            }
+            if row.record.key.starts_with(prefix) {
+                result.push((row.record.key.clone(), row));
             }
         }
         result
@@ -288,10 +280,8 @@ impl DiskRecordStore {
             .unwrap();
 
         let mut result = Vec::new();
-        for row in rows {
-            if let Ok(entry) = row {
-                result.push((entry.record.key.clone(), entry));
-            }
+        for row in rows.flatten() {
+            result.push((row.record.key.clone(), row));
         }
         result
     }

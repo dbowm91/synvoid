@@ -3,7 +3,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
 use openraft::errors::{RPCError, StreamingError, Unreachable};
 use openraft::network::v2::RaftNetworkV2;
 use openraft::network::Backoff;

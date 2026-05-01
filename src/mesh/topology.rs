@@ -606,11 +606,9 @@ impl MeshTopology {
         for node_id in global.iter() {
             if let Some(avg) = self.peer_store.get_average_latency(node_id) {
                 result.push((node_id.clone(), avg));
-            } else {
-                if let Some(peer) = self.peer_store.get_peer(node_id) {
-                    if let Some(latency) = peer.latency_ms {
-                        result.push((node_id.clone(), latency));
-                    }
+            } else if let Some(peer) = self.peer_store.get_peer(node_id) {
+                if let Some(latency) = peer.latency_ms {
+                    result.push((node_id.clone(), latency));
                 }
             }
         }

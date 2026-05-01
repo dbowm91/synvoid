@@ -66,7 +66,7 @@ impl RecordStoreManager {
                         record_age,
                         ttl
                     );
-                    let mut rs = self_arc.record_state.write();
+                    let rs = self_arc.record_state.write();
                     rs.records.remove(&key);
                     if let Some(ref disk_store) = rs.disk_store {
                         let _ = disk_store.remove(&key);

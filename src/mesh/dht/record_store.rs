@@ -131,8 +131,6 @@ impl Default for ShardedRecordStore {
     }
 }
 
-use super::record_store_disk::DiskRecordStore;
-
 #[derive(Debug, Clone)]
 pub struct RecordStoreConfig {
     pub enabled: bool,

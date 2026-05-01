@@ -6,7 +6,6 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
 use crate::mesh::protocol::MeshMessageSigner;
 
 #[derive(Clone)]
@@ -967,7 +966,7 @@ pub fn verify_quorum_proof_with_context(
     let mut verified_signers: HashSet<&str> = HashSet::new();
 
     for proof in &record.quorum_proof {
-        if let Some(ref regional_set) = ctx.regional_voter_set {
+        if let Some(regional_set) = ctx.regional_voter_set {
             if !regional_set.contains(&proof.node_id) {
                 tracing::debug!(
                     "Skipping signature from {} - not in regional voter set",
