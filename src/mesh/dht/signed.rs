@@ -8,7 +8,114 @@ use sha2::{Digest, Sha256};
 use crate::integrity::protocol::{Ed25519Signer, Ed25519Verifier};
 use crate::mesh::protocol::MeshMessageSigner;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngressPath {
+    Announce,
+    SnapshotSync,
+    SyncResponse,
+    AntiEntropy,
+    QuorumCommit,
+    Push,
+    LocalCreate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceClassification {
+    LocalNode,
+    GlobalNode,
+    EdgeNode,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct DhtRecordIngressContext {
+    pub peer_id: String,
+    pub source_node_id: String,
+    pub source_classification: SourceClassification,
+    pub path: IngressPath,
+    pub requires_quorum_proof: bool,
+    pub requires_trust_anchor: bool,
+    pub is_immutable_key: bool,
+    pub envelope_signature_valid: bool,
+    pub timestamp: u64,
+    pub request_id: Option<String>,
+    pub is_local_origin: bool,
+}
+
+impl DhtRecordIngressContext {
+    pub fn new_local(source_node_id: String) -> Self {
+        Self {
+            peer_id: source_node_id.clone(),
+            source_node_id,
+            source_classification: SourceClassification::LocalNode,
+            path: IngressPath::LocalCreate,
+            requires_quorum_proof: false,
+            requires_trust_anchor: false,
+            is_immutable_key: false,
+            envelope_signature_valid: true,
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            request_id: None,
+            is_local_origin: true,
+        }
+    }
+
+    pub fn new_remote(
+        peer_id: String,
+        source_node_id: String,
+        source_classification: SourceClassification,
+        path: IngressPath,
+    ) -> Self {
+        Self {
+            peer_id,
+            source_node_id,
+            source_classification,
+            path,
+            requires_quorum_proof: false,
+            requires_trust_anchor: false,
+            is_immutable_key: false,
+            envelope_signature_valid: false,
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            request_id: None,
+            is_local_origin: false,
+        }
+    }
+
+    pub fn with_quorum_proof(mut self, required: bool) -> Self {
+        self.requires_quorum_proof = required;
+        self
+    }
+
+    pub fn with_trust_anchor(mut self, required: bool) -> Self {
+        self.requires_trust_anchor = required;
+        self
+    }
+
+    pub fn with_immutable(mut self, is_immutable: bool) -> Self {
+        self.is_immutable_key = is_immutable;
+        self
+    }
+
+    pub fn with_timestamp(mut self, timestamp: u64) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        self.request_id = request_id;
+        self
+    }
+
+    pub fn with_envelope_signature(mut self, valid: bool) -> Self {
+        self.envelope_signature_valid = valid;
+        self
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.source_classification == SourceClassification::LocalNode
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtRecordSignable<'a> {
     pub key: &'a str,
     pub value_hash: &'a [u8],
@@ -1698,5 +1805,219 @@ mod tests {
             timestamp_valid,
             "Record with current timestamp should be valid"
         );
+    }
+
+    #[test]
+    fn test_dht_record_ingress_context_new_local() {
+        let source_node_id = "node123".to_string();
+        let ctx = DhtRecordIngressContext::new_local(source_node_id.clone());
+
+        assert_eq!(ctx.source_node_id, source_node_id);
+        assert_eq!(ctx.source_classification, SourceClassification::LocalNode);
+        assert_eq!(ctx.path, IngressPath::LocalCreate);
+        assert!(ctx.is_local_origin);
+        assert!(ctx.envelope_signature_valid);
+    }
+
+    #[test]
+    fn test_dht_record_ingress_context_new_remote() {
+        let peer_id = "peer456".to_string();
+        let source_node_id = "node789".to_string();
+        let ctx = DhtRecordIngressContext::new_remote(
+            peer_id.clone(),
+            source_node_id.clone(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+
+        assert_eq!(ctx.peer_id, peer_id);
+        assert_eq!(ctx.source_node_id, source_node_id);
+        assert_eq!(ctx.source_classification, SourceClassification::GlobalNode);
+        assert_eq!(ctx.path, IngressPath::Announce);
+        assert!(!ctx.is_local_origin);
+        assert!(!ctx.envelope_signature_valid);
+    }
+
+    #[test]
+    fn test_dht_record_ingress_context_builder_pattern() {
+        let ctx = DhtRecordIngressContext::new_local("node123".to_string())
+            .with_quorum_proof(true)
+            .with_trust_anchor(true)
+            .with_immutable(true)
+            .with_timestamp(1000)
+            .with_request_id(Some("req123".to_string()));
+
+        assert!(ctx.requires_quorum_proof);
+        assert!(ctx.requires_trust_anchor);
+        assert!(ctx.is_immutable_key);
+        assert_eq!(ctx.timestamp, 1000);
+        assert_eq!(ctx.request_id, Some("req123".to_string()));
+    }
+
+    #[test]
+    fn test_source_classification_is_local() {
+        let local_ctx = DhtRecordIngressContext::new_local("node123".to_string());
+        assert!(local_ctx.is_local());
+
+        let remote_ctx = DhtRecordIngressContext::new_remote(
+            "peer".to_string(),
+            "node".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+        assert!(!remote_ctx.is_local());
+    }
+
+    #[test]
+    fn test_verify_for_ingress_rejects_invalid_content_hash() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![0xFF; 32],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::SyncResponse,
+        );
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_for_ingress_rejects_future_timestamp() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let now = crate::mesh::safe_unix_timestamp();
+        let far_future = (now as i64 + 600) as u64;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: far_future,
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_local("node123".to_string());
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_for_ingress_rejects_expired() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp() - 7200,
+            sequence_number: 0,
+            ttl_seconds: 300,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_local("node123".to_string());
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_for_ingress_accepts_valid_local_record() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_local("node123".to_string());
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_for_ingress_rejects_remote_without_signature() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
     }
 }

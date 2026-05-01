@@ -1587,6 +1587,65 @@ impl DhtRecord {
         }
         self.compute_content_hash() == self.content_hash
     }
+
+    pub fn is_expired(&self, now: u64) -> bool {
+        let expires_at = self.timestamp.saturating_add(self.ttl_seconds);
+        now > expires_at
+    }
+
+    pub fn verify_for_ingress(
+        &self,
+        ctx: &crate::mesh::dht::signed::DhtRecordIngressContext,
+        access_control: &crate::mesh::dht::DhtAccessControl,
+    ) -> Result<(), DhtRecordVerificationError> {
+        if !self.verify_content_hash() {
+            return Err(DhtRecordVerificationError::InvalidContentHash);
+        }
+
+        if !crate::mesh::dht::signed::validate_record_timestamp(self.timestamp) {
+            return Err(DhtRecordVerificationError::TimestampTooFarInFuture);
+        }
+
+        let now = crate::mesh::safe_unix_timestamp();
+        if self.is_expired(now) {
+            return Err(DhtRecordVerificationError::Expired);
+        }
+
+        if ctx.source_classification != crate::mesh::dht::signed::SourceClassification::LocalNode {
+            if self.signature.is_empty() {
+                return Err(DhtRecordVerificationError::MissingSignature);
+            }
+
+            if !crate::mesh::dht::signed::verify_dht_record_signature(self) {
+                return Err(DhtRecordVerificationError::InvalidSignature);
+            }
+        }
+
+        if ctx.is_immutable_key || access_control.requires_immutability_trust_anchor(&self.key) {
+            if self.signer_public_key.is_none() {
+                return Err(DhtRecordVerificationError::MissingSignerPublicKey);
+            }
+        }
+
+        if ctx.requires_quorum_proof {
+            if self.quorum_proof.is_empty() {
+                return Err(DhtRecordVerificationError::MissingQuorumProof);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum DhtRecordVerificationError {
+    InvalidContentHash,
+    TimestampTooFarInFuture,
+    Expired,
+    MissingSignature,
+    InvalidSignature,
+    MissingSignerPublicKey,
+    MissingQuorumProof,
 }
 
 #[derive(

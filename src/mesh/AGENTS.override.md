@@ -69,6 +69,32 @@ These use `SignedRecordType::is_immutable()` check in both `store_record_global(
 
 All DHT records are validated against future timestamps using `validate_record_timestamp()` with `DHT_RECORD_TIMESTAMP_WINDOW_SECS` (300 seconds). Records with timestamps too far in the future are rejected before storage.
 
+### DHT Ingress Verification (W14)
+
+`DhtRecord.verify_for_ingress()` provides centralized verification for all DHT record ingress paths:
+
+```rust
+// Context types
+pub enum IngressPath { Announce, SnapshotSync, SyncResponse, AntiEntropy, QuorumCommit, Push, LocalCreate }
+pub enum SourceClassification { LocalNode, GlobalNode, EdgeNode, Unknown }
+pub struct DhtRecordIngressContext { ... }
+
+// Verification on DhtRecord
+pub fn verify_for_ingress(&self, ctx: &DhtRecordIngressContext, access_control: &DhtAccessControl) -> Result<(), DhtRecordVerificationError>
+```
+
+Verification includes:
+1. Content hash validation
+2. Timestamp validation (rejects future-skewed beyond window)
+3. TTL expiry check
+4. Ed25519 signature verification for remote sources
+5. Trust anchor verification for immutable records
+6. Quorum proof presence check
+
+Key files:
+- `src/mesh/dht/signed.rs` — IngressContext, verify_for_ingress()
+- `src/mesh/protocol.rs` — DhtRecordVerificationError enum
+
 ## DHT Regional Quorum (W11.1)
 
 DHT quorum supports two modes via `QuorumMode`:
