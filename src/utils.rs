@@ -328,7 +328,7 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         let suffix_len = long_suffix.len();
         if s.len() > suffix_len && s[s.len() - suffix_len..].eq_ignore_ascii_case(long_suffix) {
             let value = s[..s.len() - suffix_len].parse::<u64>().ok()?;
-            return Some(value * multiplier);
+            return value.checked_mul(*multiplier);
         }
     }
 
@@ -336,7 +336,7 @@ pub fn parse_duration(s: &str) -> Option<u64> {
     for (short_suffix, multiplier) in DURATION_SUFFIX_SHORT {
         if last_char.eq_ignore_ascii_case(short_suffix) {
             let value = s[..s.len() - 1].parse::<u64>().ok()?;
-            return Some(value * multiplier);
+            return value.checked_mul(*multiplier);
         }
     }
 
@@ -492,7 +492,10 @@ fn hash_ipv6(ipv6: std::net::Ipv6Addr) -> u64 {
 }
 
 #[inline]
-pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
+pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
+    if num_slots == 0 {
+        return None;
+    }
     if num_slots.is_power_of_two() {
         let mask = num_slots - 1;
         match ip {
@@ -503,11 +506,11 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
                     | (u32::from(octets[2]) << 8)
                     | u32::from(octets[3]))
                 .wrapping_mul(0x9e3779b9);
-                ((hash >> 16) as usize) & mask
+                Some(((hash >> 16) as usize) & mask)
             }
             IpAddr::V6(ipv6) => {
                 let hash = hash_ipv6(ipv6);
-                ((hash >> 32) as usize) & mask
+                Some(((hash >> 32) as usize) & mask)
             }
         }
     } else {
@@ -519,11 +522,11 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
                     | (u32::from(octets[2]) << 8)
                     | u32::from(octets[3]))
                 .wrapping_mul(0x9e3779b9);
-                (hash >> 16) as usize % num_slots
+                Some((hash >> 16) as usize % num_slots)
             }
             IpAddr::V6(ipv6) => {
                 let hash = hash_ipv6(ipv6);
-                (hash >> 32) as usize % num_slots
+                Some((hash >> 32) as usize % num_slots)
             }
         }
     }
@@ -551,8 +554,8 @@ mod ip_tests {
     #[test]
     fn test_ip_to_slot_consistency() {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        let slot1 = ip_to_slot(ip, 65536);
-        let slot2 = ip_to_slot(ip, 65536);
+        let slot1 = ip_to_slot(ip, 65536).unwrap();
+        let slot2 = ip_to_slot(ip, 65536).unwrap();
         assert_eq!(slot1, slot2, "Same IP should produce same slot");
     }
 
@@ -560,8 +563,8 @@ mod ip_tests {
     fn test_ip_to_slot_different_ips() {
         let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
-        let slot1 = ip_to_slot(ip1, 65536);
-        let slot2 = ip_to_slot(ip2, 65536);
+        let slot1 = ip_to_slot(ip1, 65536).unwrap();
+        let slot2 = ip_to_slot(ip2, 65536).unwrap();
         assert_ne!(
             slot1, slot2,
             "Different IPs should likely produce different slots"
@@ -571,8 +574,20 @@ mod ip_tests {
     #[test]
     fn test_ipv6_to_slot() {
         let ip = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-        let slot = ip_to_slot(ip, 65536);
+        let slot = ip_to_slot(ip, 65536).unwrap();
         assert!(slot < 65536);
+    }
+
+    #[test]
+    fn test_ip_to_slot_zero_slots() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(ip_to_slot(ip, 0), None);
+    }
+
+    #[test]
+    fn test_ip_to_slot_zero_slots_ipv6() {
+        let ip = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+        assert_eq!(ip_to_slot(ip, 0), None);
     }
 
     #[test]
@@ -614,6 +629,13 @@ mod tests {
         assert_eq!(parse_duration("never"), Some(0), "never");
         assert_eq!(parse_duration("permanent"), Some(0), "permanent");
         assert_eq!(parse_duration("0"), Some(0), "0");
+    }
+
+    #[test]
+    fn test_parse_duration_overflow() {
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("xyz"), None);
+        assert_eq!(parse_duration("999999999999999999999999999999s"), None);
     }
 
     #[test]

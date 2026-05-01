@@ -64,7 +64,7 @@ impl ShardedRateLimiter {
     }
 
     pub fn check(&self, client_ip: IpAddr) -> RateLimitDecision {
-        let shard_idx = ip_to_slot(client_ip, self.shards.len());
+        let shard_idx = ip_to_slot(client_ip, self.shards.len()).unwrap();
         let shard = &self.shards[shard_idx];
 
         let now_ms = get_monotonic_time_ms();
@@ -459,7 +459,7 @@ impl SlottedIpRateLimiter {
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {
-        ip_to_slot(ip, IP_RATE_LIMIT_SLOTS)
+        ip_to_slot(ip, IP_RATE_LIMIT_SLOTS).unwrap()
     }
 
     fn rotate_windows(&self, now_secs: u64) {
