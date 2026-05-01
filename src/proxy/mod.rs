@@ -23,6 +23,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use subtle::ConstantTimeEq;
+
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, RetryConfig};
 use crate::http_client::{
     create_http_client_with_config, create_upstream_client,
@@ -645,7 +647,7 @@ impl ProxyServer {
     ) -> Result<Response<bytes::Bytes>, String> {
         if let Some(ref required_token) = self.cache_purge_token {
             match purge_token {
-                Some(token) if token == required_token.as_str() => {}
+                Some(token) if required_token.as_bytes().ct_eq(token.as_bytes()).into() => {}
                 _ => {
                     tracing::warn!(
                         "Unauthorized cache purge attempt from {} to {}",
