@@ -220,7 +220,7 @@ impl UdpFloodProtector {
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {
-        ip_to_slot(ip, UDP_TRACKER_SLOTS)
+        ip_to_slot(ip, UDP_TRACKER_SLOTS).unwrap()
     }
 
     fn rotate_window(&self, now_secs: u64) {
