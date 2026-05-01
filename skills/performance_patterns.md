@@ -1177,7 +1177,7 @@ stream_pool.release((send, recv));
 
 ## Lock-Free Buffer Pool (Treiber Stack + TLS Cache)
 
-For high-throughput HTTP proxying at 500K+ RPS, buffer allocation becomes a bottleneck. The lock-free buffer pool minimizes contention.
+For high-throughput HTTP proxying at 1000K+ RPS, buffer allocation becomes a bottleneck. The lock-free buffer pool minimizes contention.
 
 ### Architecture
 

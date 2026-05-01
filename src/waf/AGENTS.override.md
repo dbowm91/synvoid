@@ -5,7 +5,7 @@ Specialized guidance for WAF engine and attack detection.
 ## Hot Path
 
 `src/waf/attack_detection/` — WAF rule matching runs per-request on all inputs. Critical hot path:
-- Every allocation compounds at 500K rps
+- Every allocation compounds at 1000K rps
 - Avoid O(n) operations; prefer O(1) lookups
 - Use thread-local buffers and object pools
 
