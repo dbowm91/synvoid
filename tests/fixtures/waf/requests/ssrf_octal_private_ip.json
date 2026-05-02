@@ -1,0 +1,17 @@
+{
+  "id": "ssrf_octal_private_ip",
+  "description": "SSRF attempt using octal notation for private IP",
+  "entry_point": "query_string",
+  "expected_result": "detect",
+  "attack_type": "ssrf",
+  "notes": "SSRF with octal IP notation - 0300.0250.0001.0001 = 192.168.1.1",
+  "request": {
+    "method": "GET",
+    "path": "/proxy",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": "url=http://0300.0250.0001.0001:8080/admin",
+    "body": null
+  }
+}

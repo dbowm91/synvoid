@@ -1,0 +1,17 @@
+{
+  "id": "ssrf_localhost_variations",
+  "description": "SSRF attempt using localhost variations",
+  "entry_point": "query_string",
+  "expected_result": "detect",
+  "attack_type": "ssrf",
+  "notes": "SSRF targeting localhost - various representations",
+  "request": {
+    "method": "GET",
+    "path": "/proxy",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": "url=http://127.1/admin",
+    "body": null
+  }
+}

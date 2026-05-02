@@ -1,0 +1,18 @@
+{
+  "id": "cache_purge_auth",
+  "description": "Cache purge request that could bypass auth when properly signed",
+  "entry_point": "path",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Cache purge with proper authentication - should pass if authorized",
+  "request": {
+    "method": "PURGE",
+    "path": "/api/cache/purge",
+    "headers": [
+      ["Host", "example.com"],
+      ["X-Auth-Token", "valid-admin-token"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

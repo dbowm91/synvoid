@@ -1,0 +1,18 @@
+{
+  "id": "benign_json_body",
+  "description": "Benign JSON body - should not trigger detection",
+  "entry_point": "post_body",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Normal JSON API request body",
+  "request": {
+    "method": "POST",
+    "path": "/api/users",
+    "headers": [
+      ["Host", "example.com"],
+      ["Content-Type", "application/json"]
+    ],
+    "query_string": null,
+    "body": "{\"name\":\"John Doe\",\"email\":\"john@example.com\",\"age\":30}"
+  }
+}

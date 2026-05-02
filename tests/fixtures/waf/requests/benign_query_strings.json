@@ -1,0 +1,17 @@
+{
+  "id": "benign_query_strings",
+  "description": "Benign query strings with common search terms - should not trigger",
+  "entry_point": "query_string",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Normal search queries with common words",
+  "request": {
+    "method": "GET",
+    "path": "/search",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": "q=how+to+make+coffee&category=recipes&sort=popular",
+    "body": null
+  }
+}

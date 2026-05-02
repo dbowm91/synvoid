@@ -222,6 +222,18 @@ impl SsrfDetector {
                 }
             }
 
+            if in_url && bytes[current] == b'@' && current + 1 < bytes.len() {
+                let after_at = &input_lower[current + 1..];
+                if let Some(slash_pos) = after_at.find('/') {
+                    let potential_ip = &after_at[..slash_pos];
+                    if Self::looks_like_ip(potential_ip) {
+                        ips.push(potential_ip.to_string());
+                    }
+                } else if Self::looks_like_ip(after_at) {
+                    ips.push(after_at.to_string());
+                }
+            }
+
             current += 1;
         }
 
@@ -241,7 +253,6 @@ impl SsrfDetector {
     }
 
     fn looks_like_ip_without_zone(s: &str) -> bool {
-        // Strip IPv6 brackets: find matching [ and ] and extract inner content
         let s = if s.starts_with('[') {
             if let Some(bracket_end) = s.find(']') {
                 &s[1..bracket_end]
@@ -251,10 +262,23 @@ impl SsrfDetector {
         } else {
             s
         };
-        // Count colons to distinguish IPv4:port (1 colon) from IPv6 (2+ colons)
+        if s.starts_with("0x") || s.starts_with("0X") {
+            let hex_part = &s[2..];
+            if hex_part.chars().all(|c| c.is_ascii_hexdigit()) && hex_part.len() <= 8 {
+                return true;
+            }
+        }
+        if s.starts_with("::ffff:") || s.starts_with("::FFFF:") {
+            let after_prefix = &s[7..];
+            let colon_count = after_prefix.chars().filter(|&c| c == ':').count();
+            if colon_count == 0 && after_prefix.contains('.') {
+                if after_prefix.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                    return true;
+                }
+            }
+        }
         let colon_count = s.chars().filter(|&c| c == ':').count();
         let s = if colon_count == 1 && s.contains('.') {
-            // IPv4 with port: strip port
             if let Some(colon_pos) = s.find(':') {
                 &s[..colon_pos]
             } else {
@@ -400,18 +424,32 @@ impl SsrfDetector {
             return self.allowlist_only_mode;
         }
         self.allowed_domains_lower.iter().any(|domain| {
-            if input_lower == domain.as_str() {
+            if input_lower == domain {
                 return true;
             }
             let dot_domain = domain.as_str();
             if input_lower.len() > dot_domain.len()
                 && input_lower[input_lower.len() - dot_domain.len()..].starts_with('.')
-                && input_lower[..input_lower.len() - dot_domain.len() - 1].ends_with('.')
             {
-                return true;
+                let prefix_idx = input_lower.len() - dot_domain.len() - 1;
+                let prefix = &input_lower[..prefix_idx];
+                if !prefix.is_empty() && !prefix.contains('.') && !prefix.contains(':') {
+                    return true;
+                }
             }
-            if self.allowlist_only_mode && Self::has_word_boundary(input_lower, domain.as_str()) {
-                return true;
+            let search_str = format!(".{}", dot_domain);
+            if let Some(pos) = input_lower.find(&search_str) {
+                if pos > 0 && input_lower.as_bytes()[pos - 1] == b'.' {
+                    let before_dot = &input_lower[..pos - 1];
+                    if !before_dot.contains('.') && !before_dot.contains(':') {
+                        return true;
+                    }
+                }
+            }
+            if self.allowlist_only_mode {
+                if Self::has_word_boundary(input_lower, dot_domain) {
+                    return true;
+                }
             }
             false
         })
@@ -707,5 +745,105 @@ mod tests {
                 InputLocation::QueryString
             )
             .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_hex_ip_detected() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect("http://0x7f000001/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_allowlist_subdomain_allowed_allowlist_mode() {
+        let detector = SsrfDetector::new(2, &[], true, vec!["allowed.com".to_string()], true);
+        assert!(detector
+            .detect("http://sub.allowed.com/admin", InputLocation::QueryString)
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://deep.sub.allowed.com/admin",
+                InputLocation::QueryString
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_allowlist_subdomain_allowed() {
+        let detector = SsrfDetector::new(2, &[], true, vec!["allowed.com".to_string()], false);
+        assert!(detector
+            .detect("http://sub.allowed.com/admin", InputLocation::QueryString)
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://deep.sub.allowed.com/admin",
+                InputLocation::QueryString
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_allowlist_suffix_bypass_still_pattern_matched() {
+        let detector = SsrfDetector::new(2, &[], true, vec!["allowed.com".to_string()], false);
+        assert!(detector
+            .detect(
+                "http://allowed.com.attacker.tld/admin",
+                InputLocation::QueryString
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_allowlist_exact_match() {
+        let detector =
+            SsrfDetector::new(2, &[], true, vec!["trusted.example.com".to_string()], false);
+        assert!(detector
+            .detect(
+                "http://trusted.example.com/path",
+                InputLocation::QueryString
+            )
+            .is_none());
+        assert!(detector
+            .detect(
+                "http://sub.trusted.example.com/path",
+                InputLocation::QueryString
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn test_ssrf_ipv6_mapped_loopback() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect(
+                "http://[::ffff:127.0.0.1]/admin",
+                InputLocation::QueryString
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_ipv6_link_local() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect("http://[fe80::1]/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_userinfo_in_url_blocked() {
+        let detector = SsrfDetector::new(2, &[], true, vec![], false);
+        assert!(detector
+            .detect("http://user@127.0.0.1/admin", InputLocation::QueryString)
+            .is_some());
+    }
+
+    #[test]
+    fn test_ssrf_userinfo_with_trusted_domain_allowed() {
+        let detector = SsrfDetector::new(2, &[], true, vec!["example.com".to_string()], true);
+        assert!(detector
+            .detect("http://user@example.com/admin", InputLocation::QueryString)
+            .is_none());
     }
 }

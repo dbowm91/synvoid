@@ -1,0 +1,17 @@
+{
+  "id": "serverless_route_bypass",
+  "description": "Serverless function path that could bypass WAF when proxying",
+  "entry_point": "path",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Serverless route patterns like /.aws/... or /api/.../invoke - known bypass case",
+  "request": {
+    "method": "GET",
+    "path": "/.aws/instance/meta-data",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

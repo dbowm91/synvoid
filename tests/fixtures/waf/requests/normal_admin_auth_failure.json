@@ -1,0 +1,18 @@
+{
+  "id": "normal_admin_auth_failure",
+  "description": "Normal admin login failure - should not trigger detection",
+  "entry_point": "post_body",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Normal authentication failure",
+  "request": {
+    "method": "POST",
+    "path": "/admin/login",
+    "headers": [
+      ["Host", "example.com"],
+      ["Content-Type", "application/x-www-form-urlencoded"]
+    ],
+    "query_string": null,
+    "body": "username=admin&password=wrongpassword123"
+  }
+}
