@@ -25,7 +25,7 @@ mod waf_corpus_tests {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<maluwaf::waf::attack_detection::AttackDetectionResult> {
-        detector.check_request(method, path, query_string, headers, body)
+        detector.check_request(method, path, query_string, headers, body).0
     }
 
     fn check_result_matches_expected(
@@ -430,7 +430,7 @@ mod waf_corpus_tests {
                 fixture.request.query_string.as_deref(),
                 &headers,
                 body.as_deref(),
-            );
+            ).0;
 
             match fixture.expected_result {
                 ExpectedResult::Detect => {

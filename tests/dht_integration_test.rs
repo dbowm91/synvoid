@@ -1395,6 +1395,10 @@ mod threat_intel_tests {
             fanout_factor: 0.5,
             re_announce_interval_secs: 300,
             trusted_signers: Vec::new(),
+            behavioral_enabled: false,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
         };
         let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
             true,
@@ -1445,6 +1449,10 @@ mod threat_intel_tests {
     fn test_threat_intelligence_config_hub_only() {
         let config = ThreatIntelligenceConfig {
             hub_only_mode: true,
+            behavioral_enabled: false,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
             ..Default::default()
         };
         assert!(config.hub_only_mode);
@@ -1466,6 +1474,10 @@ mod threat_intel_tests {
             fanout_factor: 0.8,
             re_announce_interval_secs: 600,
             trusted_signers: Vec::new(),
+            behavioral_enabled: false,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
         };
 
         let internal = config.to_internal();
@@ -1820,6 +1832,10 @@ mod threat_intel_tests {
             fanout_factor: 0.5,
             re_announce_interval_secs: 300,
             trusted_signers: Vec::new(),
+            behavioral_enabled: false,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
         };
 
         let block_store = Arc::new(maluwaf::block_store::BlockStore::new(

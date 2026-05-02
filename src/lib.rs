@@ -106,7 +106,7 @@ pub mod icmp_filter;
 #[cfg(feature = "dns")]
 pub mod dns;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
 pub use config::ConfigManager;

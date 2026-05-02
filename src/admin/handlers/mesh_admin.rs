@@ -9,7 +9,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
-use std::borrow::Borrow;
 use std::net::IpAddr;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -1107,13 +1106,18 @@ pub async fn get_raft_status(
 ) -> Result<Json<RaftStatusResponse>, StatusCode> {
     if let Some(transport) = &state.mesh.mesh_transport {
         let raft_lock = transport.get_raft_instance();
-        let raft_guard = raft_lock.read();
-        if let Some(instance) = raft_guard.as_ref() {
+        let instance = {
+            let raft_guard = raft_lock.read();
+            raft_guard.clone()
+        };
+
+        if let Some(instance) = instance {
             let is_leader = instance.is_leader().await;
+            let leader_id = instance.get_leader_id().await;
 
             return Ok(Json(RaftStatusResponse {
                 node_id: instance.node_id(),
-                leader_id: instance.get_leader_id().await,
+                leader_id,
                 term: 0, // Simplified for now
                 last_log_index: 0,
                 last_applied_index: 0,

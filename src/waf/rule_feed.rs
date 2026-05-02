@@ -136,7 +136,11 @@ pub fn clear_global_patterns() {
 }
 
 pub fn update_patterns_for_category(category: &str, patterns: Vec<String>) {
-    let mut store = RULE_PATTERN_STORE.entry("global".to_string()).or_default();
+    update_site_patterns_for_category("global", category, patterns);
+}
+
+pub fn update_site_patterns_for_category(site_id: &str, category: &str, patterns: Vec<String>) {
+    let mut store = RULE_PATTERN_STORE.entry(site_id.to_string()).or_default();
     macro_rules! set_cat {
         ($name:expr, $field:ident) => {
             if category == $name {
@@ -901,19 +905,19 @@ mod tests {
 
     #[test]
     fn test_get_merged_patterns() {
-        clear_global_patterns();
-        update_patterns_for_category("sqli", vec!["feed_pattern".to_string()]);
+        let site_id = "test_merged_patterns";
+        update_site_patterns_for_category(site_id, "sqli", vec!["feed_pattern".to_string()]);
 
         let defaults = vec!["default1", "default2"];
         let config_custom = vec!["config1".to_string()];
-        let merged = get_merged_patterns("sqli", &defaults, &config_custom, None);
+        let merged = get_merged_patterns("sqli", &defaults, &config_custom, Some(site_id));
 
         assert!(merged.iter().any(|s| s == "default1"));
         assert!(merged.iter().any(|s| s == "default2"));
         assert!(merged.iter().any(|s| s == "config1"));
         assert!(merged.iter().any(|s| s == "feed_pattern"));
 
-        clear_global_patterns();
+        RULE_PATTERN_STORE.remove(site_id);
     }
 
     #[test]
@@ -959,18 +963,19 @@ mod tests {
     #[test]
     fn test_multi_category_pattern_merge() {
         // This tests the same merge logic used by reload_attack_detector
-        clear_global_patterns();
+        let site_id = "test_multi_category";
 
         // Simulate patterns from rule feed for multiple categories
-        update_patterns_for_category("path_traversal", vec!["../custom_traversal".to_string()]);
-        update_patterns_for_category("rfi", vec!["evil_include".to_string()]);
-        update_patterns_for_category("cmd_injection", vec!["; custom_cmd".to_string()]);
+        update_site_patterns_for_category(site_id, "path_traversal", vec!["../custom_traversal".to_string()]);
+        update_site_patterns_for_category(site_id, "rfi", vec!["evil_include".to_string()]);
+        update_site_patterns_for_category(site_id, "cmd_injection", vec!["; custom_cmd".to_string()]);
+        
         // ssti and xxe have no feed patterns
-        assert!(has_custom_patterns("path_traversal", None));
-        assert!(has_custom_patterns("rfi", None));
-        assert!(has_custom_patterns("cmd_injection", None));
-        assert!(!has_custom_patterns("ssti", None));
-        assert!(!has_custom_patterns("xxe", None));
+        assert!(has_custom_patterns("path_traversal", Some(site_id)));
+        assert!(has_custom_patterns("rfi", Some(site_id)));
+        assert!(has_custom_patterns("cmd_injection", Some(site_id)));
+        assert!(!has_custom_patterns("ssti", Some(site_id)));
+        assert!(!has_custom_patterns("xxe", Some(site_id)));
 
         // Simulate the merge that reload_attack_detector does
         let categories = [
@@ -982,7 +987,7 @@ mod tests {
         ];
 
         for (category, config_patterns) in &categories {
-            let feed_patterns = get_custom_patterns_for_category(category, None);
+            let feed_patterns = get_custom_patterns_for_category(category, Some(site_id));
             let mut merged = config_patterns.clone();
             merged.extend(feed_patterns);
 
@@ -1010,6 +1015,6 @@ mod tests {
             }
         }
 
-        clear_global_patterns();
+        RULE_PATTERN_STORE.remove(site_id);
     }
 }

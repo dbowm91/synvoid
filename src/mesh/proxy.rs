@@ -52,7 +52,7 @@ const FAILED_PROVIDER_COOLDOWN_SECS: u64 = 10;
 /// Window for health metrics calculation (5 minutes)
 const HEALTH_METRICS_WINDOW_SECS: u64 = 300;
 /// Number of consecutive provider failures before broadcasting block to mesh
-const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
+pub const BLOCK_BROADCAST_FAILURE_THRESHOLD: u32 = 5;
 /// Duration to block an upstream when broadcasting to mesh (5 minutes).
 /// This is a mesh-internal decision - when we see repeated failures from a provider,
 /// we block locally and inform global peers. The actual ratelimit block duration
@@ -98,35 +98,35 @@ pub struct CachedPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CircuitState {
+pub enum CircuitState {
     Closed,
     Open,
     HalfOpen,
 }
 
 #[derive(Clone)]
-struct ProviderStats {
-    total_requests: u64,
-    successful_requests: u64,
-    consecutive_failures: u32,
-    consecutive_successes: u32,
-    last_failure: Option<Instant>,
-    last_success: Option<Instant>,
-    circuit_state: CircuitState,
-    circuit_open_until: Option<Instant>,
-    half_open_requests: u32,
+pub struct ProviderStats {
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub consecutive_failures: u32,
+    pub consecutive_successes: u32,
+    pub last_failure: Option<Instant>,
+    pub last_success: Option<Instant>,
+    pub circuit_state: CircuitState,
+    pub circuit_open_until: Option<Instant>,
+    pub half_open_requests: u32,
 }
 
 impl ProviderStats {
     #[allow(dead_code)]
-    fn success_rate(&self) -> f64 {
+    pub fn success_rate(&self) -> f64 {
         if self.total_requests == 0 {
             return 1.0;
         }
         self.successful_requests as f64 / self.total_requests as f64
     }
 
-    fn is_available(&self, half_open_max_requests: u32) -> bool {
+    pub fn is_available(&self, half_open_max_requests: u32) -> bool {
         match self.circuit_state {
             CircuitState::Closed => true,
             CircuitState::Open => {
@@ -140,7 +140,7 @@ impl ProviderStats {
         }
     }
 
-    fn record_success(&mut self, circuit_close_threshold: u32, circuit_open_timeout_secs: u64) {
+    pub fn record_success(&mut self, circuit_close_threshold: u32, circuit_open_timeout_secs: u64) {
         self.total_requests += 1;
         self.successful_requests += 1;
         self.consecutive_failures = 0;
@@ -164,7 +164,7 @@ impl ProviderStats {
         }
     }
 
-    fn record_failure(&mut self, circuit_open_threshold: u32, circuit_open_timeout_secs: u64) {
+    pub fn record_failure(&mut self, circuit_open_threshold: u32, circuit_open_timeout_secs: u64) {
         self.consecutive_failures += 1;
         self.last_failure = Some(Instant::now());
 
@@ -194,7 +194,7 @@ impl ProviderStats {
         self.half_open_requests += 1;
     }
 
-    fn decay(&mut self) {
+    pub fn decay(&mut self) {
         let now = Instant::now();
         let window = Duration::from_secs(HEALTH_METRICS_WINDOW_SECS);
 
@@ -214,10 +214,10 @@ impl ProviderStats {
 }
 
 #[derive(Clone)]
-struct TransformCacheEntry {
-    body: Bytes,
-    content_encoding: Option<String>,
-    content_type: Option<String>,
+pub struct TransformCacheEntry {
+    pub body: Bytes,
+    pub content_encoding: Option<String>,
+    pub content_type: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -257,13 +257,13 @@ static TRANSFORM_CACHE_MISSES: LazyLock<std::sync::atomic::AtomicU64> =
     LazyLock::new(|| std::sync::atomic::AtomicU64::new(0));
 
 #[derive(Clone)]
-struct TieredTransformCache {
+pub struct TieredTransformCache {
     l1: DashMap<String, TransformCacheEntry>,
     l2: Cache<String, TransformCacheEntry>,
 }
 
 impl TieredTransformCache {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let l2 = Cache::builder()
             .max_capacity(L2_CACHE_SIZE as u64)
             .weigher(|_key: &String, value: &TransformCacheEntry| {
@@ -277,7 +277,7 @@ impl TieredTransformCache {
         }
     }
 
-    fn get(&self, key: &str) -> Option<TransformCacheEntry> {
+    pub fn get(&self, key: &str) -> Option<TransformCacheEntry> {
         if let Some(entry) = self.l1.get(key) {
             TRANSFORM_CACHE_L1_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Some(entry.clone());
@@ -291,18 +291,16 @@ impl TieredTransformCache {
         None
     }
 
-    fn insert(&self, key: String, value: TransformCacheEntry) {
+    pub fn insert(&self, key: String, value: TransformCacheEntry) {
         self.l2.insert(key.clone(), value.clone());
         self.l1.insert(key, value);
     }
 
-    #[allow(dead_code)]
-    fn l1_len(&self) -> usize {
+    pub fn l1_len(&self) -> usize {
         self.l1.len()
     }
 
-    #[allow(dead_code)]
-    fn l2_len(&self) -> usize {
+    pub fn l2_len(&self) -> usize {
         self.l2.entry_count() as usize
     }
 }

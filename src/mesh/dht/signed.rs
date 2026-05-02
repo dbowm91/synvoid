@@ -1151,6 +1151,10 @@ impl Default for TtlManager {
 }
 
 impl TtlManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn with_org_ttl(mut self, ttl: Duration) -> Self {
         self.org_ttl = ttl;
         self

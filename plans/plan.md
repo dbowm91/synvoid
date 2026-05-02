@@ -3922,3 +3922,19 @@ These were implemented incrementally:
   future agents understand the rejection is intentional.
 - If compatibility with existing deployed records conflicts with fail-closed behavior, default to
   fail closed for sensitive namespaces and document any temporary migration path.
+
+---
+
+## Agent Handoff & Next Steps
+Detailed tasks for the next agent can be found in `plans/agent_handoff.md`. 
+
+### Stabilizing the Codebase (Handoff)
+1. **Raft Metrics & Axum API Fixes**: Resolve borrowing/type inference issues in `src/admin/handlers/mesh_admin.rs`.
+2. **Test Concurrency & Global State Deadlocks**: Fix mutation conflicts and `DashMap` hangs in `waf` tests.
+3. **Config Schema Modernization**: Complete backward-compatible V2 aliasing.
+
+### Foundational Enhancements (Main Agent)
+1. **Process Isolation Implementation**: Write entry points for isolated processes.
+2. **Deep Workspace Decomposition**: Extract `maluwaf-config` and `maluwaf-mesh`.
+3. **Zero-Copy Performance Validation**: Benchmark and refine HTTP proxy streaming.
+

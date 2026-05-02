@@ -18,7 +18,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/api/users/123",
             None,
@@ -37,7 +37,7 @@ mod waf_anomaly_scoring_tests {
         let headers = HeaderMap::new();
 
         let body = vec![0u8; 200];
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::POST,
             "/upload",
             None,
@@ -54,7 +54,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/search?q=1'%20OR%20'1'='1",
             Some("q=1'%20OR%20'1'='1"),
@@ -71,7 +71,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/search",
             Some("q=admin'--"),
@@ -88,7 +88,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/search",
             Some("q=<script>alert(1)</script>"),
@@ -105,7 +105,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/ping",
             Some("host=localhost;cat%20/etc/passwd"),
@@ -122,7 +122,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::POST,
             "/search?q=<script>alert('xss')</script>",
             Some("q=<script>alert('xss')</script>"),
@@ -139,10 +139,11 @@ mod waf_anomaly_scoring_tests {
         config.anomaly_scoring.enabled = true;
         config.anomaly_scoring.threshold = 150;
 
+        let threshold = config.anomaly_scoring.threshold;
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/search?q=1'%20OR%20'1'='1",
             Some("q=1'%20OR%20'1'='1"),
@@ -150,7 +151,7 @@ mod waf_anomaly_scoring_tests {
             None,
         );
 
-        assert!(score < config.anomaly_scoring.threshold);
+        assert!(score < threshold);
     }
 
     #[test]
@@ -160,7 +161,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/search?q=<script>alert('xss')</script>",
             Some("q=<script>alert('xss')</script>"),
@@ -178,7 +179,7 @@ mod waf_anomaly_scoring_tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/api/data",
             Some("id=123"),
@@ -195,7 +196,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/files/../../etc/passwd",
             None,
@@ -212,7 +213,7 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let score = detector.check_request_anomaly_scoring(
+        let (_, score) = detector.check_request(
             &Method::GET,
             "/proxy",
             Some("url=http://169.254.169.254/latest/meta-data"),
@@ -234,7 +235,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_multiple_chunks_sqli() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         let result = streaming.scan_chunk(b"SELECT * FROM users WHERE ");
@@ -247,7 +248,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_multiple_chunks_xss() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         streaming.scan_chunk(b"<script>");
@@ -258,7 +259,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_state_persistence() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         assert_eq!(streaming.bytes_seen(), 0);
@@ -279,7 +280,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_large_body_handling() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming_with_config(1024, 5);
 
         for i in 0..5 {
@@ -295,7 +296,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_finalize_returns_detection() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         streaming.scan_chunk(b"1' OR '1'='1");
@@ -312,7 +313,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_reset_clears_state() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         streaming.scan_chunk(b"some data");
@@ -328,7 +329,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_binary_data() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         let binary_data: Vec<u8> = (0..255).collect();
@@ -340,7 +341,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_utf8_lossy_conversion() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
         let streaming = detector.streaming();
 
         let invalid_utf8: Vec<u8> = vec![0x80, 0x81, 0x82, 0xFF, 0xFE];
@@ -352,8 +353,8 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_order_matters() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
-        let streaming1 = detector.streaming();
+        let detector = Arc::new(AttackDetector::new(config));
+        let streaming1 = detector.clone().streaming();
         let streaming2 = detector.streaming();
 
         streaming1.scan_chunk(b"1' OR '1'='1");
@@ -370,7 +371,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_config_chunk_size() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
 
         let streaming = detector.streaming_with_config(512, 10);
 
@@ -383,7 +384,7 @@ mod waf_streaming_tests {
     #[test]
     fn test_streaming_waf_with_custom_config() {
         let config = AttackDetectionConfig::default();
-        let detector = AttackDetector::new(config);
+        let detector = Arc::new(AttackDetector::new(config));
 
         let streaming = detector.streaming_with_config(256, 3);
 
@@ -408,7 +409,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/api/v1/users/123/profile",
             Some("fields=name,email&limit=10"),
@@ -425,7 +426,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(&Method::GET, "/js/app.js", None, &headers, None);
+        let (result, _) = detector.check_request(&Method::GET, "/js/app.js", None, &headers, None);
 
         assert!(result.is_none());
     }
@@ -436,7 +437,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::POST,
             "/api/users",
             None,
@@ -453,7 +454,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/search",
             Some("q=The+SELECT+statement+is+used+to+SELECT+data"),
@@ -471,7 +472,7 @@ mod waf_false_positive_tests {
         let headers = HeaderMap::new();
 
         let body = b"Its <b>bold</b> and <i>italic</i> text with <p>paragraphs</p>";
-        let result =
+        let (result, _) =
             detector.check_request(&Method::POST, "/api/posts", None, &headers, Some(body));
 
         assert!(result.is_none());
@@ -485,7 +486,7 @@ mod waf_false_positive_tests {
 
         let body =
             br#"{"username": "john_doe", "email": "john@example.com", "bio": "I <3 coding"}"#;
-        let result =
+        let (result, _) =
             detector.check_request(&Method::POST, "/api/profile", None, &headers, Some(body));
 
         assert!(result.is_none());
@@ -497,7 +498,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/api/search",
             Some("filter=status=active&sort=date"),
@@ -514,7 +515,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/files/docs/v1.2.3/release-notes.html",
             None,
@@ -532,7 +533,7 @@ mod waf_false_positive_tests {
         let headers = HeaderMap::new();
 
         let body = b"<!-- TODO: fix the SELECT query issue -->";
-        let result =
+        let (result, _) =
             detector.check_request(&Method::POST, "/api/comments", None, &headers, Some(body));
 
         assert!(result.is_none());
@@ -544,7 +545,7 @@ mod waf_false_positive_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/search",
             Some("q=hello%20world%21"),
@@ -580,7 +581,7 @@ mod mesh_proxy_circuit_breaker_tests {
 
     #[test]
     fn test_provider_stats_success_rate_calculation() {
-        let mut stats = ProviderStats {
+        let stats = ProviderStats {
             total_requests: 100,
             successful_requests: 95,
             consecutive_failures: 0,
@@ -755,14 +756,7 @@ mod mesh_proxy_circuit_breaker_tests {
 #[cfg(test)]
 mod mesh_proxy_tiered_cache_tests {
     use bytes::Bytes;
-    use maluwaf::mesh::proxy::TieredTransformCache;
-
-    #[derive(Clone)]
-    struct TransformCacheEntry {
-        body: Bytes,
-        content_encoding: Option<String>,
-        content_type: Option<String>,
-    }
+    use maluwaf::mesh::proxy::{TieredTransformCache, TransformCacheEntry};
 
     #[test]
     fn test_tiered_cache_creation() {
@@ -787,7 +781,7 @@ mod mesh_proxy_tiered_cache_tests {
         assert_eq!(cache.l1_len(), 1);
         let entry = cache.get("key1");
         assert!(entry.is_some());
-        assert_eq!(entry.unwrap().body, b"value1");
+        assert_eq!(entry.unwrap().body.as_ref(), b"value1");
     }
 
     #[test]
@@ -871,7 +865,7 @@ mod waf_attack_coverage_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let result = detector.check_request(&Method::GET, path, query, &headers, body);
+        let (result, _) = detector.check_request(&Method::GET, path, query, &headers, body);
 
         assert!(
             result.is_some(),
@@ -1537,8 +1531,8 @@ mod overseer_lifecycle_tests {
         manager.register_worker(WorkerId(1), 10, 5);
 
         let status = manager.get_drain_status();
-        assert_eq!(status.total_active, 10);
-        assert_eq!(status.total_idle, 5);
+        assert_eq!(status.active_connections, 10);
+        assert_eq!(status.idle_connections, 5);
     }
 
     #[test]
