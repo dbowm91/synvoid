@@ -8,10 +8,11 @@ use axum::{
         State,
     },
     http::{HeaderMap, StatusCode},
-    response::{AppendHeaders, IntoResponse, Response},
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
 
 const ADMIN_WS_COOKIE_NAME: &str = "maluwaf_ws_token";
 
@@ -56,14 +57,8 @@ fn validate_ws_cookie_token(headers: &HeaderMap, admin_token: &str) -> Result<()
 }
 
 #[allow(dead_code)]
-fn build_cookie_header(token: &str) -> AppendHeaders<(axum::http::header::HeaderName, String)> {
-    AppendHeaders((
-        axum::http::header::SET_COOKIE,
-        format!(
-            "{}={}; SameSite=Lax; Secure; HttpOnly; Path=/ws; Max-Age=86400",
-            ADMIN_WS_COOKIE_NAME, token
-        ),
-    ))
+fn build_cookie_header(_token: &str) -> Response {
+    (StatusCode::NOT_IMPLEMENTED, "Cookie auth not implemented for WebSocket").into_response()
 }
 
 pub async fn ws_metrics_handler(
@@ -77,9 +72,14 @@ pub async fn ws_metrics_handler(
         }
     }
 
-    let token = state.security.admin_token.clone();
+    let broadcaster = state.metrics.metrics_broadcaster.clone();
+
+    if broadcaster.client_count() >= broadcaster.max_clients() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Max clients reached").into_response();
+    }
+
     ws.on_upgrade(move |socket| {
-        handle_metrics_socket(socket, state.metrics.metrics_broadcaster.clone(), token)
+        handle_metrics_socket(socket, broadcaster)
     })
 }
 
@@ -94,26 +94,44 @@ pub async fn ws_logs_handler(
         }
     }
 
-    let token = state.security.admin_token.clone();
+    let broadcaster = state.metrics.logs_broadcaster.clone();
+
+    if broadcaster.client_count() >= broadcaster.max_clients() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Max clients reached").into_response();
+    }
+
     ws.on_upgrade(move |socket| {
-        handle_logs_socket(socket, state.metrics.logs_broadcaster.clone(), token)
+        handle_logs_socket(socket, broadcaster)
     })
 }
 
 async fn handle_metrics_socket(
     socket: WebSocket,
     broadcaster: Arc<broadcaster::Broadcaster>,
-    _token: String,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let (client_id, mut rx) = broadcaster.new_client();
+    let Some((client_id, mut rx)) = broadcaster.new_client() else {
+        return;
+    };
 
     tracing::debug!("WebSocket client {} connected to metrics", client_id);
 
+    let client_id_clone = client_id.clone();
     let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg.into())).await.is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(msg) => {
+                    if sender.send(Message::Text(msg.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {
+                    tracing::warn!("Metrics WebSocket client {} lagged, continuing", client_id_clone);
+                    continue;
+                }
+                Err(RecvError::Closed) => {
+                    break;
+                }
             }
         }
     });
@@ -133,17 +151,30 @@ async fn handle_metrics_socket(
 async fn handle_logs_socket(
     socket: WebSocket,
     broadcaster: Arc<broadcaster::Broadcaster>,
-    _token: String,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let (client_id, mut rx) = broadcaster.new_client();
+    let Some((client_id, mut rx)) = broadcaster.new_client() else {
+        return;
+    };
 
     tracing::debug!("WebSocket client {} connected to logs", client_id);
 
+    let client_id_clone = client_id.clone();
     let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg.into())).await.is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(msg) => {
+                    if sender.send(Message::Text(msg.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {
+                    tracing::warn!("Logs WebSocket client {} lagged, continuing", client_id_clone);
+                    continue;
+                }
+                Err(RecvError::Closed) => {
+                    break;
+                }
             }
         }
     });
