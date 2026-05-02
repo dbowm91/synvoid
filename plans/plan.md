@@ -1,48 +1,8 @@
 # MaluWAF Traffic Layer Proxy and Routing Improvement Plan
 
-**Status**: OPEN
-**Last Updated**: 2026-05-01
-**Primary Scope**: HTTP/HTTPS reverse proxying, route selection, upstream pools, retry/failover,
-request and response header forwarding, proxy cache behavior, upstream TLS client reuse, mesh
-backend routing, and traffic-layer regression coverage.
-
-This section is a handoff plan for a follow-on agent that may not have the adversarial traffic-layer
-review context. It is intentionally explicit about files, failure modes, and tests. The work below
-is read-only review output; no implementation items are complete yet. Do not delete open or deferred
-items from this section unless the implementation is finished, intentionally superseded, or moved to
-another tracked plan with a clear reference.
-
-The previously open WAF/security and architecture plans are preserved later in this file. They are
-not completed or superseded by this traffic-layer plan.
-
-## Traffic Layer Diagnosis
-
-The traffic layer has strong pieces in isolation:
-
-- `src/router.rs` precomputes exact host maps and location matchers.
-- `src/proxy/mod.rs` contains upstream pools, retry/failover, cache handling, WAF-integrated proxy
-  request handling, and response-size enforcement.
-- `src/upstream/pool.rs` tracks backend health and connection counts.
-- `src/http/server.rs` has a direct streaming path for large upstream responses.
-- `src/mesh/proxy.rs` and `src/mesh/backend.rs` provide mesh-backed routing.
-
-The problem is that these pieces do not form one coherent data-plane contract. The main HTTP
-request path in `src/http/server.rs` builds target URLs and calls HTTP client functions directly,
-while `ProxyServer` has separate logic for upstream pools, retries, cache, and response-size
-limits. As a result, config surfaces can exist without affecting the dominant request path.
-Headers, cache behavior, retries, upstream TLS, and route validation are inconsistent across HTTP,
-TLS, proxy-cache, QUIC tunnel, and mesh paths.
-
-The goal of this plan is to converge the traffic layer around a single explicit routing/proxying
-contract:
-
-1. A request route resolves to a typed backend target with precomputed proxy policy.
-2. Every external upstream path applies the same header, retry, cache, size-limit, and TLS policy
-   unless explicitly documented otherwise.
-3. Route matching and proxy forwarding avoid avoidable per-request allocation in hot paths.
-4. Cache, purge, and stale revalidation target the configured upstream and use the same key model.
-5. Mesh and direct upstream routing expose the same behavior where operationally possible.
-6. Tests prove behavior at the HTTP server boundary, not only helper functions.
+**Status**: OPEN (Wave 18 COMPLETE - all Distributed P1-P9, WAF, Arch, Systems)
+**Last Updated**: 2026-05-02
+**Wave 18 Completed**: Systems P8, Traffic P10, WAF P6/P8/P9/P10, Arch P1-P10, Systems P1-P10, Distributed P1-P9
 
 ## Traffic Layer Ground Rules
 
@@ -3370,8 +3330,8 @@ It is retained because the user requested that incomplete or deferred items rema
 
 # MaluWAF Distributed Layer Hardening Plan
 
-**Status**: OPEN
-**Last Updated**: 2026-05-01
+**Status**: COMPLETED (wave18-2026-05-02)
+**Last Updated**: 2026-05-02
 **Scope**: `src/mesh/**`, with emphasis on Raft, DHT, quorum, and P2P transport ingress.
 
 This plan is written for a follow-on agent that may not have the full review context.
@@ -3429,7 +3389,7 @@ The highest risk areas found during review:
 
 ## Priority 1: Raft Client Proposal Authorization
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3512,7 +3472,7 @@ Suggested locations:
 
 ## Priority 2: Raft Replication RPC Membership Gate
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3572,7 +3532,7 @@ Add tests covering:
 
 ## Priority 3: Make DHT Ingress Verification Mandatory
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3647,7 +3607,7 @@ Add regression tests for each ingress path:
 
 ## Priority 4: Fix Global DHT Signature Fail-Closed Behavior
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3691,7 +3651,7 @@ Add tests:
 
 ## Priority 5: Quorum State Transition Consistency
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3744,7 +3704,7 @@ Add tests:
 
 ## Priority 6: Regional Quorum Proof Context
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3801,7 +3761,7 @@ Add tests:
 
 ## Priority 7: Fix DHT Background Worker Lifetimes
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3851,7 +3811,7 @@ If time-based async tests are flaky, factor worker body into testable methods an
 
 ## Priority 8: Remove Synchronous Blocking From Quorum Verification
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -3892,7 +3852,7 @@ Add tests:
 
 ## Priority 9: Transport Envelope and Record Identity Binding Audit
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
