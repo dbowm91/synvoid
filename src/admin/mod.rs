@@ -100,6 +100,7 @@ pub fn create_admin_router(
     admin_token: String,
     admin_cors_config: AdminCorsConfig,
     admin_rate_limit_config: crate::config::admin::AdminRateLimitConfig,
+    trusted_proxies: Vec<String>,
     probe_tracker: Option<Arc<ProbeTracker>>,
     suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
@@ -136,21 +137,27 @@ pub fn create_admin_router(
 
     let state = Arc::new(state_builder);
 
-    build_router_from_state(state, admin_cors_config, admin_rate_limit_config)
+    let router = build_router_from_state(state, admin_cors_config, admin_rate_limit_config, trusted_proxies.clone());
+    middleware::set_trusted_proxies(trusted_proxies);
+    router
 }
 
 pub async fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
     let cfg = state.process.config.read().await;
     let admin_cors_config = cfg.main.admin.cors.clone();
     let rate_limit_config = cfg.main.admin.rate_limit.clone();
+    let trusted_proxies = cfg.main.admin.trusted_proxies.clone();
     drop(cfg);
-    build_router_from_state(state, admin_cors_config, rate_limit_config)
+    let router = build_router_from_state(state, admin_cors_config, rate_limit_config, trusted_proxies.clone());
+    middleware::set_trusted_proxies(trusted_proxies);
+    router
 }
 
 fn build_router_from_state(
     state: Arc<AdminState>,
     admin_cors_config: AdminCorsConfig,
     rate_limit_config: crate::config::admin::AdminRateLimitConfig,
+    _trusted_proxies: Vec<String>,
 ) -> Router {
     let api_routes = Router::new()
         .route("/health", get(health_check))
@@ -893,7 +900,7 @@ pub async fn start_admin_server(
         });
     }
 
-    let server = axum::serve(listener, app);
+    let server = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>());
 
     tokio::select! {
         result = server => {

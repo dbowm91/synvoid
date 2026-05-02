@@ -226,6 +226,7 @@ impl MainConfig {
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: Vec::new(),
             },
             logging: LoggingConfig::default(),
             metrics: MetricsConfig {

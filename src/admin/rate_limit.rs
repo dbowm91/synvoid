@@ -191,6 +191,10 @@ where
 }
 
 fn extract_client_ip(request: &Request) -> String {
+    if let Some(client_ip) = request.extensions().get::<super::middleware::ClientIp>() {
+        return client_ip.0.clone();
+    }
+
     if let Some(remote_addr) = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()

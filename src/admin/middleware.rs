@@ -6,48 +6,60 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use parking_lot::RwLock;
+use std::net::IpAddr;
 use std::sync::LazyLock;
+use parking_lot::RwLock;
 
 #[derive(Clone, Debug)]
 pub struct ClientIp(pub String);
 
+static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+
+pub fn set_trusted_proxies(proxies: Vec<String>) {
+    let mut guard = TRUSTED_PROXIES.write();
+    *guard = proxies;
+}
+
 pub async fn extract_client_ip_middleware(mut request: Request, next: Next) -> Response {
-    let client_ip = extract_client_ip_from_request(&request);
+    let trusted: Vec<String> = TRUSTED_PROXIES.read().clone();
+    let client_ip = extract_client_ip(&request, &trusted);
     request.extensions_mut().insert(ClientIp(client_ip));
     next.run(request).await
 }
 
-static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
-
-fn is_trusted_proxy(ip: &str) -> bool {
-    let guard = TRUSTED_PROXIES.read();
-    !guard.is_empty() && guard.iter().any(|p| p == ip)
-}
-
-fn extract_client_ip_from_request(request: &Request) -> String {
+pub fn extract_client_ip(request: &Request, trusted_proxies: &[String]) -> String {
     let direct_ip = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|c| c.0.ip().to_string());
 
-    if let Some(ref ip) = direct_ip {
-        if is_trusted_proxy(ip) {
-            if let Some(header) = request.headers().get("x-forwarded-for") {
-                if let Ok(s) = header.to_str() {
-                    if let Some(client_ip) = s.split(',').next() {
-                        let ip = client_ip.trim();
-                        if !ip.is_empty() && ip.parse::<std::net::IpAddr>().is_ok() {
-                            return ip.to_string();
-                        }
+    let direct_ip_str = match direct_ip {
+        Some(ref ip) => ip.clone(),
+        None => return "unknown".to_string(),
+    };
+
+    let is_trusted = trusted_proxies.iter().any(|p| {
+        if let (Ok(proxy), Ok(direct)) = (p.parse::<IpAddr>(), direct_ip_str.parse::<IpAddr>()) {
+            proxy == direct
+        } else {
+            false
+        }
+    });
+
+    if is_trusted {
+        if let Some(header) = request.headers().get("x-forwarded-for") {
+            if let Ok(s) = header.to_str() {
+                if let Some(client_ip) = s.split(',').next() {
+                    let ip = client_ip.trim();
+                    if !ip.is_empty() && ip.parse::<IpAddr>().is_ok() {
+                        return ip.to_string();
                     }
                 }
             }
         }
-        return ip.clone();
     }
 
-    direct_ip.unwrap_or_else(|| "unknown".to_string())
+    direct_ip_str
 }
 
 pub async fn auth_middleware_with_state(
