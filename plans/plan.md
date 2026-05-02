@@ -1,8 +1,76 @@
-# MaluWAF Traffic Layer Proxy and Routing Improvement Plan
+# MaluWAF Master Improvement Plan - Wave 21
 
-**Status**: COMPLETED (wave18-2026-05-02)
+**Status**: IN PROGRESS (wave21-2026-05-02)
 **Last Updated**: 2026-05-02
-**Wave 18 Completed**: Traffic P1-P10, WAF P6/P8/P9/P10, Arch P1-P10, Systems P1-P10 (docs), Distributed P1-P9
+**Wave 21 Focus**: Deep Process Isolation, Logic Migration, and Workspace Refinement.
+
+---
+
+## Wave 21: Deep Process Isolation and Business Logic Migration
+
+This wave focuses on moving the actual business logic into the isolated processes created in Wave 20 (Mesh Control Plane and Plugin Execution) and further decomposing the workspace.
+
+### Priority 1: Migrate Mesh Control Plane Logic
+
+**Problem**: 
+The mesh logic (DHT routing, Raft consensus, threat intel propagation) currently runs within the `Master` or `Worker` processes. While we have the `--mesh-control-plane` process spawned by the `Overseer`, it is currently a stub.
+
+**Required Outcome**:
+All DHT and Raft management must move to the `mesh-control-plane` process. The `Master` and `Workers` should communicate with this process via IPC for all mesh operations.
+
+**Implementation Steps**:
+1.  **IPC Handler Implementation**: Update `src/mesh/control_plane.rs` to implement a tokio-based IPC listener using the `MeshControlRequest` and `MeshControlResponse` types from `src/process/ipc.rs`.
+2.  **Logic Migration**: Move the initialization of `RoutingTable`, `RecordStoreManager`, and `RaftInstance` from `src/startup/master.rs` and `src/worker/mod.rs` into the `run_mesh_control_plane` function.
+3.  **Client Implementation**: Update the main codebase to use an `IpcMeshClient` that implements the mesh traits by forwarding requests over the IPC stream to the isolated process.
+4.  **Resilience**: Ensure that if the mesh process restarts, the IPC clients can transparently reconnect.
+
+### Priority 2: Migrate Plugin/Serverless Execution Logic
+
+**Problem**:
+WASM execution currently happens in-process within the `Worker`, sharing memory and potentially impacting request latency or stability if a plugin misbehaves.
+
+**Required Outcome**:
+WASM plugin and serverless function execution must happen in the dedicated `plugin-execution` process.
+
+**Implementation Steps**:
+1.  **Execution Server**: Implement the IPC listener in `src/plugin/execution.rs` to handle `PluginExecuteRequest` messages.
+2.  **Plugin Host Proxy**: Implement a callback mechanism (Host Function Proxy) so that plugins in the isolated process can still request services from the main process (e.g., logging, metrics) via return IPC messages.
+3.  **Worker Integration**: Update `src/waf/attack_detection/mod.rs` or the relevant plugin hook in `src/http/server.rs` to delegate execution to the isolated process.
+4.  **Resource Enforcement**: Strictly enforce memory and CPU (fuel) limits at the process boundary.
+
+### Priority 3: Deep Workspace Decomposition (`maluwaf-mesh` & `maluwaf-proxy`)
+
+**Problem**:
+The core `maluwaf` crate is still excessively large, making compile times long and boundaries easy to blur.
+
+**Required Outcome**:
+Extract the remaining major subsystems into the `crates/` directory.
+
+**Implementation Steps**:
+1.  **`maluwaf-mesh`**: Move the contents of `src/mesh/` into a new `crates/maluwaf-mesh` crate. This crate should depend on `maluwaf-config` and `maluwaf-utils`.
+2.  **`maluwaf-proxy`**: Move `src/proxy/` and `src/http_client/` into `crates/maluwaf-proxy`.
+3.  **Interface Stabilization**: Use traits in `maluwaf-utils` to allow these crates to interact without cyclic dependencies.
+
+### Priority 4: Complete Config Schema Modernization
+
+**Problem**:
+Some V2 aliases are missing, and some fields in `ThreatLevelConfig` still use old names that don't match the new naming convention.
+
+**Required Outcome**:
+All configuration fields should have consistent, modern names while maintaining backward compatibility.
+
+**Implementation Steps**:
+1.  **Threat Level Aliases**: Add `#[serde(alias = "...")]` to fields in `src/config/protection.rs`:
+    - `scale_up_attacks_per_min` -> `escalation_threshold`
+    - `scale_up_window_secs` -> `escalation_window`
+    - `initial` -> `starting_level`
+2.  **Admin API Aliases**: Add `api_key` alias to all token fields in the Admin API config if not already present.
+3.  **Verification**: Add unit tests in `crates/maluwaf-config` to verify all aliases.
+
+---
+
+# Historical Progress (Pruned)
+
 
 ## Traffic Layer Ground Rules
 
@@ -178,50 +246,9 @@ Key files:
 Host rejection must validate the incoming cleaned host against the selected site. Location matching
 must preserve current matching semantics while avoiding per-request allocation for normal matching.
 
-### Implementation Steps
+### Implementation Details
+(Pruned after successful completion)
 
-1. Fix the host-validation data flow.
-   - Change `route_to_target()` to accept the cleaned request host or a small request route context.
-   - Use that host for `reject_unknown_hosts`.
-   - Ensure all callers pass the same cleaned host used for domain lookup.
-
-2. Add regression tests for `reject_unknown_hosts`.
-   - Exact domain accepted.
-   - Allowed subdomain accepted if existing semantics intend that.
-   - Unknown host rejected.
-   - Site ID differing from domain still works.
-   - Empty host uses configured default server only where intended.
-
-3. Review wildcard/suffix semantics.
-   - Current suffix logic uses `clean_host.ends_with(domain)`.
-   - Confirm behavior for domains containing `*`, leading dots, and suffix tricks such as
-     `good.com.attacker.tld`.
-   - Add tests before changing behavior. If behavior changes, document migration risk.
-
-4. Optimize `LocationMatcher::match_uri()`.
-   - Replace `exact_matches`, `pref_prefix_matches`, `regex_matches`, and `prefix_matches` vectors
-     with scalar best-match tracking.
-   - Preserve current precedence:
-     - exact,
-     - longest preferential prefix,
-     - first regex,
-     - longest prefix.
-   - Preserve `original_order` return value.
-
-5. Add route/location tests.
-   - Exact location beats prefix.
-   - Preferential prefix beats regex.
-   - First regex wins among regex matches.
-   - Longest prefix wins among normal prefix matches.
-   - No heap allocation is preferable but not required to prove with a test. If the repo has an
-     allocation test helper, use it; otherwise document the before/after reasoning in comments or
-     PR notes.
-
-### Done Criteria
-
-- `reject_unknown_hosts` validates the actual request host.
-- Location matching semantics are unchanged and covered by tests.
-- Location matching no longer allocates vectors per request.
 
 ## Priority 3: Correct Request Header Forwarding
 
@@ -601,44 +628,8 @@ Key files:
 - `src/proxy/headers.rs`
 
 ### Required Outcome
+(Implementation details pruned after completion in wave 18)
 
-URL construction should use a single helper that combines configured upstream origin and incoming
-path/query safely and predictably. WAF, router, cache, and upstream request execution should agree
-on what is path versus query.
-
-### Implementation Steps
-
-1. Inventory URL construction.
-   - Search for `format!("{}{}", target.upstream, path)`, `format!("{}{}", upstream_url, path)`,
-     and equivalent patterns.
-
-2. Add a URL join helper.
-   - It should preserve incoming `path_and_query`.
-   - It should avoid double slashes between origin and path.
-   - It should not decode or normalize percent-encoding unless explicitly intended.
-   - It should reject invalid upstream origins early at config validation time.
-
-3. Use typed URI pieces where possible.
-   - Prefer `http::Uri` or a URL parser over string concatenation.
-   - If full URL parser dependency is already present, use it.
-
-4. Split path/query consistently for WAF and cache.
-   - The router should route on path only unless location matching intentionally includes query.
-   - WAF should receive query separately.
-   - Cache key should include path and query exactly as intended.
-
-5. Add tests.
-   - Upstream with and without trailing slash.
-   - Request path with and without leading slash.
-   - Query string preserved exactly.
-   - Percent-encoded slash behavior is preserved according to documented policy.
-   - Absolute-form request targets are rejected or normalized safely.
-
-### Done Criteria
-
-- Ad hoc upstream URL concatenation is removed from traffic hot paths.
-- Path/query handling is documented and tested.
-- WAF, router, cache, and upstream execution agree on path/query semantics.
 
 ## Priority 8: Enforce Response Size and Streaming Policy Consistently
 
