@@ -12,6 +12,40 @@ use crate::process::Message;
 
 pub type HmacSha3_256 = Hmac<Sha3_256>;
 
+#[derive(Debug)]
+enum IpcSignerError {
+    InvalidHexLength(usize),
+    InvalidHexChar(String),
+}
+
+impl std::fmt::Display for IpcSignerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IpcSignerError::InvalidHexLength(len) => {
+                write!(f, "IPC key hex must be exactly 64 characters, got {}", len)
+            }
+            IpcSignerError::InvalidHexChar(msg) => {
+                write!(f, "IPC key hex contains invalid characters: {}", msg)
+            }
+        }
+    }
+}
+
+fn parse_hex_key(hex: &str) -> Result<[u8; 32], IpcSignerError> {
+    if hex.len() != 64 {
+        return Err(IpcSignerError::InvalidHexLength(hex.len()));
+    }
+    let mut key = [0u8; 32];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let s = std::str::from_utf8(chunk)
+            .map_err(|_| IpcSignerError::InvalidHexChar("non-utf8 chunk".to_string()))?;
+        let b = u8::from_str_radix(s, 16)
+            .map_err(|_| IpcSignerError::InvalidHexChar(format!("invalid hex byte: {}", s)))?;
+        key[i] = b;
+    }
+    Ok(key)
+}
+
 pub const HMAC_SIZE: usize = 32;
 pub const TIMESTAMP_SIZE: usize = 8;
 pub const NONCE_SIZE: usize = 16;
@@ -86,8 +120,8 @@ fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
         return false;
     }
 
-    cache.evict_oldest();
     cache.insert(*nonce, timestamp);
+    cache.evict_oldest();
     true
 }
 
@@ -114,6 +148,12 @@ impl IpcSigner {
         Self { key: *key }
     }
 
+    /// Derives an IPC signing key from a secret string.
+    ///
+    /// **This should only be used for testing/development.** Production
+    /// deployments must use generated random session keys via
+    /// [`generate_session_key()`] and file-based key exchange to avoid
+    /// deterministic key material.
     pub fn from_secret(secret: &str) -> Self {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -143,60 +183,12 @@ impl IpcSigner {
                 let _ = file;
                 std::fs::remove_file(&key_file).ok();
                 let key_hex = key_hex.trim();
-                if key_hex.len() != 64 {
-                    return None;
-                }
-                let mut key = [0u8; 32];
-                let mut valid = true;
-                for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-                    if chunk.len() != 2 {
-                        valid = false;
-                        break;
-                    }
-                    let Ok(s) = std::str::from_utf8(chunk) else {
-                        valid = false;
-                        break;
-                    };
-                    match u8::from_str_radix(s, 16) {
-                        Ok(b) => key[i] = b,
-                        Err(_) => {
-                            valid = false;
-                            break;
-                        }
-                    }
-                }
-                if !valid {
-                    return None;
-                }
+                let key = parse_hex_key(key_hex).ok()?;
                 return Some(Self { key });
             }
         }
         if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
-            if key_hex.len() != 64 {
-                return None;
-            }
-            let mut key = [0u8; 32];
-            let mut valid = true;
-            for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-                if chunk.len() != 2 {
-                    valid = false;
-                    break;
-                }
-                let Ok(s) = std::str::from_utf8(chunk) else {
-                    valid = false;
-                    break;
-                };
-                match u8::from_str_radix(s, 16) {
-                    Ok(b) => key[i] = b,
-                    Err(_) => {
-                        valid = false;
-                        break;
-                    }
-                }
-            }
-            if !valid {
-                return None;
-            }
+            let key = parse_hex_key(key_hex.trim()).ok()?;
             return Some(Self { key });
         }
         None
@@ -296,19 +288,13 @@ impl<R: Read> SignedReader<R> {
 
     fn read_message(&mut self) -> io::Result<()> {
         let mut len_buf = [0u8; 4];
-        let n = self.inner.read(&mut len_buf)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "EOF reading len",
-            ));
-        }
-        if n < 4 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "short read for len",
-            ));
-        }
+        self.inner.read_exact(&mut len_buf).map_err(|e| {
+            if e.kind() == io::ErrorKind::UnexpectedEof {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "EOF reading len")
+            } else {
+                e
+            }
+        })?;
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -320,13 +306,7 @@ impl<R: Read> SignedReader<R> {
         }
 
         let mut raw = vec![0u8; total_len];
-        let n = self.inner.read(&mut raw)?;
-        if n < total_len {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "short read for raw",
-            ));
-        }
+        self.inner.read_exact(&mut raw)?;
 
         let timestamp = u64::from_be_bytes(
             raw[0..TIMESTAMP_SIZE]
@@ -614,48 +594,26 @@ fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
     let _ = std::fs::remove_file(path);
 
     let key_hex = key_hex.trim();
-    if key_hex.len() != 64 {
-        return None;
-    }
-
-    let mut key = [0u8; 32];
-    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-        if chunk.len() != 2 {
-            return None;
-        }
-        let Ok(s) = std::str::from_utf8(chunk) else {
-            return None;
-        };
-        let Ok(b) = u8::from_str_radix(s, 16) else {
-            return None;
-        };
-        key[i] = b;
-    }
+    let key = parse_hex_key(key_hex).ok()?;
     Some(Arc::new(IpcSigner::new(&key)))
 }
 
 #[cfg(not(unix))]
 fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
-    let key_hex = std::fs::read_to_string(path).ok()?.trim().to_string();
-    let _ = std::fs::remove_file(path);
-
-    if key_hex.len() != 64 {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() {
+        return None;
+    }
+    if !meta.is_file() {
+        return None;
+    }
+    if meta.len() < 64 || meta.len() > 128 {
         return None;
     }
 
-    let mut key = [0u8; 32];
-    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
-        if chunk.len() != 2 {
-            return None;
-        }
-        let Ok(s) = std::str::from_utf8(chunk) else {
-            return None;
-        };
-        let Ok(b) = u8::from_str_radix(s, 16) else {
-            return None;
-        };
-        key[i] = b;
-    }
+    let key_hex = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::remove_file(path);
+    let key = parse_hex_key(key_hex.trim()).ok()?;
     Some(Arc::new(IpcSigner::new(&key)))
 }
 

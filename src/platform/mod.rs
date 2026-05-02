@@ -9,7 +9,8 @@ pub use fs::{PlatformPaths, SecureDir};
 pub use ipc::{IpcListener, IpcStream, IpcTransport};
 pub use process::{ProcessControl, SignalHandler};
 pub use sandbox::{
-    ProcessSandbox, SandboxBackend, SandboxError, SandboxLevel, SandboxPaths, StubSandbox,
+    ProcessSandbox, SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel, SandboxPaths,
+    StubSandbox,
 };
 pub use service::{ServiceConfig, ServiceControl, ServiceState};
 pub use socket::{

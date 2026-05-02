@@ -391,11 +391,20 @@ impl OverseerLockFile {
     }
 
     pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
+        use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
+
         if let Some(parent) = self.lock_path.parent() {
             fs::create_dir_all(parent).map_err(OverseerLockError::IoError)?;
         }
 
-        let file = File::create(&self.lock_path).map_err(OverseerLockError::IoError)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.lock_path)
+            .map_err(OverseerLockError::IoError)?;
 
         match flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
             Ok(()) => {}
@@ -410,8 +419,10 @@ impl OverseerLockFile {
         let pid = std::process::id();
         let content = format!("{}\n{}", pid, crate::utils::safe_unix_timestamp());
 
-        use std::io::Write;
         let mut f = &file;
+        f.set_len(0).map_err(OverseerLockError::IoError)?;
+        f.seek(SeekFrom::Start(0))
+            .map_err(OverseerLockError::IoError)?;
         f.write_all(content.as_bytes())
             .map_err(OverseerLockError::IoError)?;
         f.flush().map_err(OverseerLockError::IoError)?;
