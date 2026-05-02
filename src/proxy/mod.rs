@@ -573,9 +573,16 @@ impl ProxyServer {
                                 let key_clone = cache_key.clone();
                                 let path_owned = path.to_string();
                                 let method_clone = method.clone();
-                                let scheme_owned = scheme.to_string();
-                                let host_owned = host.to_string();
+                                let upstream_url_clone = self.upstream_url.clone();
                                 let reval_client = self.revalidation_client.clone();
+
+                                // Build headers for revalidation (standard forward headers)
+                                let reval_headers = build_forward_headers(
+                                    client_ip,
+                                    headers,
+                                    &crate::config::site::ProxyHeadersConfig::default(),
+                                    true,
+                                );
 
                                 tokio::spawn(async move {
                                     tracing::debug!(
@@ -588,8 +595,8 @@ impl ProxyServer {
                                         key_clone,
                                         method_clone,
                                         path_owned,
-                                        scheme_owned,
-                                        host_owned,
+                                        upstream_url_clone,
+                                        reval_headers,
                                     )
                                     .await;
                                 });
@@ -815,14 +822,23 @@ impl ProxyServer {
         key: CacheKey,
         method: http::Method,
         path: String,
-        scheme: String,
-        host: String,
+        upstream_url: String,
+        headers: http::HeaderMap,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let url = format!("{}://{}{}", scheme, host, path);
+        let url = join_upstream_url(&upstream_url, &path);
 
-        match send_request_with_timeout(client, method, &url, Some(Duration::from_secs(5))).await {
+        match crate::http_client::send_request_with_body_headers_and_timeout(
+            client,
+            method,
+            &url,
+            None,
+            headers,
+            Some(Duration::from_secs(5)),
+        )
+        .await
+        {
             Ok(response) => {
                 let status = response.status_code();
                 let headers = response.headers.clone();

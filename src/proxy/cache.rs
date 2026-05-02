@@ -45,37 +45,38 @@ pub(super) fn build_cached_response(entry: &ProxyCacheEntry) -> http::Response<b
     let mut builder = http::Response::builder().status(entry.status);
 
     for (name, value) in entry.headers.iter() {
-        builder = builder.header(name, value);
-    }
-
-    let mut cache_directive = if entry.is_fresh {
-        "public".to_string()
-    } else {
-        "public, stale-while-revalidate".to_string()
-    };
-
-    if let Some(expires_at) = entry.expires_at {
-        let max_age = expires_at.saturating_duration_since(std::time::Instant::now());
-        if max_age.as_secs() > 0 {
-            cache_directive.push_str(&format!(", max-age={}", max_age.as_secs()));
+        if name != http::header::CACHE_CONTROL {
+            builder = builder.header(name, value);
         }
     }
 
-    if let Some(swr) = entry.stale_while_revalidate {
-        let swr_age = swr.saturating_duration_since(std::time::Instant::now());
-        if swr_age.as_secs() > 0 {
-            cache_directive.push_str(&format!(", stale-while-revalidate={}", swr_age.as_secs()));
-        }
-    }
+    // Preserve original Cache-Control if present, otherwise default to public
+    let mut cache_directive = entry
+        .headers
+        .get(http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            if entry.is_fresh {
+                "public".to_string()
+            } else {
+                "public, stale-while-revalidate".to_string()
+            }
+        });
 
-    if let Some(sie) = entry.stale_if_error {
-        let sie_age = sie.saturating_duration_since(std::time::Instant::now());
-        if sie_age.as_secs() > 0 {
-            cache_directive.push_str(&format!(", stale-if-error={}", sie_age.as_secs()));
+    // If stale, ensure stale-while-revalidate is present if not already
+    if !entry.is_fresh && !cache_directive.contains("stale-while-revalidate") {
+        if !cache_directive.is_empty() {
+            cache_directive.push_str(", ");
         }
+        cache_directive.push_str("stale-while-revalidate");
     }
 
     builder = builder.header("Cache-Control", cache_directive);
+
+    // Add Age header representing seconds since the response was generated at origin
+    let age = entry.created_at.elapsed().as_secs();
+    builder = builder.header("Age", age.to_string());
 
     if entry.is_fresh {
         builder = builder.header("X-Cache", "HIT");
