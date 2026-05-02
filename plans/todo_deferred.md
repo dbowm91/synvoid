@@ -5,6 +5,8 @@
 
 # Wave 2 (Architecture Deferred)
 - [ ] Full multi-crate workspace decomposition.
+  - **Attempted 2026-05-02**: WAF module extraction failed due to extensive cross-dependencies on main crate modules (config, auth, challenge, block_store, geoip, mesh, tarpit, metrics, utils, theme, upload, http_client). WAF module is too tightly coupled at the type level.
+  - **Recommendation**: Only extract truly self-contained parts (attack_detection patterns, ratelimit core) while keeping WafCore in main crate.
 - [ ] Moving mesh control-plane into a separate process.
 - [ ] Moving plugin/serverless execution into a separate process.
 - [ ] Replacing the admin UI/API architecture.
@@ -24,3 +26,9 @@
 - [ ] Major Raft storage schema changes unrelated to auth metadata.
 - [ ] New mesh admin APIs for manual quorum or Raft management.
 - [ ] Changing the public wire protocol beyond the minimum needed for signed context and auth.
+
+# Completed Items (Zero-Copy Validation)
+- [x] Zero-copy streaming for HTTP proxy is correctly implemented using BufferPool
+- [x] HTTP server uses 1MB threshold for zero-copy streaming
+- [x] Static files use 4KB threshold but uses Buffered variant (not true sendfile)
+- **Note**: Static file `into_bytes()` reads entire file into memory - would require deeper refactoring of HTTP response handling to properly use sendfile syscall
