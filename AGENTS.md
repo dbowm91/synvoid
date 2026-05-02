@@ -96,12 +96,50 @@ cargo test --test integration_test
 cargo fmt && cargo clippy --lib -- -D warnings
 ```
 
+### Architecture Profile Gates
+
+MaluWAF supports feature-gated profiles. Verify compilation for each profile:
+
+```bash
+# Core profile (minimal)
+cargo check --no-default-features
+
+# Mesh profile
+cargo check --no-default-features --features mesh
+
+# DNS profile
+cargo check --no-default-features --features dns
+
+# Full profile
+cargo check --no-default-features --features mesh,dns
+```
+
+**Note**: Core/mesh/dns profiles currently have compilation errors (~220/85/264 errors). These are being tracked in `plans/plan.md` section 4.2 (Architecture Gates).
+
 ## Known File Path Corrections
 
 | Wrong Path | Correct Path |
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
+
+## Implementation Wave Organization
+
+When implementing work from `plans/plan.md`, follow this wave structure:
+
+| Wave | Items | Parallel Tracks | Key Dependency |
+|------|-------|----------------|---------------|
+| **0** | Architecture Gates (4.2) | No | Must lead - blocks all compilation |
+| **1** | Socket/PID Hardening, Sandbox Hardening, IPC Signing Hardening | **Yes** (3 tracks) | After Wave 0 |
+| **2** | IPC Consolidation, Buffer Pool Audit, Architecture Profiles, Control Plane Boundaries | Partial | IPC Consolidation depends on IPC Signing Hardening |
+| **3** | WAF Entrypoint Matrix, Traffic Entrypoint Matrix, HTTP Server Pipeline Split | **Yes** | After Wave 0 |
+| **4** | Plugin Isolation, Config Reload Contract, Runtime Ownership Inventory | **Yes** | After Wave 0 |
+| **5** | Systems-Layer CI, Platform Support Matrix, Platform Firewall | **Yes** | After Wave 0 |
+| **6** | Worker Runtime Split, Singleton Inventory | No | Worker Runtime Split depends on Singleton Inventory |
+
+**Max Parallelism**: After Wave 0 completes, 10+ independent tracks can run in parallel.
+
+See `plans/plan.md` for detailed actionable items within each wave.
 
 ## Skills Reference
 
