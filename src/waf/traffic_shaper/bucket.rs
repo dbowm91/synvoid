@@ -1,5 +1,5 @@
 use crate::utils::now_ms;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 pub struct TokenBucket {
@@ -8,6 +8,8 @@ pub struct TokenBucket {
     refill_rate: AtomicU64,
     refill_interval_ms: u64,
     last_refill: AtomicU64,
+    #[cfg(test)]
+    time_offset_ms: AtomicI64,
 }
 
 impl TokenBucket {
@@ -22,7 +24,20 @@ impl TokenBucket {
             refill_rate: AtomicU64::new(refill_rate_bytes_per_sec),
             refill_interval_ms,
             last_refill: AtomicU64::new(now_ms()),
+            #[cfg(test)]
+            time_offset_ms: AtomicI64::new(0),
         }
+    }
+
+    #[cfg(test)]
+    pub fn advance_time(&self, ms: u64) {
+        self.time_offset_ms.fetch_add(ms as i64, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn now_ms_with_offset(&self) -> u64 {
+        let base = now_ms() as i64;
+        (base + self.time_offset_ms.load(Ordering::Relaxed)) as u64
     }
 
     pub fn try_consume(&self, bytes: u64) -> bool {
@@ -73,6 +88,9 @@ impl TokenBucket {
     }
 
     fn refill(&self) {
+        #[cfg(test)]
+        let now = self.now_ms_with_offset();
+        #[cfg(not(test))]
         let now = now_ms();
         let last = self.last_refill.load(Ordering::Acquire);
 
@@ -97,7 +115,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "Flaky timing-dependent test"]
     fn test_token_bucket_basic() {
         let bucket = TokenBucket::new(100, 50, 100);
 
@@ -105,7 +122,7 @@ mod tests {
         assert!(bucket.try_consume(30));
         assert!(!bucket.try_consume(30));
 
-        std::thread::sleep(Duration::from_millis(500));
+        bucket.advance_time(600);
 
         assert!(bucket.try_consume(50));
     }
@@ -117,7 +134,7 @@ mod tests {
         bucket.try_consume(50);
         assert_eq!(bucket.available_tokens(), 50);
 
-        std::thread::sleep(Duration::from_millis(100));
+        bucket.advance_time(100);
 
         let available = bucket.available_tokens();
         assert!(available >= 50);
