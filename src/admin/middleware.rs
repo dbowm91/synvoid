@@ -83,6 +83,27 @@ pub async fn auth_middleware_with_state(
         .map(|ip| ip.0.as_str())
         .unwrap_or("unknown");
 
+    if super::auth::AUTH_RATE_LIMITER.is_locked(client_ip) {
+        let retry_after = super::auth::AUTH_RATE_LIMITER
+            .retry_after(client_ip)
+            .unwrap_or(super::auth::AUTH_LOCKOUT_DURATION);
+        tracing::warn!(
+            "Auth middleware: client {} is locked out, retry after {:?}",
+            client_ip,
+            retry_after
+        );
+        let body = serde_json::json!({
+            "error": "Too Many Requests",
+            "message": "Too many failed authentication attempts. Please retry later."
+        });
+        let mut response = axum::Json(body).into_response();
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from(retry_after.as_secs()),
+        );
+        return (axum::http::StatusCode::TOO_MANY_REQUESTS, response).into_response();
+    }
+
     let bearer_token: Option<String> = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)

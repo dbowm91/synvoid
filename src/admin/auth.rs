@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const MAX_AUTH_ATTEMPTS: usize = 5;
-const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(300);
+pub const MAX_AUTH_ATTEMPTS: usize = 5;
+pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(300);
 const AUTH_WINDOW_DURATION: Duration = Duration::from_secs(60);
 const BCRYPT_COST: u32 = 12;
 
@@ -33,6 +33,7 @@ impl AuthRateLimiter {
     }
 
     pub fn record_failure(&self, identifier: &str) {
+        self.cleanup_if_needed(identifier);
         let mut attempts = self.attempts.write();
         if attempts
             .get(identifier)
@@ -79,6 +80,33 @@ impl AuthRateLimiter {
         attempts.remove(identifier);
     }
 
+    pub fn is_locked(&self, identifier: &str) -> bool {
+        let attempts = self.attempts.read();
+        if let Some((_, locked)) = attempts.get(identifier) {
+            if *locked {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn retry_after(&self, identifier: &str) -> Option<Duration> {
+        let attempts = self.attempts.read();
+        if let Some((times, locked)) = attempts.get(identifier) {
+            if *locked {
+                if let Some(oldest) = times.iter().max() {
+                    let elapsed = oldest.elapsed();
+                    if elapsed >= AUTH_LOCKOUT_DURATION {
+                        return Some(Duration::ZERO);
+                    }
+                    return Some(AUTH_LOCKOUT_DURATION.saturating_sub(elapsed));
+                }
+                return Some(AUTH_LOCKOUT_DURATION);
+            }
+        }
+        None
+    }
+
     pub fn cleanup_expired(&self) {
         let mut attempts = self.attempts.write();
         let now = Instant::now();
@@ -86,9 +114,19 @@ impl AuthRateLimiter {
             if *locked {
                 return true;
             }
-            times.retain(|t| now.duration_since(*t) < AUTH_LOCKOUT_DURATION);
+            times.retain(|t| now.duration_since(*t) < AUTH_WINDOW_DURATION);
             !times.is_empty()
         });
+    }
+
+    fn cleanup_if_needed(&self, identifier: &str) {
+        let mut attempts = self.attempts.write();
+        if let Some((times, _)) = attempts.get_mut(identifier) {
+            times.retain(|t| t.elapsed() < AUTH_WINDOW_DURATION);
+            if times.is_empty() {
+                attempts.remove(identifier);
+            }
+        }
     }
 }
 
@@ -208,5 +246,52 @@ mod tests {
 
         let attempts = limiter.attempts.read();
         assert_eq!(attempts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_is_locked() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.104";
+
+        for _ in 0..MAX_AUTH_ATTEMPTS {
+            limiter.record_failure(identifier);
+        }
+
+        assert!(limiter.is_locked(identifier));
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_is_locked_not_expired() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.105";
+
+        for _ in 0..MAX_AUTH_ATTEMPTS {
+            limiter.record_failure(identifier);
+        }
+
+        assert!(limiter.is_locked(identifier));
+
+        let retry = limiter.retry_after(identifier);
+        assert!(retry.is_some());
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_retry_after_none_when_not_locked() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.106";
+
+        assert!(limiter.retry_after(identifier).is_none());
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_is_locked_false_before_threshold() {
+        let limiter = AuthRateLimiter::new();
+        let identifier = "192.168.1.107";
+
+        for _ in 0..(MAX_AUTH_ATTEMPTS - 1) {
+            limiter.record_failure(identifier);
+        }
+
+        assert!(!limiter.is_locked(identifier));
     }
 }
