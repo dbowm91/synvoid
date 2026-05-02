@@ -1104,31 +1104,33 @@ pub async fn get_raft_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<RaftStatusResponse>, StatusCode> {
-    if let Some(transport) = &state.mesh.mesh_transport {
-        let raft_lock = transport.get_raft_instance();
-        let instance = {
-            let raft_guard = raft_lock.read();
-            raft_guard.clone()
-        };
+    let Some(transport) = &state.mesh.mesh_transport else {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    };
 
-        if let Some(instance) = instance {
-            let is_leader = instance.is_leader().await;
-            let leader_id = instance.get_leader_id().await;
-
-            return Ok(Json(RaftStatusResponse {
-                node_id: instance.node_id(),
-                leader_id,
-                term: 0, // Simplified for now
-                last_log_index: 0,
-                last_applied_index: 0,
-                membership: vec![],
-                is_leader,
-                state: "Active".to_string(),
-            }));
+    let raft_lock = transport.get_raft_instance();
+    let instance = {
+        let raft_guard = raft_lock.read();
+        match raft_guard.as_ref() {
+            Some(i) => i.clone(),
+            None => return Err(StatusCode::SERVICE_UNAVAILABLE),
         }
-    }
+    };
 
-    Err(StatusCode::SERVICE_UNAVAILABLE)
+    let is_leader = instance.is_leader().await;
+    let leader_id = instance.get_leader_id().await;
+    let node_id = instance.node_id();
+
+    Ok(Json(RaftStatusResponse {
+        node_id,
+        leader_id,
+        term: 0,
+        last_log_index: 0,
+        last_applied_index: 0,
+        membership: vec![],
+        is_leader,
+        state: "Active".to_string(),
+    }))
 }
 
 #[utoipa::path(

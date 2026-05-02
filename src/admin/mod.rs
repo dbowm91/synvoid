@@ -596,7 +596,19 @@ fn build_router_from_state(
             "/alerts/test-webhook",
             post(handlers::alerting::test_webhook),
         )
-        .route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
+.route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
+        .route(
+            "/mesh/raft/status",
+            get(handlers::mesh_admin::get_raft_status),
+        )
+        .route(
+            "/mesh/dht/stats",
+            get(handlers::mesh_admin::get_dht_stats),
+        )
+        .route(
+            "/mesh/attest-capability",
+            post(handlers::mesh_admin::attest_capability),
+        )
         .route(
             "/v1/mesh/raft/status",
             get(handlers::mesh_admin::get_raft_status),
