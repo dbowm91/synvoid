@@ -103,6 +103,7 @@ pub async fn auth_middleware_with_state(
         .unwrap_or("unknown");
 
     if super::auth::AUTH_RATE_LIMITER.is_locked(client_ip) {
+        super::metrics_events::record_auth_lockout();
         let retry_after = super::auth::AUTH_RATE_LIMITER
             .retry_after(client_ip)
             .unwrap_or(super::auth::AUTH_LOCKOUT_DURATION);
@@ -157,6 +158,7 @@ pub async fn auth_middleware_with_state(
     }
 
     super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
+    super::metrics_events::record_auth_failure();
     tracing::warn!("Auth middleware: authentication failed for {}", client_ip);
     StatusCode::UNAUTHORIZED.into_response()
 }
@@ -201,6 +203,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
+            super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
     };
@@ -211,6 +214,7 @@ pub async fn csrf_middleware(
             method,
             path
         );
+        super::metrics_events::record_csrf_failure();
         return StatusCode::FORBIDDEN.into_response();
     }
 
@@ -228,6 +232,7 @@ pub async fn csrf_middleware(
                 method,
                 path
             );
+            super::metrics_events::record_csrf_failure();
             return StatusCode::FORBIDDEN.into_response();
         }
     };
@@ -237,6 +242,7 @@ pub async fn csrf_middleware(
     }
 
     tracing::warn!("CSRF validation failed for {} {}", method, path);
+    super::metrics_events::record_csrf_failure();
     StatusCode::FORBIDDEN.into_response()
 }
 

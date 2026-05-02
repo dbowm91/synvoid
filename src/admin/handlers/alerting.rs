@@ -1,7 +1,9 @@
 use crate::admin::alerting::{AlertConfig, AlertEvent};
 use crate::admin::handlers::common::OptionalAuth;
 use crate::admin::state::AdminState;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::extract::{Extension, State};
+use axum::http::StatusCode;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -57,7 +59,7 @@ pub struct UpdateAlertConfigRequest {
 )]
 pub async fn update_alert_config(
     State(state): State<Arc<AdminState>>,
-    _auth: OptionalAuth,
+    Extension(client_ip): Extension<super::super::middleware::ClientIp>,
     Json(req): Json<UpdateAlertConfigRequest>,
 ) -> Result<Json<AlertConfigResponse>, StatusCode> {
     let alert_manager = state
@@ -69,6 +71,17 @@ pub async fn update_alert_config(
     let config: AlertConfig =
         serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
     alert_manager.update_config(config).await;
+
+    state.audit.log(super::super::audit::AuditLog::new(
+        None,
+        None,
+        "alert.config.update".to_string(),
+        "alerting/config".to_string(),
+        client_ip.0.clone(),
+        None,
+        None,
+        true,
+    ));
 
     Ok(Json(AlertConfigResponse { config: req.config }))
 }

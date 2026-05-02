@@ -1,6 +1,10 @@
+use super::super::audit::AuditLog;
+use super::super::middleware::ClientIp;
 use super::super::state::AdminState;
 use super::common::{OptionalAuth, StatusResponse};
-use axum::{extract::State, http::StatusCode, Json};
+use axum::extract::{Extension, State};
+use axum::http::StatusCode;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -83,7 +87,7 @@ pub async fn get_honeypot_port_config(
 )]
 pub async fn update_honeypot_port_config(
     State(state): State<Arc<AdminState>>,
-    _auth: OptionalAuth,
+    Extension(client_ip): Extension<ClientIp>,
     Json(req): Json<UpdateHoneypotPortConfigRequest>,
 ) -> Result<Json<StatusResponse>, StatusCode> {
     let mut config = state.process.config.write().await;
@@ -98,6 +102,17 @@ pub async fn update_honeypot_port_config(
             ))));
         }
     }
+
+    state.audit.log(AuditLog::new(
+        None,
+        None,
+        "honeypot.config.update".to_string(),
+        "honeypot/config".to_string(),
+        client_ip.0.clone(),
+        None,
+        None,
+        true,
+    ));
 
     persist_main_config_and_notify(&state).await?;
     Ok(Json(StatusResponse::success(

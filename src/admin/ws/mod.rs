@@ -109,6 +109,7 @@ async fn handle_metrics_socket(
         return;
     };
 
+    super::metrics_events::ws_client_connected();
     tracing::debug!("WebSocket client {} connected to metrics", client_id);
 
     let client_id_clone = client_id.clone();
@@ -122,6 +123,7 @@ async fn handle_metrics_socket(
                 }
                 Err(RecvError::Lagged(_)) => {
                     tracing::warn!("Metrics WebSocket client {} lagged, continuing", client_id_clone);
+                    super::metrics_events::record_ws_lagged();
                     continue;
                 }
                 Err(RecvError::Closed) => {
@@ -138,6 +140,7 @@ async fn handle_metrics_socket(
     }
 
     broadcaster.remove_client(&client_id);
+    super::metrics_events::ws_client_disconnected();
     send_task.abort();
 
     tracing::debug!("WebSocket client {} disconnected from metrics", client_id);
@@ -152,6 +155,7 @@ async fn handle_logs_socket(
         return;
     };
 
+    super::metrics_events::ws_client_connected();
     tracing::debug!("WebSocket client {} connected to logs", client_id);
 
     let client_id_clone = client_id.clone();
@@ -165,6 +169,7 @@ async fn handle_logs_socket(
                 }
                 Err(RecvError::Lagged(_)) => {
                     tracing::warn!("Logs WebSocket client {} lagged, continuing", client_id_clone);
+                    super::metrics_events::record_ws_lagged();
                     continue;
                 }
                 Err(RecvError::Closed) => {
@@ -181,6 +186,7 @@ async fn handle_logs_socket(
     }
 
     broadcaster.remove_client(&client_id);
+    super::metrics_events::ws_client_disconnected();
     send_task.abort();
 
     tracing::debug!("WebSocket client {} disconnected from logs", client_id);

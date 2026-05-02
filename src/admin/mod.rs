@@ -10,6 +10,8 @@ mod audit;
 mod auth;
 mod handlers;
 pub mod metrics;
+pub mod metrics_events;
+mod prometheus_exporter;
 mod middleware;
 pub mod openapi;
 pub use openapi::MaluWafOpenApi;
@@ -814,6 +816,8 @@ pub async fn start_admin_server(
         return;
     }
 
+    let metrics_config = config.read().await.main.metrics.clone();
+
     let port = cfg.port;
     let token = match hash_admin_token_with_cost(&cfg.resolve_token(), cfg.bcrypt_cost) {
         Ok(h) => h,
@@ -900,6 +904,14 @@ pub async fn start_admin_server(
         let alert_manager = admin_state.process.alert_manager.clone();
         tokio::spawn(async move {
             start_metrics_publisher(state_for_metrics, pm, alert_manager, shutdown_rx).await;
+        });
+    }
+
+    {
+        let metrics_cfg = metrics_config.clone();
+        let (_metrics_shutdown_tx, metrics_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+        tokio::spawn(async move {
+            crate::admin::prometheus_exporter::start_prometheus_exporter(&metrics_cfg, metrics_shutdown_rx).await;
         });
     }
 

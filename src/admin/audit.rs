@@ -2,12 +2,14 @@ use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
 const MAX_AUDIT_LOGS: usize = 10000;
 const MAX_CONFIG_VERSIONS: usize = 100;
+const AUDIT_LOG_FILENAME: &str = "audit.log";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLog {
@@ -52,21 +54,82 @@ impl AuditLog {
 #[derive(Clone)]
 pub struct AuditState {
     logs: Arc<RwLock<VecDeque<AuditLog>>>,
+    audit_file: PathBuf,
 }
 
 impl AuditState {
     pub fn new() -> Self {
         Self {
             logs: Arc::new(RwLock::new(VecDeque::with_capacity(MAX_AUDIT_LOGS))),
+            audit_file: PathBuf::new(),
         }
     }
 
-    pub fn log(&self, audit_log: AuditLog) {
-        let mut logs = self.logs.write();
-        if logs.len() >= MAX_AUDIT_LOGS {
-            logs.pop_front();
+    pub fn with_audit_dir(mut self, audit_dir: PathBuf) -> Self {
+        let audit_file = audit_dir.join(AUDIT_LOG_FILENAME);
+        if let Some(parent) = audit_file.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-        logs.push_back(audit_log);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&audit_file) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&audit_file, perms);
+            }
+        }
+        self.audit_file = audit_file;
+        self
+    }
+
+    pub fn load_recent_entries(&self) -> Result<(), String> {
+        if !self.audit_file.exists() {
+            return Ok(());
+        }
+        let path = self.audit_file.clone();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .map_err(|e| format!("Failed to open audit log file: {}", e))?;
+        let reader = std::io::BufReader::new(file);
+        let mut logs = self.logs.write();
+        for line in reader.lines().flatten() {
+            if let Ok(entry) = serde_json::from_str::<AuditLog>(&line) {
+                if logs.len() >= MAX_AUDIT_LOGS {
+                    logs.pop_front();
+                }
+                logs.push_back(entry);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn log(&self, audit_log: AuditLog) {
+        {
+            let mut logs = self.logs.write();
+            if logs.len() >= MAX_AUDIT_LOGS {
+                logs.pop_front();
+            }
+            logs.push_back(audit_log.clone());
+        }
+        if !self.audit_file.as_os_str().is_empty() {
+            if let Ok(json) = serde_json::to_string(&audit_log) {
+                let line = json + "\n";
+                if let Err(e) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.audit_file)
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(line.as_bytes())
+                    })
+                {
+                    tracing::warn!("Failed to persist audit log: {}", e);
+                    super::metrics_events::record_audit_write_failure();
+                }
+            }
+        }
     }
 
     pub fn get_logs(&self, limit: usize, offset: usize) -> Vec<AuditLog> {
@@ -107,6 +170,64 @@ impl AuditState {
 impl Default for AuditState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLogFilter {
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub action_prefix: Option<String>,
+    pub success: Option<bool>,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+impl Default for AuditLogFilter {
+    fn default() -> Self {
+        Self {
+            start_time: None,
+            end_time: None,
+            action_prefix: None,
+            success: None,
+            limit: 100,
+            offset: 0,
+        }
+    }
+}
+
+impl AuditState {
+    pub fn get_filtered_logs(&self, filter: &AuditLogFilter) -> Vec<AuditLog> {
+        let logs = self.logs.read();
+        logs.iter()
+            .rev()
+            .filter(|log| {
+                if let Some(ref start) = filter.start_time {
+                    if log.timestamp < *start {
+                        return false;
+                    }
+                }
+                if let Some(ref end) = filter.end_time {
+                    if log.timestamp > *end {
+                        return false;
+                    }
+                }
+                if let Some(ref prefix) = filter.action_prefix {
+                    if !log.action.starts_with(prefix) {
+                        return false;
+                    }
+                }
+                if let Some(success) = filter.success {
+                    if log.success != success {
+                        return false;
+                    }
+                }
+                true
+            })
+            .skip(filter.offset)
+            .take(filter.limit)
+            .cloned()
+            .collect()
     }
 }
 

@@ -200,15 +200,22 @@ async fn send_webhook_internal(urls: &[String], event: &AlertEvent) -> Result<()
         "message": event.message,
     });
 
+    let mut has_success = false;
     for url in urls {
         match crate::http_client::post_json(&client, url, &payload).await {
             Ok(_) => {
                 tracing::info!("Webhook sent successfully to {}", url);
+                has_success = true;
             }
             Err(e) => {
                 tracing::warn!("Failed to send webhook to {}: {}", url, e);
             }
         }
+    }
+    if has_success {
+        super::metrics_events::record_alert_delivery_success();
+    } else if !urls.is_empty() {
+        super::metrics_events::record_alert_delivery_failure();
     }
     Ok(())
 }

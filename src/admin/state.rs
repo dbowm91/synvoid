@@ -365,6 +365,15 @@ impl AdminState {
         self
     }
 
+    pub fn with_audit_dir(mut self, audit_dir: std::path::PathBuf) -> Self {
+        self.audit = self.audit.with_audit_dir(audit_dir);
+        self
+    }
+
+    pub fn load_audit_logs(&self) -> Result<(), String> {
+        self.audit.load_recent_entries()
+    }
+
     pub fn with_rate_limiter(mut self, rate_limiter: Option<Arc<AdminRateLimiter>>) -> Self {
         self.security.rate_limiter = rate_limiter;
         self
