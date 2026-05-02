@@ -1429,30 +1429,33 @@ impl HttpServer {
         // ============================================================================
         // SECTION 13: WAF Full Request Check
         // ============================================================================
-        let waf_decision = if matches!(target.backend_type, crate::router::BackendType::Serverless)
-            && target.site_config.serverless.as_ref().is_some_and(|s| s.waf_mode == crate::config::serverless::ServerlessWafMode::Off)
-        {
-            tracing::debug!(
-                "serverless route with waf_mode=off - skipping WAF check for {} {}",
-                method_str,
-                path
-            );
-            crate::proxy::WafDecision::Pass
-        } else {
-            waf.check_request_full(
-                Some(&site_id),
-                client_ip,
-                method_str.as_str(),
-                &path,
-                query_string,
-                &parts.headers,
-                body_slice_ref,
-                user_agent.as_deref(),
-                None,
-                Some(&target.site_config.bot),
-            )
-            .await
-        };
+        let waf_decision =
+            if matches!(target.backend_type, crate::router::BackendType::Serverless)
+                && target.site_config.serverless.as_ref().is_some_and(|s| {
+                    s.waf_mode == crate::config::serverless::ServerlessWafMode::Off
+                })
+            {
+                tracing::debug!(
+                    "serverless route with waf_mode=off - skipping WAF check for {} {}",
+                    method_str,
+                    path
+                );
+                crate::proxy::WafDecision::Pass
+            } else {
+                waf.check_request_full(
+                    Some(&site_id),
+                    client_ip,
+                    method_str.as_str(),
+                    &path,
+                    query_string,
+                    &parts.headers,
+                    body_slice_ref,
+                    user_agent.as_deref(),
+                    None,
+                    Some(&target.site_config.bot),
+                )
+                .await
+            };
 
         let response = match waf_decision {
             // ============================================================================

@@ -941,7 +941,7 @@ impl ProxyServer {
                         pool.mark_failed(&be.url);
                     }
 
-                    if attempt <= max_retries {
+                    if retry_enabled && should_retry_method && attempt <= max_retries {
                         continue;
                     }
 
@@ -1072,35 +1072,65 @@ mod tests {
 
     #[test]
     fn test_join_upstream_url_no_trailing_slash() {
-        assert_eq!(join_upstream_url("http://backend.example.com", "/path"), "http://backend.example.com/path");
-        assert_eq!(join_upstream_url("http://backend.example.com", "/path/to/page"), "http://backend.example.com/path/to/page");
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "/path"),
+            "http://backend.example.com/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "/path/to/page"),
+            "http://backend.example.com/path/to/page"
+        );
     }
 
     #[test]
     fn test_join_upstream_url_with_trailing_slash() {
-        assert_eq!(join_upstream_url("http://backend.example.com/", "/path"), "http://backend.example.com/path");
-        assert_eq!(join_upstream_url("http://backend.example.com///", "/path"), "http://backend.example.com/path");
+        assert_eq!(
+            join_upstream_url("http://backend.example.com/", "/path"),
+            "http://backend.example.com/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com///", "/path"),
+            "http://backend.example.com/path"
+        );
     }
 
     #[test]
     fn test_join_upstream_url_path_without_leading_slash() {
-        assert_eq!(join_upstream_url("http://backend.example.com", "path"), "http://backend.example.com/path");
-        assert_eq!(join_upstream_url("http://backend.example.com", "path/to/page"), "http://backend.example.com/path/to/page");
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "path"),
+            "http://backend.example.com/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "path/to/page"),
+            "http://backend.example.com/path/to/page"
+        );
     }
 
     #[test]
     fn test_join_upstream_url_empty_path() {
-        assert_eq!(join_upstream_url("http://backend.example.com", ""), "http://backend.example.com/");
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", ""),
+            "http://backend.example.com/"
+        );
     }
 
     #[test]
     fn test_join_upstream_url_preserves_query() {
-        assert_eq!(join_upstream_url("http://backend.example.com", "/path?query=1"), "http://backend.example.com/path?query=1");
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "/path?query=1"),
+            "http://backend.example.com/path?query=1"
+        );
     }
 
     #[test]
     fn test_join_upstream_url_with_port() {
-        assert_eq!(join_upstream_url("http://backend.example.com:8080", "/path"), "http://backend.example.com:8080/path");
-        assert_eq!(join_upstream_url("http://backend.example.com:8080/", "/path"), "http://backend.example.com:8080/path");
+        assert_eq!(
+            join_upstream_url("http://backend.example.com:8080", "/path"),
+            "http://backend.example.com:8080/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com:8080/", "/path"),
+            "http://backend.example.com:8080/path"
+        );
     }
 }

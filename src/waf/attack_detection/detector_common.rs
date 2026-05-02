@@ -550,15 +550,15 @@ where
     }
 
     if let Some(body_bytes) = body {
-        if let Ok(body_str) = std::str::from_utf8(body_bytes) {
-            let normalized = normalizer.normalize(body_str);
-            if let Some(result) = detect_with_pre_normalized(
-                detector,
-                normalized.as_lowercased(),
-                InputLocation::PostBody,
-            ) {
-                return Some(result);
-            }
+        let s = String::from_utf8_lossy(body_bytes);
+        let s: &str = &s;
+        let normalized = normalizer.normalize(s);
+        if let Some(result) = detect_with_pre_normalized(
+            detector,
+            normalized.as_lowercased(),
+            InputLocation::PostBody,
+        ) {
+            return Some(result);
         }
     }
 

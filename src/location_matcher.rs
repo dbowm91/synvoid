@@ -141,31 +141,27 @@ impl LocationMatcher {
                     LocationMatchType::Exact => {
                         best_exact = Some(loc);
                     }
-                    LocationMatchType::PreferentialPrefix => {
-                        match &best_pref_prefix {
-                            None => best_pref_prefix = Some(loc),
-                            Some(current) => {
-                                if loc.prefix_length() > current.prefix_length() {
-                                    best_pref_prefix = Some(loc);
-                                }
+                    LocationMatchType::PreferentialPrefix => match &best_pref_prefix {
+                        None => best_pref_prefix = Some(loc),
+                        Some(current) => {
+                            if loc.prefix_length() > current.prefix_length() {
+                                best_pref_prefix = Some(loc);
                             }
                         }
-                    }
+                    },
                     LocationMatchType::Regex => {
                         if first_regex.is_none() {
                             first_regex = Some(loc);
                         }
                     }
-                    LocationMatchType::Prefix => {
-                        match &best_prefix {
-                            None => best_prefix = Some(loc),
-                            Some(current) => {
-                                if loc.prefix_length() > current.prefix_length() {
-                                    best_prefix = Some(loc);
-                                }
+                    LocationMatchType::Prefix => match &best_prefix {
+                        None => best_prefix = Some(loc),
+                        Some(current) => {
+                            if loc.prefix_length() > current.prefix_length() {
+                                best_prefix = Some(loc);
                             }
                         }
-                    }
+                    },
                 }
             }
         }

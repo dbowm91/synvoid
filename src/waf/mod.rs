@@ -1461,8 +1461,7 @@ impl WafCore {
                         body,
                     );
                     if score >= config.anomaly_scoring.threshold {
-                        metrics::counter!("maluwaf.anomaly_score_threshold_exceeded")
-                            .increment(1);
+                        metrics::counter!("maluwaf.anomaly_score_threshold_exceeded").increment(1);
                         if let Some(ref tl) = self.threat_level {
                             tl.record_attack();
                         }

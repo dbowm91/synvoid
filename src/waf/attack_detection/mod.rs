@@ -744,7 +744,9 @@ impl AttackDetector {
         }
 
         if self.config.jwt.enabled {
-            if let Ok(s) = std::str::from_utf8(body) {
+            {
+                let s = String::from_utf8_lossy(body);
+                let s: &str = &s;
                 let normalized = self.normalizer.normalize(s);
                 if let Some(result) = self
                     .jwt_detector
@@ -768,7 +770,9 @@ impl AttackDetector {
         }
 
         if self.config.ssti.enabled {
-            if let Ok(s) = std::str::from_utf8(body) {
+            {
+                let s = String::from_utf8_lossy(body);
+                let s: &str = &s;
                 let normalized = self.normalizer.normalize(s);
                 if let Some(result) = self
                     .ssti_detector
@@ -788,7 +792,9 @@ impl AttackDetector {
             || self.config.xpath_injection.enabled
             || self.config.open_redirect.enabled
         {
-            if let Ok(s) = std::str::from_utf8(body) {
+            {
+                let s = String::from_utf8_lossy(body);
+                let s: &str = &s;
                 let normalized = self.normalizer.normalize(s);
                 let body_input = normalized;
 
@@ -1056,14 +1062,14 @@ impl AttackDetector {
         }
 
         if let Some(b) = body {
-            if let Ok(s) = std::str::from_utf8(b) {
-                let normalized = self.normalizer.normalize(s);
-                if let Some(result) = self
-                    .jwt_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
+            let s = String::from_utf8_lossy(b);
+            let s: &str = &s;
+            let normalized = self.normalizer.normalize(s);
+            if let Some(result) = self
+                .jwt_detector
+                .detect(normalized.as_str(), InputLocation::PostBody)
+            {
+                return Some(result);
             }
         }
 

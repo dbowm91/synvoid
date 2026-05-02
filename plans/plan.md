@@ -396,7 +396,7 @@ selection should be part of prepared route/proxy policy, not reconstructed per r
 
 ## Priority 5: Make Retry and Failover Policy Honest
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
 
@@ -917,7 +917,7 @@ handoff notes for that task.
 
 ## Priority 1: Fix Trusted Proxy and Client IP Attribution
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
 
@@ -999,7 +999,7 @@ Define and enforce one documented trusted-proxy model:
 
 ## Priority 2: Remove or Constrain WAF Bypass for Serverless-Only Routes
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
 
@@ -1048,7 +1048,7 @@ unless there is an explicit, narrowly named, validated opt-out.
 
 ## Priority 3: Make Attack Detection Action Semantics Real
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
 
@@ -1174,9 +1174,23 @@ Recommended: wire it, because it is useful for combining weak detections.
 
 ## Priority 5: Harden Body Inspection for Non-UTF8, Multipart, and Large Bodies
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed fixes:**
+
+1. **SQLi/XSS detectors**: Use `String::from_utf8_lossy()` instead of `from_utf8().ok()`, preventing non-UTF8 bypass
+2. **Normalizer body**: Uses `from_utf8_lossy()` for body normalization
+3. **All secondary detectors**: JWT, SSTI, cmd_injection, path_traversal, RFI, SSRF, XXE, LDAP, XPath, open_redirect body checks now use `from_utf8_lossy()`
+4. **Streaming WAF**: Falls back to `from_utf8_lossy` when `from_utf8` fails
+5. **Generic detector body**: Uses `from_utf8_lossy()` in detector_common
+
+### Remaining (deferred):
+- Multipart boundary parsing for targeted field inspection
+- Payload-split-across-chunks edge cases in streaming WAF
+
+### Problem (original)
 
 The normal request path only creates a normalized body if `std::str::from_utf8(body)` succeeds.
 SQLi/XSS detector entry points convert invalid UTF-8 to an empty string. This allows payloads
@@ -1322,9 +1336,23 @@ cases the parser accepts.
 
 ## Priority 7: Make Cache Purge and Other Secret Comparisons Constant-Time
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed fixes:**
+
+1. **Cache purge token**: Uses `subtle::ConstantTimeEq` in `src/proxy/mod.rs`
+2. **CSRF token**: Uses `ct_eq` in `src/auth/mod.rs` and `src/admin/state.rs`
+3. **Admin token**: Uses bcrypt (inherently constant-time)
+4. **DNS TSIG/cookie**: Uses `ConstantTimeEq`
+5. **IPC signatures**: Uses `ConstantTimeEq`
+6. **Mesh certs**: Uses `ConstantTimeEq`
+7. **Mesh auth tokens**: Fixed `transport_rate_limit.rs` and `config_mesh.rs` to use `ct_eq`
+8. **QUIC tunnel tokens**: Uses `ConstantTimeEq`
+9. **PoW hash verification**: Uses `subtle::Choice`
+
+### Problem (original)
 
 The repository security guidance requires `subtle::ConstantTimeEq` for secrets, tokens, keys, and
 MACs. Cache purge token comparison in `src/proxy/mod.rs` uses normal string equality.

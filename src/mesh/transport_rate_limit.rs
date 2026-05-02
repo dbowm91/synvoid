@@ -3,12 +3,13 @@
 
 use crate::mesh::transport::{MeshTransport, PEER_RATE_LIMIT_WINDOW_SECS};
 use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 
 impl MeshTransport {
     pub(crate) fn verify_auth_token(&self, node_id: &str, token: &str) -> bool {
         let keys = self.auth_keys.read();
         if let Some(expected_key) = keys.get(node_id) {
-            return expected_key.as_slice() == token.as_bytes();
+            return bool::from(expected_key.as_slice().ct_eq(token.as_bytes()));
         }
         if keys.is_empty() {
             return true;

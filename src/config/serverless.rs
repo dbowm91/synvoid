@@ -76,7 +76,9 @@ fn default_handler_name() -> String {
     "handle_request".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerlessWafMode {
     #[default]

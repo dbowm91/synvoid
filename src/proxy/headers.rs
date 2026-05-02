@@ -379,12 +379,18 @@ pub fn build_forward_headers(
             continue;
         }
 
-        if config.clear.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
+        if config
+            .clear
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(name_str))
+        {
             continue;
         }
 
         let should_forward = forward_all
-            || headers_to_forward.iter().any(|h| h.eq_ignore_ascii_case(name_str));
+            || headers_to_forward
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(name_str));
         if should_forward {
             forward_headers.insert(name, value.clone());
         }
@@ -398,7 +404,10 @@ pub fn build_forward_headers(
         validate_and_truncate_xff(existing, &client_ip.to_string())
     };
     if let Ok(value) = xff_value.parse::<http::HeaderValue>() {
-        forward_headers.insert(http::header::HeaderName::from_static("x-forwarded-for"), value);
+        forward_headers.insert(
+            http::header::HeaderName::from_static("x-forwarded-for"),
+            value,
+        );
     }
 
     if let Ok(value) = client_ip.to_string().parse::<http::HeaderValue>() {
@@ -407,7 +416,10 @@ pub fn build_forward_headers(
 
     let proto = if is_tls { "https" } else { "http" };
     if let Ok(value) = proto.parse::<http::HeaderValue>() {
-        forward_headers.insert(http::header::HeaderName::from_static("x-forwarded-proto"), value);
+        forward_headers.insert(
+            http::header::HeaderName::from_static("x-forwarded-proto"),
+            value,
+        );
     }
 
     for override_hdr in &config.set {

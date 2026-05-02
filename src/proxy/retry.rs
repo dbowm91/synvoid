@@ -1,7 +1,7 @@
 //! Retry logic for upstream requests.
 
-use http::Method;
 use crate::config::site::RetryConfig;
+use http::Method;
 
 pub(super) fn is_retryable_status(status: u16, config: &RetryConfig) -> bool {
     if !config.retry_on_status.is_empty() {
@@ -50,7 +50,10 @@ pub(super) fn calculate_backoff(attempt: u32, base_timeout_ms: u64) -> u64 {
 }
 
 pub(super) fn is_idempotent_method(method: &Method) -> bool {
-    matches!(method, &Method::GET | &Method::HEAD | &Method::OPTIONS | &Method::TRACE)
+    matches!(
+        method,
+        &Method::GET | &Method::HEAD | &Method::OPTIONS | &Method::TRACE
+    )
 }
 
 pub(super) fn should_retry_request(method: &Method, config: &RetryConfig) -> bool {

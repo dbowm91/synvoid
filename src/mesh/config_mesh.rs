@@ -1,3 +1,5 @@
+use subtle::ConstantTimeEq;
+
 use super::*;
 
 impl MeshConfig {
@@ -291,7 +293,7 @@ impl MeshConfig {
 
     pub fn verify_global_node_key(&self, key: &str) -> bool {
         if let Some(ref expected_key) = self.global_node_key {
-            return expected_key == key;
+            return bool::from(expected_key.as_bytes().ct_eq(key.as_bytes()));
         }
         false
     }

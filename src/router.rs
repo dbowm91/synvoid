@@ -698,7 +698,12 @@ impl Router {
         None
     }
 
-    fn route_to_target(&self, site_config: &Arc<SiteConfig>, path: &str, clean_host: &str) -> RouteResult {
+    fn route_to_target(
+        &self,
+        site_config: &Arc<SiteConfig>,
+        path: &str,
+        clean_host: &str,
+    ) -> RouteResult {
         let site_id = site_config.site_id();
 
         if site_config.security.reject_unknown_hosts.unwrap_or(false)

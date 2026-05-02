@@ -301,10 +301,7 @@ mod tests {
         let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
 
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            "1.2.3.4, 10.0.0.10".parse().unwrap(),
-        );
+        headers.insert("x-forwarded-for", "1.2.3.4, 10.0.0.10".parse().unwrap());
 
         let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
         let result = sanitizer.get_real_ip(&headers, client_ip);
@@ -313,10 +310,8 @@ mod tests {
 
     #[test]
     fn test_get_real_ip_multiple_trusted_proxies() {
-        let sanitizer = RequestSanitizer::new(
-            vec!["10.0.0.10".to_string(), "10.0.0.11".to_string()],
-            true,
-        );
+        let sanitizer =
+            RequestSanitizer::new(vec!["10.0.0.10".to_string(), "10.0.0.11".to_string()], true);
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -334,10 +329,7 @@ mod tests {
         let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
 
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            "192.168.1.1, 10.0.0.10".parse().unwrap(),
-        );
+        headers.insert("x-forwarded-for", "192.168.1.1, 10.0.0.10".parse().unwrap());
 
         let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
         let result = sanitizer.get_real_ip(&headers, client_ip);
