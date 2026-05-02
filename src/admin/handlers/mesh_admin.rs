@@ -9,6 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
+use std::borrow::Borrow;
 use std::net::IpAddr;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -158,6 +159,29 @@ pub struct MeshAdminStatusResponse {
     pub signing_public_key: Option<String>,
     pub quic_0rtt_enabled: bool,
     pub quic_0rtt_warning: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RaftStatusResponse {
+    pub node_id: u64,
+    pub leader_id: Option<u64>,
+    pub term: u64,
+    pub last_log_index: u64,
+    pub last_applied_index: u64,
+    pub membership: Vec<u64>,
+    pub is_leader: bool,
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DhtStatsResponse {
+    pub node_id: String,
+    pub total_peers: usize,
+    pub bucket_count: usize,
+    pub record_count: usize,
+    pub pending_announces: usize,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -1065,4 +1089,87 @@ pub async fn get_org_public_key(
         created_at: pub_key.created_at,
         quorum_signatures_count: pub_key.quorum_signatures.len(),
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/mesh/raft/status",
+    responses(
+        (status = 200, description = "Raft status", body = RaftStatusResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
+pub async fn get_raft_status(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<RaftStatusResponse>, StatusCode> {
+    if let Some(transport) = &state.mesh.mesh_transport {
+        let raft_lock = transport.get_raft_instance();
+        let raft_guard = raft_lock.read();
+        if let Some(instance) = raft_guard.as_ref() {
+            let is_leader = instance.is_leader().await;
+
+            return Ok(Json(RaftStatusResponse {
+                node_id: instance.node_id(),
+                leader_id: instance.get_leader_id().await,
+                term: 0, // Simplified for now
+                last_log_index: 0,
+                last_applied_index: 0,
+                membership: vec![],
+                is_leader,
+                state: "Active".to_string(),
+            }));
+        }
+    }
+
+    Err(StatusCode::SERVICE_UNAVAILABLE)
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/mesh/dht/stats",
+    responses(
+        (status = 200, description = "DHT statistics", body = DhtStatsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
+pub async fn get_dht_stats(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<DhtStatsResponse>, StatusCode> {
+    if let Some(transport) = &state.mesh.mesh_transport {
+        if let Some(routing_mgr) = &transport.routing_manager {
+            let total_peers = routing_mgr.total_peers().await;
+            let bucket_count = routing_mgr.bucket_stats().await.len();
+
+            let (record_count, pending_announces, cache_hits, cache_misses) =
+                if let Some(record_mgr) = &transport.record_store {
+                    let stats = record_mgr.get_stats();
+                    (
+                        stats.record_count,
+                        stats.pending_announce_count,
+                        stats.cache_hits,
+                        stats.cache_misses,
+                    )
+                } else {
+                    (0, 0, 0, 0)
+                };
+
+            return Ok(Json(DhtStatsResponse {
+                node_id: transport.config.node_id().to_string(),
+                total_peers,
+                bucket_count,
+                record_count,
+                pending_announces,
+                cache_hits,
+                cache_misses,
+            }));
+        }
+    }
+
+    Err(StatusCode::SERVICE_UNAVAILABLE)
 }

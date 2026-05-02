@@ -58,21 +58,16 @@ pub fn probe_reuseport_support() -> bool {
 
 #[cfg(unix)]
 pub fn is_kernel_version_at_least(major: u32, minor: u32) -> bool {
-    use nix::sys::utsname::uname;
+    use sysinfo::System;
 
-    match uname() {
-        Ok(info) => {
-            let release = info.release().to_string_lossy();
-            let parts: Vec<&str> = release.split('.').collect();
-            if let (Some(maj), Some(min)) = (parts.first(), parts.get(1)) {
-                let maj_num: u32 = maj.parse().unwrap_or(0);
-                let min_num: u32 = min.split('-').next().unwrap_or("0").parse().unwrap_or(0);
-                return maj_num > major || (maj_num == major && min_num >= minor);
-            }
-            false
-        }
-        Err(_) => false,
+    let release = System::kernel_version().unwrap_or_default();
+    let parts: Vec<&str> = release.split('.').collect();
+    if let (Some(maj), Some(min)) = (parts.first(), parts.get(1)) {
+        let maj_num: u32 = maj.parse().unwrap_or(0);
+        let min_num: u32 = min.split('-').next().unwrap_or("0").parse().unwrap_or(0);
+        return maj_num > major || (maj_num == major && min_num >= minor);
     }
+    false
 }
 
 #[cfg(not(unix))]
