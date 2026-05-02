@@ -102,6 +102,9 @@ pub mod icmp_filter;
 #[cfg(feature = "dns")]
 pub mod dns;
 
+#[cfg(test)]
+pub mod test_utils;
+
 pub use config::ConfigManager;
 pub use utils::{errors, urlencoding_decode, DrainFlag, OptionExt, ResultExt, RunningFlag};
 pub use waf::{WafCore, WafCoreConfig};

@@ -3,7 +3,7 @@
 use crate::config::site::RetryConfig;
 use http::Method;
 
-pub(super) fn is_retryable_status(status: u16, config: &RetryConfig) -> bool {
+pub fn is_retryable_status(status: u16, config: &RetryConfig) -> bool {
     if !config.retry_on_status.is_empty() {
         return config.retry_on_status.contains(&status);
     }
@@ -44,18 +44,18 @@ pub(super) fn is_timeout_error(error: &(dyn std::error::Error + Send + Sync + 's
     }
 }
 
-pub(super) fn calculate_backoff(attempt: u32, base_timeout_ms: u64) -> u64 {
+pub fn calculate_backoff(attempt: u32, base_timeout_ms: u64) -> u64 {
     let delay = base_timeout_ms * 2u64.saturating_pow(attempt.min(5));
     delay.min(30000)
 }
 
-pub(super) fn is_idempotent_method(method: &Method) -> bool {
+pub fn is_idempotent_method(method: &Method) -> bool {
     matches!(
         method,
         &Method::GET | &Method::HEAD | &Method::OPTIONS | &Method::TRACE
     )
 }
 
-pub(super) fn should_retry_request(method: &Method, config: &RetryConfig) -> bool {
+pub fn should_retry_request(method: &Method, config: &RetryConfig) -> bool {
     is_idempotent_method(method) || config.retry_non_idempotent
 }

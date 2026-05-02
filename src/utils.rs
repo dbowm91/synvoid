@@ -178,8 +178,6 @@ impl<T, E> ResultExt<T, E> for Result<T, E> {
 pub trait OptionExt<T> {
     /// Executes a closure if the option contains a value.
     fn if_some<F: FnOnce(&T)>(self, f: F);
-    /// Placeholder for logic when option is None.
-    fn if_none(self);
     /// Converts None to an Err with the given context message.
     fn require(self, context: &str) -> Result<T, String>;
 }
@@ -193,16 +191,17 @@ impl<T> OptionExt<T> for Option<T> {
     }
 
     #[inline]
-    fn if_none(self) {
-        if self.is_none() {}
-    }
-
-    #[inline]
     fn require(self, context: &str) -> Result<T, String> {
         self.ok_or_else(|| context.to_string())
     }
 }
 
+/// Thread-safe running state flag, shared across clones via `Arc<AtomicBool>`.
+///
+/// Uses `Acquire`/`Release` ordering: the flag only guards a single boolean
+/// with no dependent memory that requires sequential consistency.  `Release`
+/// stores ensure prior writes are visible to `Acquire` loads, which is
+/// sufficient for stop/drain signalling.
 #[derive(Clone, Debug)]
 pub struct RunningFlag {
     inner: Arc<AtomicBool>,
@@ -218,22 +217,22 @@ impl RunningFlag {
 
     #[inline]
     pub fn is_running(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn get(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn stop(&self) {
-        self.inner.store(false, Ordering::SeqCst);
+        self.inner.store(false, Ordering::Release);
     }
 
     #[inline]
     pub fn set(&self, value: bool) {
-        self.inner.store(value, Ordering::SeqCst);
+        self.inner.store(value, Ordering::Release);
     }
 }
 
@@ -243,6 +242,12 @@ impl Default for RunningFlag {
     }
 }
 
+/// Thread-safe drain state flag, shared across clones via `Arc<AtomicBool>`.
+///
+/// Uses `Acquire`/`Release` ordering: the flag only guards a single boolean
+/// with no dependent memory that requires sequential consistency.  `Release`
+/// stores ensure prior writes are visible to `Acquire` loads, which is
+/// sufficient for stop/drain signalling.
 #[derive(Clone, Debug)]
 pub struct DrainFlag {
     inner: Arc<AtomicBool>,
@@ -258,27 +263,27 @@ impl DrainFlag {
 
     #[inline]
     pub fn is_draining(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn get(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn start_drain(&self) {
-        self.inner.store(true, Ordering::SeqCst);
+        self.inner.store(true, Ordering::Release);
     }
 
     #[inline]
     pub fn end_drain(&self) {
-        self.inner.store(false, Ordering::SeqCst);
+        self.inner.store(false, Ordering::Release);
     }
 
     #[inline]
     pub fn set(&self, value: bool) {
-        self.inner.store(value, Ordering::SeqCst);
+        self.inner.store(value, Ordering::Release);
     }
 }
 
@@ -1025,6 +1030,8 @@ mod option_ext_tests {
 #[cfg(test)]
 mod error_helpers_tests {
     use super::errors;
+    use super::DrainFlag;
+    use super::RunningFlag;
 
     #[test]
     fn test_ipc_connect_failed() {
@@ -1056,6 +1063,87 @@ mod error_helpers_tests {
         let msg = errors::health::validation_failed(3, 10);
         assert!(msg.contains("3"));
         assert!(msg.contains("10"));
+    }
+
+    #[test]
+    fn test_running_flag_new_is_running() {
+        let flag = RunningFlag::new();
+        assert!(flag.is_running());
+        assert!(flag.get());
+    }
+
+    #[test]
+    fn test_running_flag_stop() {
+        let flag = RunningFlag::new();
+        flag.stop();
+        assert!(!flag.is_running());
+        assert!(!flag.get());
+    }
+
+    #[test]
+    fn test_running_flag_set() {
+        let flag = RunningFlag::new();
+        flag.set(false);
+        assert!(!flag.is_running());
+        flag.set(true);
+        assert!(flag.is_running());
+    }
+
+    #[test]
+    fn test_running_flag_clones_share_state() {
+        let flag = RunningFlag::new();
+        let clone = flag.clone();
+        assert!(clone.is_running());
+        flag.stop();
+        assert!(!clone.is_running());
+        assert!(!flag.is_running());
+    }
+
+    #[test]
+    fn test_running_flag_default() {
+        let flag = RunningFlag::default();
+        assert!(flag.is_running());
+    }
+
+    #[test]
+    fn test_drain_flag_new_not_draining() {
+        let flag = DrainFlag::new();
+        assert!(!flag.is_draining());
+        assert!(!flag.get());
+    }
+
+    #[test]
+    fn test_drain_flag_start_end() {
+        let flag = DrainFlag::new();
+        flag.start_drain();
+        assert!(flag.is_draining());
+        flag.end_drain();
+        assert!(!flag.is_draining());
+    }
+
+    #[test]
+    fn test_drain_flag_set() {
+        let flag = DrainFlag::new();
+        flag.set(true);
+        assert!(flag.is_draining());
+        flag.set(false);
+        assert!(!flag.is_draining());
+    }
+
+    #[test]
+    fn test_drain_flag_clones_share_state() {
+        let flag = DrainFlag::new();
+        let clone = flag.clone();
+        assert!(!clone.is_draining());
+        flag.start_drain();
+        assert!(clone.is_draining());
+        assert!(flag.is_draining());
+    }
+
+    #[test]
+    fn test_drain_flag_default() {
+        let flag = DrainFlag::default();
+        assert!(!flag.is_draining());
     }
 }
 
