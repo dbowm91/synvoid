@@ -167,7 +167,7 @@ impl SlidingWindowEntry {
 }
 
 pub struct SlidingWindowLimiter<K: Hash + Eq> {
-    entries: dashmap::DashMap<K, SlidingWindowEntry>,
+    entries: parking_lot::RwLock<std::collections::HashMap<K, SlidingWindowEntry>>,
     configs: Vec<SlidingWindowConfig>,
     max_entries: usize,
     cleanup_threshold: f64,
@@ -176,7 +176,12 @@ pub struct SlidingWindowLimiter<K: Hash + Eq> {
 impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     pub fn new(configs: Vec<SlidingWindowConfig>, max_entries: usize) -> Self {
         Self {
-            entries: dashmap::DashMap::new(),
+            entries: parking_lot::RwLock::new(
+                std::collections::HashMap::with_capacity_and_hasher(
+                    max_entries.next_power_of_two().max(64) as usize,
+                    std::hash::RandomState::default(),
+                ),
+            ),
             configs,
             max_entries,
             cleanup_threshold: 0.9,
@@ -184,19 +189,26 @@ impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     }
 
     pub fn check_and_increment(&self, key: &K) -> SlidingDecision {
-        let entry = self
-            .entries
-            .entry(key.clone())
-            .or_insert_with(|| SlidingWindowEntry::new(&self.configs));
+        let is_limited = {
+            let mut entries = self.entries.write();
+            let entry = entries
+                .entry(key.clone())
+                .or_insert_with(|| SlidingWindowEntry::new(&self.configs));
 
-        if let Some((limit_type, limit)) = entry.check_and_increment(&self.configs) {
-            return SlidingDecision::Limited {
-                limit_type,
-                current: limit,
-            };
+            if let Some((limit_type, limit)) = entry.check_and_increment(&self.configs) {
+                return SlidingDecision::Limited {
+                    limit_type,
+                    current: limit,
+                };
+            }
+            false
+        };
+
+        if is_limited {
+            return SlidingDecision::Allowed;
         }
 
-        if self.entries.len() > self.max_entries {
+        if self.entries.read().len() > self.max_entries {
             self.maybe_cleanup();
         }
 
@@ -204,16 +216,17 @@ impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     }
 
     pub fn get_count(&self, key: &K) -> Option<Vec<u32>> {
-        self.entries.get(key).map(|e| e.get_counts())
+        self.entries.read().get(key).map(|e| e.get_counts())
     }
 
     pub fn get_entry_count(&self) -> usize {
-        self.entries.len()
+        self.entries.read().len()
     }
 
     fn maybe_cleanup(&self) {
-        if self.entries.len() > (self.max_entries as f64 * self.cleanup_threshold) as usize {
-            self.entries.retain(|_, entry| {
+        let mut entries = self.entries.write();
+        if entries.len() > (self.max_entries as f64 * self.cleanup_threshold) as usize {
+            entries.retain(|_, entry| {
                 let counts = entry.get_counts();
                 counts.iter().any(|&c| c > 0)
             });
@@ -221,7 +234,7 @@ impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     }
 
     pub fn remove(&self, key: &K) {
-        self.entries.remove(key);
+        self.entries.write().remove(key);
     }
 }
 
@@ -353,7 +366,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Hangs due to DashMap initialization - needs investigation"]
     fn test_sliding_window_limiter_ip() {
         let configs = vec![
             SlidingWindowConfig::new(1, 10),
@@ -369,7 +381,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Hangs due to DashMap initialization - needs investigation"]
     fn test_sliding_window_limiter_limit() {
         let configs = vec![SlidingWindowConfig::new(1, 3)];
         let limiter: SlidingWindowLimiter<IpAddr> = SlidingWindowLimiter::new(configs, 1000);
@@ -385,7 +396,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Hangs due to DashMap initialization - needs investigation"]
     fn test_sliding_window_different_keys() {
         let configs = vec![SlidingWindowConfig::new(1, 5)];
         let limiter: SlidingWindowLimiter<IpAddr> = SlidingWindowLimiter::new(configs, 1000);
