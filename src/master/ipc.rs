@@ -526,6 +526,31 @@ pub async fn handle_worker_connection(
                             process_manager.handle_blocklist_update(blocks);
                             process_manager.trigger_blocklist_persist();
                         }
+                        Message::MeshControlRequest { worker_id, request } => {
+                            tracing::debug!("Mesh control request from worker {}: {:?}", worker_id, request);
+                            // TODO: Route to separate Mesh Control Plane process once implemented.
+                            // For now, it stays in the Master process.
+                        }
+                        Message::MeshUpdateNotification { worker_id, notification } => {
+                            tracing::debug!("Mesh update notification from worker {}: {:?}", worker_id, notification);
+                            // TODO: Route to separate Mesh Control Plane process once implemented.
+                        }
+                        Message::PluginExecuteRequest(req) => {
+                            tracing::debug!("Plugin execute request: request_id={}, plugin={}, function={}", req.request_id, req.plugin_name, req.function_name);
+                            // TODO: Route to Plugin Isolation Runner
+                        }
+                        Message::PluginExecuteResponse(res) => {
+                            tracing::debug!("Plugin execute response: request_id={}, status={}", res.request_id, res.status);
+                            // TODO: Route back to requesting worker
+                        }
+                        Message::ServerlessHandleRequest(req) => {
+                            tracing::debug!("Serverless handle request: request_id={}, function={}", req.request_id, req.function_name);
+                            // TODO: Route to Serverless Sandbox
+                        }
+                        Message::ServerlessHandleResponse(res) => {
+                            tracing::debug!("Serverless handle response: request_id={}, status={}", res.request_id, res.status);
+                            // TODO: Route back to requesting worker
+                        }
                         _ => {}
                     }
                     Ok(())

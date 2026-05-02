@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -108,6 +109,44 @@ pub struct RulePatternData {
     pub patterns: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MeshControlRequest {
+    DhtLookup {
+        key: String,
+    },
+    RaftStatus,
+    PeerRegister {
+        node_id: String,
+        address: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MeshControlResponse {
+    DhtValue {
+        key: String,
+        value: Option<Vec<u8>>,
+    },
+    RaftStatus {
+        leader_id: Option<String>,
+        term: u64,
+        is_leader: bool,
+    },
+    PeerRegistered {
+        success: bool,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MeshUpdateNotification {
+    PeerJoined { node_id: String, address: String },
+    PeerLeft { node_id: String },
+    DhtKeyUpdated { key: String },
+}
+
 /// Unique identifier for a worker process within the master's pool.
 ///
 /// Worker IDs are assigned sequentially starting from 0. They are used
@@ -171,6 +210,43 @@ impl std::fmt::Display for ErrorCode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginExecuteRequest {
+    pub request_id: u64,
+    pub plugin_name: String,
+    pub function_name: String,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginExecuteResponse {
+    pub request_id: u64,
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerlessHandleRequest {
+    pub request_id: u64,
+    pub function_name: String,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+    pub env_vars: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerlessHandleResponse {
+    pub request_id: u64,
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+    pub execution_time_ms: u64,
+    pub error: Option<String>,
+}
+
 /// IPC messages exchanged between overseer, master, and worker processes.
 ///
 /// Messages are serialized as JSON over Unix domain sockets. Each variant
@@ -222,7 +298,8 @@ impl std::fmt::Display for ErrorCode {
 /// - **Socket Handoff**: SocketHandoffRequest, SocketHandoffReady,
 ///   SocketHandoffComplete, SocketHandoffFailed, WindowsSocketInfo
 /// - **Worker Restart**: RestartWorkerRequest, RestartWorkerResponse
-/// - **Plugin**: PluginStateSync
+/// - **Plugin**: PluginStateSync, PluginExecuteRequest, PluginExecuteResponse,
+///   ServerlessHandleRequest, ServerlessHandleResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "rkyv",
@@ -677,6 +754,22 @@ pub enum Message {
         plugin_name: String,
         wasm_module_data: Vec<u8>,
     },
+    PluginExecuteRequest(PluginExecuteRequest),
+    PluginExecuteResponse(PluginExecuteResponse),
+    ServerlessHandleRequest(ServerlessHandleRequest),
+    ServerlessHandleResponse(ServerlessHandleResponse),
+    MeshControlRequest {
+        worker_id: usize,
+        request: MeshControlRequest,
+    },
+    MeshControlResponse {
+        worker_id: usize,
+        response: MeshControlResponse,
+    },
+    MeshUpdateNotification {
+        worker_id: usize,
+        notification: MeshUpdateNotification,
+    },
 }
 
 const MAX_STRING_LENGTH: usize = 64 * 1024;
@@ -1086,7 +1179,116 @@ impl Message {
                 "PluginStateSync.plugin_name",
                 plugin_name,
                 MAX_STRING_LENGTH,
-            ), // NOTE: Do NOT add a catch-all here. All variants must be explicitly handled
+            ),
+            Message::PluginExecuteRequest(req) => {
+                check_str(
+                    "PluginExecuteRequest.plugin_name",
+                    &req.plugin_name,
+                    MAX_STRING_LENGTH,
+                )?;
+                check_str(
+                    "PluginExecuteRequest.function_name",
+                    &req.function_name,
+                    MAX_STRING_LENGTH,
+                )?;
+                for (k, v) in &req.headers {
+                    check_str("PluginExecuteRequest.headers.key", k, MAX_STRING_LENGTH)?;
+                    check_str("PluginExecuteRequest.headers.value", v, MAX_STRING_LENGTH)?;
+                }
+                Ok(())
+            }
+            Message::PluginExecuteResponse(res) => {
+                for (k, v) in &res.headers {
+                    check_str("PluginExecuteResponse.headers.key", k, MAX_STRING_LENGTH)?;
+                    check_str("PluginExecuteResponse.headers.value", v, MAX_STRING_LENGTH)?;
+                }
+                check_opt_str("PluginExecuteResponse.error", &res.error, MAX_STRING_LENGTH)
+            }
+            Message::ServerlessHandleRequest(req) => {
+                check_str(
+                    "ServerlessHandleRequest.function_name",
+                    &req.function_name,
+                    MAX_STRING_LENGTH,
+                )?;
+                for (k, v) in &req.headers {
+                    check_str("ServerlessHandleRequest.headers.key", k, MAX_STRING_LENGTH)?;
+                    check_str("ServerlessHandleRequest.headers.value", v, MAX_STRING_LENGTH)?;
+                }
+                for (k, v) in &req.env_vars {
+                    check_str("ServerlessHandleRequest.env_vars.key", k, MAX_STRING_LENGTH)?;
+                    check_str("ServerlessHandleRequest.env_vars.value", v, MAX_STRING_LENGTH)?;
+                }
+                Ok(())
+            }
+            Message::ServerlessHandleResponse(res) => {
+                for (k, v) in &res.headers {
+                    check_str("ServerlessHandleResponse.headers.key", k, MAX_STRING_LENGTH)?;
+                    check_str("ServerlessHandleResponse.headers.value", v, MAX_STRING_LENGTH)?;
+                }
+                check_opt_str("ServerlessHandleResponse.error", &res.error, MAX_STRING_LENGTH)
+            }
+            Message::MeshControlRequest { request, .. } => match request {
+                MeshControlRequest::DhtLookup { key } => {
+                    check_str("MeshControlRequest.DhtLookup.key", key, MAX_STRING_LENGTH)
+                }
+                MeshControlRequest::PeerRegister { node_id, address } => {
+                    check_str(
+                        "MeshControlRequest.PeerRegister.node_id",
+                        node_id,
+                        MAX_STRING_LENGTH,
+                    )?;
+                    check_str(
+                        "MeshControlRequest.PeerRegister.address",
+                        address,
+                        MAX_STRING_LENGTH,
+                    )
+                }
+                MeshControlRequest::RaftStatus => Ok(()),
+            },
+            Message::MeshControlResponse { response, .. } => match response {
+                MeshControlResponse::DhtValue { key, .. } => {
+                    check_str("MeshControlResponse.DhtValue.key", key, MAX_STRING_LENGTH)
+                }
+                MeshControlResponse::RaftStatus { leader_id, .. } => {
+                    check_opt_str(
+                        "MeshControlResponse.RaftStatus.leader_id",
+                        leader_id,
+                        MAX_STRING_LENGTH,
+                    )
+                }
+                MeshControlResponse::PeerRegistered { .. } => Ok(()),
+                MeshControlResponse::Error { message } => {
+                    check_str("MeshControlResponse.Error.message", message, MAX_STRING_LENGTH)
+                }
+            },
+            Message::MeshUpdateNotification { notification, .. } => match notification {
+                MeshUpdateNotification::PeerJoined { node_id, address } => {
+                    check_str(
+                        "MeshUpdateNotification.PeerJoined.node_id",
+                        node_id,
+                        MAX_STRING_LENGTH,
+                    )?;
+                    check_str(
+                        "MeshUpdateNotification.PeerJoined.address",
+                        address,
+                        MAX_STRING_LENGTH,
+                    )
+                }
+                MeshUpdateNotification::PeerLeft { node_id } => {
+                    check_str(
+                        "MeshUpdateNotification.PeerLeft.node_id",
+                        node_id,
+                        MAX_STRING_LENGTH,
+                    )
+                }
+                MeshUpdateNotification::DhtKeyUpdated { key } => {
+                    check_str(
+                        "MeshUpdateNotification.DhtKeyUpdated.key",
+                        key,
+                        MAX_STRING_LENGTH,
+                    )
+                }
+            }, // NOTE: Do NOT add a catch-all here. All variants must be explicitly handled
                // so that adding a new Message variant causes a compile-time error.
         }
     }
@@ -1214,7 +1416,15 @@ impl Message {
                 MessageCategory::WorkerRestart
             }
 
-            Message::PluginStateSync { .. } => MessageCategory::Plugin,
+            Message::PluginStateSync { .. }
+            | Message::PluginExecuteRequest(_)
+            | Message::PluginExecuteResponse(_)
+            | Message::ServerlessHandleRequest(_)
+            | Message::ServerlessHandleResponse(_) => MessageCategory::Plugin,
+
+            Message::MeshControlRequest { .. }
+            | Message::MeshControlResponse { .. }
+            | Message::MeshUpdateNotification { .. } => MessageCategory::MeshControl,
         }
     }
 
@@ -1259,6 +1469,7 @@ pub enum MessageCategory {
     SocketHandoff,
     WorkerRestart,
     Plugin,
+    MeshControl,
 }
 
 impl std::fmt::Display for MessageCategory {
@@ -1280,6 +1491,7 @@ impl std::fmt::Display for MessageCategory {
             MessageCategory::SocketHandoff => write!(f, "SocketHandoff"),
             MessageCategory::WorkerRestart => write!(f, "WorkerRestart"),
             MessageCategory::Plugin => write!(f, "Plugin"),
+            MessageCategory::MeshControl => write!(f, "MeshControl"),
         }
     }
 }

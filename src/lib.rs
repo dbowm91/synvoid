@@ -42,7 +42,10 @@ pub mod admin;
 pub mod app_server;
 pub mod auth;
 pub mod block_store;
-pub mod buffer;
+pub mod buffer {
+    pub use maluwaf_utils::buffer::pool;
+    pub use pool::{BufferPool, PooledBuf};
+}
 pub mod captcha;
 pub mod cgi;
 pub mod challenge;
@@ -76,7 +79,7 @@ pub mod proxy;
 pub mod proxy_cache;
 pub mod router;
 pub mod serder;
-pub mod serialization;
+pub use maluwaf_utils::serialization;
 pub mod server;
 pub mod serverless;
 pub mod spin;

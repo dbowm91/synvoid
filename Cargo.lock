@@ -4565,6 +4565,7 @@ dependencies = [
  "linked-hash-map",
  "log",
  "lru_time_cache",
+ "maluwaf-utils",
  "maxminddb",
  "metrics 0.22.4",
  "metrics-exporter-prometheus",
@@ -4649,6 +4650,15 @@ dependencies = [
  "libfuzzer-sys",
  "maluwaf",
  "postcard",
+]
+
+[[package]]
+name = "maluwaf-utils"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "postcard",
+ "serde",
 ]
 
 [[package]]

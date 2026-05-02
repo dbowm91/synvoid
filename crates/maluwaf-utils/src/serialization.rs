@@ -12,10 +12,16 @@
 //! ## Usage
 //!
 //! ```rust
-//! use crate::serialization::{serialize, deserialize};
+//! use maluwaf_utils::serialization::{serialize, deserialize};
+//! use serde::{Serialize, Deserialize};
 //!
-//! let data = serialize(&my_message)?;
-//! let msg = deserialize::<MyMessage>(&data)?;
+//! #[derive(Serialize, Deserialize, PartialEq, Debug)]
+//! struct MyMessage { field: i32 }
+//!
+//! let my_message = MyMessage { field: 42 };
+//! let data = serialize(&my_message).unwrap();
+//! let msg = deserialize::<MyMessage>(&data).unwrap();
+//! assert_eq!(msg, my_message);
 //! ```
 
 use std::io::{self, ErrorKind};

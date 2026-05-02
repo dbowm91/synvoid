@@ -42,7 +42,7 @@ macos-sandbox = []  # Enable macOS sandbox enforcement
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/maluwaf-utils"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -179,6 +179,8 @@ libloading = "0.8"
 
 # eBPF support
 aya = { version = "0.13", optional = true }
+
+maluwaf-utils = { path = "crates/maluwaf-utils" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }
