@@ -187,6 +187,21 @@ impl MainConfig {
         self.admin.validate()?;
         self.defaults.validate()?;
         self.tunnel.validate()?;
+
+        if self.dns.enabled && !cfg!(feature = "dns") {
+            return Err(ConfigValidationError {
+                field: "dns.enabled".to_string(),
+                message: "DNS server configured but binary built without `dns` feature. Rebuild with `--features dns`.".to_string(),
+            });
+        }
+
+        if self.mesh.is_some() && !cfg!(feature = "mesh") {
+            return Err(ConfigValidationError {
+                field: "mesh".to_string(),
+                message: "Mesh configured but binary built without `mesh` feature. Rebuild with `--features mesh`.".to_string(),
+            });
+        }
+
         Ok(())
     }
 

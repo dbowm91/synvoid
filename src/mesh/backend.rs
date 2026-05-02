@@ -362,7 +362,7 @@ pub async fn initialize_mesh_transports(
     transport_manager: Arc<MeshTransportManager>,
     threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
     mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
-    dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
+    #[cfg(feature = "dns")] dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
     #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(config.clone());

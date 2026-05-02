@@ -176,6 +176,41 @@ impl StatusResponse {
             message: message.into(),
         }
     }
+
+    pub fn hot_reload_applied(message: impl Into<String>) -> Self {
+        Self {
+            status: "hot_reload_applied".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn restart_required(message: impl Into<String>) -> Self {
+        Self {
+            status: "restart_required".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn config_rejected(message: impl Into<String>) -> Self {
+        Self {
+            status: "config_rejected".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported_in_profile(message: impl Into<String>) -> Self {
+        Self {
+            status: "unsupported_in_profile".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn partial_reload(message: impl Into<String>) -> Self {
+        Self {
+            status: "partial".into(),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

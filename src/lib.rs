@@ -62,6 +62,7 @@ pub mod location_matcher;
 pub mod log_controller;
 pub mod logging;
 pub mod master;
+#[cfg(feature = "mesh")]
 pub mod mesh;
 pub mod metrics;
 pub mod mime;

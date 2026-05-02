@@ -144,7 +144,9 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::config::update_fallback_config,
         crate::admin::handlers::config::get_upgrade_config,
         crate::admin::handlers::config::update_upgrade_config,
+        #[cfg(feature = "dns")]
         crate::admin::handlers::config::get_dns_config,
+        #[cfg(feature = "dns")]
         crate::admin::handlers::config::update_dns_config,
         crate::admin::handlers::config::get_rate_limits_config,
         crate::admin::handlers::config::update_rate_limits_config,
