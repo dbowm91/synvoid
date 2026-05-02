@@ -1,3 +1,8 @@
+# CI Verification Commands
+
+This file documents the commands that should run in CI to catch systems-layer regressions.
+See the "Verification Commands" section at the end of this document.
+
 # Platform Support Matrix
 
 **Status**: Active
@@ -149,3 +154,96 @@ The `windows-sys` crate requires explicit feature flags for each API namespace u
 | `Win32_System_Console` | `SetConsoleCtrlHandler`, `CTRL_C_EVENT`, `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT` |
 | `Win32_Networking_WinSock` | `WSADuplicateSocketW`, `WSASocketW`, `closesocket`, `WSAPROTOCOL_INFOW`, `INVALID_SOCKET` |
 | `Win32_Security` | `AllocateAndInitializeSid`, `CheckTokenMembership`, `FreeSid`, admin group SID constants |
+
+---
+
+## Verification Commands
+
+This section lists the CI verification commands that should be run to catch systems-layer regressions.
+
+### Linux (Baseline)
+
+These commands form the core regression gate for the primary platform:
+
+```bash
+cargo test --lib --no-run
+cargo test --lib process
+cargo test --lib platform
+cargo test --lib buffer
+cargo test --test ipc_test
+cargo test --test process_lifecycle_test
+cargo fmt --check
+cargo clippy --lib -- -D warnings
+```
+
+### Cross-Platform Compilation
+
+Document as CI jobs or manual verification for each target:
+
+```bash
+# Linux with all features
+cargo check --target x86_64-unknown-linux-gnu --all-features
+
+# macOS no-default features  
+cargo check --target x86_64-apple-darwin --no-default-features
+
+# Windows no-default features
+cargo check --target x86_64-pc-windows-msvc --no-default-features
+```
+
+### Feature-Specific Checks
+
+```bash
+# Socket handoff feature
+cargo check --no-default-features --features socket-handoff
+
+# Mesh feature
+cargo check --no-default-features --features mesh
+
+# DNS feature
+cargo check --no-default-features --features dns
+```
+
+### Security Regression Tests
+
+The following tests verify security-critical behavior and should always pass:
+
+| Test Pattern | Security Issue |
+|--------------|----------------|
+| `test_oversized_rejected_*` | Oversized message rejection |
+| `test_unsigned_message_rejected_*` | Unsigned IPC rejection |
+| `test_*symlink*rejected` | Symlink-based attacks |
+| `test_strict_sandbox_*` | Sandbox strict mode validation |
+| `test_buffer_pool_stress_*` | Buffer pool integrity under load |
+
+Run regression tests:
+```bash
+cargo test --lib ipc_signed 2>&1 | grep -E "test.*unsigned|test.*oversized"
+cargo test --lib buffer::pool 2>&1 | grep -E "test.*stress"
+```
+
+### Existing Test Coverage
+
+The following security regression tests already exist in the codebase:
+
+- **IPC signed/unsigned**: `src/process/ipc_signed.rs` - Tests for oversized rejection, unsigned message rejection
+- **Buffer pool stress**: `src/buffer/pool.rs` - `test_stress_multithread_acquire_release`, `test_stress_random_sizes_bounded_capacity`
+- **Raft oversized**: `src/mesh/raft/regression_tests.rs` - `test_in_progress_snapshot_rejects_oversized`
+- **Socket path symlink**: `src/process/socket_path.rs` - Symlink check in `create_secure_dir_atomic`
+- **Key file symlink**: `src/process/manager.rs` - `create_new` prevents symlink attacks in `write_ipc_key_to_tempfile`
+
+Missing tests that should be added:
+- `test_key_file_symlink_rejected` - Verify key file cannot be created over a symlink
+- `test_runtime_dir_symlink_rejected` - Verify runtime dir cannot be a symlink
+- `test_strict_sandbox_fails_on_unsupported` - Verify strict mode fails gracefully on platforms without full sandbox support
+
+### CI Integration
+
+These commands should be integrated into `.github/workflows/ci.yml`:
+
+1. **Platform-specific test jobs** for Linux baseline tests
+2. **Cross-compilation check matrix** for macOS/Windows
+3. **Feature flag combinations** for optional features
+4. **Security regression filters** to highlight failures
+
+The existing `platform-compat` job already covers cross-target compilation checks.

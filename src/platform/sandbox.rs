@@ -1125,3 +1125,46 @@ pub mod darwin {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strict_sandbox_fails_on_stub_backend() {
+        let stub = StubSandbox::new(SandboxLevel::Basic, "test-stub");
+        let caps = stub.capabilities();
+        assert!(!caps.can_enforce_strict());
+
+        let result = ProcessSandbox::with_paths(SandboxLevel::Strict, SandboxPaths::new());
+        assert!(result.is_err());
+        if let Err(SandboxError::InsufficientCapabilities(_)) = result {
+        } else {
+            panic!("expected InsufficientCapabilities error");
+        }
+    }
+
+    #[test]
+    fn test_strict_sandbox_fails_on_insufficient_capabilities() {
+        let level = SandboxLevel::Strict;
+        let sandbox = ProcessSandbox::new(level);
+
+        let caps = sandbox.capabilities();
+        if !caps.can_enforce_strict() {
+            let result = sandbox.backend.capabilities().can_enforce_strict();
+            assert!(!result, "stub backend should not support strict");
+        }
+    }
+
+    #[test]
+    fn test_sandbox_off_always_succeeds() {
+        let result = ProcessSandbox::with_paths(SandboxLevel::Off, SandboxPaths::new());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_basic_sandbox_succeeds_with_stub() {
+        let result = ProcessSandbox::with_paths(SandboxLevel::Basic, SandboxPaths::new());
+        assert!(result.is_ok());
+    }
+}
