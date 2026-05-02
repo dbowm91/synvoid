@@ -177,10 +177,14 @@ impl AttackDetector {
         query_string: Option<&str>,
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
-    ) -> Option<AttackDetectionResult> {
+    ) -> (Option<AttackDetectionResult>, u32) {
         if !self.config.enabled {
-            return None;
+            return (None, 0);
         }
+
+        let mut first_result = None;
+        let mut total_score = 0;
+        let anomaly_enabled = self.config.anomaly_scoring.enabled;
 
         if let Some(ref behavioral_intel) = self.behavioral_intel {
             if let Some(features) =
@@ -188,7 +192,7 @@ impl AttackDetector {
             {
                 if let Some(fingerprint) = behavioral_intel.analyze_request(&features) {
                     if fingerprint.severity_score >= 70 {
-                        return Some(AttackDetectionResult {
+                        let result = AttackDetectionResult {
                             attack_type: AttackType::Other,
                             input_location: InputLocation::Path,
                             fingerprint: Some(format!(
@@ -199,7 +203,15 @@ impl AttackDetector {
                                 "Behavioral fingerprint match (severity: {}, confidence: {})",
                                 fingerprint.severity_score, fingerprint.confidence
                             )),
-                        });
+                        };
+
+                        if !anomaly_enabled {
+                            return (Some(result), 0);
+                        }
+
+                        if first_result.is_none() {
+                            first_result = Some(result);
+                        }
                     }
                 }
 
@@ -218,7 +230,7 @@ impl AttackDetector {
         if let Some(max_size) = self.config.max_request_body_size {
             if let Some(body) = body {
                 if body.len() > max_size {
-                    return Some(AttackDetectionResult {
+                    let result = AttackDetectionResult {
                         attack_type: AttackType::Other,
                         input_location: InputLocation::PostBody,
                         fingerprint: Some(format!("body_size:{}", body.len())),
@@ -227,24 +239,58 @@ impl AttackDetector {
                             body.len(),
                             max_size
                         )),
-                    });
+                    };
+
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 50;
                 }
             }
         }
 
         if let Some(result) = self.header_validator.validate(headers) {
-            return Some(result);
+            if !anomaly_enabled {
+                return (Some(result), 0);
+            }
+
+            if first_result.is_none() {
+                first_result = Some(result.clone());
+            }
+
+            total_score += match result.attack_type {
+                AttackType::Other => 30,
+                _ => 50,
+            };
         }
 
         if self.config.request_smuggling.enabled {
             if let Some(result) = self.check_request_smuggling(headers, body) {
-                return Some(result);
+                if !anomaly_enabled {
+                    return (Some(result), 0);
+                }
+
+                if first_result.is_none() {
+                    first_result = Some(result);
+                }
+                total_score += 50;
             }
         }
 
         if self.config.jwt.enabled {
             if let Some(result) = self.check_jwt(headers, query_string, body) {
-                return Some(result);
+                if !anomaly_enabled {
+                    return (Some(result), 0);
+                }
+
+                if first_result.is_none() {
+                    first_result = Some(result);
+                }
+                total_score += 40;
             }
         }
 
@@ -260,88 +306,170 @@ impl AttackDetector {
             || self.config.xpath_injection.enabled
             || self.config.open_redirect.enabled;
 
-        let inputs = if needs_normalized_inputs {
-            Some(NormalizedInputs::normalize_all(
+        if needs_normalized_inputs {
+            let inputs = NormalizedInputs::normalize_all(
                 &self.normalizer,
                 Some(path),
                 query_string,
                 headers,
                 body,
-            ))
-        } else {
-            None
-        };
+            );
 
-        if let Some(ref inputs) = inputs {
             if self.config.sqli.enabled {
-                if let Some(result) = self.check_sqli(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_sqli(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result.clone());
+                    }
+
+                    total_score += match result.attack_type {
+                        AttackType::Sqli => 50,
+                        _ => 30,
+                    };
                 }
             }
 
             if self.config.xss.enabled {
-                if let Some(result) = self.check_xss(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_xss(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result.clone());
+                    }
+
+                    total_score += match result.attack_type {
+                        AttackType::Xss => 50,
+                        _ => 30,
+                    };
                 }
             }
 
             if self.config.ssti.enabled {
-                if let Some(result) = self.check_ssti(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_ssti(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 40;
                 }
             }
 
             if self.config.cmd_injection.enabled {
-                if let Some(result) = self.check_cmd_injection(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_cmd_injection(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 50;
                 }
             }
 
             if self.config.path_traversal.enabled {
-                if let Some(result) = self.check_path_traversal(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_path_traversal(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 40;
                 }
             }
 
             if self.config.rfi.enabled {
-                if let Some(result) = self.check_rfi(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_rfi(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 45;
                 }
             }
 
             if self.config.ssrf.enabled {
-                if let Some(result) = self.check_ssrf(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_ssrf(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 50;
                 }
             }
 
             if self.config.xxe.enabled {
-                if let Some(result) = self.check_xxe(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_xxe(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 50;
                 }
             }
 
             if self.config.ldap_injection.enabled {
-                if let Some(result) = self.check_ldap_injection(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_ldap_injection(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 45;
                 }
             }
 
             if self.config.xpath_injection.enabled {
-                if let Some(result) = self.check_xpath_injection(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_xpath_injection(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 45;
                 }
             }
 
             if self.config.open_redirect.enabled {
-                if let Some(result) = self.check_open_redirect(inputs) {
-                    return Some(result);
+                if let Some(result) = self.check_open_redirect(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 30;
                 }
             }
         }
 
-        None
+        (first_result, total_score)
     }
+
 
     fn extract_behavioral_features(
         &self,
@@ -1220,126 +1348,6 @@ impl AttackDetector {
 
         None
     }
-
-    pub fn check_request_anomaly_scoring(
-        &self,
-        _method: &http::Method,
-        path: &str,
-        query_string: Option<&str>,
-        headers: &http::HeaderMap,
-        body: Option<&[u8]>,
-    ) -> u32 {
-        let mut total_score: u32 = 0;
-
-        if let Some(max_size) = self.config.max_request_body_size {
-            if let Some(body) = body {
-                if body.len() > max_size {
-                    total_score += 50;
-                }
-            }
-        }
-
-        if let Some(header_result) = self.header_validator.validate(headers) {
-            total_score += match header_result.attack_type {
-                AttackType::Other => 30,
-                _ => 50,
-            };
-        }
-
-        if self.config.request_smuggling.enabled {
-            if let Some(_result) = self.check_request_smuggling(headers, body) {
-                total_score += 50;
-            }
-        }
-
-        if self.config.jwt.enabled {
-            if let Some(_result) = self.check_jwt(headers, query_string, body) {
-                total_score += 40;
-            }
-        }
-
-        let inputs = NormalizedInputs::normalize_all(
-            &self.normalizer,
-            Some(path),
-            query_string,
-            headers,
-            body,
-        );
-
-        if self.config.sqli.enabled {
-            if let Some(result) = self.check_sqli(&inputs) {
-                total_score += match result.attack_type {
-                    AttackType::Sqli => 50,
-                    _ => 30,
-                };
-            }
-        }
-
-        if self.config.xss.enabled {
-            if let Some(result) = self.check_xss(&inputs) {
-                total_score += match result.attack_type {
-                    AttackType::Xss => 50,
-                    _ => 30,
-                };
-            }
-        }
-
-        if self.config.ssti.enabled {
-            if let Some(_result) = self.check_ssti(&inputs) {
-                total_score += 40;
-            }
-        }
-
-        if self.config.cmd_injection.enabled {
-            if let Some(_result) = self.check_cmd_injection(&inputs) {
-                total_score += 50;
-            }
-        }
-
-        if self.config.path_traversal.enabled {
-            if let Some(_result) = self.check_path_traversal(&inputs) {
-                total_score += 40;
-            }
-        }
-
-        if self.config.rfi.enabled {
-            if let Some(_result) = self.check_rfi(&inputs) {
-                total_score += 45;
-            }
-        }
-
-        if self.config.ssrf.enabled {
-            if let Some(_result) = self.check_ssrf(&inputs) {
-                total_score += 50;
-            }
-        }
-
-        if self.config.xxe.enabled {
-            if let Some(_result) = self.check_xxe(&inputs) {
-                total_score += 50;
-            }
-        }
-
-        if self.config.ldap_injection.enabled {
-            if let Some(_result) = self.check_ldap_injection(&inputs) {
-                total_score += 45;
-            }
-        }
-
-        if self.config.xpath_injection.enabled {
-            if let Some(_result) = self.check_xpath_injection(&inputs) {
-                total_score += 45;
-            }
-        }
-
-        if self.config.open_redirect.enabled {
-            if let Some(_result) = self.check_open_redirect(&inputs) {
-                total_score += 30;
-            }
-        }
-
-        total_score
-    }
 }
 
 #[cfg(test)]
@@ -1350,7 +1358,7 @@ mod tests {
     fn check_detects(expected: AttackType, path: &str, query: Option<&str>, body: Option<&[u8]>) {
         let detector = AttackDetector::new(AttackDetectionConfig::default());
         let headers = HeaderMap::new();
-        let result = detector.check_request(&Method::GET, path, query, &headers, body);
+        let (result, _) = detector.check_request(&Method::GET, path, query, &headers, body);
         let result = result.expect(&format!(
             "Expected {:?} to be detected in: {}",
             expected, path
@@ -1361,7 +1369,7 @@ mod tests {
     fn check_no_detect(path: &str, query: Option<&str>, body: Option<&[u8]>) {
         let detector = AttackDetector::new(AttackDetectionConfig::default());
         let headers = HeaderMap::new();
-        let result = detector.check_request(&Method::GET, path, query, &headers, body);
+        let (result, _) = detector.check_request(&Method::GET, path, query, &headers, body);
         assert!(result.is_none(), "Expected no detection in: {}", path);
     }
 
@@ -1421,7 +1429,7 @@ mod tests {
         config.enabled = false;
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/search?q=<script>alert('xss')</script>",
             Some("q=<script>alert('xss')</script>"),
@@ -1455,7 +1463,7 @@ mod tests {
     fn test_check_request_double_encoded_attack() {
         let detector = AttackDetector::new(AttackDetectionConfig::default());
         let headers = HeaderMap::new();
-        let result = detector.check_request(
+        let (result, _) = detector.check_request(
             &Method::GET,
             "/search?q=%253Cscript%253Ealert%2528%2527xss%2527%2529%253C%252Fscript%253E",
             Some("q=%253Cscript%253Ealert%2528%2527xss%2527%2529%253C%252Fscript%253E"),

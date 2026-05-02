@@ -1394,9 +1394,10 @@ impl WafCore {
                 return None;
             }
 
-            if let Some(result) =
-                attack_detector.check_request(&method_enum, path, query_string, headers, body)
-            {
+            let (first_attack_result, anomaly_score) =
+                attack_detector.check_request(&method_enum, path, query_string, headers, body);
+
+            if let Some(result) = first_attack_result {
                 metrics::counter!(
                     "maluwaf.attack_detected",
                     "type" => result.attack_type.to_string(),
@@ -1453,14 +1454,7 @@ impl WafCore {
 
             if let Some(config) = self.attack_detection_config.load().as_ref() {
                 if config.anomaly_scoring.enabled {
-                    let score = attack_detector.check_request_anomaly_scoring(
-                        &method_enum,
-                        path,
-                        query_string,
-                        headers,
-                        body,
-                    );
-                    if score >= config.anomaly_scoring.threshold {
+                    if anomaly_score >= config.anomaly_scoring.threshold {
                         metrics::counter!("maluwaf.anomaly_score_threshold_exceeded").increment(1);
                         if let Some(ref tl) = self.threat_level {
                             tl.record_attack();
