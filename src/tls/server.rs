@@ -30,10 +30,11 @@ use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
 use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
-use crate::http_client::{create_upstream_client, send_request_streaming, UpstreamTlsConfig};
+use crate::http_client::{send_request_streaming, UpstreamTlsConfig};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
+use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
     PreparedUpstreamTarget, ProxyServer,
@@ -143,6 +144,7 @@ pub struct HttpsServer {
             >,
         >,
     >,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
 }
 
 impl HttpsServer {
@@ -176,6 +178,7 @@ impl HttpsServer {
             serverless_manager: None,
             connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
             app_servers: None,
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
         }
     }
 
@@ -294,6 +297,7 @@ impl HttpsServer {
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();
         let app_servers = self.app_servers.clone();
+        let upstream_client_registry = self.upstream_client_registry.clone();
 
         let _header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -352,6 +356,7 @@ impl HttpsServer {
                             let serverless_manager_h1 = serverless_manager.clone();
                             let app_servers_h2 = app_servers.clone();
                             let app_servers_h1 = app_servers.clone();
+                            let upstream_client_registry = upstream_client_registry.clone();
 
                             if http_config.strict_protocol_validation {
                                 let raw_fd = stream.as_raw_fd();
@@ -410,6 +415,7 @@ impl HttpsServer {
                                                     let ipc = ipc_h2.clone();
                                                     let serverless_manager = serverless_manager_h2.clone();
                                                     let app_servers = app_servers_h2.clone();
+                                                    let upstream_client_registry = upstream_client_registry.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -426,8 +432,9 @@ impl HttpsServer {
                                                         let worker_id = worker_id_h2;
                                                         let serverless_manager = serverless_manager.clone();
                                                         let app_servers = app_servers.clone();
+                                                        let upstream_client_registry = upstream_client_registry.clone();
                                                         async move {
-                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers).await
+                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
                                                         }
                                                     }
                                                 }));
@@ -467,6 +474,7 @@ impl HttpsServer {
                                                     let ipc = ipc_h1.clone();
                                                     let serverless_manager = serverless_manager_h1.clone();
                                                     let app_servers = app_servers_h1.clone();
+                                                    let upstream_client_registry = upstream_client_registry.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -483,8 +491,9 @@ impl HttpsServer {
                                                         let worker_id = worker_id_h1;
                                                         let serverless_manager = serverless_manager.clone();
                                                         let app_servers = app_servers.clone();
+                                                        let upstream_client_registry = upstream_client_registry.clone();
                                                         async move {
-                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers).await
+                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
                                                         }
                                                     }
                                                 }))
@@ -571,6 +580,7 @@ impl HttpsServer {
                 >,
             >,
         >,
+        upstream_client_registry: Arc<UpstreamClientRegistry>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req
@@ -1538,15 +1548,10 @@ impl HttpsServer {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(UpstreamTlsConfig::from_site_config)
-                    .unwrap_or_default();
+                    .and_then(UpstreamTlsConfig::from_site_config);
 
-                let client = create_upstream_client(
-                    std::time::Duration::from_secs(5),
-                    100,
-                    std::time::Duration::from_secs(30),
-                    &tls_config,
-                );
+                let client =
+                    upstream_client_registry.get_or_create(&target.site_id, tls_config.as_ref());
 
                 let forward_headers = build_forward_headers(
                     client_ip,

@@ -7,6 +7,7 @@
 //! for attack detection before forwarding.
 
 pub mod cache;
+pub mod client_registry;
 pub mod executor;
 pub mod headers;
 pub mod retry;

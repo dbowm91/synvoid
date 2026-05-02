@@ -1,6 +1,6 @@
 use super::shared_state::SharedWafState;
 use crate::metrics::WorkerMetrics;
-use crate::proxy::WafDecision;
+use crate::proxy::{join_upstream_url, WafDecision};
 use crate::http_client::{create_http_client, send_request_with_timeout, HttpClient};
 use crate::process::{WorkerId, WorkerStatus};
 
@@ -191,7 +191,7 @@ impl Worker {
                                     .expect("Failed to build tarpit response"))
                             }
                             WafDecision::Pass => {
-                                let target_url = format!("{}{}", *upstream_url, path_str);
+                                let target_url = join_upstream_url(&*upstream_url, path_str);
                                 
                                 match send_request_with_timeout(&client, http_method, &target_url, Some(std::time::Duration::from_secs(30))).await {
                                     Ok(response) => {

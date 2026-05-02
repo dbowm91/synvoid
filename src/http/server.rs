@@ -112,8 +112,8 @@ use crate::http::headers::{
     is_websocket_upgrade,
 };
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, send_request_streaming,
-    send_request_with_body_and_timeout, HttpClient, UpstreamTlsConfig,
+    create_http_client_with_config, send_request_streaming, send_request_with_body_and_timeout,
+    HttpClient, UpstreamTlsConfig,
 };
 use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
@@ -124,9 +124,10 @@ use crate::process::current_timestamp;
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
+use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     apply_response_size_limit, build_forward_headers, build_headers_to_filter,
-    filter_response_headers_buf, PreparedUpstreamTarget,
+    filter_response_headers_buf, join_upstream_url, PreparedUpstreamTarget,
 };
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
@@ -343,6 +344,7 @@ pub struct HttpServer {
     connection_limit: Arc<Semaphore>,
     app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
 }
 
 impl HttpServer {
@@ -382,6 +384,7 @@ impl HttpServer {
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             app_servers: None,
             mesh_backend_pool: None,
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
         }
     }
 
@@ -468,6 +471,7 @@ impl HttpServer {
         let connection_limit = self.connection_limit.clone();
         let app_servers = self.app_servers.clone();
         let mesh_backend_pool = self.mesh_backend_pool.clone();
+        let upstream_client_registry = self.upstream_client_registry.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -515,6 +519,7 @@ impl HttpServer {
                             let connection_limit = connection_limit.clone();
                             let app_servers = app_servers.clone();
                             let mesh_backend_pool = mesh_backend_pool.clone();
+                            let upstream_client_registry = upstream_client_registry.clone();
 
                             let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
                                 let mut peek_buf = [0u8; 16];
@@ -584,8 +589,9 @@ impl HttpServer {
                                     let connection_limit = connection_limit.clone();
                                     let app_servers = app_servers.clone();
                                     let mesh_backend_pool = mesh_backend_pool.clone();
+                                    let upstream_client_registry = upstream_client_registry.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -638,6 +644,7 @@ impl HttpServer {
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
         mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+        upstream_client_registry: Arc<UpstreamClientRegistry>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
         // SECTION 1: Connection Management
@@ -2823,15 +2830,12 @@ impl HttpServer {
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
                     .and_then(UpstreamTlsConfig::from_site_config);
-                let site_client = site_tls_config.as_ref().map(|tls| {
-                    create_upstream_client(
-                        std::time::Duration::from_secs(5),
-                        100,
-                        std::time::Duration::from_secs(30),
-                        tls,
-                    )
-                });
-                let forwarding_client = site_client.as_ref().unwrap_or(&client);
+                let forwarding_client = if site_tls_config.is_some() {
+                    upstream_client_registry
+                        .get_or_create(&target.site_id, site_tls_config.as_ref())
+                } else {
+                    Arc::new(client.clone())
+                };
 
                 let needs_body_transform = router.plugin_manager().is_some()
                     || mesh_transport.is_some()
@@ -2864,7 +2868,7 @@ impl HttpServer {
                     );
 
                     match send_request_streaming(
-                        forwarding_client,
+                        &forwarding_client,
                         method,
                         &upstream_target.url,
                         Some(full_body_arc.as_ref().clone()),
@@ -3052,7 +3056,7 @@ impl HttpServer {
                     .await
                 } else {
                     send_request_with_body_and_timeout(
-                        forwarding_client,
+                        &forwarding_client,
                         method,
                         &upstream_target.url,
                         Some(full_body_arc.as_ref().clone()),
@@ -3631,19 +3635,11 @@ impl HttpServer {
             .with_max_message_size(ws_config.max_message_size.unwrap_or(16 * 1024 * 1024))
             .with_mask_required(ws_config.mask_required.unwrap_or(false));
 
-        let upstream_scheme =
-            if target.upstream.starts_with("https://") || target.upstream.starts_with("wss://") {
-                "wss"
-            } else {
-                "ws"
-            };
-        let upstream_host = target
+        let ws_upstream = target
             .upstream
-            .trim_start_matches("http://")
-            .trim_start_matches("https://")
-            .trim_start_matches("ws://")
-            .trim_start_matches("wss://");
-        let upstream_url = format!("{}://{}{}", upstream_scheme, upstream_host, path);
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        let upstream_url = join_upstream_url(&ws_upstream, &path);
 
         tracing::debug!(url = %upstream_url, "Connecting to upstream WebSocket");
 

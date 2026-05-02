@@ -360,9 +360,24 @@ Define and implement one request-header forwarding policy:
 
 ## Priority 4: Rework Upstream TLS Client Ownership and Pooling
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed:**
+
+1. Created `src/proxy/client_registry.rs` with `UpstreamClientRegistry` using `DashMap<String, Arc<HttpClient>>` keyed by site_id
+2. `get_or_create(site_id, tls_config)` provides O(1) lookup with lazy creation
+3. `invalidate(site_id)` / `clear()` support config reloads
+4. Replaced per-request `create_upstream_client()` in `src/http/server.rs` with registry lookup
+5. Replaced per-request `create_upstream_client()` in `src/tls/server.rs` with registry lookup
+6. Registry is created during server construction, not per-request
+
+### What remains:
+- Wire registry invalidation into config reload path
+- Ensure CA/client cert changes rebuild the client on reload
+
+### Problem (original)
 
 `src/http/server.rs` constructs a site-specific upstream TLS client inside the request path when
 site TLS config exists. This defeats pooling and adds avoidable per-request work. It also risks
@@ -592,9 +607,23 @@ proxy execution policy as a normal miss.
 
 ## Priority 7: Normalize URL Construction and Path/Query Handling
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed:**
+
+1. `join_upstream_url(upstream, path)` helper in `src/proxy/mod.rs` handles trailing slashes, missing leading slashes
+2. All traffic hot-path URL construction now uses `join_upstream_url()`:
+   - HTTP server main proxy path (via PreparedUpstreamTarget)
+   - TLS server direct proxy path (via PreparedUpstreamTarget)
+   - HTTP/3 server (via PreparedUpstreamTarget)
+   - ProxyServer forward paths
+   - HTTP server scheme-conversion path
+   - Worker pool path (`src/worker_pool/worker.rs`)
+3. Tests for `join_upstream_url` in `src/proxy/mod.rs`
+
+### Problem (original)
 
 Several paths build URLs with `format!("{}{}", upstream, path)`. This is fragile when the upstream
 has a trailing slash, the request target is absolute-form, the path includes query, or the path
