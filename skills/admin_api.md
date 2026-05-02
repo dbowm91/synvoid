@@ -256,6 +256,47 @@ pub struct MeshConfigResponse {
 }
 ```
 
+## Mesh Admin Endpoints
+
+The mesh admin handlers (`src/admin/handlers/mesh_admin.rs`) provide Raft and DHT status endpoints:
+
+### Raft Status Endpoint
+
+- `GET /api/mesh/raft/status` - Returns Raft cluster status
+
+Returns `RaftStatusResponse`:
+```rust
+pub struct RaftStatusResponse {
+    pub node_id: u64,
+    pub leader_id: Option<u64>,
+    pub term: u64,
+    pub last_log_index: u64,
+    pub last_applied_index: u64,
+    pub membership: Vec<u64>,
+    pub is_leader: bool,
+    pub state: String,
+}
+```
+
+### DHT Stats Endpoint
+
+- `GET /api/mesh/dht/stats` - Returns DHT statistics
+
+Returns `DhtStatsResponse`:
+```rust
+pub struct DhtStatsResponse {
+    pub node_id: String,
+    pub total_peers: usize,
+    pub bucket_count: usize,
+    pub record_count: usize,
+    pub pending_announces: usize,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+}
+```
+
+**Important**: When implementing handlers that access `parking_lot::RwLock` guards across await points, ensure the guard is dropped before the await. The guard type is `!Send` and holding it across await will cause a compilation error with `#[axum::debug_handler]`.
+
 ## Testing
 
 ```bash
