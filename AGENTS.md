@@ -29,6 +29,13 @@ MaluWAF is a WAF (Web Application Firewall) with a multi-process architecture:
 - **Master** (`src/master/`): Parent process that spawns/manages workers, handles IPC
 - **Worker** (`src/worker/`): Handles HTTP requests and communicates via IPC
 
+### Architecture Documents
+
+Key reference documents in `architecture/` directory:
+- [`architecture/overview.md`](architecture/overview.md) — Module categorization and layer overview
+- [`architecture/deep_dive_review.md`](architecture/deep_dive_review.md) — Layer 1-3 and 7 deep dive (IPC, WAF, Proxy, Foundation)
+- [`architecture/layer_3_5_deep_dive.md`](architecture/layer_3_5_deep_dive.md) — Layer 3 & 5 deep dive (Proxy & Mesh, PQC, Trust Models)
+
 ### Scalability Target
 
 MaluWAF is designed for **high scalability** with targets well in excess of **1000K requests/second** (1 million RPS).

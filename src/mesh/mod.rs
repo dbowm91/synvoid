@@ -14,7 +14,6 @@ pub mod cert_dist;
 pub mod cli;
 pub mod client_audit;
 pub mod config;
-pub mod control_plane;
 pub mod crypto_verification;
 pub mod dht;
 pub mod hierarchical_routing;

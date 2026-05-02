@@ -3,18 +3,10 @@
 The following tasks focus on moving the actual business logic into the isolated processes created in Wave 20 and further decomposing the workspace.
 
 ## 1. Migrate Mesh Control Plane Logic
-- **Goal**: Move DHT and Raft management to the `--mesh-control-plane` process.
-- **Tasks**:
-  - Implement the IPC listener in `src/mesh/control_plane.rs`.
-  - Move initialization of `RoutingTable`, `RecordStoreManager`, and `RaftInstance` into the isolated process.
-  - Implement an `IpcMeshClient` in the main process to forward mesh operations over IPC.
+- **REMOVED**: The stub process was removed. Mesh logic (DHT/Raft) remains in UnifiedServerWorker where it was designed to run. See `plans/control_plane_boundaries.md` for rationale.
 
 ## 2. Migrate Plugin/Serverless Execution Logic
-- **Goal**: Move WASM execution to the `--plugin-execution` process.
-- **Tasks**:
-  - Implement the IPC listener in `src/plugin/execution.rs`.
-  - Implement a "Plugin Host Proxy" for callbacks (logging, metrics) from the isolated process.
-  - Update the WAF/HTTP worker to delegate WASM execution via IPC.
+- **REMOVED**: The stub process was removed. WASM plugins run in UnifiedServerWorker via Wasmtime sandboxing. See `plans/plugin_isolation.md` for rationale.
 
 ## 3. Deep Workspace Decomposition
 - **Goal**: Extract `maluwaf-mesh` and `maluwaf-proxy` into the `crates/` directory.
@@ -42,6 +34,7 @@ The following tasks focus on moving the actual business logic into the isolated 
 - [x] Zero-Copy Proxying Validation (findings documented)
   - Streaming proxy correctly uses BufferPool
   - Static files Buffered variant reads into memory (needs deeper refactoring)
+- [x] **Removed unused stubs**: MeshControlPlane and PluginExecution stubs deleted
 
 ---
 
@@ -54,10 +47,10 @@ The following tasks focus on moving the actual business logic into the isolated 
 | `fix/test-concurrency` | Merged - Fixed DashMap deadlock in SlidingWindowLimiter |
 | `fix/token-bucket-mockable-clock` | Merged - Added mockable clock for TokenBucket tests |
 | `feature/zero-copy-validation` | Merged - Documented zero-copy implementation |
+| `chore/remove-unused-stubs` | Merged - Removed MeshControlPlane and PluginExecution stubs |
 
 ## Deferred Items
 See `plans/todo_deferred.md` for detailed list:
 - WAF module extraction - **FAILED** (too many cross-dependencies)
 - Static file sendfile - needs deeper HTTP response handling refactoring
-- Process isolation implementation - requires DHT/Raft/plugin subsystems
 - Workspace decomposition - only `maluwaf-config` and `maluwaf-utils` extracted so far

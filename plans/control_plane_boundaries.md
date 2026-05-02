@@ -3,7 +3,9 @@
 **Status**: DRAFT
 **Priority**: 8
 **Last Updated**: 2026-05-02
-**Purpose**: Document and enforce which mesh/control-plane operations belong in workers, which belong in Master, and which should eventually move to a separate process.
+**Purpose**: Document and enforce which mesh/control-plane operations belong in workers, which belong in Master.
+
+> **Note**: The plan to move mesh control-plane to a separate process has been abandoned. The stub was removed. Mesh logic runs in UnifiedServerWorker.
 
 ---
 

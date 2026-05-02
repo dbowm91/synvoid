@@ -7,8 +7,6 @@ pub enum ProcessMode {
     Worker { worker_id: usize, port: u16 },
     UnifiedServerWorker { worker_id: usize },
     StaticWorker { worker_id: usize },
-    MeshControlPlane,
-    PluginExecution,
 }
 
 #[derive(Debug, Clone)]
@@ -92,12 +90,6 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Command {
             cmd.arg("--static-worker")
                 .arg("--worker-id")
                 .arg(worker_id.to_string());
-        }
-        ProcessMode::MeshControlPlane => {
-            cmd.arg("--mesh-control-plane");
-        }
-        ProcessMode::PluginExecution => {
-            cmd.arg("--plugin-execution");
         }
     }
 

@@ -10,33 +10,23 @@
 
 This wave focuses on moving the actual business logic into the isolated processes created in Wave 20 (Mesh Control Plane and Plugin Execution) and further decomposing the workspace.
 
-### Priority 1: Migrate Mesh Control Plane Logic
+### Priority 1: ~~Migrate Mesh Control Plane Logic~~ REMOVED
 
-**Problem**: 
+> **Rationale**: The separate `mesh-control-plane` process added unnecessary complexity. Mesh logic (DHT/Raft) runs correctly within UnifiedServerWorker. The stub was removed.
+
+**Problem**:
 The mesh logic (DHT routing, Raft consensus, threat intel propagation) currently runs within the `Master` or `Worker` processes. While we have the `--mesh-control-plane` process spawned by the `Overseer`, it is currently a stub.
 
-**Required Outcome**:
-All DHT and Raft management must move to the `mesh-control-plane` process. The `Master` and `Workers` should communicate with this process via IPC for all mesh operations.
+**Resolution**: REMOVED - Mesh logic remains in UnifiedServerWorker as designed.
 
-**Implementation Steps**:
-1.  **IPC Handler Implementation**: Update `src/mesh/control_plane.rs` to implement a tokio-based IPC listener using the `MeshControlRequest` and `MeshControlResponse` types from `src/process/ipc.rs`.
-2.  **Logic Migration**: Move the initialization of `RoutingTable`, `RecordStoreManager`, and `RaftInstance` from `src/startup/master.rs` and `src/worker/mod.rs` into the `run_mesh_control_plane` function.
-3.  **Client Implementation**: Update the main codebase to use an `IpcMeshClient` that implements the mesh traits by forwarding requests over the IPC stream to the isolated process.
-4.  **Resilience**: Ensure that if the mesh process restarts, the IPC clients can transparently reconnect.
+### Priority 2: ~~Migrate Plugin/Serverless Execution Logic~~ REMOVED
 
-### Priority 2: Migrate Plugin/Serverless Execution Logic
+> **Rationale**: The separate `plugin-execution` process added unnecessary IPC overhead. Wasmtime provides sufficient sandboxing. The stub was removed.
 
 **Problem**:
 WASM execution currently happens in-process within the `Worker`, sharing memory and potentially impacting request latency or stability if a plugin misbehaves.
 
-**Required Outcome**:
-WASM plugin and serverless function execution must happen in the dedicated `plugin-execution` process.
-
-**Implementation Steps**:
-1.  **Execution Server**: Implement the IPC listener in `src/plugin/execution.rs` to handle `PluginExecuteRequest` messages.
-2.  **Plugin Host Proxy**: Implement a callback mechanism (Host Function Proxy) so that plugins in the isolated process can still request services from the main process (e.g., logging, metrics) via return IPC messages.
-3.  **Worker Integration**: Update `src/waf/attack_detection/mod.rs` or the relevant plugin hook in `src/http/server.rs` to delegate execution to the isolated process.
-4.  **Resource Enforcement**: Strictly enforce memory and CPU (fuel) limits at the process boundary.
+**Resolution**: REMOVED - WASM plugins run in UnifiedServerWorker via Wasmtime sandboxing.
 
 ### Priority 3: Deep Workspace Decomposition (`maluwaf-mesh` & `maluwaf-proxy`)
 
@@ -2480,12 +2470,12 @@ Add lightweight automated checks that enforce the intended architecture.
 - Reload contract tests exist.
 - Routing/location benchmarks exist.
 
-## Deferred Architectural Items: COMPLETED (wave20-2026-05-02)
+## Deferred Architectural Items: COMPLETED (wave21-2026-05-02)
 
 These were implemented incrementally:
 - Full multi-crate workspace decomposition (Proof of Concept with `maluwaf-utils`).
-- Moving mesh control-plane into a separate process (IPC Scaffolding implemented).
-- Moving plugin/serverless execution into a separate process (IPC Scaffolding implemented).
+- ~~Moving mesh control-plane into a separate process~~ REMOVED (IPC Scaffolding removed; mesh runs in UnifiedServerWorker)
+- ~~Moving plugin/serverless execution into a separate process~~ REMOVED (IPC Scaffolding removed; Wasmtime provides sandboxing)
 - Replacing the admin UI/API architecture (New V1 APIs added for capabilities and mesh).
 - A full config schema redesign (Backward-compatible V2 aliases introduced).
 - Large performance rewrites beyond routing/location hot-path cleanup (DHT routing LRU cache).
