@@ -387,6 +387,9 @@ pub fn urlencoding_decode(input: &str) -> String {
                     if byte.is_ascii() {
                         result.push(byte as char);
                         continue;
+                    } else {
+                        result.push_str(&hex);
+                        continue;
                     }
                 }
             }

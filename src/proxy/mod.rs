@@ -487,7 +487,7 @@ impl ProxyServer {
             return self.forward_with_pool(method, path, pool, body).await;
         }
 
-        let url = format!("{}{}", self.upstream_url, path);
+        let url = join_upstream_url(&self.upstream_url, path);
         self.send_single_request(method, &url, None, body).await
     }
 
@@ -499,7 +499,7 @@ impl ProxyServer {
         headers: Option<&http::HeaderMap>,
         body: Option<bytes::Bytes>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
-        let full_url = format!("{}{}", tunnel_url, path);
+        let full_url = join_upstream_url(tunnel_url, path);
         self.send_single_request(method, &full_url, headers, body)
             .await
     }
@@ -673,6 +673,16 @@ impl ProxyServer {
                 .status(403)
                 .body(bytes::Bytes::from("Forbidden: IP not allowed\n"))
                 .unwrap_or_else(|_| Response::new(bytes::Bytes::new())));
+        } else if self.cache_purge_token.is_none() && self.cache_purge_allowed_ips.is_empty() {
+            tracing::warn!(
+                "Unauthorized cache purge from {} to {} - no token configured and allowlist empty",
+                client_ip,
+                host
+            );
+            return Ok(Response::builder()
+                .status(403)
+                .body(bytes::Bytes::from("Forbidden: purge not configured\n"))
+                .unwrap_or_else(|_| Response::new(bytes::Bytes::new())));
         }
 
         let count = if path == "*" {
@@ -696,12 +706,7 @@ impl ProxyServer {
                 0
             }
         } else if let Some(ref cache) = self.cache {
-            if let Some(cache_key) = CacheKey::from_cache_string(&format!("GET:{}:{}", host, path))
-            {
-                cache.invalidate(&cache_key);
-                tracing::info!("Purged cache entry for {}", path);
-            }
-            1
+            cache.invalidate_by_pattern(&format!("GET:{}:{}:*", host, path))
         } else {
             0
         };
@@ -866,7 +871,7 @@ impl ProxyServer {
 
             backend.increment_connections();
 
-            let url = format!("{}{}", backend.url.trim_end_matches('/'), path);
+            let url = join_upstream_url(backend.url.as_str(), path);
 
             tracing::debug!(
                 "Attempting request to upstream: {} (attempt {}/{})",
@@ -1047,5 +1052,55 @@ impl ProxyServer {
         }
 
         Ok(builder.body(body)?)
+    }
+}
+
+#[inline]
+pub fn join_upstream_url(upstream: impl AsRef<str>, path: impl AsRef<str>) -> String {
+    let upstream = upstream.as_ref().trim_end_matches('/');
+    let path = path.as_ref();
+    if path.starts_with('/') {
+        format!("{}{}", upstream, path)
+    } else {
+        format!("{}/{}", upstream, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_upstream_url;
+
+    #[test]
+    fn test_join_upstream_url_no_trailing_slash() {
+        assert_eq!(join_upstream_url("http://backend.example.com", "/path"), "http://backend.example.com/path");
+        assert_eq!(join_upstream_url("http://backend.example.com", "/path/to/page"), "http://backend.example.com/path/to/page");
+    }
+
+    #[test]
+    fn test_join_upstream_url_with_trailing_slash() {
+        assert_eq!(join_upstream_url("http://backend.example.com/", "/path"), "http://backend.example.com/path");
+        assert_eq!(join_upstream_url("http://backend.example.com///", "/path"), "http://backend.example.com/path");
+    }
+
+    #[test]
+    fn test_join_upstream_url_path_without_leading_slash() {
+        assert_eq!(join_upstream_url("http://backend.example.com", "path"), "http://backend.example.com/path");
+        assert_eq!(join_upstream_url("http://backend.example.com", "path/to/page"), "http://backend.example.com/path/to/page");
+    }
+
+    #[test]
+    fn test_join_upstream_url_empty_path() {
+        assert_eq!(join_upstream_url("http://backend.example.com", ""), "http://backend.example.com/");
+    }
+
+    #[test]
+    fn test_join_upstream_url_preserves_query() {
+        assert_eq!(join_upstream_url("http://backend.example.com", "/path?query=1"), "http://backend.example.com/path?query=1");
+    }
+
+    #[test]
+    fn test_join_upstream_url_with_port() {
+        assert_eq!(join_upstream_url("http://backend.example.com:8080", "/path"), "http://backend.example.com:8080/path");
+        assert_eq!(join_upstream_url("http://backend.example.com:8080/", "/path"), "http://backend.example.com:8080/path");
     }
 }

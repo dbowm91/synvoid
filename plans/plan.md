@@ -478,7 +478,21 @@ Retry and failover behavior must match config:
 
 ## Priority 6: Fix Proxy Cache Key, Purge, and Revalidation Semantics
 
-**Status**: OPEN
+**Status**: COMPLETED (wave16-continued-2026-05-01)
+
+### Problem
+
+**Completed fixes:**
+
+1. **PURGE fail-closed by default**: When no `cache_purge_token` is configured AND `cache_purge_allowed_ips` is empty, PURGE requests now return 403 "purge not configured". Previously, PURGE was allowed without any authentication.
+
+2. **Targeted purge pattern-based approach**: Instead of reconstructing a fake cache key via `CacheKey::from_cache_string("GET:{}:{}")`, targeted purge now uses `cache.invalidate_by_pattern(&format!("GET:{}:{}:*", host, path))` which matches all scheme variants and vary combinations for that path.
+
+### What remains OPEN:
+- Cache lookup/storage still lives in `ProxyServer` - main HTTP path may bypass it
+- Stale-while-revalidate rebuilds URL as `scheme://host/path` instead of using configured upstream
+- Request-header policy for revalidation may not match normal proxying
+- `build_cached_response()` overwrites `Cache-Control` with `public...`
 
 ### Problem
 
@@ -1096,7 +1110,16 @@ If per-site action exists, it must override global action as documented.
 
 ## Priority 4: Wire or Remove Anomaly Scoring
 
-**Status**: OPEN
+**Status**: COMPLETED (wave16-continued-2026-05-01)
+
+### Problem
+
+**Completed fix:**
+
+`check_attack_patterns()` in `src/waf/mod.rs` now calls `check_request_anomaly_scoring()` when `anomaly_scoring.enabled = true`. If the accumulated score exceeds `threshold`, the configured action (stall/block/log) is applied.
+
+### What remains:
+- Duplicated detector runs - scoring re-runs many detectors already run by direct detection. This may be acceptable for off-by-default scoring, but if enabled by default, refactoring to collect results once would avoid double work.
 
 ### Problem
 
@@ -3023,7 +3046,21 @@ Add tests:
 
 ## Priority 8: Clean Up Utility Footguns
 
-**Status**: OPEN
+**Status**: PARTIAL (wave16-continued-2026-05-01)
+
+### Problem
+
+**Completed fixes:**
+
+1. **`ip_to_slot(ip, num_slots)`**: Already fixed in earlier wave16 work - returns `Option<usize>` and handles zero slots correctly.
+
+2. **`parse_duration()`**: Already fixed in earlier wave16 work - uses checked multiplication to prevent overflow.
+
+3. **`urlencoding_decode()` UTF-8 handling**: Non-ASCII percent-encoded bytes (e.g., `%E4`) are now preserved as-is instead of being silently dropped. Invalid sequences like `%GG` are preserved rather than causing silent data loss.
+
+### What remains OPEN:
+- `OptionExt::if_none()` is a no-op but appears unused in codebase (no callers via `.if_none()` pattern)
+- `RunningFlag` and `DrainFlag` use `SeqCst` without documented rationale - Acquire/Release might suffice for stop/drain flags
 
 ### Problem
 

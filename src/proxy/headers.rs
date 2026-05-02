@@ -383,9 +383,9 @@ pub fn build_forward_headers(
             continue;
         }
 
-        if forward_all {
-            forward_headers.insert(name, value.clone());
-        } else if headers_to_forward.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
+        let should_forward = forward_all
+            || headers_to_forward.iter().any(|h| h.eq_ignore_ascii_case(name_str));
+        if should_forward {
             forward_headers.insert(name, value.clone());
         }
     }
