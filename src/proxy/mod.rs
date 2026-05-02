@@ -324,7 +324,15 @@ impl ProxyServer {
             let drop = self.waf.config.drop_blocked_requests;
 
             let body_slice: Option<&[u8]> = body.as_deref();
-            let query_string = None;
+
+            let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+                (
+                    path[..q_pos].to_string(),
+                    Some(path[q_pos + 1..].to_string()),
+                )
+            } else {
+                (path.clone(), None)
+            };
 
             let waf_decision = self
                 .waf
@@ -332,8 +340,8 @@ impl ProxyServer {
                     Some(self.site_id.as_str()),
                     client_ip,
                     method.as_str(),
-                    &path,
-                    query_string,
+                    &path_for_waf,
+                    query_string.as_deref(),
                     headers,
                     body_slice,
                     user_agent.as_deref(),
@@ -1140,6 +1148,92 @@ mod tests {
         assert_eq!(
             join_upstream_url("http://backend.example.com:8080/", "/path"),
             "http://backend.example.com:8080/path"
+        );
+    }
+
+    #[test]
+    fn test_proxy_path_query_split_sqli() {
+        let path = "/search?id=1' OR '1'='1";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/search");
+        assert_eq!(query_string, Some("id=1' OR '1'='1".to_string()));
+    }
+
+    #[test]
+    fn test_proxy_path_query_split_xss() {
+        let path = "/comment?q=<script>alert(1)</script>";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/comment");
+        assert_eq!(
+            query_string,
+            Some("q=<script>alert(1)</script>".to_string())
+        );
+    }
+
+    #[test]
+    fn test_proxy_path_no_query() {
+        let path = "/api/users";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/api/users");
+        assert_eq!(query_string, None);
+    }
+
+    #[test]
+    fn test_proxy_path_query_only() {
+        let path = "/search?query=test";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/search");
+        assert_eq!(query_string, Some("query=test".to_string()));
+    }
+
+    #[test]
+    fn test_proxy_path_multiple_question_marks() {
+        let path = "/search?redirect=https://evil.com?bad=true";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/search");
+        assert_eq!(
+            query_string,
+            Some("redirect=https://evil.com?bad=true".to_string())
         );
     }
 }

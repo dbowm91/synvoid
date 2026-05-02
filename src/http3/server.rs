@@ -268,7 +268,22 @@ impl Http3Server {
             if body_bytes.len() + chunk_len > max_request_size {
                 tracing::warn!(client = %client_ip, size = body_bytes.len(), "HTTP/3 request body exceeds max size");
                 counter!("maluwaf.http3.request.body_too_large").increment(1);
-                break;
+
+                let body = "{\"error\":\"Request body too large\"}";
+                let response = http::Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::DATE, generate_stealth_timestamp(5))
+                    .body(Bytes::from(body))
+                    .map_err(|e| format!("Failed to build response: {}", e))?;
+
+                let (parts, body) = response.into_parts();
+                request_stream
+                    .send_response(http::Response::from_parts(parts, ()))
+                    .await?;
+                request_stream.send_data(body).await?;
+                request_stream.finish().await?;
+                return Ok(());
             }
 
             let mut chunk_to_scan = chunk;
