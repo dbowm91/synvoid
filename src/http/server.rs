@@ -124,7 +124,10 @@ use crate::process::current_timestamp;
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
-use crate::proxy::{build_forward_headers, build_headers_to_filter, filter_response_headers_buf};
+use crate::proxy::{
+    apply_response_size_limit, build_forward_headers, build_headers_to_filter,
+    filter_response_headers_buf, PreparedUpstreamTarget,
+};
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
@@ -2789,7 +2792,11 @@ impl HttpServer {
                     }
                 }
 
-                let target_url = format!("{}{}", target.upstream, path);
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &target.upstream,
+                    &path,
+                    Some(&target.site_config.proxy),
+                );
 
                 let headers_to_filter = build_headers_to_filter(
                     &main_config.security.more_clear_headers,
@@ -2859,10 +2866,10 @@ impl HttpServer {
                     match send_request_streaming(
                         forwarding_client,
                         method,
-                        &target_url,
+                        &upstream_target.url,
                         Some(full_body_arc.as_ref().clone()),
                         forward_header_map,
-                        Some(std::time::Duration::from_secs(30)),
+                        Some(upstream_target.timeout),
                     )
                     .await
                     {
@@ -2928,6 +2935,17 @@ impl HttpServer {
                                 body_len > ZERO_COPY_THRESHOLD || (body_len == 0 && is_chunked);
 
                             if should_zero_copy {
+                                if let Some(max_size) = upstream_target.max_response_size {
+                                    if body_len > 0 && body_len as usize > max_size {
+                                        return Ok(Self::build_response_with_alt_svc(
+                                            502,
+                                            "Bad Gateway".to_string(),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        ));
+                                    }
+                                }
                                 return Ok(builder
                                     .body(
                                         upstream_body
@@ -2950,6 +2968,20 @@ impl HttpServer {
                                 match upstream_body.collect().await {
                                     Ok(collected) => {
                                         let body_bytes = collected.to_bytes();
+                                        if apply_response_size_limit(
+                                            &body_bytes,
+                                            upstream_target.max_response_size,
+                                        )
+                                        .is_err()
+                                        {
+                                            return Ok(Self::build_response_with_alt_svc(
+                                                502,
+                                                "Bad Gateway".to_string(),
+                                                "text/plain",
+                                                &alt_svc,
+                                                &main_config,
+                                            ));
+                                        }
                                         let body_len = body_bytes.len() as u64;
                                         if let Some(ref m) = metrics {
                                             m.bandwidth.record_egress(
@@ -3012,19 +3044,19 @@ impl HttpServer {
                 let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {
                     crate::http_client::send_request_via_quic_tunnel(
                         method,
-                        &target_url,
+                        &upstream_target.url,
                         Some(&parts.headers),
                         Some(full_body_arc.as_ref().clone()),
-                        Some(std::time::Duration::from_secs(30)),
+                        Some(upstream_target.timeout),
                     )
                     .await
                 } else {
                     send_request_with_body_and_timeout(
                         forwarding_client,
                         method,
-                        &target_url,
+                        &upstream_target.url,
                         Some(full_body_arc.as_ref().clone()),
-                        Some(std::time::Duration::from_secs(30)),
+                        Some(upstream_target.timeout),
                     )
                     .await
                 };
@@ -3054,6 +3086,17 @@ impl HttpServer {
                         let mut headers: http::HeaderMap = filtered_headers;
 
                         let mut body = resp.body;
+                        if apply_response_size_limit(&body, upstream_target.max_response_size)
+                            .is_err()
+                        {
+                            return Ok(Self::build_response_with_alt_svc(
+                                502,
+                                "Bad Gateway".to_string(),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
                         let mut body_len = body.len() as u64;
 
                         // Apply WASM response transforms

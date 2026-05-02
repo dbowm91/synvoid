@@ -75,9 +75,29 @@ command cannot run locally, record the exact failure and reason in the final han
 
 ## Priority 1: Define One Proxy Execution Contract
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed:**
+
+1. **Traffic entrypoint matrix** created at `plans/traffic_entrypoint_matrix.md` documenting all entry points and their behavior
+2. **Shared proxy executor module** at `src/proxy/executor.rs` with:
+   - `PreparedUpstreamTarget` - URL construction via `join_upstream_url`, timeout from config, max_response_size
+   - `UpstreamResponsePolicy` - Response header filter set, security headers, size limits
+   - `apply_response_size_limit()` - Enforce max_response_size on buffered bodies
+   - `build_upstream_request()` - Build complete upstream Request from prepared target
+3. **Main HTTP server** wired to use `PreparedUpstreamTarget` and `apply_response_size_limit`
+4. **TLS server** direct path wired to use `PreparedUpstreamTarget`
+5. **HTTP/3 server** wired to use `PreparedUpstreamTarget` and `apply_response_size_limit`
+
+### What remains (tracked in other priorities):
+- TLS client pooling (P4)
+- Retry in main HTTP/TLS/HTTP3 paths (P5 - ProxyServer only)
+- Cache in HTTP/HTTP3 paths (P6)
+- HTTP/3 response header filtering (P8)
+
+### Problem (original)
 
 There are at least two reverse-proxy implementations:
 

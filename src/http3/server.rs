@@ -16,7 +16,9 @@ use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
 use crate::metrics::WorkerMetrics;
-use crate::proxy::{build_forward_headers, WafDecision};
+use crate::proxy::{
+    apply_response_size_limit, build_forward_headers, PreparedUpstreamTarget, WafDecision,
+};
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
@@ -509,8 +511,11 @@ impl Http3Server {
                 }
 
                 // Actual proxying logic
-                let upstream_url =
-                    format!("{}{}", route_target.upstream.trim_end_matches('/'), path);
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &route_target.upstream,
+                    &path,
+                    Some(&route_target.site_config.proxy),
+                );
 
                 static DEFAULT_HEADERS_CONFIG: ProxyHeadersConfig = ProxyHeadersConfig {
                     clear: Vec::new(),
@@ -540,10 +545,10 @@ impl Http3Server {
                 let upstream_result = send_request_streaming(
                     &self.client,
                     method,
-                    &upstream_url,
+                    &upstream_target.url,
                     body_to_send,
                     forward_headers,
-                    Some(Duration::from_secs(30)),
+                    Some(upstream_target.timeout),
                 )
                 .await;
 
@@ -622,7 +627,17 @@ impl Http3Server {
                                 );
                                 bw.record_site_egress(&host, body_len);
                             }
-                            if !body_bytes.is_empty() {
+                            if apply_response_size_limit(
+                                &body_bytes,
+                                upstream_target.max_response_size,
+                            )
+                            .is_err()
+                            {
+                                tracing::warn!(
+                                    "Response body exceeds size limit for {}",
+                                    upstream_target.url
+                                );
+                            } else if !body_bytes.is_empty() {
                                 request_stream.send_data(body_bytes.into()).await?;
                             }
                         }

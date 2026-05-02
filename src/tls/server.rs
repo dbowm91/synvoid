@@ -35,7 +35,8 @@ use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
 use crate::proxy::{
-    build_forward_headers, build_headers_to_filter, filter_response_headers_buf, ProxyServer,
+    build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
+    PreparedUpstreamTarget, ProxyServer,
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
@@ -1507,7 +1508,11 @@ impl HttpsServer {
                     }
                 }
 
-                let target_url = format!("{}{}", target.upstream, path);
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &target.upstream,
+                    &path,
+                    Some(&target.site_config.proxy),
+                );
 
                 let headers_to_filter = build_headers_to_filter(
                     &main_config.security.more_clear_headers,
@@ -1558,10 +1563,10 @@ impl HttpsServer {
                 let resp = send_request_streaming(
                     &client,
                     method.clone(),
-                    &target_url,
+                    &upstream_target.url,
                     Some(body_bytes.clone()),
                     forward_headers,
-                    Some(std::time::Duration::from_secs(30)),
+                    Some(upstream_target.timeout),
                 )
                 .await;
 
