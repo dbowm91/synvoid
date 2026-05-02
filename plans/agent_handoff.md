@@ -22,6 +22,7 @@ The following tasks focus on moving the actual business logic into the isolated 
   - Create `crates/maluwaf-mesh` and move mesh submodules.
   - Create `crates/maluwaf-proxy` and move proxy/http_client submodules.
   - Resolve cyclic dependencies using traits in `maluwaf-utils`.
+- **Status**: WAF extraction was attempted and failed - WAF module has too many cross-dependencies on main crate modules. See `plans/todo_deferred.md` for details.
 
 ## 4. Complete Config Schema Modernization
 - **Goal**: Add remaining V2 aliases and verify backward compatibility.
@@ -31,8 +32,32 @@ The following tasks focus on moving the actual business logic into the isolated 
 
 ---
 
-# Completed (Wave 20 Stabilization)
+# Completed (Wave 20 Stabilization + Recent Work)
 - [x] Raft Metrics & Axum API Fixes
 - [x] Test Concurrency & Global State Deadlocks
+  - [x] DashMap deadlock fixed - replaced with RwLock<HashMap>
+  - [x] TokenBucket mockable clock implemented
 - [x] Initial Process Isolation Scaffolding
 - [x] `maluwaf-config` Extraction
+- [x] Zero-Copy Proxying Validation (findings documented)
+  - Streaming proxy correctly uses BufferPool
+  - Static files Buffered variant reads into memory (needs deeper refactoring)
+
+---
+
+# Notes for Next Agent
+
+## Completed Fixes (2026-05-02)
+| Branch | Status |
+|--------|--------|
+| `fix/raft-metrics-api` | Merged - Fixed raft metrics endpoints |
+| `fix/test-concurrency` | Merged - Fixed DashMap deadlock in SlidingWindowLimiter |
+| `fix/token-bucket-mockable-clock` | Merged - Added mockable clock for TokenBucket tests |
+| `feature/zero-copy-validation` | Merged - Documented zero-copy implementation |
+
+## Deferred Items
+See `plans/todo_deferred.md` for detailed list:
+- WAF module extraction - **FAILED** (too many cross-dependencies)
+- Static file sendfile - needs deeper HTTP response handling refactoring
+- Process isolation implementation - requires DHT/Raft/plugin subsystems
+- Workspace decomposition - only `maluwaf-config` and `maluwaf-utils` extracted so far
