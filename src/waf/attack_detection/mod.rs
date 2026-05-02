@@ -470,7 +470,6 @@ impl AttackDetector {
         (first_result, total_score)
     }
 
-
     fn extract_behavioral_features(
         &self,
         _method: &http::Method,

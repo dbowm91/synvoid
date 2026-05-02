@@ -12,9 +12,7 @@ use crate::http_client::{HttpClient, HttpResponse};
 use crate::proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry};
 use crate::utils;
 
-use super::cache::{
-    build_cached_response, filter_sensitive_headers, get_cache_max_age_static,
-};
+use super::cache::{build_cached_response, filter_sensitive_headers, get_cache_max_age_static};
 use super::headers::build_forward_headers;
 use super::join_upstream_url;
 
@@ -116,7 +114,9 @@ impl ProxyExecutor {
         client_ip: std::net::IpAddr,
     ) -> Result<Response<Bytes>, String> {
         if !self.is_cacheable_method(&method) {
-            return self.forward_request(method, path, body, headers, client_ip).await;
+            return self
+                .forward_request(method, path, body, headers, client_ip)
+                .await;
         }
 
         if let Some(cache) = &self.cache {
@@ -151,19 +151,26 @@ impl ProxyExecutor {
                         }
 
                         tracing::debug!("Cache MISS for {}", path);
-                        let result = self.forward_request(method, path, body, headers, client_ip).await;
+                        let result = self
+                            .forward_request(method, path, body, headers, client_ip)
+                            .await;
 
                         match result {
                             Ok(response) => {
                                 if self.is_response_cacheable(&response) {
                                     let status = response.status().as_u16();
                                     let body = response.body().clone();
-                                    let filtered_headers = filter_sensitive_headers(response.headers());
+                                    let filtered_headers =
+                                        filter_sensitive_headers(response.headers());
                                     let max_age = get_cache_max_age_static(&filtered_headers);
 
-                                    if let Err(e) =
-                                        cache.insert(cache_key, body, status, filtered_headers, max_age)
-                                    {
+                                    if let Err(e) = cache.insert(
+                                        cache_key,
+                                        body,
+                                        status,
+                                        filtered_headers,
+                                        max_age,
+                                    ) {
                                         tracing::warn!("Failed to cache response: {}", e);
                                     }
                                 }
@@ -176,7 +183,8 @@ impl ProxyExecutor {
             }
         }
 
-        self.forward_request(method, path, body, headers, client_ip).await
+        self.forward_request(method, path, body, headers, client_ip)
+            .await
     }
 
     async fn forward_request(
@@ -210,7 +218,9 @@ impl ProxyExecutor {
                 for (k, v) in resp.headers.iter() {
                     builder = builder.header(k, v);
                 }
-                Ok(builder.body(resp.body).unwrap_or_else(|_| crate::http::fallback_error_bytes()))
+                Ok(builder
+                    .body(resp.body)
+                    .unwrap_or_else(|_| crate::http::fallback_error_bytes()))
             }
             Err(e) => Err(e.to_string()),
         }
@@ -282,7 +292,7 @@ impl ProxyExecutor {
         tokio::spawn(async move {
             tracing::debug!("Triggering background revalidation for {}", path);
             let url = join_upstream_url(&upstream_url, &path);
-            
+
             match crate::http_client::send_request_with_body_headers_and_timeout(
                 &reval_client,
                 method,
@@ -297,7 +307,13 @@ impl ProxyExecutor {
                     if cache.is_status_cacheable(resp.status.as_u16()) {
                         let filtered_headers = filter_sensitive_headers(&resp.headers);
                         let max_age = get_cache_max_age_static(&filtered_headers);
-                        if let Err(e) = cache.insert(key, resp.body, resp.status.as_u16(), filtered_headers, max_age) {
+                        if let Err(e) = cache.insert(
+                            key,
+                            resp.body,
+                            resp.status.as_u16(),
+                            filtered_headers,
+                            max_age,
+                        ) {
                             tracing::warn!("Failed to update cached response: {}", e);
                         }
                     }

@@ -346,13 +346,27 @@ pub struct MeshRoutingConfig {
     pub mesh_messages_per_sec: usize,
 }
 
-fn default_true() -> bool { true }
-fn default_max_hops() -> u8 { 3 }
-fn default_query_timeout_ms() -> u64 { 5000 }
-fn default_retry_attempts() -> u8 { 2 }
-fn default_peer_query_count() -> usize { 3 }
-fn default_route_query_limit() -> usize { 6000 }
-fn default_mesh_messages_per_sec() -> usize { 10000 }
+fn default_true() -> bool {
+    true
+}
+fn default_max_hops() -> u8 {
+    3
+}
+fn default_query_timeout_ms() -> u64 {
+    5000
+}
+fn default_retry_attempts() -> u8 {
+    2
+}
+fn default_peer_query_count() -> usize {
+    3
+}
+fn default_route_query_limit() -> usize {
+    6000
+}
+fn default_mesh_messages_per_sec() -> usize {
+    10000
+}
 
 impl Default for MeshRoutingConfig {
     fn default() -> Self {
@@ -400,7 +414,9 @@ pub struct MeshTlsConfig {
     pub strict_certificate_validation: bool,
 }
 
-fn default_tls_version() -> String { "1.3".to_string() }
+fn default_tls_version() -> String {
+    "1.3".to_string()
+}
 
 impl Default for MeshTlsConfig {
     fn default() -> Self {
@@ -451,10 +467,18 @@ pub struct MeshConnectionConfig {
     pub keepalive_interval_secs: u64,
 }
 
-fn default_min_peers() -> usize { 3 }
-fn default_max_peers() -> usize { 20 }
-fn default_announce_interval() -> u64 { 30 }
-fn default_keepalive_interval() -> u64 { 10 }
+fn default_min_peers() -> usize {
+    3
+}
+fn default_max_peers() -> usize {
+    20
+}
+fn default_announce_interval() -> u64 {
+    30
+}
+fn default_keepalive_interval() -> u64 {
+    10
+}
 
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
@@ -516,8 +540,12 @@ pub struct MeshConfig {
     pub cached_pow: Arc<RwLock<Option<(u64, std::time::Instant)>>>,
 }
 
-fn default_mesh_port() -> u16 { 50051 }
-fn default_bandwidth_report_interval() -> u64 { 60 }
+fn default_mesh_port() -> u16 {
+    50051
+}
+fn default_bandwidth_report_interval() -> u64 {
+    60
+}
 
 impl Default for MeshConfig {
     fn default() -> Self {

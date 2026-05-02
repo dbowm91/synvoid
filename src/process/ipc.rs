@@ -111,14 +111,9 @@ pub struct RulePatternData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MeshControlRequest {
-    DhtLookup {
-        key: String,
-    },
+    DhtLookup { key: String },
     RaftStatus,
-    PeerRegister {
-        node_id: String,
-        address: String,
-    },
+    PeerRegister { node_id: String, address: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1212,20 +1207,36 @@ impl Message {
                 )?;
                 for (k, v) in &req.headers {
                     check_str("ServerlessHandleRequest.headers.key", k, MAX_STRING_LENGTH)?;
-                    check_str("ServerlessHandleRequest.headers.value", v, MAX_STRING_LENGTH)?;
+                    check_str(
+                        "ServerlessHandleRequest.headers.value",
+                        v,
+                        MAX_STRING_LENGTH,
+                    )?;
                 }
                 for (k, v) in &req.env_vars {
                     check_str("ServerlessHandleRequest.env_vars.key", k, MAX_STRING_LENGTH)?;
-                    check_str("ServerlessHandleRequest.env_vars.value", v, MAX_STRING_LENGTH)?;
+                    check_str(
+                        "ServerlessHandleRequest.env_vars.value",
+                        v,
+                        MAX_STRING_LENGTH,
+                    )?;
                 }
                 Ok(())
             }
             Message::ServerlessHandleResponse(res) => {
                 for (k, v) in &res.headers {
                     check_str("ServerlessHandleResponse.headers.key", k, MAX_STRING_LENGTH)?;
-                    check_str("ServerlessHandleResponse.headers.value", v, MAX_STRING_LENGTH)?;
+                    check_str(
+                        "ServerlessHandleResponse.headers.value",
+                        v,
+                        MAX_STRING_LENGTH,
+                    )?;
                 }
-                check_opt_str("ServerlessHandleResponse.error", &res.error, MAX_STRING_LENGTH)
+                check_opt_str(
+                    "ServerlessHandleResponse.error",
+                    &res.error,
+                    MAX_STRING_LENGTH,
+                )
             }
             Message::MeshControlRequest { request, .. } => match request {
                 MeshControlRequest::DhtLookup { key } => {
@@ -1249,17 +1260,17 @@ impl Message {
                 MeshControlResponse::DhtValue { key, .. } => {
                     check_str("MeshControlResponse.DhtValue.key", key, MAX_STRING_LENGTH)
                 }
-                MeshControlResponse::RaftStatus { leader_id, .. } => {
-                    check_opt_str(
-                        "MeshControlResponse.RaftStatus.leader_id",
-                        leader_id,
-                        MAX_STRING_LENGTH,
-                    )
-                }
+                MeshControlResponse::RaftStatus { leader_id, .. } => check_opt_str(
+                    "MeshControlResponse.RaftStatus.leader_id",
+                    leader_id,
+                    MAX_STRING_LENGTH,
+                ),
                 MeshControlResponse::PeerRegistered { .. } => Ok(()),
-                MeshControlResponse::Error { message } => {
-                    check_str("MeshControlResponse.Error.message", message, MAX_STRING_LENGTH)
-                }
+                MeshControlResponse::Error { message } => check_str(
+                    "MeshControlResponse.Error.message",
+                    message,
+                    MAX_STRING_LENGTH,
+                ),
             },
             Message::MeshUpdateNotification { notification, .. } => match notification {
                 MeshUpdateNotification::PeerJoined { node_id, address } => {
@@ -1274,20 +1285,16 @@ impl Message {
                         MAX_STRING_LENGTH,
                     )
                 }
-                MeshUpdateNotification::PeerLeft { node_id } => {
-                    check_str(
-                        "MeshUpdateNotification.PeerLeft.node_id",
-                        node_id,
-                        MAX_STRING_LENGTH,
-                    )
-                }
-                MeshUpdateNotification::DhtKeyUpdated { key } => {
-                    check_str(
-                        "MeshUpdateNotification.DhtKeyUpdated.key",
-                        key,
-                        MAX_STRING_LENGTH,
-                    )
-                }
+                MeshUpdateNotification::PeerLeft { node_id } => check_str(
+                    "MeshUpdateNotification.PeerLeft.node_id",
+                    node_id,
+                    MAX_STRING_LENGTH,
+                ),
+                MeshUpdateNotification::DhtKeyUpdated { key } => check_str(
+                    "MeshUpdateNotification.DhtKeyUpdated.key",
+                    key,
+                    MAX_STRING_LENGTH,
+                ),
             }, // NOTE: Do NOT add a catch-all here. All variants must be explicitly handled
                // so that adding a new Message variant causes a compile-time error.
         }

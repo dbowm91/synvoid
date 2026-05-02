@@ -491,7 +491,9 @@ fn main() {
             .enable_all()
             .build()
             .expect("Failed to build Tokio runtime");
-        if let Err(e) = rt.block_on(maluwaf::mesh::control_plane::run_mesh_control_plane(mesh_args)) {
+        if let Err(e) = rt.block_on(maluwaf::mesh::control_plane::run_mesh_control_plane(
+            mesh_args,
+        )) {
             tracing::error!("Mesh control plane error: {}", e);
             std::process::exit(1);
         }
@@ -506,7 +508,9 @@ fn main() {
             .enable_all()
             .build()
             .expect("Failed to build Tokio runtime");
-        if let Err(e) = rt.block_on(maluwaf::plugin::execution::run_plugin_execution_server(plugin_args)) {
+        if let Err(e) = rt.block_on(maluwaf::plugin::execution::run_plugin_execution_server(
+            plugin_args,
+        )) {
             tracing::error!("Plugin execution server error: {}", e);
             std::process::exit(1);
         }

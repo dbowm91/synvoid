@@ -4220,7 +4220,9 @@ mod waf_attack_detection_tests {
             result.0.as_ref().unwrap().attack_type,
             AttackType::Other
         ));
-        assert!(result.0.as_ref()
+        assert!(result
+            .0
+            .as_ref()
             .unwrap()
             .fingerprint
             .as_ref()

@@ -176,12 +176,10 @@ pub struct SlidingWindowLimiter<K: Hash + Eq> {
 impl<K: Hash + Eq + Clone> SlidingWindowLimiter<K> {
     pub fn new(configs: Vec<SlidingWindowConfig>, max_entries: usize) -> Self {
         Self {
-            entries: parking_lot::RwLock::new(
-                std::collections::HashMap::with_capacity_and_hasher(
-                    max_entries.next_power_of_two().max(64) as usize,
-                    std::hash::RandomState::default(),
-                ),
-            ),
+            entries: parking_lot::RwLock::new(std::collections::HashMap::with_capacity_and_hasher(
+                max_entries.next_power_of_two().max(64) as usize,
+                std::hash::RandomState::default(),
+            )),
             configs,
             max_entries,
             cleanup_threshold: 0.9,

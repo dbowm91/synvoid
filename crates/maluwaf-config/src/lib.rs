@@ -32,12 +32,9 @@ pub mod upgrade;
 pub mod upload;
 pub mod validation;
 
+pub use admin::{AdminConfig, AdminCorsConfig, MetricsConfig};
 pub use app_server::{AppServerConfig, GranianInterface, GranianLogFormat, GranianLogLevel};
 pub use bandwidth::{MonthlyResetConfig, MonthlyResetMode};
-pub use theme::{
-    ThemeColors, ThemeConfig, ThemeDefaults, ThemeMode, ThemePreset, ThemeRestriction,
-};
-pub use admin::{AdminConfig, AdminCorsConfig, MetricsConfig};
 pub use defaults::{
     AuthDefaults, BlockedDefaults, BotDefaults, CssBlockDefaults, CssChallengeDefaults,
     DefaultsConfig, EndpointRateLimitConfig, ErrorPagesDefaults, GlobalRateLimitConfig,
@@ -50,6 +47,9 @@ pub use dns::{
     DnsConfig, DnsMeshConfig, DnsMode, DnsRateLimitConfig, DnsRateLimitMode, DnsRecordEntry,
     DnsRecordType, DnsSecAlgorithm, DnsSecConfig, DnsSettingsConfig, DnsZoneEntry, DnsZonesConfig,
     QnameLogLevel, QnamePrivacyConfig, QnamePrivacyMode,
+};
+pub use theme::{
+    ThemeColors, ThemeConfig, ThemeDefaults, ThemeMode, ThemePreset, ThemeRestriction,
 };
 
 pub use defaults::{

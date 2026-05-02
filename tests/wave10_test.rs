@@ -18,13 +18,8 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let (_, score) = detector.check_request(
-            &Method::GET,
-            "/api/users/123",
-            None,
-            &headers,
-            None,
-        );
+        let (_, score) =
+            detector.check_request(&Method::GET, "/api/users/123", None, &headers, None);
 
         assert_eq!(score, 0);
     }
@@ -37,13 +32,8 @@ mod waf_anomaly_scoring_tests {
         let headers = HeaderMap::new();
 
         let body = vec![0u8; 200];
-        let (_, score) = detector.check_request(
-            &Method::POST,
-            "/upload",
-            None,
-            &headers,
-            Some(&body),
-        );
+        let (_, score) =
+            detector.check_request(&Method::POST, "/upload", None, &headers, Some(&body));
 
         assert!(score >= 50);
     }
@@ -71,13 +61,8 @@ mod waf_anomaly_scoring_tests {
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
-        let (_, score) = detector.check_request(
-            &Method::GET,
-            "/search",
-            Some("q=admin'--"),
-            &headers,
-            None,
-        );
+        let (_, score) =
+            detector.check_request(&Method::GET, "/search", Some("q=admin'--"), &headers, None);
 
         assert!(score >= 50);
     }
@@ -179,13 +164,8 @@ mod waf_anomaly_scoring_tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
 
-        let (_, score) = detector.check_request(
-            &Method::GET,
-            "/api/data",
-            Some("id=123"),
-            &headers,
-            None,
-        );
+        let (_, score) =
+            detector.check_request(&Method::GET, "/api/data", Some("id=123"), &headers, None);
 
         assert!(score >= 0);
     }

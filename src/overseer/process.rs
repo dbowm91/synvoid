@@ -118,8 +118,13 @@ impl OverseerProcess {
         Ok(pid)
     }
 
-    pub fn spawn_mesh_control_plane(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
-        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::MeshControlPlane);
+    pub fn spawn_mesh_control_plane(
+        &mut self,
+    ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+        let config = SpawnConfig::for_current_binary(
+            self.config_path.clone(),
+            ProcessMode::MeshControlPlane,
+        );
 
         let child = spawn_and_log(&config, "mesh_control_plane")?;
         let pid = child.id();
@@ -128,8 +133,11 @@ impl OverseerProcess {
         Ok(pid)
     }
 
-    pub fn spawn_plugin_execution_server(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
-        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::PluginExecution);
+    pub fn spawn_plugin_execution_server(
+        &mut self,
+    ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+        let config =
+            SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::PluginExecution);
 
         let child = spawn_and_log(&config, "plugin_execution")?;
         let pid = child.id();
@@ -344,8 +352,16 @@ impl OverseerProcess {
         graceful: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.stop_master(graceful)?;
-        Self::stop_child_process(&mut self.mesh_control_plane_child, "mesh_control_plane", graceful)?;
-        Self::stop_child_process(&mut self.plugin_execution_child, "plugin_execution", graceful)?;
+        Self::stop_child_process(
+            &mut self.mesh_control_plane_child,
+            "mesh_control_plane",
+            graceful,
+        )?;
+        Self::stop_child_process(
+            &mut self.plugin_execution_child,
+            "plugin_execution",
+            graceful,
+        )?;
         Ok(())
     }
 

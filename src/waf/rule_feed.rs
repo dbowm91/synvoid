@@ -966,10 +966,18 @@ mod tests {
         let site_id = "test_multi_category";
 
         // Simulate patterns from rule feed for multiple categories
-        update_site_patterns_for_category(site_id, "path_traversal", vec!["../custom_traversal".to_string()]);
+        update_site_patterns_for_category(
+            site_id,
+            "path_traversal",
+            vec!["../custom_traversal".to_string()],
+        );
         update_site_patterns_for_category(site_id, "rfi", vec!["evil_include".to_string()]);
-        update_site_patterns_for_category(site_id, "cmd_injection", vec!["; custom_cmd".to_string()]);
-        
+        update_site_patterns_for_category(
+            site_id,
+            "cmd_injection",
+            vec!["; custom_cmd".to_string()],
+        );
+
         // ssti and xxe have no feed patterns
         assert!(has_custom_patterns("path_traversal", Some(site_id)));
         assert!(has_custom_patterns("rfi", Some(site_id)));

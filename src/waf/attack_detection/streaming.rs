@@ -136,7 +136,9 @@ impl StreamingWafCore {
         // Update trailing window
         state.trailing_window.clear();
         let window_start = data_to_scan.len().saturating_sub(TRAILING_WINDOW_SIZE);
-        state.trailing_window.extend_from_slice(&data_to_scan[window_start..]);
+        state
+            .trailing_window
+            .extend_from_slice(&data_to_scan[window_start..]);
 
         StreamingWafDecision::Continue
     }
@@ -159,8 +161,9 @@ impl StreamingWafCore {
                 MultipartState::LookingForBoundary => {
                     let remaining = &combined[current_pos..];
                     if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
-                        state.multipart_state =
-                            MultipartState::ReadingHeaders { buffer: String::new() };
+                        state.multipart_state = MultipartState::ReadingHeaders {
+                            buffer: String::new(),
+                        };
                         current_pos += pos + boundary.len();
                     } else {
                         current_pos = combined.len();
@@ -178,8 +181,9 @@ impl StreamingWafCore {
                         if buffer.to_lowercase().contains("filename=") {
                             state.multipart_state = MultipartState::SkippingFile;
                         } else {
-                            state.multipart_state =
-                                MultipartState::ReadingField { buffer: String::new() };
+                            state.multipart_state = MultipartState::ReadingField {
+                                buffer: String::new(),
+                            };
                         }
                     } else {
                         buffer.push_str(&s);
@@ -204,8 +208,9 @@ impl StreamingWafCore {
                             );
                         }
 
-                        state.multipart_state =
-                            MultipartState::ReadingHeaders { buffer: String::new() };
+                        state.multipart_state = MultipartState::ReadingHeaders {
+                            buffer: String::new(),
+                        };
                         current_pos += pos + boundary.len();
                     } else {
                         buffer.push_str(&String::from_utf8_lossy(remaining));
@@ -215,8 +220,9 @@ impl StreamingWafCore {
                 MultipartState::SkippingFile => {
                     let remaining = &combined[current_pos..];
                     if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
-                        state.multipart_state =
-                            MultipartState::ReadingHeaders { buffer: String::new() };
+                        state.multipart_state = MultipartState::ReadingHeaders {
+                            buffer: String::new(),
+                        };
                         current_pos += pos + boundary.len();
                     } else {
                         current_pos = combined.len();
@@ -232,7 +238,9 @@ impl StreamingWafCore {
         state.trailing_window.clear();
         let window_size = boundary.len() + 4; // enough for boundary + CRLF CRLF
         let window_start = combined.len().saturating_sub(window_size);
-        state.trailing_window.extend_from_slice(&combined[window_start..]);
+        state
+            .trailing_window
+            .extend_from_slice(&combined[window_start..]);
 
         StreamingWafDecision::Continue
     }
@@ -397,7 +405,10 @@ mod tests {
 
         for chunk in multipart_data.chunks(10) {
             let result = streaming.scan_chunk(chunk);
-            assert!(matches!(result, StreamingWafDecision::Continue), "Should NOT have detected attack in file content");
+            assert!(
+                matches!(result, StreamingWafDecision::Continue),
+                "Should NOT have detected attack in file content"
+            );
         }
     }
 }
