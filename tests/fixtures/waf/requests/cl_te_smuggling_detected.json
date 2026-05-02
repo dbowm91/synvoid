@@ -1,0 +1,19 @@
+{
+  "id": "cl_te_smuggling_detected",
+  "description": "CL/TE conflict smuggling - properly detected by current detector",
+  "entry_point": "header:Transfer-Encoding",
+  "expected_result": "detect",
+  "attack_type": "request_smuggling",
+  "notes": "CL/TE conflict that is currently detected",
+  "request": {
+    "method": "POST",
+    "path": "/api/data",
+    "headers": [
+      ["Host", "example.com"],
+      ["Transfer-Encoding", "chunked"],
+      ["Content-Length", "100"]
+    ],
+    "query_string": null,
+    "body": "0\r\n\r\nGET /admin HTTP/1.1\r\nHost: example.com\r\n\r\n"
+  }
+}

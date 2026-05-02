@@ -1,3 +1,26 @@
+/*
+ * Windows Firewall (netsh/API) ICMP Backend
+ *
+ * Capabilities:
+ *   - Block/allow ICMP by direction (inbound/outbound/both)
+ *   - Per-IP exemption (IPv4 and IPv6)
+ *   - ICMP type/code matching
+ *   - Interface filtering
+ *   - No built-in rate limiting (Windows Firewall API has no rate-limit primitives)
+ *
+ * Required privilege: Administrator (checked via platform::is_admin)
+ *
+ * INJECTION WARNING: The windows_firewall crate abstracts the netsh/PowerShell calls.
+ * If this backend is modified to shell out to netsh or PowerShell directly, all arguments
+ * (rule names, IPs, interface names) MUST be validated against injection. The config
+ * validation in IcmpFilterConfig::validate() restricts table names to alphanumeric plus
+ * underscore/hyphen, and interface names to alphanumeric plus underscore/dot/hyphen, which
+ * mitigates shell injection when these values are interpolated into command arguments.
+ *
+ * When is_enforcing() == false: the filter was created without admin rights;
+ * no Windows Firewall rules are actually created.
+ */
+
 use crate::icmp_filter::{
     config::{Direction, IcmpFilterConfig, IcmpTypeRule, InterfaceSpec},
     error::{IcmpFilterError, Result},
@@ -393,6 +416,11 @@ impl WinFwFilter {
 
     fn remove_block_rules(&self) -> Result<()> {
         if !self.has_admin {
+            tracing::warn!(
+                "Windows Firewall backend inactive: skipping rule removal (no admin privileges). \
+                 {} rule names remain tracked but are not enforced.",
+                self.rule_names.len()
+            );
             return Ok(());
         }
 
@@ -466,6 +494,10 @@ impl IcmpFilter for WinFwFilter {
         self.enabled
     }
 
+    fn is_enforcing(&self) -> bool {
+        self.enabled && self.has_admin
+    }
+
     fn backend(&self) -> FilterBackend {
         FilterBackend::WindowsFirewall
     }
@@ -492,6 +524,13 @@ impl IcmpFilter for WinFwFilter {
             self.create_block_rules()?;
         }
 
+        if !self.has_admin {
+            tracing::warn!(
+                "Windows Firewall backend is not enforcing: administrator privileges not held. \
+                 Config updated but changes will not take effect until process runs as admin."
+            );
+        }
+
         Ok(())
     }
 
@@ -506,6 +545,29 @@ impl Drop for WinFwFilter {
             if let Err(e) = self.remove_block_rules() {
                 tracing::warn!("Failed to remove Windows Firewall rules on drop: {}", e);
             }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "icmp-winfw"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_winfw_not_enforcing_without_admin() {
+        let config = IcmpFilterConfig::default();
+        let filter = WinFwFilter::new(config).expect("new should succeed");
+        assert!(!filter.is_enforcing());
+        assert!(!filter.is_enabled());
+    }
+
+    #[test]
+    fn test_winfw_enable_fails_without_admin() {
+        let config = IcmpFilterConfig::default();
+        let mut filter = WinFwFilter::new(config).expect("new should succeed");
+        if !filter.has_admin {
+            let result = filter.enable();
+            assert!(result.is_err());
         }
     }
 }

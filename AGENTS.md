@@ -18,6 +18,7 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | Config | [`src/config/AGENTS.override.md`](src/config/AGENTS.override.md) | Configuration patterns |
 | Admin API | [`src/admin/AGENTS.override.md`](src/admin/AGENTS.override.md) | Admin API patterns |
 | Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
+| Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
 | Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
 ## Project Overview
@@ -29,10 +30,10 @@ MaluWAF is a WAF (Web Application Firewall) with a multi-process architecture:
 
 ### Scalability Target
 
-MaluWAF is designed for **high scalability** with targets well in excess of **500K requests/second**.
+MaluWAF is designed for **high scalability** with targets well in excess of **1000K requests/second** (1 million RPS).
 
 This has several implications:
-- **Every allocation matters**: At 500K rps, even small per-request allocations compound to millions/sec
+- **Every allocation matters**: At 1000K rps, even small per-request allocations compound to millions/sec
 - **Avoid O(n) operations in hot paths**: Linear searches, repeated string conversions, unnecessary clones
 - **Prefer O(1) lookups**: HashMap/HashSet over Vec iteration for any frequency
 - **Reuse buffers**: Thread-local buffers, object pools, moka caches instead of per-request allocations

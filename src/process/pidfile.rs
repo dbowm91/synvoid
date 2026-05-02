@@ -1,9 +1,11 @@
 #![allow(deprecated)]
 
+#[cfg(unix)]
 use nix::fcntl::{flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
@@ -348,17 +350,20 @@ impl Default for PidFileManager {
     }
 }
 
+#[cfg(unix)]
 pub struct OverseerLockFile {
     lock_path: PathBuf,
     lock_file: Option<File>,
 }
 
+#[cfg(unix)]
 impl Default for OverseerLockFile {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(unix)]
 impl OverseerLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
@@ -386,11 +391,20 @@ impl OverseerLockFile {
     }
 
     pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
+        use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
+
         if let Some(parent) = self.lock_path.parent() {
             fs::create_dir_all(parent).map_err(OverseerLockError::IoError)?;
         }
 
-        let file = File::create(&self.lock_path).map_err(OverseerLockError::IoError)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.lock_path)
+            .map_err(OverseerLockError::IoError)?;
 
         match flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
             Ok(()) => {}
@@ -405,8 +419,10 @@ impl OverseerLockFile {
         let pid = std::process::id();
         let content = format!("{}\n{}", pid, crate::utils::safe_unix_timestamp());
 
-        use std::io::Write;
         let mut f = &file;
+        f.set_len(0).map_err(OverseerLockError::IoError)?;
+        f.seek(SeekFrom::Start(0))
+            .map_err(OverseerLockError::IoError)?;
         f.write_all(content.as_bytes())
             .map_err(OverseerLockError::IoError)?;
         f.flush().map_err(OverseerLockError::IoError)?;
@@ -504,6 +520,62 @@ impl OverseerLockFile {
     }
 }
 
+#[cfg(unix)]
+impl Drop for OverseerLockFile {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+#[cfg(not(unix))]
+pub struct OverseerLockFile {
+    lock_path: PathBuf,
+}
+
+#[cfg(not(unix))]
+impl Default for OverseerLockFile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(unix))]
+impl OverseerLockFile {
+    pub fn new() -> Self {
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(DEFAULT_RUSTWAF_DIR);
+
+        let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
+
+        Self { lock_path }
+    }
+
+    pub fn with_custom_dir(dir: PathBuf) -> Self {
+        let lock_path = dir.join(OVERSEER_LOCK_FILE);
+        Self { lock_path }
+    }
+
+    pub fn lock_path(&self) -> &PathBuf {
+        &self.lock_path
+    }
+
+    pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
+        Err(OverseerLockError::LockError(
+            "Overseer lock file not supported on this platform".into(),
+        ))
+    }
+
+    pub fn release(&mut self) {}
+
+    pub fn is_locked(&self) -> bool {
+        false
+    }
+
+    pub fn cleanup_stale_locks(_max_age_secs: u64) {}
+}
+
+#[cfg(not(unix))]
 impl Drop for OverseerLockFile {
     fn drop(&mut self) {
         self.release();

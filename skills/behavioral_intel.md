@@ -111,7 +111,7 @@ cargo test --test integration_test -- behavioral
 3. **Privacy leakage** - Audit fingerprint data to ensure no PII
 
 ## Scalability
-At 500K RPS:
+At 1000K RPS:
 - HashMap with 10K max fingerprints
 - LSH buckets for O(1) approximate lookup
 - Periodic cleanup of expired fingerprints

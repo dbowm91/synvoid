@@ -14,7 +14,7 @@ After deep investigation, 5 significant issues were identified in the edge node 
 |---|-------|----------|--------|
 | 1 | `edge_only` flag is defined but never enforced | High | Image poisoning applied when it shouldn't be |
 | 2 | `MeshProxy.proxy_cache` is populated but never used | High | Dynamic cache preferences are stored but have no effect |
-| 3 | Direct DHT lookup in `transform_response()` bypasses cache | Medium | Performance degradation at scale (500K req/sec) |
+| 3 | Direct DHT lookup in `transform_response()` bypasses cache | Medium | Performance degradation at scale (1000K req/sec) |
 | 4 | Non-mesh mode completely bypasses preference forwarding | Medium | Origin-as-edge lacks dynamic config updates |
 | 5 | `MeshTransportManager` caches not invalidated on config updates | Medium | Stale config served for up to 5 minutes |
 
@@ -116,10 +116,10 @@ let minification = tm.get_minification_for_site(upstream_id).await;  // Uses cac
 // But proxy_cache_preferences uses direct DHT lookup!
 ```
 
-**Performance impact at 500K req/sec**:
+**Performance impact at 1000K req/sec**:
 - Every response triggers synchronous DHT `get_record()` call
 - No caching benefit - O(n) per request
-- At 500K req/sec, even 1-2μs per lookup = 500K-1M ops/sec with no amortization
+- At 1000K req/sec, even 1-2μs per lookup = 1000K-2M ops/sec with no amortization
 
 **Fix required**: Use `tm.get_proxy_cache_preferences_for_site(upstream_id).await` instead of direct DHT lookup.
 

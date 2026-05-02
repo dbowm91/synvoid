@@ -178,8 +178,6 @@ impl<T, E> ResultExt<T, E> for Result<T, E> {
 pub trait OptionExt<T> {
     /// Executes a closure if the option contains a value.
     fn if_some<F: FnOnce(&T)>(self, f: F);
-    /// Placeholder for logic when option is None.
-    fn if_none(self);
     /// Converts None to an Err with the given context message.
     fn require(self, context: &str) -> Result<T, String>;
 }
@@ -193,16 +191,17 @@ impl<T> OptionExt<T> for Option<T> {
     }
 
     #[inline]
-    fn if_none(self) {
-        if self.is_none() {}
-    }
-
-    #[inline]
     fn require(self, context: &str) -> Result<T, String> {
         self.ok_or_else(|| context.to_string())
     }
 }
 
+/// Thread-safe running state flag, shared across clones via `Arc<AtomicBool>`.
+///
+/// Uses `Acquire`/`Release` ordering: the flag only guards a single boolean
+/// with no dependent memory that requires sequential consistency.  `Release`
+/// stores ensure prior writes are visible to `Acquire` loads, which is
+/// sufficient for stop/drain signalling.
 #[derive(Clone, Debug)]
 pub struct RunningFlag {
     inner: Arc<AtomicBool>,
@@ -218,22 +217,22 @@ impl RunningFlag {
 
     #[inline]
     pub fn is_running(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn get(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn stop(&self) {
-        self.inner.store(false, Ordering::SeqCst);
+        self.inner.store(false, Ordering::Release);
     }
 
     #[inline]
     pub fn set(&self, value: bool) {
-        self.inner.store(value, Ordering::SeqCst);
+        self.inner.store(value, Ordering::Release);
     }
 }
 
@@ -243,6 +242,12 @@ impl Default for RunningFlag {
     }
 }
 
+/// Thread-safe drain state flag, shared across clones via `Arc<AtomicBool>`.
+///
+/// Uses `Acquire`/`Release` ordering: the flag only guards a single boolean
+/// with no dependent memory that requires sequential consistency.  `Release`
+/// stores ensure prior writes are visible to `Acquire` loads, which is
+/// sufficient for stop/drain signalling.
 #[derive(Clone, Debug)]
 pub struct DrainFlag {
     inner: Arc<AtomicBool>,
@@ -258,27 +263,27 @@ impl DrainFlag {
 
     #[inline]
     pub fn is_draining(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn get(&self) -> bool {
-        self.inner.load(Ordering::SeqCst)
+        self.inner.load(Ordering::Acquire)
     }
 
     #[inline]
     pub fn start_drain(&self) {
-        self.inner.store(true, Ordering::SeqCst);
+        self.inner.store(true, Ordering::Release);
     }
 
     #[inline]
     pub fn end_drain(&self) {
-        self.inner.store(false, Ordering::SeqCst);
+        self.inner.store(false, Ordering::Release);
     }
 
     #[inline]
     pub fn set(&self, value: bool) {
-        self.inner.store(value, Ordering::SeqCst);
+        self.inner.store(value, Ordering::Release);
     }
 }
 
@@ -289,7 +294,6 @@ impl Default for DrainFlag {
 }
 
 const DURATION_SUFFIXES: &[(&str, &str, u64)] = &[
-    ("milliseconds", "ms", 1),
     ("seconds", "s", 1),
     ("sec", "s", 1),
     ("minutes", "m", 60),
@@ -324,11 +328,24 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         return None;
     }
 
+    // Handle millisecond suffixes before all other suffix matching to prevent
+    // "ms" from being misinterpreted as "m" (last char 's') and "milliseconds"
+    // from matching "seconds". Both convert to seconds by integer-dividing by
+    // 1000. Sub-second precision is truncated since the return type is u64.
+    if let Some(stripped) = s.strip_suffix("ms") {
+        let value = stripped.parse::<u64>().ok()?;
+        return Some(value / 1000);
+    }
+    if s.len() > 12 && s[s.len() - 12..].eq_ignore_ascii_case("milliseconds") {
+        let value = s[..s.len() - 12].parse::<u64>().ok()?;
+        return Some(value / 1000);
+    }
+
     for (long_suffix, _short_suffix, multiplier) in DURATION_SUFFIXES {
         let suffix_len = long_suffix.len();
         if s.len() > suffix_len && s[s.len() - suffix_len..].eq_ignore_ascii_case(long_suffix) {
             let value = s[..s.len() - suffix_len].parse::<u64>().ok()?;
-            return Some(value * multiplier);
+            return value.checked_mul(*multiplier);
         }
     }
 
@@ -336,13 +353,8 @@ pub fn parse_duration(s: &str) -> Option<u64> {
     for (short_suffix, multiplier) in DURATION_SUFFIX_SHORT {
         if last_char.eq_ignore_ascii_case(short_suffix) {
             let value = s[..s.len() - 1].parse::<u64>().ok()?;
-            return Some(value * multiplier);
+            return value.checked_mul(*multiplier);
         }
-    }
-
-    if let Some(stripped) = s.strip_suffix("ms") {
-        let value = stripped.parse::<u64>().ok()?;
-        return Some(value / 1000);
     }
 
     None
@@ -386,6 +398,9 @@ pub fn urlencoding_decode(input: &str) -> String {
                 if let Ok(byte) = u8::from_str_radix(&hex, 16) {
                     if byte.is_ascii() {
                         result.push(byte as char);
+                        continue;
+                    } else {
+                        result.push_str(&hex);
                         continue;
                     }
                 }
@@ -492,7 +507,10 @@ fn hash_ipv6(ipv6: std::net::Ipv6Addr) -> u64 {
 }
 
 #[inline]
-pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
+pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
+    if num_slots == 0 {
+        return None;
+    }
     if num_slots.is_power_of_two() {
         let mask = num_slots - 1;
         match ip {
@@ -503,11 +521,11 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
                     | (u32::from(octets[2]) << 8)
                     | u32::from(octets[3]))
                 .wrapping_mul(0x9e3779b9);
-                ((hash >> 16) as usize) & mask
+                Some(((hash >> 16) as usize) & mask)
             }
             IpAddr::V6(ipv6) => {
                 let hash = hash_ipv6(ipv6);
-                ((hash >> 32) as usize) & mask
+                Some(((hash >> 32) as usize) & mask)
             }
         }
     } else {
@@ -519,11 +537,11 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> usize {
                     | (u32::from(octets[2]) << 8)
                     | u32::from(octets[3]))
                 .wrapping_mul(0x9e3779b9);
-                (hash >> 16) as usize % num_slots
+                Some((hash >> 16) as usize % num_slots)
             }
             IpAddr::V6(ipv6) => {
                 let hash = hash_ipv6(ipv6);
-                (hash >> 32) as usize % num_slots
+                Some((hash >> 32) as usize % num_slots)
             }
         }
     }
@@ -551,8 +569,8 @@ mod ip_tests {
     #[test]
     fn test_ip_to_slot_consistency() {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        let slot1 = ip_to_slot(ip, 65536);
-        let slot2 = ip_to_slot(ip, 65536);
+        let slot1 = ip_to_slot(ip, 65536).unwrap();
+        let slot2 = ip_to_slot(ip, 65536).unwrap();
         assert_eq!(slot1, slot2, "Same IP should produce same slot");
     }
 
@@ -560,8 +578,8 @@ mod ip_tests {
     fn test_ip_to_slot_different_ips() {
         let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
-        let slot1 = ip_to_slot(ip1, 65536);
-        let slot2 = ip_to_slot(ip2, 65536);
+        let slot1 = ip_to_slot(ip1, 65536).unwrap();
+        let slot2 = ip_to_slot(ip2, 65536).unwrap();
         assert_ne!(
             slot1, slot2,
             "Different IPs should likely produce different slots"
@@ -571,8 +589,20 @@ mod ip_tests {
     #[test]
     fn test_ipv6_to_slot() {
         let ip = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-        let slot = ip_to_slot(ip, 65536);
+        let slot = ip_to_slot(ip, 65536).unwrap();
         assert!(slot < 65536);
+    }
+
+    #[test]
+    fn test_ip_to_slot_zero_slots() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(ip_to_slot(ip, 0), None);
+    }
+
+    #[test]
+    fn test_ip_to_slot_zero_slots_ipv6() {
+        let ip = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+        assert_eq!(ip_to_slot(ip, 0), None);
     }
 
     #[test]
@@ -614,6 +644,25 @@ mod tests {
         assert_eq!(parse_duration("never"), Some(0), "never");
         assert_eq!(parse_duration("permanent"), Some(0), "permanent");
         assert_eq!(parse_duration("0"), Some(0), "0");
+    }
+
+    #[test]
+    fn test_parse_duration_milliseconds() {
+        assert_eq!(parse_duration("500ms"), Some(0));
+        assert_eq!(parse_duration("1500ms"), Some(1));
+        assert_eq!(parse_duration("30000ms"), Some(30));
+        assert_eq!(parse_duration("500milliseconds"), Some(0));
+        assert_eq!(parse_duration("1500milliseconds"), Some(1));
+        assert_eq!(parse_duration("30000milliseconds"), Some(30));
+        assert_eq!(parse_duration("1500MILLISECONDS"), Some(1));
+        assert_eq!(parse_duration("1500MS"), None);
+    }
+
+    #[test]
+    fn test_parse_duration_overflow() {
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("xyz"), None);
+        assert_eq!(parse_duration("999999999999999999999999999999s"), None);
     }
 
     #[test]
@@ -1000,6 +1049,8 @@ mod option_ext_tests {
 #[cfg(test)]
 mod error_helpers_tests {
     use super::errors;
+    use super::DrainFlag;
+    use super::RunningFlag;
 
     #[test]
     fn test_ipc_connect_failed() {
@@ -1031,6 +1082,87 @@ mod error_helpers_tests {
         let msg = errors::health::validation_failed(3, 10);
         assert!(msg.contains("3"));
         assert!(msg.contains("10"));
+    }
+
+    #[test]
+    fn test_running_flag_new_is_running() {
+        let flag = RunningFlag::new();
+        assert!(flag.is_running());
+        assert!(flag.get());
+    }
+
+    #[test]
+    fn test_running_flag_stop() {
+        let flag = RunningFlag::new();
+        flag.stop();
+        assert!(!flag.is_running());
+        assert!(!flag.get());
+    }
+
+    #[test]
+    fn test_running_flag_set() {
+        let flag = RunningFlag::new();
+        flag.set(false);
+        assert!(!flag.is_running());
+        flag.set(true);
+        assert!(flag.is_running());
+    }
+
+    #[test]
+    fn test_running_flag_clones_share_state() {
+        let flag = RunningFlag::new();
+        let clone = flag.clone();
+        assert!(clone.is_running());
+        flag.stop();
+        assert!(!clone.is_running());
+        assert!(!flag.is_running());
+    }
+
+    #[test]
+    fn test_running_flag_default() {
+        let flag = RunningFlag::default();
+        assert!(flag.is_running());
+    }
+
+    #[test]
+    fn test_drain_flag_new_not_draining() {
+        let flag = DrainFlag::new();
+        assert!(!flag.is_draining());
+        assert!(!flag.get());
+    }
+
+    #[test]
+    fn test_drain_flag_start_end() {
+        let flag = DrainFlag::new();
+        flag.start_drain();
+        assert!(flag.is_draining());
+        flag.end_drain();
+        assert!(!flag.is_draining());
+    }
+
+    #[test]
+    fn test_drain_flag_set() {
+        let flag = DrainFlag::new();
+        flag.set(true);
+        assert!(flag.is_draining());
+        flag.set(false);
+        assert!(!flag.is_draining());
+    }
+
+    #[test]
+    fn test_drain_flag_clones_share_state() {
+        let flag = DrainFlag::new();
+        let clone = flag.clone();
+        assert!(!clone.is_draining());
+        flag.start_drain();
+        assert!(clone.is_draining());
+        assert!(flag.is_draining());
+    }
+
+    #[test]
+    fn test_drain_flag_default() {
+        let flag = DrainFlag::default();
+        assert!(!flag.is_draining());
     }
 }
 

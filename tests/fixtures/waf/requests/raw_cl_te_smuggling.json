@@ -1,0 +1,19 @@
+{
+  "id": "raw_cl_te_smuggling",
+  "description": "Content-Length and Transfer-Encoding conflict for request smuggling",
+  "entry_point": "header:Transfer-Encoding",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Raw CL/TE smuggling - known bypass case to track",
+  "request": {
+    "method": "POST",
+    "path": "/api/data",
+    "headers": [
+      ["Host", "example.com"],
+      ["Transfer-Encoding", "chunked"],
+      ["Content-Length", "5"]
+    ],
+    "query_string": null,
+    "body_file": "../bodies/raw_cl_te_smuggling.txt"
+  }
+}

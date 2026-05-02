@@ -1501,3 +1501,90 @@ impl DhtRecord {
     }
 }
 ```
+
+---
+
+## Wave 16 Security Fixes (2026-05-01)
+
+### Trusted Proxy XFF Handling
+
+**Location**: `src/waf/request_sanitization.rs`
+
+**Issue**: `get_real_ip()` returned `ips[0]` (first IP) but standard XFF order is `client, proxy1, proxy2`. The client is the first untrusted public IP before the trusted proxy suffix, not the first IP overall.
+
+**Fix**: Replaced `validate_forwarded_chain()` with `find_client_ip_in_xff()` that scans XFF right-to-left:
+- First trusted proxy marks the trusted suffix boundary
+- Client is the first untrusted public IP immediately before the trusted suffix
+- Private/spoofed middle IPs handled correctly
+
+### Cache Purge Token Comparison
+
+**Location**: `src/proxy/mod.rs`
+
+**Issue**: Cache purge token comparison used normal string equality (`==`) instead of constant-time comparison.
+
+**Fix**: Changed to use `subtle::ConstantTimeEq`:
+```rust
+use subtle::ConstantTimeEq;
+// Before: token == required_token.as_str()
+// After: required_token.as_bytes().ct_eq(token.as_bytes()).into()
+```
+
+### Attack Detection Action Semantics
+
+**Location**: `src/waf/mod.rs`
+
+**Issue**: `AttackDetectionConfig.action` was validated but ignored at runtime. All attacks returned `WafDecision::Stall`.
+
+**Fix**: `check_attack_patterns()` now reads action from config:
+- `stall` (default): returns `WafDecision::Stall`
+- `block`: returns `WafDecision::Block(403, "Forbidden")`
+- `log`: records metrics but returns `None` (request passes)
+
+### Serverless WAF Bypass Removed
+
+**Location**: `src/http/server.rs`, `src/config/serverless.rs`
+
+**Issue**: `serverless_only` flag bypassed `waf.check_request_full()` unconditionally.
+
+**Fix**: Removed unconditional skip. Added `ServerlessWafMode` enum (`enforce|log|off`) with default `enforce`. Only explicit `waf_mode = "off"` skips WAF.
+
+### Body Inspection UTF-8 Hardening
+
+**Location**: `src/waf/attack_detection/sqli.rs`, `xss.rs`, `normalizer.rs`
+
+**Issue**: `unwrap_or("")` on invalid UTF-8 body input allowed payloads to evade inspection.
+
+**Fix**: Changed to `String::from_utf8_lossy(body)` to decode invalid UTF-8 with replacement characters instead of empty string.
+
+### Retry Policy Honesty
+
+**Location**: `src/proxy/mod.rs`, `src/proxy/retry.rs`
+
+**Issue**: `RetryConfig.enabled` was never checked - retries happened even when disabled. `retry_non_idempotent` was ignored. Off-by-one in attempt counting.
+
+**Fix**: Added to `forward_with_pool()`:
+```rust
+let retry_enabled = retry_config.map(|c| c.enabled).unwrap_or(false);
+let should_retry_method = retry_config
+    .map(|c| should_retry_request_impl(&method, c))
+    .unwrap_or(true);
+
+// Method safety check: GET/HEAD/OPTIONS/TRACE are idempotent
+pub fn should_retry_request(method: &Method, config: &RetryConfig) -> bool {
+    is_idempotent_method(method) || config.retry_non_idempotent
+}
+```
+
+### Request Header Forwarding
+
+**Location**: `src/proxy/headers.rs`
+
+**Issue**: Default forwarding only preserved 4 headers (X-Real-IP, XFF, XFP, Host). Application headers like Authorization, Content-Type, Cookie were dropped.
+
+**Fix**: Changed default to forward all end-to-end headers:
+- Strip hop-by-hop headers (Connection, Keep-Alive, TE, etc.)
+- Sanitize spoofable forwarded headers from client
+- Respect `clear`/`hide` config for explicit removals
+- Apply `set` overrides for header values
+```

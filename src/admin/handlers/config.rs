@@ -166,10 +166,23 @@ pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    let _config_dir = {
+    let mesh_enabled = {
         let config = state.process.config.read().await;
-        config.config_dir.clone()
+        config
+            .main
+            .mesh
+            .as_ref()
+            .map(|m| m.enabled)
+            .unwrap_or(false)
     };
+
+    if mesh_enabled {
+        return Ok(Json(StatusResponse::restart_required(
+            "Config hot-reload is not supported when mesh feature is enabled. Mesh, \
+            YARA rules, threat intel, and honeypot changes require full worker restart. \
+            Please restart the worker to apply mesh-related configuration changes.",
+        )));
+    }
 
     let mut config = state.process.config.write().await;
     let results = config.reload_all();
@@ -194,7 +207,6 @@ pub async fn reload_config(
         }
     }
 
-    // Only broadcast to workers if all reloads succeeded
     let broadcast_success = failed == 0;
 
     drop(config);
@@ -208,43 +220,44 @@ pub async fn reload_config(
     let message = if mimes_reloaded {
         if broadcast_success {
             format!(
-                "Reloaded {} configs, {} failed, mimes reloaded, workers notified",
+                "Hot reload applied: {} configs reloaded, {} failed, mimes reloaded, workers notified",
                 loaded, failed
             )
         } else {
             format!(
-                "Reloaded {} configs, {} failed (workers not notified)",
+                "Partial reload: {} configs reloaded, {} failed (workers not notified)",
                 loaded, failed
             )
         }
     } else if let Some(err) = mimes_error {
         if broadcast_success {
             format!(
-                "Reloaded {} configs, {} failed, mimes reload failed: {}, workers notified",
+                "Hot reload applied: {} configs reloaded, {} failed, mimes reload failed: {}, workers notified",
                 loaded, failed, err
             )
         } else {
             format!(
-                "Reloaded {} configs, {} failed, mimes reload failed: {} (workers not notified)",
+                "Partial reload: {} configs reloaded, {} failed, mimes reload failed: {} (workers not notified)",
                 loaded, failed, err
             )
         }
     } else if broadcast_success {
         format!(
-            "Reloaded {} configs, {} failed, workers notified",
+            "Hot reload applied: {} configs reloaded, {} failed, workers notified",
             loaded, failed
         )
     } else {
         format!(
-            "Reloaded {} configs, {} failed (workers not notified)",
+            "Partial reload: {} configs reloaded, {} failed (workers not notified)",
             loaded, failed
         )
     };
 
-    Ok(Json(StatusResponse {
-        status: if failed == 0 { "success" } else { "partial" }.to_string(),
-        message,
-    }))
+    if failed == 0 {
+        Ok(Json(StatusResponse::hot_reload_applied(message)))
+    } else {
+        Ok(Json(StatusResponse::partial_reload(message)))
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

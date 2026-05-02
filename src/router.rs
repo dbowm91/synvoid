@@ -698,11 +698,16 @@ impl Router {
         None
     }
 
-    fn route_to_target(&self, site_config: &Arc<SiteConfig>, path: &str) -> RouteResult {
+    fn route_to_target(
+        &self,
+        site_config: &Arc<SiteConfig>,
+        path: &str,
+        clean_host: &str,
+    ) -> RouteResult {
         let site_id = site_config.site_id();
 
         if site_config.security.reject_unknown_hosts.unwrap_or(false)
-            && !self.is_host_valid_for_site(&site_id, site_config)
+            && !self.is_host_valid_for_site(clean_host, site_config)
         {
             return RouteResult::NotFound("Host not allowed".to_string());
         }
@@ -984,14 +989,14 @@ impl Router {
                         if self.is_host_valid_for_site(&clean_host, site_config)
                             || site_config.site.domains.is_empty()
                         {
-                            return self.route_to_target(site_config, path);
+                            return self.route_to_target(site_config, path, &clean_host);
                         }
                         if let Some(cleaned) = self.cleaned_site_domains.get(site_id) {
                             for clean_domain in cleaned {
                                 if clean_host == clean_domain.as_ref()
                                     || clean_host.ends_with(&format!(".{}", clean_domain))
                                 {
-                                    return self.route_to_target(site_config, path);
+                                    return self.route_to_target(site_config, path, &clean_host);
                                 }
                             }
                         }
@@ -1001,12 +1006,12 @@ impl Router {
         }
 
         if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
-            return self.route_to_target(site_config, path);
+            return self.route_to_target(site_config, path, &clean_host);
         }
 
         for (domain, site_config) in &self.suffix_domain_map {
             if clean_host.ends_with(domain.as_ref()) {
-                return self.route_to_target(site_config, path);
+                return self.route_to_target(site_config, path, &clean_host);
             }
         }
 
@@ -1014,13 +1019,13 @@ impl Router {
             if let Some(addr) = local_addr {
                 if let Some(default_site_id) = self.default_servers.get(&addr) {
                     if let Some(site_config) = self.domain_map.get(default_site_id as &str) {
-                        return self.route_to_target(site_config, path);
+                        return self.route_to_target(site_config, path, &clean_host);
                     }
                 }
             }
             if let Some(default_site_id) = self.default_servers.values().next() {
                 if let Some(site_config) = self.domain_map.get(default_site_id as &str) {
-                    return self.route_to_target(site_config, path);
+                    return self.route_to_target(site_config, path, &clean_host);
                 }
             }
         }

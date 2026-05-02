@@ -19,7 +19,7 @@ name = "server"
 path = "src/bin/server.rs"
 
 [features]
-default = ["socket-handoff", "post-quantum", "mesh", "dns"]
+default = ["socket-handoff", "mesh", "dns"]
 dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
 wireguard = ["dep:defguard_boringtun"]
@@ -226,7 +226,7 @@ sha3 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 base32 = "0.5"
 libc = "0.2"
-windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Console", "Win32_Networking_WinSock", "Win32_Security"] }
 tonic = { version = "0.14", features = ["gzip", "transport"] }
 tonic-reflection = "0.14"
 tonic-prost = "0.14"

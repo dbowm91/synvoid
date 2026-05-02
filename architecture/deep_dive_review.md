@@ -35,7 +35,7 @@ The WAF is built for streaming inspection, meaning it can detect attacks without
 The proxy layer is structurally sound and heavily inspired by Nginx. There is a clean separation of concerns between domain/path routing (`Router`), upstream connection management and health checking (`UpstreamPool`), and the actual request forwarding and caching (`ProxyServer`).
 
 **Performance & Scalability Bottlenecks:**
-While designed for 500K+ RPS, there are a few potential bottlenecks at extreme scale:
+While designed for 1000K+ RPS with 100K+ nodes, there are a few potential bottlenecks at extreme scale:
 1.  **Routing Complexity:** Exact domain matches are O(1) (HashMaps), but wildcard/suffix domains and Regex-based paths require linear iteration (`O(n)`). Heavy reliance on complex Regex routing will impact throughput.
 2.  **Upstream Locks:** `UpstreamPool` uses `parking_lot::RwLock` for managing backend server lists. While efficient for read-heavy workloads, extremely high concurrent request rates paired with highly dynamic backend health state changes could introduce thread contention.
 3.  **Memory Allocations:** There is notable use of `Arc` and `String` cloning in the routing hot path (e.g., `RouteTarget`). Migrating to more zero-copy string references (`&'a str` or `bytes::Bytes`) in the routing tree could yield measurable CPU savings at peak load.

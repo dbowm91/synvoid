@@ -27,8 +27,8 @@ impl XssDetector {
     }
 
     pub fn detect(&self, input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
-        let input_str = std::str::from_utf8(input).unwrap_or("");
-        let normalized = self.normalizer.normalize(input_str);
+        let input_str = String::from_utf8_lossy(input);
+        let normalized = self.normalizer.normalize(&input_str);
 
         // 1. Try pattern-based detection - search lowercase to match lowercase patterns
         let search_target: &str = &normalized.lowercased;

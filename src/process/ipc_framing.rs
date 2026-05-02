@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+pub const MAX_MESSAGE_SIZE: usize = super::ipc_signed::MAX_IPC_MESSAGE_SIZE;
 pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
 pub fn write_message_sync<W, T>(writer: &mut W, msg: &T) -> io::Result<()>

@@ -89,6 +89,6 @@ cargo clippy --lib -- -D warnings
 4. **Bytes vs Vec<u8>** - Use `Bytes::copy_from_slice()` for zero-copy chunk storage
 
 ## Memory Budget
-At 500K RPS:
+At 1000K RPS:
 - Target: 256KB max buffer per request
 - Total concurrent: 1000 requests = 256MB

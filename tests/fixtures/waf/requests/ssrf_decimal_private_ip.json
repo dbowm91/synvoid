@@ -1,0 +1,17 @@
+{
+  "id": "ssrf_decimal_private_ip",
+  "description": "SSRF attempt using decimal notation for private IP",
+  "entry_point": "query_string",
+  "expected_result": "detect",
+  "attack_type": "ssrf",
+  "notes": "SSRF with decimal IP notation - 3232235777 = 192.168.1.1",
+  "request": {
+    "method": "GET",
+    "path": "/proxy",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": "url=http://3232235777:8080/admin",
+    "body": null
+  }
+}

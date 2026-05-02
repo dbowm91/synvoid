@@ -112,8 +112,8 @@ use crate::http::headers::{
     is_websocket_upgrade,
 };
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, send_request_streaming,
-    send_request_with_body_and_timeout, HttpClient, UpstreamTlsConfig,
+    create_http_client_with_config, send_request_streaming, send_request_with_body_and_timeout,
+    HttpClient, UpstreamTlsConfig,
 };
 use crate::mesh::config::MeshConfig;
 use crate::mesh::transports::MeshTransportManager;
@@ -124,7 +124,11 @@ use crate::process::current_timestamp;
 use crate::protocol::trait_def::{ProtocolHandler, WafAction};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
-use crate::proxy::{build_forward_headers, build_headers_to_filter, filter_response_headers_buf};
+use crate::proxy::client_registry::UpstreamClientRegistry;
+use crate::proxy::{
+    apply_response_size_limit, build_forward_headers, build_headers_to_filter,
+    filter_response_headers_buf, join_upstream_url, PreparedUpstreamTarget,
+};
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
@@ -340,6 +344,7 @@ pub struct HttpServer {
     connection_limit: Arc<Semaphore>,
     app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
 }
 
 impl HttpServer {
@@ -379,6 +384,7 @@ impl HttpServer {
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             app_servers: None,
             mesh_backend_pool: None,
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
         }
     }
 
@@ -465,6 +471,7 @@ impl HttpServer {
         let connection_limit = self.connection_limit.clone();
         let app_servers = self.app_servers.clone();
         let mesh_backend_pool = self.mesh_backend_pool.clone();
+        let upstream_client_registry = self.upstream_client_registry.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -512,6 +519,7 @@ impl HttpServer {
                             let connection_limit = connection_limit.clone();
                             let app_servers = app_servers.clone();
                             let mesh_backend_pool = mesh_backend_pool.clone();
+                            let upstream_client_registry = upstream_client_registry.clone();
 
                             let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
                                 let mut peek_buf = [0u8; 16];
@@ -581,8 +589,9 @@ impl HttpServer {
                                     let connection_limit = connection_limit.clone();
                                     let app_servers = app_servers.clone();
                                     let mesh_backend_pool = mesh_backend_pool.clone();
+                                    let upstream_client_registry = upstream_client_registry.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -635,6 +644,7 @@ impl HttpServer {
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
         mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+        upstream_client_registry: Arc<UpstreamClientRegistry>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
         // SECTION 1: Connection Management
@@ -1427,32 +1437,35 @@ impl HttpServer {
         let method_str = method.to_string();
 
         // ============================================================================
-        // SECTION 13: WAF Full Request Check (skip for serverless_only sites with Serverless backend)
+        // SECTION 13: WAF Full Request Check
         // ============================================================================
-        let waf_decision = if matches!(target.backend_type, crate::router::BackendType::Serverless)
-            && target.site_config.serverless_only
-        {
-            tracing::debug!(
-                "serverless_only site - skipping WAF check for {} {}",
-                method_str,
-                path
-            );
-            crate::proxy::WafDecision::Pass
-        } else {
-            waf.check_request_full(
-                Some(&site_id),
-                client_ip,
-                method_str.as_str(),
-                &path,
-                query_string,
-                &parts.headers,
-                body_slice_ref,
-                user_agent.as_deref(),
-                None,
-                Some(&target.site_config.bot),
-            )
-            .await
-        };
+        let waf_decision =
+            if matches!(target.backend_type, crate::router::BackendType::Serverless)
+                && target.site_config.serverless.as_ref().is_some_and(|s| {
+                    s.waf_mode == crate::config::serverless::ServerlessWafMode::Off
+                })
+            {
+                tracing::debug!(
+                    "serverless route with waf_mode=off - skipping WAF check for {} {}",
+                    method_str,
+                    path
+                );
+                crate::proxy::WafDecision::Pass
+            } else {
+                waf.check_request_full(
+                    Some(&site_id),
+                    client_ip,
+                    method_str.as_str(),
+                    &path,
+                    query_string,
+                    &parts.headers,
+                    body_slice_ref,
+                    user_agent.as_deref(),
+                    None,
+                    Some(&target.site_config.bot),
+                )
+                .await
+            };
 
         let response = match waf_decision {
             // ============================================================================
@@ -2786,7 +2799,11 @@ impl HttpServer {
                     }
                 }
 
-                let target_url = format!("{}{}", target.upstream, path);
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &target.upstream,
+                    &path,
+                    Some(&target.site_config.proxy),
+                );
 
                 let headers_to_filter = build_headers_to_filter(
                     &main_config.security.more_clear_headers,
@@ -2813,15 +2830,12 @@ impl HttpServer {
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
                     .and_then(UpstreamTlsConfig::from_site_config);
-                let site_client = site_tls_config.as_ref().map(|tls| {
-                    create_upstream_client(
-                        std::time::Duration::from_secs(5),
-                        100,
-                        std::time::Duration::from_secs(30),
-                        tls,
-                    )
-                });
-                let forwarding_client = site_client.as_ref().unwrap_or(&client);
+                let forwarding_client = if site_tls_config.is_some() {
+                    upstream_client_registry
+                        .get_or_create(&target.site_id, site_tls_config.as_ref())
+                } else {
+                    Arc::new(client.clone())
+                };
 
                 let needs_body_transform = router.plugin_manager().is_some()
                     || mesh_transport.is_some()
@@ -2854,12 +2868,12 @@ impl HttpServer {
                     );
 
                     match send_request_streaming(
-                        forwarding_client,
+                        &forwarding_client,
                         method,
-                        &target_url,
+                        &upstream_target.url,
                         Some(full_body_arc.as_ref().clone()),
                         forward_header_map,
-                        Some(std::time::Duration::from_secs(30)),
+                        Some(upstream_target.timeout),
                     )
                     .await
                     {
@@ -2925,6 +2939,17 @@ impl HttpServer {
                                 body_len > ZERO_COPY_THRESHOLD || (body_len == 0 && is_chunked);
 
                             if should_zero_copy {
+                                if let Some(max_size) = upstream_target.max_response_size {
+                                    if body_len > 0 && body_len as usize > max_size {
+                                        return Ok(Self::build_response_with_alt_svc(
+                                            502,
+                                            "Bad Gateway".to_string(),
+                                            "text/plain",
+                                            &alt_svc,
+                                            &main_config,
+                                        ));
+                                    }
+                                }
                                 return Ok(builder
                                     .body(
                                         upstream_body
@@ -2947,6 +2972,20 @@ impl HttpServer {
                                 match upstream_body.collect().await {
                                     Ok(collected) => {
                                         let body_bytes = collected.to_bytes();
+                                        if apply_response_size_limit(
+                                            &body_bytes,
+                                            upstream_target.max_response_size,
+                                        )
+                                        .is_err()
+                                        {
+                                            return Ok(Self::build_response_with_alt_svc(
+                                                502,
+                                                "Bad Gateway".to_string(),
+                                                "text/plain",
+                                                &alt_svc,
+                                                &main_config,
+                                            ));
+                                        }
                                         let body_len = body_bytes.len() as u64;
                                         if let Some(ref m) = metrics {
                                             m.bandwidth.record_egress(
@@ -3009,19 +3048,19 @@ impl HttpServer {
                 let resp = if crate::http_client::is_quictunnel_url(&target.upstream) {
                     crate::http_client::send_request_via_quic_tunnel(
                         method,
-                        &target_url,
+                        &upstream_target.url,
                         Some(&parts.headers),
                         Some(full_body_arc.as_ref().clone()),
-                        Some(std::time::Duration::from_secs(30)),
+                        Some(upstream_target.timeout),
                     )
                     .await
                 } else {
                     send_request_with_body_and_timeout(
-                        forwarding_client,
+                        &forwarding_client,
                         method,
-                        &target_url,
+                        &upstream_target.url,
                         Some(full_body_arc.as_ref().clone()),
-                        Some(std::time::Duration::from_secs(30)),
+                        Some(upstream_target.timeout),
                     )
                     .await
                 };
@@ -3051,6 +3090,17 @@ impl HttpServer {
                         let mut headers: http::HeaderMap = filtered_headers;
 
                         let mut body = resp.body;
+                        if apply_response_size_limit(&body, upstream_target.max_response_size)
+                            .is_err()
+                        {
+                            return Ok(Self::build_response_with_alt_svc(
+                                502,
+                                "Bad Gateway".to_string(),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
                         let mut body_len = body.len() as u64;
 
                         // Apply WASM response transforms
@@ -3585,19 +3635,11 @@ impl HttpServer {
             .with_max_message_size(ws_config.max_message_size.unwrap_or(16 * 1024 * 1024))
             .with_mask_required(ws_config.mask_required.unwrap_or(false));
 
-        let upstream_scheme =
-            if target.upstream.starts_with("https://") || target.upstream.starts_with("wss://") {
-                "wss"
-            } else {
-                "ws"
-            };
-        let upstream_host = target
+        let ws_upstream = target
             .upstream
-            .trim_start_matches("http://")
-            .trim_start_matches("https://")
-            .trim_start_matches("ws://")
-            .trim_start_matches("wss://");
-        let upstream_url = format!("{}://{}{}", upstream_scheme, upstream_host, path);
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        let upstream_url = join_upstream_url(&ws_upstream, &path);
 
         tracing::debug!(url = %upstream_url, "Connecting to upstream WebSocket");
 

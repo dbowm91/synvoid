@@ -7,14 +7,23 @@
 //! for attack detection before forwarding.
 
 pub mod cache;
+pub mod client_registry;
+pub mod executor;
 pub mod headers;
 pub mod retry;
 
+pub use executor::{
+    apply_response_size_limit, build_upstream_request, PreparedUpstreamTarget, ResponseSizeError,
+    UpstreamResponsePolicy,
+};
 pub use headers::{
     apply_response_header_transforms, build_forward_headers, build_headers_to_filter,
     filter_response_headers, filter_response_headers_buf, filter_response_headers_buf_with_str_set,
     is_hop_by_hop_header, is_hop_by_hop_header_name, sanitize_request_path,
     validate_and_truncate_xff, HEADERS_TO_STRIP, HOP_BY_HOP_HEADERS, MAX_XFF_CHAIN_LENGTH,
+};
+pub use retry::{
+    calculate_backoff, is_idempotent_method, is_retryable_status, should_retry_request,
 };
 
 use ::metrics::{counter, histogram};
@@ -22,6 +31,8 @@ use http::Response;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use subtle::ConstantTimeEq;
 
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, RetryConfig};
 use crate::http_client::{
@@ -38,6 +49,7 @@ use crate::proxy::cache::{
 use crate::proxy::retry::{
     calculate_backoff as calculate_backoff_impl, is_connection_error as is_connection_error_impl,
     is_retryable_status as is_retryable_status_impl, is_timeout_error as is_timeout_error_impl,
+    should_retry_request as should_retry_request_impl,
 };
 use crate::proxy_cache::{
     CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry, ProxyCacheSettings,
@@ -312,7 +324,15 @@ impl ProxyServer {
             let drop = self.waf.config.drop_blocked_requests;
 
             let body_slice: Option<&[u8]> = body.as_deref();
-            let query_string = None;
+
+            let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+                (
+                    path[..q_pos].to_string(),
+                    Some(path[q_pos + 1..].to_string()),
+                )
+            } else {
+                (path.clone(), None)
+            };
 
             let waf_decision = self
                 .waf
@@ -320,8 +340,8 @@ impl ProxyServer {
                     Some(self.site_id.as_str()),
                     client_ip,
                     method.as_str(),
-                    &path,
-                    query_string,
+                    &path_for_waf,
+                    query_string.as_deref(),
                     headers,
                     body_slice,
                     user_agent.as_deref(),
@@ -484,7 +504,7 @@ impl ProxyServer {
             return self.forward_with_pool(method, path, pool, body).await;
         }
 
-        let url = format!("{}{}", self.upstream_url, path);
+        let url = join_upstream_url(&self.upstream_url, path);
         self.send_single_request(method, &url, None, body).await
     }
 
@@ -496,7 +516,7 @@ impl ProxyServer {
         headers: Option<&http::HeaderMap>,
         body: Option<bytes::Bytes>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
-        let full_url = format!("{}{}", tunnel_url, path);
+        let full_url = join_upstream_url(tunnel_url, path);
         self.send_single_request(method, &full_url, headers, body)
             .await
     }
@@ -645,7 +665,7 @@ impl ProxyServer {
     ) -> Result<Response<bytes::Bytes>, String> {
         if let Some(ref required_token) = self.cache_purge_token {
             match purge_token {
-                Some(token) if token == required_token.as_str() => {}
+                Some(token) if required_token.as_bytes().ct_eq(token.as_bytes()).into() => {}
                 _ => {
                     tracing::warn!(
                         "Unauthorized cache purge attempt from {} to {}",
@@ -670,6 +690,16 @@ impl ProxyServer {
                 .status(403)
                 .body(bytes::Bytes::from("Forbidden: IP not allowed\n"))
                 .unwrap_or_else(|_| Response::new(bytes::Bytes::new())));
+        } else if self.cache_purge_token.is_none() && self.cache_purge_allowed_ips.is_empty() {
+            tracing::warn!(
+                "Unauthorized cache purge from {} to {} - no token configured and allowlist empty",
+                client_ip,
+                host
+            );
+            return Ok(Response::builder()
+                .status(403)
+                .body(bytes::Bytes::from("Forbidden: purge not configured\n"))
+                .unwrap_or_else(|_| Response::new(bytes::Bytes::new())));
         }
 
         let count = if path == "*" {
@@ -693,12 +723,7 @@ impl ProxyServer {
                 0
             }
         } else if let Some(ref cache) = self.cache {
-            if let Some(cache_key) = CacheKey::from_cache_string(&format!("GET:{}:{}", host, path))
-            {
-                cache.invalidate(&cache_key);
-                tracing::info!("Purged cache entry for {}", path);
-            }
-            1
+            cache.invalidate_by_pattern(&format!("GET:{}:{}:*", host, path))
         } else {
             0
         };
@@ -828,7 +853,11 @@ impl ProxyServer {
         body: Option<bytes::Bytes>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let retry_config = self.retry_config.as_ref();
+        let retry_enabled = retry_config.map(|c| c.enabled).unwrap_or(false);
         let max_retries = retry_config.map(|c| c.max_retries).unwrap_or(3);
+        let should_retry_method = retry_config
+            .map(|c| should_retry_request_impl(&method, c))
+            .unwrap_or(true);
 
         let mut current_backend: Option<Backend> = None;
         let mut last_error: Option<String> = None;
@@ -859,7 +888,7 @@ impl ProxyServer {
 
             backend.increment_connections();
 
-            let url = format!("{}{}", backend.url.trim_end_matches('/'), path);
+            let url = join_upstream_url(backend.url.as_str(), path);
 
             tracing::debug!(
                 "Attempting request to upstream: {} (attempt {}/{})",
@@ -878,21 +907,23 @@ impl ProxyServer {
                 Ok(response) => {
                     let status = response.status().as_u16();
 
-                    if let Some(config) = retry_config {
-                        if is_retryable_status_impl(status, config) && attempt < max_retries {
-                            if let Some(ref be) = current_backend {
-                                pool.mark_failed(&be.url);
-                            }
-
-                            if let Some(timeout) = config.timeout_ms {
-                                tokio::time::sleep(std::time::Duration::from_millis(
-                                    calculate_backoff_impl(attempt, timeout),
-                                ))
-                                .await;
-                            }
-
-                            continue;
+                    if retry_enabled
+                        && should_retry_method
+                        && is_retryable_status_impl(status, retry_config.unwrap())
+                        && attempt <= max_retries
+                    {
+                        if let Some(ref be) = current_backend {
+                            pool.mark_failed(&be.url);
                         }
+
+                        if let Some(timeout) = retry_config.unwrap().timeout_ms {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                calculate_backoff_impl(attempt, timeout),
+                            ))
+                            .await;
+                        }
+
+                        continue;
                     }
 
                     return Ok(response);
@@ -901,16 +932,18 @@ impl ProxyServer {
                     let error_str = e.to_string();
                     last_error = Some(error_str.clone());
 
-                    if let Some(config) = retry_config {
-                        let should_retry = (config.retry_on_error && is_connection_error_impl(&*e))
-                            || (config.retry_on_timeout && is_timeout_error_impl(&*e));
+                    if retry_enabled && should_retry_method {
+                        let should_retry = (retry_config.unwrap().retry_on_error
+                            && is_connection_error_impl(&*e))
+                            || (retry_config.unwrap().retry_on_timeout
+                                && is_timeout_error_impl(&*e));
 
-                        if should_retry && attempt < max_retries {
+                        if should_retry && attempt <= max_retries {
                             if let Some(ref be) = current_backend {
                                 pool.mark_failed(&be.url);
                             }
 
-                            if let Some(timeout) = config.timeout_ms {
+                            if let Some(timeout) = retry_config.unwrap().timeout_ms {
                                 tokio::time::sleep(std::time::Duration::from_millis(
                                     calculate_backoff_impl(attempt, timeout),
                                 ))
@@ -925,7 +958,7 @@ impl ProxyServer {
                         pool.mark_failed(&be.url);
                     }
 
-                    if attempt < max_retries {
+                    if retry_enabled && should_retry_method && attempt <= max_retries {
                         continue;
                     }
 
@@ -1036,5 +1069,171 @@ impl ProxyServer {
         }
 
         Ok(builder.body(body)?)
+    }
+}
+
+#[inline]
+pub fn join_upstream_url(upstream: impl AsRef<str>, path: impl AsRef<str>) -> String {
+    let upstream = upstream.as_ref().trim_end_matches('/');
+    let path = path.as_ref();
+    if path.starts_with('/') {
+        format!("{}{}", upstream, path)
+    } else {
+        format!("{}/{}", upstream, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_upstream_url;
+
+    #[test]
+    fn test_join_upstream_url_no_trailing_slash() {
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "/path"),
+            "http://backend.example.com/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "/path/to/page"),
+            "http://backend.example.com/path/to/page"
+        );
+    }
+
+    #[test]
+    fn test_join_upstream_url_with_trailing_slash() {
+        assert_eq!(
+            join_upstream_url("http://backend.example.com/", "/path"),
+            "http://backend.example.com/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com///", "/path"),
+            "http://backend.example.com/path"
+        );
+    }
+
+    #[test]
+    fn test_join_upstream_url_path_without_leading_slash() {
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "path"),
+            "http://backend.example.com/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "path/to/page"),
+            "http://backend.example.com/path/to/page"
+        );
+    }
+
+    #[test]
+    fn test_join_upstream_url_empty_path() {
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", ""),
+            "http://backend.example.com/"
+        );
+    }
+
+    #[test]
+    fn test_join_upstream_url_preserves_query() {
+        assert_eq!(
+            join_upstream_url("http://backend.example.com", "/path?query=1"),
+            "http://backend.example.com/path?query=1"
+        );
+    }
+
+    #[test]
+    fn test_join_upstream_url_with_port() {
+        assert_eq!(
+            join_upstream_url("http://backend.example.com:8080", "/path"),
+            "http://backend.example.com:8080/path"
+        );
+        assert_eq!(
+            join_upstream_url("http://backend.example.com:8080/", "/path"),
+            "http://backend.example.com:8080/path"
+        );
+    }
+
+    #[test]
+    fn test_proxy_path_query_split_sqli() {
+        let path = "/search?id=1' OR '1'='1";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/search");
+        assert_eq!(query_string, Some("id=1' OR '1'='1".to_string()));
+    }
+
+    #[test]
+    fn test_proxy_path_query_split_xss() {
+        let path = "/comment?q=<script>alert(1)</script>";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/comment");
+        assert_eq!(
+            query_string,
+            Some("q=<script>alert(1)</script>".to_string())
+        );
+    }
+
+    #[test]
+    fn test_proxy_path_no_query() {
+        let path = "/api/users";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/api/users");
+        assert_eq!(query_string, None);
+    }
+
+    #[test]
+    fn test_proxy_path_query_only() {
+        let path = "/search?query=test";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/search");
+        assert_eq!(query_string, Some("query=test".to_string()));
+    }
+
+    #[test]
+    fn test_proxy_path_multiple_question_marks() {
+        let path = "/search?redirect=https://evil.com?bad=true";
+        let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
+            (
+                path[..q_pos].to_string(),
+                Some(path[q_pos + 1..].to_string()),
+            )
+        } else {
+            (path.to_string(), None)
+        };
+
+        assert_eq!(path_for_waf, "/search");
+        assert_eq!(
+            query_string,
+            Some("redirect=https://evil.com?bad=true".to_string())
+        );
     }
 }

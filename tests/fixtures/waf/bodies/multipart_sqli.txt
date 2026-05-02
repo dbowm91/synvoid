@@ -1,0 +1,9 @@
+------WebKitFormBoundary
+Content-Disposition: form-data; name="username"
+
+1' OR '1'='1' --
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="test.txt"
+
+test content
+------WebKitFormBoundary--

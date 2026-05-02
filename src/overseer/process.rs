@@ -3,7 +3,9 @@ use std::process::Child;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 use nix::sys::signal::kill;
+#[cfg(unix)]
 use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
 
@@ -476,6 +478,7 @@ impl OverseerProcess {
         std::cmp::min(base_delay * backoff_multiplier, 300)
     }
 
+    #[cfg(unix)]
     async fn attempt_recovery(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let state = self.persistence.load().unwrap_or_default();
 
@@ -563,6 +566,25 @@ impl OverseerProcess {
             orchestrator_state.staged_version = None;
             orchestrator_state.last_error =
                 Some("Recovery: no surviving master, starting fresh".to_string());
+            self.persistence.save(&orchestrator_state)?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    async fn attempt_recovery(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        tracing::warn!("Upgrade recovery not fully supported on this platform, resetting state");
+
+        {
+            let mut orchestrator_state = self.orchestrator.state.write().await;
+            orchestrator_state.state = UpgradeState::Idle;
+            orchestrator_state.old_master_pid = None;
+            orchestrator_state.new_master_pid = None;
+            orchestrator_state.staged_binary_path = None;
+            orchestrator_state.staged_version = None;
+            orchestrator_state.last_error =
+                Some("Recovery: reset on non-Unix platform".to_string());
             self.persistence.save(&orchestrator_state)?;
         }
 

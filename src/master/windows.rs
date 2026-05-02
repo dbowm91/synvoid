@@ -4,7 +4,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::ConfigManager;
+use crate::process::ipc_signed::{IpcSigner, SignedIpcMessage};
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
+use crate::process::write_message_sync;
 use crate::process::{
     CommandResponse, MasterCommand, MasterStatus, ProcessManager, StatusStats, ThreatSummary,
 };
@@ -70,6 +72,10 @@ pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_
         };
 
         let pm = process_manager.clone();
+        // TODO(ipc): This creates a sync `IpcStream` but `handle_worker_connection`
+        // expects an async `AsyncIpcStream`. This is a type mismatch that would fail
+        // on Windows. Should be refactored to use `ipc_transport::IpcListener` for
+        // proper async named pipe handling.
         tokio::spawn(async move {
             super::handle_worker_connection(IpcStream::new(stream), pm).await;
         });
@@ -77,7 +83,10 @@ pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_
 }
 
 #[cfg(windows)]
-pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>>) {
+pub async fn windows_command_pipe_listener(
+    config_manager: Arc<RwLock<ConfigManager>>,
+    signer: Option<Arc<IpcSigner>>,
+) {
     use std::os::windows::ffi::OsStrExt;
 
     let pipe_name_str = "\\\\.\\pipe\\maluwaf-commands";
@@ -135,16 +144,26 @@ pub async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigMana
         let stream = unsafe {
             std::fs::File::from_raw_handle(pipe_handle as std::os::windows::io::RawHandle)
         };
+        let signer = signer.clone();
         tokio::spawn(async move {
-            handle_command_connection(stream, config_manager.clone()).await;
+            handle_command_connection(stream, config_manager.clone(), signer).await;
         });
     }
 }
 
+/// Handle an incoming command on the Windows named command pipe.
+///
+/// Privileged commands (Stop, ReloadConfig) require HMAC-signed IPC messages.
+/// Read-only commands (Status, HealthCheck) are accepted unsigned but this
+/// should be migrated to require signing in a future release.
+///
+/// TODO(security): Full signed IPC migration — accept ONLY signed messages
+/// when a signing key is configured, removing the unsigned fallback entirely.
 #[cfg(windows)]
 async fn handle_command_connection(
     stream: std::fs::File,
     config_manager: Arc<RwLock<ConfigManager>>,
+    signer: Option<Arc<IpcSigner>>,
 ) {
     use std::io::{Read, Write};
 
@@ -165,30 +184,96 @@ async fn handle_command_connection(
         return;
     }
 
-    let mut json_buf = vec![0u8; len];
-    if let Err(e) = stream.read_exact(&mut json_buf) {
+    let mut msg_buf = vec![0u8; len];
+    if let Err(e) = stream.read_exact(&mut msg_buf) {
         tracing::warn!("Failed to read command: {}", e);
         return;
     }
 
-    let command: MasterCommand = match serde_json::from_slice(&json_buf) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("Failed to parse command: {}", e);
-            let _ = stream.write_all(&0u32.to_be_bytes());
-            return;
+    let mut frame = Vec::with_capacity(4 + len);
+    frame.extend_from_slice(&length_buf);
+    frame.extend_from_slice(&msg_buf);
+
+    let (command, authenticated) = if let Some(ref s) = signer {
+        match SignedIpcMessage::deserialize_signed::<MasterCommand>(&frame, s) {
+            Ok(cmd) => (cmd, true),
+            Err(_) => match crate::serialization::deserialize::<MasterCommand>(&msg_buf) {
+                Ok(c) => (c, false),
+                Err(_) => match serde_json::from_slice::<MasterCommand>(&msg_buf) {
+                    Ok(c) => (c, false),
+                    Err(e) => {
+                        tracing::warn!("Failed to parse command: {}", e);
+                        let _ = write_message_sync(
+                            &mut stream,
+                            &CommandResponse::Error("Failed to parse command".to_string()),
+                        );
+                        return;
+                    }
+                },
+            },
+        }
+    } else {
+        match crate::serialization::deserialize::<MasterCommand>(&msg_buf) {
+            Ok(c) => (c, false),
+            Err(_) => match serde_json::from_slice::<MasterCommand>(&msg_buf) {
+                Ok(c) => (c, false),
+                Err(e) => {
+                    tracing::warn!("Failed to parse command: {}", e);
+                    let _ = write_message_sync(
+                        &mut stream,
+                        &CommandResponse::Error("Failed to parse command".to_string()),
+                    );
+                    return;
+                }
+            },
         }
     };
+
+    match &command {
+        MasterCommand::Stop { .. } | MasterCommand::ReloadConfig => {
+            if !authenticated {
+                tracing::error!(
+                    "SECURITY: Rejected unauthenticated privileged command ({:?}) \
+                     on command pipe. Configure MALUWAF_IPC_KEY or MALUWAF_IPC_KEY_FILE \
+                     for signed IPC.",
+                    command
+                );
+                let _ = write_message_sync(
+                    &mut stream,
+                    &CommandResponse::Error(
+                        "Authentication required: configure IPC signing key".to_string(),
+                    ),
+                );
+                return;
+            }
+        }
+        MasterCommand::Status | MasterCommand::HealthCheck => {
+            // SECURITY NOTE: Status and HealthCheck are non-mutating read-only
+            // operations and may remain unsigned. Future releases should require
+            // signing for all commands when a signing key is configured.
+            if !authenticated {
+                tracing::debug!("Unsigned read-only command ({:?}) on command pipe", command);
+            }
+        }
+        _ => {
+            if !authenticated {
+                tracing::warn!("Rejected unauthenticated unknown command on command pipe");
+                let _ = write_message_sync(
+                    &mut stream,
+                    &CommandResponse::Error("Authentication required".to_string()),
+                );
+                return;
+            }
+        }
+    }
 
     match command {
         MasterCommand::Stop { graceful } => {
             tracing::info!("CLI: Stop command received (graceful: {})", graceful);
-            let _ = stream.write_all(&4u32.to_be_bytes());
-            let _ = stream.write_all(b"true");
+            let _ = write_message_sync(&mut stream, &CommandResponse::Ok("true".to_string()));
         }
         MasterCommand::ReloadConfig => {
             tracing::info!("CLI: ReloadConfig command received");
-            // Reload config and mimes
             {
                 let config = config_manager.read();
                 let mimes_config = &config.main.mimes;
@@ -209,13 +294,11 @@ async fn handle_command_connection(
                     }
                 }
             }
-            // Reload site configs
             {
                 let mut config = config_manager.write();
                 config.reload_all();
             }
-            let _ = stream.write_all(&4u32.to_be_bytes());
-            let _ = stream.write_all(b"true");
+            let _ = write_message_sync(&mut stream, &CommandResponse::Ok("true".to_string()));
         }
         MasterCommand::Status => {
             let status = MasterStatus {
@@ -227,14 +310,10 @@ async fn handle_command_connection(
                 stats: StatusStats::default(),
                 threat_summary: ThreatSummary::default(),
             };
-            let json = serde_json::to_string(&CommandResponse::Status(status)).unwrap_or_default();
-            let len = json.len() as u32;
-            let _ = stream.write_all(&len.to_be_bytes());
-            let _ = stream.write_all(json.as_bytes());
+            let _ = write_message_sync(&mut stream, &CommandResponse::Status(status));
         }
         MasterCommand::HealthCheck => {
-            let _ = stream.write_all(&4u32.to_be_bytes());
-            let _ = stream.write_all(b"true");
+            let _ = write_message_sync(&mut stream, &CommandResponse::Ok("true".to_string()));
         }
         _ => {}
     }

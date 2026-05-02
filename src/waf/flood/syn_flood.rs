@@ -143,7 +143,7 @@ impl SynFloodProtector {
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {
-        ip_to_slot(ip, SYN_TRACKER_SLOTS)
+        ip_to_slot(ip, SYN_TRACKER_SLOTS).unwrap()
     }
 
     fn rotate_window(&self, now_secs: u64) {

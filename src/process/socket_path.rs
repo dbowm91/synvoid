@@ -5,7 +5,7 @@ static MASTER_GENERATION: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(unix)]
 fn create_secure_dir_atomic(path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     match std::fs::create_dir(path) {
         Ok(()) => {
@@ -13,13 +13,33 @@ fn create_secure_dir_atomic(path: &std::path::Path) -> std::io::Result<()> {
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let metadata = std::fs::metadata(path)?;
-            if !metadata.is_dir() {
+            let metadata = std::fs::symlink_metadata(path)?;
+            let file_type = metadata.file_type();
+
+            if file_type.is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "socket path is a symlink, refusing for security",
+                ));
+            }
+
+            if !file_type.is_dir() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::AlreadyExists,
                     "path exists but is not a directory",
                 ));
             }
+
+            let dir_uid = metadata.uid();
+            let my_uid = unsafe { libc::geteuid() };
+
+            if dir_uid != 0 && dir_uid != my_uid {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "directory owned by untrusted user",
+                ));
+            }
+
             if metadata.permissions().mode() & 0o777 != 0o700 {
                 std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
             }
@@ -52,7 +72,8 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
             }
         }
 
-        let path = PathBuf::from("/tmp").join("maluwaf");
+        let uid = unsafe { libc::geteuid() };
+        let path = PathBuf::from("/tmp").join(format!("maluwaf-{}", uid));
         let _ = create_secure_dir_atomic(&path);
 
         path.join(name)

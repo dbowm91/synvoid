@@ -27,7 +27,10 @@ pub mod wfp;
 
 pub use config::{Direction, FilterType, IcmpFilterConfig, InterfaceSpec, RateLimitConfig};
 pub use error::{IcmpFilterError, Result};
-pub use traits::{FilterBackend, FilterStatus, IcmpFilter};
+pub use platform::{
+    has_privilege_for, required_privilege_for_operation, FilterOperation, PrivilegeLevel,
+};
+pub use traits::{BackendCapabilities, FilterBackend, FilterStatus, IcmpFilter};
 
 #[cfg(target_os = "linux")]
 use nftables::NftablesFilter;
@@ -355,6 +358,40 @@ impl IcmpFilterManager {
             )
         )))]
         {
+            false
+        }
+    }
+
+    pub fn is_enforcing(&self) -> bool {
+        #[cfg(any(
+            target_os = "linux",
+            all(target_os = "macos", feature = "icmp-pf"),
+            all(
+                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
+                feature = "icmp-pf"
+            ),
+            all(
+                target_os = "windows",
+                any(feature = "icmp-winfw", feature = "icmp-wfp")
+            )
+        ))]
+        {
+            self.filter.is_enforcing()
+        }
+        #[cfg(not(any(
+            target_os = "linux",
+            all(target_os = "macos", feature = "icmp-pf"),
+            all(
+                any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"),
+                feature = "icmp-pf"
+            ),
+            all(
+                target_os = "windows",
+                any(feature = "icmp-winfw", feature = "icmp-wfp")
+            )
+        )))]
+        {
+            tracing::warn!("ICMP filter manager: no backend active on this platform");
             false
         }
     }

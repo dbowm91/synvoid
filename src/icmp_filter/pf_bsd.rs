@@ -316,6 +316,10 @@ impl IcmpFilter for PfBsdFilter {
         self.enabled
     }
 
+    fn is_enforcing(&self) -> bool {
+        self.enabled
+    }
+
     fn backend(&self) -> FilterBackend {
         FilterBackend::Pf
     }

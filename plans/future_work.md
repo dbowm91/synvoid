@@ -5,7 +5,7 @@ Based on the recent completion of the implementation plan and a deep dive into t
 ## 1. Performance & Scalability
 
 *   **DHT Routing Optimization:** ~~While we fixed the $O(N)$ lookup in the record store (D3), Kademlia bucket routing in `RoutingTable::find_closest` still iterates through all peers in buckets. For extreme scales (100k+ nodes), this should be optimized using a more advanced data structure or caching closest peers for frequent targets.~~ **COMPLETED (W2.3):** Added moka-based LRU cache to `RoutingTable::find_closest` for O(1) hot path lookups.
-*   **Zero-Copy Proxying:** ~~The HTTP and HTTP/3 proxy paths (`src/http/server.rs`, `src/http3/server.rs`) do a lot of buffer allocation. Investigate hyper's `body::to_bytes` usage and look for opportunities to stream request/response bodies directly between sockets where possible, especially for large file uploads/downloads.~~ **COMPLETED (W2.1/W2.2):** Implemented streaming body pipe for large responses (>1MB) in HTTP and HTTP/3 server paths to reduce allocations at 500K RPS.
+*   **Zero-Copy Proxying:** ~~The HTTP and HTTP/3 proxy paths (`src/http/server.rs`, `src/http3/server.rs`) do a lot of buffer allocation. Investigate hyper's `body::to_bytes` usage and look for opportunities to stream request/response bodies directly between sockets where possible, especially for large file uploads/downloads.~~ **COMPLETED (W2.1/W2.2):** Implemented streaming body pipe for large responses (>1MB) in HTTP and HTTP/3 server paths to reduce allocations at 1000K RPS.
 *   **Mesh Connection Pooling:** ~~`MeshPeerConnection` currently establishes QUIC streams per request in some paths. Implementing a robust multiplexed stream pool or using datagrams for small control messages could significantly reduce mesh latency.~~ **COMPLETED (W2.4):** Implemented `StreamPool` in `src/tunnel/quic/client.rs` to reuse streams per peer instead of opening/closing per message.
 
 ## 2. Multi-tenancy & Plugins
@@ -48,4 +48,4 @@ Based on the recent completion of the implementation plan and a deep dive into t
 |------|----------|-------|
 | D7 God modules | Low | Manual refactor - skipped due to reversion risk |
 | HTTP/QUIC Stream pooling | Medium | Could be combined with W2.4 |
-| Advanced DHT routing | Low | For 100k+ node scale - current implementation adequate for <10k nodes |
+| Advanced DHT routing | Medium | For 100k+ node scale - current implementation adequate for <10k nodes |

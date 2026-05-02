@@ -1,0 +1,17 @@
+{
+  "id": "ssrf_encoded_private_ip",
+  "description": "SSRF attempt using encoded private IP address",
+  "entry_point": "query_string",
+  "expected_result": "detect",
+  "attack_type": "ssrf",
+  "notes": "SSRF with private IP encoding - should be blocked",
+  "request": {
+    "method": "GET",
+    "path": "/proxy",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": "url=http%3A%2F%2F192%2E168%2E1%2E1%3A8080%2Fadmin",
+    "body": null
+  }
+}

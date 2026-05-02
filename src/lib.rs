@@ -62,6 +62,7 @@ pub mod location_matcher;
 pub mod log_controller;
 pub mod logging;
 pub mod master;
+#[cfg(feature = "mesh")]
 pub mod mesh;
 pub mod metrics;
 pub mod mime;
@@ -101,6 +102,9 @@ pub mod icmp_filter;
 
 #[cfg(feature = "dns")]
 pub mod dns;
+
+#[cfg(test)]
+pub mod test_utils;
 
 pub use config::ConfigManager;
 pub use utils::{errors, urlencoding_decode, DrainFlag, OptionExt, ResultExt, RunningFlag};

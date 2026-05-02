@@ -2165,4 +2165,80 @@ mod tests {
         assert!(id1.0 < id2.0);
         assert_ne!(id1, id2);
     }
+
+    #[test]
+    fn test_key_file_symlink_rejected() {
+        let temp_dir = std::env::temp_dir();
+        let symlink_path = temp_dir.join("maluwaf_ipc_key_symlink_test");
+
+        #[cfg(unix)]
+        {
+            use std::fs::OpenOptions;
+            use std::os::unix::fs::symlink;
+
+            let target_file = temp_dir.join("maluwaf_ipc_key_real_target");
+            let _ = std::fs::remove_file(&target_file);
+            let _ = std::fs::remove_file(&symlink_path);
+
+            let _ = symlink(&target_file, &symlink_path);
+
+            let result = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&symlink_path);
+
+            assert!(result.is_err(), "creating file over symlink should fail");
+            assert_eq!(
+                result.unwrap_err().kind(),
+                std::io::ErrorKind::AlreadyExists,
+                "symlink should appear as AlreadyExists"
+            );
+
+            let _ = std::fs::remove_file(&symlink_path);
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = symlink_path;
+        }
+    }
+
+    #[test]
+    fn test_runtime_dir_symlink_rejected() {
+        let temp_dir = std::env::temp_dir();
+        let runtime_path = temp_dir.join("maluwaf_runtime_symlink_test");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let real_dir = temp_dir.join("maluwaf_runtime_real");
+            let _ = std::fs::remove_dir_all(&real_dir);
+            let _ = std::fs::remove_file(&runtime_path);
+
+            std::fs::create_dir_all(&real_dir).unwrap();
+
+            let _ = symlink(&real_dir, &runtime_path);
+
+            let result = std::fs::symlink_metadata(&runtime_path);
+            assert!(result.is_ok());
+            let meta = result.unwrap();
+            assert!(meta.file_type().is_symlink(), "path should be a symlink");
+
+            let err = std::fs::create_dir(&runtime_path).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                std::io::ErrorKind::AlreadyExists,
+                "symlink should cause AlreadyExists"
+            );
+
+            let _ = std::fs::remove_dir_all(&runtime_path);
+            let _ = std::fs::remove_dir_all(&real_dir);
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = runtime_path;
+        }
+    }
 }

@@ -1,0 +1,18 @@
+{
+  "id": "normal_binary_upload",
+  "description": "Normal binary file upload - should not trigger detection",
+  "entry_point": "post_body",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Normal binary upload - PNG image",
+  "request": {
+    "method": "POST",
+    "path": "/upload",
+    "headers": [
+      ["Host", "example.com"],
+      ["Content-Type", "multipart/form-data; boundary=----WebKitFormBoundary"]
+    ],
+    "query_string": null,
+    "body_file": "../bodies/normal_binary_upload.bin"
+  }
+}

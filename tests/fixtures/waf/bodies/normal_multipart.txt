@@ -1,0 +1,13 @@
+------WebKitFormBoundary
+Content-Disposition: form-data; name="name"
+
+John Doe
+------WebKitFormBoundary
+Content-Disposition: form-data; name="email"
+
+john@example.com
+------WebKitFormBoundary
+Content-Disposition: form-data; name="message"
+
+Hello, this is a normal message with regular text content.
+------WebKitFormBoundary--

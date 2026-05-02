@@ -109,7 +109,7 @@ impl ConnectionLimiter {
     }
 
     fn ip_to_slot(&self, ip: IpAddr) -> usize {
-        ip_to_slot(ip, CONNECTION_TRACKER_SLOTS)
+        ip_to_slot(ip, CONNECTION_TRACKER_SLOTS).unwrap()
     }
 
     fn rotate_windows(&self, now_secs: u64) {

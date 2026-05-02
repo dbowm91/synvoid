@@ -131,8 +131,6 @@ impl Default for ShardedRecordStore {
     }
 }
 
-use super::record_store_disk::DiskRecordStore;
-
 #[derive(Debug, Clone)]
 pub struct RecordStoreConfig {
     pub enabled: bool,
@@ -489,6 +487,52 @@ impl RecordStoreManager {
         } else {
             false
         }
+    }
+
+    pub fn verify_quorum_proof_authoritative(
+        &self,
+        record: &crate::mesh::protocol::DhtRecord,
+    ) -> (bool, usize) {
+        let routing = self.routing_state.read();
+
+        let total_global_nodes = if let Some(ref topology) = routing.topology {
+            tokio::runtime::Handle::current()
+                .block_on(topology.get_global_nodes())
+                .len()
+        } else {
+            0
+        };
+
+        if total_global_nodes == 0 {
+            tracing::warn!(
+                "Quorum proof verification failed: no global nodes known, failing closed"
+            );
+            return (false, 0);
+        }
+
+        let cert_manager = routing.transport.as_ref().map(|t| t.cert_manager.clone());
+
+        drop(routing);
+
+        let get_authorized_key = move |node_id: &str| -> Option<String> {
+            let Some(ref cm) = cert_manager else {
+                return None;
+            };
+            let cm = cm.read();
+            cm.get_global_node_key(node_id)
+                .map(|pk| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pk))
+        };
+
+        let ctx = crate::mesh::dht::signed::QuorumVerifierContext::new(
+            total_global_nodes,
+            None,
+            record.request_id.as_deref().unwrap_or(""),
+            "add",
+            &get_authorized_key,
+        );
+
+        let verified = crate::mesh::dht::signed::verify_quorum_proof_with_context(record, &ctx);
+        (verified, total_global_nodes)
     }
 }
 

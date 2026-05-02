@@ -170,26 +170,39 @@ impl ProxyUpstreamConfig {
     }
 }
 
+/// Configuration for upstream request retry behavior.
+///
+/// Retry is disabled by default. When enabled, failed or unhealthy responses are
+/// retried against alternate backends in the upstream pool up to `max_retries` times.
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct RetryConfig {
+    /// Whether retry is enabled (default `false`).
     #[serde(default = "default_retry_enabled")]
     pub enabled: bool,
 
+    /// Maximum number of retry attempts after the first request.
+    /// For example, `3` means up to 4 total attempts (1 initial + 3 retries).
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
+    /// Base timeout in milliseconds for exponential backoff between retries.
+    /// When `None`, retries proceed immediately without delay.
     #[serde(default)]
     pub timeout_ms: Option<u64>,
 
+    /// Whether to retry on connection errors (default `true`).
     #[serde(default = "default_retry_on_error")]
     pub retry_on_error: bool,
 
+    /// Whether to retry on timeout errors (default `true`).
     #[serde(default = "default_retry_on_timeout")]
     pub retry_on_timeout: bool,
 
+    /// HTTP status codes that trigger a retry (default `[502, 503, 504]`).
     #[serde(default = "default_retry_status_codes")]
     pub retry_on_status: Vec<u16>,
 
+    /// Whether to retry non-idempotent methods such as POST, PUT, PATCH (default `false`).
     #[serde(default = "default_retry_non_idempotent")]
     pub retry_non_idempotent: bool,
 }

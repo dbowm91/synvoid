@@ -1439,7 +1439,42 @@ impl WafCore {
                     tl.record_attack();
                 }
 
-                return Some(WafDecision::Stall);
+                let action_str = match self.attack_detection_config.load().as_ref() {
+                    Some(config) => config.action.clone(),
+                    None => "stall".to_string(),
+                };
+
+                match action_str.as_str() {
+                    "block" => return Some(WafDecision::Block(403, "Forbidden".to_string())),
+                    "log" => return None,
+                    _ => return Some(WafDecision::Stall),
+                }
+            }
+
+            if let Some(config) = self.attack_detection_config.load().as_ref() {
+                if config.anomaly_scoring.enabled {
+                    let score = attack_detector.check_request_anomaly_scoring(
+                        &method_enum,
+                        path,
+                        query_string,
+                        headers,
+                        body,
+                    );
+                    if score >= config.anomaly_scoring.threshold {
+                        metrics::counter!("maluwaf.anomaly_score_threshold_exceeded").increment(1);
+                        if let Some(ref tl) = self.threat_level {
+                            tl.record_attack();
+                        }
+                        let action_str = config.action.clone();
+                        match action_str.as_str() {
+                            "block" => {
+                                return Some(WafDecision::Block(403, "Forbidden".to_string()));
+                            }
+                            "log" => return None,
+                            _ => return Some(WafDecision::Stall),
+                        }
+                    }
+                }
             }
         }
         None

@@ -257,6 +257,26 @@ impl TcpListenerPool {
         &self,
         listener_config: TcpListenerConfig,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if listener_config.port < 1024 {
+            #[cfg(unix)]
+            {
+                if unsafe { libc::getuid() != 0 && libc::geteuid() != 0 } {
+                    tracing::warn!(
+                        "Binding to privileged port {} requires root. \
+                         This may fail if the process lacks CAP_NET_BIND_SERVICE.",
+                        listener_config.port
+                    );
+                }
+            }
+            #[cfg(windows)]
+            {
+                tracing::warn!(
+                    "Binding to privileged port {} may require Administrator privileges on Windows.",
+                    listener_config.port
+                );
+            }
+        }
+
         let bind_addr = format!("{}:{}", listener_config.bind_address, listener_config.port);
         let listener = TcpListener::bind(&bind_addr).await?;
         let local_addr = listener.local_addr()?;

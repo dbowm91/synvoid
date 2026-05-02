@@ -30,12 +30,14 @@ use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
 use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
-use crate::http_client::{create_upstream_client, send_request_streaming, UpstreamTlsConfig};
+use crate::http_client::{send_request_streaming, UpstreamTlsConfig};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
+use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
-    build_forward_headers, build_headers_to_filter, filter_response_headers_buf, ProxyServer,
+    build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
+    PreparedUpstreamTarget, ProxyServer,
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
@@ -142,6 +144,7 @@ pub struct HttpsServer {
             >,
         >,
     >,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
 }
 
 impl HttpsServer {
@@ -175,6 +178,7 @@ impl HttpsServer {
             serverless_manager: None,
             connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
             app_servers: None,
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
         }
     }
 
@@ -293,6 +297,7 @@ impl HttpsServer {
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();
         let app_servers = self.app_servers.clone();
+        let upstream_client_registry = self.upstream_client_registry.clone();
 
         let _header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -351,6 +356,7 @@ impl HttpsServer {
                             let serverless_manager_h1 = serverless_manager.clone();
                             let app_servers_h2 = app_servers.clone();
                             let app_servers_h1 = app_servers.clone();
+                            let upstream_client_registry = upstream_client_registry.clone();
 
                             if http_config.strict_protocol_validation {
                                 let raw_fd = stream.as_raw_fd();
@@ -409,6 +415,7 @@ impl HttpsServer {
                                                     let ipc = ipc_h2.clone();
                                                     let serverless_manager = serverless_manager_h2.clone();
                                                     let app_servers = app_servers_h2.clone();
+                                                    let upstream_client_registry = upstream_client_registry.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -425,8 +432,9 @@ impl HttpsServer {
                                                         let worker_id = worker_id_h2;
                                                         let serverless_manager = serverless_manager.clone();
                                                         let app_servers = app_servers.clone();
+                                                        let upstream_client_registry = upstream_client_registry.clone();
                                                         async move {
-                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers).await
+                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
                                                         }
                                                     }
                                                 }));
@@ -466,6 +474,7 @@ impl HttpsServer {
                                                     let ipc = ipc_h1.clone();
                                                     let serverless_manager = serverless_manager_h1.clone();
                                                     let app_servers = app_servers_h1.clone();
+                                                    let upstream_client_registry = upstream_client_registry.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -482,8 +491,9 @@ impl HttpsServer {
                                                         let worker_id = worker_id_h1;
                                                         let serverless_manager = serverless_manager.clone();
                                                         let app_servers = app_servers.clone();
+                                                        let upstream_client_registry = upstream_client_registry.clone();
                                                         async move {
-                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers).await
+                                                            Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
                                                         }
                                                     }
                                                 }))
@@ -570,6 +580,7 @@ impl HttpsServer {
                 >,
             >,
         >,
+        upstream_client_registry: Arc<UpstreamClientRegistry>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req
@@ -1507,7 +1518,11 @@ impl HttpsServer {
                     }
                 }
 
-                let target_url = format!("{}{}", target.upstream, path);
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &target.upstream,
+                    &path,
+                    Some(&target.site_config.proxy),
+                );
 
                 let headers_to_filter = build_headers_to_filter(
                     &main_config.security.more_clear_headers,
@@ -1533,15 +1548,10 @@ impl HttpsServer {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(UpstreamTlsConfig::from_site_config)
-                    .unwrap_or_default();
+                    .and_then(UpstreamTlsConfig::from_site_config);
 
-                let client = create_upstream_client(
-                    std::time::Duration::from_secs(5),
-                    100,
-                    std::time::Duration::from_secs(30),
-                    &tls_config,
-                );
+                let client =
+                    upstream_client_registry.get_or_create(&target.site_id, tls_config.as_ref());
 
                 let forward_headers = build_forward_headers(
                     client_ip,
@@ -1558,10 +1568,10 @@ impl HttpsServer {
                 let resp = send_request_streaming(
                     &client,
                     method.clone(),
-                    &target_url,
+                    &upstream_target.url,
                     Some(body_bytes.clone()),
                     forward_headers,
-                    Some(std::time::Duration::from_secs(30)),
+                    Some(upstream_target.timeout),
                 )
                 .await;
 
@@ -1576,6 +1586,16 @@ impl HttpsServer {
                             .and_then(|v| v.to_str().ok())
                             .and_then(|v| v.parse::<u64>().ok())
                             .unwrap_or(0);
+
+                        if let Some(max_size) = upstream_target.max_response_size {
+                            if body_len > 0 && body_len as usize > max_size {
+                                return Ok(Self::build_response(
+                                    502,
+                                    "Bad Gateway".to_string(),
+                                    "text/plain",
+                                ));
+                            }
+                        }
 
                         if let Some(ref bw) = bandwidth {
                             bw.record_proxied(request_body_size, body_len, &target.upstream);

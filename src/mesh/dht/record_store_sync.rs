@@ -316,6 +316,13 @@ impl RecordStoreManager {
         let mut stored_count = 0;
         let mut skipped_count = 0;
 
+        let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
+            from_node.to_string(),
+            from_node.to_string(),
+            crate::mesh::dht::signed::SourceClassification::Unknown,
+            crate::mesh::dht::signed::IngressPath::Announce,
+        );
+
         for record in records {
             if !self.verify_origin_permission(&record, from_node) {
                 tracing::debug!(
@@ -327,18 +334,8 @@ impl RecordStoreManager {
                 continue;
             }
 
-            if record.signature.is_empty() {
-                tracing::debug!(
-                    "Rejected record announce with empty signature from {}: key {}",
-                    from_node,
-                    record.key
-                );
-                skipped_count += 1;
-                continue;
-            }
-
             if self.is_global_node() || self.can_cache_on_edge(&record.key) {
-                if self.store_record(record, source_reputation, false) {
+                if self.store_record_from_ingress(record, &ingress_ctx, source_reputation) {
                     stored_count += 1;
                 }
             } else {
@@ -472,6 +469,13 @@ impl RecordStoreManager {
         let signer_public_key = signer.map(|s| s.get_public_key());
         let mut verified_records = Vec::new();
 
+        let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
+            _from_node.to_string(),
+            _from_node.to_string(),
+            crate::mesh::dht::signed::SourceClassification::Unknown,
+            crate::mesh::dht::signed::IngressPath::SyncResponse,
+        );
+
         for record in records {
             let dht_key = crate::mesh::dht::keys::DhtKey::from_str(&record.key);
             let record_type = dht_key
@@ -525,7 +529,9 @@ impl RecordStoreManager {
             }
         }
 
-        self.apply_sync(verified_records);
+        for record in verified_records {
+            self.store_record_from_ingress(record, &ingress_ctx, 100);
+        }
     }
 
     pub fn handle_anti_entropy_response_verified(
@@ -548,6 +554,13 @@ impl RecordStoreManager {
 
         let mut accepted_count = 0;
         let mut rejected_count = 0;
+
+        let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
+            from_node.to_string(),
+            from_node.to_string(),
+            crate::mesh::dht::signed::SourceClassification::Unknown,
+            crate::mesh::dht::signed::IngressPath::AntiEntropy,
+        );
 
         for record in records {
             if record.signature.is_empty() {
@@ -624,7 +637,7 @@ impl RecordStoreManager {
 
             let record_key = record.key.clone();
 
-            if self.store_record(record, 100, false) {
+            if self.store_record_from_ingress(record, &ingress_ctx, 100) {
                 tracing::debug!("Stored record {} from {} (verified)", record_key, from_node);
                 accepted_count += 1;
             }

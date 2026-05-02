@@ -5,7 +5,7 @@ Specialized guidance for HTTP request handling and dispatch.
 ## Hot Path
 
 `src/http/server.rs` — HTTP request handling and dispatch executes on every request. Critical hot path:
-- Every allocation compounds at 500K rps
+- Every allocation compounds at 1000K rps
 - Avoid O(n) operations; prefer O(1) lookups
 - Use thread-local buffers and object pools
 

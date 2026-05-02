@@ -18,6 +18,11 @@ pub struct IpcConnection {
 }
 
 impl IpcConnection {
+    /// Connect to the master IPC endpoint.
+    ///
+    /// **WARNING:** This creates an unsigned connection. The caller must ensure
+    /// this is not used for privileged operations. Prefer the async transport
+    /// with `connect_to_master_async_signed` for new code.
     pub fn connect(socket_path: &Path) -> Result<Self, std::io::Error> {
         let stream = connect_to_master(socket_path)?;
         Ok(Self {

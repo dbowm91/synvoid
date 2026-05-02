@@ -9,6 +9,7 @@ use instant_acme::{
     NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 
+#[cfg(feature = "dns")]
 use super::acme_dns::AcmeDnsChallenge;
 use super::cert_resolver::CertResolver;
 use super::config::InternalAcmeConfig;

@@ -130,38 +130,58 @@ impl LocationMatcher {
     }
 
     pub fn match_uri(&self, uri: &str) -> Option<(usize, LocationMatchType)> {
-        let mut exact_matches: Vec<&LocationMatch> = Vec::new();
-        let mut pref_prefix_matches: Vec<&LocationMatch> = Vec::new();
-        let mut regex_matches: Vec<&LocationMatch> = Vec::new();
-        let mut prefix_matches: Vec<&LocationMatch> = Vec::new();
+        let mut best_exact: Option<&LocationMatch> = None;
+        let mut best_pref_prefix: Option<&LocationMatch> = None;
+        let mut first_regex: Option<&LocationMatch> = None;
+        let mut best_prefix: Option<&LocationMatch> = None;
 
         for loc in &self.locations {
             if loc.matches(uri) {
                 match loc.match_type {
-                    LocationMatchType::Exact => exact_matches.push(loc),
-                    LocationMatchType::PreferentialPrefix => pref_prefix_matches.push(loc),
-                    LocationMatchType::Regex => regex_matches.push(loc),
-                    LocationMatchType::Prefix => prefix_matches.push(loc),
+                    LocationMatchType::Exact => {
+                        best_exact = Some(loc);
+                    }
+                    LocationMatchType::PreferentialPrefix => match &best_pref_prefix {
+                        None => best_pref_prefix = Some(loc),
+                        Some(current) => {
+                            if loc.prefix_length() > current.prefix_length() {
+                                best_pref_prefix = Some(loc);
+                            }
+                        }
+                    },
+                    LocationMatchType::Regex => {
+                        if first_regex.is_none() {
+                            first_regex = Some(loc);
+                        }
+                    }
+                    LocationMatchType::Prefix => match &best_prefix {
+                        None => best_prefix = Some(loc),
+                        Some(current) => {
+                            if loc.prefix_length() > current.prefix_length() {
+                                best_prefix = Some(loc);
+                            }
+                        }
+                    },
                 }
             }
         }
 
-        if let Some(loc) = exact_matches.first() {
+        if let Some(loc) = best_exact {
             return Some((loc.original_order, LocationMatchType::Exact));
         }
 
-        if let Some(longest) = pref_prefix_matches.iter().max_by_key(|l| l.prefix_length()) {
+        if let Some(longest) = best_pref_prefix {
             return Some((
                 longest.original_order,
                 LocationMatchType::PreferentialPrefix,
             ));
         }
 
-        if let Some(first) = regex_matches.first() {
+        if let Some(first) = first_regex {
             return Some((first.original_order, LocationMatchType::Regex));
         }
 
-        if let Some(longest) = prefix_matches.iter().max_by_key(|l| l.prefix_length()) {
+        if let Some(longest) = best_prefix {
             return Some((longest.original_order, LocationMatchType::Prefix));
         }
 

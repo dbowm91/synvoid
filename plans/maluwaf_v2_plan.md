@@ -7,7 +7,7 @@
 
 ## Objective
 
-Evolve MaluWAF into a highly scalable, fully multi-tenant edge proxy capable of handling 500K+ RPS with zero-copy proxying, secure WASM component plugins, and robust threat intelligence integration. This plan addresses the technical debt (God modules) and architecture limitations (DHT routing, Site Isolation) identified during previous implementation cycles.
+Evolve MaluWAF into a highly scalable, fully multi-tenant edge proxy capable of handling 1000K+ RPS with zero-copy proxying, secure WASM component plugins, and robust threat intelligence integration. This plan addresses the technical debt (God modules) and architecture limitations (DHT routing, Site Isolation) identified during previous implementation cycles.
 
 ## Background & Motivation
 

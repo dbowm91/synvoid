@@ -14,6 +14,8 @@ pub struct ServerlessConfig {
     pub default_cpu_fuel: u64,
     #[serde(default = "default_timeout_seconds")]
     pub default_timeout_seconds: u64,
+    #[serde(default = "default_waf_mode")]
+    pub waf_mode: ServerlessWafMode,
 }
 
 fn default_memory_mb() -> usize {
@@ -72,4 +74,19 @@ pub struct FunctionDefinition {
 
 fn default_handler_name() -> String {
     "handle_request".to_string()
+}
+
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerlessWafMode {
+    #[default]
+    Enforce,
+    Log,
+    Off,
+}
+
+fn default_waf_mode() -> ServerlessWafMode {
+    ServerlessWafMode::Enforce
 }

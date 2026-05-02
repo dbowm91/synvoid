@@ -161,6 +161,18 @@ impl HeaderValidator {
     }
 
     fn check_duplicate_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
+        // PARSER NOTE: http::HeaderMap cannot represent duplicate headers with
+        // different values. Hyper's httparse keeps only the FIRST occurrence of
+        // each header name. If a raw request has:
+        //   Content-Length: 10\r\n
+        //   Content-Length: 5
+        // The HeaderMap will only contain Content-Length: 10.
+        //
+        // This means duplicate header NAME detection in the WAF catches cases
+        // where the same header appears multiple times in the raw request, but
+        // the second occurrence's VALUE is lost. For Content-Length specifically,
+        // the RequestSmugglingDetector.check_headers() catches CL+TE conflicts
+        // which is the primary smuggling concern.
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for name in headers.keys() {

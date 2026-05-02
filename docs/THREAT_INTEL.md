@@ -32,7 +32,7 @@ The threat intelligence system consists of two main components:
 1. **ThreatIntel** - Manages IP block lists, rate limiting indicators, and suspicious activity reports
 2. **YARA Rules** - Malware scanning rules distributed via DHT for file upload scanning
 
-Both components use Ed25519 signatures for authenticity verification and the DHT for primary propagation. The system is designed for high scalability, targeting 500K+ requests/second with minimal per-request allocations.
+Both components use Ed25519 signatures for authenticity verification and the DHT for primary propagation. The system is designed for high scalability, targeting 1000K+ requests/second with minimal per-request allocations.
 
 ## Architecture
 

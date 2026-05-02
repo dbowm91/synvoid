@@ -70,6 +70,7 @@ impl MeshTransport {
             raft_instance: self.raft_instance.clone(),
             pending_membership_changes: self.pending_membership_changes.clone(),
             edge_replica_manager: self.edge_replica_manager.clone(),
+            raft_proposal_replay_cache: self.raft_proposal_replay_cache.clone(),
         }
     }
 

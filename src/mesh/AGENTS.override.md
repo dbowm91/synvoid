@@ -333,3 +333,106 @@ if !self.node_role.is_global()
     // reject
 }
 ```
+
+## Wave 15: Distributed Layer Hardening Follow-Up
+
+All Wave 15 priorities have been implemented and committed to their respective branches.
+
+### P1: Authorization-Aware Quorum Proof Verification
+
+`QuorumVerifierContext` provides authorization-aware quorum verification that binds signatures to authorized global nodes:
+
+```rust
+pub struct QuorumVerifierContext<'a> {
+    pub total_known_global_nodes: usize,
+    pub regional_voter_set: Option<&'a HashSet<String>>,
+    pub request_id: &'a str,
+    pub action: &'a str,
+    pub authorized_global_keys: &'a dyn Fn(&str) -> Option<String>,
+}
+```
+
+Key behavior:
+- `verify_quorum_proof_with_context()` validates `proof.node_id` is an authorized global node
+- `proof.signer_public_key` must match the trusted key for `proof.node_id`
+- Regional voter set filtering rejects signatures from nodes outside the selected set
+- `verify_quorum_proof_authoritative()` gets actual global node count from topology and fails closed if unavailable
+
+Key files:
+- `src/mesh/dht/signed.rs` — `QuorumVerifierContext`, `verify_quorum_proof_with_context()`
+- `src/mesh/dht/record_store.rs` — `verify_quorum_proof_authoritative()`
+
+### P2: SQLite Schema Migration for DiskRecordStore
+
+`DiskRecordStore::new()` now performs schema migration for existing databases:
+
+```rust
+// Migration-based initialization
+let migrations_run = disk_store.run_migrations().unwrap();
+// Adds missing columns: signature, signer_public_key, quorum_proof, request_id
+// Sets PRAGMA user_version for future migrations
+```
+
+Key behavior:
+- `run_migrations()` inspects `PRAGMA table_info(dht_records)` and ALTER TABLE missing columns
+- `is_legacy_row()` detects rows without auth metadata
+- Legacy sensitive records are quarantined (skipped during load)
+- Legacy public records are loaded with debug logging
+
+Key files:
+- `src/mesh/dht/record_store_disk.rs` — `run_migrations()`, `is_legacy_row()`
+- `src/mesh/dht/record_store.rs` — `load_from_disk()` quarantine logic
+
+### P3: Raft Snapshot Framing Cleanup
+
+`ALLOW_LEGACY_RAFT_SNAPSHOT_FRAMES` controls the legacy length heuristic:
+
+```rust
+// In src/mesh/transport.rs
+pub const ALLOW_LEGACY_RAFT_SNAPSHOT_FRAMES: bool = false;
+```
+
+When `false` (default): InstallSnapshot decode failure results in rejection
+When `true`: Falls back to `payload.data.len() < 100` heuristic with LEGACY-prefixed logging
+
+Key files:
+- `src/mesh/transport.rs` — `ALLOW_LEGACY_RAFT_SNAPSHOT_FRAMES` constant
+- `src/mesh/transport_peer.rs` — Legacy fallback with telemetry
+
+### P4: Network Ingress Identity Binding
+
+`DhtRecord::verify_for_ingress()` now binds signer public key to source_node_id:
+
+```rust
+// Derives node ID from signer's public key and compares to record.source_node_id
+// Rejects with InvalidSourceNodeId if they don't match
+```
+
+This prevents remote attackers from claiming to be a different node by setting `source_node_id` to a victim node.
+
+Key files:
+- `src/mesh/dht/signed.rs` — Signer-to-source binding validation
+- `src/mesh/protocol.rs` — `InvalidSourceNodeId` error variant
+
+### P5: Clippy Offline Reproducibility
+
+`utoipa-swagger-ui` uses `vendored` feature to embed Swagger UI assets locally:
+
+```toml
+# In Cargo.toml
+utoipa-swagger-ui = { version = "...", features = ["vendored"] }
+```
+
+This allows `cargo clippy --lib -- -D warnings` to run without network access.
+
+### P6: Warning Cleanup
+
+Wave 15 fixed warnings in mesh/DHT/Raft files:
+- Removed unused imports (DiskRecordStore, Ed25519Signer/Verifier, bytes::Bytes, rkyv, Path, Async*Ext)
+- Fixed ref pattern creating reference to reference (`Some(ref regional_set)` → `Some(regional_set)`)
+- Use `std::io::Error::other()` instead of `new(ErrorKind::Other, ...)`
+- Added `#[allow(dead_code)]` to `fallback_json_install`
+- Use `.ok()` and `.flatten()` patterns for iterators
+- Prefix unused variables with underscore (`_pool`)
+- Add `#[derive(Default)]` with `#[default]` on `DhtRecordStatus`
+- Collapse nested if-else blocks

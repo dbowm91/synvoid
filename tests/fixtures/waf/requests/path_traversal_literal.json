@@ -1,0 +1,17 @@
+{
+  "id": "path_traversal_literal",
+  "description": "Standard path traversal with literal dot segments",
+  "entry_point": "path",
+  "expected_result": "detect",
+  "attack_type": "path_traversal",
+  "notes": "Standard path traversal that should be detected",
+  "request": {
+    "method": "GET",
+    "path": "/files/../../etc/passwd",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

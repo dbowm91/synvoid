@@ -22,7 +22,7 @@ impl QuicMeshTransport {
         threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
         mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
-        dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
+        #[cfg(feature = "dns")] dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
         #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     ) -> Self {
         let cert_manager = Arc::new(RwLock::new(MeshCertManager::new(&config)));

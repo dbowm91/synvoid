@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use openraft::entry::RaftEntry;
@@ -17,7 +19,7 @@ use openraft::EntryPayload;
 use openraft::OptionalSend;
 use openraft::RaftTypeConfig;
 use rusqlite::{params, Connection};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use std::io::{Read, Seek, Write};
 
@@ -49,6 +51,115 @@ impl Namespace {
 
     pub fn try_from_str(s: &str) -> Option<Self> {
         Self::from_str(s)
+    }
+
+    pub fn allowed_writers(&self) -> &'static str {
+        match self {
+            Namespace::Org => "global",
+            Namespace::Intel => "global",
+            Namespace::Revocation => "global",
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ClientProposalPayload {
+    pub namespace: Namespace,
+    pub key: String,
+    pub value_hash: Vec<u8>,
+    pub command_kind: CommandKind,
+    pub source_node_id: String,
+    pub timestamp: u64,
+    pub nonce: u64,
+    pub protocol_version: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum CommandKind {
+    Set,
+    Delete,
+}
+
+impl ClientProposalPayload {
+    pub fn new(
+        namespace: Namespace,
+        key: String,
+        value: &[u8],
+        command_kind: CommandKind,
+        source_node_id: String,
+        timestamp: u64,
+        nonce: u64,
+    ) -> Self {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        let value_hash = postcard::to_stdvec(&hasher.finish()).unwrap_or_default();
+
+        Self {
+            namespace,
+            key,
+            value_hash,
+            command_kind,
+            source_node_id,
+            timestamp,
+            nonce,
+            protocol_version: 1,
+        }
+    }
+
+    pub fn get_signable_content(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).unwrap_or_default()
+    }
+}
+
+pub struct ReplayProtectionCache {
+    seen_entries: HashSet<(String, u64)>,
+    timestamps: HashMap<(String, u64), Instant>,
+    max_size: usize,
+    window: Duration,
+}
+
+impl ReplayProtectionCache {
+    pub fn new(max_size: usize, window_secs: u64) -> Self {
+        Self {
+            seen_entries: HashSet::new(),
+            timestamps: HashMap::new(),
+            max_size,
+            window: Duration::from_secs(window_secs),
+        }
+    }
+
+    pub fn check_and_insert(&mut self, source_node_id: &str, _timestamp: u64, nonce: u64) -> bool {
+        let key = (source_node_id.to_string(), nonce);
+        if self.seen_entries.contains(&key) {
+            return false;
+        }
+        if self.timestamps.len() >= self.max_size {
+            if let Some(oldest) = self.timestamps.iter().min_by_key(|(_, v)| *v) {
+                let oldest_key = oldest.0.clone();
+                self.timestamps.remove(&oldest_key);
+                self.seen_entries.remove(&oldest_key);
+            }
+        }
+        self.seen_entries.insert(key);
+        self.timestamps
+            .insert((source_node_id.to_string(), nonce), Instant::now());
+        true
+    }
+
+    pub fn purge_expired(&mut self) {
+        let now = Instant::now();
+        self.timestamps
+            .retain(|_, added_at| now.duration_since(*added_at) < self.window);
+        self.seen_entries
+            .retain(|key| self.timestamps.contains_key(key));
+    }
+}
+
+impl Default for ReplayProtectionCache {
+    fn default() -> Self {
+        Self::new(10000, 300)
     }
 }
 
@@ -472,7 +583,7 @@ impl GlobalRegistryStateMachine {
             Ok(RaftSnapshotData::File(tokio::fs::File::from_std(file)))
         })
         .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .map_err(std::io::Error::other)?
     }
 
     pub async fn streaming_deserialize_and_apply(
@@ -526,7 +637,7 @@ impl GlobalRegistryStateMachine {
             Ok(())
         })
         .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        .map_err(std::io::Error::other)?
     }
 
     fn fallback_json_install_from_reader(
@@ -561,6 +672,7 @@ impl GlobalRegistryStateMachine {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn fallback_json_install(&self, data: &[u8]) -> std::io::Result<()> {
         Self::fallback_json_install_static(self.db.clone(), data)
     }
@@ -1089,7 +1201,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
     }
 
     async fn begin_receiving_snapshot(&mut self) -> std::io::Result<RaftSnapshotData> {
-        let std_file = tokio::task::spawn_blocking(|| tempfile::tempfile()).await??;
+        let std_file = tokio::task::spawn_blocking(tempfile::tempfile).await??;
         let file = tokio::fs::File::from_std(std_file);
         Ok(RaftSnapshotData::File(file))
     }

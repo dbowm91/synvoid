@@ -4,7 +4,6 @@
 //! Ed25519 signatures with post-quantum ML-DSA-44 signatures for
 //! enhanced security against quantum adversaries.
 
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 pub use crate::integrity::signing::{

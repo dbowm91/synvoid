@@ -14,6 +14,9 @@ pub enum SandboxError {
 
     #[error("Syscall failed: {0}")]
     Syscall(String),
+
+    #[error("Strict sandbox requested but backend cannot enforce it: {0}")]
+    InsufficientCapabilities(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,11 +37,33 @@ impl SandboxLevel {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SandboxCapabilities {
+    pub read_path_allowlist: bool,
+    pub write_path_allowlist: bool,
+    pub deny_paths: bool,
+    pub process_limits: bool,
+    pub network_restrictions: bool,
+    pub child_process_restrictions: bool,
+}
+
+impl SandboxCapabilities {
+    pub fn can_enforce_strict(&self) -> bool {
+        self.read_path_allowlist
+    }
+}
+
 pub trait SandboxBackend: Send + Sync {
-    fn apply(&self, allowed_paths: &[&Path], denied_paths: &[&Path]) -> Result<(), SandboxError>;
+    fn apply(
+        &self,
+        read_paths: &[&Path],
+        write_paths: &[&Path],
+        denied_paths: &[&Path],
+    ) -> Result<(), SandboxError>;
     fn is_supported(&self) -> bool;
     fn feature_name(&self) -> &'static str;
     fn level(&self) -> SandboxLevel;
+    fn capabilities(&self) -> SandboxCapabilities;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -142,10 +167,23 @@ impl ProcessSandbox {
             return Ok(sandbox);
         }
 
+        if level == SandboxLevel::Strict {
+            let caps = sandbox.backend.capabilities();
+            if !caps.can_enforce_strict() {
+                return Err(SandboxError::InsufficientCapabilities(format!(
+                    "backend '{}' has no read-path allowlist support",
+                    sandbox.backend.feature_name(),
+                )));
+            }
+        }
+
         let read_refs: Vec<&Path> = paths.read_paths.iter().map(|p| p.as_path()).collect();
+        let write_refs: Vec<&Path> = paths.write_paths.iter().map(|p| p.as_path()).collect();
         let denied_refs: Vec<&Path> = paths.no_access_paths.iter().map(|p| p.as_path()).collect();
 
-        sandbox.backend.apply(&read_refs, &denied_refs)?;
+        sandbox
+            .backend
+            .apply(&read_refs, &write_refs, &denied_refs)?;
 
         Ok(sandbox)
     }
@@ -161,6 +199,10 @@ impl ProcessSandbox {
     pub fn feature_name(&self) -> &'static str {
         self.backend.feature_name()
     }
+
+    pub fn capabilities(&self) -> SandboxCapabilities {
+        self.backend.capabilities()
+    }
 }
 
 pub struct StubSandbox {
@@ -175,7 +217,12 @@ impl StubSandbox {
 }
 
 impl SandboxBackend for StubSandbox {
-    fn apply(&self, _allowed_paths: &[&Path], _denied_paths: &[&Path]) -> Result<(), SandboxError> {
+    fn apply(
+        &self,
+        _read_paths: &[&Path],
+        _write_paths: &[&Path],
+        _denied_paths: &[&Path],
+    ) -> Result<(), SandboxError> {
         if self.level == SandboxLevel::Off {
             tracing::debug!("Sandbox disabled - no restrictions applied");
             return Ok(());
@@ -203,12 +250,52 @@ impl SandboxBackend for StubSandbox {
     fn level(&self) -> SandboxLevel {
         self.level
     }
+
+    fn capabilities(&self) -> SandboxCapabilities {
+        SandboxCapabilities {
+            read_path_allowlist: false,
+            write_path_allowlist: false,
+            deny_paths: false,
+            process_limits: false,
+            network_restrictions: false,
+            child_process_restrictions: false,
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
 pub mod linux {
-    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use super::{SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel};
+    use std::os::unix::io::AsRawFd;
     use std::path::Path;
+
+    const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
+    const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1 << 1;
+    const LANDLOCK_ACCESS_FS_READ_FILE: u64 = 1 << 2;
+    const LANDLOCK_ACCESS_FS_READ_DIR: u64 = 1 << 3;
+    const LANDLOCK_ACCESS_FS_REMOVE_DIR: u64 = 1 << 4;
+    const LANDLOCK_ACCESS_FS_REMOVE_FILE: u64 = 1 << 5;
+    const LANDLOCK_ACCESS_FS_MAKE_CHAR: u64 = 1 << 6;
+    const LANDLOCK_ACCESS_FS_MAKE_DIR: u64 = 1 << 7;
+    const LANDLOCK_ACCESS_FS_MAKE_REG: u64 = 1 << 8;
+    const LANDLOCK_ACCESS_FS_MAKE_SOCK: u64 = 1 << 9;
+    const LANDLOCK_ACCESS_FS_MAKE_FIFO: u64 = 1 << 10;
+    const LANDLOCK_ACCESS_FS_MAKE_BLOCK: u64 = 1 << 11;
+    const LANDLOCK_ACCESS_FS_MAKE_SYM: u64 = 1 << 12;
+
+    const LANDLOCK_ACCESS_FS_READ: u64 = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
+    const LANDLOCK_ACCESS_FS_WRITE: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+        | LANDLOCK_ACCESS_FS_REMOVE_DIR
+        | LANDLOCK_ACCESS_FS_REMOVE_FILE
+        | LANDLOCK_ACCESS_FS_MAKE_CHAR
+        | LANDLOCK_ACCESS_FS_MAKE_DIR
+        | LANDLOCK_ACCESS_FS_MAKE_REG
+        | LANDLOCK_ACCESS_FS_MAKE_SOCK
+        | LANDLOCK_ACCESS_FS_MAKE_FIFO
+        | LANDLOCK_ACCESS_FS_MAKE_BLOCK
+        | LANDLOCK_ACCESS_FS_MAKE_SYM;
+    const LANDLOCK_ACCESS_FS_ALL: u64 =
+        LANDLOCK_ACCESS_FS_READ | LANDLOCK_ACCESS_FS_WRITE | LANDLOCK_ACCESS_FS_EXECUTE;
 
     pub struct LandlockSandbox {
         level: SandboxLevel,
@@ -238,7 +325,6 @@ pub mod linux {
 
         fn create_landlock_ruleset(&self) -> Result<i32, SandboxError> {
             const LANDLOCK_CREATE_RULESET: u64 = 1;
-            const LANDLOCK_ATTR_RULESET: u64 = 1;
 
             #[repr(C)]
             struct LandlockRulesetAttr {
@@ -247,7 +333,7 @@ pub mod linux {
 
             unsafe {
                 let attr = LandlockRulesetAttr {
-                    handled_access_fs: 0b111,
+                    handled_access_fs: LANDLOCK_ACCESS_FS_ALL,
                 };
 
                 let ret = libc::syscall(
@@ -280,9 +366,8 @@ pub mod linux {
                 allowed_access: u64,
             }
 
-            let dir_fd = std::fs::File::open(path)
-                .map_err(|e| SandboxError::Io(e))?
-                .as_raw_fd();
+            let file = std::fs::File::open(path).map_err(SandboxError::Io)?;
+            let dir_fd = file.as_raw_fd();
 
             let attr = LandlockPathBeneathAttr {
                 parent_fd: dir_fd,
@@ -326,7 +411,8 @@ pub mod linux {
     impl SandboxBackend for LandlockSandbox {
         fn apply(
             &self,
-            allowed_paths: &[&Path],
+            read_paths: &[&Path],
+            write_paths: &[&Path],
             denied_paths: &[&Path],
         ) -> Result<(), SandboxError> {
             if !Self::is_landlock_available() {
@@ -339,9 +425,16 @@ pub mod linux {
 
             let ruleset_fd = self.create_landlock_ruleset()?;
 
-            for path in allowed_paths {
-                let access = 0b11;
-                self.add_path_rule(ruleset_fd, path, access)?;
+            for path in read_paths {
+                self.add_path_rule(ruleset_fd, path, LANDLOCK_ACCESS_FS_READ)?;
+            }
+
+            for path in write_paths {
+                self.add_path_rule(
+                    ruleset_fd,
+                    path,
+                    LANDLOCK_ACCESS_FS_READ | LANDLOCK_ACCESS_FS_WRITE,
+                )?;
             }
 
             for path in denied_paths {
@@ -355,10 +448,13 @@ pub mod linux {
             }
 
             tracing::info!(
-                "Applied landlock sandbox (level: {:?}) with {} allowed paths",
+                "Applied landlock sandbox (level: {:?}) with {} read paths, {} write paths",
                 self.level,
-                allowed_paths.len()
+                read_paths.len(),
+                write_paths.len()
             );
+
+            let _ = denied_paths;
 
             Ok(())
         }
@@ -374,12 +470,23 @@ pub mod linux {
         fn level(&self) -> SandboxLevel {
             self.level
         }
+
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                read_path_allowlist: true,
+                write_path_allowlist: true,
+                deny_paths: false,
+                process_limits: false,
+                network_restrictions: false,
+                child_process_restrictions: false,
+            }
+        }
     }
 }
 
 #[cfg(target_os = "freebsd")]
 pub mod capsicum {
-    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use super::{SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel};
     use std::ffi::CStr;
     use std::path::Path;
 
@@ -393,11 +500,9 @@ pub mod capsicum {
         }
 
         fn is_capsicum_available() -> bool {
-            unsafe {
-                libc::cap_enter();
-                let enabled = libc::cap_getmode(std::ptr::null_mut());
-                enabled >= 0
-            }
+            // Do NOT call cap_enter() here — that permanently enters capability mode.
+            // Capsicum is available on all FreeBSD 10+ systems.
+            true
         }
 
         fn enter_sandbox(&self) -> Result<(), SandboxError> {
@@ -427,7 +532,8 @@ pub mod capsicum {
     impl SandboxBackend for CapsicumSandbox {
         fn apply(
             &self,
-            allowed_paths: &[&Path],
+            read_paths: &[&Path],
+            write_paths: &[&Path],
             denied_paths: &[&Path],
         ) -> Result<(), SandboxError> {
             if !Self::is_capsicum_available() {
@@ -441,11 +547,13 @@ pub mod capsicum {
             self.enter_sandbox()?;
 
             tracing::info!(
-                "Applied capsicum sandbox (level: {:?}) with {} allowed paths",
+                "Applied capsicum sandbox (level: {:?}) with {} read paths, {} write paths",
                 self.level,
-                allowed_paths.len()
+                read_paths.len(),
+                write_paths.len()
             );
             let _ = denied_paths;
+            let _ = write_paths;
 
             Ok(())
         }
@@ -461,12 +569,23 @@ pub mod capsicum {
         fn level(&self) -> SandboxLevel {
             self.level
         }
+
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                read_path_allowlist: false,
+                write_path_allowlist: false,
+                deny_paths: false,
+                process_limits: true,
+                network_restrictions: true,
+                child_process_restrictions: true,
+            }
+        }
     }
 }
 
 #[cfg(target_os = "openbsd")]
 pub mod pledge {
-    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use super::{SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel};
     use std::ffi::CStr;
     use std::path::Path;
 
@@ -520,7 +639,8 @@ pub mod pledge {
     impl SandboxBackend for PledgeSandbox {
         fn apply(
             &self,
-            allowed_paths: &[&Path],
+            read_paths: &[&Path],
+            write_paths: &[&Path],
             denied_paths: &[&Path],
         ) -> Result<(), SandboxError> {
             if !Self::is_pledge_available() {
@@ -531,23 +651,26 @@ pub mod pledge {
                 return Err(SandboxError::NotSupported("Pledge not available".into()));
             }
 
-            for path in allowed_paths {
-                let perms = if denied_paths.contains(path) {
-                    "r"
-                } else {
-                    "rwc"
-                };
-                self.unveil(path, perms)?;
+            for path in read_paths {
+                self.unveil(path, "r")?;
+            }
+
+            for path in write_paths {
+                self.unveil(path, "rwc")?;
+            }
+
+            for path in denied_paths {
+                self.unveil(path, "")?;
             }
 
             self.commit_pledge()?;
 
             tracing::info!(
-                "Applied pledge sandbox (level: {:?}) with {} allowed paths",
+                "Applied pledge sandbox (level: {:?}) with {} read paths, {} write paths",
                 self.level,
-                allowed_paths.len()
+                read_paths.len(),
+                write_paths.len()
             );
-            let _ = denied_paths;
 
             Ok(())
         }
@@ -563,12 +686,23 @@ pub mod pledge {
         fn level(&self) -> SandboxLevel {
             self.level
         }
+
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                read_path_allowlist: true,
+                write_path_allowlist: true,
+                deny_paths: true,
+                process_limits: true,
+                network_restrictions: true,
+                child_process_restrictions: true,
+            }
+        }
     }
 }
 
 #[cfg(target_os = "windows")]
 pub mod windows {
-    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use super::{SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel};
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -589,6 +723,11 @@ pub mod windows {
             true
         }
 
+        // Windows Job Objects provide process resource controls (memory limits,
+        // kill-on-close) and mitigation policies (DEP, ASLR), but do NOT provide
+        // filesystem path sandboxing, network restrictions, or child process
+        // spawning restrictions. Path sandboxing would require a separate mechanism
+        // such as AppContainer or DACLs which is not implemented here.
         fn apply_job_object(&self) -> Result<(), SandboxError> {
             use std::ffi::OsStr;
             use std::os::windows::ffi::OsStrExt;
@@ -749,7 +888,8 @@ pub mod windows {
     impl SandboxBackend for WindowsSandbox {
         fn apply(
             &self,
-            allowed_paths: &[&Path],
+            read_paths: &[&Path],
+            write_paths: &[&Path],
             denied_paths: &[&Path],
         ) -> Result<(), SandboxError> {
             if self.applied.load(Ordering::SeqCst) {
@@ -766,9 +906,10 @@ pub mod windows {
             self.applied.store(true, Ordering::SeqCst);
 
             tracing::info!(
-                "Applied windows sandbox (level: {:?}) with {} allowed paths, {} denied paths",
+                "Applied windows sandbox (level: {:?}) with {} read paths, {} write paths, {} denied paths",
                 self.level,
-                allowed_paths.len(),
+                read_paths.len(),
+                write_paths.len(),
                 denied_paths.len()
             );
 
@@ -786,12 +927,23 @@ pub mod windows {
         fn level(&self) -> SandboxLevel {
             self.level
         }
+
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                read_path_allowlist: false,
+                write_path_allowlist: false,
+                deny_paths: false,
+                process_limits: true,
+                network_restrictions: false,
+                child_process_restrictions: false,
+            }
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
 pub mod darwin {
-    use super::{SandboxBackend, SandboxError, SandboxLevel};
+    use super::{SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel};
     use std::path::Path;
 
     pub struct SeatbeltSandbox {
@@ -804,11 +956,19 @@ pub mod darwin {
         }
 
         fn is_supported() -> bool {
-            true
+            #[cfg(feature = "macos-sandbox")]
+            {
+                true
+            }
+            #[cfg(not(feature = "macos-sandbox"))]
+            {
+                false
+            }
         }
 
         fn compile_sandbox_profile(
-            allowed_paths: &[&Path],
+            read_paths: &[&Path],
+            write_paths: &[&Path],
             denied_paths: &[&Path],
             level: SandboxLevel,
         ) -> String {
@@ -833,14 +993,21 @@ pub mod darwin {
                 }
             }
 
-            for path in allowed_paths {
+            for path in read_paths {
                 let path_str = path.display().to_string().replace('\\', "\\\\");
                 profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", path_str));
+            }
+
+            for path in write_paths {
+                let path_str = path.display().to_string().replace('\\', "\\\\");
+                profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", path_str));
+                profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path_str));
             }
 
             for path in denied_paths {
                 let path_str = path.display().to_string().replace('\\', "\\\\");
                 profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path_str));
+                profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path_str));
             }
 
             profile
@@ -896,21 +1063,24 @@ pub mod darwin {
     impl SandboxBackend for SeatbeltSandbox {
         fn apply(
             &self,
-            allowed_paths: &[&Path],
+            read_paths: &[&Path],
+            write_paths: &[&Path],
             denied_paths: &[&Path],
         ) -> Result<(), SandboxError> {
             if self.level == SandboxLevel::Off {
                 return Ok(());
             }
 
-            let profile = Self::compile_sandbox_profile(allowed_paths, denied_paths, self.level);
+            let profile =
+                Self::compile_sandbox_profile(read_paths, write_paths, denied_paths, self.level);
 
             self.apply_sandbox(&profile)?;
 
             tracing::info!(
-                "Applied seatbelt sandbox (level: {:?}) with {} allowed paths, {} denied paths",
+                "Applied seatbelt sandbox (level: {:?}) with {} read paths, {} write paths, {} denied paths",
                 self.level,
-                allowed_paths.len(),
+                read_paths.len(),
+                write_paths.len(),
                 denied_paths.len()
             );
 
@@ -928,5 +1098,73 @@ pub mod darwin {
         fn level(&self) -> SandboxLevel {
             self.level
         }
+
+        fn capabilities(&self) -> SandboxCapabilities {
+            #[cfg(feature = "macos-sandbox")]
+            {
+                SandboxCapabilities {
+                    read_path_allowlist: true,
+                    write_path_allowlist: true,
+                    deny_paths: true,
+                    process_limits: true,
+                    network_restrictions: true,
+                    child_process_restrictions: true,
+                }
+            }
+            #[cfg(not(feature = "macos-sandbox"))]
+            {
+                SandboxCapabilities {
+                    read_path_allowlist: false,
+                    write_path_allowlist: false,
+                    deny_paths: false,
+                    process_limits: false,
+                    network_restrictions: false,
+                    child_process_restrictions: false,
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strict_sandbox_fails_on_stub_backend() {
+        let stub = StubSandbox::new(SandboxLevel::Basic, "test-stub");
+        let caps = stub.capabilities();
+        assert!(!caps.can_enforce_strict());
+
+        let result = ProcessSandbox::with_paths(SandboxLevel::Strict, SandboxPaths::new());
+        assert!(result.is_err());
+        if let Err(SandboxError::InsufficientCapabilities(_)) = result {
+        } else {
+            panic!("expected InsufficientCapabilities error");
+        }
+    }
+
+    #[test]
+    fn test_strict_sandbox_fails_on_insufficient_capabilities() {
+        let level = SandboxLevel::Strict;
+        let sandbox = ProcessSandbox::new(level);
+
+        let caps = sandbox.capabilities();
+        if !caps.can_enforce_strict() {
+            let result = sandbox.backend.capabilities().can_enforce_strict();
+            assert!(!result, "stub backend should not support strict");
+        }
+    }
+
+    #[test]
+    fn test_sandbox_off_always_succeeds() {
+        let result = ProcessSandbox::with_paths(SandboxLevel::Off, SandboxPaths::new());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_basic_sandbox_succeeds_with_stub() {
+        let result = ProcessSandbox::with_paths(SandboxLevel::Basic, SandboxPaths::new());
+        assert!(result.is_ok());
     }
 }

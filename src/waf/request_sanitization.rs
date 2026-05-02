@@ -145,19 +145,8 @@ impl RequestSanitizer {
                 if let Ok(value) = forwarded_for.to_str() {
                     let ips: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
                     if !ips.is_empty() {
-                        // Validate the X-Forwarded-For chain:
-                        // - All IPs except the LAST should be from trusted proxies
-                        // - The LAST IP (original client) should not be a trusted proxy
-                        let chain_valid = self.validate_forwarded_chain(&ips);
-                        if chain_valid {
-                            // Return the first IP (original client) if chain is valid
-                            if let Ok(ip) = ips[0].parse::<IpAddr>() {
-                                if !self.is_private_ip(&ip) {
-                                    return Some(ip);
-                                }
-                            }
-                        } else {
-                            tracing::debug!("X-Forwarded-For chain validation failed: {:?}", ips);
+                        if let Some(client_ip_from_xff) = self.find_client_ip_in_xff(&ips) {
+                            return Some(client_ip_from_xff);
                         }
                     }
                 }
@@ -184,34 +173,28 @@ impl RequestSanitizer {
         Some(client_ip)
     }
 
-    fn validate_forwarded_chain(&self, ips: &[&str]) -> bool {
-        if ips.is_empty() {
-            return false;
-        }
-
-        // All IPs except the last one should be trusted proxies
-        for &ip_str in &ips[..ips.len().saturating_sub(1)] {
-            if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                if !self.is_trusted_proxy(ip) {
-                    return false;
-                }
-            } else {
-                // Invalid IP format in chain - treat as suspicious
-                return false;
-            }
-        }
-
-        // The last IP (original client) should NOT be a trusted proxy
-        if let Some(&last_ip) = ips.last() {
-            if let Ok(ip) = last_ip.parse::<IpAddr>() {
+    fn find_client_ip_in_xff(&self, ips: &[&str]) -> Option<IpAddr> {
+        let n = ips.len();
+        let mut found_trusted = false;
+        for i in (0..n).rev() {
+            if let Ok(ip) = ips[i].parse::<IpAddr>() {
                 if self.is_trusted_proxy(ip) {
-                    // Original client IP cannot be a trusted proxy
-                    return false;
+                    found_trusted = true;
+                    continue;
                 }
+                if found_trusted {
+                    if self.is_private_ip(&ip) {
+                        continue;
+                    }
+                    return Some(ip);
+                }
+                if self.is_private_ip(&ip) {
+                    return None;
+                }
+                return Some(ip);
             }
         }
-
-        true
+        None
     }
 
     fn is_private_ip(&self, ip: &IpAddr) -> bool {
@@ -299,5 +282,96 @@ mod tests {
             result.original_forwarded_for,
             Some("1.2.3.4, 5.6.7.8".to_string())
         );
+    }
+
+    #[test]
+    fn test_get_real_ip_direct_untrusted_client() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.0/8".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 50));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(client_ip));
+    }
+
+    #[test]
+    fn test_get_real_ip_trusted_proxy_single() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4, 10.0.0.10".parse().unwrap());
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))));
+    }
+
+    #[test]
+    fn test_get_real_ip_multiple_trusted_proxies() {
+        let sanitizer =
+            RequestSanitizer::new(vec!["10.0.0.10".to_string(), "10.0.0.11".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "1.2.3.4, 10.0.0.10, 10.0.0.11".parse().unwrap(),
+        );
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))));
+    }
+
+    #[test]
+    fn test_get_real_ip_private_client_rejected() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "192.168.1.1, 10.0.0.10".parse().unwrap());
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(client_ip));
+    }
+
+    #[test]
+    fn test_get_real_ip_spoofed_middle_public_ip_rejected() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "1.2.3.4, 5.6.7.8, 10.0.0.10".parse().unwrap(),
+        );
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8))));
+    }
+
+    #[test]
+    fn test_get_real_ip_forwarded_header() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("forwarded", "for=1.2.3.4".parse().unwrap());
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))));
+    }
+
+    #[test]
+    fn test_get_real_ip_empty_xff() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "".parse().unwrap());
+
+        let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        let result = sanitizer.get_real_ip(&headers, client_ip);
+        assert_eq!(result, Some(client_ip));
     }
 }
