@@ -55,6 +55,12 @@ struct Args {
     #[arg(long, value_name = "ID", help = "Unified server worker ID")]
     unified_worker_id: Option<usize>,
 
+    #[arg(long, help = "Run as mesh control plane process")]
+    mesh_control_plane: bool,
+
+    #[arg(long, help = "Run as plugin execution server process")]
+    plugin_execution: bool,
+
     #[arg(
         long,
         value_name = "COUNT",
@@ -474,6 +480,36 @@ fn main() {
     // ============================================================================================
     } else if args.master {
         run_master_mode(args.config_path, args.log_level);
+    } else if args.mesh_control_plane {
+        init_logging_simple();
+        let mesh_args = maluwaf::mesh::control_plane::MeshControlPlaneArgs {
+            config_path: args.config_path,
+            log_level: args.log_level,
+        };
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("Failed to build Tokio runtime");
+        if let Err(e) = rt.block_on(maluwaf::mesh::control_plane::run_mesh_control_plane(mesh_args)) {
+            tracing::error!("Mesh control plane error: {}", e);
+            std::process::exit(1);
+        }
+    } else if args.plugin_execution {
+        init_logging_simple();
+        let plugin_args = maluwaf::plugin::execution::PluginExecutionArgs {
+            config_path: args.config_path,
+            log_level: args.log_level,
+        };
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("Failed to build Tokio runtime");
+        if let Err(e) = rt.block_on(maluwaf::plugin::execution::run_plugin_execution_server(plugin_args)) {
+            tracing::error!("Plugin execution server error: {}", e);
+            std::process::exit(1);
+        }
     } else {
         // Default: Run as Overseer (parent of Master and Workers)
         // This is the only supported mode for production deployments.

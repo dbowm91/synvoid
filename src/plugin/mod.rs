@@ -8,6 +8,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
 pub mod axum_loader;
+pub mod execution;
 pub mod global;
 pub mod instance_pool;
 pub mod pool;

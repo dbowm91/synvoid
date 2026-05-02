@@ -51,6 +51,8 @@ pub struct WorkerStatusInfo {
 pub struct OverseerProcess {
     master_child: Option<Child>,
     upgraded_master_child: Option<Child>,
+    mesh_control_plane_child: Option<Child>,
+    plugin_execution_child: Option<Child>,
     config_path: PathBuf,
     runtime_dir: PathBuf,
     running: RunningFlag,
@@ -86,6 +88,8 @@ impl OverseerProcess {
         Ok(Self {
             master_child: None,
             upgraded_master_child: None,
+            mesh_control_plane_child: None,
+            plugin_execution_child: None,
             config_path: config_path.clone(),
             runtime_dir,
             running: RunningFlag::new(),
@@ -111,6 +115,26 @@ impl OverseerProcess {
 
         self.master_child = Some(child);
         self.stable_since = Some(Instant::now());
+        Ok(pid)
+    }
+
+    pub fn spawn_mesh_control_plane(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::MeshControlPlane);
+
+        let child = spawn_and_log(&config, "mesh_control_plane")?;
+        let pid = child.id();
+
+        self.mesh_control_plane_child = Some(child);
+        Ok(pid)
+    }
+
+    pub fn spawn_plugin_execution_server(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::PluginExecution);
+
+        let child = spawn_and_log(&config, "plugin_execution")?;
+        let pid = child.id();
+
+        self.plugin_execution_child = Some(child);
         Ok(pid)
     }
 
@@ -268,11 +292,12 @@ impl OverseerProcess {
         Ok(false)
     }
 
-    pub fn stop_master(
-        &mut self,
+    fn stop_child_process(
+        child_opt: &mut Option<Child>,
+        process_name: &str,
         graceful: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref mut child) = self.master_child {
+        if let Some(ref mut child) = child_opt {
             let pid = child.id();
 
             if graceful {
@@ -285,11 +310,11 @@ impl OverseerProcess {
                 }
 
                 let start = Instant::now();
-                while start.elapsed() < Duration::from_secs(30) {
+                while start.elapsed() < Duration::from_secs(10) {
                     match child.try_wait() {
                         Ok(Some(_)) => {
-                            tracing::info!("Master process stopped gracefully");
-                            self.master_child = None;
+                            tracing::info!("{} process stopped gracefully", process_name);
+                            *child_opt = None;
                             return Ok(());
                         }
                         Ok(None) => {
@@ -302,8 +327,25 @@ impl OverseerProcess {
 
             let _ = child.kill();
             let _ = child.wait();
-            self.master_child = None;
+            *child_opt = None;
         }
+        Ok(())
+    }
+
+    pub fn stop_master(
+        &mut self,
+        graceful: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Self::stop_child_process(&mut self.master_child, "master", graceful)
+    }
+
+    pub fn stop_all_isolated_processes(
+        &mut self,
+        graceful: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.stop_master(graceful)?;
+        Self::stop_child_process(&mut self.mesh_control_plane_child, "mesh_control_plane", graceful)?;
+        Self::stop_child_process(&mut self.plugin_execution_child, "plugin_execution", graceful)?;
         Ok(())
     }
 
@@ -321,6 +363,8 @@ impl OverseerProcess {
         }
 
         self.spawn_master()?;
+        self.spawn_mesh_control_plane()?;
+        self.spawn_plugin_execution_server()?;
 
         // Signal readiness to systemd if running under it
         if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
@@ -354,7 +398,7 @@ impl OverseerProcess {
             self.write_status_file().await;
         }
 
-        self.stop_master(true)?;
+        self.stop_all_isolated_processes(true)?;
         Ok(())
     }
 
