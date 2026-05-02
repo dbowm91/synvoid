@@ -1,17 +1,38 @@
+/*
+ * Windows Interface Resolver via PowerShell
+ *
+ * INJECTION WARNING: This module shells out to `powershell` via std::process::Command.
+ * The `resolve()` method interpolates an interface name into a PowerShell command string
+ * using single-quote wrapping (Name='...'). Single quotes in the interface name could
+ * break out of the string literal. The `sanitize_powershell_string()` function below
+ * escapes single quotes by doubling them, which is the standard PowerShell escaping
+ * technique for single-quoted strings.
+ *
+ * Required privilege: Standard user (Get-NetAdapter is readable by non-admin).
+ *
+ * NOTE: The `get_all_interfaces()` and `get_interface_by_index()` methods use
+ * static PowerShell commands or numeric indices and are not subject to injection.
+ */
+
 use std::collections::HashMap;
 use std::process::Command;
+
+fn sanitize_powershell_string(input: &str) -> String {
+    input.replace('\'', "''")
+}
 
 pub struct WindowsInterfaceResolver;
 
 impl WindowsInterfaceResolver {
     pub fn resolve(interface_name: &str) -> Result<u32, String> {
+        let safe_name = sanitize_powershell_string(interface_name);
         let output = Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
                 &format!(
                     "(Get-NetAdapter -Name '{}' | Get-NetIPInterface -AddressFamily IPv4).InterfaceIndex",
-                    interface_name
+                    safe_name
                 ),
             ])
             .output()

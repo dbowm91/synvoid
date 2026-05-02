@@ -1,7 +1,27 @@
+/*
+ * Windows Firewall rule management via netsh
+ *
+ * INJECTION WARNING: This module shells out to `netsh` via std::process::Command.
+ * The rule name and port arguments are constructed from format strings. The port
+ * is a u16 (cannot contain injection characters). Rule names are constructed from
+ * a fixed prefix ("MaluWAF HTTP/3 QUIC Port " or "MaluWAF HTTP Port ") plus a
+ * u16 port number, so they are also safe. However, if this code is extended to
+ * accept user-supplied strings for rule names or other netsh arguments, those
+ * MUST be validated against shell injection (e.g., reject characters like '"', '&',
+ * '|', ';', '`', '$', '(', ')', '<', '>').
+ *
+ * Required privilege: Administrator (netsh firewall commands require elevation).
+ */
+
 use std::process::Command;
+
+fn is_safe_rule_name(name: &str) -> bool {
+    name.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '/' || c == '-')
+}
 
 pub fn inject_quic_firewall_rule(port: u16) -> Result<(), String> {
     let rule_name = format!("MaluWAF HTTP/3 QUIC Port {}", port);
+    debug_assert!(is_safe_rule_name(&rule_name), "rule name failed safety check");
 
     if let Ok(exists) = check_rule_exists(&rule_name) {
         if exists {

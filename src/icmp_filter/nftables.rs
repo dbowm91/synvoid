@@ -282,6 +282,10 @@ impl IcmpFilter for NftablesFilter {
         self.enabled
     }
 
+    fn is_enforcing(&self) -> bool {
+        self.enabled
+    }
+
     fn backend(&self) -> FilterBackend {
         FilterBackend::Nftables
     }

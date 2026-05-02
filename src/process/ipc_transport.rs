@@ -352,6 +352,7 @@ impl IpcStream {
 
             let len = u32::from_be_bytes(len_buf) as usize;
             if len > super::ipc_framing::MAX_MESSAGE_SIZE {
+                super::ipc_signed::increment_oversized_rejected();
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "message too large",

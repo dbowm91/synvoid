@@ -1304,8 +1304,14 @@ pub enum WorkerStatus {
 
 /// Synchronous IPC stream for framed message passing.
 ///
+/// **COMPATIBILITY WARNING:** This is a legacy sync wrapper retained for
+/// `std::thread::spawn` contexts (static worker connections, overseer IPC
+/// client) where tokio is not available. **New code should use
+/// [`crate::process::ipc_transport::IpcStream`] (the async transport) which
+/// supports message signing, `enforce_signing`, and proper framed I/O.**
+///
 /// This is a blocking wrapper around `UnixStream` (Unix) or `std::fs::File`
-/// (Windows named pipe) that provides length-prefixed JSON framing via
+/// (Windows named pipe) that provides length-prefixed framing via
 /// `send()` and `try_recv()`.
 ///
 /// # Sync vs Async IpcStream
@@ -1317,7 +1323,7 @@ pub enum WorkerStatus {
 /// | Runtime | Synchronous (std) | Async (tokio) |
 /// | Unix inner | `std::os::unix::net::UnixStream` | `tokio::net::UnixStream` |
 /// | Windows inner | `std::fs::File` | `tokio::net::windows::named_pipe::NamedPipeClient` |
-/// | Message signing | Not supported | Supported via `IpcSigner` |
+/// | Message signing | Partial (via `send_signed`) | Full (via `IpcSigner`, `enforce_signing`) |
 /// | Recv with timeout | Polling via `recv()` | Native `recv_with_timeout()` |
 /// | AsyncRead/Write | No | Yes |
 /// | Use case | Static worker threads, command handling | Master↔Worker IPC, mesh transport |
@@ -1475,6 +1481,12 @@ pub fn get_platform_info() -> crate::platform::Platform {
     crate::platform::platform()
 }
 
+/// Connect to the master IPC endpoint without message signing.
+///
+/// **DEPRECATED:** Prefer [`crate::process::ipc_transport::connect_to_master_signed`]
+/// or [`crate::process::ipc_transport::IpcEndpoint::connect_with_signer`] for
+/// production deployments. Unsigned connections must not be used for privileged
+/// operations (Stop, ReloadConfig, threat data exchange).
 pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
     #[cfg(unix)]
     {
@@ -1522,6 +1534,11 @@ pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
 }
 
 impl IpcStream {
+    /// Create a new sync IpcStream from an existing Unix stream.
+    ///
+    /// **COMPATIBILITY:** Prefer using the async transport when possible.
+    /// This constructor creates an unsigned stream; use `connect_with_signer`
+    /// when message authentication is required.
     #[cfg(unix)]
     pub fn new(stream: UnixStream) -> Self {
         stream.set_nonblocking(true).ok();
@@ -1532,6 +1549,10 @@ impl IpcStream {
         }
     }
 
+    /// Create a new sync IpcStream from an existing Windows named pipe handle.
+    ///
+    /// **COMPATIBILITY:** Prefer using the async transport when possible.
+    /// This constructor creates an unsigned stream.
     #[cfg(windows)]
     pub fn new(stream: std::fs::File) -> Self {
         Self {
@@ -1541,6 +1562,9 @@ impl IpcStream {
         }
     }
 
+    /// Connect to a Unix socket with an IPC signer for message authentication.
+    ///
+    /// This is the preferred sync constructor when signing is required.
     #[cfg(unix)]
     pub fn connect_with_signer(path: &std::path::Path, signer: Arc<IpcSigner>) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
@@ -1552,6 +1576,10 @@ impl IpcStream {
         })
     }
 
+    /// Connect to a Unix socket without signing.
+    ///
+    /// **DEPRECATED for privileged paths:** Use `connect_with_signer` instead
+    /// when the connection will carry privileged operations.
     #[cfg(unix)]
     pub fn connect_unix(path: &std::path::Path) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
@@ -1563,6 +1591,10 @@ impl IpcStream {
         })
     }
 
+    /// Connect to the master IPC endpoint without signing (Windows).
+    ///
+    /// **DEPRECATED for privileged paths:** Use the async transport with
+    /// `connect_with_signer` when the connection will carry privileged operations.
     #[cfg(windows)]
     pub fn connect_unix(path: &std::path::Path) -> io::Result<Self> {
         connect_to_master(path)

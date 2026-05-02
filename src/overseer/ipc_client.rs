@@ -63,6 +63,8 @@ impl IpcClient {
             IpcStream::connect_with_signer(&self.socket_path, signer)
                 .map_err(|e| ipc_errors::connect_failed(&e))
         } else {
+            // WARNING: Unsigned fallback — acceptable for read-only overseer
+            // queries. Must not be used to send privileged commands.
             IpcStream::connect_unix(&self.socket_path).map_err(|e| ipc_errors::connect_failed(&e))
         }
     }

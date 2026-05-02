@@ -50,6 +50,17 @@ pub const HMAC_SIZE: usize = 32;
 pub const TIMESTAMP_SIZE: usize = 8;
 pub const NONCE_SIZE: usize = 16;
 pub const SIGNED_MESSAGE_OVERHEAD: usize = 4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE;
+pub const MAX_IPC_MESSAGE_SIZE: usize = 1024 * 1024;
+
+static OVERSIZED_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn oversized_rejected_count() -> u64 {
+    OVERSIZED_REJECTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn increment_oversized_rejected() {
+    OVERSIZED_REJECTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
 
 struct NonceEntry {
     nonce: [u8; 16],
@@ -209,6 +220,24 @@ impl IpcSigner {
         use subtle::ConstantTimeEq;
         computed_hmac.ct_eq(expected_hmac).into()
     }
+
+    pub fn sign_parts(&self, parts: &[&[u8]]) -> [u8; HMAC_SIZE] {
+        let mut mac =
+            HmacSha3_256::new_from_slice(&self.key).expect("HMAC can take key of any size");
+        for part in parts {
+            mac.update(part);
+        }
+        let result = mac.finalize();
+        let mut hmac_bytes = [0u8; HMAC_SIZE];
+        hmac_bytes.copy_from_slice(&result.into_bytes());
+        hmac_bytes
+    }
+
+    pub fn verify_parts(&self, parts: &[&[u8]], expected_hmac: &[u8; HMAC_SIZE]) -> bool {
+        let computed = self.sign_parts(parts);
+        use subtle::ConstantTimeEq;
+        computed.ct_eq(expected_hmac).into()
+    }
 }
 
 pub struct SignedWriter<W> {
@@ -244,17 +273,12 @@ impl<W: Write> Write for SignedWriter<W> {
 
         let timestamp = crate::utils::current_timestamp();
         let nonce = generate_nonce();
-
-        let mut hmac_data = Vec::with_capacity(TIMESTAMP_SIZE + NONCE_SIZE + self.buffer.len());
-        hmac_data.extend_from_slice(&timestamp.to_be_bytes());
-        hmac_data.extend_from_slice(&nonce);
-        hmac_data.extend_from_slice(&self.buffer);
-
-        let hmac = self.signer.sign(&hmac_data);
+        let ts_bytes = timestamp.to_be_bytes();
+        let hmac = self.signer.sign_parts(&[&ts_bytes, &nonce, &self.buffer]);
 
         let total_len = (TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE + self.buffer.len()) as u32;
         self.inner.write_all(&total_len.to_be_bytes())?;
-        self.inner.write_all(&timestamp.to_be_bytes())?;
+        self.inner.write_all(&ts_bytes)?;
         self.inner.write_all(&nonce)?;
         self.inner.write_all(&hmac)?;
         self.inner.write_all(&self.buffer)?;
@@ -297,8 +321,8 @@ impl<R: Read> SignedReader<R> {
         })?;
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
-        const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
-        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_MESSAGE_SIZE).contains(&total_len) {
+        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_IPC_MESSAGE_SIZE).contains(&total_len) {
+            increment_oversized_rejected();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "signed message size invalid",
@@ -331,13 +355,12 @@ impl<R: Read> SignedReader<R> {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad hmac"))?;
 
         let payload = &raw[TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..];
+        let ts_bytes = timestamp.to_be_bytes();
 
-        let mut hmac_data = Vec::with_capacity(TIMESTAMP_SIZE + NONCE_SIZE + payload.len());
-        hmac_data.extend_from_slice(&timestamp.to_be_bytes());
-        hmac_data.extend_from_slice(&nonce);
-        hmac_data.extend_from_slice(payload);
-
-        if !self.signer.verify(&hmac_data, &hmac) {
+        if !self
+            .signer
+            .verify_parts(&[&ts_bytes, &nonce, payload], &hmac)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "HMAC verification failed",
@@ -351,7 +374,9 @@ impl<R: Read> SignedReader<R> {
             ));
         }
 
-        self.payload_buffer = payload.to_vec();
+        let header_len = TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE;
+        raw.drain(..header_len);
+        self.payload_buffer = raw;
         self.payload_pos = 0;
         Ok(())
     }
@@ -405,18 +430,13 @@ impl SignedIpcMessage {
 
         let timestamp = crate::utils::current_timestamp();
         let nonce = generate_nonce();
-
-        let mut hmac_data = Vec::with_capacity(TIMESTAMP_SIZE + NONCE_SIZE + payload.len());
-        hmac_data.extend_from_slice(&timestamp.to_be_bytes());
-        hmac_data.extend_from_slice(&nonce);
-        hmac_data.extend_from_slice(&payload);
-
-        let hmac = signer.sign(&hmac_data);
+        let ts_bytes = timestamp.to_be_bytes();
+        let hmac = signer.sign_parts(&[&ts_bytes, &nonce, &payload]);
 
         let total_len = (TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE + payload.len()) as u32;
         let mut result = Vec::with_capacity(4 + total_len as usize);
         result.extend_from_slice(&total_len.to_be_bytes());
-        result.extend_from_slice(&timestamp.to_be_bytes());
+        result.extend_from_slice(&ts_bytes);
         result.extend_from_slice(&nonce);
         result.extend_from_slice(&hmac);
         result.extend_from_slice(&payload);
@@ -428,8 +448,6 @@ impl SignedIpcMessage {
         data: &[u8],
         signer: &IpcSigner,
     ) -> io::Result<T> {
-        const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
-
         if data.len() < 4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -438,7 +456,8 @@ impl SignedIpcMessage {
         }
 
         let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_MESSAGE_SIZE).contains(&len) {
+        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_IPC_MESSAGE_SIZE).contains(&len) {
+            increment_oversized_rejected();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "signed message size invalid",
@@ -473,13 +492,9 @@ impl SignedIpcMessage {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "HMAC extraction failed"))?;
 
         let payload = &data[4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..4 + len];
+        let ts_bytes = timestamp.to_be_bytes();
 
-        let mut hmac_data = Vec::with_capacity(TIMESTAMP_SIZE + NONCE_SIZE + payload.len());
-        hmac_data.extend_from_slice(&timestamp.to_be_bytes());
-        hmac_data.extend_from_slice(&nonce);
-        hmac_data.extend_from_slice(payload);
-
-        if !signer.verify(&hmac_data, &hmac) {
+        if !signer.verify_parts(&[&ts_bytes, &nonce, payload], &hmac) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "HMAC verification failed",
@@ -508,8 +523,8 @@ impl SignedIpcMessage {
         }
 
         let total_len = u32::from_be_bytes(len_buf) as usize;
-        const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
-        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_MESSAGE_SIZE).contains(&total_len) {
+        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_IPC_MESSAGE_SIZE).contains(&total_len) {
+            increment_oversized_rejected();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "signed message size invalid",
@@ -542,13 +557,9 @@ impl SignedIpcMessage {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad hmac"))?;
 
         let payload = &raw[TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..];
+        let ts_bytes = timestamp.to_be_bytes();
 
-        let mut hmac_data = Vec::with_capacity(TIMESTAMP_SIZE + NONCE_SIZE + payload.len());
-        hmac_data.extend_from_slice(&timestamp.to_be_bytes());
-        hmac_data.extend_from_slice(&nonce);
-        hmac_data.extend_from_slice(payload);
-
-        if !signer.verify(&hmac_data, &hmac) {
+        if !signer.verify_parts(&[&ts_bytes, &nonce, payload], &hmac) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "HMAC verification failed",
@@ -708,6 +719,131 @@ mod tests {
         let mut reader = SignedReader::new(raw.as_slice(), signer);
         let mut out = Vec::new();
         let result = reader.read_to_end(&mut out);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_oversized_rejected_signed_deserialize() {
+        let key = generate_session_key();
+        let signer = IpcSigner::new(&key);
+
+        let oversized_len = (MAX_IPC_MESSAGE_SIZE + 1) as u32;
+        let mut data = Vec::with_capacity(4 + 56);
+        data.extend_from_slice(&oversized_len.to_be_bytes());
+        data.extend_from_slice(&[0u8; 56]);
+
+        let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&data, &signer);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_oversized_rejected_signed_reader() {
+        let key = generate_session_key();
+        let signer = Arc::new(IpcSigner::new(&key));
+
+        let oversized_len = (MAX_IPC_MESSAGE_SIZE + 1) as u32;
+        let mut data = Vec::new();
+        data.extend_from_slice(&oversized_len.to_be_bytes());
+        data.extend_from_slice(&[0u8; 8]);
+
+        let mut reader = SignedReader::new(data.as_slice(), signer);
+        let mut out = Vec::new();
+        let result = reader.read_to_end(&mut out);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_oversized_rejected_unsigned_framing() {
+        let mut buf = Vec::new();
+        let large_msg = vec![0u8; super::super::ipc_framing::MAX_MESSAGE_SIZE + 1];
+        let result: Result<(), _> =
+            super::super::ipc_framing::write_message_sync(&mut buf, &large_msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_signed_unsigned_length_semantics_agree() {
+        assert_eq!(
+            super::super::ipc_framing::MAX_MESSAGE_SIZE,
+            MAX_IPC_MESSAGE_SIZE
+        );
+    }
+
+    #[test]
+    fn test_multiple_messages_sequential() {
+        let key = generate_session_key();
+        let signer = Arc::new(IpcSigner::new(&key));
+
+        let mut writer = SignedWriter::new(Vec::new(), signer.clone());
+
+        let messages: &[&[u8]] = &[b"first", b"second", b"third"];
+        for msg in messages {
+            writer.write_all(msg).unwrap();
+            writer.flush().unwrap();
+        }
+
+        let raw = writer.into_inner();
+        let mut reader = SignedReader::new(raw.as_slice(), signer);
+
+        for msg in messages {
+            let mut buf = vec![0u8; msg.len()];
+            reader.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf[..], *msg);
+        }
+    }
+
+    #[test]
+    fn test_oversized_counter_increments() {
+        let key = generate_session_key();
+        let signer = IpcSigner::new(&key);
+
+        let before = oversized_rejected_count();
+
+        let oversized_len = (MAX_IPC_MESSAGE_SIZE + 1) as u32;
+        let mut data = Vec::with_capacity(4 + 56);
+        data.extend_from_slice(&oversized_len.to_be_bytes());
+        data.extend_from_slice(&[0u8; 56]);
+        let _: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&data, &signer);
+
+        assert!(oversized_rejected_count() > before);
+    }
+
+    #[test]
+    fn test_unsigned_message_rejected_when_signer_expected() {
+        let key = generate_session_key();
+        let signer = IpcSigner::new(&key);
+
+        let payload = vec![1u8, 2, 3, 4];
+        let unsigned_frame = {
+            let len = payload.len() as u32;
+            let mut buf = Vec::with_capacity(4 + payload.len());
+            buf.extend_from_slice(&len.to_be_bytes());
+            buf.extend_from_slice(&payload);
+            buf
+        };
+
+        let result: Result<Vec<u8>, _> =
+            SignedIpcMessage::deserialize_signed(&unsigned_frame, &signer);
+        assert!(
+            result.is_err(),
+            "Unsigned payload must be rejected by signed deserializer, but got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_tampered_timestamp_rejected() {
+        let key = generate_session_key();
+        let signer = IpcSigner::new(&key);
+
+        let msg = vec![42u8; 100];
+        let mut signed = SignedIpcMessage::serialize_signed(&msg, &signer).unwrap();
+
+        let old_ts = u64::from_be_bytes(signed[4..12].try_into().unwrap());
+        let bad_ts = old_ts.wrapping_add(999999);
+        signed[4..12].copy_from_slice(&bad_ts.to_be_bytes());
+
+        let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&signed, &signer);
         assert!(result.is_err());
     }
 }

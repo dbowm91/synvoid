@@ -613,9 +613,6 @@ async fn run_master(
     {
         tracing::info!("Master IPC listening on Windows named pipe: \\\\.\\pipe\\maluwaf-master");
 
-        // On Windows, need to do IPC different
-        // The workers will connect via named pipes
-        // This spawns a background task that handles Windows pipe connections
         let pm_clone = process_manager.clone();
         let master_path = master_socket_path.clone();
 
@@ -623,10 +620,12 @@ async fn run_master(
             windows_ipc_accept_loop(pm_clone, master_path).await;
         });
 
-        // Also start command pipe listener for CLI commands
         let config_clone = config_manager.clone();
+        let command_signer = process_manager
+            .get_ipc_session_key()
+            .map(|key| Arc::new(crate::process::IpcSigner::new(&key)));
         tokio::spawn(async move {
-            windows_command_pipe_listener(config_clone).await;
+            windows_command_pipe_listener(config_clone, command_signer).await;
         });
     }
 
@@ -780,14 +779,18 @@ async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, _pipe_nam
 }
 
 #[cfg(windows)]
-async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>>) {
+async fn windows_command_pipe_listener(
+    config_manager: Arc<RwLock<ConfigManager>>,
+    signer: Option<Arc<crate::process::IpcSigner>>,
+) {
     let listener = crate::process::ipc::WindowsIpcListener::new("maluwaf-commands");
 
     loop {
         match listener.accept() {
             Ok(stream) => {
+                let signer = signer.clone();
                 tokio::spawn(async move {
-                    handle_command_connection(stream, config_manager.clone()).await;
+                    handle_command_connection(stream, config_manager.clone(), signer).await;
                 });
             }
             Err(e) => {
@@ -798,16 +801,25 @@ async fn windows_command_pipe_listener(config_manager: Arc<RwLock<ConfigManager>
     }
 }
 
+/// Handle an incoming command on the Windows named command pipe.
+///
+/// Privileged commands (Stop, ReloadConfig) require HMAC-signed IPC messages.
+/// Read-only commands (Status, HealthCheck) are accepted unsigned but this
+/// should be migrated to require signing in a future release.
+///
+/// TODO(security): Full signed IPC migration — accept ONLY signed messages
+/// when a signing key is configured, removing the unsigned fallback entirely.
 #[cfg(windows)]
 async fn handle_command_connection(
     stream: std::fs::File,
     config_manager: Arc<RwLock<ConfigManager>>,
+    signer: Option<Arc<crate::process::IpcSigner>>,
 ) {
+    use crate::process::ipc_signed::SignedIpcMessage;
     use std::io::{Read, Write};
 
     let mut stream = stream;
 
-    // Read command
     let mut length_buf = [0u8; 4];
     match stream.read_exact(&mut length_buf) {
         Ok(_) => {}
@@ -823,33 +835,108 @@ async fn handle_command_connection(
         return;
     }
 
-    let mut json_buf = vec![0u8; len];
-    if let Err(e) = stream.read_exact(&mut json_buf) {
+    let mut msg_buf = vec![0u8; len];
+    if let Err(e) = stream.read_exact(&mut msg_buf) {
         tracing::warn!("Failed to read command: {}", e);
         return;
     }
 
-    let command: crate::process::MasterCommand = match serde_json::from_slice(&json_buf) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("Failed to parse command: {}", e);
-            let _ = stream.write_all(&0u32.to_be_bytes());
-            return;
+    let mut frame = Vec::with_capacity(4 + len);
+    frame.extend_from_slice(&length_buf);
+    frame.extend_from_slice(&msg_buf);
+
+    let (command, authenticated) = if let Some(ref s) = signer {
+        match SignedIpcMessage::deserialize_signed::<crate::process::MasterCommand>(&frame, s) {
+            Ok(cmd) => (cmd, true),
+            Err(_) => {
+                match crate::serialization::deserialize::<crate::process::MasterCommand>(&msg_buf) {
+                    Ok(c) => (c, false),
+                    Err(_) => {
+                        match serde_json::from_slice::<crate::process::MasterCommand>(&msg_buf) {
+                            Ok(c) => (c, false),
+                            Err(e) => {
+                                tracing::warn!("Failed to parse command: {}", e);
+                                let _ = crate::process::write_message_sync(
+                                    &mut stream,
+                                    &crate::process::CommandResponse::Error(
+                                        "Failed to parse command".to_string(),
+                                    ),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        match crate::serialization::deserialize::<crate::process::MasterCommand>(&msg_buf) {
+            Ok(c) => (c, false),
+            Err(_) => match serde_json::from_slice::<crate::process::MasterCommand>(&msg_buf) {
+                Ok(c) => (c, false),
+                Err(e) => {
+                    tracing::warn!("Failed to parse command: {}", e);
+                    let _ = crate::process::write_message_sync(
+                        &mut stream,
+                        &crate::process::CommandResponse::Error(
+                            "Failed to parse command".to_string(),
+                        ),
+                    );
+                    return;
+                }
+            },
         }
     };
 
-    // Handle command and send response
-    let response = match command {
+    match &command {
+        crate::process::MasterCommand::Stop { .. }
+        | crate::process::MasterCommand::ReloadConfig => {
+            if !authenticated {
+                tracing::error!(
+                    "SECURITY: Rejected unauthenticated privileged command ({:?}) \
+                     on command pipe. Configure MALUWAF_IPC_KEY or MALUWAF_IPC_KEY_FILE \
+                     for signed IPC.",
+                    command
+                );
+                let _ = crate::process::write_message_sync(
+                    &mut stream,
+                    &crate::process::CommandResponse::Error(
+                        "Authentication required: configure IPC signing key".to_string(),
+                    ),
+                );
+                return;
+            }
+        }
+        crate::process::MasterCommand::Status | crate::process::MasterCommand::HealthCheck => {
+            // SECURITY NOTE: Status and HealthCheck are non-mutating read-only
+            // operations and may remain unsigned. Future releases should require
+            // signing for all commands when a signing key is configured.
+            if !authenticated {
+                tracing::debug!("Unsigned read-only command ({:?}) on command pipe", command);
+            }
+        }
+        _ => {
+            if !authenticated {
+                tracing::warn!("Rejected unauthenticated unknown command on command pipe");
+                let _ = crate::process::write_message_sync(
+                    &mut stream,
+                    &crate::process::CommandResponse::Error("Authentication required".to_string()),
+                );
+                return;
+            }
+        }
+    }
+
+    match command {
         crate::process::MasterCommand::Stop { graceful } => {
             tracing::info!("CLI: Stop command received (graceful: {})", graceful);
-            // Trigger shutdown
-            let _ = stream.write_all(&4u32.to_be_bytes());
-            let _ = stream.write_all(b"true");
-            return;
+            let _ = crate::process::write_message_sync(
+                &mut stream,
+                &crate::process::CommandResponse::Ok("true".to_string()),
+            );
         }
         crate::process::MasterCommand::ReloadConfig => {
             tracing::info!("CLI: ReloadConfig command received");
-            // Reload config and mimes
             {
                 let config = config_manager.read();
                 let mimes_config = &config.main.mimes;
@@ -870,17 +957,16 @@ async fn handle_command_connection(
                     }
                 }
             }
-            // Reload site configs
             {
                 let mut config = config_manager.write();
                 config.reload_all();
             }
-            let _ = stream.write_all(&4u32.to_be_bytes());
-            let _ = stream.write_all(b"true");
-            return;
+            let _ = crate::process::write_message_sync(
+                &mut stream,
+                &crate::process::CommandResponse::Ok("true".to_string()),
+            );
         }
         crate::process::MasterCommand::Status => {
-            // Return status
             let status = crate::process::MasterStatus {
                 master_pid: std::process::id(),
                 started_at: 0,
@@ -890,17 +976,17 @@ async fn handle_command_connection(
                 stats: crate::process::StatusStats::default(),
                 threat_summary: crate::process::ThreatSummary::default(),
             };
-            let json = serde_json::to_string(&crate::process::CommandResponse::Status(status))
-                .unwrap_or_default();
-            let len = json.len() as u32;
-            let _ = stream.write_all(&len.to_be_bytes());
-            let _ = stream.write_all(json.as_bytes());
-            return;
+            let _ = crate::process::write_message_sync(
+                &mut stream,
+                &crate::process::CommandResponse::Status(status),
+            );
         }
         crate::process::MasterCommand::HealthCheck => {
-            let _ = stream.write_all(&4u32.to_be_bytes());
-            let _ = stream.write_all(b"true");
-            return;
+            let _ = crate::process::write_message_sync(
+                &mut stream,
+                &crate::process::CommandResponse::Ok("true".to_string()),
+            );
         }
-    };
+        _ => {}
+    }
 }

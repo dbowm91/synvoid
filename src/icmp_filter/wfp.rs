@@ -1,3 +1,19 @@
+/*
+ * Windows Filtering Platform (WFP) ICMP Backend
+ *
+ * Capabilities:
+ *   - Block/allow ICMP by direction (inbound/outbound/both)
+ *   - Per-IP exemption (IPv4 and IPv6)
+ *   - ICMP type/code matching via WFP conditions
+ *   - Interface filtering by numeric index
+ *   - No built-in rate limiting (WFP has no native rate-limit primitives)
+ *
+ * Required privilege: Administrator (checked via platform::is_admin)
+ *
+ * When is_enforcing() == false: the filter was created without admin rights or
+ * the icmp-wfp feature is not enabled; no kernel-level enforcement occurs.
+ */
+
 use crate::icmp_filter::{
     config::{Direction, IcmpFilterConfig, IcmpTypeRule},
     error::{IcmpFilterError, Result},
@@ -397,6 +413,11 @@ impl WfpFilter {
 
     fn remove_icmp_filters(&mut self) -> Result<()> {
         if !self.has_admin {
+            tracing::warn!(
+                "WFP backend inactive: skipping filter removal (no admin privileges). \
+                 {} filter IDs remain tracked but are not enforced.",
+                self.filter_ids.len()
+            );
             return Ok(());
         }
 
@@ -486,6 +507,10 @@ impl IcmpFilter for WfpFilter {
         self.enabled
     }
 
+    fn is_enforcing(&self) -> bool {
+        self.enabled && self.has_admin
+    }
+
     fn backend(&self) -> FilterBackend {
         FilterBackend::Wfp
     }
@@ -512,6 +537,13 @@ impl IcmpFilter for WfpFilter {
             self.add_icmp_filters()?;
         }
 
+        if !self.has_admin {
+            tracing::warn!(
+                "WFP backend is not enforcing: administrator privileges not held. \
+                 Config updated but changes will not take effect until process runs as admin."
+            );
+        }
+
         Ok(())
     }
 
@@ -526,6 +558,29 @@ impl Drop for WfpFilter {
             if let Err(e) = self.remove_icmp_filters() {
                 tracing::warn!("Failed to remove WFP filters on drop: {}", e);
             }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "icmp-wfp"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wfp_not_enforcing_without_admin() {
+        let config = IcmpFilterConfig::default();
+        let filter = WfpFilter::new(config).expect("new should succeed");
+        assert!(!filter.is_enforcing());
+        assert!(!filter.is_enabled());
+    }
+
+    #[test]
+    fn test_wfp_enable_fails_without_admin() {
+        let config = IcmpFilterConfig::default();
+        let mut filter = WfpFilter::new(config).expect("new should succeed");
+        if !filter.has_admin {
+            let result = filter.enable();
+            assert!(result.is_err());
         }
     }
 }
