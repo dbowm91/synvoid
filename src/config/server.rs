@@ -62,7 +62,7 @@ impl ServerConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct FallbackConfig {
-    #[serde(default = "default_fallback_mode")]
+    #[serde(default = "default_fallback_mode", alias = "strategy")]
     pub mode: String,
     #[serde(default)]
     pub upstream: Option<String>,
@@ -90,5 +90,27 @@ impl FallbackConfig {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fallback_config_alias() {
+        let toml_old = r#"
+            mode = "return_404"
+        "#;
+        let config_old: FallbackConfig = toml::from_str(toml_old).unwrap();
+        assert_eq!(config_old.mode, "return_404");
+
+        let toml_new = r#"
+            strategy = "proxy"
+            upstream = "http://localhost:8080"
+        "#;
+        let config_new: FallbackConfig = toml::from_str(toml_new).unwrap();
+        assert_eq!(config_new.mode, "proxy");
+        assert_eq!(config_new.upstream.unwrap(), "http://localhost:8080");
     }
 }
