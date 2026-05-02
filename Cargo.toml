@@ -43,7 +43,7 @@ test-utils = []
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/maluwaf-utils"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/maluwaf-utils", "crates/maluwaf-config"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"

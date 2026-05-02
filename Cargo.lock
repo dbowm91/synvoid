@@ -4645,6 +4645,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "maluwaf-config"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "base32",
+ "base64",
+ "bytes",
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "hkdf",
+ "http 1.4.0",
+ "parking_lot",
+ "pbkdf2",
+ "pqc",
+ "rand 0.9.4",
+ "rkyv 0.8.16",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "toml 0.8.23",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "maluwaf-fuzz"
 version = "0.0.0"
 dependencies = [
@@ -8887,6 +8918,7 @@ checksum = "6d79d08d92ab8af4c5e8a6da20c47ae3f61a0f1dabc1997cdf2d082b757ca08b"
 dependencies = [
  "proc-macro2",
  "quote",
+ "regex",
  "syn 2.0.117",
 ]
 
