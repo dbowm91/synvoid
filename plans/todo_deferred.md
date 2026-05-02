@@ -1,7 +1,7 @@
 # Wave 1
-- [ ] Traffic Layer: Fix Proxy Cache Key, Purge, and Revalidation Semantics (Cache lookup/storage lives in ProxyServer, Stale-while-revalidate URL rebuild, Request-header policy for revalidation, build_cached_response() overwrites Cache-Control).
-- [ ] WAF/Security Layer: Anomaly Scoring - Duplicated detector runs (scoring re-runs many detectors already run by direct detection).
-- [ ] WAF/Security Layer: Body Inspection - Multipart boundary parsing for targeted field inspection, Payload-split-across-chunks edge cases in streaming WAF.
+- [x] Traffic Layer: Fix Proxy Cache Key, Purge, and Revalidation Semantics (Cache lookup/storage lives in ProxyServer, Stale-while-revalidate URL rebuild, Request-header policy for revalidation, build_cached_response() overwrites Cache-Control).
+- [x] WAF/Security Layer: Anomaly Scoring - Duplicated detector runs (scoring re-runs many detectors already run by direct detection).
+- [x] WAF/Security Layer: Body Inspection - Multipart boundary parsing for targeted field inspection, Payload-split-across-chunks edge cases in streaming WAF.
 
 # Wave 2 (Architecture Deferred)
 - [ ] Full multi-crate workspace decomposition.

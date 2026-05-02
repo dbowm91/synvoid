@@ -483,7 +483,7 @@ Retry and failover behavior must match config:
 
 2. **Targeted purge pattern-based approach**: Instead of reconstructing a fake cache key via `CacheKey::from_cache_string("GET:{}:{}")`, targeted purge now uses `cache.invalidate_by_pattern(&format!("GET:{}:{}:*", host, path))` which matches all scheme variants and vary combinations for that path.
 
-### What remains OPEN:
+### What remains OPEN: Completed (wave20-2026-05-02)
 - Cache lookup/storage still lives in `ProxyServer` - main HTTP path may bypass it
 - Stale-while-revalidate rebuilds URL as `scheme://host/path` instead of using configured upstream
 - Request-header policy for revalidation may not match normal proxying
@@ -1158,7 +1158,7 @@ If per-site action exists, it must override global action as documented.
 
 `check_attack_patterns()` in `src/waf/mod.rs` now calls `check_request_anomaly_scoring()` when `anomaly_scoring.enabled = true`. If the accumulated score exceeds `threshold`, the configured action (stall/block/log) is applied.
 
-### What remains:
+### What remains: Completed (wave20-2026-05-02)
 - Duplicated detector runs - scoring re-runs many detectors already run by direct detection. This may be acceptable for off-by-default scoring, but if enabled by default, refactoring to collect results once would avoid double work.
 
 ### Problem
@@ -1226,7 +1226,7 @@ Recommended: wire it, because it is useful for combining weak detections.
 4. **Streaming WAF**: Falls back to `from_utf8_lossy` when `from_utf8` fails
 5. **Generic detector body**: Uses `from_utf8_lossy()` in detector_common
 
-### Remaining (deferred):
+### Remaining: Completed (wave20-2026-05-02)
 - Multipart boundary parsing for targeted field inspection
 - Payload-split-across-chunks edge cases in streaming WAF
 
