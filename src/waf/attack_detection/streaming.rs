@@ -23,13 +23,27 @@ pub struct StreamingWafCore {
     state: RwLock<StreamingState>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum MultipartState {
+    None,
+    LookingForBoundary,
+    ReadingHeaders { buffer: String },
+    ReadingField { buffer: String },
+    SkippingFile,
+}
+
 struct StreamingState {
     pending_chunks: VecDeque<Bytes>,
     current_input: String,
     chunks_processed: usize,
     last_result: Option<AttackDetectionResult>,
     bytes_seen: usize,
+    boundary: Option<String>,
+    multipart_state: MultipartState,
+    trailing_window: Vec<u8>,
 }
+
+const TRAILING_WINDOW_SIZE: usize = 128;
 
 impl StreamingWafCore {
     pub fn new(inner: Arc<AttackDetector>) -> Self {
@@ -43,6 +57,9 @@ impl StreamingWafCore {
                 chunks_processed: 0,
                 last_result: None,
                 bytes_seen: 0,
+                boundary: None,
+                multipart_state: MultipartState::None,
+                trailing_window: Vec::with_capacity(TRAILING_WINDOW_SIZE),
             }),
         }
     }
@@ -62,8 +79,17 @@ impl StreamingWafCore {
                 chunks_processed: 0,
                 last_result: None,
                 bytes_seen: 0,
+                boundary: None,
+                multipart_state: MultipartState::None,
+                trailing_window: Vec::with_capacity(TRAILING_WINDOW_SIZE),
             }),
         }
+    }
+
+    pub fn set_multipart_boundary(&self, boundary: &str) {
+        let mut state = self.state.write();
+        state.boundary = Some(format!("--{}", boundary));
+        state.multipart_state = MultipartState::LookingForBoundary;
     }
 
     /// Scans a chunk of data. Optimized for 1M+ RPS by using a persistent string buffer.
@@ -80,28 +106,133 @@ impl StreamingWafCore {
         state.bytes_seen += chunk.len();
         state.chunks_processed += 1;
 
-        // Efficiently append to existing string instead of re-assembling
-        if let Ok(s) = std::str::from_utf8(chunk) {
-            state.current_input.push_str(s);
+        if state.boundary.is_some() {
+            self.process_multipart_chunk(&mut state, chunk)
         } else {
-            // Fallback for non-UTF8: we still want to store it for potential binary patterns
-            // or just treat as invalid if WAF requires UTF8.
-            // For now, we'll try to lossy convert to keep scanning.
-            state
-                .current_input
-                .push_str(&String::from_utf8_lossy(chunk));
+            self.process_regular_chunk(&mut state, chunk)
         }
+    }
 
-        if let Some(result) = self
-            .inner
-            .check_body_only_via_normalized(&state.current_input)
-        {
+    fn process_regular_chunk(
+        &self,
+        state: &mut StreamingState,
+        chunk: &[u8],
+    ) -> StreamingWafDecision {
+        // Handle split across chunks by prepending trailing window
+        let mut data_to_scan = Vec::with_capacity(state.trailing_window.len() + chunk.len());
+        data_to_scan.extend_from_slice(&state.trailing_window);
+        data_to_scan.extend_from_slice(chunk);
+
+        let s = String::from_utf8_lossy(&data_to_scan);
+
+        if let Some(result) = self.inner.check_body_only_via_normalized(&s) {
             state.last_result = Some(result.clone());
             return StreamingWafDecision::Block(
                 result.get_block_status().unwrap_or(403),
                 format!("Attack detected: {:?}", result.attack_type),
             );
         }
+
+        // Update trailing window
+        state.trailing_window.clear();
+        let window_start = data_to_scan.len().saturating_sub(TRAILING_WINDOW_SIZE);
+        state.trailing_window.extend_from_slice(&data_to_scan[window_start..]);
+
+        StreamingWafDecision::Continue
+    }
+
+    fn process_multipart_chunk(
+        &self,
+        state: &mut StreamingState,
+        chunk: &[u8],
+    ) -> StreamingWafDecision {
+        let boundary = state.boundary.clone().unwrap();
+        let mut current_pos = 0;
+
+        // Use a combined buffer of trailing window + current chunk to handle splits
+        let mut combined = Vec::with_capacity(state.trailing_window.len() + chunk.len());
+        combined.extend_from_slice(&state.trailing_window);
+        combined.extend_from_slice(chunk);
+
+        while current_pos < combined.len() {
+            match &mut state.multipart_state {
+                MultipartState::LookingForBoundary => {
+                    let remaining = &combined[current_pos..];
+                    if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
+                        state.multipart_state =
+                            MultipartState::ReadingHeaders { buffer: String::new() };
+                        current_pos += pos + boundary.len();
+                    } else {
+                        current_pos = combined.len();
+                    }
+                }
+                MultipartState::ReadingHeaders { buffer } => {
+                    let remaining = &combined[current_pos..];
+                    let s = String::from_utf8_lossy(remaining);
+                    if let Some(pos) = s.find("\r\n\r\n") {
+                        let header_chunk = &s[..pos + 4];
+                        buffer.push_str(header_chunk);
+                        current_pos += header_chunk.as_bytes().len();
+
+                        // Parse headers to see if it's a file
+                        if buffer.to_lowercase().contains("filename=") {
+                            state.multipart_state = MultipartState::SkippingFile;
+                        } else {
+                            state.multipart_state =
+                                MultipartState::ReadingField { buffer: String::new() };
+                        }
+                    } else {
+                        buffer.push_str(&s);
+                        current_pos = combined.len();
+                    }
+                }
+                MultipartState::ReadingField { buffer } => {
+                    let remaining = &combined[current_pos..];
+                    if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
+                        let field_data = &remaining[..pos];
+                        buffer.push_str(&String::from_utf8_lossy(field_data));
+
+                        // Scan the field
+                        if let Some(result) = self.inner.check_body_only_via_normalized(buffer) {
+                            state.last_result = Some(result.clone());
+                            return StreamingWafDecision::Block(
+                                result.get_block_status().unwrap_or(403),
+                                format!(
+                                    "Attack detected in multipart field: {:?}",
+                                    result.attack_type
+                                ),
+                            );
+                        }
+
+                        state.multipart_state =
+                            MultipartState::ReadingHeaders { buffer: String::new() };
+                        current_pos += pos + boundary.len();
+                    } else {
+                        buffer.push_str(&String::from_utf8_lossy(remaining));
+                        current_pos = combined.len();
+                    }
+                }
+                MultipartState::SkippingFile => {
+                    let remaining = &combined[current_pos..];
+                    if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
+                        state.multipart_state =
+                            MultipartState::ReadingHeaders { buffer: String::new() };
+                        current_pos += pos + boundary.len();
+                    } else {
+                        current_pos = combined.len();
+                    }
+                }
+                MultipartState::None => {
+                    state.multipart_state = MultipartState::LookingForBoundary;
+                }
+            }
+        }
+
+        // Update trailing window to handle split boundaries/headers
+        state.trailing_window.clear();
+        let window_size = boundary.len() + 4; // enough for boundary + CRLF CRLF
+        let window_start = combined.len().saturating_sub(window_size);
+        state.trailing_window.extend_from_slice(&combined[window_start..]);
 
         StreamingWafDecision::Continue
     }
@@ -126,6 +257,16 @@ impl StreamingWafCore {
         state.chunks_processed = 0;
         state.last_result = None;
         state.bytes_seen = 0;
+        state.boundary = None;
+        state.multipart_state = MultipartState::None;
+        state.trailing_window.clear();
+    }
+
+    fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+        haystack.windows(needle.len()).position(|w| w == needle)
     }
 }
 
@@ -195,5 +336,68 @@ mod tests {
 
         streaming.reset();
         assert_eq!(streaming.chunks_processed(), 0);
+    }
+
+    #[test]
+    fn test_streaming_waf_split_attack() {
+        use crate::waf::attack_detection::AttackDetectionConfig;
+
+        let config = AttackDetectionConfig::default();
+        let detector = AttackDetector::new(config);
+        let streaming = StreamingWafCore::new(Arc::new(detector));
+
+        // "1' OR '1'='1" split into two chunks
+        streaming.scan_chunk(b"1' OR ");
+        let result = streaming.scan_chunk(b"'1'='1");
+        assert!(matches!(result, StreamingWafDecision::Block(..)));
+    }
+
+    #[test]
+    fn test_streaming_waf_multipart_field_attack() {
+        use crate::waf::attack_detection::AttackDetectionConfig;
+
+        let config = AttackDetectionConfig::default();
+        let detector = AttackDetector::new(config);
+        let streaming = StreamingWafCore::new(Arc::new(detector));
+        streaming.set_multipart_boundary("boundary");
+
+        let multipart_data = b"--boundary\r\n\
+                               Content-Disposition: form-data; name=\"field\"\r\n\
+                               \r\n\
+                               1' OR '1'='1\r\n\
+                               --boundary--";
+
+        // Scan in small chunks to test streaming
+        for chunk in multipart_data.chunks(10) {
+            let result = streaming.scan_chunk(chunk);
+            if let StreamingWafDecision::Block(..) = result {
+                return; // Success
+            }
+        }
+        panic!("Should have detected attack in multipart field");
+    }
+
+    #[test]
+    fn test_streaming_waf_multipart_skip_file() {
+        use crate::waf::attack_detection::AttackDetectionConfig;
+
+        let config = AttackDetectionConfig::default();
+        let detector = AttackDetector::new(config);
+        let streaming = StreamingWafCore::new(Arc::new(detector));
+        streaming.set_multipart_boundary("boundary");
+
+        // Attack payload inside a file should be skipped if we strictly follow the requirement
+        // "avoid scanning binary file uploads if we shouldn't"
+        let multipart_data = b"--boundary\r\n\
+                               Content-Disposition: form-data; name=\"file\"; filename=\"malicious.txt\"\r\n\
+                               Content-Type: text/plain\r\n\
+                               \r\n\
+                               1' OR '1'='1\r\n\
+                               --boundary--";
+
+        for chunk in multipart_data.chunks(10) {
+            let result = streaming.scan_chunk(chunk);
+            assert!(matches!(result, StreamingWafDecision::Continue), "Should NOT have detected attack in file content");
+        }
     }
 }
