@@ -39,6 +39,14 @@ impl<'a> QuorumVerifierContext<'a> {
     }
 }
 
+// DHT MESSAGE IDENTITY HIERARCHY (see docs/identity_hierarchy.md):
+// L1: peer_id (TLS/cert) → L2: envelope signer → L3: record signer → L4: source_node_id → L5: quorum signer
+// Msg types: DhtRecordAnnounce(TS✓RoleRepEnv✓Rec✓BindP), DhtSyncRequest(TS-Role-Env-RecN/A), DhtSyncResponse(TS✓Env✓Rec✓BindP)
+//   DhtAntiEntropyRequest(TS✓EnvP RecN/A), DhtAntiEntropyResponse(TS✓Env✓Rec✓BindP), DhtRecordPush(Rec✓)
+//   DhtRecordCommit(TS✓Rec✓BindP), QuorumStoreRequest(-), QuorumSignatureResp(-), Raft(N/A✓P✓Replay✓)
+// Gaps: DhtSyncRequest(no auth), DhtAntiEntropyRequest(pk unused), DhtRecordPush(no ts), DhtRecordCommit(no envsig)
+//       QuorumStoreRequest(no verify), QuorumSignatureResp(no verify)
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngressPath {
     Announce,
@@ -1203,6 +1211,7 @@ impl TtlManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mesh::protocol::DhtRecordVerificationError;
 
     #[test]
     fn test_signed_record_creation() {
