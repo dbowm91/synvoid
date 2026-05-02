@@ -2,6 +2,21 @@ use crate::metrics::bandwidth::BandwidthPayload;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthStatus {
+    #[default]
+    Healthy,
+    Unhealthy,
+    Unknown,
+}
+
+impl HealthStatus {
+    pub fn as_bool(&self) -> bool {
+        matches!(self, HealthStatus::Healthy)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiteMetricsPayload {
     pub total_requests: u64,
@@ -16,7 +31,7 @@ pub struct SiteMetricsPayload {
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
     pub blocked_by_type: HashMap<String, u64>,
-    pub upstream_healthy: bool,
+    pub upstream_healthy: HealthStatus,
     pub proxy_cache_hits: u64,
     pub proxy_cache_misses: u64,
     pub static_cache_hits: u64,
@@ -27,6 +42,10 @@ pub struct SiteMetricsPayload {
     pub proxied_bytes_received: u64,
     pub mesh_bytes_sent: u64,
     pub mesh_bytes_received: u64,
+    pub healthy_backends: usize,
+    pub unhealthy_backends: usize,
+    pub total_backends: usize,
+    pub metrics_timestamp_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

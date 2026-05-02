@@ -1,6 +1,6 @@
 use crate::metrics::bandwidth::BandwidthTracker;
 use crate::metrics::collection::LATENCY_SAMPLE_SIZE;
-use crate::metrics::payloads::*;
+use crate::metrics::payloads::{HealthStatus, ServerlessMetrics, SiteMetricsPayload, WorkerMetricsPayload};
 use crate::waf::attack_detection::config::AttackType;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -150,6 +150,16 @@ impl SiteMetrics {
             (0.0, 0.0, 0.0, 0.0)
         };
 
+        let upstream_successes = self.upstream_successes.load(Ordering::Relaxed);
+        let upstream_failures = self.upstream_failures.load(Ordering::Relaxed);
+        let upstream_healthy = if upstream_failures > 0 && upstream_successes == 0 {
+            HealthStatus::Unhealthy
+        } else if upstream_successes > 0 {
+            HealthStatus::Healthy
+        } else {
+            HealthStatus::Unknown
+        };
+
         SiteMetricsPayload {
             total_requests: self.total_requests.load(Ordering::Relaxed),
             blocked: self.blocked.load(Ordering::Relaxed),
@@ -163,7 +173,7 @@ impl SiteMetrics {
             p95_latency_ms: p95,
             p99_latency_ms: p99,
             blocked_by_type: blocked_types,
-            upstream_healthy: true, // TODO: Wire actual health
+            upstream_healthy,
             proxy_cache_hits: 0,
             proxy_cache_misses: 0,
             static_cache_hits: 0,
@@ -174,6 +184,10 @@ impl SiteMetrics {
             proxied_bytes_received: 0,
             mesh_bytes_sent: 0,
             mesh_bytes_received: 0,
+            healthy_backends: 0,
+            unhealthy_backends: 0,
+            total_backends: 0,
+            metrics_timestamp_ms: 0,
         }
     }
 }

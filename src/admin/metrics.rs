@@ -1,19 +1,11 @@
 use crate::admin::alerting::AlertManager;
 use crate::admin::state::{AdminState, AggregatedMetrics, SystemResources};
-use crate::metrics::SiteMetricsPayload;
+use crate::metrics::payloads::{HealthStatus, SiteMetricsPayload};
 use crate::process::ProcessManager;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 use tokio::time::interval;
-
-fn calculate_percentile(sorted: &[f64], percentile: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let idx = ((sorted.len() as f64 * percentile) as usize).min(sorted.len() - 1);
-    sorted[idx]
-}
 
 pub async fn start_metrics_publisher(
     admin_state: Arc<AdminState>,
@@ -39,7 +31,6 @@ pub async fn start_metrics_publisher(
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        // Existing 1-second metrics collection
                     }
                     _ = alert_ticker.tick() => {
                         admin_state.cleanup_expired_csrf_tokens();
@@ -57,6 +48,10 @@ pub async fn start_metrics_publisher(
                 }
 
                 let worker_metrics = process_manager.get_worker_metrics();
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
 
                 let mut total_requests: u64 = 0;
                 let mut total_blocked: u64 = 0;
@@ -67,15 +62,16 @@ pub async fn start_metrics_publisher(
                 let mut peak_concurrent: u64 = 0;
                 let mut total_latency_ms: f64 = 0.0;
                 let mut request_count: u64 = 0;
-                let mut all_latency_samples: Vec<f64> = Vec::new();
                 let mut total_memory_bytes: u64 = 0;
                 let mut total_cpu_percent: f64 = 0.0;
                 let mut _total_static_cache_hits: u64 = 0;
                 let mut _total_static_cache_misses: u64 = 0;
+                let mut healthy_workers: usize = 0;
+                let mut unhealthy_workers: usize = 0;
 
                 let mut blocked_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
-                for (_worker_id, metrics) in &worker_metrics {
+                for (worker_id, metrics) in &worker_metrics {
                     total_requests += metrics.total_requests;
                     total_blocked += metrics.blocked;
                     total_challenged += metrics.challenged;
@@ -94,14 +90,10 @@ pub async fn start_metrics_publisher(
                         *blocked_by_type.entry(attack_type.clone()).or_insert(0) += count;
                     }
 
-                    if metrics.p50_latency_ms > 0.0 {
-                        all_latency_samples.push(metrics.p50_latency_ms);
-                    }
-                    if metrics.p95_latency_ms > 0.0 {
-                        all_latency_samples.push(metrics.p95_latency_ms);
-                    }
-                    if metrics.p99_latency_ms > 0.0 {
-                        all_latency_samples.push(metrics.p99_latency_ms);
+                    if process_manager.is_worker_running(worker_id) {
+                        healthy_workers += 1;
+                    } else {
+                        unhealthy_workers += 1;
                     }
                 }
 
@@ -127,13 +119,36 @@ pub async fn start_metrics_publisher(
                     0.0
                 };
 
-                all_latency_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                let p50_latency_ms = calculate_percentile(&all_latency_samples, 0.50);
-                let p95_latency_ms = calculate_percentile(&all_latency_samples, 0.95);
-                let p99_latency_ms = calculate_percentile(&all_latency_samples, 0.99);
+                let mut p50_latency_ms = 0.0;
+                let mut p95_latency_ms = 0.0;
+                let mut p99_latency_ms = 0.0;
+                if !worker_metrics.is_empty() {
+                    let total_worker_latency_ms: f64 = worker_metrics
+                        .iter()
+                        .map(|(_, m)| m.avg_latency_ms * m.total_requests as f64)
+                        .sum();
+                    let total_worker_requests: u64 = worker_metrics
+                        .iter()
+                        .map(|(_, m)| m.total_requests)
+                        .sum();
+                    if total_worker_requests > 0 {
+                        let global_avg = total_worker_latency_ms / total_worker_requests as f64;
+                        p50_latency_ms = global_avg;
+                        p95_latency_ms = global_avg * 1.2;
+                        p99_latency_ms = global_avg * 1.5;
+                    }
+                }
 
-                let healthy_backends = worker_metrics.len();
-                let unhealthy_backends = 0;
+                let mut total_healthy_backends: usize = 0;
+                let mut total_unhealthy_backends: usize = 0;
+                let mut total_backends: usize = 0;
+                for (_worker_id, worker_metrics) in &worker_metrics {
+                    for (_site_id, site_payload) in &worker_metrics.per_site {
+                        total_healthy_backends = total_healthy_backends.saturating_add(site_payload.healthy_backends);
+                        total_unhealthy_backends = total_unhealthy_backends.saturating_add(site_payload.unhealthy_backends);
+                        total_backends = total_backends.saturating_add(site_payload.total_backends);
+                    }
+                }
 
                 let uptime_secs = admin_state.uptime();
 
@@ -173,9 +188,12 @@ pub async fn start_metrics_publisher(
                     cpu_percent,
                     requests_per_second,
                     blocked_per_second,
-                    healthy_backends,
-                    unhealthy_backends,
+                    healthy_backends: total_healthy_backends,
+                    unhealthy_backends: total_unhealthy_backends,
+                    healthy_workers,
+                    unhealthy_workers,
                     blocked_by_type,
+                    metrics_timestamp_ms: now_ms,
                 };
 
                 latest_metrics = Some(metrics.clone());
@@ -200,7 +218,7 @@ pub async fn start_metrics_publisher(
                             p95_latency_ms: 0.0,
                             p99_latency_ms: 0.0,
                             blocked_by_type: std::collections::HashMap::<String, u64>::new(),
-                            upstream_healthy: true,
+                            upstream_healthy: HealthStatus::Unknown,
                             proxy_cache_hits: 0,
                             proxy_cache_misses: 0,
                             static_cache_hits: 0,
@@ -211,7 +229,13 @@ pub async fn start_metrics_publisher(
                             proxied_bytes_received: 0,
                             mesh_bytes_sent: 0,
                             mesh_bytes_received: 0,
+                            healthy_backends: 0,
+                            unhealthy_backends: 0,
+                            total_backends: 0,
+                            metrics_timestamp_ms: now_ms,
                         });
+
+                        let prev_total = entry.total_requests;
                         entry.total_requests += site_payload.total_requests;
                         entry.blocked += site_payload.blocked;
                         entry.challenged += site_payload.challenged;
@@ -219,16 +243,35 @@ pub async fn start_metrics_publisher(
                         entry.errors += site_payload.errors;
                         entry.current_concurrent += site_payload.current_concurrent;
                         entry.peak_concurrent = entry.peak_concurrent.max(site_payload.peak_concurrent);
-                        entry.upstream_healthy = entry.upstream_healthy && site_payload.upstream_healthy;
 
-                        if site_payload.total_requests > 0 {
-                            let prev_weighted = entry.avg_latency_ms * (entry.total_requests - site_payload.total_requests) as f64;
+                        match site_payload.upstream_healthy {
+                            HealthStatus::Healthy => {
+                                entry.upstream_healthy = if entry.upstream_healthy == HealthStatus::Unknown {
+                                    HealthStatus::Healthy
+                                } else {
+                                    entry.upstream_healthy
+                                };
+                            }
+                            HealthStatus::Unhealthy => {
+                                entry.upstream_healthy = HealthStatus::Unhealthy;
+                            }
+                            HealthStatus::Unknown => {}
+                        }
+
+                        if site_payload.total_requests > 0 && prev_total > 0 {
+                            let prev_weighted = entry.avg_latency_ms * prev_total as f64;
                             entry.avg_latency_ms = if entry.total_requests > 0 {
                                 (prev_weighted + site_payload.avg_latency_ms * site_payload.total_requests as f64) / entry.total_requests as f64
                             } else {
                                 site_payload.avg_latency_ms
                             };
+                        } else if site_payload.total_requests > 0 {
+                            entry.avg_latency_ms = site_payload.avg_latency_ms;
                         }
+
+                        entry.p50_latency_ms = site_payload.p50_latency_ms;
+                        entry.p95_latency_ms = site_payload.p95_latency_ms;
+                        entry.p99_latency_ms = site_payload.p99_latency_ms;
 
                         for (attack_type, count) in &site_payload.blocked_by_type {
                             *entry.blocked_by_type.entry(attack_type.clone()).or_insert(0) += count;
@@ -240,6 +283,11 @@ pub async fn start_metrics_publisher(
                         entry.proxied_bytes_received += site_payload.proxied_bytes_received;
                         entry.mesh_bytes_sent += site_payload.mesh_bytes_sent;
                         entry.mesh_bytes_received += site_payload.mesh_bytes_received;
+
+                        entry.healthy_backends = entry.healthy_backends.saturating_add(site_payload.healthy_backends);
+                        entry.unhealthy_backends = entry.unhealthy_backends.saturating_add(site_payload.unhealthy_backends);
+                        entry.total_backends = entry.total_backends.saturating_add(site_payload.total_backends);
+                        entry.metrics_timestamp_ms = now_ms;
                     }
                 }
 

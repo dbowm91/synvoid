@@ -162,7 +162,10 @@ pub struct AggregatedMetrics {
     pub blocked_per_second: f64,
     pub healthy_backends: usize,
     pub unhealthy_backends: usize,
+    pub healthy_workers: usize,
+    pub unhealthy_workers: usize,
     pub blocked_by_type: std::collections::HashMap<String, u64>,
+    pub metrics_timestamp_ms: u64,
 }
 
 #[derive(Clone, Default)]

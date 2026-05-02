@@ -1,5 +1,6 @@
 use super::super::state::{AdminState, AggregatedMetrics};
 use super::common::OptionalAuth;
+use crate::metrics::payloads::HealthStatus;
 use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses, RequestLogPayload};
 use axum::{
     extract::{Query, State},
@@ -25,6 +26,8 @@ pub struct SystemStats {
     pub sites_loaded: usize,
     pub healthy_backends: usize,
     pub unhealthy_backends: usize,
+    pub healthy_workers: usize,
+    pub unhealthy_workers: usize,
     pub blocked_total: u64,
     pub challenged_total: u64,
     pub proxied_total: u64,
@@ -35,6 +38,7 @@ pub struct SystemStats {
     pub p99_latency_ms: f64,
     pub peak_concurrent: u64,
     pub time_validation_errors: u64,
+    pub metrics_timestamp_ms: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
@@ -51,7 +55,10 @@ pub struct SiteStats {
     pub p50_latency_ms: f64,
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
-    pub upstream_healthy: bool,
+    pub upstream_healthy: HealthStatus,
+    pub healthy_backends: usize,
+    pub unhealthy_backends: usize,
+    pub total_backends: usize,
     pub bytes_received: u64,
     pub bytes_sent: u64,
     pub proxied_bytes_sent: u64,
@@ -93,6 +100,8 @@ pub async fn get_summary(
         sites_loaded: sites_count,
         healthy_backends: metrics.healthy_backends,
         unhealthy_backends: metrics.unhealthy_backends,
+        healthy_workers: metrics.healthy_workers,
+        unhealthy_workers: metrics.unhealthy_workers,
         blocked_total: metrics.blocked,
         challenged_total: metrics.challenged,
         proxied_total: metrics.proxied,
@@ -103,6 +112,7 @@ pub async fn get_summary(
         p99_latency_ms: metrics.p99_latency_ms,
         peak_concurrent: metrics.peak_concurrent,
         time_validation_errors: resources.time_validation_errors,
+        metrics_timestamp_ms: metrics.metrics_timestamp_ms,
     };
 
     Ok(Json(stats))
@@ -155,7 +165,12 @@ pub async fn get_sites_stats(
                 p50_latency_ms: site_metric.map(|m| m.p50_latency_ms).unwrap_or(0.0),
                 p95_latency_ms: site_metric.map(|m| m.p95_latency_ms).unwrap_or(0.0),
                 p99_latency_ms: site_metric.map(|m| m.p99_latency_ms).unwrap_or(0.0),
-                upstream_healthy: site_metric.map(|m| m.upstream_healthy).unwrap_or(true),
+                upstream_healthy: site_metric
+                    .map(|m| m.upstream_healthy)
+                    .unwrap_or(HealthStatus::Unknown),
+                healthy_backends: site_metric.map(|m| m.healthy_backends).unwrap_or(0),
+                unhealthy_backends: site_metric.map(|m| m.unhealthy_backends).unwrap_or(0),
+                total_backends: site_metric.map(|m| m.total_backends).unwrap_or(0),
                 bytes_received: site_metric.map(|m| m.bytes_received).unwrap_or(0),
                 bytes_sent: site_metric.map(|m| m.bytes_sent).unwrap_or(0),
                 proxied_bytes_sent: site_metric.map(|m| m.proxied_bytes_sent).unwrap_or(0),
