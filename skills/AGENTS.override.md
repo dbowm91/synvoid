@@ -22,4 +22,6 @@ This directory contains detailed documentation for various subsystems.
 | `dht_scoping.md` | DHT site isolation and scoping patterns |
 | `threat_feed_production.md` | Production and signing of threat intel feeds |
 | `raft_consensus.md` | Raft consensus integration for global control plane |
-| `sandboxing.md` | OS sandboxing (Windows/macOS) |
+| `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
+| `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
+| `buffer_pool.md` | Lock-free buffer pool safety and performance patterns |
