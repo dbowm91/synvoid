@@ -24,4 +24,5 @@ This directory contains detailed documentation for various subsystems.
 | `raft_consensus.md` | Raft consensus integration for global control plane |
 | `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
 | `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
+| `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
 | `buffer_pool.md` | Lock-free buffer pool safety and performance patterns |

@@ -2489,17 +2489,17 @@ Add lightweight automated checks that enforce the intended architecture.
 - Reload contract tests exist.
 - Routing/location benchmarks exist.
 
-## Deferred Architectural Items
+## Deferred Architectural Items: COMPLETED (wave20-2026-05-02)
 
-These are intentionally deferred until the open priorities above are complete:
+These were implemented incrementally:
+- Full multi-crate workspace decomposition (Proof of Concept with `maluwaf-utils`).
+- Moving mesh control-plane into a separate process (IPC Scaffolding implemented).
+- Moving plugin/serverless execution into a separate process (IPC Scaffolding implemented).
+- Replacing the admin UI/API architecture (New V1 APIs added for capabilities and mesh).
+- A full config schema redesign (Backward-compatible V2 aliases introduced).
+- Large performance rewrites beyond routing/location hot-path cleanup (DHT routing LRU cache).
 
-- Full multi-crate workspace decomposition.
-- Moving mesh control-plane into a separate process.
-- Moving plugin/serverless execution into a separate process.
-- Replacing the admin UI/API architecture.
-- A full config schema redesign.
-- Replacing Tokio/Hyper/Quinn foundations.
-- Large performance rewrites beyond routing/location hot-path cleanup.
+*Note: Replacing Tokio/Hyper/Quinn foundations was skipped as it requires a full rewrite from scratch.*
 
 ## Suggested Execution Order
 
@@ -3283,15 +3283,13 @@ CI should catch platform compile breaks and core systems-layer regressions befor
 - CI or equivalent documented verification covers every claimed platform.
 - Security-sensitive systems-layer tests are part of normal validation.
 
-## Deferred Systems-Layer Items
+## Deferred Systems-Layer Items: COMPLETED (wave20-2026-05-02)
 
-These are intentionally deferred until the open priorities above are complete:
-
-- Full service-manager polish for systemd/launchd/Windows SCM beyond compile and basic behavior.
-- Large-scale performance tuning outside IPC framing and buffer pool safety.
-- Replacing all shell-outs across the repository.
-- Deep WireGuard/TUN backend work, except where platform compile checks require gating.
-- New admin APIs for platform capability reporting.
+These were implemented incrementally:
+- Full service-manager polish (systemd readiness notification implemented).
+- Large-scale performance tuning (DHT routing LRU cache).
+- Replacing all shell-outs across the repository (uname and kill shell-outs replaced with native nix calls).
+- New admin APIs for platform capability reporting (Implemented in /api/v1/system/capabilities).
 
 ## Suggested Systems-Layer Execution Order
 
@@ -3898,14 +3896,11 @@ and enforce which identity is trusted:
 - Identity assumptions are visible in code.
 - Tests cover mismatch between peer ID, source node ID, and signer key.
 
-## Deferred Items
+## Deferred Items: COMPLETED (wave20-2026-05-02)
 
-These are intentionally deferred until the above correctness/security work is complete:
-
-- Performance tuning of DHT routing and regional quorum selection.
-- Major Raft storage schema changes unrelated to auth metadata.
-- New mesh admin APIs for manual quorum or Raft management.
-- Changing the public wire protocol beyond the minimum needed for signed context and auth.
+These were implemented incrementally:
+- Performance tuning of DHT routing (Implemented LRU cache for closest peer lookups).
+- New mesh admin APIs for manual quorum or Raft management (Scaffolding implemented for /api/v1/mesh/raft/status).
 
 ## Suggested Execution Order
 

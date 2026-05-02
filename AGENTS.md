@@ -19,6 +19,7 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | Admin API | [`src/admin/AGENTS.override.md`](src/admin/AGENTS.override.md) | Admin API patterns |
 | Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
 | Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
+| Deferred Items | [`skills/deferred_items_knowledge.md`](skills/deferred_items_knowledge.md) | Context on incremental deferred item implementation |
 | Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
 ## Project Overview
