@@ -40,7 +40,7 @@ pub struct AdminConfig {
     pub port: u16,
     #[serde(default = "default_admin_bind")]
     pub bind_address: String,
-    #[serde(default = "default_admin_token")]
+    #[serde(default = "default_admin_token", alias = "api_key")]
     pub token: String,
     #[serde(default)]
     pub token_env_var: Option<String>,
