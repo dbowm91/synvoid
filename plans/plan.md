@@ -2536,19 +2536,13 @@ items were identified during this update.
 
 # MaluWAF Foundational Utilities and Systems Layer Improvement Plan
 
-**Status**: COMPLETED (wave18-2026-05-02)
+**Status**: COMPLETED (wave19-2026-05-02)
 **Last Updated**: 2026-05-02
 **Primary Scope**: foundational utilities and systems code, especially `src/utils.rs`,
 `src/buffer/**`, `src/process/**`, `src/platform/**`, `src/zero_copy.rs`, and platform-specific
 support code.
 
-This plan is written for a follow-on agent that may not have the original review context.
-No implementation has been completed for this systems-layer review yet. Items below are therefore
-open unless explicitly marked deferred.
-
-Existing open distributed-layer work from the previous plan is preserved later in this file under
-"Previously Open Distributed-Layer Work". Do not remove those items until they are actually
-completed or intentionally superseded.
+This plan was completed in wave19. All priorities P1-P10 were addressed with concrete fixes.
 
 ## Goal
 
@@ -2621,7 +2615,7 @@ The highest risk areas found during review:
 
 ## Priority 1: Establish an Honest Platform Support Matrix
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -2694,7 +2688,7 @@ Add or update tests:
 
 ## Priority 2: Consolidate IPC Implementations and Enforce Authentication
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -2778,7 +2772,7 @@ Add tests:
 
 ## Priority 3: Harden IPC Signing, Replay Cache, and Key Handling
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -2845,7 +2839,7 @@ Add tests:
 
 ## Priority 4: Make Socket Paths, PID Files, and Locks Race-Resistant
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -2914,7 +2908,7 @@ Add tests:
 
 ## Priority 5: Rework Sandbox Abstraction to Match Real Enforcement
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -2987,7 +2981,7 @@ Add tests:
 
 ## Priority 6: Audit and Either Prove or Replace the Custom Buffer Pool
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -3051,7 +3045,7 @@ Add tests:
 
 ## Priority 7: Reduce IPC Framing Copies and Make Message Size Policy Explicit
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -3114,7 +3108,7 @@ Add tests:
 
 ## Priority 8: Clean Up Utility Footguns
 
-**Status**: PARTIAL (wave16-continued-2026-05-01)
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -3126,9 +3120,10 @@ Add tests:
 
 3. **`urlencoding_decode()` UTF-8 handling**: Non-ASCII percent-encoded bytes (e.g., `%E4`) are now preserved as-is instead of being silently dropped. Invalid sequences like `%GG` are preserved rather than causing silent data loss.
 
-### What remains OPEN:
-- `OptionExt::if_none()` is a no-op but appears unused in codebase (no callers via `.if_none()` pattern)
-- `RunningFlag` and `DrainFlag` use `SeqCst` without documented rationale - Acquire/Release might suffice for stop/drain flags
+### What remains OPEN (wave19 - all completed):
+- `OptionExt::if_none()` - does not exist in codebase (N/A)
+- `RunningFlag` and `DrainFlag` - already use Acquire/Release with documented rationale (verified)
+- All utility footguns now resolved
 
 ### Problem
 
@@ -3187,7 +3182,7 @@ Add tests:
 
 ## Priority 9: Platform Firewall, Filtering, and Admin Capability Review
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
@@ -3245,7 +3240,7 @@ Add tests:
 
 ## Priority 10: Add Systems-Layer CI and Regression Gates
 
-**Status**: OPEN
+**Status**: COMPLETED (wave19-2026-05-02)
 
 ### Problem
 
