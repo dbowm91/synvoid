@@ -56,11 +56,6 @@ fn validate_ws_cookie_token(headers: &HeaderMap, admin_token: &str) -> Result<()
     }
 }
 
-#[allow(dead_code)]
-fn build_cookie_header(_token: &str) -> Response {
-    (StatusCode::NOT_IMPLEMENTED, "Cookie auth not implemented for WebSocket").into_response()
-}
-
 pub async fn ws_metrics_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,

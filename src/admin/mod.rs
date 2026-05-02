@@ -744,6 +744,9 @@ fn build_router_from_state(
         )
         .route("/theme/css", get(handlers::theme::get_theme_css))
         .route("/theme/presets", get(handlers::theme::get_theme_presets))
+        .route("/auth/session", post(handlers::auth::create_session))
+        .route("/auth/csrf", get(handlers::auth::get_csrf_token))
+        .route("/auth/session", delete(handlers::auth::delete_session))
         .route("/ws/metrics", get(ws::ws_metrics_handler))
         .route("/ws/logs", get(ws::ws_logs_handler));
 

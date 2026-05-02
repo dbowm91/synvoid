@@ -1,6 +1,7 @@
 use super::alerting::AlertManager;
 use super::audit::{AuditState, ConfigVersionManager};
 use super::ws::broadcaster::Broadcaster;
+use base64::Engine;
 use crate::config::ConfigManager;
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::SiteMetricsPayload;
@@ -12,10 +13,10 @@ use crate::waf::{
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
-use subtle::ConstantTimeEq;
 use tokio::sync::RwLock as TokioRwLock;
 use utoipa::ToSchema;
 
@@ -201,8 +202,15 @@ pub struct WafTrackingState {
 pub struct SecurityState {
     pub admin_token: String,
     pub csrf_tokens: Arc<RwLock<std::collections::HashMap<String, CsrfTokenData>>>,
+    pub sessions: Arc<RwLock<std::collections::HashMap<String, SessionData>>>,
     pub rate_limiter: Option<Arc<AdminRateLimiter>>,
     pub yara_rate_limiter: Option<Arc<YaraRateLimiter>>,
+}
+
+pub struct SessionData {
+    pub id_hash: String,
+    pub created: Instant,
+    pub last_used: Instant,
 }
 
 #[derive(Clone)]
@@ -293,6 +301,10 @@ const MAX_REQUEST_LOGS: usize = 10000;
 const MAX_HISTORY_SIZE: usize = 3600;
 const MAX_CSRF_TOKENS_PER_SESSION: usize = 10;
 
+const MAX_SESSION_ID_LENGTH: usize = 32;
+const SESSION_ID_BYTES: usize = 32;
+const SESSION_TTL_SECS: u64 = 3600;
+
 impl AdminState {
     pub fn new(config: Arc<TokioRwLock<ConfigManager>>, admin_token: String) -> Self {
         Self {
@@ -319,6 +331,7 @@ impl AdminState {
             security: SecurityState {
                 admin_token,
                 csrf_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
+                sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
                 rate_limiter: None,
                 yara_rate_limiter: None,
             },
@@ -673,15 +686,11 @@ impl AdminState {
 
         let now = Instant::now();
         let csrf_tokens = self.security.csrf_tokens.read();
+        let session_hash = hex::encode(sha2::Sha256::digest(session_id));
 
         if let Some(valid_token) = csrf_tokens.get(token) {
             if now.duration_since(valid_token.created) < Duration::from_secs(3600)
-                && bool::from(
-                    valid_token
-                        .session_id
-                        .as_bytes()
-                        .ct_eq(session_id.as_bytes()),
-                )
+                && valid_token.session_id_hash == session_hash
             {
                 return true;
             }
@@ -694,17 +703,18 @@ impl AdminState {
         use uuid::Uuid;
 
         let token = Uuid::new_v4().to_string();
+        let session_hash = hex::encode(sha2::Sha256::digest(&session_id));
 
         {
             let mut tokens = self.security.csrf_tokens.write();
             let count_for_session = tokens
                 .iter()
-                .filter(|(_, v)| v.session_id == session_id)
+                .filter(|(_, v)| v.session_id_hash == session_hash)
                 .count();
             if count_for_session >= MAX_CSRF_TOKENS_PER_SESSION {
                 let mut to_remove: Vec<_> = tokens
                     .iter()
-                    .filter(|(_, v)| v.session_id == session_id)
+                    .filter(|(_, v)| v.session_id_hash == session_hash)
                     .map(|(k, v)| (k.clone(), v.created))
                     .collect();
                 to_remove.sort_by_key(|(_, created)| *created);
@@ -713,15 +723,16 @@ impl AdminState {
                     tokens.remove(&key);
                 }
             }
-            tokens.insert(token.clone(), CsrfTokenData::new(session_id));
+            tokens.insert(token.clone(), CsrfTokenData::new(&session_id));
         }
 
         token
     }
 
     pub fn invalidate_csrf_tokens_for_session(&self, session_id: &str) {
+        let session_hash = hex::encode(sha2::Sha256::digest(session_id));
         let mut tokens = self.security.csrf_tokens.write();
-        tokens.retain(|_, v| v.session_id != session_id);
+        tokens.retain(|_, v| v.session_id_hash != session_hash);
     }
 
     pub fn cleanup_expired_csrf_tokens(&self) {
@@ -732,18 +743,85 @@ impl AdminState {
 
         tokens.retain(|_, v| now.duration_since(v.created) < Duration::from_secs(3600));
     }
+
+    pub fn create_session(&self) -> String {
+        use std::time::Duration;
+
+        let mut rng = rand::rng();
+        let mut bytes = [0u8; SESSION_ID_BYTES];
+        rand::Rng::fill(&mut rng, &mut bytes);
+
+        let session_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+
+        let id_hash = hex::encode(sha2::Sha256::digest(session_id.as_bytes()));
+
+        {
+            let mut sessions = self.security.sessions.write();
+            let now = Instant::now();
+
+            if sessions.len() >= 10000 {
+                sessions.retain(|_, v| now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS));
+            }
+
+            sessions.insert(session_id.clone(), SessionData {
+                id_hash,
+                created: now,
+                last_used: now,
+            });
+        }
+
+        session_id
+    }
+
+    pub fn validate_session(&self, session_id: &str) -> bool {
+        use std::time::Duration;
+
+        if session_id.len() > MAX_SESSION_ID_LENGTH {
+            return false;
+        }
+
+        let now = Instant::now();
+        let sessions = self.security.sessions.read();
+
+        if let Some(session) = sessions.get(session_id) {
+            if now.duration_since(session.last_used) < Duration::from_secs(SESSION_TTL_SECS) {
+                drop(sessions);
+                let mut sessions = self.security.sessions.write();
+                if let Some(s) = sessions.get_mut(session_id) {
+                    s.last_used = now;
+                }
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn invalidate_session(&self, session_id: &str) {
+        let mut sessions = self.security.sessions.write();
+        sessions.remove(session_id);
+    }
+
+    pub fn cleanup_expired_sessions(&self) {
+        use std::time::Duration;
+
+        let now = Instant::now();
+        let mut sessions = self.security.sessions.write();
+        sessions.retain(|_, v| now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS));
+    }
 }
 
 pub struct CsrfTokenData {
     pub created: Instant,
-    pub session_id: String,
+    pub session_id_hash: String,
 }
 
 impl CsrfTokenData {
-    fn new(session_id: String) -> Self {
+    fn new(session_id: &str) -> Self {
+        let session_id_hash = hex::encode(sha2::Sha256::digest(session_id));
         Self {
             created: Instant::now(),
-            session_id,
+            session_id_hash,
         }
     }
 }
@@ -841,6 +919,7 @@ mod tests {
     fn test_csrf_token_max_per_session() {
         let state = create_test_state();
         let session_id = "limited-session";
+        let session_hash = hex::encode(sha2::Sha256::digest(session_id));
 
         for _ in 0..15 {
             let _ = state.generate_csrf_token(session_id.to_string());
@@ -849,7 +928,7 @@ mod tests {
         let tokens = state.security.csrf_tokens.read();
         let count_for_session = tokens
             .iter()
-            .filter(|(_, v)| v.session_id == session_id)
+            .filter(|(_, v)| v.session_id_hash == session_hash)
             .count();
         assert_eq!(count_for_session, MAX_CSRF_TOKENS_PER_SESSION);
     }
@@ -858,6 +937,7 @@ mod tests {
     fn test_invalidate_csrf_tokens_for_session() {
         let state = create_test_state();
         let session_id = "to-invalidate";
+        let _session_hash = hex::encode(sha2::Sha256::digest(session_id));
 
         state.generate_csrf_token(session_id.to_string());
         state.generate_csrf_token(session_id.to_string());
@@ -935,8 +1015,9 @@ mod tests {
 
     #[test]
     fn test_csrf_token_data_creation() {
-        let data = CsrfTokenData::new("session-xyz".to_string());
-        assert_eq!(data.session_id, "session-xyz");
+        let data = CsrfTokenData::new("session-xyz");
+        let expected_hash = hex::encode(sha2::Sha256::digest("session-xyz"));
+        assert_eq!(data.session_id_hash, expected_hash);
         assert!(data.created <= Instant::now());
     }
 

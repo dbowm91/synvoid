@@ -1,5 +1,22 @@
 pub mod yara_rate_limit;
 
+// Admin authentication middleware.
+//
+// # Hybrid CSRF/Session Model
+//
+// This module implements a hybrid authentication model:
+//
+// - **Bearer token requests**: Bypass CSRF validation (API clients)
+// - **Session cookie requests**: Require valid CSRF token (browser clients)
+//
+// ## Flow
+//
+// 1. Client exchanges bearer token for session via `POST /api/auth/session`
+// 2. Server returns session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`)
+// 3. Client receives CSRF token via response header and cookie
+// 4. Client includes CSRF token in `x-csrf-token` header for mutating requests
+// 5. CSRF middleware validates token against session
+
 use axum::http::StatusCode;
 use axum::{
     extract::Request,
@@ -14,6 +31,8 @@ use parking_lot::RwLock;
 pub struct ClientIp(pub String);
 
 static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+
+const SESSION_COOKIE_NAME: &str = "maluwaf_session";
 
 pub fn set_trusted_proxies(proxies: Vec<String>) {
     let mut guard = TRUSTED_PROXIES.write();
@@ -124,6 +143,19 @@ pub async fn auth_middleware_with_state(
         }
     }
 
+    if let Some(session_id) = get_session_cookie(&request) {
+        if state.validate_session(&session_id) {
+            super::auth::AUTH_RATE_LIMITER.record_success(client_ip);
+            request
+                .extensions_mut()
+                .insert(super::handlers::common::AuthenticatedUser {
+                    username: "admin".to_string(),
+                    role: super::handlers::common::RequiredRole::Admin,
+                });
+            return next.run(request).await;
+        }
+    }
+
     super::auth::AUTH_RATE_LIMITER.record_failure(client_ip);
     tracing::warn!("Auth middleware: authentication failed for {}", client_ip);
     StatusCode::UNAUTHORIZED.into_response()
@@ -148,18 +180,45 @@ pub async fn csrf_middleware(
         return next.run(request).await;
     }
 
-    let csrf_token = request
-        .headers()
-        .get("x-csrf-token")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    let session_id = request
+    let bearer_token: Option<String> = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|t| t.to_string());
+
+    if bearer_token.is_some() {
+        return next.run(request).await;
+    }
+
+    let session_id = get_session_cookie(&request);
+
+    let session_id = match session_id {
+        Some(id) => id,
+        None => {
+            tracing::warn!(
+                "CSRF validation failed for {} {} - missing session cookie",
+                method,
+                path
+            );
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    };
+
+    if !state.validate_session(&session_id) {
+        tracing::warn!(
+            "CSRF validation failed for {} {} - invalid session",
+            method,
+            path
+        );
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    let csrf_token = request
+        .headers()
+        .get("x-csrf-token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let csrf_token = match csrf_token {
         Some(token) => token,
@@ -173,22 +232,27 @@ pub async fn csrf_middleware(
         }
     };
 
-    let session_id = match session_id {
-        Some(id) => id,
-        None => {
-            tracing::warn!(
-                "CSRF validation failed for {} {} - missing session",
-                method,
-                path
-            );
-            return StatusCode::FORBIDDEN.into_response();
-        }
-    };
-
     if state.validate_csrf(&csrf_token, &session_id) {
         return next.run(request).await;
     }
 
     tracing::warn!("CSRF validation failed for {} {}", method, path);
     StatusCode::FORBIDDEN.into_response()
+}
+
+fn get_session_cookie(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookie_str| {
+            cookie_str.split(';').find_map(|c| {
+                let c = c.trim();
+                if c.starts_with(&format!("{}=", SESSION_COOKIE_NAME)) {
+                    Some(c[SESSION_COOKIE_NAME.len() + 1..].to_string())
+                } else {
+                    None
+                }
+            })
+        })
 }
