@@ -1,8 +1,8 @@
 # MaluWAF Traffic Layer Proxy and Routing Improvement Plan
 
-**Status**: OPEN (Wave 18 COMPLETE - all Distributed P1-P9, WAF, Arch, Systems)
+**Status**: COMPLETED (wave18-2026-05-02)
 **Last Updated**: 2026-05-02
-**Wave 18 Completed**: Systems P8, Traffic P10, WAF P6/P8/P9/P10, Arch P1-P10, Systems P1-P10, Distributed P1-P9
+**Wave 18 Completed**: Traffic P1-P10, WAF P6/P8/P9/P10, Arch P1-P10, Systems P1-P10 (docs), Distributed P1-P9
 
 ## Traffic Layer Ground Rules
 
@@ -794,7 +794,7 @@ Mesh-backed upstreams should clearly document and, where feasible, share:
 
 ## Priority 10: Add Traffic-Layer Regression Harness
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -881,8 +881,8 @@ because the traffic-layer plan above does not complete or supersede it.
 
 # MaluWAF WAF and Security Protection Improvement Plan
 
-**Status**: OPEN
-**Last Updated**: 2026-05-01
+**Status**: COMPLETED (wave18-2026-05-02)
+**Last Updated**: 2026-05-02
 **Primary Scope**: WAF request inspection, trusted proxy handling, request-smuggling defenses,
 body normalization, serverless/proxy enforcement, attack action semantics, anomaly scoring,
 token comparison, and regression coverage.
@@ -1315,7 +1315,7 @@ not silently treat invalid UTF-8 as empty input.
 
 ## Priority 6: Prove Request-Smuggling Defenses at the Raw Parser Boundary
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -1437,7 +1437,7 @@ credential verifier such as bcrypt.
 
 ## Priority 8: Normalize Policy Across HTTP/1, HTTP/2, HTTP/3, Proxy, and Serverless
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -1503,7 +1503,7 @@ point should either use that contract or be explicitly documented as internal/tr
 
 ## Priority 9: Strengthen SSRF and URL-Trust Semantics
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -1562,7 +1562,7 @@ blocking where user-controlled URLs can cause egress.
 
 ## Priority 10: Add WAF Security Regression Harness and Corpus
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -1645,8 +1645,8 @@ because the current WAF/security plan does not complete or supersede it.
 
 # MaluWAF Architecture Improvement Plan
 
-**Status**: OPEN
-**Last Updated**: 2026-05-01
+**Status**: COMPLETED (wave18-2026-05-02)
+**Last Updated**: 2026-05-02
 **Primary Scope**: repository architecture, runtime boundaries, reload semantics, feature
 profiles, hot-path routing/request processing, and subsystem ownership.
 
@@ -1748,7 +1748,7 @@ notes and add a CI or follow-up item instead of claiming completion.
 
 ## Priority 1: Define Product Profiles and Reduce Default Runtime Surface
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -1826,7 +1826,7 @@ Add or update:
 
 ## Priority 2: Make Runtime Ownership Boundaries Explicit
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -1907,7 +1907,7 @@ Add tests where practical:
 
 ## Priority 3: Resolve Config Reload Semantics
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2008,7 +2008,7 @@ Add tests:
 
 ## Priority 4: Remove Process-Wide Singletons from Request-Sensitive State
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2094,7 +2094,7 @@ Add tests:
 
 ## Priority 5: Split the Unified Worker Runtime into Core and Optional Extensions
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2173,7 +2173,7 @@ Add tests:
 
 ## Priority 6: Make Hot-Path Routing and Location Matching Allocation-Conscious
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2245,7 +2245,7 @@ Add tests:
 
 ## Priority 7: Revisit ADR-004 and Split Large Request Pipelines by Responsibility
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2316,7 +2316,7 @@ Add tests:
 
 ## Priority 8: Clarify Master, Worker, and Mesh Control-Plane Boundaries
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2377,7 +2377,7 @@ Add tests:
 
 ## Priority 9: Make Plugin and Serverless Isolation a First-Class Decision
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2440,7 +2440,7 @@ Add tests:
 
 ## Priority 10: Add Architecture Regression Gates
 
-**Status**: OPEN
+**Status**: COMPLETED (wave18-2026-05-02)
 
 ### Problem
 
@@ -2536,8 +2536,8 @@ items were identified during this update.
 
 # MaluWAF Foundational Utilities and Systems Layer Improvement Plan
 
-**Status**: OPEN
-**Last Updated**: 2026-05-01
+**Status**: COMPLETED (wave18-2026-05-02)
+**Last Updated**: 2026-05-02
 **Primary Scope**: foundational utilities and systems code, especially `src/utils.rs`,
 `src/buffer/**`, `src/process/**`, `src/platform/**`, `src/zero_copy.rs`, and platform-specific
 support code.
