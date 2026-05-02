@@ -294,7 +294,6 @@ impl Default for DrainFlag {
 }
 
 const DURATION_SUFFIXES: &[(&str, &str, u64)] = &[
-    ("milliseconds", "ms", 1),
     ("seconds", "s", 1),
     ("sec", "s", 1),
     ("minutes", "m", 60),
@@ -329,6 +328,19 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         return None;
     }
 
+    // Handle millisecond suffixes before all other suffix matching to prevent
+    // "ms" from being misinterpreted as "m" (last char 's') and "milliseconds"
+    // from matching "seconds". Both convert to seconds by integer-dividing by
+    // 1000. Sub-second precision is truncated since the return type is u64.
+    if let Some(stripped) = s.strip_suffix("ms") {
+        let value = stripped.parse::<u64>().ok()?;
+        return Some(value / 1000);
+    }
+    if s.len() > 12 && s[s.len() - 12..].eq_ignore_ascii_case("milliseconds") {
+        let value = s[..s.len() - 12].parse::<u64>().ok()?;
+        return Some(value / 1000);
+    }
+
     for (long_suffix, _short_suffix, multiplier) in DURATION_SUFFIXES {
         let suffix_len = long_suffix.len();
         if s.len() > suffix_len && s[s.len() - suffix_len..].eq_ignore_ascii_case(long_suffix) {
@@ -343,11 +355,6 @@ pub fn parse_duration(s: &str) -> Option<u64> {
             let value = s[..s.len() - 1].parse::<u64>().ok()?;
             return value.checked_mul(*multiplier);
         }
-    }
-
-    if let Some(stripped) = s.strip_suffix("ms") {
-        let value = stripped.parse::<u64>().ok()?;
-        return Some(value / 1000);
     }
 
     None
@@ -637,6 +644,18 @@ mod tests {
         assert_eq!(parse_duration("never"), Some(0), "never");
         assert_eq!(parse_duration("permanent"), Some(0), "permanent");
         assert_eq!(parse_duration("0"), Some(0), "0");
+    }
+
+    #[test]
+    fn test_parse_duration_milliseconds() {
+        assert_eq!(parse_duration("500ms"), Some(0));
+        assert_eq!(parse_duration("1500ms"), Some(1));
+        assert_eq!(parse_duration("30000ms"), Some(30));
+        assert_eq!(parse_duration("500milliseconds"), Some(0));
+        assert_eq!(parse_duration("1500milliseconds"), Some(1));
+        assert_eq!(parse_duration("30000milliseconds"), Some(30));
+        assert_eq!(parse_duration("1500MILLISECONDS"), Some(1));
+        assert_eq!(parse_duration("1500MS"), None);
     }
 
     #[test]

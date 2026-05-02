@@ -1,9 +1,11 @@
 #![allow(deprecated)]
 
+#[cfg(unix)]
 use nix::fcntl::{flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
@@ -348,17 +350,20 @@ impl Default for PidFileManager {
     }
 }
 
+#[cfg(unix)]
 pub struct OverseerLockFile {
     lock_path: PathBuf,
     lock_file: Option<File>,
 }
 
+#[cfg(unix)]
 impl Default for OverseerLockFile {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(unix)]
 impl OverseerLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
@@ -504,6 +509,62 @@ impl OverseerLockFile {
     }
 }
 
+#[cfg(unix)]
+impl Drop for OverseerLockFile {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+#[cfg(not(unix))]
+pub struct OverseerLockFile {
+    lock_path: PathBuf,
+}
+
+#[cfg(not(unix))]
+impl Default for OverseerLockFile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(unix))]
+impl OverseerLockFile {
+    pub fn new() -> Self {
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(DEFAULT_RUSTWAF_DIR);
+
+        let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
+
+        Self { lock_path }
+    }
+
+    pub fn with_custom_dir(dir: PathBuf) -> Self {
+        let lock_path = dir.join(OVERSEER_LOCK_FILE);
+        Self { lock_path }
+    }
+
+    pub fn lock_path(&self) -> &PathBuf {
+        &self.lock_path
+    }
+
+    pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
+        Err(OverseerLockError::LockError(
+            "Overseer lock file not supported on this platform".into(),
+        ))
+    }
+
+    pub fn release(&mut self) {}
+
+    pub fn is_locked(&self) -> bool {
+        false
+    }
+
+    pub fn cleanup_stale_locks(_max_age_secs: u64) {}
+}
+
+#[cfg(not(unix))]
 impl Drop for OverseerLockFile {
     fn drop(&mut self) {
         self.release();
