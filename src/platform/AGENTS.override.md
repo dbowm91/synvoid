@@ -16,7 +16,7 @@ This module covers foundational systems code including IPC, process management, 
 | `src/process/ipc_transport.rs` | Async IPC transport layer |
 | `src/process/socket_path.rs` | Secure socket directory management |
 | `src/process/pidfile.rs` | PID file and lock file management |
-| `src/buffer/pool.rs` | Custom buffer pool (lock-free + TLS cache) |
+| `crates/maluwaf-utils/src/buffer/pool.rs` | Custom buffer pool (lock-free + TLS cache) |
 
 ## Critical Patterns
 
@@ -58,11 +58,13 @@ Key files:
 
 ### 4. Buffer Pool Safety
 
-The buffer pool (`src/buffer/pool.rs`) uses:
-- **TreiberStack**: Lock-free stack with CAS. Safe for buffer pool use because ABA is mitigated by the usage pattern.
+The buffer pool (`crates/maluwaf-utils/src/buffer/pool.rs`) currently uses:
+- **TreiberStack**: Lock-free stack with CAS. **CRITICAL**: Vulnerable to ABA problem under high contention.
 - **ThreadLocalCache**: Uses `RefCell` for safe interior mutability (thread-local guarantees single-threaded access).
 
-All unsafe blocks have safety comments explaining invariants.
+**Planned Refactor**: Replace `TreiberStack` with a sharded mutex-backed `Vec<BytesMut>` to eliminate ABA vulnerability and remove `unsafe` code.
+
+**Safety Note**: Current `unsafe` blocks in `pool.rs` lack proper `SAFETY` documentation. Always verify invariants before modifying.
 
 ### 5. Socket Path Security
 
@@ -70,7 +72,7 @@ Socket directories are created with:
 - `0o700` permissions
 - Ownership verification (current UID or root)
 - Symlink rejection via `symlink_metadata()`
-- Per-UID isolation in `/tmp/maluwaf-{uid}`
+- **Planned**: Per-UID isolation in `/tmp/maluwaf-{uid}` (pending implementation)
 
 ### 6. Lock File Acquisition
 

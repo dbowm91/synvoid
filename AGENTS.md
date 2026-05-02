@@ -127,15 +127,13 @@ cargo check --no-default-features --features mesh,dns
 
 When implementing work from `plans/plan.md`, follow this wave structure:
 
-| Wave | Items | Parallel Tracks | Key Dependency |
-|------|-------|----------------|---------------|
-| **0** | Architecture Gates (4.2) | No | Must lead - blocks all compilation |
-| **1** | Socket/PID Hardening, Sandbox Hardening, IPC Signing Hardening | **Yes** (3 tracks) | After Wave 0 |
-| **2** | IPC Consolidation, Buffer Pool Audit, Architecture Profiles, Control Plane Boundaries | Partial | IPC Consolidation depends on IPC Signing Hardening |
-| **3** | WAF Entrypoint Matrix, Traffic Entrypoint Matrix, HTTP Server Pipeline Split | **Yes** | After Wave 0 |
-| **4** | Plugin Isolation, Config Reload Contract, Runtime Ownership Inventory | **Yes** | After Wave 0 |
-| **5** | Systems-Layer CI, Platform Support Matrix, Platform Firewall | **Yes** | After Wave 0 |
-| **6** | Worker Runtime Split, Singleton Inventory | No | Worker Runtime Split depends on Singleton Inventory |
+| Wave | Focus | Parallel Tracks | Key Dependency |
+|------|-------|-----------------|---------------|
+| **0** | Architecture Gates (4.2) | No | Must lead |
+| **1** | **Security & Hardening** | **Yes (3 tracks)** | After Wave 0 |
+| **2** | **Architecture & Performance** | **Yes (3 tracks)** | After Wave 1 |
+| **3** | **Process & Runtime** | **Yes (2 tracks)** | After Wave 2 |
+| **4** | **Platform & Traffic** | **Yes (2 tracks)** | After Wave 0 |
 
 **Max Parallelism**: After Wave 0 completes, 10+ independent tracks can run in parallel.
 

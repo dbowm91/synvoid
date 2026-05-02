@@ -12,25 +12,27 @@
 
 ### Wave Summary
 
-| Wave | Items | Parallel Tracks | Key Dependency |
+| Wave | Focus | Parallel Tracks | Key Dependency |
 |------|-------|-----------------|---------------|
-| **0** | 4.2 Architecture Gates | No | Must lead |
-| **1** | 2.1, 2.2, 2.3 | **Yes** (3 tracks) | After Wave 0 |
-| **2** | 2.4, 3.1, 4.1, 4.3 | Partial | 2.4 depends on 2.3 |
-| **3** | 5.1, 5.2, 5.4 | **Yes** | After Wave 0 |
-| **4** | 6.1, 6.2, 6.3 | **Yes** | After Wave 0 |
-| **5** | 8.1, 8.2, 8.3 | **Yes** | After Wave 0 |
-| **6** | 5.3, 2.5 | No | 5.3 depends on 2.5 |
+| **0** | Architecture Gates (4.2) | No | Must lead |
+| **1** | **Security & Hardening** | **Yes (3 tracks)** | After Wave 0 |
+| | 1.1: IPC Signing (2.3) | | |
+| | 1.2: Socket/PID Fallback (2.1) | | |
+| | 1.3: Sandbox Refinement (2.2) | | |
+| **2** | **Architecture & Performance** | **Yes (3 tracks)** | After Wave 1 |
+| | 2.1: IPC Consolidation (2.4) | | |
+| | 2.2: Buffer Pool Replacement (3.1) | | |
+| | 2.3: Singleton/RequestServices (2.5) | | |
+| **3** | **Process & Runtime** | **Yes (2 tracks)** | After Wave 2 |
+| | 3.1: Worker Runtime Split (5.3) | | |
+| | 3.2: Pipeline Split Phase 1-3 (5.4) | | |
+| **4** | **Platform & Traffic** | **Yes (2 tracks)** | After Wave 0 |
+| | 4.1: TLS Client Pooling (5.2) | | |
+| | 4.2: Firewall & CI Gates (8.1, 8.3) | | |
 
 ### Max Parallelism
 
-After Wave 0 completes: **10+ independent tracks** can run in parallel:
-- Security fixes: socket/pid, sandbox, IPC signing
-- Performance: buffer pool, routing hot-path, IPC framing
-- Architecture: profiles, control plane boundaries
-- HTTP/Traffic: WAF matrix, traffic matrix, pipeline split
-- Process isolation: plugin, reload, runtime ownership
-- CI/Platform: systems CI, platform matrix, firewall review
+After Wave 0 completes: **10+ independent tracks** can run in parallel across the waves as long as their specific dependencies are met.
 
 ---
 
@@ -44,36 +46,34 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel:
 6. [Process Isolation & Reload](#6-process-isolation--reload)
 7. [WAF & Security Features](#7-waf--security-features)
 8. [CI/Gates & Testing](#8-cigates--testing)
-9. [MaluWAF V2 Plan (Waves 1-4)](#9-maluwaf-v2-plan-waves-1-4)
+9. [MaluWAF V2 Plan (Completed)](#9-maluwaf-v2-plan-completed)
 10. [Deferred/Future Work](#10-deferredfuture-work)
 
 ---
 
 ## 1. Overview/Status
 
-### Current Wave: Wave 21
+### Current Status (2026-05-02)
 
-**Wave 21 Focus**: Deep Process Isolation and Business Logic Migration
+**Phase**: Consolidating Plans & Hardening
 
 | Priority | Task | Status | Notes |
 |----------|------|--------|-------|
-| P1 | Migrate Mesh Control Plane Logic | **REMOVED** | Mesh logic remains in UnifiedServerWorker |
-| P2 | Migrate Plugin/Serverless Execution Logic | **REMOVED** | WASM plugins run in UnifiedServerWorker via Wasmtime |
-| P3 | Deep Workspace Decomposition (`maluwaf-mesh` & `maluwaf-proxy`) | **PENDING** | Extract remaining subsystems into `crates/` |
-| P4 | Complete Config Schema Modernization | **PENDING** | V2 aliases for ThreatLevelConfig |
+| P0 | Consolidate `plans/` into `plan.md` | **COMPLETED** | All technical plans merged into a single actionable roadmap |
+| P1 | Fix Architecture Gates (Core Profile) | **PENDING** | ~220 errors blocking CI |
+| P2 | Implement RequestServices Context | **PENDING** | Remove hidden global singletons |
+| P3 | Replace Buffer Pool with Mutex Sharding | **PENDING** | Resolve ABA hazard in lock-free stack |
+| P4 | Complete IPC Consolidation | **PENDING** | Windows security descriptors & Command auth |
 
-### Completed Waves Summary
+### Recently Completed Implementation (Verified)
 
-| Wave | Focus | Status |
-|------|-------|--------|
-| Wave 16 | Host validation fix, request header forwarding, proxy cache purge | COMPLETED |
-| Wave 17 | Shared proxy executor, upstream TLS client registry, retry policy, URL construction | COMPLETED |
-| Wave 18 | WAF security improvements, threat feed production | COMPLETED |
-| Wave 20 | Process isolation scaffolding, maluwaf-config extraction | COMPLETED |
-
-### Wave 21 Previous Stub Removals
-- `MeshControlPlane` stub deleted - mesh logic stays in UnifiedServerWorker
-- `PluginExecution` stub deleted - WASM sandboxing sufficient
+| Task | Location | Improvement |
+|------|----------|-------------|
+| Socket Hardening | `src/process/socket_path.rs` | Uses `symlink_metadata()` to prevent symlink following |
+| Lock Ordering | `src/process/pidfile.rs` | Open without truncate → acquire lock → write |
+| Sandbox Constants | `src/platform/sandbox.rs` | Replaced hardcoded masks with named Landlock constants |
+| Threat Feed Export | `src/mesh/threat_intel.rs` | Signed feed export CLI and logic |
+| Mockable Clock | `src/utils.rs` | Clock trait for deterministic TokenBucket tests |
 
 ---
 
@@ -81,58 +81,40 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel:
 
 ### 2.1 Socket Path & PID File Hardening
 
-**Status**: DOCUMENTED (not implemented)
+**Status**: PARTIALLY IMPLEMENTED
 **Priority**: 4
 
-| Issue | Location | Severity | Description |
-|-------|----------|----------|-------------|
-| Symlink following in `create_secure_dir_atomic()` | `src/process/socket_path.rs:16` | **HIGH** | Uses `metadata()` instead of `symlink_metadata()` - could follow attacker-controlled symlink |
-| `/tmp/maluwaf` fallback weaknesses | `src/process/socket_path.rs:55-58` | **MEDIUM** | No per-UID isolation, no ownership verification before chmod |
-| Lock acquisition ordering in `OverseerLockFile` | `src/process/pidfile.rs:388-416` | **HIGH** | `File::create()` truncates BEFORE `flock()` acquired - race condition |
-| Windows `tasklist` process check | `src/process/pidfile.rs:288-298` | **LOW** | Uses external process spawn instead of `OpenProcess` API |
+| Issue | Location | Status | Description |
+|-------|----------|--------|-------------|
+| Symlink following in `create_secure_dir_atomic()` | `src/process/socket_path.rs` | **FIXED** | Now uses `symlink_metadata()` and rejects if symlink |
+| `/tmp/maluwaf` fallback weaknesses | `src/process/socket_path.rs` | **PENDING** | No per-UID isolation |
+| Lock acquisition ordering | `src/process/pidfile.rs` | **FIXED** | Open WITHOUT truncate → acquire lock → write content |
+| Windows `tasklist` process check | `src/process/pidfile.rs` | **PENDING** | Uses external process spawn instead of `OpenProcess` API |
 
-**Key Fixes Required**:
-1. Replace `metadata()` with `symlink_metadata()` and reject if symlink
-2. Add per-UID fallback directory (`/tmp/maluwaf-$UID`)
-3. Fix lock acquisition: open WITHOUT truncate → acquire lock → write content
-4. Use `OpenProcess` + `GetExitCodeProcess` on Windows instead of `tasklist`
-
-**Dependencies**: None
-**Actionable Items**:
-- [ ] Fix `create_secure_dir_atomic()` to use `symlink_metadata()` and reject symlinks
-- [ ] Implement per-UID fallback directory
-- [ ] Fix `OverseerLockFile::acquire()` lock ordering
-- [ ] Replace Windows process existence check with native API
+**Remaining Actionable Items**:
+- [ ] **Per-UID Fallback**: Implement `get_user_socket_dir()` which returns `/tmp/maluwaf-$UID`. Ensure directory is owned by current UID and has `0700` permissions.
+- [ ] **Windows Native API**: Replace `tasklist` check in `src/process/pidfile.rs` with `OpenProcess` and `GetExitCodeProcess` to avoid process spawning overhead and potential parsing issues.
+- [ ] **Permission Verification**: Add check that existing socket directory is not a symlink and has correct ownership before use.
 
 ---
 
 ### 2.2 Sandbox Hardening
 
-**Status**: DOCUMENTED (not implemented)
+**Status**: PARTIALLY IMPLEMENTED
 **Priority**: 5
 
-| Issue | Location | Severity | Description |
-|-------|----------|----------|-------------|
-| `SandboxPaths::write_paths()` not used | `src/platform/sandbox.rs:138-151` | **HIGH** | `write_paths` vector is never passed to backend - write access not distinguished |
-| Landlock hardcoded access masks | `src/platform/sandbox.rs:248-256` | **MEDIUM** | `0b111` (read+write+execute) too broad; per-path uses `0b11` (read+write) without distinction |
-| FreeBSD `cap_enter()` called during availability check | `src/platform/sandbox.rs:395-401` | **CRITICAL** | `cap_enter()` actually enters sandbox before checking availability - premature sandbox entry |
-| macOS `is_supported()` returns true when feature disabled | `src/platform/sandbox.rs:806-808` | **MEDIUM** | Always returns `true` regardless of `macos-sandbox` feature flag |
-| Windows Job Objects ignore path parameters | `src/platform/sandbox.rs:592-711` | **LOW** | Job Objects provide process limits, NOT filesystem sandboxing - path params ignored |
+| Issue | Location | Status | Description |
+|-------|----------|--------|-------------|
+| Landlock hardcoded access masks | `src/platform/sandbox.rs` | **FIXED** | Now uses named constants (e.g., `LANDLOCK_ACCESS_FS_READ`) |
+| FreeBSD `cap_enter()` premature call | `src/platform/sandbox.rs` | **PENDING** | Availability check enters sandbox - must use `cap_getmode()` |
+| macOS `is_supported()` feature check | `src/platform/sandbox.rs` | **PENDING** | Returns true even if feature disabled |
+| Windows Job Objects limitations | `src/platform/sandbox.rs` | **DOCUMENTED** | Clarified as resource control, not FS sandbox |
 
-**Key Fixes Required**:
-1. Pass `write_paths` separately to backends or merge based on backend capability
-2. Use named Landlock constants (`LANDLOCK_ACCESS_FS_READ`, etc.)
-3. Check `cap_getmode()` FIRST without calling `cap_enter()` in availability check
-4. `is_supported()` should return `cfg!(feature = "macos-sandbox")`
-5. Document Windows Job Objects as "process resource controls" not filesystem sandboxing
-
-**Dependencies**: None
 **Actionable Items**:
-- [ ] Fix `with_paths()` to pass write paths separately
-- [ ] Replace hardcoded Landlock masks with named constants
-- [ ] Fix `is_capsicum_available()` to check before entering
-- [ ] Fix macOS `is_supported()` to check feature flag
-- [ ] Document Windows Job Object limitations
+- [ ] **FreeBSD Fix**: In `is_capsicum_available()`, check `cap_getmode()` first. Do NOT call `cap_enter()` unless explicitly requested to enter the sandbox.
+- [ ] **macOS Feature Gate**: Update `is_supported()` on macOS to return `cfg!(feature = "macos-sandbox")`.
+- [ ] **Unified Path Handling**: Ensure `write_paths` are passed to all backends that support them (Landlock, etc.) and properly distinguished from read-only paths.
+- [ ] **Documentation**: Update `docs/SANDBOXING.md` to reflect that Windows "sandboxing" is process-level resource limiting via Job Objects.
 
 ---
 
@@ -143,25 +125,20 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel:
 
 | Issue | Location | Severity | Description |
 |-------|----------|----------|-------------|
-| Replay cache: global mutex contention | `src/process/ipc_signed.rs:77-92` | **MEDIUM** | Single global mutex for all signers/channels creates contention at high scale |
-| Replay cache: eviction-before-insert bug | `src/process/ipc_signed.rs:89` | **MEDIUM** | Cache can exceed `MAX_NONCE_CACHE_SIZE` by 1 entry |
-| Replay cache: no channel/signer distinction | `src/process/ipc_signed.rs:77` | **MEDIUM** | Cache key is just nonce - different channels can conflict |
-| Key file loading: missing symlink/permission checks | `src/process/ipc_signed.rs:598-635` | **HIGH** | No `O_NOFOLLOW` on env path, no permission verification |
-| Duplicated hex parsing | Multiple locations | **LOW** | 4 separate hex parsing implementations |
-| `from_secret()` lacks KDF parameters | `src/process/ipc_signed.rs:117-125` | **HIGH** | Direct SHA-256 with no salt/iterations - weak for production |
+| Replay cache bug | `src/process/ipc_signed.rs` | **MEDIUM** | Cache can exceed `MAX_NONCE_CACHE_SIZE` because insertion happens before eviction check |
+| Mutex contention | `src/process/ipc_signed.rs` | **MEDIUM** | Global mutex for all signers creates bottleneck |
+| Key file security | `src/process/ipc_signed.rs` | **HIGH** | Missing `O_NOFOLLOW` and permission checks (should be `0600`) |
+| Weak KDF | `src/process/ipc_signed.rs` | **HIGH** | `from_secret()` uses raw SHA-256 without salt/iterations |
 
-**Key Fixes Required**:
-1. Per-signer or per-channel replay cache with bounded size
-2. Add `O_NOFOLLOW` and permission checks for key file loading
-3. Single canonical `parse_hex_key()` function
-4. Document `from_secret()` as test/dev only or replace with KDF
-
-**Dependencies**: None
 **Actionable Items**:
-- [ ] Implement bounded per-signer replay cache
-- [ ] Fix key file loading with proper symlink/permission checks
-- [ ] Consolidate hex parsing to single function
-- [ ] Document or replace `from_secret()`
+- [ ] **Fix Replay Cache**: Change insertion logic to evict BEFORE inserting if size limit reached. Key the cache by `(signer_id, nonce)` to prevent cross-channel conflicts.
+- [ ] **Reduce Contention**: Move to per-channel or per-signer `DashMap` or sharded mutexes for the nonce cache.
+- [ ] **Secure Key Loading**: 
+    - Use `nix::fcntl::open` with `O_NOFOLLOW` and `O_CLOEXEC`.
+    - Verify file is owned by current user and has `0600` (or stricter) permissions.
+    - Reject if file is in a world-writable directory.
+- [ ] **Strengthen Secret Loading**: Document `from_secret()` as **TEST ONLY**. Add a production-ready KDF (e.g., PBKDF2 or Argon2) if loading from a password is required.
+- [ ] **Consolidate Hex Parsing**: Remove duplicated `hex` parsing code and use a single helper in `maluwaf-utils`.
 
 ---
 
@@ -176,66 +153,39 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel:
 | Null security attributes on Windows | Security | Multiple Windows pipe creation sites pass `std::ptr::null_mut()` |
 | Raw JSON command parsing | Security | `handle_command_connection()` parses raw JSON without auth |
 | Platform IPC traits not used | Architecture | `src/platform/ipc.rs` traits vs actual `src/process/ipc.rs` |
-| `WindowsIpcListener` duplication | Code Quality | Exists in both `src/process/ipc.rs` and `src/platform/windows_impl.rs` |
-
-**IPC Entry Point Inventory**:
-
-| Entry Point | Type | Signing | Framing | Platform |
-|-------------|------|---------|---------|----------|
-| Worker Control IPC (Master ↔ Worker) | `IpcStream` | Optional (enforce_signing flag) | Length-prefixed JSON | Unix/Windows |
-| Master Command IPC (CLI → Master) | Raw JSON | **NONE** | Raw JSON | Windows |
-| Socket Handoff | Message enum | Via IpcStream | Part of Message | Unix/Windows |
-| Status Queries | Various | Via IpcStream | Standard IPC | All |
 
 **Implementation Phases**:
-1. **Phase 1**: Enforce Signing by Default - Make `enforce_signing=true` default, fail closed
-2. **Phase 2**: Windows Security - Create security descriptor builder, replace null attributes
-3. **Phase 3**: Consolidate IPC Stack - Remove `ipc_windows.rs` duplicate, move `WindowsIpcListener`
-4. **Phase 4**: Command Auth - Use signed IPC for commands, require auth
 
-**Dependencies**: IPC Signing Hardening (2.3)
+**Phase 1: Enforce Signing by Default**
+- Make `enforce_signing=true` default for all `IpcStream` instances.
+- Remove `WARNED_UNSIGNED` logs and replace with hard errors.
+- Ensure `SocketHandoff` always uses signed IPC.
+
+**Phase 2: Windows Security Hardening**
+- Create `WindowsSecurityDescriptorBuilder` in `src/platform/windows_impl.rs`.
+- Implement `SecurityDescriptor::new_user_only()` that grants `FILE_ALL_ACCESS` to the current user and `None` to others.
+- Replace `std::ptr::null_mut()` in `CreateNamedPipeW` and `CreateFileW` calls with the built security attributes.
+
+**Phase 3: Command Auth**
+- Update CLI to sign all JSON commands.
+- Update `handle_command_connection()` to wrap the stream in `SignedIpcReader` and verify signatures before parsing.
+
 **Actionable Items**:
-- [ ] Make signing enforcement fail-closed
-- [ ] Create Windows security descriptor builder
-- [ ] Remove `WARNED_UNSIGNED` pattern
-- [ ] Replace raw JSON command handling with signed IPC
-- [ ] Consolidate IPC stack to single implementation
+- [ ] Implement `WindowsSecurityDescriptorBuilder`
+- [ ] Enforce signed IPC for all control channels
+- [ ] Migrate CLI to signed command protocol
+- [ ] Remove `WARNED_UNSIGNED` fallback pattern
 
 ---
 
-### 2.5 Singleton Inventory
+### 2.5 Singleton Inventory & Refactoring
 
-**Status**: Documentation Only
+**Status**: DOCUMENTED
 **Priority**: 4
 
-**Category Key**:
-- **ACCEPTABLE**: Immutable or process-global by nature (metrics, caches, constants)
-- **QUESTIONABLE**: Request/lifecycle-sensitive components that should be explicit
-- **NEEDS_REFACTORING**: Component is request-sensitive and requires explicit context
+**Refactoring Goal**: Remove hidden global state by threading a `RequestServices` context through the request handling pipeline.
 
-### Request-Sensitive Singletons (NEEDS_REFACTORING)
-
-| Singleton | Location | Problem | Refactoring Approach |
-|-----------|----------|---------|---------------------|
-| Threat Intelligence Manager | `src/waf/mod.rs:108-118` | Request-serving code depends on hidden global state | Thread through `RuntimeSnapshot` |
-| YARA Rules Manager | `src/waf/mod.rs:120-126` | Upload validator accesses YARA via global, not injection | Pass to UploadValidator at construction |
-| Upload Validator | `src/waf/mod.rs:128-134` | Holds mutable state but globally accessible | Own by RuntimeSnapshot |
-| Global Plugin Manager | `src/plugin/global.rs:9-10` | Memory budget is process-wide, test contamination | Owned by RuntimeSnapshot with profile limits |
-| Spin Apps Manager | `src/spin/handler.rs:236-241` | Serverless state leaks between test cases | Move to runtime-scoped management |
-
-### Acceptable Process-Globals
-
-| Singleton | Location | Verdict |
-|-----------|----------|---------|
-| Global Buffer Pool | `src/buffer/pool.rs:348-349` | ACCEPTABLE for performance at 1000K RPS |
-| Metrics Collection | `src/metrics/collection.rs:11-118` | ACCEPTABLE - metrics are inherently process-global |
-| Static Regex Caches | Multiple files | ACCEPTABLE - deterministic, bounded |
-| Nonce Cache | `src/process/ipc_signed.rs:77` | ACCEPTABLE - bounded cache with TTL |
-| Upstream Client Cache | `src/http_client/mod.rs:65` | ACCEPTABLE - bounded cache with eviction |
-
-### Refactoring Approach
-
-1. Create `RequestServices` context struct:
+**Proposed Context Struct**:
 ```rust
 pub struct RequestServices {
     pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
@@ -246,55 +196,49 @@ pub struct RequestServices {
 }
 ```
 
-2. RuntimeSnapshot owns services
-3. Thread services through request path via `Arc<RequestServices>`
-4. Deprecate old global accessors
+**Refactoring Path**:
+1. **Creation**: Instantiate `RequestServices` in `UnifiedServerWorker::new()`.
+2. **Storage**: Add `Arc<RequestServices>` to `UnifiedServerWorkerState` and `RuntimeSnapshot`.
+3. **Threading**: Pass `Arc<RequestServices>` to `handle_request()` and all downstream inspectors.
+4. **Deprecation**: Mark global accessors (e.g., `get_threat_intel()`) as `#[deprecated]` and make them return `None` or panic in debug builds to flush out hidden dependencies.
 
-**Dependencies**: None
 **Actionable Items**:
-- [ ] Create `RequestServices` context struct
-- [ ] Add to `RuntimeSnapshot`
-- [ ] Thread through request paths
-- [ ] Fix UploadValidator YARA dependency at construction
+- [ ] Create `RequestServices` struct in `src/worker/context.rs`.
+- [ ] Add `RequestServices` to `RuntimeSnapshot`.
+- [ ] Update `handle_request` signature to accept the services context.
+- [ ] Fix `UploadValidator` to take `Arc<YaraRulesManager>` at construction instead of using `YARA_RULES.get()`.
+- [ ] Migrate `YaraRulesManager` to be owned by `RequestServices`.
 
 ---
 
 ## 3. Performance & Scalability
 
-### 3.1 Buffer Pool Audit
+### 3.1 Buffer Pool Audit & Replacement
 
-**Status**: DOCUMENTED (not implemented)
+**Status**: DOCUMENTED
 **Priority**: 6
 
 | Issue | Location | Severity | Description |
 |-------|----------|----------|-------------|
-| ABA problem in Treiber Stack | `src/buffer/pool.rs:65-137` | **HIGH** | Lock-free stack vulnerable to use-after-free under contention |
-| Interior mutation via unsafe cast | `src/buffer/pool.rs:220-254` | **MEDIUM** | `push_to_array`/`pop_from_array` create `&mut` from `&self` |
-| No SAFETY comments | Entire file | **MEDIUM** | Every unsafe block lacks documentation |
+| ABA problem in Treiber Stack | `crates/maluwaf-utils/src/buffer/pool.rs` | **HIGH** | Lock-free stack vulnerable to use-after-free under contention |
+| Interior mutation via unsafe cast | `crates/maluwaf-utils/src/buffer/pool.rs` | **MEDIUM** | `push_to_array`/`pop_from_array` create `&mut` from `&self` |
 
-**Hazard Analysis**:
+**ABA Hazard Scenario**:
+1. Thread A reads pointer `P` to node `N`.
+2. Thread B pops `N`, frees it, and then pushes a new node `M` which happens to be allocated at the SAME address `P`.
+3. Thread A performs CAS on `P`. It succeeds because `P` matches, but it incorrectly assumes the stack state is the same as when it first read `P`.
 
-**ABA Problem**: In a lock-free stack:
-1. Thread A reads pointer `P` to node `N`
-2. Thread B pops `N`, frees it, allocates new node at same address `P`, pushes it
-3. Thread A's CAS sees `P` unchanged and incorrectly succeeds
+**Replacement Plan**:
+Replace the lock-free Treiber stack with a sharded mutex-backed `Vec<BytesMut>`.
+1. **Sharding**: Use 16-64 shards (depending on CPU core count) to minimize lock contention.
+2. **Implementation**: `parking_lot::Mutex<Vec<BytesMut>>` per shard.
+3. **Safety**: Completely eliminates `unsafe` blocks and ABA vulnerability.
 
-**Interior Mutation**: `push_to_array` takes `&self` and casts to `*mut [Option<BytesMut>]`, creating aliased mutability. While thread-local guarantees safety, this is undocumented.
-
-**Recommendation**: Replace with `parking_lot::Mutex<Vec<BytesMut>>` per shard
-
-**Before Replacing**:
-1. Add benchmark for buffer pool acquire/release
-2. Establish baseline throughput
-3. Implement mutex-based replacement
-4. Compare - if regression < 5%, use safe version
-
-**Dependencies**: None
 **Actionable Items**:
-- [ ] Add SAFETY comments to existing unsafe blocks
-- [ ] Create benchmark for buffer acquire/release
-- [ ] Implement mutex-based replacement and benchmark
-- [ ] If keeping current code, document ABA prevention strategy
+- [ ] **Benchmark Baseline**: Establish current performance baseline with `benches/bench_buffer_pool.rs`.
+- [ ] **Implement Mutex Sharding**: Replace `TreiberStack` with `ShardedBufferPool`.
+- [ ] **Verify Performance**: Ensure regression is < 5% at 1000K RPS target.
+- [ ] **Remove Unsafe**: Delete all `unsafe` blocks in `pool.rs` and add `#[deny(unsafe_code)]` to the module.
 
 ---
 
@@ -427,76 +371,33 @@ cargo build --all-features
 
 ### 4.2 Architecture Gates
 
-**Status**: **OPEN**
+**Status**: **OPEN (BLOCKING)**
 **Priority**: 1
 
-### Profile Check Results (2026-05-02)
+**Profile Check Results (2026-05-02)**: ~215 errors in `core` profile.
 
-| Profile | Command | Result | Errors |
-|---------|---------|--------|--------|
-| `core` | `cargo check --no-default-features` | **FAIL** | ~220 errors |
-| `mesh` | `cargo check --no-default-features --features mesh` | **FAIL** | ~85 errors |
-| `dns` | `cargo check --no-default-features --features dns` | **FAIL** | ~264 errors |
-| `full` | `cargo check --no-default-features --features mesh,dns` | **PASS** | 0 errors |
+**Forbidden Import Patterns**:
+These patterns must NOT exist in the `core` profile:
 
-### Boundary Violations Identified
+| Source Module | Forbidden Import | Reason |
+|---------------|------------------|--------|
+| `src/worker/` | `crate::mesh::*` | Data plane must not depend on distributed mesh |
+| `src/admin/` | `crate::mesh::*` | Admin API must be feature-gated for mesh |
+| `src/dns/` | `crate::mesh::*` | DNS should use local-first or DNS-native sync |
+| `src/tls/` | `crate::config::mesh` | TLS termination is independent of mesh identity |
 
-**1. Direct Mesh Imports Without Feature Guards (Severity: HIGH)**
-- `src/worker/unified_server.rs` - references mesh types without guards
-- `src/admin/handlers/mesh_admin.rs` - uses mesh types directly
-- `src/config/tunnel.rs` - `MeshConfig` without feature guard
-- `src/serverless/manager.rs` - uses `MeshNodeRole`
-- `src/tls/server.rs` - `mesh_config` field without feature guard
-
-**2. DNS Module Depends on Mesh (Severity: HIGH)**
-- `src/dns/anycast_sync.rs` - imports mesh types
-- `src/dns/mesh_sync/dht.rs` - imports mesh DHT types
-- `src/dns/mesh_sync/registry.rs` - imports DHT routing manager
-- `src/dns/server/startup.rs` - imports `MeshTransport`
-- `src/dns/server/mod.rs` - imports `MeshTransport`
-
-**3. Admin API Depends on Mesh Types (Severity: MEDIUM)**
-- `src/admin/handlers/mesh_admin.rs` function signatures use mesh types
-
-**4. HTTP/TLS Servers Accept Mesh Config (Severity: MEDIUM)**
-- `src/tls/server.rs` accepts `Option<Arc<MeshConfig>>` without feature gating
-
-### Profile Check Commands
-
-```bash
-# Verify core profile compiles
-cargo check --no-default-features
-
-# Verify mesh profile compiles
-cargo check --no-default-features --features mesh
-
-# Verify dns profile compiles
-cargo check --no-default-features --features dns
-
-# Verify full profile compiles
-cargo check --no-default-features --features mesh,dns
-```
-
-### What Needs Fixing
-
-**Priority 1**: Fix Core Profile
-1. Feature-gate `src/worker/unified_server.rs` mesh references with `#[cfg(feature = "mesh")]`
-2. Feature-gate `src/config/tunnel.rs` MeshConfig field
-3. Feature-gate `src/tls/server.rs` mesh_config field
-4. Feature-gate `src/serverless/manager.rs` mesh references
-5. Feature-gate admin handler mesh type references
-
-**Priority 2**: Decouple DNS from Mesh
-1. Remove mesh protocol types from `src/dns/anycast_sync.rs`
-2. Replace mesh DHT types with DNS-specific sync mechanism
-3. Create DNS-native sync protocol
-
-**Dependencies**: None
 **Actionable Items**:
-- [ ] Fix core profile compilation (215 errors)
-- [ ] Fix mesh profile compilation (85 errors)
-- [ ] Fix dns profile compilation (259 errors - requires DNS/mesh decoupling)
-- [ ] Add forbidden import patterns to CI
+- [ ] **Fix Core Profile**:
+    - Add `#[cfg(feature = "mesh")]` to all mesh-related fields in `UnifiedServerWorkerState`, `ConfigManager`, and `SiteConfig`.
+    - Wrap mesh-specific admin handlers in `#[cfg(feature = "mesh")]`.
+- [ ] **Decouple DNS from Mesh**:
+    - Extract `DnsResolver` from `mesh` module into its own top-level module or `maluwaf-utils`.
+    - Replace mesh-based sync in `src/dns/anycast_sync.rs` with a generic `SyncProvider` trait.
+- [ ] **CI Enforcement**:
+    - Add `cargo check --no-default-features` to GitHub Actions.
+    - Add a script to `scripts/check_imports.py` that regex-checks for forbidden patterns in core modules.
+- [ ] **Workspace Refinement**:
+    - Move `maluwaf-mesh` specific types into `crates/maluwaf-mesh` to enforce physical boundary.
 
 ---
 
@@ -649,72 +550,35 @@ Rationale:
 
 ---
 
-### 5.3 Worker Runtime Split
+### 5.3 Worker Runtime Split & Extension Policies
 
-**Status**: DOCUMENTATION ONLY
+**Status**: DOCUMENTED
 **Priority**: 5
 
-### CoreWorkerRuntime (Conceptual)
-
-This is **documentation only** - no new struct is created.
-
-| Component | Description |
-|-----------|-------------|
-| Config snapshot | `Arc<RwLock<ConfigManager>>` |
-| HTTP/HTTPS/HTTP3 listeners | Port binding, socket acceptance |
-| Router | `Router` - precomputed host maps, location matchers |
-| WAF | `WafCore` - attack detection, body inspection |
-| Proxy/static handlers | Request forwarding, static file serving |
-| Metrics | `WorkerMetrics`, bandwidth tracking |
-
-**What is NOT core**:
-- Mesh networking and DHT
-- DNS serving and mesh DNS registry
-- WASM/plugin runtime
-- Serverless function execution
-- Upload scanning with YARA
-- Port honeypot
-
-### Extension Initialization Summary
-
-| Extension | Initialization | Always Initialized |
-|-----------|---------------|-------------------|
-| MeshRuntime | `unified_server.rs:537-1037` | No (config-gated) |
-| DnsRuntime | `unified_server.rs:699-795` | No (feature-gated) |
-| PluginRuntime | `unified_server.rs:22, 337-338` | No (feature-gated) |
-| ServerlessRuntime | `unified_server.rs:333-364` | No (config-gated) |
-| UploadScanningRuntime | `unified_server.rs:429-469` | Yes (always compiled) |
-| HoneypotRuntime | `unified_server.rs:472-520` | Yes (always compiled) |
-
-### Failure Policy Issues
-
-| Extension | Current Policy | Recommended Policy |
-|-----------|---------------|-------------------|
-| Mesh | Fail-open (dummy threat intel) | **Fail-closed** if enabled in config |
-| DNS | Fail-open (warning) | Fail-closed if global node and DNS required |
-| Serverless | Fail-open (warning) | Fail-open with warning |
-| UploadScanning | Fail-open (warning) | Fail-open with warning |
-| Honeypot | Fail-open (warning) | Fail-open (observability) |
-
-### 4. Replace Global Singletons with `Option<Arc<T>>`
-
-**Approach**:
-1. Change global accessors to return `Option<Arc<T>>`
-2. Store extensions as `Option<Arc<T>>` in `UnifiedServerWorkerState`
-3. Request-handling code checks `Option::is_some()` before using extension
-
-**Example**:
+**ExtensionRuntime Trait**:
 ```rust
-// Current
-pub fn get_threat_intel() -> Arc<ThreatIntelligenceManager> { ... }
-
-// Desired
-pub fn get_threat_intel() -> Option<Arc<ThreatIntelligenceManager>> { ... }
+#[async_trait]
+pub trait ExtensionRuntime: Send + Sync {
+    fn name(&self) -> &'static str;
+    async fn start(&self) -> Result<(), Error>;
+    async fn stop(&self) -> Result<(), Error>;
+    fn health_check(&self) -> HealthStatus;
+}
 ```
 
-**Dependencies**: Singleton Inventory refactoring (2.5)
+**Failure Policies**:
+| Extension | Policy | Recovery |
+|-----------|--------|----------|
+| Mesh | **Fail-Closed** | Stop request processing if mesh enabled but unreachable |
+| DNS | **Fail-Closed** | Stop DNS serving if sync fails |
+| Serverless | **Fail-Open** | Log warning and return 503 for serverless requests |
+| Honeypot | **Fail-Open** | Continue without honeypot observability |
+
 **Actionable Items**:
-- [ ] Track as architecture goal - no structural changes made
+- [ ] **Trait Implementation**: Define `ExtensionRuntime` in `src/worker/extension.rs`.
+- [ ] **Migration**: Wrap `MeshRuntime`, `DnsRuntime`, and `ServerlessRuntime` in the trait.
+- [ ] **Registry**: Create an `ExtensionRegistry` in `UnifiedServerWorker` to manage life-cycle and health.
+- [ ] **Health API**: Expose extension health via Admin API `/health/extensions`.
 
 ---
 
@@ -1057,94 +921,21 @@ This is less invasive - just add a test-only method without trait generics.
 **Status**: OPEN
 **Priority**: 6
 
-### CI/Local Verification Commands
+**Security Regression Test Concepts**:
 
-**Linux Default Features**:
-```bash
-cargo check
-cargo test --lib
-cargo fmt --check
-cargo clippy --lib -- -D warnings
-```
+| Test Case | Implementation Detail |
+|-----------|-----------------------|
+| **IPC Auth Bypass** | Attempt to send unsigned JSON command to Master Command IPC. Must fail with `AuthError`. |
+| **Key File Symlink** | Create symlink `key.txt -> /etc/shadow`. Signer must refuse to load the key. |
+| **Pidfile Race** | Run two Master processes simultaneously. Second must fail to acquire lock without truncating existing pidfile. |
+| **Sandbox Leak** | Attempt to write to `/etc/hosts` from within a Landlocked worker. Must return `EACCES`. |
+| **Socket Hijack** | Attempt to create socket in `/tmp/maluwaf` as different user. Must fail due to `0700` parent perms. |
 
-**Linux No-Default Features**:
-```bash
-cargo check --no-default-features
-cargo check --no-default-features --features mesh
-cargo check --no-default-features --features dns
-cargo check --no-default-features --features mesh,dns
-```
-
-**macOS No-Default Features**:
-```bash
-cargo check --no-default-features --features mesh,dns
-cargo check --no-default-features --features mesh,dns,macos-sandbox
-```
-
-**Windows MSVC No-Default Features**:
-```bash
-cargo +stable check --no-default-features --features mesh,dns
-```
-
-### Security Regression Test Concepts
-
-| Test | Security Issue |
-|------|----------------|
-| IPC unsigned rejection | Unsigned IPC messages should be rejected |
-| Key file symlink rejection | Symlink-based key file attacks |
-| Runtime dir symlink rejection | Runtime directory symlink attacks |
-| Sandbox strict-mode failure | Strict mode fails gracefully on unsupported platforms |
-
-### Unsafe Code Gates
-
-**Miri for Buffer Pool** (requires nightly):
-```bash
-cargo +nightly miri test --lib buffer
-```
-
-**Scope**: Focus on `TreiberStack` push/pop operations and buffer metadata handling.
-
-### GitHub Actions Pipeline Recommendation
-
-```yaml
-name: Systems CI
-on: [push, pull_request]
-jobs:
-  linux-default:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check default features
-        run: |
-          cargo check
-          cargo test --lib
-          cargo fmt --check
-          cargo clippy --lib -- -D warnings
-  linux-no-default:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check no-default-features
-        run: |
-          cargo check --no-default-features
-          cargo check --no-default-features --features mesh
-          cargo check --no-default-features --features dns
-          cargo check --no-default-features --features mesh,dns
-```
-
-**Done Criteria**:
-- [ ] CI or equivalent documented verification covers every claimed platform
-- [ ] Security-sensitive systems-layer tests are part of normal validation
-- [ ] Unsafe code gates documented and executable where feasible
-- [ ] Platform-specific compile errors caught before merge
-
-**Dependencies**: None
 **Actionable Items**:
-- [ ] Add security regression tests to CI
-- [ ] Add unsafe code gates (Miri) for buffer pool
-- [ ] Add platform-specific compile checks
+- [ ] **Integration Test Suite**: Create `tests/security_regression.rs` implementing the above cases.
+- [ ] **Miri CI**: Add `cargo miri test` to CI for `maluwaf-utils` to detect ABA and other UB in buffer pool.
+- [ ] **Cross-Platform Check**: Ensure `cargo check --no-default-features` runs on Linux, macOS, and Windows in CI.
+- [ ] **Forbidden Imports**: Implement `scripts/check_imports.py` and run in CI.
 
 ---
 

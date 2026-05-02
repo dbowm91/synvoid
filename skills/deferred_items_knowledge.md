@@ -4,7 +4,7 @@ This skill provides context on how deferred items from the original `plans/plan.
 
 ## Completion Status (Wave 21 - 2026-05-02)
 
-Most plan priorities have been completed or removed. Remaining items are documented in `plans/todo_deferred.md`.
+Most plan priorities have been completed or removed. Remaining items are documented in `plans/plan.md`.
 
 ## Architecture Documents
 
@@ -15,7 +15,7 @@ Key architecture documentation is available in the `architecture/` directory:
 
 ## Deferred Items (Not Implemented)
 
-Remaining items tracked in `plans/todo_deferred.md`:
+Remaining items tracked in `plans/plan.md`:
 
 ### Systems Layer (Wave 3)
 - Deep WireGuard/TUN backend work, except where platform compile checks require gating
