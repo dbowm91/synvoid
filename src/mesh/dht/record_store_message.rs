@@ -238,8 +238,16 @@ impl RecordStoreManager {
                 }
 
                 let reputation = self.get_sender_reputation(from_node, signer).await;
+
+                let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
+                    from_node.to_string(),
+                    from_node.to_string(),
+                    crate::mesh::dht::signed::SourceClassification::Unknown,
+                    crate::mesh::dht::signed::IngressPath::Push,
+                );
+
                 for record in records {
-                    self.store_record(record.clone(), reputation, false);
+                    self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation);
                     self.init_propagation_state(&record.key);
                 }
                 self.compute_merkle_tree();
@@ -465,8 +473,15 @@ impl RecordStoreManager {
         let mut stored_count = 0;
         let reputation = self.get_sender_reputation(from_node, None).await;
 
+        let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
+            from_node.to_string(),
+            from_node.to_string(),
+            crate::mesh::dht::signed::SourceClassification::Unknown,
+            crate::mesh::dht::signed::IngressPath::AntiEntropy,
+        );
+
         for record in missing_records {
-            if self.store_record(record.clone(), reputation, false) {
+            if self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation) {
                 stored_count += 1;
             }
         }
@@ -1211,6 +1226,14 @@ impl RecordStoreManager {
             rs.records.get(&record.key)
         };
 
+        let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
+            source_node_id.to_string(),
+            source_node_id.to_string(),
+            crate::mesh::dht::signed::SourceClassification::Unknown,
+            crate::mesh::dht::signed::IngressPath::QuorumCommit,
+        )
+        .with_quorum_proof(key_requires_quorum_proof);
+
         if let Some(entry) = existing {
             if entry.status == crate::mesh::protocol::DhtRecordStatus::Live {
                 tracing::debug!(
@@ -1222,7 +1245,7 @@ impl RecordStoreManager {
             }
         }
 
-        self.store_record(record, 100, false)
+        self.store_record_from_ingress(record, &ingress_ctx, 100)
     }
 
     pub async fn handle_quorum_signature_response(

@@ -2582,4 +2582,278 @@ mod tests {
         let result = verify_quorum_proof_with_context(&record, &ctx);
         assert!(result, "Valid proof with correct trusted keys should pass");
     }
+
+    #[test]
+    fn test_ingress_rejects_missing_signature_on_remote_announce() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer456".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            DhtRecordVerificationError::MissingSignature
+        ));
+    }
+
+    #[test]
+    fn test_ingress_rejects_missing_signer_public_key_for_global_store() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let mut record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+        record.content_hash = record.compute_content_hash();
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer456".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DhtRecordVerificationError::InvalidSignature),
+            "Expected InvalidSignature when signature verification fails due to missing signer key, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ingress_rejects_source_node_mismatch() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "actual_source_node".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer456".to_string(),
+            "different_source_node".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DhtRecordVerificationError::MissingSignature),
+            "Expected MissingSignature for empty signature, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ingress_rejects_immutable_record_without_trust_anchor() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let mut record = DhtRecord {
+            key: "immutable:test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![1; 64],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+        record.content_hash = record.compute_content_hash();
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer456".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        )
+        .with_immutable(true);
+
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DhtRecordVerificationError::InvalidSignature),
+            "Expected InvalidSignature for missing signer key, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ingress_accepts_valid_remote_announce_with_signature() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::{DhtRecord, MeshMessageSigner};
+
+        let secret = [0x11u8; 32];
+        let signer = MeshMessageSigner::new(secret);
+
+        let mut record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let signed_record = crate::mesh::dht::signed::dht_record_to_signed_record(&record);
+        record.signature = signer.sign(&signed_record.get_signable_content());
+        record.content_hash = record.compute_content_hash();
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer456".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        );
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ingress_rejects_quorum_required_without_proof() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::{DhtRecord, MeshMessageSigner};
+
+        let secret = [0x42u8; 32];
+        let signer = MeshMessageSigner::new(secret);
+
+        let mut record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let signed_record = crate::mesh::dht::signed::dht_record_to_signed_record(&record);
+        record.signature = signer.sign(&signed_record.get_signable_content());
+        record.content_hash = record.compute_content_hash();
+
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer456".to_string(),
+            "node123".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Announce,
+        )
+        .with_quorum_proof(true);
+
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DhtRecordVerificationError::MissingQuorumProof),
+            "Expected MissingQuorumProof (signature verified), got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ingress_local_create_allows_unsigned() {
+        use crate::mesh::config::MeshConfig;
+        use crate::mesh::dht::DhtAccessControl;
+        use crate::mesh::protocol::DhtRecord;
+
+        let record = DhtRecord {
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "node123".to_string(),
+            signature: vec![],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+
+        let ctx = DhtRecordIngressContext::new_local("node123".to_string());
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+
+        let result = record.verify_for_ingress(&ctx, &access_control);
+        assert!(result.is_ok());
+    }
 }

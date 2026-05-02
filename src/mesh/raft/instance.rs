@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use openraft::raft::ReadPolicy;
-use openraft::type_config::alias::SnapshotMetaOf;
+use openraft::type_config::alias::{SnapshotMetaOf, StoredMembershipOf};
 use openraft::Raft;
 use tokio::sync::broadcast;
 
@@ -258,6 +258,10 @@ impl RaftInstance {
 
     pub fn observer_tags(&self) -> &[String] {
         &self.observer_tags
+    }
+
+    pub fn get_applied_membership(&self) -> Option<StoredMembershipOf<GlobalRegistryTypeConfig>> {
+        self.registry.state_machine().get_applied_membership()
     }
 
     pub async fn install_snapshot(

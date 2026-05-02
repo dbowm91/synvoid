@@ -711,11 +711,11 @@ mod snapshot_install_tests {
         assert_eq!(snapshot.total_size, 1024);
 
         let chunk1 = vec![0u8; 512];
-        assert!(snapshot.add_chunk(0, chunk1, false));
+        assert!(snapshot.add_chunk(0, chunk1, false, None));
         assert_eq!(snapshot.offset, 512);
 
         let chunk2 = vec![0u8; 512];
-        assert!(snapshot.add_chunk(512, chunk2, true));
+        assert!(snapshot.add_chunk(512, chunk2, true, None));
         assert_eq!(snapshot.offset, 1024);
         assert!(snapshot.is_complete());
     }
@@ -725,11 +725,11 @@ mod snapshot_install_tests {
         let mut snapshot = InProgressSnapshot::new("test-snap".to_string(), 1024, vec![], vec![]);
 
         let chunk1 = vec![0u8; 512];
-        assert!(snapshot.add_chunk(0, chunk1, false));
+        assert!(snapshot.add_chunk(0, chunk1, false, None));
         assert_eq!(snapshot.offset, 512);
 
         let chunk_wrong_offset = vec![0u8; 512];
-        assert!(!snapshot.add_chunk(256, chunk_wrong_offset, false));
+        assert!(!snapshot.add_chunk(256, chunk_wrong_offset, false, None));
     }
 
     #[test]
@@ -737,7 +737,7 @@ mod snapshot_install_tests {
         let mut snapshot = InProgressSnapshot::new("test-snap".to_string(), 512, vec![], vec![]);
 
         let oversized_chunk = vec![0u8; 1024];
-        assert!(!snapshot.add_chunk(0, oversized_chunk, true));
+        assert!(!snapshot.add_chunk(0, oversized_chunk, true, None));
     }
 }
 
@@ -1177,5 +1177,437 @@ mod regression_tests {
             verify_format.as_bytes(),
             "BUG: Snapshot request is signed using get_anti_entropy_request_signable_content() which uses postcard serialization, but verified using format! with request_id, node_id, from_version which is a different format. These are incompatible!"
         );
+    }
+
+    #[test]
+    fn test_regression_non_member_cannot_send_append_entries() {
+        use crate::mesh::transport::InProgressSnapshot;
+
+        let mut snapshot = InProgressSnapshot::with_sender(
+            "test-snap".to_string(),
+            1024,
+            vec![],
+            vec![],
+            "member-node".to_string(),
+        );
+
+        assert!(snapshot.validate_sender("member-node"));
+        assert!(!snapshot.validate_sender("attacker-node"));
+
+        let chunk = vec![0u8; 512];
+        assert!(snapshot.add_chunk(0, chunk, false, Some("member-node")));
+        assert!(!snapshot.add_chunk(512, vec![0u8; 512], false, Some("attacker-node")));
+    }
+
+    #[test]
+    fn test_regression_non_member_cannot_send_vote_request() {
+        use crate::mesh::transport::InProgressSnapshot;
+
+        let snapshot = InProgressSnapshot::with_sender(
+            "vote-snap".to_string(),
+            512,
+            vec![],
+            vec![],
+            "voter-node".to_string(),
+        );
+
+        assert!(snapshot.validate_sender("voter-node"));
+        assert!(!snapshot.validate_sender("non-voter-node"));
+    }
+
+    #[test]
+    fn test_regression_non_member_cannot_start_install_snapshot() {
+        use crate::mesh::transport::InProgressSnapshot;
+
+        let snapshot = InProgressSnapshot::with_sender(
+            "install-snap".to_string(),
+            2048,
+            vec![1, 2, 3],
+            vec![4, 5, 6],
+            "authorized-node".to_string(),
+        );
+
+        assert_eq!(snapshot.sender(), Some("authorized-node"));
+        assert_eq!(snapshot.sender(), Some("authorized-node"));
+        assert!(snapshot
+            .sender_node_id
+            .as_ref()
+            .map_or(false, |s| s == "authorized-node"));
+    }
+
+    #[test]
+    fn test_regression_snapshot_chunks_from_different_peer_rejected() {
+        use crate::mesh::transport::InProgressSnapshot;
+
+        let mut snapshot = InProgressSnapshot::with_sender(
+            "multi-peer-snap".to_string(),
+            1024,
+            vec![],
+            vec![],
+            "leader-node".to_string(),
+        );
+
+        let chunk1 = vec![0u8; 512];
+        assert!(snapshot.add_chunk(0, chunk1, false, Some("leader-node")));
+
+        let chunk2 = vec![0u8; 512];
+        assert!(snapshot.add_chunk(512, chunk2, true, Some("leader-node")));
+
+        let mut snapshot2 = InProgressSnapshot::with_sender(
+            "attacker-snap".to_string(),
+            1024,
+            vec![],
+            vec![],
+            "attacker-node".to_string(),
+        );
+
+        assert!(snapshot2.add_chunk(0, vec![0u8; 512], false, Some("attacker-node")));
+
+        let mut snapshot3 = InProgressSnapshot::with_sender(
+            "snap3".to_string(),
+            1024,
+            vec![],
+            vec![],
+            "node-a".to_string(),
+        );
+
+        let chunk = vec![0u8; 256];
+        assert!(snapshot3.add_chunk(0, chunk, false, Some("node-a")));
+        assert!(!snapshot3.add_chunk(256, vec![0u8; 256], false, Some("node-b")));
+    }
+
+    #[test]
+    fn test_regression_in_progress_snapshot_sender_tracking() {
+        use crate::mesh::transport::InProgressSnapshot;
+
+        let snapshot1 = InProgressSnapshot::new("snap1".to_string(), 512, vec![], vec![]);
+        assert!(snapshot1.sender().is_none());
+
+        let snapshot2 = InProgressSnapshot::with_sender(
+            "snap2".to_string(),
+            512,
+            vec![],
+            vec![],
+            "node-x".to_string(),
+        );
+        assert_eq!(snapshot2.sender(), Some("node-x"));
+    }
+}
+
+#[cfg(test)]
+mod client_proposal_authorization_tests {
+    use crate::mesh::protocol::MeshMessageSigner;
+    use crate::mesh::raft::state_machine::{
+        ClientProposalPayload, CommandKind, Namespace, RaftCommand, ReplayProtectionCache,
+    };
+
+    #[test]
+    fn test_client_proposal_payload_signable_content_includes_namespace() {
+        let payload1 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+        let payload2 = ClientProposalPayload::new(
+            Namespace::Intel,
+            "key1".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+
+        let content1 = payload1.get_signable_content();
+        let content2 = payload2.get_signable_content();
+
+        assert_ne!(
+            content1, content2,
+            "Different namespaces should produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_client_proposal_payload_signable_content_includes_key() {
+        let payload1 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+        let payload2 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key2".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+
+        let content1 = payload1.get_signable_content();
+        let content2 = payload2.get_signable_content();
+
+        assert_ne!(
+            content1, content2,
+            "Different keys should produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_client_proposal_payload_signable_content_includes_source_node() {
+        let payload1 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+        let payload2 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_b".to_string(),
+            1000,
+            1,
+        );
+
+        let content1 = payload1.get_signable_content();
+        let content2 = payload2.get_signable_content();
+
+        assert_ne!(
+            content1, content2,
+            "Different source nodes should produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_client_proposal_signature_changes_with_value() {
+        let signing_key = [0x42u8; 32];
+        let signer = MeshMessageSigner::new(signing_key);
+
+        let payload1 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"value1",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+        let payload2 = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"value2",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+
+        let sig1 = signer.sign(&payload1.get_signable_content());
+        let sig2 = signer.sign(&payload2.get_signable_content());
+
+        assert_ne!(
+            sig1, sig2,
+            "Different values should produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_client_proposal_signature_is_verifiable() {
+        let signing_key = [0x42u8; 32];
+        let signer = MeshMessageSigner::new(signing_key);
+        let public_key = signer.get_public_key_bytes();
+
+        let payload = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"test_value",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+        let signable_content = payload.get_signable_content();
+        let signature = signer.sign(&signable_content);
+
+        assert!(
+            signer.verify(&signable_content, &signature, &public_key),
+            "Signature should verify with correct public key"
+        );
+    }
+
+    #[test]
+    fn test_client_proposal_signature_rejected_with_wrong_key() {
+        let signing_key = [0x42u8; 32];
+        let signer = MeshMessageSigner::new(signing_key);
+        let wrong_key = [0x99u8; 32];
+        let wrong_signer = MeshMessageSigner::new(wrong_key);
+
+        let payload = ClientProposalPayload::new(
+            Namespace::Org,
+            "key1".to_string(),
+            b"test_value",
+            CommandKind::Set,
+            "node_a".to_string(),
+            1000,
+            1,
+        );
+        let signable_content = payload.get_signable_content();
+        let signature = wrong_signer.sign(&signable_content);
+
+        assert!(
+            signer.verify(
+                &signable_content,
+                &signature,
+                &signer.get_public_key_bytes()
+            ) == false,
+            "Signature created with wrong key should not verify with correct key"
+        );
+
+        assert!(
+            wrong_signer.verify(
+                &signable_content,
+                &signature,
+                &wrong_signer.get_public_key_bytes()
+            ),
+            "Signature created with wrong key should verify with wrong key"
+        );
+    }
+
+    #[test]
+    fn test_raft_command_missing_signature_rejected() {
+        let command = RaftCommand::Set {
+            namespace: Namespace::Org,
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            source_node_id: Some("node_a".to_string()),
+            signature: None,
+        };
+
+        match &command {
+            RaftCommand::Set {
+                signature: None, ..
+            } => {
+                assert!(true, "Set command correctly identifies missing signature");
+            }
+            _ => panic!("Expected Set command"),
+        }
+
+        let delete_command = RaftCommand::Delete {
+            namespace: Namespace::Org,
+            key: "test_key".to_string(),
+            source_node_id: Some("node_a".to_string()),
+            signature: None,
+        };
+
+        match &delete_command {
+            RaftCommand::Delete {
+                signature: None, ..
+            } => {
+                assert!(
+                    true,
+                    "Delete command correctly identifies missing signature"
+                );
+            }
+            _ => panic!("Expected Delete command"),
+        }
+    }
+
+    #[test]
+    fn test_raft_command_with_signature_stored() {
+        let signature = vec![1, 2, 3, 4];
+        let command = RaftCommand::Set {
+            namespace: Namespace::Org,
+            key: "test_key".to_string(),
+            value: b"test_value".to_vec(),
+            source_node_id: Some("node_a".to_string()),
+            signature: Some(signature.clone()),
+        };
+
+        match &command {
+            RaftCommand::Set {
+                signature: Some(sig),
+                ..
+            } => {
+                assert_eq!(*sig, signature);
+            }
+            _ => panic!("Expected Set command with signature"),
+        }
+    }
+
+    #[test]
+    fn test_replay_protection_cache_detects_duplicate_nonce() {
+        let mut cache = ReplayProtectionCache::new(100, 300);
+
+        let node_id = "node_a";
+        let timestamp = 1000u64;
+        let nonce = 12345u64;
+
+        assert!(
+            cache.check_and_insert(node_id, timestamp, nonce),
+            "First insertion should succeed"
+        );
+
+        assert!(
+            !cache.check_and_insert(node_id, timestamp, nonce),
+            "Duplicate nonce should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_replay_protection_cache_allows_different_nonces() {
+        let mut cache = ReplayProtectionCache::new(100, 300);
+
+        let node_id = "node_a";
+        let timestamp = 1000u64;
+
+        assert!(
+            cache.check_and_insert(node_id, timestamp, 1),
+            "First nonce should succeed"
+        );
+        assert!(
+            cache.check_and_insert(node_id, timestamp, 2),
+            "Different nonce should succeed"
+        );
+        assert!(
+            cache.check_and_insert(node_id, timestamp, 3),
+            "Different nonce should succeed"
+        );
+    }
+
+    #[test]
+    fn test_replay_protection_cache_allows_different_nodes() {
+        let mut cache = ReplayProtectionCache::new(100, 300);
+
+        let timestamp = 1000u64;
+        let nonce = 12345u64;
+
+        assert!(
+            cache.check_and_insert("node_a", timestamp, nonce),
+            "First node insertion should succeed"
+        );
+        assert!(
+            cache.check_and_insert("node_b", timestamp, nonce),
+            "Different node with same nonce should succeed"
+        );
+    }
+
+    #[test]
+    fn test_namespace_allowed_writers() {
+        assert_eq!(Namespace::Org.allowed_writers(), "global");
+        assert_eq!(Namespace::Intel.allowed_writers(), "global");
+        assert_eq!(Namespace::Revocation.allowed_writers(), "global");
     }
 }

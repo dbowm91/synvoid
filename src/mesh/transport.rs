@@ -159,6 +159,8 @@ pub struct MeshTransport {
     pub(crate) pending_membership_changes: Arc<tokio::sync::Mutex<Vec<PendingMembershipChange>>>,
     pub(crate) edge_replica_manager:
         Arc<RwLock<Option<Arc<crate::mesh::raft::edge_replica::EdgeReplicaManager>>>>,
+    pub(crate) raft_proposal_replay_cache:
+        Arc<tokio::sync::Mutex<crate::mesh::raft::state_machine::ReplayProtectionCache>>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +179,7 @@ pub struct InProgressSnapshot {
     pub meta: Vec<u8>,
     pub offset: u64,
     pub created_at: Instant,
+    pub sender_node_id: Option<String>,
 }
 
 impl InProgressSnapshot {
@@ -189,10 +192,57 @@ impl InProgressSnapshot {
             meta,
             offset: 0,
             created_at: Instant::now(),
+            sender_node_id: None,
         }
     }
 
-    pub fn add_chunk(&mut self, chunk_offset: u64, chunk_data: Vec<u8>, is_last: bool) -> bool {
+    pub fn with_sender(
+        request_id: String,
+        total_size: u64,
+        vote: Vec<u8>,
+        meta: Vec<u8>,
+        sender: String,
+    ) -> Self {
+        Self {
+            request_id,
+            total_size,
+            data: Vec::with_capacity(total_size as usize),
+            vote,
+            meta,
+            offset: 0,
+            created_at: Instant::now(),
+            sender_node_id: Some(sender),
+        }
+    }
+
+    pub fn sender(&self) -> Option<&str> {
+        self.sender_node_id.as_deref()
+    }
+
+    pub fn validate_sender(&self, sender: &str) -> bool {
+        self.sender_node_id
+            .as_ref()
+            .map(|s| s == sender)
+            .unwrap_or(true)
+    }
+
+    pub fn add_chunk(
+        &mut self,
+        chunk_offset: u64,
+        chunk_data: Vec<u8>,
+        is_last: bool,
+        expected_sender: Option<&str>,
+    ) -> bool {
+        if let (Some(sender), Some(expected)) = (&self.sender_node_id, expected_sender) {
+            if sender != expected {
+                tracing::warn!(
+                    "Chunk sender mismatch: expected {}, got {}",
+                    expected,
+                    sender
+                );
+                return false;
+            }
+        }
         if chunk_offset != self.offset {
             tracing::warn!(
                 "Chunk offset mismatch: expected {}, got {}",
@@ -351,6 +401,7 @@ impl Clone for MeshTransport {
             raft_instance: self.raft_instance.clone(),
             pending_membership_changes: self.pending_membership_changes.clone(),
             edge_replica_manager: self.edge_replica_manager.clone(),
+            raft_proposal_replay_cache: self.raft_proposal_replay_cache.clone(),
         }
     }
 }
@@ -584,6 +635,9 @@ impl MeshTransport {
             raft_instance: Arc::new(RwLock::new(None)),
             pending_membership_changes: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             edge_replica_manager: Arc::new(RwLock::new(None)),
+            raft_proposal_replay_cache: Arc::new(tokio::sync::Mutex::new(
+                crate::mesh::raft::state_machine::ReplayProtectionCache::default(),
+            )),
         }
     }
 

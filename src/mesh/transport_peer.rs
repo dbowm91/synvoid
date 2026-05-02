@@ -1,6 +1,8 @@
 #![allow(dead_code, clippy::redundant_locals)] // Reserved for future peer communication handling
 
-use crate::mesh::raft::state_machine::GlobalRegistryTypeConfig;
+use crate::mesh::raft::state_machine::{
+    ClientProposalPayload, CommandKind, GlobalRegistryTypeConfig, RaftCommand,
+};
 use crate::mesh::transport::{
     MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
 };
@@ -2538,7 +2540,12 @@ impl MeshTransport {
                     target_node_id
                 );
                 let response_data = self
-                    .handle_raft_message(target_node_id.to_string(), payload, send_stream)
+                    .handle_raft_message(
+                        target_node_id.to_string(),
+                        payload,
+                        send_stream,
+                        &peer_node_id,
+                    )
                     .await?;
                 if let Some(data) = response_data {
                     let len = (data.len() as u32).to_be_bytes();
@@ -2708,11 +2715,99 @@ impl MeshTransport {
         Ok(())
     }
 
+    async fn verify_and_maybe_store_client_proposal(
+        &self,
+        command: &RaftCommand,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let (namespace, key, source_node_id, signature) = match command {
+            RaftCommand::Set {
+                namespace,
+                key,
+                source_node_id,
+                signature,
+                ..
+            } => (
+                namespace.clone(),
+                key.clone(),
+                source_node_id.clone(),
+                signature.clone(),
+            ),
+            RaftCommand::Delete {
+                namespace,
+                key,
+                source_node_id,
+                signature,
+            } => (
+                namespace.clone(),
+                key.clone(),
+                source_node_id.clone(),
+                signature.clone(),
+            ),
+        };
+
+        let source_node_id = match source_node_id {
+            Some(id) => id,
+            None => {
+                tracing::warn!("ClientProposal missing source_node_id");
+                return Ok(false);
+            }
+        };
+
+        let signature = match signature {
+            Some(sig) => sig.clone(),
+            None => {
+                tracing::warn!("ClientProposal missing signature");
+                return Ok(false);
+            }
+        };
+
+        let signer = match self.mesh_signer.as_ref() {
+            Some(s) => s,
+            None => {
+                tracing::warn!("No mesh signer configured, rejecting signed proposal");
+                return Ok(false);
+            }
+        };
+
+        let payload = ClientProposalPayload::new(
+            namespace.clone(),
+            key.clone(),
+            &[],
+            CommandKind::Set,
+            source_node_id.clone(),
+            0,
+            0,
+        );
+        let signable_content = payload.get_signable_content();
+
+        let public_key = signer.get_public_key_bytes();
+        if !signer.verify(&signable_content, &signature, &public_key) {
+            tracing::warn!(
+                "ClientProposal signature verification failed for node {}",
+                source_node_id
+            );
+            return Ok(false);
+        }
+
+        let mut replay_cache = self.raft_proposal_replay_cache.lock().await;
+        let timestamp = crate::utils::safe_unix_timestamp();
+        if !replay_cache.check_and_insert(&source_node_id, timestamp, 0) {
+            tracing::warn!(
+                "ClientProposal replay detected from node {}",
+                source_node_id
+            );
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
     pub(crate) async fn handle_raft_message(
         &self,
         target_node_id: String,
         payload: crate::mesh::protocol::RaftPayload,
         _send_stream: &mut quinn::SendStream,
+        from_node_id: &str,
     ) -> Result<Option<Vec<u8>>, MeshTransportError> {
         let local_node_id = self.config.node_id();
         if target_node_id != local_node_id {
@@ -2728,6 +2823,22 @@ impl MeshTransport {
             let guard = self.raft_instance.read();
             guard.clone()
         };
+
+        let peer = self.topology.get_peer(from_node_id).await;
+        let is_authorized = self.check_raft_peer_authorization(
+            from_node_id,
+            payload.msg_type,
+            instance.as_ref(),
+            peer.as_ref(),
+        );
+        if !is_authorized {
+            tracing::warn!(
+                "Rejected Raft message type {:?} from unauthorized node {}",
+                payload.msg_type,
+                from_node_id
+            );
+            return Ok(None);
+        }
 
         let response_data = match payload.msg_type {
             crate::mesh::protocol::RaftMsgType::ClientProposal => {
@@ -2757,6 +2868,22 @@ impl MeshTransport {
                                 .map_err(|e| MeshTransportError::SendFailed(format!("{:?}", e)))?,
                         )
                     } else {
+                        match self.verify_and_maybe_store_client_proposal(&command).await {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                tracing::warn!(
+                                    "ClientProposal rejected: signature verification failed or replay detected"
+                                );
+                                return Ok(None);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "ClientProposal rejected: authorization error: {}",
+                                    e
+                                );
+                                return Ok(None);
+                            }
+                        }
                         match inst.client_write(command).await {
                             Ok(commit_index) => {
                                 let response =
@@ -2860,11 +2987,12 @@ impl MeshTransport {
                             let mut pending = self.pending_snapshot_transfers.lock().await;
                             pending.insert(
                                 header.request_id.clone(),
-                                crate::mesh::transport::InProgressSnapshot::new(
+                                crate::mesh::transport::InProgressSnapshot::with_sender(
                                     header.request_id,
                                     header.total_size,
                                     header.vote,
                                     header.meta,
+                                    from_node_id.to_string(),
                                 ),
                             );
                             None
@@ -2877,6 +3005,7 @@ impl MeshTransport {
                                     chunk.offset,
                                     chunk.data.clone(),
                                     chunk.is_last,
+                                    Some(from_node_id),
                                 ) {
                                     tracing::warn!(
                                         "Failed to add chunk at offset {} for request_id {}",
@@ -2977,11 +3106,12 @@ impl MeshTransport {
                             let mut pending = self.pending_snapshot_transfers.lock().await;
                             pending.insert(
                                 header.request_id.clone(),
-                                crate::mesh::transport::InProgressSnapshot::new(
+                                crate::mesh::transport::InProgressSnapshot::with_sender(
                                     header.request_id,
                                     header.total_size,
                                     header.vote,
                                     header.meta,
+                                    from_node_id.to_string(),
                                 ),
                             );
                             None
@@ -3004,6 +3134,7 @@ impl MeshTransport {
                                     chunk.offset,
                                     chunk.data.clone(),
                                     chunk.is_last,
+                                    Some(from_node_id),
                                 ) {
                                     tracing::warn!(
                                         "Failed to add chunk at offset {} for request_id {}",
@@ -3680,5 +3811,84 @@ impl MeshTransport {
         }
 
         Ok(())
+    }
+
+    fn check_raft_peer_authorization(
+        &self,
+        from_node_id: &str,
+        msg_type: crate::mesh::protocol::RaftMsgType,
+        instance: Option<&Arc<crate::mesh::raft::instance::RaftInstance>>,
+        peer: Option<&crate::mesh::topology::PeerState>,
+    ) -> bool {
+        match msg_type {
+            crate::mesh::protocol::RaftMsgType::ClientProposal => {
+                if let Some(inst) = instance {
+                    if let Some(membership) = inst.get_applied_membership() {
+                        if let Ok(node_id) = from_node_id.parse::<u64>() {
+                            let mem = membership.membership();
+                            if mem.voter_ids().any(|id| id == node_id)
+                                || mem.learner_ids().any(|id| id == node_id)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                if let Some(p) = peer {
+                    if p.role.is_global() || p.role.is_edge() {
+                        tracing::warn!("ClientProposal from non-member {} rejected", from_node_id);
+                        return false;
+                    }
+                }
+                true
+            }
+            crate::mesh::protocol::RaftMsgType::AppendEntries
+            | crate::mesh::protocol::RaftMsgType::VoteRequest
+            | crate::mesh::protocol::RaftMsgType::InstallSnapshot => {
+                if let Some(inst) = instance {
+                    if let Some(membership) = inst.get_applied_membership() {
+                        if let Ok(node_id) = from_node_id.parse::<u64>() {
+                            let mem = membership.membership();
+                            if mem.voter_ids().any(|id| id == node_id) {
+                                return true;
+                            }
+                            if mem.learner_ids().any(|id| id == node_id) {
+                                if matches!(
+                                    msg_type,
+                                    crate::mesh::protocol::RaftMsgType::AppendEntries
+                                ) {
+                                    return true;
+                                }
+                                tracing::warn!(
+                                    "Learner {} attempted {:?} - only AppendEntries allowed for learners",
+                                    from_node_id,
+                                    msg_type
+                                );
+                                return false;
+                            }
+                        }
+                    } else {
+                        tracing::debug!(
+                            "No membership info available, allowing {:?} from {}",
+                            msg_type,
+                            from_node_id
+                        );
+                        return true;
+                    }
+                }
+                if let Some(p) = peer {
+                    if p.role.is_global() || p.role.is_edge() {
+                        tracing::warn!(
+                            "{:?} from {} rejected - edge/origin nodes not authorized for Raft consensus",
+                            msg_type,
+                            from_node_id
+                        );
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => true,
+        }
     }
 }

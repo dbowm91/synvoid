@@ -10,7 +10,7 @@ impl RecordStoreManager {
         dht_key.is_public()
     }
 
-    pub fn store_record(
+    pub(crate) fn store_record_verified_internal(
         &self,
         record: DhtRecord,
         source_reputation: i64,
@@ -32,31 +32,31 @@ impl RecordStoreManager {
 
         let is_global = self.is_global_node();
 
-        if !is_global && record.signature.is_empty() {
-            tracing::warn!(
-                "Record store: edge node record for key {} must be signed",
-                record.key
-            );
-            return false;
-        }
+        if record.signature.is_empty() {
+            if !is_global {
+                tracing::warn!(
+                    "Record store: edge node record for key {} must be signed",
+                    record.key
+                );
+                return false;
+            }
+        } else {
+            let signer_key_valid = record
+                .signer_public_key
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
 
-        if !record.signature.is_empty() {
-            if record.signer_public_key.is_none()
-                || record
-                    .signer_public_key
-                    .as_ref()
-                    .map(|s| s.is_empty())
-                    .unwrap_or(false)
-            {
-                if !is_global {
-                    tracing::warn!(
-                        "Record store: missing signer public key for key {} from node {}",
-                        record.key,
-                        record.source_node_id
-                    );
-                    return false;
-                }
-            } else if !crate::mesh::dht::signed::verify_dht_record_signature(&record) {
+            if !signer_key_valid {
+                tracing::warn!(
+                    "Record store: missing signer public key for key {} from node {}",
+                    record.key,
+                    record.source_node_id
+                );
+                return false;
+            }
+
+            if !crate::mesh::dht::signed::verify_dht_record_signature(&record) {
                 tracing::warn!(
                     "Record store: invalid signature for key {} from node {}",
                     record.key,
@@ -164,6 +164,40 @@ impl RecordStoreManager {
         false
     }
 
+    pub fn store_record(
+        &self,
+        record: DhtRecord,
+        source_reputation: i64,
+        is_local_origin: bool,
+    ) -> bool {
+        self.store_record_verified_internal(record, source_reputation, is_local_origin)
+    }
+
+    pub fn store_record_from_ingress(
+        &self,
+        record: DhtRecord,
+        ingress_ctx: &crate::mesh::dht::signed::DhtRecordIngressContext,
+        source_reputation: i64,
+    ) -> bool {
+        if !self.config.enabled {
+            return false;
+        }
+
+        if let Err(e) = record.verify_for_ingress(ingress_ctx, &self.access_control) {
+            tracing::warn!(
+                "Ingress verification failed for record {} from {} via {:?}: {:?}",
+                record.key,
+                ingress_ctx.source_node_id,
+                ingress_ctx.path,
+                e
+            );
+            crate::metrics::record_dht_store_operation(false);
+            return false;
+        }
+
+        self.store_record_verified_internal(record, source_reputation, ingress_ctx.is_local_origin)
+    }
+
     pub(crate) fn store_record_global(&self, mut record: DhtRecord, is_local_origin: bool) -> bool {
         let now = crate::mesh::safe_unix_timestamp();
 
@@ -242,35 +276,36 @@ impl RecordStoreManager {
                 crate::metrics::record_dht_store_operation(false);
                 return false;
             }
-            if let Some(ref signer_pk) = record.signer_public_key {
-                if !signer_pk.is_empty() {
-                    let rs = self.record_state.read();
-                    if let Some(ref verifier) = rs.record_signer {
-                        let signed_record = crate::mesh::dht::SignedDhtRecord {
-                            key: record.key.clone(),
-                            value: record.value.clone(),
-                            publisher_id: record.source_node_id.clone(),
-                            signature: record.signature.clone(),
-                            created_at: record.timestamp,
-                            expires_at: Some(expires_at),
-                            record_type: crate::mesh::dht::SignedRecordType::NodeInfo,
-                            sequence_number: 0,
-                            source_node_id: record.source_node_id.clone(),
-                            ttl_seconds: record.ttl_seconds,
-                            signer_public_key: record.signer_public_key.clone(),
-                        };
 
-                        if !verifier.verify(&signed_record) {
-                            tracing::warn!(
-                                "Rejected record with invalid Ed25519 signature: {}",
-                                record.key
-                            );
-                            crate::metrics::record_dht_store_operation(false);
-                            return false;
-                        }
-                        tracing::debug!("Verified Ed25519 signature on record: {}", record.key);
-                    }
-                }
+            let signer_key_valid = record
+                .signer_public_key
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if !signer_key_valid {
+                tracing::warn!(
+                    "Rejected record with missing signer public key for key {} from node {}",
+                    record.key,
+                    record.source_node_id
+                );
+                crate::metrics::record_dht_store_operation(false);
+                return false;
+            }
+
+            let dht_key = DhtKey::from_str(&record.key);
+            let record_type = dht_key
+                .to_signed_record_type()
+                .unwrap_or(crate::mesh::dht::SignedRecordType::NodeInfo);
+
+            if !crate::mesh::dht::signed::verify_dht_record_signature_for_key(&record, record_type)
+            {
+                tracing::warn!(
+                    "Rejected record with invalid signature for key {} from node {}",
+                    record.key,
+                    record.source_node_id
+                );
+                crate::metrics::record_dht_store_operation(false);
+                return false;
             }
         }
 
@@ -1150,5 +1185,120 @@ impl RecordStoreManager {
     pub fn get(&self, key: &str) -> Option<crate::mesh::protocol::DhtRecord> {
         let rs = self.record_state.read();
         rs.records.get(key).map(|entry| entry.record.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_remote_record_with_signature(
+        key: &str,
+        signature: Vec<u8>,
+        signer_public_key: Option<String>,
+    ) -> DhtRecord {
+        DhtRecord {
+            key: key.to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature,
+            signer_public_key,
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        }
+    }
+
+    #[test]
+    fn test_store_record_requires_signer_key_for_non_empty_signature() {
+        let record =
+            make_remote_record_with_signature("node_info:test", vec![1, 2, 3, 4, 5, 6, 7, 8], None);
+
+        let should_reject = !record.signature.is_empty()
+            && record
+                .signer_public_key
+                .as_ref()
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+        assert!(
+            should_reject,
+            "A record with non-empty signature but missing signer key should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_store_record_rejects_empty_signer_key_with_signature() {
+        let record = make_remote_record_with_signature(
+            "node_info:test",
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
+            Some("".to_string()),
+        );
+
+        let signer_key_valid = record
+            .signer_public_key
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        assert!(
+            !signer_key_valid,
+            "Empty signer key should be detected as invalid"
+        );
+    }
+
+    #[test]
+    fn test_verify_dht_record_signature_detects_missing_key() {
+        let record =
+            make_remote_record_with_signature("node_info:test", vec![1, 2, 3, 4, 5, 6, 7, 8], None);
+
+        let result = crate::mesh::dht::signed::verify_dht_record_signature(&record);
+        assert!(
+            !result,
+            "verify_dht_record_signature should reject record with missing signer public key"
+        );
+    }
+
+    #[test]
+    fn test_record_type_derived_from_dht_key_for_node_info() {
+        let dht_key = DhtKey::from_str("node_info:test_node");
+        let record_type = dht_key
+            .to_signed_record_type()
+            .unwrap_or(crate::mesh::dht::SignedRecordType::NodeInfo);
+
+        assert_eq!(
+            record_type,
+            crate::mesh::dht::SignedRecordType::NodeInfo,
+            "node_info: prefix should derive NodeInfo record type"
+        );
+    }
+
+    #[test]
+    fn test_record_type_derived_from_dht_key_for_org() {
+        let dht_key = DhtKey::from_str("org:test_org");
+        let record_type = dht_key
+            .to_signed_record_type()
+            .unwrap_or(crate::mesh::dht::SignedRecordType::NodeInfo);
+
+        assert_eq!(
+            record_type,
+            crate::mesh::dht::SignedRecordType::Organization,
+            "org: prefix should derive Organization record type"
+        );
+    }
+
+    #[test]
+    fn test_record_type_derived_from_dht_key_for_upstream() {
+        let dht_key = DhtKey::from_str("upstream:example.com");
+        let record_type = dht_key
+            .to_signed_record_type()
+            .unwrap_or(crate::mesh::dht::SignedRecordType::NodeInfo);
+
+        assert_eq!(
+            record_type,
+            crate::mesh::dht::SignedRecordType::Upstream,
+            "upstream: prefix should derive Upstream record type"
+        );
     }
 }
