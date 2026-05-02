@@ -52,6 +52,16 @@ pub struct UpstreamResponsePolicy {
     pub max_response_size: Option<usize>,
 }
 
+/// Check if a buffered response body exceeds the configured size limit.
+///
+/// For **buffered responses**: hard limit check. Returns `Err(ResponseSizeError)`
+/// if the body exceeds `max_size`, and the caller should respond with 502 Bad Gateway.
+///
+/// For **streaming responses**: this function cannot be used directly since the body
+/// is not fully buffered. Use a content-length header pre-check instead — compare the
+/// advertised content-length against `max_size` before streaming. Note that chunked
+/// or unknown-length responses may still exceed the limit since the actual body size
+/// is not known until fully received.
 pub fn apply_response_size_limit(
     body: &[u8],
     max_size: Option<usize>,

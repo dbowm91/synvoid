@@ -1587,6 +1587,16 @@ impl HttpsServer {
                             .and_then(|v| v.parse::<u64>().ok())
                             .unwrap_or(0);
 
+                        if let Some(max_size) = upstream_target.max_response_size {
+                            if body_len > 0 && body_len as usize > max_size {
+                                return Ok(Self::build_response(
+                                    502,
+                                    "Bad Gateway".to_string(),
+                                    "text/plain",
+                                ));
+                            }
+                        }
+
                         if let Some(ref bw) = bandwidth {
                             bw.record_proxied(request_body_size, body_len, &target.upstream);
                             bw.record_site_proxied(&site_id, request_body_size, body_len);

@@ -563,87 +563,106 @@ impl Http3Server {
                             .and_then(|s| s.parse::<u64>().ok())
                             .unwrap_or(0);
 
-                        let mut resp_builder = http::Response::builder().status(parts.status);
+                        let size_exceeded = upstream_target
+                            .max_response_size
+                            .map(|max| body_len > 0 && body_len as usize > max)
+                            .unwrap_or(false);
 
-                        for (name, value) in parts.headers.iter() {
-                            if !crate::proxy::is_hop_by_hop_header_name(name) {
-                                resp_builder = resp_builder.header(name, value);
-                            }
-                        }
-
-                        let response = resp_builder
-                            .body(())
-                            .map_err(|e| format!("Failed to build response: {}", e))?;
-
-                        request_stream.send_response(response).await?;
-
-                        const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB
-
-                        if body_len > ZERO_COPY_THRESHOLD {
-                            while let Some(chunk) = upstream_body.frame().await {
-                                match chunk {
-                                    Ok(frame) => {
-                                        if let Some(data) = frame.data_ref() {
-                                            request_stream.send_data(data.clone()).await?;
-
-                                            let data_len = data.len() as u64;
-                                            if let Some(ref bw) = bandwidth {
-                                                bw.record_egress(
-                                                    data_len,
-                                                    BandwidthProtocol::Http3,
-                                                    EgressDirection::Proxied,
-                                                );
-                                                bw.record_site_egress(&host, data_len);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Error reading upstream body: {}", e);
-                                        break;
-                                    }
-                                }
+                        if size_exceeded {
+                            let body = Bytes::from("Bad Gateway");
+                            let response = http::Response::builder()
+                                .status(StatusCode::BAD_GATEWAY)
+                                .header(header::CONTENT_TYPE, "text/plain")
+                                .body(())
+                                .map_err(|e| format!("Failed to build response: {}", e))?;
+                            request_stream.send_response(response).await?;
+                            request_stream.send_data(body).await?;
+                            if let Some(ref metrics) = self.metrics {
+                                metrics.record_site_upstream_failure(&site_id);
                             }
                         } else {
-                            let mut body_bytes = Vec::new();
-                            while let Some(chunk) = upstream_body.frame().await {
-                                match chunk {
-                                    Ok(frame) => {
-                                        if let Some(data) = frame.data_ref() {
-                                            body_bytes.extend_from_slice(data.as_ref());
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Error reading upstream body: {}", e);
-                                        break;
-                                    }
+                            let mut resp_builder = http::Response::builder().status(parts.status);
+
+                            for (name, value) in parts.headers.iter() {
+                                if !crate::proxy::is_hop_by_hop_header_name(name) {
+                                    resp_builder = resp_builder.header(name, value);
                                 }
                             }
-                            let body_len = body_bytes.len() as u64;
-                            if let Some(ref bw) = bandwidth {
-                                bw.record_egress(
-                                    body_len,
-                                    BandwidthProtocol::Http3,
-                                    EgressDirection::Proxied,
-                                );
-                                bw.record_site_egress(&host, body_len);
-                            }
-                            if apply_response_size_limit(
-                                &body_bytes,
-                                upstream_target.max_response_size,
-                            )
-                            .is_err()
-                            {
-                                tracing::warn!(
-                                    "Response body exceeds size limit for {}",
-                                    upstream_target.url
-                                );
-                            } else if !body_bytes.is_empty() {
-                                request_stream.send_data(body_bytes.into()).await?;
-                            }
-                        }
 
-                        if let Some(ref metrics) = self.metrics {
-                            metrics.record_site_upstream_success(&site_id);
+                            let response = resp_builder
+                                .body(())
+                                .map_err(|e| format!("Failed to build response: {}", e))?;
+
+                            request_stream.send_response(response).await?;
+
+                            const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB
+
+                            if body_len > ZERO_COPY_THRESHOLD {
+                                while let Some(chunk) = upstream_body.frame().await {
+                                    match chunk {
+                                        Ok(frame) => {
+                                            if let Some(data) = frame.data_ref() {
+                                                request_stream.send_data(data.clone()).await?;
+
+                                                let data_len = data.len() as u64;
+                                                if let Some(ref bw) = bandwidth {
+                                                    bw.record_egress(
+                                                        data_len,
+                                                        BandwidthProtocol::Http3,
+                                                        EgressDirection::Proxied,
+                                                    );
+                                                    bw.record_site_egress(&host, data_len);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Error reading upstream body: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else {
+                                let mut body_bytes = Vec::new();
+                                while let Some(chunk) = upstream_body.frame().await {
+                                    match chunk {
+                                        Ok(frame) => {
+                                            if let Some(data) = frame.data_ref() {
+                                                body_bytes.extend_from_slice(data.as_ref());
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Error reading upstream body: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                                let body_len = body_bytes.len() as u64;
+                                if let Some(ref bw) = bandwidth {
+                                    bw.record_egress(
+                                        body_len,
+                                        BandwidthProtocol::Http3,
+                                        EgressDirection::Proxied,
+                                    );
+                                    bw.record_site_egress(&host, body_len);
+                                }
+                                if apply_response_size_limit(
+                                    &body_bytes,
+                                    upstream_target.max_response_size,
+                                )
+                                .is_err()
+                                {
+                                    tracing::warn!(
+                                        "Response body exceeds size limit for {}",
+                                        upstream_target.url
+                                    );
+                                } else if !body_bytes.is_empty() {
+                                    request_stream.send_data(body_bytes.into()).await?;
+                                }
+                            }
+
+                            if let Some(ref metrics) = self.metrics {
+                                metrics.record_site_upstream_success(&site_id);
+                            }
                         }
                     }
                     Err(e) => {

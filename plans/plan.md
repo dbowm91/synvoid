@@ -682,9 +682,26 @@ on what is path versus query.
 
 ## Priority 8: Enforce Response Size and Streaming Policy Consistently
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed:**
+
+1. **Buffered responses**: `apply_response_size_limit()` in `src/proxy/executor.rs` enforces hard limit, returns 502 if exceeded
+2. **HTTP server**: Content-length pre-check on streaming path, hard limit on buffered path
+3. **TLS server**: Content-length pre-check on direct proxy streaming path
+4. **HTTP/3 server**: Content-length pre-check on both streaming and buffered paths
+5. **ProxyServer**: `max_response_size` check in `send_single_request()` (pre-existing)
+6. **Documentation**: Doc comments on `apply_response_size_limit()` explain enforcement strategy
+
+### Policy:
+- Per-site limit from config
+- Returns 502 Bad Gateway when exceeded
+- Streaming: content-length pre-check (chunked/unknown length has best-effort)
+- Buffered: hard limit after body collection
+
+### Problem (original)
 
 `ProxyServer::send_single_request()` uses `send_request_with_body_and_timeout_with_limit()` for
 buffered HTTP responses and checks QUIC tunnel response body length. The main HTTP streaming path
@@ -741,9 +758,23 @@ Recommended: enforce as a hard limit using a limited body wrapper where possible
 
 ## Priority 9: Align Mesh Backend Routing with Direct Proxy Policy
 
-**Status**: OPEN
+**Status**: COMPLETED (wave17-2026-05-02)
 
 ### Problem
+
+**Completed:**
+
+1. **Request headers**: Mesh proxy now strips hop-by-hop headers before sending to peers (`proxy_to_peer`, `proxy_to_peer_with_fallback`)
+2. **Response headers**: Mesh proxy strips hop-by-hop headers from peer responses before returning to caller
+3. **Uses shared helper**: `is_hop_by_hop_header_name()` from `src/proxy/headers.rs`
+
+### Intentional differences (documented):
+- Mesh uses provider fallback with circuit breaker (different from direct retry)
+- Mesh has own L1/L2 cache + DHT-based cache (different from proxy cache)
+- Mesh does not apply WAF (delegated to peer node)
+- Mesh does not apply WASM filters (delegated to peer node)
+
+### Problem (original)
 
 Mesh backend routing goes through `mesh_backend_pool` and `MeshProxy::route_request()`. It selects
 providers and proxies to peers, then transforms responses. Direct upstream routing has separate

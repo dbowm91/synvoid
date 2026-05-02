@@ -40,6 +40,7 @@ use crate::mesh::protocol::{ProviderInfo, UpstreamProtocol, WafPolicy};
 use crate::mesh::topology::MeshTopology;
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
+use crate::proxy::headers::is_hop_by_hop_header_name;
 use crate::proxy_cache::key::CacheKeyBuilder;
 use crate::proxy_cache::ProxyCache;
 use crate::proxy_cache::ProxyCacheSettings;
@@ -1011,7 +1012,15 @@ impl MeshProxy {
         // Extract method, uri, and headers before consuming the body
         let method = req.method().clone();
         let uri = req.uri().clone();
-        let headers = req.headers().clone();
+        let mut headers = req.headers().clone();
+        let to_remove: Vec<http::header::HeaderName> = headers
+            .iter()
+            .filter(|(name, _)| is_hop_by_hop_header_name(name))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in to_remove {
+            headers.remove(name);
+        }
 
         // Collect request body upfront since we need to send it multiple times
         let body_bytes = match req.into_body().collect().await {
@@ -1341,7 +1350,7 @@ impl MeshProxy {
         peer_node_id: &str,
         upstream_id: &str,
         provider_upstream_url: String,
-        req: Request<B>,
+        mut req: Request<B>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, MeshProxyError>
     where
         B: HttpBody + Send,
@@ -1413,6 +1422,18 @@ impl MeshProxy {
             MeshProxyError::ConnectionFailed("Transport not initialized".to_string())
         })?;
 
+        {
+            let to_remove: Vec<http::header::HeaderName> = req
+                .headers()
+                .iter()
+                .filter(|(name, _)| is_hop_by_hop_header_name(name))
+                .map(|(name, _)| name.clone())
+                .collect();
+            for name in to_remove {
+                req.headers_mut().remove(name);
+            }
+        }
+
         let response = transport
             .proxy_http_request(peer_node_id, &target_url, req)
             .await
@@ -1420,7 +1441,18 @@ impl MeshProxy {
 
         self.active_connections.remove(&request_id);
 
-        let response = self.transform_response(response, upstream_id, &uri).await;
+        let mut response = self.transform_response(response, upstream_id, &uri).await;
+        {
+            let to_remove: Vec<http::header::HeaderName> = response
+                .headers()
+                .iter()
+                .filter(|(name, _)| is_hop_by_hop_header_name(name))
+                .map(|(name, _)| name.clone())
+                .collect();
+            for name in to_remove {
+                response.headers_mut().remove(name);
+            }
+        }
 
         Ok(response)
     }
