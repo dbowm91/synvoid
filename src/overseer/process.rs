@@ -322,6 +322,11 @@ impl OverseerProcess {
 
         self.spawn_master()?;
 
+        // Signal readiness to systemd if running under it
+        if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
+            tracing::debug!("Failed to send systemd readiness notification: {}", e);
+        }
+
         // Write initial status file
         self.write_status_file().await;
 

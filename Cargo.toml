@@ -197,6 +197,9 @@ hyperlocal = { version = "0.9", features = ["hyper-util"] }
 # Syslog support
 syslog = "6"
 
+# systemd readiness notification
+sd-notify = "0.4"
+
 # Logging facade
 log = "0.4"
 

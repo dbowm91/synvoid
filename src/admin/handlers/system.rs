@@ -42,6 +42,72 @@ pub struct SystemInfoResponse {
     pub running_mode: String,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CapabilitiesResponse {
+    pub features: Vec<String>,
+    pub platform: String,
+    pub architecture: String,
+    pub sandboxing: bool,
+    pub post_quantum: bool,
+    pub ebpf_support: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/system/capabilities",
+    responses(
+        (status = 200, description = "System capabilities", body = CapabilitiesResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "system"
+)]
+pub async fn get_capabilities(
+    State(_state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<CapabilitiesResponse>, StatusCode> {
+    let mut features = vec![
+        "TLS".to_string(),
+        "HTTP/3".to_string(),
+        "WebSocket".to_string(),
+        "Master-Worker".to_string(),
+        "IPC".to_string(),
+    ];
+
+    #[cfg(feature = "dns")]
+    features.push("DNS".to_string());
+
+    #[cfg(feature = "mesh")]
+    features.push("Mesh".to_string());
+
+    #[cfg(feature = "socket-handoff")]
+    features.push("Socket Handoff".to_string());
+
+    #[cfg(feature = "icmp-filter")]
+    features.push("ICMP Filter".to_string());
+
+    #[cfg(feature = "flood-ebpf")]
+    features.push("eBPF Flood Protection".to_string());
+
+    #[cfg(feature = "post-quantum")]
+    features.push("Post-Quantum Cryptography".to_string());
+
+    #[cfg(feature = "macos-sandbox")]
+    features.push("macOS Sandbox".to_string());
+
+    #[cfg(feature = "wireguard")]
+    features.push("WireGuard".to_string());
+
+    Ok(Json(CapabilitiesResponse {
+        features,
+        platform: std::env::consts::OS.to_string(),
+        architecture: std::env::consts::ARCH.to_string(),
+        sandboxing: cfg!(feature = "macos-sandbox") || cfg!(target_os = "linux"),
+        post_quantum: cfg!(feature = "post-quantum"),
+        ebpf_support: cfg!(feature = "flood-ebpf") || cfg!(feature = "icmp-filter"),
+    }))
+}
+
 #[utoipa::path(
     get,
     path = "/system/master",

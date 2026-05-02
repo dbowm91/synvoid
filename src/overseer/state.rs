@@ -332,14 +332,28 @@ impl Drop for LockGuard {
 }
 
 mod kill {
-    use std::process::Command;
+    #[cfg(unix)]
+    pub fn process(pid: i32) -> std::io::Result<()> {
+        use nix::sys::signal::{kill, Signal};
+        use nix::unistd::Pid;
 
-    pub fn process(pid: i32) -> std::io::Result<std::process::Child> {
-        Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .output()
-            .map(|_| std::process::Command::new("echo").spawn().unwrap())
-            .map_err(std::io::Error::other)
+        match kill(Pid::from_raw(pid), None) {
+            Ok(_) => Ok(()),
+            Err(nix::errno::Errno::ESRCH) => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Process not found",
+            )),
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to check process: {}", e),
+            )),
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub fn process(pid: i32) -> std::io::Result<()> {
+        // Basic check for Windows/other platforms
+        // In a real implementation, we would use Windows-specific APIs
+        Ok(())
     }
 }

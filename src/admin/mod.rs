@@ -559,6 +559,7 @@ fn build_router_from_state(
         .route("/icmp/disable", post(handlers::icmp::disable))
         .route("/icmp/backends", get(handlers::icmp::list_backends))
         .route("/system/info", get(handlers::system::get_system_info))
+        .route("/system/capabilities", get(handlers::system::get_capabilities))
         .route("/system/master", get(handlers::system::get_master_status))
         .route("/system/workers", get(handlers::system::get_workers))
         .route(
