@@ -9,7 +9,9 @@ use crate::honeypot_port::config::PortHoneypotConfig;
 use crate::honeypot_port::listener::PortHoneypotListener;
 use crate::honeypot_port::storage::HoneypotStorage;
 use crate::honeypot_port::threat_intel::HoneypotIntelExtractor;
+#[cfg(feature = "mesh")]
 use crate::mesh::protocol::ThreatType;
+#[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 
 pub struct PortHoneypotRunner {
@@ -137,6 +139,7 @@ impl PortHoneypotRunner {
         *running = false;
     }
 
+    #[cfg(feature = "mesh")]
     pub fn start_mesh_threat_publishing(
         self: &Arc<Self>,
         threat_intel: Arc<ThreatIntelligenceManager>,
