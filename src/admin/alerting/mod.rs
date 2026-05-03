@@ -2,6 +2,17 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
+pub const SUPPORTED_ALERT_METRICS: &[&str] = &[
+    "error_rate_percent",
+    "requests_per_second",
+    "blocked_per_second",
+    "time_validation_errors",
+    "unhealthy_backends",
+    "unhealthy_workers",
+    "threat_level",
+    "audit_write_failures",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
     pub enabled: bool,
@@ -13,6 +24,7 @@ pub struct AlertConfig {
     pub email_password: Option<String>,
     pub webhook_enabled: bool,
     pub webhook_urls: Vec<String>,
+    pub cooldown_secs: u64,
     pub alerts: Vec<AlertRule>,
 }
 
@@ -28,6 +40,7 @@ impl Default for AlertConfig {
             email_password: None,
             webhook_enabled: false,
             webhook_urls: Vec::new(),
+            cooldown_secs: 300,
             alerts: vec![
                 AlertRule {
                     name: "High Threat Level".to_string(),
@@ -38,16 +51,16 @@ impl Default for AlertConfig {
                 },
                 AlertRule {
                     name: "High Error Rate".to_string(),
-                    metric: "error_rate".to_string(),
+                    metric: "error_rate_percent".to_string(),
                     threshold: 5.0,
                     condition: AlertCondition::GreaterThan,
                     enabled: true,
                 },
                 AlertRule {
                     name: "Worker Failure".to_string(),
-                    metric: "worker_status".to_string(),
+                    metric: "unhealthy_workers".to_string(),
                     threshold: 0.0,
-                    condition: AlertCondition::Equals,
+                    condition: AlertCondition::GreaterThan,
                     enabled: true,
                 },
             ],
@@ -81,14 +94,68 @@ pub struct AlertEvent {
     pub message: String,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum AlertConfigError {
+    #[error("Unknown metric: {metric}. Supported metrics: {metrics:?}")]
+    UnknownMetric { metric: String, metrics: &'static [&'static str] },
+    #[error("Invalid threshold: {threshold}. Threshold must be non-negative and finite")]
+    InvalidThreshold { threshold: f64 },
+    #[error("Invalid webhook URL scheme: {url}. Only http and https are allowed")]
+    InvalidWebhookScheme { url: String },
+    #[error("Link-local/internal webhook URL blocked for SSRF: {url}. Add to allowlist if intentional")]
+    BlockedWebhookUrl { url: String },
+    #[error("Email enabled but SMTP host not configured")]
+    EmailMissingSmtpHost,
+}
+
+impl AlertConfig {
+    pub fn validate(&self) -> Result<(), AlertConfigError> {
+        if self.email_enabled {
+            if self.email_smtp_host.is_none() {
+                return Err(AlertConfigError::EmailMissingSmtpHost);
+            }
+        }
+
+        for rule in &self.alerts {
+            if !SUPPORTED_ALERT_METRICS.contains(&rule.metric.as_str()) {
+                return Err(AlertConfigError::UnknownMetric {
+                    metric: rule.metric.clone(),
+                    metrics: SUPPORTED_ALERT_METRICS,
+                });
+            }
+            if !rule.threshold.is_finite() || rule.threshold < 0.0 {
+                return Err(AlertConfigError::InvalidThreshold { threshold: rule.threshold });
+            }
+        }
+
+        for url in &self.webhook_urls {
+            let url_lower = url.to_lowercase();
+            if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
+                return Err(AlertConfigError::InvalidWebhookScheme { url: url.clone() });
+            }
+            if url_lower.starts_with("http://") {
+                let host = url.strip_prefix("http://").unwrap_or(url);
+                let host_part = host.split('/').next().unwrap_or(host);
+                if host_part == "localhost" || host_part.starts_with("127.") || host_part.starts_with("10.") || host_part.starts_with("192.168.") || host_part.starts_with("172.") {
+                    return Err(AlertConfigError::BlockedWebhookUrl { url: url.clone() });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 pub struct AlertManager {
     config: Arc<TokioRwLock<AlertConfig>>,
+    last_fired: Arc<TokioRwLock<std::collections::HashMap<String, i64>>>,
 }
 
 impl AlertManager {
     pub fn new() -> Self {
         Self {
             config: Arc::new(TokioRwLock::new(AlertConfig::default())),
+            last_fired: Arc::new(TokioRwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -97,12 +164,47 @@ impl AlertManager {
     }
 
     pub async fn update_config(&self, config: AlertConfig) {
+        config.validate().expect("validated config should be valid");
         *self.config.write().await = config;
+    }
+
+    fn extract_metric_value(metric: &str, metrics: &super::state::AggregatedMetrics, system_resources: &super::state::SystemResources) -> Option<f64> {
+        match metric {
+            "error_rate_percent" => {
+                let total = metrics.total_requests;
+                let errors = metrics.errors;
+                if total > 0 {
+                    Some((errors as f64 / total as f64) * 100.0)
+                } else {
+                    Some(0.0)
+                }
+            }
+            "requests_per_second" => Some(metrics.requests_per_second),
+            "blocked_per_second" => Some(metrics.blocked_per_second),
+            "time_validation_errors" => Some(system_resources.time_validation_errors as f64),
+            "unhealthy_backends" => Some(metrics.unhealthy_backends as f64),
+            "unhealthy_workers" => Some(metrics.unhealthy_workers as f64),
+            "threat_level" => None,
+            "audit_write_failures" => {
+                Some(super::metrics_events::get_audit_write_failures() as f64)
+            }
+            _ => None,
+        }
+    }
+
+    fn check_condition(value: f64, condition: AlertCondition, threshold: f64) -> bool {
+        match condition {
+            AlertCondition::GreaterThan => value > threshold,
+            AlertCondition::LessThan => value < threshold,
+            AlertCondition::Equals => (value - threshold).abs() < 0.01,
+        }
     }
 
     pub async fn check_and_notify(
         &self,
         metrics: &super::state::AggregatedMetrics,
+        system_resources: &super::state::SystemResources,
+        threat_level: Option<u8>,
     ) -> Vec<AlertEvent> {
         let config = self.config.read().await;
 
@@ -112,51 +214,54 @@ impl AlertManager {
 
         let mut events = Vec::new();
         let now = crate::utils::safe_unix_timestamp() as i64;
+        let cooldown = config.cooldown_secs;
 
         for rule in &config.alerts {
             if !rule.enabled {
                 continue;
             }
 
-            let should_fire = match rule.metric.as_str() {
-                "threat_level" => {
-                    let _threat_level = 1.0;
-                    false
-                }
-                "error_rate" => {
-                    let total = metrics.total_requests;
-                    let errors = metrics.errors;
-                    if total > 0 {
-                        let rate = (errors as f64 / total as f64) * 100.0;
-                        match rule.condition {
-                            AlertCondition::GreaterThan => rate > rule.threshold,
-                            AlertCondition::LessThan => rate < rule.threshold,
-                            AlertCondition::Equals => (rate - rule.threshold).abs() < 0.01,
-                        }
-                    } else {
-                        false
-                    }
-                }
-                "worker_status" => false,
-                _ => false,
+            let value = match rule.metric.as_str() {
+                "threat_level" => threat_level.map(|l| l as f64),
+                _ => Self::extract_metric_value(&rule.metric, metrics, system_resources),
             };
 
+            let Some(value) = value else {
+                continue;
+            };
+
+            let should_fire = Self::check_condition(value, rule.condition, rule.threshold);
+
             if should_fire {
+                let rule_key = format!("{}:{}", rule.name, rule.metric);
+                let mut last = self.last_fired.write().await;
+                if let Some(last_time) = last.get(&rule_key) {
+                    if now - last_time < cooldown as i64 {
+                        continue;
+                    }
+                }
+                last.insert(rule_key, now);
+                drop(last);
+
                 let event = AlertEvent {
                     timestamp: now,
                     rule_name: rule.name.clone(),
                     metric: rule.metric.clone(),
-                    value: 0.0,
+                    value,
                     threshold: rule.threshold,
                     message: format!(
-                        "Alert triggered: {} - threshold: {}",
-                        rule.name, rule.threshold
+                        "Alert triggered: {} - {} {} {} (current value: {})",
+                        rule.name, rule.metric, match rule.condition {
+                            AlertCondition::GreaterThan => ">",
+                            AlertCondition::LessThan => "<",
+                            AlertCondition::Equals => "=",
+                        }, rule.threshold, value
                     ),
                 };
 
                 events.push(event.clone());
 
-                if config.webhook_enabled {
+                if config.webhook_enabled && !config.webhook_urls.is_empty() {
                     let webhook_urls = config.webhook_urls.clone();
                     let event_clone = event.clone();
                     tokio::spawn(async move {
@@ -166,7 +271,7 @@ impl AlertManager {
                     });
                 }
 
-                if config.email_enabled {
+                if config.email_enabled && !config.email_recipients.is_empty() {
                     let email_config = (
                         config.email_recipients.clone(),
                         config.email_smtp_host.clone(),

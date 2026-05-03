@@ -22,6 +22,7 @@ pub async fn start_metrics_publisher(
     let mut sys = System::new_all();
     let mut last_sys_refresh = Instant::now();
     let mut latest_metrics: Option<AggregatedMetrics> = None;
+    let mut latest_system_resources: Option<SystemResources> = None;
 
     tokio::select! {
         _ = shutdown_rx.recv() => {
@@ -36,8 +37,9 @@ pub async fn start_metrics_publisher(
                         admin_state.cleanup_expired_csrf_tokens();
                         crate::admin::auth::AUTH_RATE_LIMITER.cleanup_expired();
                         if let Some(ref am) = alert_manager {
-                            if let Some(ref metrics) = latest_metrics {
-                                let events = am.check_and_notify(metrics).await;
+                            if let (Some(metrics), Some(sys_res)) = (latest_metrics.as_ref(), latest_system_resources.as_ref()) {
+                                let threat_level = admin_state.threat_level_manager().map(|m| m.get_level().as_u8());
+                                let events = am.check_and_notify(metrics, sys_res, threat_level).await;
                                 for event in events {
                                     tracing::info!("Alert triggered: {} - {}", event.rule_name, event.message);
                                 }
@@ -300,6 +302,7 @@ pub async fn start_metrics_publisher(
                     cpu_usage_percent: sys_cpu,
                     time_validation_errors,
                 };
+                latest_system_resources = Some(resources.clone());
                 admin_state.update_system_resources(resources);
 
                 let json = serde_json::to_string(&metrics).unwrap_or_default();

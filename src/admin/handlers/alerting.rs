@@ -1,4 +1,4 @@
-use crate::admin::alerting::{AlertConfig, AlertEvent};
+use crate::admin::alerting::{AlertConfig, AlertConfigError, AlertEvent, AlertManager};
 use crate::admin::handlers::common::OptionalAuth;
 use crate::admin::state::AdminState;
 use axum::extract::{Extension, State};
@@ -70,7 +70,13 @@ pub async fn update_alert_config(
 
     let config: AlertConfig =
         serde_json::from_value(req.config.clone()).map_err(|_| StatusCode::BAD_REQUEST)?;
-    alert_manager.update_config(config).await;
+
+    if let Err(e) = config.validate() {
+        tracing::warn!("Alert config validation failed: {}", e);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    alert_manager.update_config(config.clone()).await;
 
     state.audit.log(super::super::audit::AuditLog::new(
         None,
@@ -83,7 +89,8 @@ pub async fn update_alert_config(
         true,
     ));
 
-    Ok(Json(AlertConfigResponse { config: req.config }))
+    let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+    Ok(Json(AlertConfigResponse { config: json }))
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

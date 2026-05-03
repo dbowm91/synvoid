@@ -82,3 +82,7 @@ pub fn record_alert_delivery_failure() {
 pub fn record_rate_limited() {
     counter!("maluwaf.admin.rate_limited").increment(1);
 }
+
+pub fn get_audit_write_failures() -> u64 {
+    ADMIN_AUDIT_WRITE_FAILURES.load(Ordering::Relaxed)
+}
