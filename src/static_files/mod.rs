@@ -18,6 +18,12 @@ use crate::config::site::{SiteStaticConfig, SiteStaticThemeConfig};
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
+#[cfg(not(feature = "mesh"))]
+pub type MeshCompressionConfig = ();
+#[cfg(not(feature = "mesh"))]
+pub type MeshImageProtectionConfig = ();
+#[cfg(not(feature = "mesh"))]
+pub type MeshMinificationConfig = ();
 use crate::mime::MIME_REGISTRY;
 use crate::theme::ThemeConfig;
 use minifier::MinifierCache;

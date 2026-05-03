@@ -313,260 +313,276 @@ impl HttpsServer {
 
         loop {
             tokio::select! {
-                            _ = self.shutdown_rx.recv() => {
-                                tracing::info!("HTTPS server received shutdown signal");
-                                break;
-                            }
-                            result = listener.accept() => {
-                                match result {
-                                    Ok((stream, client_addr)) => {
-                                        let client_ip = client_addr.ip();
+                _ = self.shutdown_rx.recv() => {
+                    tracing::info!("HTTPS server received shutdown signal");
+                    break;
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, client_addr)) => {
+                            let client_ip = client_addr.ip();
 
-                                        // L3/L4 flood protection BEFORE TLS handshake (fixes bug
-                                        // where check was done after handshake)
-                                        if let Some(ref fp) = flood_protector {
-                                            match fp.check_tcp_connection(client_ip) {
-                                                FloodDecision::Blackholed => {
-                                                    counter!("maluwaf.tls.flood_blackhole").increment(1);
-                                                    tracing::debug!("TLS connection blackholed for {}", client_ip);
-                                                    drop(stream);
-                                                    continue;
-                                                }
-                                                FloodDecision::RateLimited => {
-                                                    counter!("maluwaf.tls.flood_limited").increment(1);
-                                                    tracing::debug!("TLS connection rate limited for {}", client_ip);
-                                                    drop(stream);
-                                                    continue;
-                                                }
-                                                FloodDecision::Allowed => {}
-                                            }
-                                        }
-
-                                        let acceptor = acceptor.clone();
-                                        let router = router.clone();
-                                        let waf = waf.clone();
-                                        let http_config = http_config.clone();
-                                        let main_config = main_config.clone();
-                                        let proxy_servers = proxy_servers.clone();
-                                        let metrics_h2 = metrics.clone();
-                                        let metrics_h1 = metrics.clone();
-                                        let drain_state_h2 = drain_state.clone();
-                                        let drain_state_h1 = drain_state.clone();
-                                        let mesh_config_h2 = mesh_config.clone();
-                                        let mesh_config_h1 = mesh_config.clone();
-                                        let mesh_transport_h2 = mesh_transport.clone();
-                                        let mesh_transport_h1 = mesh_transport.clone();
-                                        let ipc_h2 = ipc.clone();
-                                        let ipc_h1 = ipc.clone();
-            let worker_id_h2 = worker_id;
-                                        let worker_id_h1 = worker_id;
-                                        #[cfg(feature = "mesh")]
-                                        let mesh_config_h2 = mesh_config.clone();
-                                        #[cfg(feature = "mesh")]
-                                        let mesh_config_h1 = mesh_config.clone();
-                                        #[cfg(feature = "mesh")]
-                                        let mesh_transport_h2 = mesh_transport.clone();
-                                        #[cfg(feature = "mesh")]
-                                        let mesh_transport_h1 = mesh_transport.clone();
-                                        let ipc_h2 = ipc.clone();
-                                        let ipc_h1 = ipc.clone();
-                                        let serverless_manager_h2 = serverless_manager.clone();
-                                        let serverless_manager_h1 = serverless_manager.clone();
-                                        let app_servers_h2 = app_servers.clone();
-                                        let app_servers_h1 = app_servers.clone();
-                                        let upstream_client_registry = upstream_client_registry.clone();
-
-                                        if http_config.strict_protocol_validation {
-                                            let raw_fd = stream.as_raw_fd();
-                                            let socket = unsafe { std::net::TcpStream::from_raw_fd(raw_fd) };
-                                            socket.set_nonblocking(false).ok();
-                                            let mut peek_buf = [0u8; 16];
-                                            if let Ok(1..) = socket.peek(&mut peek_buf) {
-                                                if is_valid_http_request_start(&peek_buf) {
-                                                    counter!("maluwaf.tls.http_on_tls_port").increment(1);
-                                                    tracing::debug!(
-                                                        "Rejected HTTP connection on TLS port from {}",
-                                                        client_ip
-                                                    );
-                                                }
-                                            }
-                                            socket.set_nonblocking(true).ok();
-                                            std::mem::forget(socket);
-                                        }
-
-                                        tokio::spawn(async move {
-                                            match acceptor.accept(stream).await {
-                                                Ok(tls_stream) => {
-                                                    counter!("maluwaf.tls.handshakes").increment(1);
-                                                    counter!("maluwaf.tls.handshakes", "result" => "success").increment(1);
-                                                    tracing::debug!(
-                                                        "TLS handshake completed for {}",
-                                                        client_addr
-                                                    );
-
-                                                    let alpn_protocol = tls_stream.get_ref().1.alpn_protocol();
-                                                    let is_http2 = alpn_protocol.map(|p| p == ALPN_HTTP2).unwrap_or(false);
-
-                                                    if is_http2 {
-                                                        tracing::debug!("Negotiated HTTP/2 for {}", client_addr);
-                                                        counter!("maluwaf.tls.alpn", "protocol" => "h2").increment(1);
-
-                                                        let https_conn = Arc::new(HttpsConnection::new(tls_stream));
-                                                        let https_conn_clone = https_conn.clone();
-
-                                                        let io = match https_conn.io.lock().take() {
-                                                            Some(io) => io,
-                                                            None => {
-                                                                tracing::error!("Failed to take IO from HTTPS connection");
-                                                                return;
-                                                            }
-                                                        };
-
-                                                        let conn = http2_server::Builder::new(TokioExecutor::new())
-                                                            .max_header_list_size(max_headers as u32)
-                                                            .serve_connection(io, hyper::service::service_fn({
-                                                                let ps = proxy_servers.clone();
-                                                                let metrics = metrics_h2.clone();
-                                                                let drain_state = drain_state_h2.clone();
-                                                                let mesh_config = mesh_config_h2.clone();
-                                                                let mesh_transport = mesh_transport_h2.clone();
-                                                                let ipc = ipc_h2.clone();
-                                                                let serverless_manager = serverless_manager_h2.clone();
-                                                                let app_servers = app_servers_h2.clone();
-                                                                let upstream_client_registry = upstream_client_registry.clone();
-                                                                move |req| {
-                                                                    let router = router.clone();
-                                                                    let waf = waf.clone();
-                                                                    let http_config = http_config.clone();
-                                                                    let main_config = main_config.clone();
-                                                                    let client_addr = client_addr;
-                                                                    let https_conn = https_conn_clone.clone();
-                                                                    let ps = ps.clone();
-                                                                    let metrics = metrics.clone();
-                                                                    let drain_state = drain_state.clone();
-                                                                    #[cfg(feature = "mesh")]
-                                                                    let mesh_config = mesh_config.clone();
-                                                                    #[cfg(feature = "mesh")]
-                                                                    let mesh_transport = mesh_transport.clone();
-                                                                    let ipc = ipc.clone();
-                                                                    let worker_id = worker_id_h2;
-                                                                    let serverless_manager = serverless_manager.clone();
-                                                                    let app_servers = app_servers.clone();
-                                                                    let upstream_client_registry = upstream_client_registry.clone();
-                                                                    async move {
-                                                                        Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
-                                                                    }
-                                                                }
-                                                            }));
-
-                                                        tokio::spawn(async move {
-                                                            if let Err(e) = conn.await {
-                                                                tracing::debug!("HTTP/2 connection error: {}", e);
-                                                            }
-                                                            if https_conn.should_drop() {
-                                                                if let Some(stream) = https_conn.take_stream() {
-                                                                    drop(stream);
-                                                                }
-                                                            }
-                                                        });
-                                                    } else {
-                                                        counter!("maluwaf.tls.alpn", "protocol" => "http1.1").increment(1);
-
-                                                        let https_conn = Arc::new(HttpsConnection::new(tls_stream));
-                                                        let https_conn_clone = https_conn.clone();
-
-                                                        let io = match https_conn.io.lock().take() {
-                                                            Some(io) => io,
-                                                            None => {
-                                                                tracing::error!("Failed to take IO from HTTPS connection");
-                                                                return;
-                                                            }
-                                                        };
-
-                                                        let conn = http1_server::Builder::new()
-                                                            .keep_alive(true)
-                                                            .serve_connection(io, hyper::service::service_fn({
-                                                                let ps = proxy_servers.clone();
-                                                                let metrics = metrics_h1.clone();
-                                                                let drain_state = drain_state_h1.clone();
-                                                                let mesh_config = mesh_config_h1.clone();
-                                                                let mesh_transport = mesh_transport_h1.clone();
-                                                                let ipc = ipc_h1.clone();
-                                                                let serverless_manager = serverless_manager_h1.clone();
-                                                                let app_servers = app_servers_h1.clone();
-                                                                let upstream_client_registry = upstream_client_registry.clone();
-                                                                move |req| {
-                                                                    let router = router.clone();
-                                                                    let waf = waf.clone();
-                                                                    let http_config = http_config.clone();
-                                                                    let main_config = main_config.clone();
-                                                                    let client_addr = client_addr;
-                                                                    let https_conn = https_conn_clone.clone();
-                                                                    let ps = ps.clone();
-                                                                    let metrics = metrics.clone();
-                                                                    let drain_state = drain_state.clone();
-                                                                    #[cfg(feature = "mesh")]
-                                                                    let mesh_config = mesh_config.clone();
-                                                                    #[cfg(feature = "mesh")]
-                                                                    let mesh_transport = mesh_transport.clone();
-                                                                    let ipc = ipc.clone();
-                                                                    let worker_id = worker_id_h1;
-                                                                    let serverless_manager = serverless_manager.clone();
-                                                                    let app_servers = app_servers.clone();
-                                                                    let upstream_client_registry = upstream_client_registry.clone();
-                                                                    async move {
-                                                                        Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
-                                                                    }
-                                                                }
-                                                            }))
-                                                            .with_upgrades();
-
-                                                        tokio::spawn(async move {
-                                                            if let Err(e) = conn.await {
-                                                                tracing::debug!("HTTPS connection error: {}", e);
-                                                            }
-                                                            if https_conn.should_drop() {
-                                                                if let Some(stream) = https_conn.take_stream() {
-                                                                    drop(stream);
-                                                                }
-                                                            }
-                                                        });
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    counter!("maluwaf.tls.handshakes").increment(1);
-                                                    counter!("maluwaf.tls.handshakes", "result" => "failed").increment(1);
-
-                                                    let error_str = e.to_string().to_lowercase();
-                                                    if error_str.contains("version") || error_str.contains("protocol") {
-                                                        counter!("maluwaf.tls.handshakes", "reason" => "version_mismatch").increment(1);
-                                                        tracing::warn!(
-                                                            "TLS handshake failed due to protocol version mismatch for {}: {}. \
-                                                            Consider enabling enable_tls_12_fallback if legacy clients need TLS 1.2 support.",
-                                                            client_addr,
-                                                            e
-                                                        );
-                                                    } else if error_str.contains("certificate") || error_str.contains("cert") {
-                                                        counter!("maluwaf.tls.handshakes", "reason" => "certificate_error").increment(1);
-                                                    } else {
-                                                        counter!("maluwaf.tls.handshakes", "reason" => "other").increment(1);
-                                                    }
-
-                                                    tracing::debug!(
-                                                        "TLS handshake failed for {}: {}",
-                                                        client_addr,
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                        });
+                            // L3/L4 flood protection BEFORE TLS handshake (fixes bug
+                            // where check was done after handshake)
+                            if let Some(ref fp) = flood_protector {
+                                match fp.check_tcp_connection(client_ip) {
+                                    FloodDecision::Blackholed => {
+                                        counter!("maluwaf.tls.flood_blackhole").increment(1);
+                                        tracing::debug!("TLS connection blackholed for {}", client_ip);
+                                        drop(stream);
+                                        continue;
                                     }
-                                    Err(e) => {
-                                        tracing::error!("HTTPS accept error: {}", e);
+                                    FloodDecision::RateLimited => {
+                                        counter!("maluwaf.tls.flood_limited").increment(1);
+                                        tracing::debug!("TLS connection rate limited for {}", client_ip);
+                                        drop(stream);
+                                        continue;
                                     }
+                                    FloodDecision::Allowed => {}
                                 }
                             }
+
+                            let acceptor = acceptor.clone();
+                            let router = router.clone();
+                            let waf = waf.clone();
+                            let http_config = http_config.clone();
+                            let main_config = main_config.clone();
+                            let proxy_servers = proxy_servers.clone();
+                            let metrics_h2 = metrics.clone();
+                            let metrics_h1 = metrics.clone();
+                            let drain_state_h2 = drain_state.clone();
+                            let drain_state_h1 = drain_state.clone();
+                            let ipc_h2 = ipc.clone();
+                            let ipc_h1 = ipc.clone();
+                            let worker_id_h2 = worker_id;
+                            let worker_id_h1 = worker_id;
+                            #[cfg(feature = "mesh")]
+                            let mesh_config_h2 = mesh_config.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_config_h1 = mesh_config.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_transport_h2 = mesh_transport.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_transport_h1 = mesh_transport.clone();
+                            let serverless_manager_h2 = serverless_manager.clone();
+                            let serverless_manager_h1 = serverless_manager.clone();
+                            let app_servers_h2 = app_servers.clone();
+                            let app_servers_h1 = app_servers.clone();
+                            let upstream_client_registry = upstream_client_registry.clone();
+
+                            if http_config.strict_protocol_validation {
+                                let raw_fd = stream.as_raw_fd();
+                                let socket = unsafe { std::net::TcpStream::from_raw_fd(raw_fd) };
+                                socket.set_nonblocking(false).ok();
+                                let mut peek_buf = [0u8; 16];
+                                if let Ok(1..) = socket.peek(&mut peek_buf) {
+                                    if is_valid_http_request_start(&peek_buf) {
+                                        counter!("maluwaf.tls.http_on_tls_port").increment(1);
+                                        tracing::debug!(
+                                            "Rejected HTTP connection on TLS port from {}",
+                                            client_ip
+                                        );
+                                    }
+                                }
+                                socket.set_nonblocking(true).ok();
+                                std::mem::forget(socket);
+                            }
+
+                            tokio::spawn(async move {
+                                match acceptor.accept(stream).await {
+                                    Ok(tls_stream) => {
+                                        counter!("maluwaf.tls.handshakes").increment(1);
+                                        counter!("maluwaf.tls.handshakes", "result" => "success").increment(1);
+                                        tracing::debug!(
+                                            "TLS handshake completed for {}",
+                                            client_addr
+                                        );
+
+                                        let alpn_protocol = tls_stream.get_ref().1.alpn_protocol();
+                                        let is_http2 = alpn_protocol.map(|p| p == ALPN_HTTP2).unwrap_or(false);
+
+                                        if is_http2 {
+                                            tracing::debug!("Negotiated HTTP/2 for {}", client_addr);
+                                            counter!("maluwaf.tls.alpn", "protocol" => "h2").increment(1);
+
+                                            let https_conn = Arc::new(HttpsConnection::new(tls_stream));
+                                            let https_conn_clone = https_conn.clone();
+
+                                            let io = match https_conn.io.lock().take() {
+                                                Some(io) => io,
+                                                None => {
+                                                    tracing::error!("Failed to take IO from HTTPS connection");
+                                                    return;
+                                                }
+                                            };
+
+                                            let conn = http2_server::Builder::new(TokioExecutor::new())
+                                                .max_header_list_size(max_headers as u32)
+                                                .serve_connection(io, hyper::service::service_fn({
+                                                    let ps = proxy_servers.clone();
+                                                    let metrics = metrics_h2.clone();
+                                                    let drain_state = drain_state_h2.clone();
+                                                    #[cfg(feature = "mesh")]
+                                                    let mesh_config = mesh_config_h2.clone();
+                                                    #[cfg(feature = "mesh")]
+                                                    let mesh_transport = mesh_transport_h2.clone();
+                                                    let ipc = ipc_h2.clone();
+                                                    let serverless_manager = serverless_manager_h2.clone();
+                                                    let app_servers = app_servers_h2.clone();
+                                                    let upstream_client_registry = upstream_client_registry.clone();
+                                                    move |req| {
+                                                        let router = router.clone();
+                                                        let waf = waf.clone();
+                                                        let http_config = http_config.clone();
+                                                        let main_config = main_config.clone();
+                                                        let client_addr = client_addr;
+                                                        let https_conn = https_conn_clone.clone();
+                                                        let ps = ps.clone();
+                                                        let metrics = metrics.clone();
+                                                        let drain_state = drain_state.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let mesh_config = mesh_config.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let mesh_transport = mesh_transport.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let ipc = ipc.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let worker_id = worker_id_h2;
+                                                        let serverless_manager = serverless_manager.clone();
+                                                        let app_servers = app_servers.clone();
+                                                        let upstream_client_registry = upstream_client_registry.clone();
+                                                        async move {
+                                                            #[cfg(feature = "mesh")]
+                                                            {
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
+                                                            }
+                                                            #[cfg(not(feature = "mesh"))]
+                                                            {
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, serverless_manager, app_servers, upstream_client_registry).await
+                                                            }
+                                                        }
+                                                    }
+                                                }));
+
+                                            tokio::spawn(async move {
+                                                if let Err(e) = conn.await {
+                                                    tracing::debug!("HTTP/2 connection error: {}", e);
+                                                }
+                                                if https_conn.should_drop() {
+                                                    if let Some(stream) = https_conn.take_stream() {
+                                                        drop(stream);
+                                                    }
+                                                }
+                                            });
+                                        } else {
+                                            counter!("maluwaf.tls.alpn", "protocol" => "http1.1").increment(1);
+
+                                            let https_conn = Arc::new(HttpsConnection::new(tls_stream));
+                                            let https_conn_clone = https_conn.clone();
+
+                                            let io = match https_conn.io.lock().take() {
+                                                Some(io) => io,
+                                                None => {
+                                                    tracing::error!("Failed to take IO from HTTPS connection");
+                                                    return;
+                                                }
+                                            };
+
+                                            let conn = http1_server::Builder::new()
+                                                .keep_alive(true)
+                                                .serve_connection(io, hyper::service::service_fn({
+                                                    let ps = proxy_servers.clone();
+                                                    let metrics = metrics_h1.clone();
+                                                    let drain_state = drain_state_h1.clone();
+                                                    #[cfg(feature = "mesh")]
+                                                    let mesh_config = mesh_config_h1.clone();
+                                                    #[cfg(feature = "mesh")]
+                                                    let mesh_transport = mesh_transport_h1.clone();
+                                                    let ipc = ipc_h1.clone();
+                                                    let serverless_manager = serverless_manager_h1.clone();
+                                                    let app_servers = app_servers_h1.clone();
+                                                    let upstream_client_registry = upstream_client_registry.clone();
+                                                    move |req| {
+                                                        let router = router.clone();
+                                                        let waf = waf.clone();
+                                                        let http_config = http_config.clone();
+                                                        let main_config = main_config.clone();
+                                                        let client_addr = client_addr;
+                                                        let https_conn = https_conn_clone.clone();
+                                                        let ps = ps.clone();
+                                                        let metrics = metrics.clone();
+                                                        let drain_state = drain_state.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let mesh_config = mesh_config.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let mesh_transport = mesh_transport.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let ipc = ipc.clone();
+                                                        #[cfg(feature = "mesh")]
+                                                        let worker_id = worker_id_h1;
+                                                        let serverless_manager = serverless_manager.clone();
+                                                        let app_servers = app_servers.clone();
+                                                        let upstream_client_registry = upstream_client_registry.clone();
+                                                        async move {
+                                                            #[cfg(feature = "mesh")]
+                                                            {
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
+                                                            }
+                                                            #[cfg(not(feature = "mesh"))]
+                                                            {
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, serverless_manager, app_servers, upstream_client_registry).await
+                                                            }
+                                                        }
+                                                    }
+                                                }))
+                                                .with_upgrades();
+
+                                            tokio::spawn(async move {
+                                                if let Err(e) = conn.await {
+                                                    tracing::debug!("HTTPS connection error: {}", e);
+                                                }
+                                                if https_conn.should_drop() {
+                                                    if let Some(stream) = https_conn.take_stream() {
+                                                        drop(stream);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                    Err(e) => {
+                                        counter!("maluwaf.tls.handshakes").increment(1);
+                                        counter!("maluwaf.tls.handshakes", "result" => "failed").increment(1);
+
+                                        let error_str = e.to_string().to_lowercase();
+                                        if error_str.contains("version") || error_str.contains("protocol") {
+                                            counter!("maluwaf.tls.handshakes", "reason" => "version_mismatch").increment(1);
+                                            tracing::warn!(
+                                                "TLS handshake failed due to protocol version mismatch for {}: {}. \
+                                                Consider enabling enable_tls_12_fallback if legacy clients need TLS 1.2 support.",
+                                                client_addr,
+                                                e
+                                            );
+                                        } else if error_str.contains("certificate") || error_str.contains("cert") {
+                                            counter!("maluwaf.tls.handshakes", "reason" => "certificate_error").increment(1);
+                                        } else {
+                                            counter!("maluwaf.tls.handshakes", "reason" => "other").increment(1);
+                                        }
+
+                                        tracing::debug!(
+                                            "TLS handshake failed for {}: {}",
+                                            client_addr,
+                                            e
+                                        );
+                                    }
+                                }
+                            });
                         }
+                        Err(e) => {
+                            tracing::error!("HTTPS accept error: {}", e);
+                        }
+                    }
+                }
+            }
         }
 
         tracing::info!("HTTPS server shutdown complete");
@@ -587,10 +603,14 @@ impl HttpsServer {
         >,
         metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
         _drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
-        mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
-        mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
-        _ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-        _worker_id: Option<crate::process::ipc::WorkerId>,
+        #[cfg(feature = "mesh")] mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+        #[cfg(feature = "mesh")] mesh_transport: Option<
+            Arc<crate::mesh::transports::MeshTransportManager>,
+        >,
+        #[cfg(feature = "mesh")] _ipc: Option<
+            Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>,
+        >,
+        #[cfg(feature = "mesh")] _worker_id: Option<crate::process::ipc::WorkerId>,
         serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
         app_servers: Option<
             Arc<

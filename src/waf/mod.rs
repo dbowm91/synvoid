@@ -625,6 +625,19 @@ impl WafCore {
         }
     }
 
+    #[cfg(not(feature = "mesh"))]
+    pub fn block_ip_for_honeypot(
+        &self,
+        client_ip: IpAddr,
+        reason: &str,
+        duration: u64,
+        _scope: &str,
+    ) {
+        if let Some(ref store) = self.block_store {
+            store.block_ip(client_ip, reason, duration, "local");
+        }
+    }
+
     fn maybe_auto_ban_probe(&self, client_ip: IpAddr, tracker: &ProbeTracker) {
         let config = tracker.get_config();
         if !config.auto_ban_elevated_threat {

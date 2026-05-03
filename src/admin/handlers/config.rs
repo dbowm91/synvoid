@@ -1913,21 +1913,7 @@ pub struct MeshConfigResponse {
     pub config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct UpdateMeshConfigRequest {
-    pub config: serde_json::Value,
-}
-
-#[utoipa::path(
-    get,
-    path = "/config/mesh",
-    responses(
-        (status = 200, description = "Mesh configuration", body = MeshConfigResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "config"
-)]
+#[cfg(feature = "mesh")]
 pub async fn get_mesh_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1938,18 +1924,29 @@ pub async fn get_mesh_config(
     Ok(Json(MeshConfigResponse { config: mesh_value }))
 }
 
-#[utoipa::path(
-    put,
-    path = "/config/mesh",
-    request_body = UpdateMeshConfigRequest,
-    responses(
-        (status = 200, description = "Mesh config updated", body = StatusResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 400, description = "Invalid configuration"),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "config"
-)]
+#[cfg(not(feature = "mesh"))]
+pub async fn get_mesh_config(
+    _: State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<MeshConfigResponse>, StatusCode> {
+    Err(StatusCode::NOT_FOUND)
+}
+
+#[cfg(not(feature = "mesh"))]
+pub async fn update_mesh_config(
+    _: State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(_req): Json<UpdateMeshConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    Err(StatusCode::NOT_FOUND)
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateMeshConfigRequest {
+    pub config: serde_json::Value,
+}
+
+#[cfg(feature = "mesh")]
 pub async fn update_mesh_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
@@ -1967,6 +1964,16 @@ pub async fn update_mesh_config(
 
     persist_with_snapshot(&state, "TLS config updated").await?;
     Ok(Json(StatusResponse::success("Mesh config updated.")))
+}
+
+#[cfg(not(feature = "mesh"))]
+#[allow(dead_code)]
+pub async fn _update_mesh_config_stub(
+    _: State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+    Json(_req): Json<UpdateMeshConfigRequest>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    Err(StatusCode::NOT_FOUND)
 }
 
 // --- Mime types config ---

@@ -844,10 +844,6 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::config::update_rate_limits_config,
         crate::admin::handlers::config::get_bot_detection_config,
         crate::admin::handlers::config::update_bot_detection_config,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::config::get_mesh_config,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::config::update_mesh_config,
         crate::admin::handlers::config::validate_config,
         crate::admin::handlers::probes::list_probes,
         crate::admin::handlers::probes::get_probe,

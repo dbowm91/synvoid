@@ -295,7 +295,16 @@ pub async fn start_metrics_publisher(
 
                 admin_state.update_site_metrics(aggregated_site_metrics);
 
-                let time_validation_errors = crate::mesh::transport::get_time_validation_error_count();
+                let time_validation_errors = {
+                    #[cfg(feature = "mesh")]
+                    {
+                        crate::mesh::transport::get_time_validation_error_count()
+                    }
+                    #[cfg(not(feature = "mesh"))]
+                    {
+                        0
+                    }
+                };
                 let resources = SystemResources {
                     memory_used_mb,
                     memory_total_mb,

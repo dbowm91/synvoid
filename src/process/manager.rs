@@ -1178,7 +1178,7 @@ impl ProcessManager {
         indicators: Vec<crate::process::ipc::ThreatIndicatorData>,
         version: u64,
     ) {
-        let timestamp = crate::mesh::safe_unix_timestamp();
+        let timestamp = crate::utils::safe_unix_timestamp();
         let msg = Message::ThreatFeedUpdate {
             indicators,
             version,

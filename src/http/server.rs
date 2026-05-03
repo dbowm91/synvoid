@@ -381,7 +381,9 @@ impl HttpServer {
             alt_svc: None,
             main_config: Arc::new(main_config),
             drain_state: None,
+            #[cfg(feature = "mesh")]
             mesh_config: None,
+            #[cfg(feature = "mesh")]
             mesh_transport: None,
             metrics: None,
             ipc: None,
@@ -389,6 +391,7 @@ impl HttpServer {
             serverless_manager: None,
             connection_limit: Arc::new(Semaphore::new(max_connections)),
             app_servers: None,
+            #[cfg(feature = "mesh")]
             mesh_backend_pool: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
         }
@@ -524,13 +527,16 @@ impl HttpServer {
                             let main_config = main_config.clone();
                             let drain_state = drain_state.clone();
                             let http_config = http_config.clone();
+                            #[cfg(feature = "mesh")]
                             let mesh_config = mesh_config.clone();
+                            #[cfg(feature = "mesh")]
                             let mesh_transport = mesh_transport.clone();
                             let metrics = metrics.clone();
                             let ipc = self.ipc.clone();
                             let serverless_manager = serverless_manager.clone();
                             let connection_limit = connection_limit.clone();
                             let app_servers = app_servers.clone();
+                            #[cfg(feature = "mesh")]
                             let mesh_backend_pool = mesh_backend_pool.clone();
                             let upstream_client_registry = upstream_client_registry.clone();
 
@@ -592,7 +598,9 @@ impl HttpServer {
                                     let local_addr = local_addr;
                                     let drain_state = drain_state.clone();
                                     let http_config = http_config.clone();
+                                    #[cfg(feature = "mesh")]
                                     let mesh_config = mesh_config.clone();
+                                    #[cfg(feature = "mesh")]
                                     let mesh_transport = mesh_transport.clone();
                                     let metrics = metrics.clone();
                                     let http_conn = http_conn_clone.clone();
@@ -601,6 +609,7 @@ impl HttpServer {
                                     let serverless_manager = serverless_manager.clone();
                                     let connection_limit = connection_limit.clone();
                                     let app_servers = app_servers.clone();
+                                    #[cfg(feature = "mesh")]
                                     let mesh_backend_pool = mesh_backend_pool.clone();
                                     let upstream_client_registry = upstream_client_registry.clone();
                                     async move {
@@ -645,8 +654,8 @@ impl HttpServer {
         main_config: Arc<MainConfig>,
         drain_state: Option<Arc<WorkerDrainState>>,
         http_config: HttpConfig,
-        mesh_config: Option<Arc<MeshConfig>>,
-        mesh_transport: Option<Arc<MeshTransportManager>>,
+        #[cfg(feature = "mesh")] mesh_config: Option<Arc<MeshConfig>>,
+        #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
         metrics: Option<Arc<WorkerMetrics>>,
         http_conn: Arc<HttpConnection>,
         ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
@@ -656,7 +665,7 @@ impl HttpServer {
         app_servers: Option<
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
-        mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+        #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
@@ -731,6 +740,7 @@ impl HttpServer {
         // SECTION 4: Key Exchange Request Handling (global nodes)
         // ============================================================================
         // Handle key exchange requests for global nodes
+        #[cfg(feature = "mesh")]
         if path.starts_with("/key-") || path == "/health" {
             if let Some(ref mesh_cfg) = mesh_config {
                 if mesh_cfg.role.is_global()
@@ -754,6 +764,7 @@ impl HttpServer {
         // SECTION 4.5: Mesh Ownership Challenge Serving (HTTP-01)
         // ============================================================================
         // Serve HTTP-01 challenges for mesh ownership verification
+        #[cfg(feature = "mesh")]
         if let Some(ref mt) = mesh_transport {
             if let Some(token) = path.strip_prefix("/.well-known/malu-challenge/") {
                 if !token.is_empty() && !token.contains('/') {
@@ -2437,6 +2448,7 @@ impl HttpServer {
                 }
 
                 // Mesh backend dispatch - route through mesh proxy
+                #[cfg(feature = "mesh")]
                 if matches!(target.backend_type, crate::router::BackendType::Mesh) {
                     if let Some(ref pool) = mesh_backend_pool {
                         let upstream_id = target.upstream.as_ref();
@@ -2852,7 +2864,6 @@ impl HttpServer {
                 };
 
                 let needs_body_transform = router.plugin_manager().is_some()
-                    || mesh_transport.is_some()
                     || target
                         .site_config
                         .r#static
@@ -3163,6 +3174,7 @@ impl HttpServer {
                             .get("accept-encoding")
                             .and_then(|v: &http::HeaderValue| v.to_str().ok());
 
+                        #[cfg(feature = "mesh")]
                         if let Some(ref mt) = mesh_transport {
                             let (minification, image_protection, image_poison_config, compression) = tokio::join!(
                                 mt.get_minification_for_site(&site_id),

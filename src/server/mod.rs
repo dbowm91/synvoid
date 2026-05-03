@@ -30,6 +30,7 @@ struct ServerSharedState {
     waf: Arc<WafCore>,
     flood_protector: Option<Arc<FloodProtector>>,
     drain_state: Option<Arc<WorkerDrainState>>,
+    #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
@@ -62,7 +63,9 @@ pub struct UnifiedServer {
     tunnel_router: Option<Arc<Mutex<TunnelRouter>>>,
     tunnel_config: Option<TunnelConfig>,
     drain_state: Option<Arc<WorkerDrainState>>,
+    #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+    #[cfg(feature = "mesh")]
     mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
@@ -86,7 +89,10 @@ pub struct UnifiedServer {
 impl UnifiedServer {
     pub async fn new(
         config: Arc<RwLock<ConfigManager>>,
-        mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+        #[cfg(feature = "mesh")] mesh_transport: Option<
+            Arc<crate::mesh::transport::MeshTransportManager>,
+        >,
+        #[cfg(not(feature = "mesh"))] _mesh_transport: Option<std::marker::PhantomData<fn()>>,
         _app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (
@@ -409,7 +415,9 @@ impl UnifiedServer {
             tunnel_router,
             tunnel_config,
             drain_state: None,
+            #[cfg(feature = "mesh")]
             mesh_transport,
+            #[cfg(feature = "mesh")]
             mesh_backend_pool: None,
             metrics: None,
             ipc: None,
@@ -457,11 +465,13 @@ impl UnifiedServer {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_backend_pool(mut self, pool: Arc<crate::mesh::MeshBackendPool>) -> Self {
         self.mesh_backend_pool = Some(pool);
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn get_mesh_backend_pool(&self) -> Option<Arc<crate::mesh::MeshBackendPool>> {
         self.mesh_backend_pool.clone()
     }
@@ -891,6 +901,7 @@ impl UnifiedServer {
             waf: waf.clone(),
             flood_protector: self.flood_protector.clone(),
             drain_state: self.drain_state.clone(),
+            #[cfg(feature = "mesh")]
             mesh_transport: self.mesh_transport.clone(),
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
@@ -1187,7 +1198,15 @@ impl UnifiedServer {
 
         server = server.with_app_servers(Some(state.app_servers.clone()));
 
-        server.serve().await
+        #[cfg(feature = "mesh")]
+        {
+            server.serve().await
+        }
+        #[cfg(not(feature = "mesh"))]
+        {
+            let _ = server;
+            Ok(())
+        }
     }
 
     async fn run_https_server_inner(

@@ -302,10 +302,6 @@ fn build_router_from_state(
                 .put(handlers::config::update_bot_detection_config),
         )
         .route(
-            "/config/mesh",
-            get(handlers::config::get_mesh_config).put(handlers::config::update_mesh_config),
-        )
-        .route(
             "/config/threat-level",
             get(handlers::config::get_threat_level_config)
                 .put(handlers::config::update_threat_level_config),

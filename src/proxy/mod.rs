@@ -456,6 +456,7 @@ impl ProxyServer {
                                             "global",
                                         );
                                     }
+                                    #[cfg(feature = "mesh")]
                                     if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
                                         threat_intel.announce_local_block(
                                             client_ip,

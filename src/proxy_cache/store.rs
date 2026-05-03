@@ -216,6 +216,7 @@ impl ProxyCache {
         Arc::new(self.settings.read().clone())
     }
 
+    #[cfg(feature = "mesh")]
     pub fn apply_preferences(&self, preferences: &crate::mesh::protocol::ProxyCachePreferences) {
         let mut settings = self.settings.read().clone();
         settings.enabled = preferences.enable;
