@@ -1,3 +1,5 @@
+#![cfg(feature = "mesh")]
+
 use super::super::state::AdminState;
 use super::common::{OptionalAuth, PaginationQuery};
 use crate::mesh::client_audit::{AuditReportResponse, ClientAuditReport};

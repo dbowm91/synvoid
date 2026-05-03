@@ -1,3 +1,5 @@
+#![cfg(feature = "mesh")]
+
 use super::super::audit::AuditLog;
 use super::super::state::AdminState;
 use super::common::OptionalAuth;
