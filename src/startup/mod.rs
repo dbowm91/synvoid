@@ -9,12 +9,12 @@ use tokio::sync::{broadcast, RwLock};
 
 use crate::block_store::BlockStore;
 use crate::config::ConfigManager;
+#[cfg(feature = "mesh")]
+use crate::waf::YaraRulesManager;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,
 };
-#[cfg(feature = "mesh")]
-use crate::waf::YaraRulesManager;
 
 #[derive(Clone)]
 pub struct MasterState {

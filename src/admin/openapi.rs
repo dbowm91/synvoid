@@ -3,83 +3,626 @@ use utoipa::openapi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-#[cfg(feature = "mesh")]
-use crate::admin::handlers::mesh_admin::{
-    AttestCapabilityRequest, AttestCapabilityResponse, AuditReportRequest, AuditReportResponseDto,
-    BanListResponse, BanRecord, DeriveSigningKeyRequest, DeriveSigningKeyResponse,
-    MeshAdminStatusResponse, MeshNodeInfo, MeshNodeListResponse, SignatureFailureReport,
-    SignatureFailureResponse,
-};
-
-#[cfg(feature = "mesh")]
-use crate::admin::handlers::yara_rules::{
-    YaraApplyRequest, YaraApplyResponse, YaraApprovalRequest, YaraApproveResponse,
-    YaraBroadcastResponse, YaraDeleteResponse, YaraRejectResponse, YaraRejectionRequest,
-    YaraStatusResponse, YaraSubmissionResponse, YaraSubmissionsListResponse, YaraSubmitRequest,
-    YaraSubmitResponse, YaraSyncResponse,
-};
-
 #[cfg(not(feature = "mesh"))]
-mod mesh_stubs {
+pub mod mesh_stubs {
+    use crate::admin::handlers::common::OptionalAuth;
+    use crate::admin::handlers::common::PaginationQuery;
+    use crate::admin::handlers::common::StatusResponse;
+    use crate::admin::state::AdminState;
+    use axum::extract::{Query, State};
+    use axum::Json;
+    use std::sync::Arc;
     use utoipa::ToSchema;
+
     #[derive(ToSchema)]
-    pub struct MeshNodeListResponse;
+    pub struct MeshNodeListResponse {
+        pub nodes: Vec<MeshNodeInfo>,
+        pub total: usize,
+        pub connected: usize,
+    }
+
     #[derive(ToSchema)]
-    pub struct MeshNodeInfo;
+    pub struct MeshNodeInfo {
+        pub node_id: String,
+        pub address: String,
+        pub role: String,
+        pub status: String,
+        pub last_seen: i64,
+    }
+
     #[derive(ToSchema)]
-    pub struct BanListResponse;
+    pub struct BanListResponse {
+        pub bans: Vec<BanRecord>,
+        pub total: usize,
+    }
+
     #[derive(ToSchema)]
-    pub struct BanRecord;
+    pub struct BanRecord {
+        pub ban_type: String,
+        pub value: String,
+        pub reason: Option<String>,
+        pub expires: Option<i64>,
+    }
+
     #[derive(ToSchema)]
-    pub struct MeshAdminStatusResponse;
+    pub struct MeshAdminStatusResponse {
+        pub status: String,
+        pub connected_nodes: usize,
+        pub total_nodes: usize,
+    }
+
     #[derive(ToSchema)]
-    pub struct AttestCapabilityRequest;
+    pub struct AttestCapabilityRequest {
+        pub node_id: String,
+        pub capability: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct AttestCapabilityResponse;
+    pub struct AttestCapabilityResponse {
+        pub success: bool,
+    }
+
     #[derive(ToSchema)]
-    pub struct DeriveSigningKeyRequest;
+    pub struct DeriveSigningKeyRequest {
+        pub node_id: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct DeriveSigningKeyResponse;
+    pub struct DeriveSigningKeyResponse {
+        pub public_key: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct AuditReportRequest;
+    pub struct AuditReportRequest {
+        pub mesh_id: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct AuditReportResponseDto;
+    pub struct AuditReportResponseDto {
+        pub success: bool,
+    }
+
     #[derive(ToSchema)]
-    pub struct SignatureFailureReport;
+    pub struct SignatureFailureReport {
+        pub node_id: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct SignatureFailureResponse;
+    pub struct SignatureFailureResponse {
+        pub acknowledged: bool,
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/mesh/nodes",
+        responses(
+            (status = 200, description = "List mesh nodes", body = MeshNodeListResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn list_mesh_nodes(
+        State(_state): State<Arc<AdminState>>,
+        Query(_query): Query<PaginationQuery>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<MeshNodeListResponse>, axum::http::StatusCode> {
+        Ok(Json(MeshNodeListResponse {
+            nodes: vec![],
+            total: 0,
+            connected: 0,
+        }))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/mesh/nodes/{node_id}",
+        responses(
+            (status = 200, description = "Get mesh node", body = MeshNodeInfo),
+            (status = 401, description = "Unauthorized"),
+            (status = 404, description = "Node not found"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn get_mesh_node(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<MeshNodeInfo>, axum::http::StatusCode> {
+        Ok(Json(MeshNodeInfo {
+            node_id: String::new(),
+            address: String::new(),
+            role: String::new(),
+            status: String::new(),
+            last_seen: 0,
+        }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/ban/ip",
+        responses(
+            (status = 200, description = "Ban IP", body = StatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn ban_ip(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
+        Ok(Json(StatusResponse::success("IP banned (mesh disabled)")))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/ban/mesh-id",
+        responses(
+            (status = 200, description = "Ban mesh ID", body = StatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn ban_mesh_id(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
+        Ok(Json(StatusResponse::success(
+            "Mesh ID banned (mesh disabled)",
+        )))
+    }
+
+    #[utoipa::path(
+        delete,
+        path = "/mesh/ban",
+        responses(
+            (status = 200, description = "Unban", body = StatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn unban(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
+        Ok(Json(StatusResponse::success("Unbanned (mesh disabled)")))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/mesh/bans",
+        responses(
+            (status = 200, description = "List bans", body = BanListResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn list_bans(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<BanListResponse>, axum::http::StatusCode> {
+        Ok(Json(BanListResponse {
+            bans: vec![],
+            total: 0,
+        }))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/mesh/status",
+        responses(
+            (status = 200, description = "Mesh status", body = MeshAdminStatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn get_mesh_status(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<MeshAdminStatusResponse>, axum::http::StatusCode> {
+        Ok(Json(MeshAdminStatusResponse {
+            status: "disabled".to_string(),
+            connected_nodes: 0,
+            total_nodes: 0,
+        }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/attest-capability",
+        responses(
+            (status = 200, description = "Attest capability", body = AttestCapabilityResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn attest_capability(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<AttestCapabilityResponse>, axum::http::StatusCode> {
+        Ok(Json(AttestCapabilityResponse { success: false }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/derive-signing-key",
+        responses(
+            (status = 200, description = "Derive signing key", body = DeriveSigningKeyResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn derive_signing_key(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<DeriveSigningKeyResponse>, axum::http::StatusCode> {
+        Ok(Json(DeriveSigningKeyResponse {
+            public_key: String::new(),
+        }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/audit/report",
+        responses(
+            (status = 200, description = "Submit audit report", body = AuditReportResponseDto),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn submit_audit_report(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<AuditReportResponseDto>, axum::http::StatusCode> {
+        Ok(Json(AuditReportResponseDto { success: false }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/report/signature-failure",
+        responses(
+            (status = 200, description = "Report signature failure", body = SignatureFailureResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn report_signature_failure(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<SignatureFailureResponse>, axum::http::StatusCode> {
+        Ok(Json(SignatureFailureResponse {
+            acknowledged: false,
+        }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/mesh/organizations",
+        responses(
+            (status = 200, description = "Create organization", body = StatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn create_organization(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
+        Ok(Json(StatusResponse::success(
+            "Organization created (mesh disabled)",
+        )))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/mesh/organizations/{org_id}",
+        responses(
+            (status = 200, description = "Get organization", body = serde_json::Value),
+            (status = 401, description = "Unauthorized"),
+            (status = 404, description = "Not found"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn get_organization(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::Value::Null))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/mesh/organizations/{org_id}/public-key",
+        responses(
+            (status = 200, description = "Get org public key", body = serde_json::Value),
+            (status = 401, description = "Unauthorized"),
+            (status = 404, description = "Not found"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "mesh"
+    )]
+    pub async fn get_org_public_key(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::Value::Null))
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraStatusResponse;
+    pub struct YaraStatusResponse {
+        pub status: String,
+        pub rules_loaded: usize,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraSubmissionResponse;
+    pub struct YaraSubmissionResponse {
+        pub submission_id: String,
+        pub status: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraSubmissionsListResponse;
+    pub struct YaraSubmissionsListResponse {
+        pub submissions: Vec<YaraSubmissionResponse>,
+        pub total: usize,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraApprovalRequest;
+    pub struct YaraApprovalRequest {
+        pub submission_id: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraRejectionRequest;
+    pub struct YaraRejectionRequest {
+        pub submission_id: String,
+        pub reason: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraApproveResponse;
+    pub struct YaraApproveResponse {
+        pub success: bool,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraRejectResponse;
+    pub struct YaraRejectResponse {
+        pub success: bool,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraBroadcastResponse;
+    pub struct YaraBroadcastResponse {
+        pub success: bool,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraSyncResponse;
+    pub struct YaraSyncResponse {
+        pub synced: usize,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraSubmitRequest;
+    pub struct YaraSubmitRequest {
+        pub rules: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraSubmitResponse;
+    pub struct YaraSubmitResponse {
+        pub submission_id: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraApplyRequest;
+    pub struct YaraApplyRequest {
+        pub submission_id: String,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraApplyResponse;
+    pub struct YaraApplyResponse {
+        pub success: bool,
+    }
+
     #[derive(ToSchema)]
-    pub struct YaraDeleteResponse;
+    pub struct YaraDeleteResponse {
+        pub success: bool,
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/yara/status",
+        responses(
+            (status = 200, description = "YARA status", body = YaraStatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn yara_get_status(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraStatusResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraStatusResponse {
+            status: "disabled".to_string(),
+            rules_loaded: 0,
+        }))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/yara/submissions",
+        responses(
+            (status = 200, description = "List YARA submissions", body = YaraSubmissionsListResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn list_submissions(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraSubmissionsListResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraSubmissionsListResponse {
+            submissions: vec![],
+            total: 0,
+        }))
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/yara/submissions/{submission_id}",
+        responses(
+            (status = 200, description = "Get YARA submission", body = YaraSubmissionResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 404, description = "Not found"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn get_submission(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraSubmissionResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraSubmissionResponse {
+            submission_id: String::new(),
+            status: String::new(),
+        }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/yara/submissions/{submission_id}/approve",
+        responses(
+            (status = 200, description = "Approve YARA submission", body = YaraApproveResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn approve_submission(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraApproveResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraApproveResponse { success: false }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/yara/submissions/{submission_id}/reject",
+        responses(
+            (status = 200, description = "Reject YARA submission", body = YaraRejectResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn reject_submission(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraRejectResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraRejectResponse { success: false }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/yara/broadcast",
+        responses(
+            (status = 200, description = "Broadcast YARA rules", body = YaraBroadcastResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn broadcast_rules(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraBroadcastResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraBroadcastResponse { success: false }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/yara/sync",
+        responses(
+            (status = 200, description = "Sync YARA rules", body = YaraSyncResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn sync_from_global(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraSyncResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraSyncResponse { synced: 0 }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/yara/submit",
+        responses(
+            (status = 200, description = "Submit YARA rules", body = YaraSubmitResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn submit_rules(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraSubmitResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraSubmitResponse {
+            submission_id: String::new(),
+        }))
+    }
+
+    #[utoipa::path(
+        post,
+        path = "/yara/apply",
+        responses(
+            (status = 200, description = "Apply YARA rules", body = YaraApplyResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn apply_rules_direct(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraApplyResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraApplyResponse { success: false }))
+    }
+
+    #[utoipa::path(
+        delete,
+        path = "/yara/submissions/{submission_id}",
+        responses(
+            (status = 200, description = "Delete YARA submission", body = YaraDeleteResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "yara"
+    )]
+    pub async fn delete_submission(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<YaraDeleteResponse>, axum::http::StatusCode> {
+        Ok(Json(YaraDeleteResponse { success: false }))
+    }
 }
 
 #[cfg(not(feature = "mesh"))]
 use mesh_stubs::{
+    apply_rules_direct, approve_submission, attest_capability, ban_ip, ban_mesh_id,
+    broadcast_rules, create_organization, delete_submission, derive_signing_key, get_mesh_node,
+    get_mesh_status, get_org_public_key, get_organization, get_submission, list_bans,
+    list_mesh_nodes, list_submissions, reject_submission, report_signature_failure,
+    submit_audit_report, submit_rules, sync_from_global, unban, yara_get_status,
     AttestCapabilityRequest, AttestCapabilityResponse, AuditReportRequest, AuditReportResponseDto,
     BanListResponse, BanRecord, DeriveSigningKeyRequest, DeriveSigningKeyResponse,
     MeshAdminStatusResponse, MeshNodeInfo, MeshNodeListResponse, SignatureFailureReport,
@@ -88,6 +631,71 @@ use mesh_stubs::{
     YaraRejectionRequest, YaraStatusResponse, YaraSubmissionResponse, YaraSubmissionsListResponse,
     YaraSubmitRequest, YaraSubmitResponse, YaraSyncResponse,
 };
+
+#[cfg(not(feature = "dns"))]
+pub mod dns_stubs {
+    use crate::admin::handlers::common::OptionalAuth;
+    use crate::admin::handlers::common::StatusResponse;
+    use crate::admin::state::AdminState;
+    use axum::extract::State;
+    use axum::Json;
+    use std::sync::Arc;
+    use utoipa::ToSchema;
+
+    #[derive(ToSchema)]
+    pub struct DnsConfigResponse {
+        pub config: serde_json::Value,
+    }
+
+    #[derive(ToSchema)]
+    pub struct UpdateDnsConfigRequest {
+        pub config: serde_json::Value,
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/config/dns",
+        responses(
+            (status = 200, description = "DNS configuration", body = DnsConfigResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "config"
+    )]
+    pub async fn get_dns_config(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+    ) -> Result<Json<DnsConfigResponse>, axum::http::StatusCode> {
+        Ok(Json(DnsConfigResponse {
+            config: serde_json::Value::Null,
+        }))
+    }
+
+    #[utoipa::path(
+        put,
+        path = "/config/dns",
+        request_body = UpdateDnsConfigRequest,
+        responses(
+            (status = 200, description = "DNS config updated", body = StatusResponse),
+            (status = 401, description = "Unauthorized"),
+            (status = 400, description = "Invalid configuration"),
+            (status = 500, description = "Internal server error")
+        ),
+        tag = "config"
+    )]
+    pub async fn update_dns_config(
+        State(_state): State<Arc<AdminState>>,
+        _auth: OptionalAuth,
+        Json(_body): Json<UpdateDnsConfigRequest>,
+    ) -> Result<Json<StatusResponse>, axum::http::StatusCode> {
+        Ok(Json(StatusResponse::success(
+            "DNS config not available in core profile.",
+        )))
+    }
+}
+
+#[cfg(not(feature = "dns"))]
+use dns_stubs::{get_dns_config, update_dns_config};
 
 struct AddBearerAuth;
 
@@ -167,34 +775,20 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::theme::update_theme,
         crate::admin::handlers::theme::get_theme_css,
         crate::admin::handlers::theme::get_theme_presets,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::list_mesh_nodes,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::get_mesh_node,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::ban_ip,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::ban_mesh_id,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::unban,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::list_bans,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::get_mesh_status,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::attest_capability,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::derive_signing_key,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::submit_audit_report,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::report_signature_failure,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::create_organization,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::get_organization,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::mesh_admin::get_org_public_key,
+        crate::admin::openapi::mesh_stubs::list_mesh_nodes,
+        crate::admin::openapi::mesh_stubs::get_mesh_node,
+        crate::admin::openapi::mesh_stubs::ban_ip,
+        crate::admin::openapi::mesh_stubs::ban_mesh_id,
+        crate::admin::openapi::mesh_stubs::unban,
+        crate::admin::openapi::mesh_stubs::list_bans,
+        crate::admin::openapi::mesh_stubs::get_mesh_status,
+        crate::admin::openapi::mesh_stubs::attest_capability,
+        crate::admin::openapi::mesh_stubs::derive_signing_key,
+        crate::admin::openapi::mesh_stubs::submit_audit_report,
+        crate::admin::openapi::mesh_stubs::report_signature_failure,
+        crate::admin::openapi::mesh_stubs::create_organization,
+        crate::admin::openapi::mesh_stubs::get_organization,
+        crate::admin::openapi::mesh_stubs::get_org_public_key,
         crate::admin::handlers::config::get_main_config,
         crate::admin::handlers::config::update_main_config,
         crate::admin::handlers::config::get_config_schema,
@@ -244,10 +838,8 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::config::update_fallback_config,
         crate::admin::handlers::config::get_upgrade_config,
         crate::admin::handlers::config::update_upgrade_config,
-        #[cfg(feature = "dns")]
-        crate::admin::handlers::config::get_dns_config,
-        #[cfg(feature = "dns")]
-        crate::admin::handlers::config::update_dns_config,
+        crate::admin::openapi::dns_stubs::get_dns_config,
+        crate::admin::openapi::dns_stubs::update_dns_config,
         crate::admin::handlers::config::get_rate_limits_config,
         crate::admin::handlers::config::update_rate_limits_config,
         crate::admin::handlers::config::get_bot_detection_config,
@@ -268,26 +860,16 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::probes::list_upstream_errors,
         crate::admin::handlers::probes::get_upstream_error_stats,
         crate::admin::handlers::probes::delete_upstream_error,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::get_status,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::list_submissions,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::get_submission,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::approve_submission,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::reject_submission,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::broadcast_rules,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::sync_from_global,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::submit_rules,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::apply_rules_direct,
-        #[cfg(feature = "mesh")]
-        crate::admin::handlers::yara_rules::delete_submission,
+        crate::admin::openapi::mesh_stubs::yara_get_status,
+        crate::admin::openapi::mesh_stubs::list_submissions,
+        crate::admin::openapi::mesh_stubs::get_submission,
+        crate::admin::openapi::mesh_stubs::approve_submission,
+        crate::admin::openapi::mesh_stubs::reject_submission,
+        crate::admin::openapi::mesh_stubs::broadcast_rules,
+        crate::admin::openapi::mesh_stubs::sync_from_global,
+        crate::admin::openapi::mesh_stubs::submit_rules,
+        crate::admin::openapi::mesh_stubs::apply_rules_direct,
+        crate::admin::openapi::mesh_stubs::delete_submission,
         crate::admin::handlers::threat_level::get_status,
         crate::admin::handlers::threat_level::get_history,
         crate::admin::handlers::threat_level::get_baseline,

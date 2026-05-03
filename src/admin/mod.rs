@@ -11,9 +11,9 @@ mod auth;
 mod handlers;
 pub mod metrics;
 pub mod metrics_events;
-mod prometheus_exporter;
 mod middleware;
 pub mod openapi;
+mod prometheus_exporter;
 pub use openapi::MaluWafOpenApi;
 mod rate_limit;
 pub mod schema;
@@ -142,7 +142,12 @@ pub fn create_admin_router(
 
     let state = Arc::new(state_builder);
 
-    let router = build_router_from_state(state, admin_cors_config, admin_rate_limit_config, trusted_proxies.clone());
+    let router = build_router_from_state(
+        state,
+        admin_cors_config,
+        admin_rate_limit_config,
+        trusted_proxies.clone(),
+    );
     middleware::set_trusted_proxies(trusted_proxies);
     router
 }
@@ -153,7 +158,12 @@ pub async fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
     let rate_limit_config = cfg.main.admin.rate_limit.clone();
     let trusted_proxies = cfg.main.admin.trusted_proxies.clone();
     drop(cfg);
-    let router = build_router_from_state(state, admin_cors_config, rate_limit_config, trusted_proxies.clone());
+    let router = build_router_from_state(
+        state,
+        admin_cors_config,
+        rate_limit_config,
+        trusted_proxies.clone(),
+    );
     middleware::set_trusted_proxies(trusted_proxies);
     router
 }
@@ -564,9 +574,7 @@ fn build_router_from_state(
         .route(
             "/yara/submissions/{submission_id}",
             delete(handlers::yara_rules::delete_submission),
-        );
-
-    let api_routes = api_routes
+        )
         .route("/icmp/status", get(handlers::icmp::get_status))
         .route(
             "/icmp/config",
@@ -615,107 +623,93 @@ fn build_router_from_state(
         .route(
             "/alerts/test-webhook",
             post(handlers::alerting::test_webhook),
-        )
-        #[cfg(feature = "mesh")]
+        );
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes
         .route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/raft/status",
             get(handlers::mesh_admin::get_raft_status),
         )
-        #[cfg(feature = "mesh")]
         .route("/mesh/dht/stats", get(handlers::mesh_admin::get_dht_stats))
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/attest-capability",
             post(handlers::mesh_admin::attest_capability),
-        )
-        #[cfg(feature = "mesh")]
+        );
+
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes
         .route(
             "/v1/mesh/raft/status",
             get(handlers::mesh_admin::get_raft_status),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/v1/mesh/dht/stats",
             get(handlers::mesh_admin::get_dht_stats),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/attest-capability",
             post(handlers::mesh_admin::attest_capability),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/derive-signing-key",
             post(handlers::mesh_admin::derive_signing_key),
         )
-        #[cfg(feature = "mesh")]
         .route("/mesh/nodes", get(handlers::mesh_admin::list_mesh_nodes))
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/nodes/{node_id}",
             get(handlers::mesh_admin::get_mesh_node),
-        )
-        #[cfg(feature = "mesh")]
+        );
+
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes
         .route(
             "/mesh/organizations",
             post(handlers::mesh_admin::create_organization),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/organizations/{org_id}",
             get(handlers::mesh_admin::get_organization),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/organizations/{org_id}/public-key",
             get(handlers::mesh_admin::get_org_public_key),
         )
-        #[cfg(feature = "mesh")]
         .route("/mesh/ban/ip", post(handlers::mesh_admin::ban_ip))
-        #[cfg(feature = "mesh")]
         .route("/mesh/ban/mesh-id", post(handlers::mesh_admin::ban_mesh_id))
-        #[cfg(feature = "mesh")]
         .route("/mesh/ban", delete(handlers::mesh_admin::unban))
-        #[cfg(feature = "mesh")]
-        .route("/mesh/bans", get(handlers::mesh_admin::list_bans))
-        #[cfg(feature = "mesh")]
+        .route("/mesh/bans", get(handlers::mesh_admin::list_bans));
+
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes
         .route(
             "/mesh/topology",
             get(handlers::mesh_topology::get_mesh_topology),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/topology/graph",
             get(handlers::mesh_topology::get_topology_graph),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/behavioral/stats",
             get(handlers::behavioral_intel::get_behavioral_stats),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/behavioral/config",
             get(handlers::behavioral_intel::get_behavioral_config),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/audit/report",
             post(handlers::mesh_admin::submit_audit_report),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/report/signature-failure",
             post(handlers::mesh_admin::report_signature_failure),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/mesh/wasm-modules",
             get(handlers::plugins::get_mesh_wasm_modules),
         )
-        #[cfg(feature = "mesh")]
         .route(
             "/plugins/metrics",
             get(handlers::plugins::get_all_plugins_metrics),
@@ -948,11 +942,18 @@ pub async fn start_admin_server(
         let metrics_cfg = metrics_config.clone();
         let (_metrics_shutdown_tx, metrics_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
         tokio::spawn(async move {
-            crate::admin::prometheus_exporter::start_prometheus_exporter(&metrics_cfg, metrics_shutdown_rx).await;
+            crate::admin::prometheus_exporter::start_prometheus_exporter(
+                &metrics_cfg,
+                metrics_shutdown_rx,
+            )
+            .await;
         });
     }
 
-    let server = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>());
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    );
 
     tokio::select! {
         result = server => {

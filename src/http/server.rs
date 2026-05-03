@@ -449,7 +449,7 @@ impl HttpServer {
         app_servers: Option<
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
-) -> Self {
+    ) -> Self {
         self.app_servers = app_servers;
         self
     }
