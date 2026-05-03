@@ -334,6 +334,7 @@ async fn run_master(
             upstream_error_tracker: None,
             threat_level_manager: None,
             rule_feed_manager: rule_feed_manager.clone(),
+            #[cfg(feature = "mesh")]
             yara_rules: None,
         },
         master_block_store,

@@ -119,7 +119,9 @@ mod tests {
 
         broadcaster.broadcast("hello world".to_string());
 
-        let msg = rx.blocking_recv().expect("should receive broadcast message");
+        let msg = rx
+            .blocking_recv()
+            .expect("should receive broadcast message");
         assert_eq!(msg, "hello world");
     }
 
@@ -166,7 +168,7 @@ mod tests {
         let result = rx1.blocking_recv();
         assert!(result.is_err());
         match result {
-            Err(broadcast::error::RecvError::Lagged(_)) => {},
+            Err(broadcast::error::RecvError::Lagged(_)) => {}
             _ => panic!("expected Lagged error, got {:?}", result),
         }
     }

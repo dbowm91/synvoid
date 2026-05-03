@@ -3,6 +3,92 @@ use utoipa::openapi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+#[cfg(feature = "mesh")]
+use crate::admin::handlers::mesh_admin::{
+    AttestCapabilityRequest, AttestCapabilityResponse, AuditReportRequest, AuditReportResponseDto,
+    BanListResponse, BanRecord, DeriveSigningKeyRequest, DeriveSigningKeyResponse,
+    MeshAdminStatusResponse, MeshNodeInfo, MeshNodeListResponse, SignatureFailureReport,
+    SignatureFailureResponse,
+};
+
+#[cfg(feature = "mesh")]
+use crate::admin::handlers::yara_rules::{
+    YaraApplyRequest, YaraApplyResponse, YaraApprovalRequest, YaraApproveResponse,
+    YaraBroadcastResponse, YaraDeleteResponse, YaraRejectResponse, YaraRejectionRequest,
+    YaraStatusResponse, YaraSubmissionResponse, YaraSubmissionsListResponse, YaraSubmitRequest,
+    YaraSubmitResponse, YaraSyncResponse,
+};
+
+#[cfg(not(feature = "mesh"))]
+mod mesh_stubs {
+    use utoipa::ToSchema;
+    #[derive(ToSchema)]
+    pub struct MeshNodeListResponse;
+    #[derive(ToSchema)]
+    pub struct MeshNodeInfo;
+    #[derive(ToSchema)]
+    pub struct BanListResponse;
+    #[derive(ToSchema)]
+    pub struct BanRecord;
+    #[derive(ToSchema)]
+    pub struct MeshAdminStatusResponse;
+    #[derive(ToSchema)]
+    pub struct AttestCapabilityRequest;
+    #[derive(ToSchema)]
+    pub struct AttestCapabilityResponse;
+    #[derive(ToSchema)]
+    pub struct DeriveSigningKeyRequest;
+    #[derive(ToSchema)]
+    pub struct DeriveSigningKeyResponse;
+    #[derive(ToSchema)]
+    pub struct AuditReportRequest;
+    #[derive(ToSchema)]
+    pub struct AuditReportResponseDto;
+    #[derive(ToSchema)]
+    pub struct SignatureFailureReport;
+    #[derive(ToSchema)]
+    pub struct SignatureFailureResponse;
+    #[derive(ToSchema)]
+    pub struct YaraStatusResponse;
+    #[derive(ToSchema)]
+    pub struct YaraSubmissionResponse;
+    #[derive(ToSchema)]
+    pub struct YaraSubmissionsListResponse;
+    #[derive(ToSchema)]
+    pub struct YaraApprovalRequest;
+    #[derive(ToSchema)]
+    pub struct YaraRejectionRequest;
+    #[derive(ToSchema)]
+    pub struct YaraApproveResponse;
+    #[derive(ToSchema)]
+    pub struct YaraRejectResponse;
+    #[derive(ToSchema)]
+    pub struct YaraBroadcastResponse;
+    #[derive(ToSchema)]
+    pub struct YaraSyncResponse;
+    #[derive(ToSchema)]
+    pub struct YaraSubmitRequest;
+    #[derive(ToSchema)]
+    pub struct YaraSubmitResponse;
+    #[derive(ToSchema)]
+    pub struct YaraApplyRequest;
+    #[derive(ToSchema)]
+    pub struct YaraApplyResponse;
+    #[derive(ToSchema)]
+    pub struct YaraDeleteResponse;
+}
+
+#[cfg(not(feature = "mesh"))]
+use mesh_stubs::{
+    AttestCapabilityRequest, AttestCapabilityResponse, AuditReportRequest, AuditReportResponseDto,
+    BanListResponse, BanRecord, DeriveSigningKeyRequest, DeriveSigningKeyResponse,
+    MeshAdminStatusResponse, MeshNodeInfo, MeshNodeListResponse, SignatureFailureReport,
+    SignatureFailureResponse, YaraApplyRequest, YaraApplyResponse, YaraApprovalRequest,
+    YaraApproveResponse, YaraBroadcastResponse, YaraDeleteResponse, YaraRejectResponse,
+    YaraRejectionRequest, YaraStatusResponse, YaraSubmissionResponse, YaraSubmissionsListResponse,
+    YaraSubmitRequest, YaraSubmitResponse, YaraSyncResponse,
+};
+
 struct AddBearerAuth;
 
 impl Modify for AddBearerAuth {
@@ -166,7 +252,9 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::config::update_rate_limits_config,
         crate::admin::handlers::config::get_bot_detection_config,
         crate::admin::handlers::config::update_bot_detection_config,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::config::get_mesh_config,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::config::update_mesh_config,
         crate::admin::handlers::config::validate_config,
         crate::admin::handlers::probes::list_probes,
@@ -277,19 +365,19 @@ impl Modify for AddBearerAuth {
             crate::admin::handlers::theme::LightColors,
             crate::admin::handlers::theme::ThemePresetInfo,
             crate::admin::handlers::theme::UpdateThemeRequest,
-            crate::admin::handlers::mesh_admin::MeshNodeListResponse,
-            crate::admin::handlers::mesh_admin::MeshNodeInfo,
-            crate::admin::handlers::mesh_admin::BanListResponse,
-            crate::admin::handlers::mesh_admin::BanRecord,
-            crate::admin::handlers::mesh_admin::MeshAdminStatusResponse,
-            crate::admin::handlers::mesh_admin::AttestCapabilityRequest,
-            crate::admin::handlers::mesh_admin::AttestCapabilityResponse,
-            crate::admin::handlers::mesh_admin::DeriveSigningKeyRequest,
-            crate::admin::handlers::mesh_admin::DeriveSigningKeyResponse,
-            crate::admin::handlers::mesh_admin::AuditReportRequest,
-            crate::admin::handlers::mesh_admin::AuditReportResponseDto,
-            crate::admin::handlers::mesh_admin::SignatureFailureReport,
-            crate::admin::handlers::mesh_admin::SignatureFailureResponse,
+            MeshNodeListResponse,
+            MeshNodeInfo,
+            BanListResponse,
+            BanRecord,
+            MeshAdminStatusResponse,
+            AttestCapabilityRequest,
+            AttestCapabilityResponse,
+            DeriveSigningKeyRequest,
+            DeriveSigningKeyResponse,
+            AuditReportRequest,
+            AuditReportResponseDto,
+            SignatureFailureReport,
+            SignatureFailureResponse,
             crate::admin::handlers::config::MainConfigResponse,
             crate::admin::handlers::config::UpdateMainConfigRequest,
             crate::admin::handlers::probes::BlockProbesRequest,
@@ -305,20 +393,20 @@ impl Modify for AddBearerAuth {
             crate::admin::handlers::probes::UpstreamErrorListResponse,
             crate::admin::handlers::probes::UpstreamErrorStatsResponse,
             crate::admin::handlers::probes::UpstreamErrorEndpointCountResponse,
-            crate::admin::handlers::yara_rules::YaraStatusResponse,
-            crate::admin::handlers::yara_rules::YaraSubmissionResponse,
-            crate::admin::handlers::yara_rules::YaraSubmissionsListResponse,
-            crate::admin::handlers::yara_rules::YaraApprovalRequest,
-            crate::admin::handlers::yara_rules::YaraRejectionRequest,
-            crate::admin::handlers::yara_rules::YaraApproveResponse,
-            crate::admin::handlers::yara_rules::YaraRejectResponse,
-            crate::admin::handlers::yara_rules::YaraBroadcastResponse,
-            crate::admin::handlers::yara_rules::YaraSyncResponse,
-            crate::admin::handlers::yara_rules::YaraSubmitRequest,
-            crate::admin::handlers::yara_rules::YaraSubmitResponse,
-            crate::admin::handlers::yara_rules::YaraApplyRequest,
-            crate::admin::handlers::yara_rules::YaraApplyResponse,
-            crate::admin::handlers::yara_rules::YaraDeleteResponse,
+            YaraStatusResponse,
+            YaraSubmissionResponse,
+            YaraSubmissionsListResponse,
+            YaraApprovalRequest,
+            YaraRejectionRequest,
+            YaraApproveResponse,
+            YaraRejectResponse,
+            YaraBroadcastResponse,
+            YaraSyncResponse,
+            YaraSubmitRequest,
+            YaraSubmitResponse,
+            YaraApplyRequest,
+            YaraApplyResponse,
+            YaraDeleteResponse,
             crate::admin::handlers::threat_level::ThreatLevelStatusResponse,
             crate::admin::handlers::threat_level::ThreatLevelHistoryResponse,
             crate::admin::handlers::threat_level::HistorySample,

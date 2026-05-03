@@ -14,10 +14,10 @@ pub mod windows;
 #[cfg(windows)]
 pub use windows::{windows_command_pipe_listener, windows_ipc_accept_loop};
 
-pub use commands::{
-    handle_configtest, handle_generatenewtoken, handle_generatetoken,
-    handle_rehash, handle_status, handle_stop,
-};
 #[cfg(feature = "mesh")]
 pub use commands::handle_export_threat_feed;
+pub use commands::{
+    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
+    handle_stop,
+};
 pub use ipc::handle_worker_connection;

@@ -21,10 +21,7 @@ pub async fn start_prometheus_exporter(
         }
     };
 
-    match PrometheusBuilder::new()
-        .with_http_listener(addr)
-        .build()
-    {
+    match PrometheusBuilder::new().with_http_listener(addr).build() {
         Ok((_layer, exporter)) => {
             tokio::spawn(async move {
                 match exporter.await {

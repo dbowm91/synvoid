@@ -1,6 +1,8 @@
 use crate::metrics::bandwidth::BandwidthTracker;
 use crate::metrics::collection::LATENCY_SAMPLE_SIZE;
-use crate::metrics::payloads::{HealthStatus, ServerlessMetrics, SiteMetricsPayload, WorkerMetricsPayload};
+use crate::metrics::payloads::{
+    HealthStatus, ServerlessMetrics, SiteMetricsPayload, WorkerMetricsPayload,
+};
 use crate::waf::attack_detection::config::AttackType;
 use parking_lot::Mutex;
 use std::collections::HashMap;

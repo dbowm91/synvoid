@@ -1,7 +1,6 @@
 use super::alerting::AlertManager;
 use super::audit::{AuditState, ConfigVersionManager};
 use super::ws::broadcaster::Broadcaster;
-use base64::Engine;
 use crate::config::ConfigManager;
 #[cfg(feature = "mesh")]
 use crate::mesh::transport::MeshTransport;
@@ -12,6 +11,7 @@ use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,
 };
+use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -334,7 +334,9 @@ impl AdminState {
                 upstream_error_tracker: None,
                 threat_level_manager: None,
                 rule_feed_manager: None,
+                #[cfg(feature = "mesh")]
                 yara_rules: None,
+                #[cfg(feature = "mesh")]
                 behavioral_intel_manager: None,
             },
             security: SecurityState {
@@ -345,8 +347,11 @@ impl AdminState {
                 yara_rate_limiter: None,
             },
             mesh: MeshState {
+                #[cfg(feature = "mesh")]
                 mesh_transport: None,
+                #[cfg(feature = "mesh")]
                 client_audit_manager: None,
+                #[cfg(feature = "mesh")]
                 org_key_manager: None,
             },
             honeypot: HoneypotState {
@@ -796,14 +801,19 @@ impl AdminState {
             let now = Instant::now();
 
             if sessions.len() >= 10000 {
-                sessions.retain(|_, v| now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS));
+                sessions.retain(|_, v| {
+                    now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS)
+                });
             }
 
-            sessions.insert(session_id.clone(), SessionData {
-                id_hash,
-                created: now,
-                last_used: now,
-            });
+            sessions.insert(
+                session_id.clone(),
+                SessionData {
+                    id_hash,
+                    created: now,
+                    last_used: now,
+                },
+            );
         }
 
         session_id
@@ -843,7 +853,8 @@ impl AdminState {
 
         let now = Instant::now();
         let mut sessions = self.security.sessions.write();
-        sessions.retain(|_, v| now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS));
+        sessions
+            .retain(|_, v| now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS));
     }
 }
 

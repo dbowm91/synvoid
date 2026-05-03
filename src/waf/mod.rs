@@ -1026,6 +1026,7 @@ impl WafCore {
         }
 
         let dht_start = std::time::Instant::now();
+        #[cfg(feature = "mesh")]
         if let Some(decision) = self.check_dht_threat_lookup(client_ip) {
             crate::metrics::record_waf_check_timing(
                 "dht_threat",
@@ -1033,6 +1034,8 @@ impl WafCore {
             );
             return decision;
         }
+        #[cfg(not(feature = "mesh"))]
+        let _ = dht_start;
 
         let endpoint_start = std::time::Instant::now();
         if let Some(decision) = self.check_endpoint_block(path, method) {

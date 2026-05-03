@@ -73,9 +73,7 @@ pub async fn ws_metrics_handler(
         return (StatusCode::SERVICE_UNAVAILABLE, "Max clients reached").into_response();
     }
 
-    ws.on_upgrade(move |socket| {
-        handle_metrics_socket(socket, broadcaster)
-    })
+    ws.on_upgrade(move |socket| handle_metrics_socket(socket, broadcaster))
 }
 
 pub async fn ws_logs_handler(
@@ -95,15 +93,10 @@ pub async fn ws_logs_handler(
         return (StatusCode::SERVICE_UNAVAILABLE, "Max clients reached").into_response();
     }
 
-    ws.on_upgrade(move |socket| {
-        handle_logs_socket(socket, broadcaster)
-    })
+    ws.on_upgrade(move |socket| handle_logs_socket(socket, broadcaster))
 }
 
-async fn handle_metrics_socket(
-    socket: WebSocket,
-    broadcaster: Arc<broadcaster::Broadcaster>,
-) {
+async fn handle_metrics_socket(socket: WebSocket, broadcaster: Arc<broadcaster::Broadcaster>) {
     let (mut sender, mut receiver) = socket.split();
     let Some((client_id, mut rx)) = broadcaster.new_client() else {
         return;
@@ -122,7 +115,10 @@ async fn handle_metrics_socket(
                     }
                 }
                 Err(RecvError::Lagged(_)) => {
-                    tracing::warn!("Metrics WebSocket client {} lagged, continuing", client_id_clone);
+                    tracing::warn!(
+                        "Metrics WebSocket client {} lagged, continuing",
+                        client_id_clone
+                    );
                     super::metrics_events::record_ws_lagged();
                     continue;
                 }
@@ -146,10 +142,7 @@ async fn handle_metrics_socket(
     tracing::debug!("WebSocket client {} disconnected from metrics", client_id);
 }
 
-async fn handle_logs_socket(
-    socket: WebSocket,
-    broadcaster: Arc<broadcaster::Broadcaster>,
-) {
+async fn handle_logs_socket(socket: WebSocket, broadcaster: Arc<broadcaster::Broadcaster>) {
     let (mut sender, mut receiver) = socket.split();
     let Some((client_id, mut rx)) = broadcaster.new_client() else {
         return;
@@ -168,7 +161,10 @@ async fn handle_logs_socket(
                     }
                 }
                 Err(RecvError::Lagged(_)) => {
-                    tracing::warn!("Logs WebSocket client {} lagged, continuing", client_id_clone);
+                    tracing::warn!(
+                        "Logs WebSocket client {} lagged, continuing",
+                        client_id_clone
+                    );
                     super::metrics_events::record_ws_lagged();
                     continue;
                 }

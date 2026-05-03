@@ -128,7 +128,9 @@ pub struct HttpsServer {
     shutdown_rx: broadcast::Receiver<()>,
     proxy_servers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<ProxyServer>>>>,
     drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
+    #[cfg(feature = "mesh")]
     mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+    #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<crate::process::ipc::WorkerId>,
@@ -171,7 +173,9 @@ impl HttpsServer {
             shutdown_rx,
             proxy_servers: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             drain_state: None,
+            #[cfg(feature = "mesh")]
             mesh_config: None,
+            #[cfg(feature = "mesh")]
             mesh_transport: None,
             ipc: None,
             worker_id: None,
@@ -200,11 +204,13 @@ impl HttpsServer {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_config(mut self, mesh_config: Arc<crate::mesh::config::MeshConfig>) -> Self {
         self.mesh_config = Some(mesh_config);
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_transport(
         mut self,
         mesh_transport: Arc<crate::mesh::transports::MeshTransportManager>,
@@ -291,7 +297,9 @@ impl HttpsServer {
         let proxy_servers = self.proxy_servers.clone();
         let metrics = self.metrics.clone();
         let drain_state = self.drain_state.clone();
+        #[cfg(feature = "mesh")]
         let mesh_config = self.mesh_config.clone();
+        #[cfg(feature = "mesh")]
         let mesh_transport = self.mesh_transport.clone();
         let ipc = self.ipc.clone();
         let worker_id = self.worker_id;
@@ -350,8 +358,18 @@ impl HttpsServer {
                             let mesh_transport_h1 = mesh_transport.clone();
                             let ipc_h2 = ipc.clone();
                             let ipc_h1 = ipc.clone();
-                            let worker_id_h2 = worker_id;
+let worker_id_h2 = worker_id;
                             let worker_id_h1 = worker_id;
+                            #[cfg(feature = "mesh")]
+                            let mesh_config_h2 = mesh_config.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_config_h1 = mesh_config.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_transport_h2 = mesh_transport.clone();
+                            #[cfg(feature = "mesh")]
+                            let mesh_transport_h1 = mesh_transport.clone();
+                            let ipc_h2 = ipc.clone();
+                            let ipc_h1 = ipc.clone();
                             let serverless_manager_h2 = serverless_manager.clone();
                             let serverless_manager_h1 = serverless_manager.clone();
                             let app_servers_h2 = app_servers.clone();
@@ -426,7 +444,9 @@ impl HttpsServer {
                                                         let ps = ps.clone();
                                                         let metrics = metrics.clone();
                                                         let drain_state = drain_state.clone();
+                                                        #[cfg(feature = "mesh")]
                                                         let mesh_config = mesh_config.clone();
+                                                        #[cfg(feature = "mesh")]
                                                         let mesh_transport = mesh_transport.clone();
                                                         let ipc = ipc.clone();
                                                         let worker_id = worker_id_h2;
@@ -485,7 +505,9 @@ impl HttpsServer {
                                                         let ps = ps.clone();
                                                         let metrics = metrics.clone();
                                                         let drain_state = drain_state.clone();
+                                                        #[cfg(feature = "mesh")]
                                                         let mesh_config = mesh_config.clone();
+                                                        #[cfg(feature = "mesh")]
                                                         let mesh_transport = mesh_transport.clone();
                                                         let ipc = ipc.clone();
                                                         let worker_id = worker_id_h1;
@@ -565,7 +587,7 @@ impl HttpsServer {
         >,
         metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
         _drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
-        _mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+        mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
         mesh_transport: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
         _ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
         _worker_id: Option<crate::process::ipc::WorkerId>,

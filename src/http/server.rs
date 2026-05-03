@@ -115,8 +115,11 @@ use crate::http_client::{
     create_http_client_with_config, send_request_streaming, send_request_with_body_and_timeout,
     HttpClient, UpstreamTlsConfig,
 };
+#[cfg(feature = "mesh")]
 use crate::mesh::config::MeshConfig;
+#[cfg(feature = "mesh")]
 use crate::mesh::transports::MeshTransportManager;
+#[cfg(feature = "mesh")]
 use crate::mesh::MeshBackendPool;
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use crate::metrics::{RequestLogPayload, WorkerMetrics};
@@ -335,7 +338,9 @@ pub struct HttpServer {
     alt_svc: Option<String>,
     main_config: Arc<MainConfig>,
     drain_state: Option<Arc<WorkerDrainState>>,
+    #[cfg(feature = "mesh")]
     mesh_config: Option<Arc<MeshConfig>>,
+    #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<MeshTransportManager>>,
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
@@ -343,6 +348,7 @@ pub struct HttpServer {
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     connection_limit: Arc<Semaphore>,
     app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
+    #[cfg(feature = "mesh")]
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
 }
@@ -426,11 +432,13 @@ impl HttpServer {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_config(mut self, mesh_config: Option<Arc<MeshConfig>>) -> Self {
         self.mesh_config = mesh_config;
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_transport(mut self, transport: Option<Arc<MeshTransportManager>>) -> Self {
         self.mesh_transport = transport;
         self
@@ -441,16 +449,18 @@ impl HttpServer {
         app_servers: Option<
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
-    ) -> Self {
+) -> Self {
         self.app_servers = app_servers;
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_backend_pool(mut self, pool: Option<Arc<MeshBackendPool>>) -> Self {
         self.mesh_backend_pool = pool;
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind(self.addr).await?;
         tracing::info!("HTTP server listening on {} (HTTP/1.1 + HTTP/2)", self.addr);
@@ -463,13 +473,16 @@ impl HttpServer {
         let alt_svc = self.alt_svc.clone();
         let main_config = self.main_config.clone();
         let drain_state = self.drain_state.clone();
+        #[cfg(feature = "mesh")]
         let mesh_config = self.mesh_config.clone();
+        #[cfg(feature = "mesh")]
         let mesh_transport = self.mesh_transport.clone();
         let metrics = self.metrics.clone();
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();
         let connection_limit = self.connection_limit.clone();
         let app_servers = self.app_servers.clone();
+        #[cfg(feature = "mesh")]
         let mesh_backend_pool = self.mesh_backend_pool.clone();
         let upstream_client_registry = self.upstream_client_registry.clone();
 
@@ -4159,6 +4172,7 @@ impl HttpServer {
         )))
     }
 
+    #[cfg(feature = "mesh")]
     async fn handle_key_exchange_request(
         req: hyper::Request<hyper::body::Incoming>,
         mesh_config: &Arc<MeshConfig>,

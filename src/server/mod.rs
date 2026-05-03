@@ -1126,7 +1126,10 @@ impl UnifiedServer {
             let http_config = cfg.main.http.clone();
             let http3_config = &cfg.main.http3;
             let main_config = cfg.main.clone();
+            #[cfg(feature = "mesh")]
             let mesh_config = cfg.main.tunnel.mesh.clone();
+            #[cfg(not(feature = "mesh"))]
+            let mesh_config = None;
 
             let alt_svc = if http3_config.enabled {
                 Some(format!(
@@ -1160,10 +1163,12 @@ impl UnifiedServer {
             server = server.with_drain_state(ds);
         }
 
+        #[cfg(feature = "mesh")]
         if let Some(mesh_cfg) = mesh_config {
             server = server.with_mesh_config(Some(Arc::new(mesh_cfg)));
         }
 
+        #[cfg(feature = "mesh")]
         if let Some(mt) = state.mesh_transport.clone() {
             server = server.with_mesh_transport(Some(mt));
         }
@@ -1216,6 +1221,7 @@ impl UnifiedServer {
         if let Some(ds) = state.drain_state.clone() {
             server = server.with_drain_state(ds);
         }
+        #[cfg(feature = "mesh")]
         if let Some(mt) = state.mesh_transport.clone() {
             let config_guard = state.config.read().await;
             if let Some(mesh_cfg) = config_guard.main.mesh.clone() {

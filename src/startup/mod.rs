@@ -11,8 +11,10 @@ use crate::block_store::BlockStore;
 use crate::config::ConfigManager;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
-    UpstreamErrorTracker, YaraRulesManager,
+    UpstreamErrorTracker,
 };
+#[cfg(feature = "mesh")]
+use crate::waf::YaraRulesManager;
 
 #[derive(Clone)]
 pub struct MasterState {
@@ -23,9 +25,12 @@ pub struct MasterState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<YaraRulesManager>>,
     pub block_store: Arc<BlockStore>,
+    #[cfg(feature = "mesh")]
     pub mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
+    #[cfg(feature = "mesh")]
     pub org_key_manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
 }
 
@@ -36,10 +41,12 @@ pub struct MasterStateTrackers {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<YaraRulesManager>>,
 }
 
 impl MasterState {
+    #[cfg(feature = "mesh")]
     pub fn new(
         config: Arc<RwLock<ConfigManager>>,
         trackers: MasterStateTrackers,

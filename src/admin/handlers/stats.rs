@@ -351,9 +351,7 @@ fn redact_sensitive_params(path: &str) -> String {
             let mut parts = param.splitn(2, '=');
             if let Some(key) = parts.next() {
                 let key_lower = key.to_lowercase();
-                let is_sensitive = SENSITIVE_QUERY_PARAMS
-                    .iter()
-                    .any(|s| key_lower.contains(s));
+                let is_sensitive = SENSITIVE_QUERY_PARAMS.iter().any(|s| key_lower.contains(s));
                 if is_sensitive {
                     params.push(format!("{}=[REDACTED]", key));
                 } else {
@@ -436,8 +434,12 @@ pub async fn get_request_logs(
         query.method.as_deref(),
         query.status.as_deref(),
         query.search.as_deref(),
-        query.from_timestamp.and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
-        query.to_timestamp.and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
+        query
+            .from_timestamp
+            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
+        query
+            .to_timestamp
+            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
         limit,
         offset,
     );

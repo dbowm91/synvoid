@@ -51,9 +51,7 @@ pub async fn create_session(
 
     response.headers_mut().insert(
         "X-CSRF-Token",
-        HeaderValue::from_str(&csrf_token).unwrap_or_else(|_| {
-            HeaderValue::from_static("")
-        }),
+        HeaderValue::from_str(&csrf_token).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
 
     response
@@ -89,13 +87,12 @@ pub async fn get_csrf_token(
 
     let mut response = Json(serde_json::json!({
         "csrf_token": csrf_token
-    })).into_response();
+    }))
+    .into_response();
 
     response.headers_mut().insert(
         "X-CSRF-Token",
-        HeaderValue::from_str(&csrf_token).unwrap_or_else(|_| {
-            HeaderValue::from_static("")
-        }),
+        HeaderValue::from_str(&csrf_token).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
 
     response
@@ -128,12 +125,13 @@ pub async fn delete_session(
 
     let mut response = Json(StatusResponse::success("Session deleted")).into_response();
 
-    let cookie = format!("{}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=0", SESSION_COOKIE_NAME, "");
+    let cookie = format!(
+        "{}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        SESSION_COOKIE_NAME, ""
+    );
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
-        HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
-            HeaderValue::from_static("")
-        }),
+        HeaderValue::from_str(&cookie).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
 
     response

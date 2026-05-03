@@ -158,14 +158,18 @@ pub async fn create_site(
     })?;
 
     let site_id_for_broadcast = site_id.clone();
+    #[cfg(feature = "mesh")]
     let proxy_cache_preferences = site_config
         .proxy
         .cache
         .as_ref()
         .map(crate::mesh::protocol::ProxyCachePreferences::from);
+    #[cfg(not(feature = "mesh"))]
+    let proxy_cache_preferences: Option<crate::mesh::protocol::ProxyCachePreferences> = None;
     drop(config);
     drop(_guard);
 
+    #[cfg(feature = "mesh")]
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
         let mesh_transport_for_publish = mesh_transport.clone();
@@ -308,15 +312,19 @@ pub async fn update_site(
     state_config.sites.insert(site_id.clone(), config.clone());
 
     let site_id_for_broadcast = site_id.clone();
+    #[cfg(feature = "mesh")]
     let proxy_cache_preferences = config
         .proxy
         .cache
         .as_ref()
         .map(crate::mesh::protocol::ProxyCachePreferences::from);
+    #[cfg(not(feature = "mesh"))]
+    let proxy_cache_preferences: Option<crate::mesh::protocol::ProxyCachePreferences> = None;
     let version = crate::utils::safe_unix_timestamp();
     drop(state_config);
     drop(_guard);
 
+    #[cfg(feature = "mesh")]
     if let Some(ref mesh_transport) = state.mesh.mesh_transport {
         let mesh_transport_clone = mesh_transport.clone();
         let mesh_transport_for_publish = mesh_transport.clone();

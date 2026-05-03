@@ -97,12 +97,17 @@ pub struct AlertEvent {
 #[derive(Debug, thiserror::Error)]
 pub enum AlertConfigError {
     #[error("Unknown metric: {metric}. Supported metrics: {metrics:?}")]
-    UnknownMetric { metric: String, metrics: &'static [&'static str] },
+    UnknownMetric {
+        metric: String,
+        metrics: &'static [&'static str],
+    },
     #[error("Invalid threshold: {threshold}. Threshold must be non-negative and finite")]
     InvalidThreshold { threshold: f64 },
     #[error("Invalid webhook URL scheme: {url}. Only http and https are allowed")]
     InvalidWebhookScheme { url: String },
-    #[error("Link-local/internal webhook URL blocked for SSRF: {url}. Add to allowlist if intentional")]
+    #[error(
+        "Link-local/internal webhook URL blocked for SSRF: {url}. Add to allowlist if intentional"
+    )]
     BlockedWebhookUrl { url: String },
     #[error("Email enabled but SMTP host not configured")]
     EmailMissingSmtpHost,
@@ -124,7 +129,9 @@ impl AlertConfig {
                 });
             }
             if !rule.threshold.is_finite() || rule.threshold < 0.0 {
-                return Err(AlertConfigError::InvalidThreshold { threshold: rule.threshold });
+                return Err(AlertConfigError::InvalidThreshold {
+                    threshold: rule.threshold,
+                });
             }
         }
 
@@ -136,7 +143,12 @@ impl AlertConfig {
             if url_lower.starts_with("http://") {
                 let host = url.strip_prefix("http://").unwrap_or(url);
                 let host_part = host.split('/').next().unwrap_or(host);
-                if host_part == "localhost" || host_part.starts_with("127.") || host_part.starts_with("10.") || host_part.starts_with("192.168.") || host_part.starts_with("172.") {
+                if host_part == "localhost"
+                    || host_part.starts_with("127.")
+                    || host_part.starts_with("10.")
+                    || host_part.starts_with("192.168.")
+                    || host_part.starts_with("172.")
+                {
                     return Err(AlertConfigError::BlockedWebhookUrl { url: url.clone() });
                 }
             }
@@ -168,7 +180,11 @@ impl AlertManager {
         *self.config.write().await = config;
     }
 
-    fn extract_metric_value(metric: &str, metrics: &super::state::AggregatedMetrics, system_resources: &super::state::SystemResources) -> Option<f64> {
+    fn extract_metric_value(
+        metric: &str,
+        metrics: &super::state::AggregatedMetrics,
+        system_resources: &super::state::SystemResources,
+    ) -> Option<f64> {
         match metric {
             "error_rate_percent" => {
                 let total = metrics.total_requests;
@@ -251,11 +267,15 @@ impl AlertManager {
                     threshold: rule.threshold,
                     message: format!(
                         "Alert triggered: {} - {} {} {} (current value: {})",
-                        rule.name, rule.metric, match rule.condition {
+                        rule.name,
+                        rule.metric,
+                        match rule.condition {
                             AlertCondition::GreaterThan => ">",
                             AlertCondition::LessThan => "<",
                             AlertCondition::Equals => "=",
-                        }, rule.threshold, value
+                        },
+                        rule.threshold,
+                        value
                     ),
                 };
 

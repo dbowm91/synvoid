@@ -83,6 +83,7 @@ pub use upgrade::UpgradeConfig;
 pub use upload::{UploadAllowedTypesDefaults, UploadDefaults};
 pub use validation::{parse_size_string, ConfigValidationError};
 
+#[cfg(feature = "mesh")]
 pub use mesh::{
     MeshConfig, MeshLocalUpstream, MeshNodeRole, MeshPeerConfig, MeshRoutingConfig, MeshSeedNode,
     MeshServicePolicy, MeshTlsConfig, MeshUpstreamConfig, MeshUpstreamPeer,

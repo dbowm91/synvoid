@@ -1,33 +1,24 @@
 use metrics::{counter, gauge};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 
-static ADMIN_AUTH_FAILURES: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_AUTH_FAILURES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_AUTH_LOCKOUTS: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_AUTH_LOCKOUTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_CSRF_FAILURES: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_CSRF_FAILURES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_AUDIT_WRITE_FAILURES: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_AUDIT_WRITE_FAILURES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_WS_CLIENTS: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_WS_CLIENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_WS_LAGGED: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_WS_LAGGED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_WS_DROPPED: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_WS_DROPPED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_ALERT_DELIVERY_SUCCESS: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_ALERT_DELIVERY_SUCCESS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
-static ADMIN_ALERT_DELIVERY_FAILURE: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
+static ADMIN_ALERT_DELIVERY_FAILURE: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 pub fn record_auth_failure() {
     ADMIN_AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);

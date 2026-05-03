@@ -12,6 +12,7 @@ pub struct TunnelConfig {
     pub vpn: TunnelVpnConfig,
     #[serde(default)]
     pub quic: TunnelQuicConfig,
+    #[cfg(feature = "mesh")]
     #[serde(default)]
     pub mesh: Option<crate::mesh::config::MeshConfig>,
 }

@@ -42,9 +42,9 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::LazyLock;
-use parking_lot::RwLock;
 
 #[derive(Clone, Debug)]
 pub struct ClientIp(pub String);

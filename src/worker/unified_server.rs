@@ -525,7 +525,7 @@ pub async fn run_unified_server_worker(
         });
     }
 
-// ============================================================================================
+    // ============================================================================================
     // Mesh and Threat Intelligence Initialization
     //
     // The UnifiedServer Worker handles all mesh connections (WAF-WAF, WAF-User VPN, WAF-Server VPN).

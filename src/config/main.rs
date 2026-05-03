@@ -130,6 +130,7 @@ pub struct MainConfig {
     #[cfg(feature = "dns")]
     #[serde(default)]
     pub dns: DnsConfig,
+    #[cfg(feature = "mesh")]
     #[serde(default)]
     pub mesh: Option<super::MeshConfig>,
     #[serde(default)]
@@ -163,6 +164,7 @@ impl MainConfig {
             }
         }
 
+        #[cfg(feature = "mesh")]
         // Load global node keys and node identity if mesh is configured
         if let Some(ref mut mesh_config) = config.tunnel.mesh {
             if let Err(e) = mesh_config.load_global_node_keys() {
@@ -188,6 +190,7 @@ impl MainConfig {
         self.defaults.validate()?;
         self.tunnel.validate()?;
 
+        #[cfg(feature = "dns")]
         if self.dns.enabled && !cfg!(feature = "dns") {
             return Err(ConfigValidationError {
                 field: "dns.enabled".to_string(),
@@ -195,6 +198,7 @@ impl MainConfig {
             });
         }
 
+        #[cfg(feature = "mesh")]
         if self.mesh.is_some() && !cfg!(feature = "mesh") {
             return Err(ConfigValidationError {
                 field: "mesh".to_string(),
@@ -261,6 +265,7 @@ impl MainConfig {
             mimes: MimesConfig::default(),
             #[cfg(feature = "dns")]
             dns: DnsConfig::default(),
+            #[cfg(feature = "mesh")]
             mesh: None,
             overseer: super::OverseerConfig::default(),
             process_manager: super::ProcessManagerConfig::default(),
