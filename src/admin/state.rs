@@ -3,6 +3,7 @@ use super::audit::{AuditState, ConfigVersionManager};
 use super::ws::broadcaster::Broadcaster;
 use base64::Engine;
 use crate::config::ConfigManager;
+#[cfg(feature = "mesh")]
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::SiteMetricsPayload;
 use crate::plugin::PluginManager;
@@ -196,7 +197,9 @@ pub struct WafTrackingState {
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub threat_level_manager: Option<Arc<ThreatLevelManager>>,
     pub rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
+    #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+    #[cfg(feature = "mesh")]
     pub behavioral_intel_manager:
         Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
 }
@@ -218,8 +221,11 @@ pub struct SessionData {
 
 #[derive(Clone)]
 pub struct MeshState {
+    #[cfg(feature = "mesh")]
     pub mesh_transport: Option<Arc<MeshTransport>>,
+    #[cfg(feature = "mesh")]
     pub client_audit_manager: Option<Arc<crate::mesh::client_audit::ClientAuditManager>>,
+    #[cfg(feature = "mesh")]
     pub org_key_manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
 }
 
@@ -418,6 +424,7 @@ impl AdminState {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_yara_rules(
         mut self,
         manager: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
@@ -426,6 +433,7 @@ impl AdminState {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_behavioral_intel_manager(
         mut self,
         manager: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
@@ -444,11 +452,13 @@ impl AdminState {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_transport(mut self, transport: Option<Arc<MeshTransport>>) -> Self {
         self.mesh.mesh_transport = transport;
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_org_key_manager(
         mut self,
         manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
@@ -457,6 +467,7 @@ impl AdminState {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_client_audit_manager(
         mut self,
         manager: Option<Arc<crate::mesh::client_audit::ClientAuditManager>>,

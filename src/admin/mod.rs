@@ -93,10 +93,13 @@ fn create_cors_layer(cors_config: &AdminCorsConfig) -> CorsLayer {
 
     cors
 }
+
+#[cfg(feature = "mesh")]
 use crate::mesh::transport::MeshTransport;
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
+#[cfg(feature = "mesh")]
 pub fn create_admin_router(
     config: Arc<TokioRwLock<ConfigManager>>,
     admin_token: String,

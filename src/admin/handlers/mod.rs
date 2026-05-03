@@ -1,13 +1,16 @@
 pub mod alerting;
 pub mod api_discovery;
 pub mod auth;
+#[cfg(feature = "mesh")]
 pub mod behavioral_intel;
 pub mod common;
 pub mod config;
 pub mod honeypot;
 pub mod icmp;
 pub mod logs;
+#[cfg(feature = "mesh")]
 pub mod mesh_admin;
+#[cfg(feature = "mesh")]
 pub mod mesh_topology;
 pub mod php;
 pub mod plugins;
@@ -22,4 +25,5 @@ pub mod tcp_udp;
 pub mod theme;
 pub mod threat_level;
 pub mod upstreams;
+#[cfg(feature = "mesh")]
 pub mod yara_rules;
