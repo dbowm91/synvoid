@@ -14,6 +14,7 @@ use metrics::{counter, histogram};
 use tokio::io::AsyncReadExt;
 
 use crate::config::site::{SiteStaticConfig, SiteStaticThemeConfig};
+#[cfg(feature = "mesh")]
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };

@@ -530,7 +530,10 @@ fn build_router_from_state(
         .route("/rules/status", get(handlers::rule_feed::get_status))
         .route("/rules/check", post(handlers::rule_feed::check_for_updates))
         .route("/rules/apply", post(handlers::rule_feed::apply_pending))
-        .route("/rules/discard", post(handlers::rule_feed::discard_pending))
+        .route("/rules/discard", post(handlers::rule_feed::discard_pending));
+
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes
         .route("/yara/status", get(handlers::yara_rules::get_status))
         .route(
             "/yara/submissions",
@@ -561,7 +564,9 @@ fn build_router_from_state(
         .route(
             "/yara/submissions/{submission_id}",
             delete(handlers::yara_rules::delete_submission),
-        )
+        );
+
+    let api_routes = api_routes
         .route("/icmp/status", get(handlers::icmp::get_status))
         .route(
             "/icmp/config",
@@ -611,81 +616,106 @@ fn build_router_from_state(
             "/alerts/test-webhook",
             post(handlers::alerting::test_webhook),
         )
+        #[cfg(feature = "mesh")]
         .route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/raft/status",
             get(handlers::mesh_admin::get_raft_status),
         )
+        #[cfg(feature = "mesh")]
         .route("/mesh/dht/stats", get(handlers::mesh_admin::get_dht_stats))
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/attest-capability",
             post(handlers::mesh_admin::attest_capability),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/v1/mesh/raft/status",
             get(handlers::mesh_admin::get_raft_status),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/v1/mesh/dht/stats",
             get(handlers::mesh_admin::get_dht_stats),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/attest-capability",
             post(handlers::mesh_admin::attest_capability),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/derive-signing-key",
             post(handlers::mesh_admin::derive_signing_key),
         )
+        #[cfg(feature = "mesh")]
         .route("/mesh/nodes", get(handlers::mesh_admin::list_mesh_nodes))
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/nodes/{node_id}",
             get(handlers::mesh_admin::get_mesh_node),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/organizations",
             post(handlers::mesh_admin::create_organization),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/organizations/{org_id}",
             get(handlers::mesh_admin::get_organization),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/organizations/{org_id}/public-key",
             get(handlers::mesh_admin::get_org_public_key),
         )
+        #[cfg(feature = "mesh")]
         .route("/mesh/ban/ip", post(handlers::mesh_admin::ban_ip))
+        #[cfg(feature = "mesh")]
         .route("/mesh/ban/mesh-id", post(handlers::mesh_admin::ban_mesh_id))
+        #[cfg(feature = "mesh")]
         .route("/mesh/ban", delete(handlers::mesh_admin::unban))
+        #[cfg(feature = "mesh")]
         .route("/mesh/bans", get(handlers::mesh_admin::list_bans))
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/topology",
             get(handlers::mesh_topology::get_mesh_topology),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/topology/graph",
             get(handlers::mesh_topology::get_topology_graph),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/behavioral/stats",
             get(handlers::behavioral_intel::get_behavioral_stats),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/behavioral/config",
             get(handlers::behavioral_intel::get_behavioral_config),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/audit/report",
             post(handlers::mesh_admin::submit_audit_report),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/report/signature-failure",
             post(handlers::mesh_admin::report_signature_failure),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/mesh/wasm-modules",
             get(handlers::plugins::get_mesh_wasm_modules),
         )
+        #[cfg(feature = "mesh")]
         .route(
             "/plugins/metrics",
             get(handlers::plugins::get_all_plugins_metrics),
@@ -808,8 +838,8 @@ pub async fn start_admin_server(
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
     rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
-    yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
-    mesh_transport: Option<Arc<MeshTransport>>,
+    #[cfg(feature = "mesh")] yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
     process_manager: Option<Arc<crate::process::ProcessManager>>,
     plugin_manager: Option<Arc<crate::plugin::PluginManager>>,
@@ -873,13 +903,16 @@ pub async fn start_admin_server(
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
-        .with_yara_rules(yara_rules)
         .with_process_manager(process_manager.clone())
         .with_plugin_manager(plugin_manager)
-        .with_mesh_transport(mesh_transport.clone())
-        .with_org_key_manager(mesh_transport.map(|m| m.org_key_manager.clone()))
         .with_rate_limiter(rate_limiter)
         .with_yara_rate_limiter(yara_rate_limiter);
+
+    #[cfg(feature = "mesh")]
+    let admin_state_builder = admin_state_builder
+        .with_yara_rules(yara_rules)
+        .with_mesh_transport(mesh_transport.clone())
+        .with_org_key_manager(mesh_transport.map(|m| m.org_key_manager.clone()));
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -888,6 +921,7 @@ pub async fn start_admin_server(
 
     let admin_state = Arc::new(admin_state_builder);
 
+    #[cfg(feature = "mesh")]
     admin_state.setup_site_config_sync().await;
 
     let app = create_admin_router_with_state(admin_state.clone()).await;

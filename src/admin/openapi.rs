@@ -81,19 +81,33 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::theme::update_theme,
         crate::admin::handlers::theme::get_theme_css,
         crate::admin::handlers::theme::get_theme_presets,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::list_mesh_nodes,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::get_mesh_node,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::ban_ip,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::ban_mesh_id,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::unban,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::list_bans,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::get_mesh_status,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::attest_capability,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::derive_signing_key,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::submit_audit_report,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::report_signature_failure,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::create_organization,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::get_organization,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::mesh_admin::get_org_public_key,
         crate::admin::handlers::config::get_main_config,
         crate::admin::handlers::config::update_main_config,
@@ -166,15 +180,25 @@ impl Modify for AddBearerAuth {
         crate::admin::handlers::probes::list_upstream_errors,
         crate::admin::handlers::probes::get_upstream_error_stats,
         crate::admin::handlers::probes::delete_upstream_error,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::get_status,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::list_submissions,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::get_submission,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::approve_submission,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::reject_submission,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::broadcast_rules,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::sync_from_global,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::submit_rules,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::apply_rules_direct,
+        #[cfg(feature = "mesh")]
         crate::admin::handlers::yara_rules::delete_submission,
         crate::admin::handlers::threat_level::get_status,
         crate::admin::handlers::threat_level::get_history,

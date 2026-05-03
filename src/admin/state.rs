@@ -542,6 +542,7 @@ impl AdminState {
         self.metrics.metrics.read().clone()
     }
 
+    #[cfg(feature = "mesh")]
     pub async fn setup_site_config_sync(&self) {
         let mesh_transport = match &self.mesh.mesh_transport {
             Some(t) => t.clone(),
