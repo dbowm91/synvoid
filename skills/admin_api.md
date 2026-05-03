@@ -306,3 +306,78 @@ cargo test --test integration_test
 # Test specific endpoint
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/config/versions
 ```
+
+## Authentication and Session Model
+
+The Admin API uses a **hybrid authentication model**:
+
+### Bearer Token (API Clients)
+- Send `Authorization: Bearer <token>` header
+- Bypasses CSRF validation (API clients don't need it)
+- Rate limited and lockout-protected
+
+### Session + CSRF (Browser Clients)
+1. **Login**: `POST /api/auth/session` with bearer token → receives session cookie
+2. **Get CSRF token**: `GET /api/auth/csrf` → returns CSRF token for session
+3. **Mutating requests**: Include `x-csrf-token` header and session cookie
+
+### Session Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/session` | POST | Exchange bearer token for session cookie |
+| `/api/auth/session` | DELETE | Invalidate session (logout) |
+| `/api/auth/csrf` | GET | Get CSRF token for current session |
+
+### Auth Lockout
+
+After 5 failed auth attempts within 60 seconds, the client is locked out for 5 minutes. Lockout is enforced BEFORE bcrypt verification to prevent DoS attacks.
+
+### Client IP Extraction
+
+The admin server uses `ConnectInfo<SocketAddr>` for direct peer IP extraction. Trusted proxies can be configured via `admin.trusted_proxies` config. `x-forwarded-for` is only trusted when the direct peer is in the trusted proxies list.
+
+## Audit Logging
+
+All mutating operations are audit logged with:
+- Action name (e.g., `config.update_main`, `worker.restart`, `mesh.ban_ip`)
+- Target resource
+- Client IP (from `ClientIp` extension)
+- Success/failure status
+- Timestamp
+
+Audit logs are persisted to `audit.log` file in JSON Lines format (`.0600` permissions on Unix). Recent entries are loaded on startup for in-memory access.
+
+### High-Impact Handler Audit Checklist
+
+Mutating operations in these handlers include audit logging:
+- `config.rs` - config updates, reload, import
+- `system.rs` - worker scale/restart
+- `mesh_admin.rs` - ban/unban, organization creation
+- `yara_rules.rs` - submit, approve, reject, broadcast
+- `plugins.rs` - plugin reload
+- `honeypot.rs` - control, config updates
+- `sites.rs` - site CRUD
+- `alerting.rs` - alert config updates, test webhook
+
+## Metrics Export
+
+Prometheus metrics are exported on `127.0.0.1:9090/metrics` when `config.main.metrics.enabled` is true.
+
+Key admin metrics:
+- `maluwaf_admin_auth_failures_total`
+- `maluwaf_admin_auth_lockouts_total`
+- `maluwaf_admin_rate_limited_total`
+- `maluwaf_admin_csrf_failures_total`
+- `maluwaf_admin_audit_write_failures_total`
+- `maluwaf_admin_ws_clients` (gauge)
+- `maluwaf_admin_alert_delivery_success_total`
+- `maluwaf_admin_alert_delivery_failure_total`
+
+## Health Status
+
+Site/backend health is reported as enum values (`healthy`, `unhealthy`, `unknown`) rather than optimistic boolean defaults. Freshness is indicated via `metrics_timestamp_ms` field.
+
+## Request Log Redaction
+
+Request logs redact sensitive query parameters: `token`, `secret`, `password`, `key`, `authorization`, `session`, `csrf`, etc.
