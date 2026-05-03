@@ -16,6 +16,16 @@ use utoipa::ToSchema;
 
 pub type OptionalAuth = Option<TypedHeader<Authorization<Bearer>>>;
 
+/// Authorization role for admin API endpoints.
+///
+/// # Current Model
+///
+/// MaluWAF uses a **single admin token model**. Only one role exists: `Admin`.
+/// All authenticated users receive the `Admin` role regardless of which credentials
+/// are used (bearer token or session cookie).
+///
+/// The `User` role variant and `require_role()` middleware exist as a foundation
+/// for future RBAC implementation but are not currently used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredRole {
     Admin,

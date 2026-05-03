@@ -2,20 +2,39 @@ pub mod yara_rate_limit;
 
 // Admin authentication middleware.
 //
-// # Hybrid CSRF/Session Model
+// # Single Admin Token Model
 //
-// This module implements a hybrid authentication model:
+// MaluWAF implements a **single admin token authentication model** with a hybrid
+// CSRF/session approach for browser clients:
 //
 // - **Bearer token requests**: Bypass CSRF validation (API clients)
 // - **Session cookie requests**: Require valid CSRF token (browser clients)
 //
-// ## Flow
+// ## Authentication Flow
 //
 // 1. Client exchanges bearer token for session via `POST /api/auth/session`
 // 2. Server returns session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`)
 // 3. Client receives CSRF token via response header and cookie
 // 4. Client includes CSRF token in `x-csrf-token` header for mutating requests
 // 5. CSRF middleware validates token against session
+//
+// ## AuthenticatedUser
+//
+// All valid bearer tokens or sessions result in an `AuthenticatedUser` with:
+// - `username`: Always `"admin"` (single admin user)
+// - `role`: Always `RequiredRole::Admin` (no role-based access control)
+//
+// This means there is currently no distinction between multiple admin users or
+// role-based permissions. The `RequiredRole::User` variant exists for future
+// expansion but all authenticated users are treated as admins.
+//
+// ## Public Routes
+//
+// The following routes bypass authentication:
+// - `GET /health` - Returns health status, no sensitive data
+// - `GET /api/openapi.json` - OpenAPI specification
+// - `GET /api/docs/*` - Swagger UI
+// - `WS /ws/*` - WebSocket endpoints (auth handled per-connection)
 
 use axum::http::StatusCode;
 use axum::{
