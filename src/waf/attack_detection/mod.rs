@@ -62,6 +62,7 @@ pub struct AttackDetector {
     ldap_injection_detector: Arc<LdapInjectionDetector>,
     xpath_injection_detector: Arc<XPathInjectionDetector>,
     open_redirect_detector: Arc<OpenRedirectDetector>,
+    #[cfg(feature = "mesh")]
     behavioral_intel: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
 }
 
@@ -156,10 +157,12 @@ impl AttackDetector {
             ldap_injection_detector,
             xpath_injection_detector,
             open_redirect_detector,
+            #[cfg(feature = "mesh")]
             behavioral_intel: None,
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub fn new_with_behavioral_intel(
         config: AttackDetectionConfig,
         behavioral_intel: Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>,
@@ -186,7 +189,9 @@ impl AttackDetector {
         let mut total_score = 0;
         let anomaly_enabled = self.config.anomaly_scoring.enabled;
 
+        #[cfg(feature = "mesh")]
         if let Some(ref behavioral_intel) = self.behavioral_intel {
+            #[cfg(feature = "mesh")]
             if let Some(features) =
                 self.extract_behavioral_features(_method, path, query_string, headers, body)
             {
@@ -470,6 +475,7 @@ impl AttackDetector {
         (first_result, total_score)
     }
 
+    #[cfg(feature = "mesh")]
     fn extract_behavioral_features(
         &self,
         _method: &http::Method,

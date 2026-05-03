@@ -1,3 +1,5 @@
+#![cfg(feature = "mesh")]
+
 use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

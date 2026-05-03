@@ -60,6 +60,7 @@ pub use traffic_shaper::{
 };
 pub use violation_tracker::{ViolationStats, ViolationTracker};
 
+#[cfg(feature = "mesh")]
 pub use crate::mesh::yara_rules::YaraRulesManager;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -94,7 +95,9 @@ use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
+#[cfg(feature = "mesh")]
 use crate::mesh::protocol::{ThreatSeverity, ThreatType};
+#[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::theme::ThemeConfig;
 use crate::upload::UploadValidator;
@@ -105,22 +108,28 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+#[cfg(feature = "mesh")]
 static THREAT_INTEL: OnceLock<Arc<ThreatIntelligenceManager>> = OnceLock::new();
+#[cfg(feature = "mesh")]
 static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
 static UPLOAD_VALIDATOR: OnceLock<Arc<UploadValidator>> = OnceLock::new();
 
+#[cfg(feature = "mesh")]
 pub fn set_threat_intel(ti: Arc<ThreatIntelligenceManager>) {
     let _ = THREAT_INTEL.set(ti);
 }
 
+#[cfg(feature = "mesh")]
 pub fn get_threat_intel() -> Option<Arc<ThreatIntelligenceManager>> {
     THREAT_INTEL.get().cloned()
 }
 
+#[cfg(feature = "mesh")]
 pub fn set_yara_rules(yr: Arc<YaraRulesManager>) {
     let _ = YARA_RULES.set(yr);
 }
 
+#[cfg(feature = "mesh")]
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
     YARA_RULES.get().cloned()
 }
