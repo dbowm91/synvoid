@@ -1,8 +1,11 @@
 use std::path::PathBuf;
+#[cfg(feature = "mesh")]
 use std::sync::Arc;
 
 use crate::config::main::MainConfig;
+#[cfg(feature = "mesh")]
 use crate::mesh::protocol::MeshMessageSigner;
+#[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::process::{CommandClient, MasterCommand, PidFileManager};
 
@@ -362,6 +365,7 @@ auto_scale = true
     println!("Admin token has been set in [admin] section");
 }
 
+#[cfg(feature = "mesh")]
 pub fn handle_export_threat_feed(
     sign_with: &Option<PathBuf>,
     site_id: Option<&str>,
