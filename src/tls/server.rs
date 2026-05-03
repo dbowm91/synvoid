@@ -1083,6 +1083,7 @@ impl HttpsServer {
                 }
 
                 // Serverless function dispatch
+                #[cfg(feature = "mesh")]
                 if matches!(target.backend_type, crate::router::BackendType::Serverless) {
                     if let Some(ref sm) = serverless_manager {
                         let body_bytes_for_serverless: Bytes = body_bytes.clone();

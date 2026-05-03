@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 use thiserror::Error;
 
 use crate::config::serverless::{FunctionDefinition, ServerlessConfig};
+#[cfg(feature = "mesh")]
 use crate::mesh::config::MeshNodeRole;
 use crate::plugin::{WasmPluginManager, WasmResourceLimits};
 use crate::serverless::async_compilation::{
@@ -20,6 +21,7 @@ use crate::serverless::routing::{parse_routes, MethodMatch, RouteMatch, Serverle
 #[derive(Debug, Clone)]
 pub struct CallerContext {
     pub node_id: String,
+    #[cfg(feature = "mesh")]
     pub role: MeshNodeRole,
     pub org_id: Option<String>,
     pub tier: Option<u32>,
@@ -30,6 +32,7 @@ impl CallerContext {
     pub fn local() -> Self {
         Self {
             node_id: "local".to_string(),
+            #[cfg(feature = "mesh")]
             role: MeshNodeRole::SERVERLESS_ORIGIN,
             org_id: None,
             tier: None,
@@ -37,6 +40,7 @@ impl CallerContext {
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub fn mesh(node_id: String, role: MeshNodeRole) -> Self {
         Self {
             node_id,
@@ -94,12 +98,17 @@ pub struct ServerlessManager {
     config: RwLock<Option<ServerlessConfig>>,
     runtime: Arc<WasmPluginManager>,
     routes: RwLock<Vec<ServerlessRoute>>,
+    #[cfg(feature = "mesh")]
     record_store: RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
+    #[cfg(feature = "mesh")]
     routing_manager:
         RwLock<Option<Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>>>,
+    #[cfg(feature = "mesh")]
     transport: RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>,
     event_subscriptions: RwLock<HashMap<String, Vec<String>>>,
+    #[cfg(feature = "mesh")]
     org_manager: RwLock<Option<Arc<crate::mesh::organization::OrganizationManager>>>,
+    #[cfg(feature = "mesh")]
     revocation_list: RwLock<Option<Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>>>,
     compilation_manager: Arc<AsyncCompilationManager>,
 }
@@ -112,11 +121,16 @@ impl ServerlessManager {
             config: RwLock::new(None),
             runtime: Arc::new(WasmPluginManager::new()),
             routes: RwLock::new(Vec::new()),
+            #[cfg(feature = "mesh")]
             record_store: RwLock::new(None),
+            #[cfg(feature = "mesh")]
             routing_manager: RwLock::new(None),
+            #[cfg(feature = "mesh")]
             transport: RwLock::new(None),
             event_subscriptions: RwLock::new(HashMap::new()),
+            #[cfg(feature = "mesh")]
             org_manager: RwLock::new(None),
+            #[cfg(feature = "mesh")]
             revocation_list: RwLock::new(None),
             compilation_manager: Arc::new(AsyncCompilationManager::new()),
         }
@@ -127,10 +141,12 @@ impl ServerlessManager {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn set_record_store(&self, store: Arc<crate::mesh::dht::RecordStoreManager>) {
         *self.record_store.write() = Some(store);
     }
 
+    #[cfg(feature = "mesh")]
     pub fn set_routing_manager(
         &self,
         manager: Arc<crate::mesh::hierarchical_routing::HierarchicalRoutingManager>,
@@ -138,14 +154,17 @@ impl ServerlessManager {
         *self.routing_manager.write() = Some(manager);
     }
 
+    #[cfg(feature = "mesh")]
     pub fn set_org_manager(&self, manager: Arc<crate::mesh::organization::OrganizationManager>) {
         *self.org_manager.write() = Some(manager);
     }
 
+    #[cfg(feature = "mesh")]
     pub fn set_revocation_list(&self, list: Arc<crate::mesh::peer_auth::GlobalNodeRevocationList>) {
         *self.revocation_list.write() = Some(list);
     }
 
+    #[cfg(feature = "mesh")]
     pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
         *self.transport.write() = Some(transport);
     }
@@ -229,6 +248,7 @@ impl ServerlessManager {
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub fn verify_caller_permission(
         &self,
         function_name: &str,
@@ -364,6 +384,7 @@ impl ServerlessManager {
                     let func_def = func_def_clone.clone();
                     let runtime = runtime.clone();
                     move || {
+                        #[cfg(feature = "mesh")]
                         if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
                             if let Some(data) = wasm_dist.get_module_data(
                                 &func_def.name,
@@ -431,48 +452,51 @@ impl ServerlessManager {
             self.pools.write().insert(func_name.clone(), pool);
             self.compilation_manager.mark_compiling(&func_name);
 
-            let record_store = self.record_store.read().clone();
-            if let Some(rs) = record_store {
-                let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_def.name);
-                let node_id = self
-                    .transport
-                    .read()
-                    .as_ref()
-                    .map(|t| t.config.node_id().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let value = serde_json::json!({
-                    "function_name": func_def.name,
-                    "version": 1,
-                    "node_id": node_id,
-                    "routes": func_def.routes,
-                    "allowed_methods": func_def.allowed_methods,
-                    "memory_mb": func_def.memory_mb,
-                    "timeout_seconds": func_def.timeout_seconds,
-                    "priority": 100,
-                    "announced_at": chrono::Utc::now().timestamp(),
-                });
-                if let Ok(bytes) = serde_json::to_vec(&value) {
-                    rs.store_and_announce(key.as_str().to_string(), bytes, 3600);
-                    tracing::debug!("Registered serverless function {} in DHT", func_def.name);
+            #[cfg(feature = "mesh")]
+            {
+                let record_store = self.record_store.read().clone();
+                if let Some(rs) = record_store {
+                    let key = crate::mesh::dht::keys::DhtKey::serverless_function(&func_def.name);
+                    let node_id = self
+                        .transport
+                        .read()
+                        .as_ref()
+                        .map(|t| t.config.node_id().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let value = serde_json::json!({
+                        "function_name": func_def.name,
+                        "version": 1,
+                        "node_id": node_id,
+                        "routes": func_def.routes,
+                        "allowed_methods": func_def.allowed_methods,
+                        "memory_mb": func_def.memory_mb,
+                        "timeout_seconds": func_def.timeout_seconds,
+                        "priority": 100,
+                        "announced_at": chrono::Utc::now().timestamp(),
+                    });
+                    if let Ok(bytes) = serde_json::to_vec(&value) {
+                        rs.store_and_announce(key.as_str().to_string(), bytes, 3600);
+                        tracing::debug!("Registered serverless function {} in DHT", func_def.name);
+                    }
                 }
-            }
 
-            let routing_manager = self.routing_manager.read().clone();
-            if let Some(routing) = routing_manager {
-                let upstream_id = format!("serverless_function:{}", func_def.name);
-                let routing_clone = routing.clone();
-                let func_name = func_def.name.clone();
-                tokio::spawn(async move {
-                    routing_clone.register_local_upstream(&upstream_id).await;
-                    tracing::debug!(
-                        "Registered serverless function {} in hierarchical routing",
-                        func_name
-                    );
-                });
-            }
+                let routing_manager = self.routing_manager.read().clone();
+                if let Some(routing) = routing_manager {
+                    let upstream_id = format!("serverless_function:{}", func_def.name);
+                    let routing_clone = routing.clone();
+                    let func_name = func_def.name.clone();
+                    tokio::spawn(async move {
+                        routing_clone.register_local_upstream(&upstream_id).await;
+                        tracing::debug!(
+                            "Registered serverless function {} in hierarchical routing",
+                            func_name
+                        );
+                    });
+                }
 
-            if let Some(ref transport) = *self.transport.read() {
-                transport.announce_serverless();
+                if let Some(ref transport) = *self.transport.read() {
+                    transport.announce_serverless();
+                }
             }
         }
 
@@ -508,6 +532,7 @@ impl ServerlessManager {
     }
 
     #[allow(dead_code)]
+    #[cfg(feature = "mesh")]
     async fn register_function_dht(&self, func_def: &FunctionDefinition) {
         let store = self.record_store.read().clone();
         if let Some(rs) = store {
@@ -541,7 +566,9 @@ impl ServerlessManager {
         &self,
         func_def: &FunctionDefinition,
     ) -> Result<Arc<crate::plugin::wasm_runtime::WasmRuntime>, ServerlessError> {
+        #[cfg(feature = "mesh")]
         if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
+            #[cfg(feature = "mesh")]
             if let Some(data) = wasm_dist.get_module_data(
                 &func_def.name,
                 crate::mesh::protocol::WasmModuleType::Serverless,
@@ -604,7 +631,9 @@ impl ServerlessManager {
         let default_limits = self.get_default_limits();
 
         let result = tokio::task::spawn_blocking(move || {
+            #[cfg(feature = "mesh")]
             if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
+                #[cfg(feature = "mesh")]
                 if let Some(data) = wasm_dist.get_module_data(
                     &func_def.name,
                     crate::mesh::protocol::WasmModuleType::Serverless,
@@ -743,6 +772,7 @@ impl ServerlessManager {
         tracing::info!("ServerlessManager shutdown complete");
     }
 
+    #[cfg(feature = "mesh")]
     pub async fn invoke_for_mesh(
         &self,
         function_name: &str,
@@ -988,6 +1018,7 @@ impl Default for ServerlessManager {
     }
 }
 
+#[cfg(feature = "mesh")]
 pub async fn handle_serverless_function(
     manager: &ServerlessManager,
     method: &Method,
@@ -1038,6 +1069,7 @@ pub async fn handle_serverless_function(
         || compilation_in_progress;
 
     // If no local runtime and not compiling, try to find a provider via DHT
+    #[cfg(feature = "mesh")]
     if !has_local_runtime {
         let upstream_id = format!("serverless_function:{}", function_name);
         if let Some(rs) = manager.record_store.read().as_ref() {

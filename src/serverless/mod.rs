@@ -9,10 +9,13 @@ pub use instance_pool::{
     InstancePool, InstancePoolConfig, InstancePoolError, InstancePoolMode, InstanceState,
     PoolHealth, PoolMetrics, ServerlessInstance,
 };
+#[cfg(feature = "mesh")]
 pub use manager::{
     handle_serverless_function, CallerContext, ServerlessError, ServerlessFunction,
     ServerlessManager,
 };
+#[cfg(not(feature = "mesh"))]
+pub use manager::{CallerContext, ServerlessError, ServerlessFunction, ServerlessManager};
 pub use registry::{
     get_global_serverless_registry, FunctionMetadata, FunctionStats, ServerlessRegistry,
 };
