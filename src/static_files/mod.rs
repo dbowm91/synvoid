@@ -14,7 +14,6 @@ use metrics::{counter, histogram};
 use tokio::io::AsyncReadExt;
 
 use crate::config::site::{SiteStaticConfig, SiteStaticThemeConfig};
-#[cfg(feature = "mesh")]
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
@@ -49,11 +48,8 @@ pub struct StaticFileHandler {
     site_id: String,
     minified_cache_dir: Option<PathBuf>,
     enable_zero_copy: bool,
-    #[cfg(feature = "mesh")]
     mesh_image_protection: Option<MeshImageProtectionConfig>,
-    #[cfg(feature = "mesh")]
     mesh_compression: Option<MeshCompressionConfig>,
-    #[cfg(feature = "mesh")]
     mesh_minification: Option<MeshMinificationConfig>,
     theme_config: ThemeConfig,
     directory_template_path: Option<String>,
@@ -111,7 +107,6 @@ impl StaticResponse {
 }
 
 impl StaticFileHandler {
-#[cfg(feature = "mesh")]
     pub fn new(config: SiteStaticConfig, theme_config: ThemeConfig) -> Result<Self, String> {
         Self::new_with_minifier(
             config,
@@ -126,19 +121,6 @@ impl StaticFileHandler {
         )
     }
 
-    #[cfg(not(feature = "mesh"))]
-    pub fn new(config: SiteStaticConfig, theme_config: ThemeConfig) -> Result<Self, String> {
-        Self::new_with_minifier(
-            config,
-            String::new(),
-            None,
-            None,
-            None,
-            theme_config,
-        )
-    }
-
-    #[cfg(feature = "mesh")]
     pub fn new_with_minifier(
         config: SiteStaticConfig,
         site_id: String,
@@ -150,19 +132,6 @@ impl StaticFileHandler {
         mesh_minification: Option<MeshMinificationConfig>,
         theme_config: ThemeConfig,
     ) -> Result<Self, String> {
-
-    #[cfg(not(feature = "mesh"))]
-    pub fn new_with_minifier(
-        config: SiteStaticConfig,
-        site_id: String,
-        _minifier_cache: Option<Arc<MinifierCache>>,
-        _minifier_client: Option<client::MinifierClient>,
-        _async_minifier_client: Option<client::AsyncMinifierClient>,
-        theme_config: ThemeConfig,
-    ) -> Result<Self, String> {
-        let mesh_image_protection = None;
-        let mesh_compression = None;
-        let mesh_minification = None;
         let enabled = config.enabled.unwrap_or(false);
         let gzip_level = config.gzip_level.unwrap_or(5);
         let gzip_min_size = config.gzip_min_size.unwrap_or(256);
@@ -203,11 +172,8 @@ impl StaticFileHandler {
                 site_id,
                 minified_cache_dir,
                 enable_zero_copy: false,
-                #[cfg(feature = "mesh")]
                 mesh_image_protection,
-                #[cfg(feature = "mesh")]
                 mesh_compression,
-                #[cfg(feature = "mesh")]
                 mesh_minification,
                 theme_config,
                 directory_template_path: None,
@@ -278,11 +244,8 @@ impl StaticFileHandler {
             site_id,
             minified_cache_dir,
             enable_zero_copy: cfg!(unix),
-            #[cfg(feature = "mesh")]
             mesh_image_protection,
-            #[cfg(feature = "mesh")]
             mesh_compression,
-            #[cfg(feature = "mesh")]
             mesh_minification,
             theme_config,
             directory_template_path,
@@ -293,7 +256,6 @@ impl StaticFileHandler {
         !self.locations.is_empty()
     }
 
-    #[cfg(feature = "mesh")]
     pub fn with_mesh_config(
         mut self,
         image_protection: Option<MeshImageProtectionConfig>,

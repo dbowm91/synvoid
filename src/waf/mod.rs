@@ -588,6 +588,7 @@ impl WafCore {
         if let Some(ref store) = self.block_store {
             store.block_ip(client_ip, reason, duration, scope);
         }
+        #[cfg(feature = "mesh")]
         if let Some(ref threat_intel) = get_threat_intel() {
             threat_intel.announce_honeypot_indicator(
                 client_ip,
@@ -600,6 +601,7 @@ impl WafCore {
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub fn block_ip_for_honeypot(
         &self,
         client_ip: IpAddr,
@@ -610,6 +612,7 @@ impl WafCore {
         if let Some(ref store) = self.block_store {
             store.block_ip(client_ip, reason, duration, scope);
         }
+        #[cfg(feature = "mesh")]
         if let Some(ref threat_intel) = get_threat_intel() {
             threat_intel.announce_honeypot_indicator(
                 client_ip,
@@ -1223,6 +1226,7 @@ impl WafCore {
         None
     }
 
+    #[cfg(feature = "mesh")]
     fn check_dht_threat_lookup(&self, client_ip: IpAddr) -> Option<WafDecision> {
         if let Some(ref threat_intel) = get_threat_intel() {
             if let Some(indicator) =

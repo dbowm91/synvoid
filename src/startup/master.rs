@@ -509,67 +509,70 @@ async fn run_master(
     let process_manager = Arc::new(process_manager);
 
     // Initialize threat feed client if enabled
-    let threat_feed_config = crate::waf::threat_intel::feed_client::ThreatFeedConfig {
-        enabled: true, // TODO: Make configurable
-        ..Default::default()
-    };
-    let threat_feed_client =
-        crate::waf::threat_intel::feed_client::ThreatFeedClient::new(threat_feed_config, None);
-
+    #[cfg(feature = "mesh")]
     {
-        let pm = process_manager.clone();
-        threat_feed_client.set_on_update_callback(move |_timestamp, indicators| {
-            let pm_clone = pm.clone();
-            let ipc_indicators: Vec<crate::process::ipc::ThreatIndicatorData> = indicators
-                .into_iter()
-                .map(|i| crate::process::ipc::ThreatIndicatorData {
-                    threat_type: match i.threat_type {
-                        crate::mesh::protocol::ThreatType::IpBlock => {
-                            crate::process::ipc::ThreatIndicatorType::IpBlock
-                        }
-                        crate::mesh::protocol::ThreatType::RateLimitViolation => {
-                            crate::process::ipc::ThreatIndicatorType::RateLimitViolation
-                        }
-                        crate::mesh::protocol::ThreatType::SuspiciousActivity => {
-                            crate::process::ipc::ThreatIndicatorType::SuspiciousActivity
-                        }
-                        _ => crate::process::ipc::ThreatIndicatorType::IpBlock,
-                    },
-                    indicator_value: i.indicator_value,
-                    severity: match i.severity {
-                        crate::mesh::protocol::ThreatSeverity::Low => {
-                            crate::process::ipc::ThreatSeverityLevel::Low
-                        }
-                        crate::mesh::protocol::ThreatSeverity::Medium => {
-                            crate::process::ipc::ThreatSeverityLevel::Medium
-                        }
-                        crate::mesh::protocol::ThreatSeverity::High => {
-                            crate::process::ipc::ThreatSeverityLevel::High
-                        }
-                        crate::mesh::protocol::ThreatSeverity::Critical => {
-                            crate::process::ipc::ThreatSeverityLevel::Critical
-                        }
-                        _ => crate::process::ipc::ThreatSeverityLevel::Medium,
-                    },
-                    reason: i.reason,
-                    ttl_seconds: i.ttl_seconds,
-                    source_node_id: i.source_node_id,
-                    timestamp: i.timestamp,
-                    site_scope: i.site_scope,
-                    rate_limit_requests: i.rate_limit_requests,
-                    rate_limit_window_secs: i.rate_limit_window_secs,
-                    suspicious_pattern: i.suspicious_pattern,
-                })
-                .collect();
+        let threat_feed_config = crate::waf::threat_intel::feed_client::ThreatFeedConfig {
+            enabled: true, // TODO: Make configurable
+            ..Default::default()
+        };
+        let threat_feed_client =
+            crate::waf::threat_intel::feed_client::ThreatFeedClient::new(threat_feed_config, None);
 
-            tokio::spawn(async move {
-                pm_clone
-                    .broadcast_threat_feed_update(ipc_indicators, 1)
-                    .await;
+        {
+            let pm = process_manager.clone();
+            threat_feed_client.set_on_update_callback(move |_timestamp, indicators| {
+                let pm_clone = pm.clone();
+                let ipc_indicators: Vec<crate::process::ipc::ThreatIndicatorData> = indicators
+                    .into_iter()
+                    .map(|i| crate::process::ipc::ThreatIndicatorData {
+                        threat_type: match i.threat_type {
+                            crate::mesh::protocol::ThreatType::IpBlock => {
+                                crate::process::ipc::ThreatIndicatorType::IpBlock
+                            }
+                            crate::mesh::protocol::ThreatType::RateLimitViolation => {
+                                crate::process::ipc::ThreatIndicatorType::RateLimitViolation
+                            }
+                            crate::mesh::protocol::ThreatType::SuspiciousActivity => {
+                                crate::process::ipc::ThreatIndicatorType::SuspiciousActivity
+                            }
+                            _ => crate::process::ipc::ThreatIndicatorType::IpBlock,
+                        },
+                        indicator_value: i.indicator_value,
+                        severity: match i.severity {
+                            crate::mesh::protocol::ThreatSeverity::Low => {
+                                crate::process::ipc::ThreatSeverityLevel::Low
+                            }
+                            crate::mesh::protocol::ThreatSeverity::Medium => {
+                                crate::process::ipc::ThreatSeverityLevel::Medium
+                            }
+                            crate::mesh::protocol::ThreatSeverity::High => {
+                                crate::process::ipc::ThreatSeverityLevel::High
+                            }
+                            crate::mesh::protocol::ThreatSeverity::Critical => {
+                                crate::process::ipc::ThreatSeverityLevel::Critical
+                            }
+                            _ => crate::process::ipc::ThreatSeverityLevel::Medium,
+                        },
+                        reason: i.reason,
+                        ttl_seconds: i.ttl_seconds,
+                        source_node_id: i.source_node_id,
+                        timestamp: i.timestamp,
+                        site_scope: i.site_scope,
+                        rate_limit_requests: i.rate_limit_requests,
+                        rate_limit_window_secs: i.rate_limit_window_secs,
+                        suspicious_pattern: i.suspicious_pattern,
+                    })
+                    .collect();
+
+                tokio::spawn(async move {
+                    pm_clone
+                        .broadcast_threat_feed_update(ipc_indicators, 1)
+                        .await;
+                });
             });
-        });
+        }
+        threat_feed_client.start_background_fetching();
     }
-    threat_feed_client.start_background_fetching();
 
     // Set up rule feed broadcast callback if enabled
     if let Some(ref manager) = rule_feed_manager {
