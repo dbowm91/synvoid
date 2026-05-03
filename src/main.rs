@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+#[cfg(feature = "mesh")]
+use maluwaf::master::handle_export_threat_feed;
 use maluwaf::master::{
-    handle_configtest, handle_export_threat_feed, handle_generatenewtoken, handle_generatetoken,
+    handle_configtest, handle_generatenewtoken, handle_generatetoken,
     handle_rehash, handle_status, handle_stop,
 };
 use maluwaf::worker::{
@@ -201,31 +203,40 @@ fn main() {
     }
 
     if args.genesis {
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        use base64::Engine;
-        use maluwaf::mesh::config::GenesisKeyConfig;
+        #[cfg(feature = "mesh")]
+        {
+            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            use base64::Engine;
+            use maluwaf::mesh::config::GenesisKeyConfig;
 
-        let genesis = GenesisKeyConfig::generate();
-        let genesis_b64 = URL_SAFE_NO_PAD.encode(genesis.private_key.unwrap());
+            let genesis = GenesisKeyConfig::generate();
+            let genesis_b64 = URL_SAFE_NO_PAD.encode(genesis.private_key.unwrap());
 
-        println!("Genesis key generated successfully.");
-        println!();
-        println!("IMPORTANT: This genesis key is the root of trust for your mesh network.");
-        println!("          Store it securely - it will be needed to add additional global nodes.");
-        println!();
-        println!("Genesis key (base64): {}", genesis_b64);
-        println!();
-        println!("To use this genesis key, add the following to your config/main.toml:");
-        println!();
-        println!("  [mesh.node_identity]");
-        println!("  genesis_key_base64 = \"{}\"", genesis_b64);
-        println!();
+            println!("Genesis key generated successfully.");
+            println!();
+            println!("IMPORTANT: This genesis key is the root of trust for your mesh network.");
+            println!("          Store it securely - it will be needed to add additional global nodes.");
+            println!();
+            println!("Genesis key (base64): {}", genesis_b64);
+            println!();
+            println!("To use this genesis key, add the following to your config/main.toml:");
+            println!();
+            println!("  [mesh.node_identity]");
+            println!("  genesis_key_base64 = \"{}\"", genesis_b64);
+            println!();
 
-        std::process::exit(0);
+            std::process::exit(0);
+        }
+        #[cfg(not(feature = "mesh"))]
+        {
+            eprintln!("Genesis key generation requires the mesh feature to be enabled.");
+            std::process::exit(1);
+        }
     }
 
     if args.show_node_info {
-        use maluwaf::config::MainConfig;
+        #[cfg(feature = "mesh")]
+        {
 
         let config_path = args
             .config_path
@@ -284,6 +295,12 @@ fn main() {
         }
 
         std::process::exit(0);
+        }
+        #[cfg(not(feature = "mesh"))]
+        {
+            eprintln!("Node information requires the mesh feature to be enabled.");
+            std::process::exit(1);
+        }
     }
 
     if args.generatetoken {
@@ -360,12 +377,19 @@ fn main() {
         std::process::exit(0);
     }
 
+    #[cfg(feature = "mesh")]
     if args.export_threat_feed {
         if let Err(e) = handle_export_threat_feed(&args.sign_with, args.site_id.as_deref()) {
             eprintln!("Export threat feed failed: {}", e);
             std::process::exit(1);
         }
         std::process::exit(0);
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    if args.export_threat_feed {
+        eprintln!("Export threat feed requires the mesh feature to be enabled.");
+        std::process::exit(1);
     }
 
     if args.restart {

@@ -326,6 +326,7 @@ async fn run_master(
         None
     };
 
+    #[cfg(feature = "mesh")]
     let master_state = MasterState::new(
         shared_config.clone(),
         MasterStateTrackers {
@@ -334,11 +335,23 @@ async fn run_master(
             upstream_error_tracker: None,
             threat_level_manager: None,
             rule_feed_manager: rule_feed_manager.clone(),
-            #[cfg(feature = "mesh")]
             yara_rules: None,
         },
         master_block_store,
         None,
+    );
+
+    #[cfg(not(feature = "mesh"))]
+    let master_state = MasterState::new(
+        shared_config.clone(),
+        MasterStateTrackers {
+            probe_tracker: None,
+            suspicious_word_tracker: None,
+            upstream_error_tracker: None,
+            threat_level_manager: None,
+            rule_feed_manager: rule_feed_manager.clone(),
+        },
+        master_block_store,
     );
 
     let paths = PlatformPaths::new();
@@ -673,6 +686,7 @@ async fn run_master(
     tracing::info!("Starting admin server...");
     let admin_state = master_state.clone();
     tokio::spawn(async move {
+        #[cfg(feature = "mesh")]
         crate::admin::start_admin_server(
             admin_state.config,
             admin_state.probe_tracker,
@@ -682,6 +696,21 @@ async fn run_master(
             admin_state.rule_feed_manager,
             admin_state.yara_rules,
             admin_state.mesh_transport,
+            #[cfg(feature = "icmp-filter")]
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        #[cfg(not(feature = "mesh"))]
+        crate::admin::start_admin_server(
+            admin_state.config,
+            admin_state.probe_tracker,
+            admin_state.suspicious_word_tracker,
+            admin_state.upstream_error_tracker,
+            admin_state.threat_level_manager,
+            admin_state.rule_feed_manager,
             #[cfg(feature = "icmp-filter")]
             None,
             None,

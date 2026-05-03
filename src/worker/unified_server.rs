@@ -209,6 +209,7 @@ pub async fn run_unified_server_worker(
             port_labels.insert(main_config.admin.port, "Admin");
         }
 
+        #[cfg(feature = "mesh")]
         if let Some(ref mesh_config) = main_config.mesh {
             if mesh_config.enabled {
                 ports_to_check.push(mesh_config.port);

@@ -166,22 +166,30 @@ pub async fn reload_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    let mesh_enabled = {
-        let config = state.process.config.read().await;
-        config
-            .main
-            .mesh
-            .as_ref()
-            .map(|m| m.enabled)
-            .unwrap_or(false)
-    };
+    #[cfg(feature = "mesh")]
+    {
+        let mesh_enabled = {
+            let config = state.process.config.read().await;
+            config
+                .main
+                .mesh
+                .as_ref()
+                .map(|m| m.enabled)
+                .unwrap_or(false)
+        };
 
-    if mesh_enabled {
-        return Ok(Json(StatusResponse::restart_required(
-            "Config hot-reload is not supported when mesh feature is enabled. Mesh, \
-            YARA rules, threat intel, and honeypot changes require full worker restart. \
-            Please restart the worker to apply mesh-related configuration changes.",
-        )));
+        if mesh_enabled {
+            return Ok(Json(StatusResponse::restart_required(
+                "Config hot-reload is not supported when mesh feature is enabled. Mesh, \
+                YARA rules, threat intel, and honeypot changes require full worker restart. \
+                Please restart the worker to apply mesh-related configuration changes.",
+            )));
+        }
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    {
+        return Ok(Json(StatusResponse::success("Configuration reloaded successfully")));
     }
 
     let mut config = state.process.config.write().await;

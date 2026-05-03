@@ -165,7 +165,7 @@ pub async fn create_site(
         .as_ref()
         .map(crate::mesh::protocol::ProxyCachePreferences::from);
     #[cfg(not(feature = "mesh"))]
-    let proxy_cache_preferences = None;
+    let proxy_cache_preferences: Option<()> = None;
     drop(config);
     drop(_guard);
 
@@ -319,7 +319,7 @@ pub async fn update_site(
         .as_ref()
         .map(crate::mesh::protocol::ProxyCachePreferences::from);
     #[cfg(not(feature = "mesh"))]
-    let proxy_cache_preferences = None;
+    let proxy_cache_preferences: Option<()> = None;
     let version = crate::utils::safe_unix_timestamp();
     drop(state_config);
     drop(_guard);

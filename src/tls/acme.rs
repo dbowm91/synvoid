@@ -79,8 +79,6 @@ impl AcmeManager {
             http_challenges: Arc::new(DashMap::new()),
             #[cfg(feature = "dns")]
             dns_challenges: Some(Arc::new(AcmeDnsChallenge::new())),
-            #[cfg(not(feature = "dns"))]
-            dns_challenges: None,
             managed_certs: parking_lot::RwLock::new(HashMap::new()),
             renew_callback: parking_lot::RwLock::new(None),
         }
@@ -262,20 +260,27 @@ impl AcmeManager {
                     );
                 }
                 ChallengeType::Dns01 => {
-                    // DNS-01 challenge: store in AcmeDnsChallenge for DNS server to serve
-                    let key_auth_str = key_auth.as_str();
-                    if let Some(ref dns_challenges) = self.dns_challenges {
-                        dns_challenges.prepare_challenge(domain, key_auth_str);
-                        tracing::info!(
-                            "DNS-01 challenge for {} — stored for _acme-challenge.{} TXT record",
-                            domain,
-                            domain
-                        );
-                    } else {
-                        tracing::warn!(
-                            "DNS-01 challenge for {} but dns_challenges not available",
-                            domain
-                        );
+                    #[cfg(feature = "dns")]
+                    {
+                        // DNS-01 challenge: store in AcmeDnsChallenge for DNS server to serve
+                        let key_auth_str = key_auth.as_str();
+                        if let Some(ref dns_challenges) = self.dns_challenges {
+                            dns_challenges.prepare_challenge(domain, key_auth_str);
+                            tracing::info!(
+                                "DNS-01 challenge for {} — stored for _acme-challenge.{} TXT record",
+                                domain,
+                                domain
+                            );
+                        } else {
+                            tracing::warn!(
+                                "DNS-01 challenge for {} but dns_challenges not available",
+                                domain
+                            );
+                        }
+                    }
+                    #[cfg(not(feature = "dns"))]
+                    {
+                        tracing::warn!("DNS-01 challenge requested but DNS feature is not enabled");
                     }
                 }
                 _ => {

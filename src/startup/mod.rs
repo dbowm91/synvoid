@@ -70,6 +70,26 @@ impl MasterState {
         }
     }
 
+    #[cfg(not(feature = "mesh"))]
+    pub fn new(
+        config: Arc<RwLock<ConfigManager>>,
+        trackers: MasterStateTrackers,
+        block_store: Arc<BlockStore>,
+    ) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
+
+        Self {
+            config,
+            shutdown_tx,
+            probe_tracker: trackers.probe_tracker,
+            suspicious_word_tracker: trackers.suspicious_word_tracker,
+            upstream_error_tracker: trackers.upstream_error_tracker,
+            threat_level_manager: trackers.threat_level_manager,
+            rule_feed_manager: trackers.rule_feed_manager,
+            block_store,
+        }
+    }
+
     pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()
     }

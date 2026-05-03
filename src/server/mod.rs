@@ -1140,7 +1140,7 @@ impl UnifiedServer {
             #[cfg(feature = "mesh")]
             let mesh_config = cfg.main.tunnel.mesh.clone();
             #[cfg(not(feature = "mesh"))]
-            let mesh_config = None;
+            let mesh_config: Option<()> = None;
 
             let alt_svc = if http3_config.enabled {
                 Some(format!(
