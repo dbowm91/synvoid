@@ -12,11 +12,17 @@ use super::metrics::WorkerMetrics;
 use crate::app_server::{GranianConfig, GranianSupervisor};
 use crate::common::setup_panic_handler;
 use crate::config::ConfigManager;
+#[cfg(feature = "mesh")]
 use crate::mesh::backend::create_record_store;
+#[cfg(feature = "mesh")]
 use crate::mesh::config::ThreatIntelligenceConfig;
+#[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
+#[cfg(feature = "mesh")]
 use crate::mesh::topology::MeshTopology;
+#[cfg(feature = "mesh")]
 use crate::mesh::transports::MeshTransportManager;
+#[cfg(feature = "mesh")]
 use crate::mesh::yara_rules::YaraRulesManager;
 use crate::platform::fs::PlatformPaths;
 use crate::plugin::get_global_plugin_manager;
@@ -519,7 +525,7 @@ pub async fn run_unified_server_worker(
         });
     }
 
-    // ============================================================================================
+// ============================================================================================
     // Mesh and Threat Intelligence Initialization
     //
     // The UnifiedServer Worker handles all mesh connections (WAF-WAF, WAF-User VPN, WAF-Server VPN).
@@ -528,12 +534,13 @@ pub async fn run_unified_server_worker(
     // - Process isolation: mesh-related vulnerabilities don't affect Master
     // - Single mesh identity per WAF deployment (shared across Workers via Master config)
     // ============================================================================================
-
+    #[cfg(feature = "mesh")]
     let mesh_config = {
         let config = shared_config.read().await;
         config.main.tunnel.mesh.clone()
     };
 
+    #[cfg(feature = "mesh")]
     let (_mesh_transport_manager, _threat_intel_manager, _mesh_signer) = if let Some(
         ref mesh_config,
     ) = mesh_config
@@ -1077,16 +1084,21 @@ pub async fn run_unified_server_worker(
     };
 
     // Wire serverless manager to record store and routing manager if mesh is enabled
+    #[cfg(feature = "mesh")]
     if let Some(sm) = unified_server.get_serverless_manager() {
+        #[cfg(feature = "mesh")]
         if let Some(ref tm) = _mesh_transport_manager {
+            #[cfg(feature = "mesh")]
             if let Some(rs) = tm.get_record_store() {
                 sm.set_record_store(rs);
                 tracing::info!("Serverless manager wired to DHT record store");
             }
+            #[cfg(feature = "mesh")]
             if let Some(quic) = tm.get_quic_transport() {
                 sm.set_transport(quic.get_inner());
                 tracing::info!("Serverless manager wired to mesh transport");
             }
+            #[cfg(feature = "mesh")]
             if let Some(quic) = tm.get_quic_transport() {
                 let inner = quic.get_inner();
                 inner.set_serverless_manager(sm.clone());
@@ -1096,9 +1108,12 @@ pub async fn run_unified_server_worker(
     }
 
     // Wire up port honeypot threat publishing to mesh network (or standalone)
+    #[cfg(feature = "mesh")]
     if let Some(ref runner) = port_honeypot_runner {
+        #[cfg(feature = "mesh")]
         if let Some(ref threat_intel) = _threat_intel_manager {
             runner.start_mesh_threat_publishing(threat_intel.clone(), 30);
+            #[cfg(feature = "mesh")]
             if _mesh_transport_manager.is_some() {
                 tracing::info!("Port honeypot threat publishing wired to mesh network");
             } else {
@@ -1439,6 +1454,7 @@ pub async fn run_unified_server_worker(
                         );
                     }
                 }
+                #[cfg(feature = "mesh")]
                 Some(Message::ThreatFeedUpdate {
                     indicators,
                     version: _,
