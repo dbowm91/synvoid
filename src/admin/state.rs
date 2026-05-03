@@ -645,6 +645,8 @@ impl AdminState {
         method: Option<&str>,
         status_prefix: Option<&str>,
         search: Option<&str>,
+        from_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+        to_timestamp: Option<chrono::DateTime<chrono::Utc>>,
         limit: usize,
         offset: usize,
     ) -> (Vec<RequestLogEntry>, usize, bool) {
@@ -674,6 +676,16 @@ impl AdminState {
                     if !log.path.to_lowercase().contains(&search_lower)
                         && !log.client_ip.contains(&search_lower)
                     {
+                        return false;
+                    }
+                }
+                if let Some(from) = from_timestamp {
+                    if log.timestamp < from {
+                        return false;
+                    }
+                }
+                if let Some(to) = to_timestamp {
+                    if log.timestamp > to {
                         return false;
                     }
                 }

@@ -1,7 +1,7 @@
 use super::super::state::{AdminState, AggregatedMetrics};
 use super::common::OptionalAuth;
 use crate::metrics::payloads::HealthStatus;
-use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses, RequestLogPayload};
+use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -326,6 +326,49 @@ pub async fn get_bandwidth(
     Ok(Json(payload))
 }
 
+const SENSITIVE_QUERY_PARAMS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "key",
+    "authorization",
+    "auth",
+    "session",
+    "csrf",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "apikey",
+    "private",
+];
+
+fn redact_sensitive_params(path: &str) -> String {
+    if let Some(q_pos) = path.find('?') {
+        let (base_path, query) = (&path[..q_pos], &path[q_pos + 1..]);
+        let mut params: Vec<String> = Vec::new();
+        for param in query.split('&') {
+            let mut parts = param.splitn(2, '=');
+            if let Some(key) = parts.next() {
+                let key_lower = key.to_lowercase();
+                let is_sensitive = SENSITIVE_QUERY_PARAMS
+                    .iter()
+                    .any(|s| key_lower.contains(s));
+                if is_sensitive {
+                    params.push(format!("{}=[REDACTED]", key));
+                } else {
+                    params.push(param.to_string());
+                }
+            } else {
+                params.push(param.to_string());
+            }
+        }
+        format!("{}?{}", base_path, params.join("&"))
+    } else {
+        path.to_string()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct RequestLogResponse {
     pub id: String,
@@ -354,6 +397,8 @@ pub struct RequestLogsQuery {
     pub method: Option<String>,
     pub status: Option<String>,
     pub search: Option<String>,
+    pub from_timestamp: Option<i64>,
+    pub to_timestamp: Option<i64>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -366,6 +411,8 @@ pub struct RequestLogsQuery {
         ("method" = Option<String>, Query, description = "Filter by HTTP method"),
         ("status" = Option<String>, Query, description = "Filter by status code prefix"),
         ("search" = Option<String>, Query, description = "Search in path and IP"),
+        ("from_timestamp" = Option<i64>, Query, description = "Start of time range (Unix timestamp in seconds)"),
+        ("to_timestamp" = Option<i64>, Query, description = "End of time range (Unix timestamp in seconds)"),
         ("limit" = Option<usize>, Query, description = "Number of logs to return (max 1000)"),
         ("offset" = Option<usize>, Query, description = "Offset for pagination")
     ),
@@ -384,60 +431,25 @@ pub async fn get_request_logs(
     let limit = query.limit.unwrap_or(100).min(1000);
     let offset = query.offset.unwrap_or(0);
 
-    let all_logs = if let Some(ref pm) = state.process.process_manager {
-        pm.get_request_logs()
-    } else {
-        Vec::new()
-    };
+    let (logs, total, has_more) = state.get_request_logs(
+        query.site_id.as_deref(),
+        query.method.as_deref(),
+        query.status.as_deref(),
+        query.search.as_deref(),
+        query.from_timestamp.and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
+        query.to_timestamp.and_then(|ts| chrono::DateTime::from_timestamp(ts, 0)),
+        limit,
+        offset,
+    );
 
-    let filtered: Vec<RequestLogPayload> = all_logs
-        .iter()
-        .filter(|log| {
-            if let Some(ref site_id) = query.site_id {
-                if &log.site_id != site_id {
-                    return false;
-                }
-            }
-            if let Some(ref method) = query.method {
-                if !log.method.eq_ignore_ascii_case(method) {
-                    return false;
-                }
-            }
-            if let Some(ref status_prefix) = query.status {
-                let status_str = log.status.to_string();
-                if !status_str.starts_with(status_prefix) {
-                    return false;
-                }
-            }
-            if let Some(ref search) = query.search {
-                let search_lower = search.to_lowercase();
-                if !log.path.to_lowercase().contains(&search_lower)
-                    && !log.client_ip.contains(&search_lower)
-                {
-                    return false;
-                }
-            }
-            true
-        })
-        .cloned()
-        .collect();
-
-    let total = filtered.len();
-    let has_more = offset + limit < total;
-
-    let entries: Vec<RequestLogResponse> = filtered
+    let entries: Vec<RequestLogResponse> = logs
         .into_iter()
-        .skip(offset)
-        .take(limit)
-        .enumerate()
-        .map(|(i, e)| RequestLogResponse {
-            id: format!("log-{}", i),
-            timestamp: chrono::DateTime::from_timestamp(e.timestamp as i64, 0)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default(),
+        .map(|e| RequestLogResponse {
+            id: e.id,
+            timestamp: e.timestamp.to_rfc3339(),
             client_ip: e.client_ip,
             method: e.method,
-            path: e.path,
+            path: redact_sensitive_params(&e.path),
             status: e.status,
             response_time_ms: e.response_time_ms,
             site_id: e.site_id,
