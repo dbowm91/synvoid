@@ -10,6 +10,7 @@ use crate::config::site::BackendConfig;
 use crate::config::site::PhpLocationConfig;
 use crate::config::{MainConfig, SiteConfig};
 use crate::location_matcher::LocationMatcher;
+#[cfg(feature = "mesh")]
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
@@ -1165,6 +1166,7 @@ impl Router {
             .sort_by(|a, b| b.0.len().cmp(&a.0.len()));
     }
 
+    #[cfg(feature = "mesh")]
     pub fn update_static_handler_mesh_config(
         &self,
         site_id: &str,
