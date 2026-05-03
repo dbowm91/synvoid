@@ -1,6 +1,7 @@
 use bytes::Bytes;
 
 use crate::config::site::{SiteImagePoisonConfig, SiteStaticConfig};
+#[cfg(feature = "mesh")]
 use crate::mesh::config::{
     MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
 };
@@ -34,6 +35,7 @@ pub struct CompressionSettings<'a> {
 }
 
 impl<'a> ResponseTransformConfig<'a> {
+    #[cfg(feature = "mesh")]
     pub fn from_mesh_config(
         minification: Option<&'a MeshMinificationConfig>,
         image_protection: Option<&'a MeshImageProtectionConfig>,
