@@ -63,6 +63,7 @@ impl PluginManager {
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub fn load_wasm_plugin(&self, path: &Path) -> Result<(), WasmPluginError> {
         if let Some(name) = path.file_stem() {
             if let Some(name_str) = name.to_str() {
@@ -81,6 +82,12 @@ impl PluginManager {
                 }
             }
         }
+        self.wasm_manager.load_plugin(path)?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    pub fn load_wasm_plugin(&self, path: &Path) -> Result<(), WasmPluginError> {
         self.wasm_manager.load_plugin(path)?;
         Ok(())
     }

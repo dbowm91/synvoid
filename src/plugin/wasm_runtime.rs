@@ -786,8 +786,8 @@ impl WasmRuntime {
                 |mut caller: wasmtime::Caller<'_, RequestContext>,
                  key_ptr: i32,
                  key_len: i32,
-                 out_ptr: i32,
-                 out_max: i32|
+                 _out_ptr: i32,
+                 _out_max: i32|
                  -> i32 {
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
@@ -828,6 +828,7 @@ impl WasmRuntime {
                         return -2;
                     }
 
+                    #[cfg(feature = "mesh")]
                     let result = if let Some(rs) = crate::mesh::get_global_record_store() {
                         if let Some(record) = rs.get_record(&key) {
                             let value = &record.value;
@@ -853,6 +854,9 @@ impl WasmRuntime {
                     } else {
                         0
                     };
+
+                    #[cfg(not(feature = "mesh"))]
+                    let result = 0;
 
                     if result > 0 {
                         tracing::debug!("WASM mesh_query_dht('{}') -> {} bytes", key, result);
@@ -886,12 +890,24 @@ impl WasmRuntime {
 
                     let ip_str = String::from_utf8_lossy(&mem_data[ip_start..ip_end]).to_string();
 
-                    if let Some(rs) = crate::mesh::get_global_record_store() {
+                    #[cfg(feature = "mesh")]
+                    let threat_result = if let Some(rs) = crate::mesh::get_global_record_store() {
                         let key = format!("threat_indicator:{}:IpBlock", ip_str);
                         if rs.get_record(&key).is_some() {
                             tracing::debug!("WASM mesh_check_threat('{}') -> THREATENED", ip_str);
-                            return 1;
+                            1
+                        } else {
+                            0
                         }
+                    } else {
+                        0
+                    };
+
+                    #[cfg(not(feature = "mesh"))]
+                    let threat_result = 0;
+
+                    if threat_result == 1 {
+                        return 1;
                     }
 
                     tracing::debug!("WASM mesh_check_threat('{}') -> CLEAN", ip_str);
@@ -936,6 +952,7 @@ impl WasmRuntime {
 
                     tracing::debug!("WASM mesh_emit_event('{}', {} bytes)", topic, data.len());
 
+                    #[cfg(feature = "mesh")]
                     if let Some(rs) = crate::mesh::get_global_record_store() {
                         let key = format!("event:{}", topic);
                         if let Ok(bytes) = serde_json::to_vec(&data) {
