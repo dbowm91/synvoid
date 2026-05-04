@@ -596,6 +596,8 @@ Worker guidance says global singletons such as `get_threat_intel`, `get_yara_rul
 
 ## P2: Cache and Revalidation Scalability
 
+### Status: ⚠️ DEFERRED - Requires bounded queue implementation
+
 ### Problem
 
 Proxy cache behavior exists, but stale-while-revalidate and invalidation can create background task bursts and broad invalidation scans.
@@ -623,6 +625,8 @@ Proxy cache behavior exists, but stale-while-revalidate and invalidation can cre
 - Cache invalidation complexity is bounded or explicitly rate-limited.
 
 ## P2: Mesh Proxy Provider Selection and Failure Behavior
+
+### Status: ⚠️ DEFERRED - Requires mesh internals review
 
 ### Problem
 
@@ -661,6 +665,8 @@ Mesh proxy scalability depends on fast provider selection, health tracking, and 
 - Failure modes are fast, observable, and recoverable.
 
 ## P2: Performance Verification Gates
+
+### Status: ⚠️ DEFERRED - Requires benchmark infrastructure
 
 ### Problem
 
