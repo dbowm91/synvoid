@@ -559,18 +559,24 @@ Rationale:
 
 ### 5.3 Worker Runtime Split & Extension Policies
 
-**Status**: DOCUMENTED
+**Status**: IMPLEMENTED
 **Priority**: 5
 
 **ExtensionRuntime Trait**:
 ```rust
-#[async_trait]
-pub trait ExtensionRuntime: Send + Sync {
-    fn name(&self) -> &'static str;
-    async fn start(&self) -> Result<(), Error>;
-    async fn stop(&self) -> Result<(), Error>;
-    fn health_check(&self) -> HealthStatus;
+pub enum ExtensionRuntime: Send + Sync {
+    Mesh(MeshExtensionRuntime),
+    Dns(DnsExtensionRuntime),
+    Serverless(ServerlessExtensionRuntime),
+    Honeypot(HoneypotExtensionRuntime),
 }
+
+pub enum ExtensionFailurePolicy {
+    FailClosed,
+    FailOpen,
+}
+
+pub struct ExtensionRegistry { ... }
 ```
 
 **Failure Policies**:
@@ -582,9 +588,9 @@ pub trait ExtensionRuntime: Send + Sync {
 | Honeypot | **Fail-Open** | Continue without honeypot observability |
 
 **Actionable Items**:
-- [ ] **Trait Implementation**: Define `ExtensionRuntime` in `src/worker/extension.rs`.
-- [ ] **Migration**: Wrap `MeshRuntime`, `DnsRuntime`, and `ServerlessRuntime` in the trait.
-- [ ] **Registry**: Create an `ExtensionRegistry` in `UnifiedServerWorker` to manage life-cycle and health.
+- [x] **Trait Implementation**: Define `ExtensionRuntime` in `src/worker/extension.rs`.
+- [x] **Migration**: Wrap `MeshRuntime`, `DnsRuntime`, and `ServerlessRuntime` in the trait.
+- [x] **Registry**: Create an `ExtensionRegistry` in `UnifiedServerWorker` to manage life-cycle and health.
 - [ ] **Health API**: Expose extension health via Admin API `/health/extensions`.
 
 ---

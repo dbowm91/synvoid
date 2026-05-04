@@ -23,6 +23,7 @@ pub mod common;
 pub mod connect;
 pub mod context;
 pub mod drain_state;
+pub mod extension;
 pub mod metrics;
 pub mod traits;
 pub mod unified_server;
