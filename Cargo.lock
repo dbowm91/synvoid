@@ -4690,6 +4690,7 @@ name = "maluwaf-utils"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "parking_lot",
  "postcard",
  "serde",
 ]
