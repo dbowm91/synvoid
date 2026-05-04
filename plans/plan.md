@@ -543,7 +543,7 @@ Rationale:
 **Remaining Gaps**:
 | Gap | Plan Priority | Status |
 |-----|---------------|--------|
-| Per-site TLS client created per-request (no pooling) | Traffic P4 | OPEN |
+| Per-site TLS client created per-request (no pooling) | Traffic P4 | COMPLETED |
 | No retry in main HTTP/TLS/HTTP3 direct paths | Traffic P5 | COMPLETED (ProxyServer path only) |
 | No cache in HTTP/HTTP3 direct paths | Traffic P6 | COMPLETED (partial) |
 | HTTP/3 missing response header filtering and security headers | Traffic P8/P9 | OPEN |
@@ -551,7 +551,7 @@ Rationale:
 
 **Dependencies**: Wave 17 traffic priorities
 **Actionable Items**:
-- [ ] Implement per-site TLS client pooling
+- [x] Implement per-site TLS client pooling
 - [ ] Add response header filtering to HTTP/3
 - [ ] Align mesh with shared header policy
 
