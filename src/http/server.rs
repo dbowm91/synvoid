@@ -107,10 +107,10 @@ use crate::challenge::HONEYPOT_PREFIX;
 use crate::config::site::{ProxyHeadersConfig, SiteWebSocketConfig};
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
-use crate::http::headers::{
-    compute_websocket_accept_key, generate_stealth_timestamp, inject_security_headers,
-    is_websocket_upgrade,
-};
+use crate::http::headers;
+use crate::http::internal_handlers;
+use crate::http::response_helpers::{self, build_websocket_response};
+use crate::http::validation_helpers::validate_websocket_upgrade;
 use crate::http_client::{
     create_http_client_with_config, send_request_streaming, send_request_with_body_and_timeout,
     HttpClient, UpstreamTlsConfig,
@@ -3430,173 +3430,46 @@ impl HttpServer {
         response
     }
 
-    fn inject_security_headers(
-        builder: http::response::Builder,
-        config: &crate::config::SiteSecurityHeadersConfig,
-    ) -> http::response::Builder {
-        inject_security_headers(builder, config)
-    }
-
     fn apply_security_headers(
         builder: http::response::Builder,
         target: &crate::router::RouteTarget,
         main_config: &Arc<MainConfig>,
     ) -> http::response::Builder {
-        let mut builder = builder;
-        if target.site_config.security_headers.enabled.unwrap_or(false)
-            || main_config.security.global_security_headers
-        {
-            builder = Self::inject_security_headers(builder, &target.site_config.security_headers);
-        }
-        if target
-            .site_config
-            .security_headers
-            .date_header
-            .unwrap_or(true)
-        {
-            let jitter = target
-                .site_config
-                .security_headers
-                .date_jitter_seconds
-                .unwrap_or(5);
-            builder = builder.header("Date", generate_stealth_timestamp(jitter));
-        }
-        if let Some(ref token) = target.site_config.security_headers.server_token {
-            builder = builder.header("Server", token.as_str());
-        }
-        builder
+        crate::http::response_helpers::apply_security_headers(builder, target, main_config)
     }
 
     async fn handle_drain_request(
-        _req: hyper::Request<hyper::body::Incoming>,
+        req: hyper::Request<hyper::body::Incoming>,
         drain_state: &Arc<WorkerDrainState>,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-        let drain_id = crate::utils::safe_unix_duration().as_millis() as u64;
-
-        let accepted = drain_state.start_drain(drain_id).await;
-        drain_state.stop_accepting();
-
-        let status = drain_state.get_status().await;
-        let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
-
-        let status_code = if accepted { 200 } else { 409 };
-        Ok(Self::build_response_with_alt_svc(
-            status_code,
-            body,
-            "application/json",
-            alt_svc,
-            main_config,
-        ))
+        internal_handlers::handle_drain_request(req, drain_state, alt_svc, main_config).await
     }
 
     async fn handle_drain_status_request(
-        _req: hyper::Request<hyper::body::Incoming>,
+        req: hyper::Request<hyper::body::Incoming>,
         drain_state: &Arc<WorkerDrainState>,
         alt_svc: &Option<String>,
         main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-        let status = drain_state.get_status().await;
-        let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
-
-        Ok(Self::build_response_with_alt_svc(
-            200,
-            body,
-            "application/json",
-            alt_svc,
-            main_config,
-        ))
+        internal_handlers::handle_drain_status_request(req, drain_state, alt_svc, main_config).await
     }
 
     async fn handle_health_request(
         drain_state: &Option<Arc<WorkerDrainState>>,
         alt_svc: &Option<String>,
-        _main_config: &Arc<MainConfig>,
+        main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-        let (status_code, body) = if let Some(state) = drain_state {
-            let status = state.get_status().await;
-            if status.is_draining {
-                let body = serde_json::json!({
-                    "status": "draining",
-                    "active_connections": status.active_connections,
-                    "drain_elapsed_secs": status.drain_elapsed_secs,
-                });
-                (503, body.to_string())
-            } else {
-                let body = serde_json::json!({
-                    "status": "healthy",
-                });
-                (200, body.to_string())
-            }
-        } else {
-            let body = serde_json::json!({
-                "status": "healthy",
-            });
-            (200, body.to_string())
-        };
-
-        let mut builder = Response::builder()
-            .status(status_code)
-            .header("Content-Type", "application/json")
-            .header("Content-Length", body.len());
-
-        if status_code == 503 {
-            builder = builder.header("Retry-After", "5");
-        }
-
-        if let Some(alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        Ok(builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
+        internal_handlers::handle_health_request(drain_state, alt_svc, main_config).await
     }
 
     async fn handle_ready_request(
         drain_state: &Option<Arc<WorkerDrainState>>,
         alt_svc: &Option<String>,
-        _main_config: &Arc<MainConfig>,
+        main_config: &Arc<MainConfig>,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-        let (status_code, body) = if let Some(state) = drain_state {
-            let status = state.get_status().await;
-            if status.is_draining || status.stopped_accepting {
-                let body = serde_json::json!({
-                    "ready": false,
-                    "reason": "draining",
-                    "active_connections": status.active_connections,
-                });
-                (503, body.to_string())
-            } else {
-                let body = serde_json::json!({
-                    "ready": true,
-                });
-                (200, body.to_string())
-            }
-        } else {
-            let body = serde_json::json!({
-                "ready": true,
-            });
-            (200, body.to_string())
-        };
-
-        let mut builder = Response::builder()
-            .status(status_code)
-            .header("Content-Type", "application/json")
-            .header("Content-Length", body.len());
-
-        if status_code == 503 {
-            builder = builder.header("Retry-After", "5");
-        }
-
-        if let Some(alt_svc) = alt_svc {
-            builder = builder.header("Alt-Svc", alt_svc.as_str());
-        }
-
-        Ok(builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
+        internal_handlers::handle_ready_request(drain_state, alt_svc, main_config).await
     }
 
     fn build_response_with_alt_svc(
@@ -4057,38 +3930,15 @@ impl HttpServer {
     }
 
     fn is_websocket_upgrade(headers: &http::HeaderMap) -> bool {
-        is_websocket_upgrade(headers)
+        validate_websocket_upgrade(headers)
     }
 
     fn compute_websocket_accept_key(key: &str) -> String {
-        compute_websocket_accept_key(key)
+        crate::http::headers::compute_websocket_accept_key(key)
     }
 
     fn build_websocket_response(headers: &http::HeaderMap) -> Response<BoxBody<Bytes, Infallible>> {
-        let ws_key = headers
-            .get("sec-websocket-key")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        let ws_protocols = headers
-            .get("sec-websocket-protocol")
-            .and_then(|v| v.to_str().ok());
-
-        let accept_key = Self::compute_websocket_accept_key(ws_key);
-
-        let mut builder = Response::builder()
-            .status(101)
-            .header("Upgrade", "websocket")
-            .header("Connection", "Upgrade")
-            .header("Sec-WebSocket-Accept", accept_key);
-
-        if let Some(protocols) = ws_protocols {
-            builder = builder.header("Sec-WebSocket-Protocol", protocols);
-        }
-
-        builder
-            .body(Full::new(Bytes::new()).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
+        build_websocket_response(headers)
     }
 
     /// Handle requests routed to an AxumDynamic plugin backend.
