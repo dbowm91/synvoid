@@ -21,6 +21,7 @@ use crate::common::setup_panic_handler;
 
 pub mod common;
 pub mod connect;
+pub mod context;
 pub mod drain_state;
 pub mod metrics;
 pub mod traits;

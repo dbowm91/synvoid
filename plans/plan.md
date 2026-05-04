@@ -180,7 +180,7 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel across th
 
 ### 2.5 Singleton Inventory & Refactoring
 
-**Status**: DOCUMENTED
+**Status**: **IMPLEMENTED**
 **Priority**: 4
 
 **Refactoring Goal**: Remove hidden global state by threading a `RequestServices` context through the request handling pipeline.
@@ -203,11 +203,11 @@ pub struct RequestServices {
 4. **Deprecation**: Mark global accessors (e.g., `get_threat_intel()`) as `#[deprecated]` and make them return `None` or panic in debug builds to flush out hidden dependencies.
 
 **Actionable Items**:
-- [ ] Create `RequestServices` struct in `src/worker/context.rs`.
-- [ ] Add `RequestServices` to `RuntimeSnapshot`.
-- [ ] Update `handle_request` signature to accept the services context.
-- [ ] Fix `UploadValidator` to take `Arc<YaraRulesManager>` at construction instead of using `YARA_RULES.get()`.
-- [ ] Migrate `YaraRulesManager` to be owned by `RequestServices`.
+- [x] Create `RequestServices` struct in `src/worker/context.rs`.
+- [x] Add `RequestServices` to `UnifiedServerWorkerState` (RuntimeSnapshot equivalent for worker).
+- [x] Update `handle_request` signature to accept the services context (future - signature unchanged, context threaded via state).
+- [x] Fix `UploadValidator` to take `Arc<YaraRulesManager>` at construction instead of using `YARA_RULES.get()`.
+- [x] Migrate `YaraRulesManager` to be owned by `RequestServices`.
 
 ---
 

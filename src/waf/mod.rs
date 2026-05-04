@@ -115,29 +115,35 @@ static YARA_RULES: OnceLock<Arc<YaraRulesManager>> = OnceLock::new();
 static UPLOAD_VALIDATOR: OnceLock<Arc<UploadValidator>> = OnceLock::new();
 
 #[cfg(feature = "mesh")]
+#[deprecated(since = "0.2.0", note = "Use RequestServices context instead of global singleton")]
 pub fn set_threat_intel(ti: Arc<ThreatIntelligenceManager>) {
     let _ = THREAT_INTEL.set(ti);
 }
 
 #[cfg(feature = "mesh")]
+#[deprecated(since = "0.2.0", note = "Use RequestServices context instead of global singleton")]
 pub fn get_threat_intel() -> Option<Arc<ThreatIntelligenceManager>> {
     THREAT_INTEL.get().cloned()
 }
 
 #[cfg(feature = "mesh")]
+#[deprecated(since = "0.2.0", note = "Use RequestServices context instead of global singleton")]
 pub fn set_yara_rules(yr: Arc<YaraRulesManager>) {
     let _ = YARA_RULES.set(yr);
 }
 
 #[cfg(feature = "mesh")]
+#[deprecated(since = "0.2.0", note = "Use RequestServices context instead of global singleton")]
 pub fn get_yara_rules() -> Option<Arc<YaraRulesManager>> {
     YARA_RULES.get().cloned()
 }
 
+#[deprecated(since = "0.2.0", note = "Use RequestServices context instead of global singleton")]
 pub fn set_upload_validator(uv: Arc<UploadValidator>) {
     let _ = UPLOAD_VALIDATOR.set(uv);
 }
 
+#[deprecated(since = "0.2.0", note = "Use RequestServices context instead of global singleton")]
 pub fn get_upload_validator() -> Option<Arc<UploadValidator>> {
     UPLOAD_VALIDATOR.get().cloned()
 }
