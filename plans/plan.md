@@ -31,6 +31,32 @@ The intended steady-state path is:
 
 Do not remove these invariants while implementing the plan.
 
+## Verified: Single UnifiedServerWorker Architecture
+
+### Why Only One UnifiedServerWorker?
+
+**Tokio's single-process multi-threaded model is correct** for our 1M+ RPS target:
+
+1. **Tokio handles all cores efficiently**: A single Tokio runtime with `worker_threads` equal to CPU cores uses cooperative scheduling internally. Multiple worker processes add process isolation overhead without increasing throughput.
+
+2. **Millions of tenants - no process-per-tenant isolation**: Process-per-tenant isolation would require millions of processes (one per tenant), which is impossible. All tenants share the same async event loop with O(1) domain-based routing.
+
+3. **Scaling approach**: For scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop. **Do NOT increase `unified_server_workers`** — this only affects the number of Tokio runtime threads, not request throughput.
+
+### BaseWorkerProcess is Legacy TCP/UDP Proxy (Not HTTP)
+
+The `--worker` flag spawns `BaseWorkerProcess` which:
+- Receives a dedicated port in the `worker_port_base` range (default 9000+)
+- **Has no HTTP handler** in `main.rs` — the `args.worker` branch is empty
+- The code exists but is **never invoked** for normal HTTP traffic
+- May be legacy pre-unified design or for raw TCP/UDP proxy scenarios
+- Admin API `/system/workers/scale` only scales `BaseWorkerProcess` count, not UnifiedServerWorker
+
+**Investigation needed**: Determine if BaseWorkerProcess should be removed or if it serves some legitimate purpose (serverless, webapp architecture, etc.).
+
+### Reference Documents
+- [`docs/adr/ADR-003-unified-worker-process.md`](../docs/adr/ADR-003-unified-worker-process.md) — Full ADR for unified worker architecture
+
 ## P0: Preserve the Worker-Only Request Boundary
 
 ### Status: ✅ COMPLETED (2026-05-04)

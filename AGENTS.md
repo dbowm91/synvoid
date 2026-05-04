@@ -128,6 +128,44 @@ cargo check --no-default-features --features mesh,dns
 | `src/http/client.rs` | `src/http_client/mod.rs` |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 
+## Multi-Process Architecture
+
+MaluWAF uses a multi-process architecture designed for **high scalability (1M+ RPS)** with **millions of tenants**:
+
+### Process Hierarchy
+
+| Process | Flag | Purpose | Default Count |
+|---------|------|---------|---------------|
+| **Overseer** | (default) | Manages master lifecycle, upgrades, health monitoring | 1 |
+| **Master** | `--master` | Spawns/manages workers, handles IPC, runs admin API | 1 |
+| **UnifiedServerWorker** | `--unified-server-worker` | Handles HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
+| **StaticWorker** | `--static-worker` | CSS/JS minification, compression | 1 |
+| **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated, unused for HTTP) | configurable |
+
+### UnifiedServerWorker: Single Process for HTTP/HTTPS/HTTP3
+
+**The unified worker uses a single Tokio async event loop** which is far more efficient than spawning multiple worker processes:
+
+1. **Tokio's optimization**: A single Tokio runtime with `worker_threads` equal to CPU cores handles all cores efficiently via cooperative scheduling. Adding more worker processes adds process isolation overhead but NOT throughput.
+
+2. **Millions of tenants**: We cannot use process-per-tenant isolation (too many processes). All tenants share the same async event loop with O(1) domain-based routing.
+
+3. **Scaling approach**: For scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop. **Do NOT increase `unified_server_workers` for scaling purposes** — this only affects the number of Tokio runtime threads.
+
+### BaseWorkerProcess (Legacy - Not Used for HTTP)
+
+The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. However:
+- **No HTTP handler exists** for this mode in `main.rs`
+- The code path exists but is **never invoked** for normal HTTP traffic
+- It may be legacy pre-unified design or for raw TCP/UDP proxy scenarios
+- The admin API `/system/workers/scale` only scales `BaseWorkerProcess` count
+- **Requires investigation** to determine if it should be removed or completed
+
+### Reference Documents
+
+- [`docs/adr/ADR-003-unified-worker-process.md`](docs/adr/ADR-003-unified-worker-process.md) — ADR for unified worker architecture
+- [`src/worker/unified_server.rs`] — Main unified server implementation
+
 ## Skills Reference
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
