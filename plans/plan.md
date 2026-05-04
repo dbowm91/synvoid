@@ -385,6 +385,8 @@ Attack detection defaults to action `stall`, and the HTTP handler holds the requ
 
 ## P1: Unify HTTP, HTTPS, and HTTP/3 Behavior
 
+### Status: ⚠️ DEFERRED - Requires significant architectural refactoring
+
 ### Problem
 
 HTTP, TLS, and HTTP/3 paths each contain request handling/proxy logic. This risks drift in WAF checks, body handling, header forwarding, response filtering, metrics, and drain behavior.
@@ -437,6 +439,8 @@ HTTP, TLS, and HTTP/3 paths each contain request handling/proxy logic. This risk
 - Parity tests prevent future drift.
 
 ## P1: Scale Routing for Many Sites
+
+### Status: ⚠️ DEFERRED - Requires benchmarks to determine if current approach is sufficient
 
 ### Problem
 
