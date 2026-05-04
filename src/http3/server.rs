@@ -11,13 +11,15 @@ use metrics::{counter, gauge, histogram};
 use crate::config::site::ProxyHeadersConfig;
 use crate::config::{Http3Config, MainConfig};
 use crate::http::headers::generate_stealth_timestamp;
+use crate::http::response_helpers::apply_security_headers;
 use crate::http_client::{create_http_client_with_config, send_request_streaming, HttpClient};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
 use crate::metrics::WorkerMetrics;
 use crate::proxy::{
-    apply_response_size_limit, build_forward_headers, PreparedUpstreamTarget, WafDecision,
+    apply_response_size_limit, build_forward_headers, filter_response_headers_buf,
+    PreparedUpstreamTarget, WafDecision,
 };
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
@@ -35,6 +37,7 @@ pub struct Http3Server {
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
     trusted_proxies: Vec<IpAddr>,
+    main_config: Arc<MainConfig>,
 }
 
 impl Http3Server {
@@ -67,6 +70,7 @@ impl Http3Server {
             metrics: None,
             shutdown_rx,
             trusted_proxies,
+            main_config: Arc::new(main_config),
         }
     }
 
@@ -615,11 +619,28 @@ impl Http3Server {
                         } else {
                             let mut resp_builder = http::Response::builder().status(parts.status);
 
-                            for (name, value) in parts.headers.iter() {
-                                if !crate::proxy::is_hop_by_hop_header_name(name) {
-                                    resp_builder = resp_builder.header(name, value);
+                            let headers_to_filter = crate::proxy::build_headers_to_filter(
+                                &[],
+                                &route_target
+                                    .site_config
+                                    .security_headers
+                                    .more_clear_headers,
+                            );
+
+                            let filtered_headers =
+                                filter_response_headers_buf(&parts.headers, &headers_to_filter);
+
+                            for (name, value) in filtered_headers.iter() {
+                                if let Ok(v) = value.to_str() {
+                                    resp_builder = resp_builder.header(name.as_str(), v);
                                 }
                             }
+
+                            resp_builder = apply_security_headers(
+                                resp_builder,
+                                &route_target,
+                                &self.main_config,
+                            );
 
                             let response = resp_builder
                                 .body(())
