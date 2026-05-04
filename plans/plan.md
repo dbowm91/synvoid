@@ -355,7 +355,7 @@ All 4 waves (W1-W4) implemented and verified.
 | Socket Hijack Test | Low | Test infrastructure incomplete |
 | Health API (`/health/extensions`) | Medium | ExtensionRegistry not integrated |
 | Wire GlobalWasmMemoryBudget | High | Requires significant refactoring |
-| Duplicate plugin name check | Medium | Low risk, rare scenario |
+| Duplicate plugin name check | Medium | **COMPLETED** | Low risk, rare scenario |
 | Plugin lifecycle leak | Low | Intentional design decision |
 | DHT routing optimization | Low | Current implementation adequate for <10k nodes |
 | HTTP/3 response header filtering | Medium | Low traffic path |
