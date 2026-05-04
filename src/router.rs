@@ -582,6 +582,28 @@ impl Router {
                         }
                         RouteResult::Error("Spin backend missing app name".to_string())
                     }
+                    #[cfg(feature = "mesh")]
+                    BackendConfig::Mesh { upstream } => {
+                        let upstream_id = upstream.clone().unwrap_or_default();
+                        RouteResult::Found(RouteTarget {
+                            site_id: Arc::from(site_id.as_str()),
+                            upstream: Arc::from(upstream_id.as_str()),
+                            site_config: site_config.clone(),
+                            static_handler: None,
+                            backend_type: BackendType::Mesh,
+                            backend_socket: None,
+                            backend_plugin: None,
+                            tunnel_peer: None,
+                            tunnel_port: None,
+                            serverless_function: None,
+                            php_location_config: None,
+                            spin_app_name: None,
+                        })
+                    }
+                    #[cfg(not(feature = "mesh"))]
+                    BackendConfig::Mesh { .. } => {
+                        RouteResult::Error("Mesh backend not available".to_string())
+                    }
                 });
             }
 
@@ -858,6 +880,26 @@ impl Router {
                         });
                     }
                 }
+                #[cfg(feature = "mesh")]
+                BackendConfig::Mesh { upstream } => {
+                    let upstream_id = upstream.clone().unwrap_or_default();
+                    return RouteResult::Found(RouteTarget {
+                        site_id: Arc::from(site_id.as_str()),
+                        upstream: Arc::from(upstream_id.as_str()),
+                        site_config: site_config.clone(),
+                        static_handler: None,
+                        backend_type: BackendType::Mesh,
+                        backend_socket: None,
+                        backend_plugin: None,
+                        tunnel_peer: None,
+                        tunnel_port: None,
+                        serverless_function: None,
+                        php_location_config: None,
+                        spin_app_name: None,
+                    });
+                }
+                #[cfg(not(feature = "mesh"))]
+                BackendConfig::Mesh { .. } => {}
             }
         }
 

@@ -145,6 +145,12 @@ pub enum BackendConfig {
         #[serde(default)]
         spin_app_name: Option<String>,
     },
+
+    #[serde(rename = "mesh")]
+    Mesh {
+        #[serde(default)]
+        upstream: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
