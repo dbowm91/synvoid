@@ -287,16 +287,21 @@ impl PidFileManager {
             }
             #[cfg(windows)]
             {
-                use std::process::Command;
-                // On Windows, use tasklist to check if process exists
-                let output = Command::new("tasklist")
-                    .args(["/FI", &format!("PID eq {}", content.pid)])
-                    .output()
-                    .ok();
+                use windows_sys::Win32::Foundation::HANDLE;
+                use windows_sys::Win32::System::Threading::{
+                    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+                    STILL_ACTIVE,
+                };
 
-                if let Some(output) = output {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    return stdout.contains(&content.pid.to_string());
+                let pid = content.pid;
+                let process_handle =
+                    unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+
+                if process_handle != 0 {
+                    let mut exit_code: u32 = 0;
+                    let result = unsafe { GetExitCodeProcess(process_handle, &mut exit_code) };
+                    unsafe { windows_sys::Win32::Foundation::CloseHandle(process_handle) };
+                    return result != 0 && exit_code == STILL_ACTIVE as u32;
                 }
             }
         }
@@ -485,13 +490,27 @@ impl OverseerLockFile {
                                     }
                                     #[cfg(windows)]
                                     {
-                                        use std::process::Command;
-                                        let output = Command::new("tasklist")
-                                            .args(["/FI", &format!("PID eq {}", pid)])
-                                            .output();
-                                        if let Some(output) = output {
-                                            let stdout = String::from_utf8_lossy(&output.stdout);
-                                            stdout.contains(&pid.to_string())
+                                        use windows_sys::Win32::Foundation::HANDLE;
+                                        use windows_sys::Win32::System::Threading::{
+                                            GetExitCodeProcess, OpenProcess,
+                                            PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+                                        };
+
+                                        let check_handle = unsafe {
+                                            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+                                        };
+
+                                        if check_handle != 0 {
+                                            let mut exit_code: u32 = 0;
+                                            let result = unsafe {
+                                                GetExitCodeProcess(check_handle, &mut exit_code)
+                                            };
+                                            unsafe {
+                                                windows_sys::Win32::Foundation::CloseHandle(
+                                                    check_handle,
+                                                )
+                                            };
+                                            result != 0 && exit_code == STILL_ACTIVE as u32
                                         } else {
                                             false
                                         }
