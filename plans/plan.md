@@ -208,12 +208,12 @@ Core profile now compiles with `--no-default-features` (verified 2026-05-04).
 
 ### 5.1 WAF Entrypoint Matrix
 
-**Status**: ACTIVE
+**Status**: **COMPLETED** ✅
 
 | Fix | Priority | Description |
 |-----|----------|-------------|
 | ProxyServer query_string fix | **FIXED** | `handle_request()` now passes `query_string` to WAF |
-| HTTP/3 forwarded sanitization | **MEDIUM** | Uses `client_ip = remote_addr.ip()` directly without XFF check |
+| HTTP/3 forwarded sanitization | **FIXED** | Uses `RequestSanitizer` to extract real IP from X-Forwarded-For for trusted proxies |
 
 ### 5.2 Traffic Entrypoint Matrix
 
