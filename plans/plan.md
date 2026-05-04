@@ -144,7 +144,7 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel across th
 
 ### 2.4 IPC Consolidation
 
-**Status**: Inventory Complete - Implementation Pending
+**Status**: **COMPLETED** (Wave 2.1)
 **Priority**: 2
 
 | Issue | Category | Description |
@@ -171,10 +171,22 @@ After Wave 0 completes: **10+ independent tracks** can run in parallel across th
 - Update `handle_command_connection()` to wrap the stream in `SignedIpcReader` and verify signatures before parsing.
 
 **Actionable Items**:
-- [ ] Implement `WindowsSecurityDescriptorBuilder`
-- [ ] Enforce signed IPC for all control channels
-- [ ] Migrate CLI to signed command protocol
-- [ ] Remove `WARNED_UNSIGNED` fallback pattern
+- [x] Implement `WindowsSecurityDescriptorBuilder`
+- [x] Enforce signed IPC for all control channels
+- [x] Migrate CLI to signed command protocol
+- [x] Remove `WARNED_UNSIGNED` fallback pattern
+
+---
+
+**Implementation Summary (Wave 2.1 - 2026-05-04)**:
+
+1. **Phase 1 - Enforce Signing**: Modified `src/process/ipc_transport.rs` to remove `WARNED_UNSIGNED` OnceLock and replaced unsigned fallback paths with hard errors. When `enforce_signing` is true and no signer is present, the stream now returns errors rather than logging warnings.
+
+2. **Phase 2 - Windows Security**: Created `security` submodule in `src/platform/windows_impl.rs` with `SecurityDescriptor::new_user_only()` that builds a proper Windows security descriptor granting `FILE_ALL_ACCESS` to the current user only. Updated `WindowsIpcListener::create_named_pipe()` to use the security descriptor.
+
+3. **Phase 3 - CLI Signing**: Modified `src/process/command.rs` to use `IpcSigner::try_from_env()` and `SignedIpcMessage::serialize_signed()` when sending commands via Unix socket or Windows named pipe. Commands are now signed when a key is available.
+
+4. **Removed WARNED_UNSIGNED**: The `static WARNED_UNSIGNED: OnceLock<()>` and all associated warning logs have been removed from `ipc_transport.rs`.
 
 ---
 

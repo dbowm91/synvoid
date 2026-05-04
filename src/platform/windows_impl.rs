@@ -195,16 +195,14 @@ pub struct WindowsIpcListener {
 impl WindowsIpcListener {
     fn create_named_pipe(&self) -> io::Result<std::fs::File> {
         use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
-        use windows_sys::Win32::System::Pipes::{
-            CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
-            PIPE_WAIT,
-        };
 
         let wide_name: Vec<u16> = self
             .pipe_path
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
+
+        let security = security::SecurityDescriptor::new_user_only()?;
 
         // SAFETY: CreateNamedPipeW is called with a valid pipe name; we check for zero handle.
         unsafe {
@@ -216,7 +214,7 @@ impl WindowsIpcListener {
                 PIPE_BUFFER_SIZE,
                 PIPE_BUFFER_SIZE,
                 0,
-                std::ptr::null_mut(),
+                security.as_ptr(),
             );
 
             if handle == 0 {
@@ -614,4 +612,199 @@ pub unsafe fn raw_socket_to_tcp_listener(socket: RawSocket) -> OwnedTcpListener 
 /// The caller must not use the socket after this call.
 pub unsafe fn raw_socket_to_tcp_stream(socket: RawSocket) -> OwnedTcpStream {
     OwnedTcpStream::from_raw_socket(socket)
+}
+
+#[cfg(windows)]
+pub mod security {
+    use std::io;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, PSID};
+    use windows_sys::Win32::Security::{
+        AllocateAndInitializeSid, CopySid, EqualSid, FreeSid, GetLengthSid,
+        GetNamedSecurityInfoW, GetSecurityDescriptorDacl, InitializeSecurityDescriptor,
+        LookupAccountNameW, SetSecurityDescriptorDacl, ACL_SIZE_INFORMATION, DACL_SIZE_INFORMATION,
+        PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_REVISION, SID_NAME_USE,
+    };
+    use windows_sys::Win32::System::Memory::{LocalFree, RtlMoveMemory};
+    use windows_sys::Win32::System::Pipes::{CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT};
+    use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
+
+    const FILE_ALL_ACCESS: u32 = 0x1_0000 | 0x1FF;
+    const SECURITY_DESCRIPTOR_SIZE: usize = std::mem::size_of::<SECURITY_DESCRIPTOR>();
+    const ACL_SIZE: usize = std::mem::size_of::<windows_sys::Win32::Security::ACL>();
+
+    pub struct SecurityDescriptor {
+        raw: Vec<u8>,
+    }
+
+    impl SecurityDescriptor {
+        pub fn new_user_only() -> Result<Self, io::Error> {
+            let mut sd_bytes = vec![0u8; SECURITY_DESCRIPTOR_SIZE + ACL_SIZE + 256];
+
+            let sd = sd_bytes.as_mut_ptr() as *mut SECURITY_DESCRIPTOR;
+            unsafe {
+                if InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+
+            let current_user_sid = get_current_user_sid()?;
+            let dacl = build_dacl(current_user_sid)?;
+
+            unsafe {
+                if SetSecurityDescriptorDacl(sd, 1, Some(dacl), 0) == 0 {
+                    FreeSid(current_user_sid);
+                    return Err(io::Error::last_os_error());
+                }
+            }
+
+            unsafe { FreeSid(current_user_sid) };
+
+            Ok(Self { raw: sd_bytes })
+        }
+
+        pub fn as_ptr(&self) -> *mut std::ffi::c_void {
+            self.raw.as_ptr() as *mut std::ffi::c_void
+        }
+    }
+
+    impl Drop for SecurityDescriptor {
+        fn drop(&mut self) {}
+    }
+
+    fn get_current_user_sid() -> Result<PSID, io::Error> {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let mut name_buf = vec![0u16; 128];
+        let mut name_len = name_buf.len() as u32;
+
+        let domain_buf = vec![0u16; 128];
+        let mut domain_len = domain_buf.len() as u32;
+        let mut sid_size = 256u32;
+        let mut sid_buf = vec![0u8; 256];
+        let mut use_ = SID_NAME_USE(0);
+
+        let computer_name: Vec<u16> = OsString::from("localhost")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            if LookupAccountNameW(
+                computer_name.as_ptr(),
+                std::ptr::null(),
+                sid_buf.as_mut_ptr() as PSID,
+                &mut sid_size,
+                domain_buf.as_mut_ptr(),
+                &mut domain_len,
+                &mut use_,
+            ) != 0 {
+                return Ok(sid_buf.as_ptr() as PSID);
+            }
+
+            let err = GetLastError();
+            if err != 122 {
+                return Err(io::Error::from_raw_os_error(err as i32));
+            }
+        }
+
+        let sid_size = (sid_size as usize) * std::mem::size_of::<u8>();
+        let mut sid_buf = vec![0u8; sid_size];
+        let mut actual_sid_size = sid_size as u32;
+
+        unsafe {
+            let result = LookupAccountNameW(
+                std::ptr::null(),
+                std::ptr::null(),
+                sid_buf.as_mut_ptr() as PSID,
+                &mut actual_sid_size,
+                domain_buf.as_mut_ptr(),
+                &mut domain_len,
+                &mut use_,
+            );
+
+            if result == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let sid = vec![0u8; actual_sid_size as usize * std::mem::size_of::<u8>()];
+            let mut sid_ptr = sid.as_ptr() as *mut u8;
+            CopySid(actual_sid_size, &mut sid_ptr, sid_buf.as_ptr() as PSID);
+
+            let mut sid_result = vec![0u8; actual_sid_size as usize * std::mem::size_of::<u8>()];
+            std::ptr::copy_nonoverlapping(sid_buf.as_ptr(), sid_result.as_mut_ptr(), sid_buf.len());
+
+            let actual_sid_size_bytes = actual_sid_size as usize * std::mem::size_of::<u8>();
+            let mut final_sid_vec = vec![0u8; actual_sid_size_bytes];
+            std::ptr::copy_nonoverlapping(sid_buf.as_ptr(), final_sid_vec.as_mut_ptr(), sid_buf.len());
+
+            let mut sid = vec![0u8; actual_sid_size as usize];
+            std::ptr::copy_nonoverlapping(sid_buf.as_ptr(), sid.as_mut_ptr(), sid.len());
+
+            return allocate_sid(&sid);
+        }
+    }
+
+    fn allocate_sid(sid_bytes: &[u8]) -> Result<PSID, io::Error> {
+        if sid_bytes.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Empty SID"));
+        }
+
+        unsafe {
+            let sub_authority_count = *sid_bytes.offset(1) as u8;
+            let sid_size = (8 + (sub_authority_count as usize) * 4) * std::mem::size_of::<u32>();
+            let sid_mem = windows_sys::Win32::System::Memory::LocalAlloc(
+                0x0000_0040,
+                sid_size,
+            );
+
+            if sid_mem.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+
+            let dest = std::slice::from_raw_parts_mut(sid_mem as *mut u8, sid_size);
+            dest.copy_from_slice(sid_bytes);
+
+            Ok(sid_mem as PSID)
+        }
+    }
+
+    fn build_dacl(user_sid: PSID) -> Result<*mut windows_sys::Win32::Security::ACL, io::Error> {
+        let sid_len = unsafe { GetLengthSid(user_sid) } as usize;
+
+        let acl_size = ACL_SIZE + sid_len + std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>() + 8;
+
+        let dacl = unsafe {
+            windows_sys::Win32::System::Memory::LocalAlloc(
+                0x0000_0040,
+                acl_size,
+            )
+        };
+
+        if dacl.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+
+        unsafe {
+            let acl = dacl as *mut windows_sys::Win32::Security::ACL;
+            (*acl).AclRevision = 2;
+            (*acl).Sbz1 = 0;
+            (*acl).AclSize = acl_size as u16;
+            (*acl).AceCount = 1;
+            (*acl).Sbz2 = 0;
+
+            let ace = (acl as *mut u8).add(ACL_SIZE) as *mut windows_sys::Win32::Security::ACCESS_ALLOWED_ACE;
+            (*ace).Header.AceType = windows_sys::Win32::Security::ACCESS_ALLOWED_ACE_TYPE;
+            (*ace).Header.AceFlags = 0;
+            (*ace).Header.AceSize = (std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>() + sid_len) as u16;
+            (*ace).Mask = FILE_ALL_ACCESS;
+
+            let sid_dest = (ace as *mut u8).add(std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>()) as *mut u8;
+            let sid_src = user_sid as *const u8;
+            std::ptr::copy_nonoverlapping(sid_src, sid_dest, sid_len);
+
+            Ok(acl)
+        }
+    }
 }
