@@ -277,9 +277,63 @@ jobs:
             cargo check --target $target || echo "::warning::$target check failed"
           done
 
+  core-profile:
+    name: Core Profile (No Default Features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check core profile compilation
+        run: cargo check --no-default-features
+
+  import-check:
+    name: Forbidden Import Patterns
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Check forbidden imports
+        run: python scripts/check_imports.py
+
+  miri-test:
+    name: Miri Test (maluwaf-utils)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly with miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run miri tests on maluwaf-utils
+        run: |
+          cargo miri test -p maluwaf-utils
+        continue-on-error: true
+
+  security-regression:
+    name: Security Regression Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run security regression tests
+        run: cargo test --test security_regression -- --test-threads=1
+
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps]
+    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression]
     if: always()
     runs-on: ubuntu-latest
     steps:

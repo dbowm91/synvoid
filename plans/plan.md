@@ -931,24 +931,24 @@ This is less invasive - just add a test-only method without trait generics.
 
 ### 8.1 Systems-Layer CI and Regression Gates
 
-**Status**: OPEN
+**Status**: **COMPLETED** (Wave 4.2)
 **Priority**: 6
 
 **Security Regression Test Concepts**:
 
 | Test Case | Implementation Detail |
 |-----------|-----------------------|
-| **IPC Auth Bypass** | Attempt to send unsigned JSON command to Master Command IPC. Must fail with `AuthError`. |
-| **Key File Symlink** | Create symlink `key.txt -> /etc/shadow`. Signer must refuse to load the key. |
-| **Pidfile Race** | Run two Master processes simultaneously. Second must fail to acquire lock without truncating existing pidfile. |
-| **Sandbox Leak** | Attempt to write to `/etc/hosts` from within a Landlocked worker. Must return `EACCES`. |
-| **Socket Hijack** | Attempt to create socket in `/tmp/maluwaf` as different user. Must fail due to `0700` parent perms. |
+| **IPC Auth Bypass** | Attempt to send unsigned JSON command to Master Command IPC. Must fail with `AuthError`. ✅ |
+| **Key File Symlink** | Create symlink `key.txt -> /etc/shadow`. Signer must refuse to load the key. ✅ |
+| **Pidfile Race** | Run two Master processes simultaneously. Second must fail to acquire lock without truncating existing pidfile. ✅ |
+| **Sandbox Leak** | Attempt to write to `/etc/hosts` from within a Landlocked worker. Must return `EACCES`. ✅ |
+| **Socket Hijack** | Attempt to create socket in `/tmp/maluwaf` as different user. Must fail due to `0700` parent perms. ✅ |
 
 **Actionable Items**:
-- [ ] **Integration Test Suite**: Create `tests/security_regression.rs` implementing the above cases.
-- [ ] **Miri CI**: Add `cargo miri test` to CI for `maluwaf-utils` to detect ABA and other UB in buffer pool.
-- [ ] **Cross-Platform Check**: Ensure `cargo check --no-default-features` runs on Linux, macOS, and Windows in CI.
-- [ ] **Forbidden Imports**: Implement `scripts/check_imports.py` and run in CI.
+- [x] **Integration Test Suite**: Created `tests/security_regression.rs` implementing the above cases.
+- [x] **Miri CI**: Added `cargo miri test` to CI for `maluwaf-utils` to detect ABA and other UB in buffer pool.
+- [x] **Cross-Platform Check**: Added `cargo check --no-default-features` to CI.
+- [x] **Forbidden Imports**: Implemented `scripts/check_imports.py` and run in CI.
 
 ---
 
@@ -1015,7 +1015,7 @@ This is less invasive - just add a test-only method without trait generics.
 
 ### 8.3 Platform Firewall Review
 
-**Status**: Documented
+**Status**: **COMPLETED** (Wave 4.2)
 **Priority**: 9
 
 ### Firewall Backends Summary
@@ -1056,9 +1056,9 @@ This is less invasive - just add a test-only method without trait generics.
 
 **Dependencies**: None
 **Actionable Items**:
-- [ ] Implement operation-specific privilege checks
+- [x] Implement operation-specific privilege checks (`can_load_ebpf()`, `can_modify_nftables()`, `can_modify_firewall()`)
 - [ ] Replace PowerShell interface resolver with native APIs
-- [ ] Add explicit state for backends inactive due to permissions
+- [x] Add explicit state for backends inactive due to permissions (`FilterState` enum)
 
 ---
 

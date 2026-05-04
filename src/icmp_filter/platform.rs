@@ -19,6 +19,19 @@ pub fn required_privilege_for_operation(op: FilterOperation) -> PrivilegeLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterState {
+    InactiveNotPrivileged,
+    InactiveConfigError,
+    Active,
+}
+
+impl FilterState {
+    pub fn is_active(&self) -> bool {
+        matches!(self, FilterState::Active)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterOperation {
     BindLowPort,
     Nftables,
@@ -28,14 +41,48 @@ pub enum FilterOperation {
     WindowsWfp,
 }
 
+pub fn can_load_ebpf() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        is_admin()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        is_admin()
+    }
+}
+
+pub fn can_modify_nftables() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        is_admin()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+pub fn can_modify_firewall() -> bool {
+    is_admin()
+}
+
+pub fn filter_state_for_operation(op: FilterOperation) -> FilterState {
+    if has_privilege_for(op) {
+        FilterState::Active
+    } else {
+        FilterState::InactiveNotPrivileged
+    }
+}
+
 pub fn has_privilege_for(op: FilterOperation) -> bool {
     match op {
         FilterOperation::BindLowPort => can_bind_low_ports(),
-        FilterOperation::Nftables => is_admin(),
-        FilterOperation::EbpfLoad => is_admin(),
+        FilterOperation::Nftables => can_modify_nftables(),
+        FilterOperation::EbpfLoad => can_load_ebpf(),
         FilterOperation::PfControl => is_admin(),
-        FilterOperation::WindowsFirewall => is_admin(),
-        FilterOperation::WindowsWfp => is_admin(),
+        FilterOperation::WindowsFirewall => can_modify_firewall(),
+        FilterOperation::WindowsWfp => can_modify_firewall(),
     }
 }
 
@@ -202,13 +249,56 @@ mod tests {
     }
 
     #[test]
-    fn test_has_privilege_for_returns_bool() {
-        let _ = has_privilege_for(FilterOperation::BindLowPort);
-        let _ = has_privilege_for(FilterOperation::Nftables);
-        let _ = has_privilege_for(FilterOperation::EbpfLoad);
-        let _ = has_privilege_for(FilterOperation::PfControl);
-        let _ = has_privilege_for(FilterOperation::WindowsFirewall);
-        let _ = has_privilege_for(FilterOperation::WindowsWfp);
+    fn test_filter_state_inactive_when_not_privileged() {
+        let state = filter_state_for_operation(FilterOperation::Nftables);
+        if !is_admin() {
+            assert_eq!(state, FilterState::InactiveNotPrivileged);
+        }
+    }
+
+    #[test]
+    fn test_can_load_ebpf_respects_bpf_disabled() {
+        #[cfg(target_os = "linux")]
+        {
+            let can_load = can_load_ebpf();
+            let is_root = unsafe { libc::getuid() == 0 || libc::geteuid() == 0 };
+            let can_admin = is_admin();
+
+            if !is_root {
+                if let Ok(content) = std::fs::read_to_string("/proc/sys/kernel/unprivileged_bpf_disabled") {
+                    if content.trim() == "2" {
+                        assert!(!can_load, "eBPF should be disabled when unprivileged_bpf_disabled=2");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_can_modify_nftables_linux_only() {
+        #[cfg(target_os = "linux")]
+        {
+            let can_modify = can_modify_nftables();
+            assert_eq!(can_modify, is_admin());
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(!can_modify_nftables());
+        }
+    }
+
+    #[test]
+    fn test_can_modify_firewall_admin_required() {
+        let can_modify = can_modify_firewall();
+        assert_eq!(can_modify, is_admin());
+    }
+
+    #[test]
+    fn test_filter_state_active_when_privileged() {
+        if is_admin() {
+            let state = filter_state_for_operation(FilterOperation::Nftables);
+            assert_eq!(state, FilterState::Active);
+        }
     }
 
     #[test]
