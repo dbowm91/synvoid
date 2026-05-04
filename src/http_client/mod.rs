@@ -23,8 +23,15 @@ use hyperlocal::{UnixConnector, Uri as HyperlocalUri};
 use moka::sync::Cache;
 use serde::{de::DeserializeOwned, Serialize};
 
+mod erased_pool;
+
+pub use erased_pool::{
+    ErasedBody, ErasedBodyImpl, PoolKey,
+};
+
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
+pub use erased_pool::BoxErasedBody;
 
 #[derive(Hash, PartialEq, Eq)]
 struct UpstreamClientKey {
@@ -713,20 +720,19 @@ pub async fn send_request_with_body_headers_and_timeout(
 
 /// Send a request and return the raw hyper Response with streaming body intact.
 /// The caller is responsible for consuming the body stream.
-pub async fn send_request_streaming<B>(
+///
+/// Body must be `Full<Bytes>`. For streaming with WAF scanning, wrap the body
+/// in `StreamingWafBody` which implements `http_body::Body`.
+pub async fn send_request_streaming(
     client: &HttpClient,
     method: Method,
     url: &str,
-    body: B,
+    body: Full<Bytes>,
     headers: http::HeaderMap,
     timeout: Option<Duration>,
 ) -> Result<Response<Incoming>>
-where
-    B: Into<Option<Bytes>>,
 {
     let uri: Uri = url.parse()?;
-    let body_bytes = body.into();
-    let body = Full::new(body_bytes.unwrap_or_default());
     let mut req_builder = Request::builder()
         .method(method)
         .uri(uri)
