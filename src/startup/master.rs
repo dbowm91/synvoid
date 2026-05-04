@@ -683,7 +683,10 @@ async fn run_master(
         }
     });
 
-    tracing::info!("Starting admin server...");
+    tracing::info!(
+        "Starting admin server on port {} (owned by: MASTER process)",
+        main_config.admin.port
+    );
     let admin_state = master_state.clone();
     tokio::spawn(async move {
         #[cfg(feature = "mesh")]
@@ -721,7 +724,7 @@ async fn run_master(
 
     let unified_worker_count = process_manager.get_config().unified_server_workers.max(1);
     tracing::info!(
-        "Spawning {} unified server worker(s)...",
+        "Spawning {} unified server worker(s) (each worker owns: HTTP/HTTPS/HTTP3 listeners)...",
         unified_worker_count
     );
     if let Err(e) = process_manager.spawn_unified_server_workers(unified_worker_count) {
