@@ -500,9 +500,9 @@ pub mod capsicum {
         }
 
         fn is_capsicum_available() -> bool {
-            // Do NOT call cap_enter() here — that permanently enters capability mode.
-            // Capsicum is available on all FreeBSD 10+ systems.
-            true
+            let mut mode: libc::c_int = 0;
+            let result = unsafe { libc::cap_getmode(&mut mode) };
+            result == 0 && mode != 0
         }
 
         fn enter_sandbox(&self) -> Result<(), SandboxError> {
