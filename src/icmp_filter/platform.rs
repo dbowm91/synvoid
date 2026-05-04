@@ -265,9 +265,14 @@ mod tests {
             let can_admin = is_admin();
 
             if !is_root {
-                if let Ok(content) = std::fs::read_to_string("/proc/sys/kernel/unprivileged_bpf_disabled") {
+                if let Ok(content) =
+                    std::fs::read_to_string("/proc/sys/kernel/unprivileged_bpf_disabled")
+                {
                     if content.trim() == "2" {
-                        assert!(!can_load, "eBPF should be disabled when unprivileged_bpf_disabled=2");
+                        assert!(
+                            !can_load,
+                            "eBPF should be disabled when unprivileged_bpf_disabled=2"
+                        );
                     }
                 }
             }

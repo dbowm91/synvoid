@@ -618,16 +618,18 @@ pub unsafe fn raw_socket_to_tcp_stream(socket: RawSocket) -> OwnedTcpStream {
 pub mod security {
     use std::io;
 
+    use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, PSID};
     use windows_sys::Win32::Security::{
-        AllocateAndInitializeSid, CopySid, EqualSid, FreeSid, GetLengthSid,
-        GetNamedSecurityInfoW, GetSecurityDescriptorDacl, InitializeSecurityDescriptor,
-        LookupAccountNameW, SetSecurityDescriptorDacl, ACL_SIZE_INFORMATION, DACL_SIZE_INFORMATION,
+        AllocateAndInitializeSid, CopySid, EqualSid, FreeSid, GetLengthSid, GetNamedSecurityInfoW,
+        GetSecurityDescriptorDacl, InitializeSecurityDescriptor, LookupAccountNameW,
+        SetSecurityDescriptorDacl, ACL_SIZE_INFORMATION, DACL_SIZE_INFORMATION,
         PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_REVISION, SID_NAME_USE,
     };
     use windows_sys::Win32::System::Memory::{LocalFree, RtlMoveMemory};
-    use windows_sys::Win32::System::Pipes::{CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT};
-    use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
+    use windows_sys::Win32::System::Pipes::{
+        CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
+    };
 
     const FILE_ALL_ACCESS: u32 = 0x1_0000 | 0x1FF;
     const SECURITY_DESCRIPTOR_SIZE: usize = std::mem::size_of::<SECURITY_DESCRIPTOR>();
@@ -699,7 +701,8 @@ pub mod security {
                 domain_buf.as_mut_ptr(),
                 &mut domain_len,
                 &mut use_,
-            ) != 0 {
+            ) != 0
+            {
                 return Ok(sid_buf.as_ptr() as PSID);
             }
 
@@ -737,7 +740,11 @@ pub mod security {
 
             let actual_sid_size_bytes = actual_sid_size as usize * std::mem::size_of::<u8>();
             let mut final_sid_vec = vec![0u8; actual_sid_size_bytes];
-            std::ptr::copy_nonoverlapping(sid_buf.as_ptr(), final_sid_vec.as_mut_ptr(), sid_buf.len());
+            std::ptr::copy_nonoverlapping(
+                sid_buf.as_ptr(),
+                final_sid_vec.as_mut_ptr(),
+                sid_buf.len(),
+            );
 
             let mut sid = vec![0u8; actual_sid_size as usize];
             std::ptr::copy_nonoverlapping(sid_buf.as_ptr(), sid.as_mut_ptr(), sid.len());
@@ -754,10 +761,7 @@ pub mod security {
         unsafe {
             let sub_authority_count = *sid_bytes.offset(1) as u8;
             let sid_size = (8 + (sub_authority_count as usize) * 4) * std::mem::size_of::<u32>();
-            let sid_mem = windows_sys::Win32::System::Memory::LocalAlloc(
-                0x0000_0040,
-                sid_size,
-            );
+            let sid_mem = windows_sys::Win32::System::Memory::LocalAlloc(0x0000_0040, sid_size);
 
             if sid_mem.is_null() {
                 return Err(io::Error::last_os_error());
@@ -773,14 +777,12 @@ pub mod security {
     fn build_dacl(user_sid: PSID) -> Result<*mut windows_sys::Win32::Security::ACL, io::Error> {
         let sid_len = unsafe { GetLengthSid(user_sid) } as usize;
 
-        let acl_size = ACL_SIZE + sid_len + std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>() + 8;
+        let acl_size = ACL_SIZE
+            + sid_len
+            + std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>()
+            + 8;
 
-        let dacl = unsafe {
-            windows_sys::Win32::System::Memory::LocalAlloc(
-                0x0000_0040,
-                acl_size,
-            )
-        };
+        let dacl = unsafe { windows_sys::Win32::System::Memory::LocalAlloc(0x0000_0040, acl_size) };
 
         if dacl.is_null() {
             return Err(io::Error::last_os_error());
@@ -794,13 +796,18 @@ pub mod security {
             (*acl).AceCount = 1;
             (*acl).Sbz2 = 0;
 
-            let ace = (acl as *mut u8).add(ACL_SIZE) as *mut windows_sys::Win32::Security::ACCESS_ALLOWED_ACE;
+            let ace = (acl as *mut u8).add(ACL_SIZE)
+                as *mut windows_sys::Win32::Security::ACCESS_ALLOWED_ACE;
             (*ace).Header.AceType = windows_sys::Win32::Security::ACCESS_ALLOWED_ACE_TYPE;
             (*ace).Header.AceFlags = 0;
-            (*ace).Header.AceSize = (std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>() + sid_len) as u16;
+            (*ace).Header.AceSize = (std::mem::size_of::<
+                windows_sys::Win32::Security::ACCESS_ALLOWED_ACE,
+            >() + sid_len) as u16;
             (*ace).Mask = FILE_ALL_ACCESS;
 
-            let sid_dest = (ace as *mut u8).add(std::mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>()) as *mut u8;
+            let sid_dest = (ace as *mut u8).add(std::mem::size_of::<
+                windows_sys::Win32::Security::ACCESS_ALLOWED_ACE,
+            >()) as *mut u8;
             let sid_src = user_sid as *const u8;
             std::ptr::copy_nonoverlapping(sid_src, sid_dest, sid_len);
 

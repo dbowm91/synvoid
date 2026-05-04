@@ -454,6 +454,7 @@ pub async fn initialize_mesh_transports(
         threat_intel,
         mesh_signer,
         stake_manager,
+        #[cfg(feature = "dns")]
         dns_resolver,
         #[cfg(feature = "dns")]
         dns_registry,

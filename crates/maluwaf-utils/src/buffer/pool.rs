@@ -393,14 +393,38 @@ impl BufferPool {
             medium_available,
             large_available,
             jumbo_available,
-            small_acquired: self.metrics.small_acquired.load(std::sync::atomic::Ordering::Relaxed),
-            medium_acquired: self.metrics.medium_acquired.load(std::sync::atomic::Ordering::Relaxed),
-            large_acquired: self.metrics.large_acquired.load(std::sync::atomic::Ordering::Relaxed),
-            jumbo_acquired: self.metrics.jumbo_acquired.load(std::sync::atomic::Ordering::Relaxed),
-            small_reused: self.metrics.small_reused.load(std::sync::atomic::Ordering::Relaxed),
-            medium_reused: self.metrics.medium_reused.load(std::sync::atomic::Ordering::Relaxed),
-            large_reused: self.metrics.large_reused.load(std::sync::atomic::Ordering::Relaxed),
-            jumbo_reused: self.metrics.jumbo_reused.load(std::sync::atomic::Ordering::Relaxed),
+            small_acquired: self
+                .metrics
+                .small_acquired
+                .load(std::sync::atomic::Ordering::Relaxed),
+            medium_acquired: self
+                .metrics
+                .medium_acquired
+                .load(std::sync::atomic::Ordering::Relaxed),
+            large_acquired: self
+                .metrics
+                .large_acquired
+                .load(std::sync::atomic::Ordering::Relaxed),
+            jumbo_acquired: self
+                .metrics
+                .jumbo_acquired
+                .load(std::sync::atomic::Ordering::Relaxed),
+            small_reused: self
+                .metrics
+                .small_reused
+                .load(std::sync::atomic::Ordering::Relaxed),
+            medium_reused: self
+                .metrics
+                .medium_reused
+                .load(std::sync::atomic::Ordering::Relaxed),
+            large_reused: self
+                .metrics
+                .large_reused
+                .load(std::sync::atomic::Ordering::Relaxed),
+            jumbo_reused: self
+                .metrics
+                .jumbo_reused
+                .load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -1029,7 +1053,7 @@ mod tests {
                         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
                         let size = ((rng_state >> 33) as usize % (LARGE_BUF_SIZE * 2)).max(1);
                         let buf = BufferPool::acquire(size);
-               assert_eq!(buf.len(), size);
+                        assert_eq!(buf.len(), size);
                         drop(buf);
                     }
                 })

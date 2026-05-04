@@ -119,6 +119,7 @@ impl DotServer {
             let ctx = crate::dns::server::QueryContext {
                 zones: &zones,
                 zone_trie: &zone_trie,
+                #[cfg(feature = "mesh")]
                 mesh_registry: None,
                 geoip_lookup: None,
                 min_geo_ttl: 60,

@@ -17,8 +17,6 @@ use super::ipc_framing::{
 };
 use super::ipc_signed::IpcSigner;
 
-
-
 pub struct IpcStream {
     #[cfg(unix)]
     inner: UnixStream,

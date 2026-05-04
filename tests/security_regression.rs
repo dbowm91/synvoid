@@ -29,7 +29,8 @@ mod tests {
             buf
         };
 
-        let result: Result<Message, _> = SignedIpcMessage::deserialize_signed(&unsigned_frame, &signer);
+        let result: Result<Message, _> =
+            SignedIpcMessage::deserialize_signed(&unsigned_frame, &signer);
         assert!(
             result.is_err(),
             "Unsigned IPC command must be rejected - got: {:?}",
@@ -114,7 +115,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut manager1 = PidFileManager::with_custom_dir(temp_dir.path().to_path_buf());
 
-        manager1.write_pid(1234, "v1.0.0").unwrap();
+        manager1.try_acquire(1234, "v1.0.0").unwrap();
 
         let content_before = fs::read_to_string(temp_dir.path().join("maluwaf.pid")).unwrap();
         assert!(content_before.contains("1234"));
@@ -227,7 +228,7 @@ mod tests {
     #[test]
     fn test_unprivileged_bpf_check() {
         #[cfg(feature = "icmp-filter")]
-        use maluwaf::icmp_filter::platform::{is_admin, has_privilege_for, FilterOperation};
+        use maluwaf::icmp_filter::platform::{has_privilege_for, is_admin, FilterOperation};
 
         #[cfg(not(feature = "icmp-filter"))]
         {

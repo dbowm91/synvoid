@@ -95,7 +95,9 @@ pub async fn handle_health_request(
 
     let body_bytes = Bytes::from(body);
     let boxed: BoxBody<Bytes, Infallible> = Full::new(body_bytes).boxed();
-    Ok(builder.body(boxed).unwrap_or_else(|_| crate::http::fallback_error_boxed()))
+    Ok(builder
+        .body(boxed)
+        .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
 }
 
 pub async fn handle_ready_request(
@@ -140,5 +142,7 @@ pub async fn handle_ready_request(
 
     let body_bytes = Bytes::from(body);
     let boxed: BoxBody<Bytes, Infallible> = Full::new(body_bytes).boxed();
-    Ok(builder.body(boxed).unwrap_or_else(|_| crate::http::fallback_error_boxed()))
+    Ok(builder
+        .body(boxed)
+        .unwrap_or_else(|_| crate::http::fallback_error_boxed()))
 }

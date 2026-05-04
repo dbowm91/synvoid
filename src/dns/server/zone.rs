@@ -228,6 +228,7 @@ impl DnsServer {
         self.zones.rebuild_index();
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_registry(mut self, registry: Arc<MeshDnsRegistry>) -> Self {
         self.mesh_registry = Some(registry);
         self
@@ -270,6 +271,7 @@ impl DnsServer {
         QueryContext {
             zones: &self.zones,
             zone_trie: &self.zone_trie,
+            #[cfg(feature = "mesh")]
             mesh_registry: self.mesh_registry.as_ref(),
             geoip_lookup: self.geoip_lookup.as_ref(),
             min_geo_ttl: self.config.settings.min_geo_ttl,

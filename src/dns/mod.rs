@@ -12,6 +12,7 @@
 //! - Dynamic Updates (RFC 2136)
 
 pub mod anycast;
+#[cfg(feature = "mesh")]
 pub mod anycast_sync;
 pub mod cache;
 pub mod compression;
@@ -31,6 +32,7 @@ pub mod firewall;
 pub mod hsm;
 pub mod limits;
 pub mod mesh_dnssec;
+#[cfg(feature = "mesh")]
 pub mod mesh_sync;
 pub mod messages;
 pub mod metrics;
@@ -69,6 +71,7 @@ pub use crate::config::dns::{
     RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
 };
 pub use anycast::{AnycastHealthUpdate, AnycastPacketInfo, AnycastSocketManager};
+#[cfg(feature = "mesh")]
 pub use anycast_sync::{
     AnycastZoneSync, SerialComparison, SerializedRecord, SerializedZoneData, ZoneSyncDecision,
     ZoneSyncMetadata, ZoneSyncReason,
@@ -92,6 +95,7 @@ pub use firewall::{
 };
 pub use hsm::{HsmBackend, HsmError, HsmManager, HsmSigner, Pkcs11Hsm, SoftHsm};
 pub use limits::{ConnectionLimitError, ConnectionLimits, ConnectionStats};
+#[cfg(feature = "mesh")]
 pub use mesh_sync::{
     MeshDnsRegistry, MeshDnsRegistryConfig, MeshNodeCertificate, RegisteredAnycastNode,
     RegisteredEdgeNode, RegisteredOriginNode, VerificationMetricsSummary,

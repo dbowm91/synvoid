@@ -913,19 +913,16 @@ impl MeshTransport {
                 )
                 .await;
             }
+            #[cfg(not(feature = "dns"))]
+            _ => {
+                tracing::debug!("DNS messages not available without dns feature");
+            }
             MeshMessage::Ping {
                 request_id,
                 node_id: _,
                 timestamp: _,
             } => {
                 self.handle_ping(peer_id, &request_id).await;
-            }
-            MeshMessage::Pong {
-                request_id,
-                node_id,
-                timestamp: _,
-            } => {
-                self.handle_pong(peer_id, &request_id, &node_id).await;
             }
             #[cfg(feature = "dns")]
             MeshMessage::AnycastNodeRegistration { .. } => {
@@ -1993,6 +1990,7 @@ impl MeshTransport {
         );
 
         match challenge_type {
+            #[cfg(feature = "dns")]
             crate::mesh::protocol::OwnershipChallengeType::Dns01 {
                 domain,
                 txt_record_name,
@@ -2028,6 +2026,7 @@ impl MeshTransport {
                     tracing::warn!("Failed to send challenge proof to {}: {}", peer_id, e);
                 }
             }
+            #[cfg(feature = "dns")]
             crate::mesh::protocol::OwnershipChallengeType::Http01 {
                 token,
                 key_authorization,
@@ -2059,6 +2058,10 @@ impl MeshTransport {
                 if let Err(e) = self.send_datagram_to_peer(peer_id, &response).await {
                     tracing::warn!("Failed to send challenge proof to {}: {}", peer_id, e);
                 }
+            }
+            #[cfg(not(feature = "dns"))]
+            _ => {
+                tracing::warn!("Ownership challenge type not available without dns feature");
             }
         }
     }
@@ -3322,6 +3325,7 @@ impl MeshTransport {
             }
         };
 
+        #[cfg(feature = "dns")]
         if let Some(token) = header_str.strip_prefix("GET /.well-known/acme-challenge/") {
             let token = token.trim();
             if !token.is_empty() && !token.contains('\r') && !token.contains('\n') {

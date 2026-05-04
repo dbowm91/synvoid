@@ -944,6 +944,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 timestamp: r.timestamp,
                 signature: r.signature,
             }),
+            #[cfg(feature = "dns")]
             proto::mesh_message::Payload::DnsDomainRegisterRequest(r) => {
                 Ok(MeshMessage::DnsDomainRegisterRequest {
                     request_id: r.request_id.into(),
@@ -956,6 +957,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: r.signature,
                 })
             }
+            #[cfg(feature = "dns")]
             proto::mesh_message::Payload::DnsDomainRegisterResponse(r) => {
                 Ok(MeshMessage::DnsDomainRegisterResponse {
                     request_id: r.request_id.into(),
@@ -967,6 +969,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: r.signature,
                 })
             }
+            #[cfg(feature = "dns")]
             proto::mesh_message::Payload::DnsDomainDeregisterRequest(r) => {
                 Ok(MeshMessage::DnsDomainDeregisterRequest {
                     request_id: r.request_id.into(),
@@ -977,6 +980,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: r.signature,
                 })
             }
+            #[cfg(feature = "dns")]
             proto::mesh_message::Payload::DnsDomainRegistered(r) => {
                 Ok(MeshMessage::DnsDomainRegistered {
                     domain: r.domain.into(),
@@ -989,6 +993,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: r.signature,
                 })
             }
+            #[cfg(feature = "dns")]
             proto::mesh_message::Payload::DnsDomainDeregistered(r) => {
                 Ok(MeshMessage::DnsDomainDeregistered {
                     domain: r.domain.into(),
@@ -999,6 +1004,14 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signature: r.signature,
                 })
             }
+            #[cfg(not(feature = "dns"))]
+            proto::mesh_message::Payload::DnsDomainRegisterRequest(_)
+            | proto::mesh_message::Payload::DnsDomainRegisterResponse(_)
+            | proto::mesh_message::Payload::DnsDomainDeregisterRequest(_)
+            | proto::mesh_message::Payload::DnsDomainRegistered(_)
+            | proto::mesh_message::Payload::DnsDomainDeregistered(_) => Err(
+                ProtocolError::InvalidValue("DNS domain messages not available"),
+            ),
             #[cfg(not(feature = "dns"))]
             proto::mesh_message::Payload::DnsRegistrationRequest(_) => Err(
                 ProtocolError::InvalidValue("DNS registration not available"),

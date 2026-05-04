@@ -830,7 +830,6 @@ pub async fn run_unified_server_worker(
                     transport_manager.clone(),
                     Some(threat_intel.clone()),
                     Some(Arc::new(signer_for_mesh)),
-                    None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
                 )
                 .await
                 {

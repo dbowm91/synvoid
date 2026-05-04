@@ -903,6 +903,7 @@ pub enum MeshMessage {
         signer_public_key: Option<ArcStr>,
         proxy_cache_preferences: Option<ProxyCachePreferences>,
     },
+    #[cfg(feature = "dns")]
     DnsDomainRegisterRequest {
         request_id: ArcStr,
         domain: ArcStr,
@@ -913,6 +914,7 @@ pub enum MeshMessage {
         timestamp: u64,
         signature: Vec<u8>,
     },
+    #[cfg(feature = "dns")]
     DnsDomainRegisterResponse {
         request_id: ArcStr,
         domain: ArcStr,
@@ -922,6 +924,7 @@ pub enum MeshMessage {
         timestamp: u64,
         signature: Vec<u8>,
     },
+    #[cfg(feature = "dns")]
     DnsDomainDeregisterRequest {
         request_id: ArcStr,
         domain: ArcStr,
@@ -930,6 +933,7 @@ pub enum MeshMessage {
         timestamp: u64,
         signature: Vec<u8>,
     },
+    #[cfg(feature = "dns")]
     DnsDomainRegistered {
         domain: ArcStr,
         origin_node_id: ArcStr,
@@ -940,6 +944,7 @@ pub enum MeshMessage {
         expires_at: u64,
         signature: Vec<u8>,
     },
+    #[cfg(feature = "dns")]
     DnsDomainDeregistered {
         domain: ArcStr,
         origin_node_id: ArcStr,

@@ -1590,6 +1590,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            #[cfg(feature = "dns")]
             MeshMessage::DnsDomainRegisterRequest {
                 request_id,
                 domain,
@@ -1614,6 +1615,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            #[cfg(feature = "dns")]
             MeshMessage::DnsDomainRegisterResponse {
                 request_id,
                 domain,
@@ -1636,6 +1638,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            #[cfg(feature = "dns")]
             MeshMessage::DnsDomainDeregisterRequest {
                 request_id,
                 domain,
@@ -1656,6 +1659,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            #[cfg(feature = "dns")]
             MeshMessage::DnsDomainRegistered {
                 domain,
                 origin_node_id,
@@ -1680,6 +1684,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            #[cfg(feature = "dns")]
             MeshMessage::DnsDomainDeregistered {
                 domain,
                 origin_node_id,

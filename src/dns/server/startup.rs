@@ -31,6 +31,7 @@ impl DnsServer {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_mesh_transport(
         mut self,
         transport: Arc<crate::mesh::transport::MeshTransport>,
@@ -39,6 +40,7 @@ impl DnsServer {
         self
     }
 
+    #[cfg(feature = "mesh")]
     pub fn with_zone_sync(mut self, zone_sync: crate::dns::anycast_sync::AnycastZoneSync) -> Self {
         self.zone_sync = Some(Arc::new(zone_sync));
         self
@@ -67,7 +69,10 @@ impl DnsServer {
         }
 
         if self.config.anycast.enabled {
+            #[cfg(feature = "mesh")]
             self.start_anycast_mode().await?;
+            #[cfg(not(feature = "mesh"))]
+            return Err("Anycast requires mesh feature".to_string());
         } else {
             self.start_standard_mode().await?;
         }
@@ -106,6 +111,7 @@ impl DnsServer {
         Ok(())
     }
 
+    #[cfg(feature = "mesh")]
     async fn start_anycast_mode(&mut self) -> Result<(), String> {
         let platform = crate::dns::platform::create_platform();
 
@@ -192,6 +198,7 @@ impl DnsServer {
         Ok(())
     }
 
+    #[cfg(feature = "mesh")]
     async fn start_listeners_with_anycast(&mut self) -> Result<(), String> {
         let anycast_manager = self
             .anycast_manager
@@ -203,6 +210,7 @@ impl DnsServer {
         tracing::info!("Starting anycast DNS on {:?}", bound_addresses);
 
         let state = self.build_handler_state();
+        #[cfg(feature = "mesh")]
         let mesh_registry = self.mesh_registry.clone();
         let geoip_lookup = self.geoip_lookup.clone();
         let anycast_mgr = anycast_manager.clone();
@@ -214,6 +222,7 @@ impl DnsServer {
         self.shutdown_tx = Some(tx);
 
         let udp_state = state.clone();
+        #[cfg(feature = "mesh")]
         let mesh_registry_udp = mesh_registry.clone();
         let geoip_lookup_udp = geoip_lookup.clone();
         let anycast_udp = anycast_mgr.clone();
@@ -247,6 +256,7 @@ impl DnsServer {
             let ctx = QueryContext {
                 zones: &zones_udp,
                 zone_trie: &zone_trie_udp,
+                #[cfg(feature = "mesh")]
                 mesh_registry: mesh_registry_udp.as_ref(),
                 geoip_lookup: geoip_lookup_udp.as_ref(),
                 min_geo_ttl,
@@ -467,6 +477,7 @@ impl DnsServer {
                                 let zones_clone = zones_tcp.clone();
                                 let zone_trie_clone = zone_trie_tcp.clone();
                                 let _zone_index_clone = zone_index_tcp.clone();
+                                #[cfg(feature = "mesh")]
                                 let mesh_registry_clone = mesh_registry_tcp.clone();
                                 let geoip_lookup_clone = geoip_lookup_tcp.clone();
                                 let cache_clone = cache_tcp.clone();
@@ -491,6 +502,7 @@ impl DnsServer {
                                     let ctx = QueryContext {
                                         zones: &zones_clone,
                                         zone_trie: &zone_trie_clone,
+                                        #[cfg(feature = "mesh")]
                                         mesh_registry: mesh_registry_clone.as_ref(),
                                         geoip_lookup: geoip_lookup_clone.as_ref(),
                                         min_geo_ttl,
@@ -537,6 +549,7 @@ impl DnsServer {
     async fn start_standard_mode(&mut self) -> Result<(), String> {
         // C3: Check dns_mesh_mode_only enforcement
         // If dns_mesh_mode_only is set and this node is not global, skip DNS binding
+        #[cfg(feature = "mesh")]
         let should_skip_binding = if let Some(ref transport) = self.mesh_transport {
             let cfg = transport.get_mesh_config();
             if let Some(ref dht_cfg) = cfg.dht {
@@ -547,6 +560,9 @@ impl DnsServer {
         } else {
             false
         };
+
+        #[cfg(not(feature = "mesh"))]
+        let should_skip_binding = false;
 
         if should_skip_binding {
             tracing::info!(
@@ -568,6 +584,7 @@ impl DnsServer {
         tracing::info!("DNS server listening on {} (UDP + TCP)", bind_addr);
 
         let state = self.build_handler_state();
+        #[cfg(feature = "mesh")]
         let mesh_registry = self.mesh_registry.clone();
         let geoip_lookup = self.geoip_lookup.clone();
         let udp_buffer_size = self.config.limits.udp_buffer_size;
@@ -578,6 +595,7 @@ impl DnsServer {
         self.shutdown_tx = Some(tx);
 
         let udp_state = state.clone();
+        #[cfg(feature = "mesh")]
         let mesh_registry_udp = mesh_registry.clone();
         let geoip_lookup_udp = geoip_lookup.clone();
         #[cfg(feature = "dns")]
@@ -609,6 +627,7 @@ impl DnsServer {
             let ctx = QueryContext {
                 zones: &zones_udp,
                 zone_trie: &zone_trie_udp,
+                #[cfg(feature = "mesh")]
                 mesh_registry: mesh_registry_udp.as_ref(),
                 geoip_lookup: geoip_lookup_udp.as_ref(),
                 min_geo_ttl,
@@ -768,6 +787,7 @@ impl DnsServer {
         });
 
         let tcp_state = state;
+        #[cfg(feature = "mesh")]
         let mesh_registry_tcp = mesh_registry;
         let geoip_lookup_tcp = geoip_lookup;
         let tcp_buffer_size = self.config.limits.udp_buffer_size;
@@ -829,6 +849,7 @@ impl DnsServer {
                                 let zones_clone = zones_tcp.clone();
                                 let zone_trie_clone = zone_trie_tcp.clone();
                                 let _zone_index_clone = zone_index_tcp.clone();
+                                #[cfg(feature = "mesh")]
                                 let mesh_registry_clone = mesh_registry_tcp.clone();
                                 let geoip_lookup_clone = geoip_lookup_tcp.clone();
                                 let cache_clone = cache_tcp.clone();
@@ -852,6 +873,7 @@ impl DnsServer {
                                     let ctx = QueryContext {
                                         zones: &zones_clone,
                                         zone_trie: &zone_trie_clone,
+                                        #[cfg(feature = "mesh")]
                                         mesh_registry: mesh_registry_clone.as_ref(),
                                         geoip_lookup: geoip_lookup_clone.as_ref(),
                                         min_geo_ttl,

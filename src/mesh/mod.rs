@@ -42,7 +42,7 @@ pub mod transport_connection;
 pub mod transport_core;
 #[cfg(feature = "mesh")]
 pub mod transport_dht;
-#[cfg(feature = "mesh")]
+#[cfg(all(feature = "mesh", feature = "dns"))]
 pub mod transport_dns;
 #[cfg(feature = "mesh")]
 pub mod transport_global;

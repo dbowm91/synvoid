@@ -7,7 +7,9 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use crate::config::MainConfig;
-use crate::http::headers::{compute_websocket_accept_key, generate_stealth_timestamp, inject_security_headers};
+use crate::http::headers::{
+    compute_websocket_accept_key, generate_stealth_timestamp, inject_security_headers,
+};
 use crate::router::RouteTarget;
 
 pub type BoxBodyResponse = Response<BoxBody<Bytes, Infallible>>;

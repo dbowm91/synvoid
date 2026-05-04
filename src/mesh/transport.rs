@@ -387,6 +387,7 @@ impl Clone for MeshTransport {
             )),
             stake_manager: self.stake_manager.clone(),
             mlkem_session_manager: self.mlkem_session_manager.clone(),
+            #[cfg(feature = "dns")]
             dns_resolver: self.dns_resolver.clone(),
             #[cfg(feature = "dns")]
             dns_registry: self.dns_registry.clone(),
@@ -615,6 +616,7 @@ impl MeshTransport {
             seen_messages: Arc::new(RwLock::new(seen_messages)),
             stake_manager,
             mlkem_session_manager,
+            #[cfg(feature = "dns")]
             dns_resolver,
             #[cfg(feature = "dns")]
             dns_registry,

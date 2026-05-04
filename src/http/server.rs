@@ -764,7 +764,7 @@ impl HttpServer {
         // SECTION 4.5: Mesh Ownership Challenge Serving (HTTP-01)
         // ============================================================================
         // Serve HTTP-01 challenges for mesh ownership verification
-        #[cfg(feature = "mesh")]
+        #[cfg(all(feature = "mesh", feature = "dns"))]
         if let Some(ref mt) = mesh_transport {
             if let Some(token) = path.strip_prefix("/.well-known/malu-challenge/") {
                 if !token.is_empty() && !token.contains('/') {

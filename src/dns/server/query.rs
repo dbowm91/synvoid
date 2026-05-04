@@ -533,6 +533,7 @@ impl DnsServer {
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub(super) fn resolve_from_mesh(
         mesh_registry: &Arc<MeshDnsRegistry>,
         qname: &str,
@@ -887,6 +888,7 @@ impl DnsServer {
             }
         }
 
+        #[cfg(feature = "mesh")]
         if let (Some(registry), Some(ip)) = (ctx.mesh_registry, client_ip) {
             if let Some(mesh_records) =
                 Self::resolve_from_mesh(registry, &qname, ip, ctx.geoip_lookup, qtype)

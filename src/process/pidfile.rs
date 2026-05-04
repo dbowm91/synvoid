@@ -113,38 +113,28 @@ impl PidFileManager {
     #[cfg(unix)]
     pub fn try_acquire(&mut self, pid: u32, version: &str) -> std::io::Result<bool> {
         use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
         use std::os::unix::io::AsRawFd;
 
         let path = self.pid_file_path();
 
-        // Try to open with O_EXCL to atomically check-and-create
-        // This avoids the TOCTOU race between is_running() and write_pid()
-        let file = match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // File exists - check if the process is actually running
-                if self.is_running() {
-                    return Ok(false);
-                }
-                // Stale PID file - try to remove and recreate
-                drop(fs::remove_file(&path));
-                let file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)?;
-                file
-            }
-            Err(e) => return Err(e),
-        };
+        let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
 
-        // Acquire exclusive file lock using nix
         let fd = file.as_raw_fd();
 
-        if flock(fd, FlockArg::LockExclusive).is_err() {
-            return Err(std::io::Error::last_os_error());
+        if flock(fd, FlockArg::LockExclusiveNonblock).is_err() {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(false);
+            }
+            return Err(err);
         }
 
-        // Now we have exclusive access - write the PID file
+        if self.is_running() {
+            let _ = flock(fd, FlockArg::Unlock);
+            return Ok(false);
+        }
+
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = crate::utils::safe_unix_timestamp();
 
@@ -158,7 +148,12 @@ impl PidFileManager {
         let json = serde_json::to_string_pretty(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-        self.atomic_write(&self.pid_file_path(), json.as_bytes())?;
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(json.as_bytes())?;
+        file.flush()?;
+
+        self.lock_file = Some(file);
         Ok(true)
     }
 
@@ -168,26 +163,15 @@ impl PidFileManager {
 
         let path = self.pid_file_path();
 
-        // Try to open with O_EXCL to atomically check-and-create
-        // On Windows, opening with write+exclusive access implicitly acquires a lock
-        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if self.is_running() {
-                    return Ok(false);
-                }
-                drop(fs::remove_file(&path));
-                let file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)?;
-                file
-            }
-            Err(e) => return Err(e),
-        };
+        let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
 
-        // On Windows, the file is opened with exclusive access implicitly
-        // The O_CREATE_NEW flag ensures we get an error if file exists
+        if !lock_file_exclusive(&file) {
+            return Ok(false);
+        }
+
+        if self.is_running() {
+            return Ok(false);
+        }
 
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = crate::utils::safe_unix_timestamp();
@@ -202,6 +186,8 @@ impl PidFileManager {
         let json = serde_json::to_string_pretty(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
+        file.set_len(0)?;
+        file.seek(std::io::SeekFrom::Start(0))?;
         file.write_all(json.as_bytes())?;
         file.flush()?;
 
@@ -210,28 +196,36 @@ impl PidFileManager {
         Ok(true)
     }
 
+    #[cfg(windows)]
+    fn lock_file_exclusive(file: &File) -> bool {
+        use windows_sys::Win32::FileManagement::LockFileEx;
+        use windows_sys::Win32::Foundation::OVERLAPPED;
+
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            LockFileEx(
+                file.as_raw_fd() as _,
+                0x00000001,
+                0,
+                0,
+                0xFFFFFFFF,
+                &mut overlapped,
+            )
+        };
+        result != 0
+    }
+
     #[cfg(not(any(unix, windows)))]
     pub fn try_acquire(&mut self, pid: u32, version: &str) -> std::io::Result<bool> {
-        // Fallback for other platforms - use O_EXCL without file locking
         use std::fs::OpenOptions;
 
         let path = self.pid_file_path();
 
-        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if self.is_running() {
-                    return Ok(false);
-                }
-                drop(fs::remove_file(&path));
-                let file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)?;
-                file
-            }
-            Err(e) => return Err(e),
-        };
+        let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
+
+        if self.is_running() {
+            return Ok(false);
+        }
 
         let socket_path = self.socket_file_path().to_string_lossy().to_string();
         let started_at = crate::utils::safe_unix_timestamp();
@@ -246,6 +240,8 @@ impl PidFileManager {
         let json = serde_json::to_string_pretty(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
+        file.set_len(0)?;
+        file.seek(std::io::SeekFrom::Start(0))?;
         file.write_all(json.as_bytes())?;
         file.flush()?;
 

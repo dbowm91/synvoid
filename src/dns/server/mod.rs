@@ -16,6 +16,7 @@ use super::doh::DohServer;
 use super::doq::DoqServer;
 use super::dot::DotServer;
 use super::edns::{parse_edns_options, EdnsOptions};
+#[cfg(feature = "mesh")]
 use super::mesh_sync::MeshDnsRegistry;
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
@@ -457,6 +458,7 @@ struct DnsHandlerState {
 pub struct QueryContext<'a> {
     pub zones: &'a Arc<ShardedZoneStore>,
     pub zone_trie: &'a Arc<RwLock<super::zone_trie::ZoneTrie>>,
+    #[cfg(feature = "mesh")]
     pub mesh_registry: Option<&'a Arc<MeshDnsRegistry>>,
     pub geoip_lookup: Option<&'a Arc<crate::geoip::GeoIpManager>>,
     pub min_geo_ttl: u32,
@@ -491,6 +493,7 @@ pub struct DnsServer {
     query_validator: Option<DnsQueryValidator>,
     firewall: Option<Arc<RwLock<super::firewall::DnsFirewall>>>,
     connection_limits: Arc<super::limits::ConnectionLimits>,
+    #[cfg(feature = "mesh")]
     mesh_registry: Option<Arc<MeshDnsRegistry>>,
     geoip_lookup: Option<Arc<crate::geoip::GeoIpManager>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -511,7 +514,9 @@ pub struct DnsServer {
     hsm_manager: Option<super::hsm::HsmManager>,
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
     anycast_manager: Option<Arc<super::anycast::AnycastSocketManager>>,
+    #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransport>>,
+    #[cfg(feature = "mesh")]
     zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
     recursive_server: Option<Arc<super::recursive::RecursiveDnsServer>>,
     dns64_translator: Option<super::dns64::Dns64Translator>,
@@ -532,6 +537,7 @@ impl Clone for DnsServer {
             query_validator: self.query_validator.clone(),
             firewall: self.firewall.clone(),
             connection_limits: self.connection_limits.clone(),
+            #[cfg(feature = "mesh")]
             mesh_registry: self.mesh_registry.clone(),
             geoip_lookup: self.geoip_lookup.clone(),
             shutdown_tx: None, // Cannot clone sender
@@ -549,9 +555,11 @@ impl Clone for DnsServer {
             notify_handler: self.notify_handler.clone(),
             hsm_manager: None, // Cannot clone HSM - requires re-initialization
             query_coalescer: self.query_coalescer.clone(),
-            anycast_manager: None,  // Cannot clone - requires re-initialization
-            mesh_transport: None,   // Cannot clone - requires re-initialization
-            zone_sync: None,        // Cannot clone - requires re-initialization
+            anycast_manager: None, // Cannot clone - requires re-initialization
+            #[cfg(feature = "mesh")]
+            mesh_transport: None, // Cannot clone - requires re-initialization
+            #[cfg(feature = "mesh")]
+            zone_sync: None, // Cannot clone - requires re-initialization
             recursive_server: None, // Cannot clone - requires re-initialization
             dns64_translator: self.dns64_translator.clone(),
             #[cfg(feature = "dns")]
@@ -673,6 +681,7 @@ impl DnsServer {
 
         let rrl_enabled = config.rrl.enabled;
 
+        #[cfg(feature = "mesh")]
         let mesh_registry = None;
         let geoip_lookup = None;
 
@@ -847,6 +856,7 @@ impl DnsServer {
             query_validator: Some(query_validator),
             firewall,
             connection_limits,
+            #[cfg(feature = "mesh")]
             mesh_registry,
             geoip_lookup,
             shutdown_tx: None,
@@ -865,7 +875,9 @@ impl DnsServer {
             hsm_manager,
             query_coalescer,
             anycast_manager: None,
+            #[cfg(feature = "mesh")]
             mesh_transport: None,
+            #[cfg(feature = "mesh")]
             zone_sync: None,
             recursive_server: None,
             dns64_translator,

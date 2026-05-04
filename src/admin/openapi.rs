@@ -616,7 +616,6 @@ pub mod mesh_stubs {
     }
 }
 
-#[cfg(not(feature = "dns"))]
 pub mod dns_stubs {
     use crate::admin::handlers::common::OptionalAuth;
     use crate::admin::handlers::common::StatusResponse;
@@ -702,14 +701,14 @@ impl Modify for AddBearerAuth {
 }
 
 #[cfg(not(feature = "mesh"))]
-    mod core_openapi {
-        use super::AddBearerAuth;
-        use crate::admin::openapi::dns_stubs;
-        use crate::admin::openapi::mesh_stubs;
-        use utoipa::OpenApi;
+mod core_openapi {
+    use super::AddBearerAuth;
+    use crate::admin::openapi::dns_stubs;
+    use crate::admin::openapi::mesh_stubs;
+    use utoipa::OpenApi;
 
-        #[derive(OpenApi)]
-        #[openapi(
+    #[derive(OpenApi)]
+    #[openapi(
             info(
                 title = "MaluWAF Admin API",
                 version = "1.0.0",
@@ -826,7 +825,9 @@ impl Modify for AddBearerAuth {
             crate::admin::handlers::config::update_fallback_config,
             crate::admin::handlers::config::get_upgrade_config,
             crate::admin::handlers::config::update_upgrade_config,
+            #[cfg(not(feature = "dns"))]
             dns_stubs::get_dns_config,
+            #[cfg(not(feature = "dns"))]
             dns_stubs::update_dns_config,
             crate::admin::handlers::config::get_rate_limits_config,
             crate::admin::handlers::config::update_rate_limits_config,
@@ -1035,15 +1036,15 @@ impl Modify for AddBearerAuth {
 }
 
 #[cfg(feature = "mesh")]
-    mod mesh_openapi {
-        use super::AddBearerAuth;
-        use crate::admin::handlers::mesh_admin;
-        use crate::admin::handlers::yara_rules;
-        use crate::admin::handlers::plugins;
-        use utoipa::OpenApi;
+mod mesh_openapi {
+    use super::AddBearerAuth;
+    use crate::admin::handlers::mesh_admin;
+    use crate::admin::handlers::plugins;
+    use crate::admin::handlers::yara_rules;
+    use utoipa::OpenApi;
 
-        #[derive(OpenApi)]
-        #[openapi(
+    #[derive(OpenApi)]
+    #[openapi(
             info(
                 title = "MaluWAF Admin API",
                 version = "1.0.0",
@@ -1160,8 +1161,10 @@ impl Modify for AddBearerAuth {
             crate::admin::handlers::config::update_fallback_config,
             crate::admin::handlers::config::get_upgrade_config,
             crate::admin::handlers::config::update_upgrade_config,
-            crate::admin::handlers::config::get_dns_config,
-            crate::admin::handlers::config::update_dns_config,
+            #[cfg(feature = "dns")]
+            crate::admin::openapi::dns_stubs::get_dns_config,
+            crate::admin::openapi::dns_stubs::update_dns_config,
+            #[cfg(feature = "dns")]
             crate::admin::handlers::config::get_rate_limits_config,
             crate::admin::handlers::config::update_rate_limits_config,
             crate::admin::handlers::config::get_bot_detection_config,

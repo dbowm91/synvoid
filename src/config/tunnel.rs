@@ -27,6 +27,29 @@ impl TunnelConfig {
         }
         Ok(())
     }
+
+    #[cfg(feature = "mesh")]
+    pub fn has_mesh(&self) -> bool {
+        self.mesh.is_some()
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    pub fn has_mesh(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "mesh")]
+    pub fn is_global_node(&self) -> bool {
+        self.mesh
+            .as_ref()
+            .map(|m| m.role.is_global())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    pub fn is_global_node(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema, ToSchema)]

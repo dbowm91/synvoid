@@ -39,6 +39,7 @@ impl QuicMeshTransport {
             threat_intel,
             mesh_signer,
             stake_manager,
+            #[cfg(feature = "dns")]
             dns_resolver,
             #[cfg(feature = "dns")]
             dns_registry,
@@ -56,6 +57,7 @@ impl QuicMeshTransport {
         self.inner.clone()
     }
 
+    #[cfg(feature = "dns")]
     pub async fn start(&self) -> Result<(), crate::mesh::transport::MeshTransportError> {
         self.inner.start().await
     }

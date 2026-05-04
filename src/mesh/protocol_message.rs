@@ -106,14 +106,21 @@ impl MeshMessage {
             | Self::YaraRuleSubmission { .. }
             | Self::YaraRuleSubmissionResponse { .. } => MessageCategory::Yara,
             #[cfg(feature = "dns")]
-            Self::DnsRegistrationRequest { .. }
-            | Self::DnsRegistrationResponse { .. }
-            | Self::DnsVerificationUpdate { .. }
-            | Self::DnsDomainRegisterRequest { .. }
-            | Self::DnsDomainRegisterResponse { .. }
-            | Self::DnsDomainDeregisterRequest { .. }
-            | Self::DnsDomainRegistered { .. }
-            | Self::DnsDomainDeregistered { .. } => MessageCategory::Dns,
+            Self::DnsRegistrationRequest { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsRegistrationResponse { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsVerificationUpdate { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsDomainRegisterRequest { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsDomainRegisterResponse { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsDomainDeregisterRequest { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsDomainRegistered { .. } => MessageCategory::Dns,
+            #[cfg(feature = "dns")]
+            Self::DnsDomainDeregistered { .. } => MessageCategory::Dns,
             Self::AnycastNodeRegistration { .. } | Self::AnycastHealthUpdate { .. } => {
                 MessageCategory::Anycast
             }

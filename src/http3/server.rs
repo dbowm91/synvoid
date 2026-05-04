@@ -245,7 +245,11 @@ impl Http3Server {
         })?;
 
         let client_ip = {
-            let trusted_proxy_strings: Vec<String> = self.trusted_proxies.iter().map(|ip| ip.to_string()).collect();
+            let trusted_proxy_strings: Vec<String> = self
+                .trusted_proxies
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect();
             let sanitizer = RequestSanitizer::new(trusted_proxy_strings, true);
             sanitizer
                 .get_real_ip(request.headers(), client_ip)
@@ -621,10 +625,7 @@ impl Http3Server {
 
                             let headers_to_filter = crate::proxy::build_headers_to_filter(
                                 &[],
-                                &route_target
-                                    .site_config
-                                    .security_headers
-                                    .more_clear_headers,
+                                &route_target.site_config.security_headers.more_clear_headers,
                             );
 
                             let filtered_headers =

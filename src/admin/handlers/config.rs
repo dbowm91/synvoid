@@ -189,7 +189,9 @@ pub async fn reload_config(
 
     #[cfg(not(feature = "mesh"))]
     {
-        return Ok(Json(StatusResponse::success("Configuration reloaded successfully")));
+        return Ok(Json(StatusResponse::success(
+            "Configuration reloaded successfully",
+        )));
     }
 
     let mut config = state.process.config.write().await;

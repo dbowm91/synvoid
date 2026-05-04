@@ -300,17 +300,10 @@ impl UnifiedServer {
 
             if !dns_cfg.enabled {
                 (None, None, None, None)
-            } else if !cfg
-                .main
-                .tunnel
-                .mesh
-                .as_ref()
-                .map(|m| m.role.is_global())
-                .unwrap_or(false)
-            {
+            } else if cfg.main.tunnel.has_mesh() && !cfg.main.tunnel.is_global_node() {
                 tracing::warn!(
-                    "DNS server is only available on global mesh nodes. Refusing to start DNS server on non-global node."
-                );
+                        "DNS server is only available on global mesh nodes. Refusing to start DNS server on non-global node."
+                    );
                 (None, None, None, None)
             } else {
                 let bind_addr: SocketAddr = format!("{}:{}", dns_cfg.bind_address, dns_cfg.port)
@@ -318,7 +311,6 @@ impl UnifiedServer {
                     .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 53)));
 
                 let dns_addr_v6 = if dns_cfg.bind_address != "0.0.0.0" {
-                    // Try to parse as IPv6 if not 0.0.0.0
                     format!("[::]:{}", dns_cfg.port).parse().ok()
                 } else {
                     None
@@ -1031,11 +1023,15 @@ impl UnifiedServer {
         let dns_jh: Option<tokio::task::JoinHandle<()>> = {
             match &self.dns_server {
                 Some(dns_server) => {
+                    #[cfg(feature = "mesh")]
                     let is_global = self
                         .mesh_transport
                         .as_ref()
                         .map(|mt| mt.is_global_node())
                         .unwrap_or(false);
+                    #[cfg(not(feature = "mesh"))]
+                    let is_global = false;
+                    #[cfg(feature = "mesh")]
                     let dns_mesh_mode_only = {
                         let topology = self.mesh_transport.as_ref().map(|mt| mt.get_topology());
                         if let Some(ref t) = topology {
@@ -1048,6 +1044,8 @@ impl UnifiedServer {
                             true
                         }
                     };
+                    #[cfg(not(feature = "mesh"))]
+                    let dns_mesh_mode_only = true;
                     let can_start = !dns_mesh_mode_only || is_global;
 
                     if can_start {
