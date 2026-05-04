@@ -106,6 +106,8 @@ Unsigned IPC is allowed for read-only operations (Status, HealthCheck) but:
 2. **Bounded cache**: Nonce cache is bounded to 10,000 entries
 3. **Key file security**: Files must be owned by current user, mode 0600, not symlinks
 4. **No hardcoded secrets**: `from_secret()` is test/dev only
+5. **Windows Security**: `WindowsSecurityDescriptorBuilder` creates DACLs granting `FILE_ALL_ACCESS` only to current user
+6. **Signing enforced by default**: `enforce_signing=true` is default for `IpcStream`; unsigned connections emit hard errors
 
 ## Testing
 

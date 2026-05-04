@@ -25,4 +25,5 @@ This directory contains detailed documentation for various subsystems.
 | `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
 | `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
 | `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
-| `buffer_pool.md` | Lock-free buffer pool safety and performance patterns |
+| `buffer_pool.md` | Sharded mutex buffer pool (replaces TreiberStack with ABA-safe implementation) |
+| `extension_runtime.md` | ExtensionRuntime trait and registry for worker lifecycle management |

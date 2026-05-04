@@ -16,7 +16,7 @@ This module covers foundational systems code including IPC, process management, 
 | `src/process/ipc_transport.rs` | Async IPC transport layer |
 | `src/process/socket_path.rs` | Secure socket directory management |
 | `src/process/pidfile.rs` | PID file and lock file management |
-| `crates/maluwaf-utils/src/buffer/pool.rs` | Custom buffer pool (lock-free + TLS cache) |
+| `crates/maluwaf-utils/src/buffer/pool.rs` | Custom buffer pool (sharded mutex + TLS cache) |
 
 ## Critical Patterns
 
@@ -58,15 +58,28 @@ Key files:
 
 ### 4. Buffer Pool Safety
 
-The buffer pool (`crates/maluwaf-utils/src/buffer/pool.rs`) currently uses:
-- **TreiberStack**: Lock-free stack with CAS. **CRITICAL**: Vulnerable to ABA problem under high contention.
+The buffer pool (`crates/maluwaf-utils/src/buffer/pool.rs`) uses:
+- **Sharded Mutex**: 8 shards with `parking_lot::Mutex<Vec<BytesMut>>` per tier. **Eliminates ABA vulnerability** that existed in the old TreiberStack design.
 - **ThreadLocalCache**: Uses `RefCell` for safe interior mutability (thread-local guarantees single-threaded access).
 
-**Planned Refactor**: Replace `TreiberStack` with a sharded mutex-backed `Vec<BytesMut>` to eliminate ABA vulnerability and remove `unsafe` code.
+The module has `#[deny(unsafe_code)]` - no unsafe blocks remain.
 
-**Safety Note**: Current `unsafe` blocks in `pool.rs` lack proper `SAFETY` documentation. Always verify invariants before modifying.
+### 5. Operation-Specific Privilege Checks
 
-### 5. Socket Path Security
+Firewall operations use operation-specific privilege checks instead of a single `is_admin()`:
+
+```rust
+can_load_ebpf()           // Checks unprivileged_bpf_disabled state
+can_modify_nftables()     // Linux-only, checks root or CAP_NET_ADMIN
+can_modify_firewall()     // Generic admin check for Windows
+```
+
+Filter backends expose state via `FilterState`:
+- `InactiveNotPrivileged` - Backend inactive due to permissions
+- `InactiveConfigError` - Backend inactive due to config issues
+- `Active` - Backend is operational
+
+### 6. Socket Path Security
 
 Socket directories are created with:
 - `0o700` permissions
@@ -74,7 +87,7 @@ Socket directories are created with:
 - Symlink rejection via `symlink_metadata()`
 - **Planned**: Per-UID isolation in `/tmp/maluwaf-{uid}` (pending implementation)
 
-### 6. Lock File Acquisition
+### 7. Lock File Acquisition
 
 `OverseerLockFile` acquires `flock` BEFORE writing to avoid truncation races:
 1. Open without truncate
