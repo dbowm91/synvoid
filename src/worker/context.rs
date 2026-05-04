@@ -9,8 +9,10 @@ use crate::serverless::registry::ServerlessRegistry;
 use crate::upload::UploadValidator;
 
 pub struct RequestServices {
+    #[cfg(feature = "mesh")]
     pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
     pub upload_validator: Option<Arc<UploadValidator>>,
+    #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<YaraRulesManager>>,
     pub plugin_manager: Option<Arc<GlobalPluginManager>>,
     pub serverless_registry: Option<Arc<ServerlessRegistry>>,
@@ -41,9 +43,7 @@ impl RequestServices {
         serverless_registry: Option<Arc<ServerlessRegistry>>,
     ) -> Self {
         Self {
-            threat_intel: None,
             upload_validator,
-            yara_rules: None,
             plugin_manager,
             serverless_registry,
         }

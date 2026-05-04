@@ -96,6 +96,7 @@ pub struct UploadValidator {
     malware_scanner: Option<Arc<MalwareScanner>>,
     config: UploadConfig,
     reload_lock: parking_lot::RwLock<()>,
+    #[cfg(feature = "mesh")]
     yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
 }
 
@@ -137,7 +138,7 @@ impl UploadValidator {
     #[cfg(not(feature = "mesh"))]
     pub fn new_with_yara_rules(
         config: UploadConfig,
-        _yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+        _yara_rules: Option<Arc<dyn std::any::Any>>,
     ) -> Result<Self, UploadValidationError> {
         let sandbox_config = SandboxConfig::new(&config.sandbox_dir, &config.quarantine_dir);
         let sandbox = Arc::new(Sandbox::new(sandbox_config));
@@ -160,7 +161,6 @@ impl UploadValidator {
             malware_scanner,
             config,
             reload_lock: parking_lot::RwLock::new(()),
-            yara_rules: None,
         })
     }
 
