@@ -92,3 +92,74 @@ cargo clippy --lib -- -D warnings
 At 1000K RPS:
 - Target: 256KB max buffer per request
 - Total concurrent: 1000 requests = 256MB
+
+## StreamingWafBody for True Streaming (Wave P1)
+
+**Location**: `src/http_client/mod.rs:92-203`
+
+For true streaming to upstream (without full body buffering), a `StreamingWafBody<B>` type was added that wraps `hyper::body::Body` and performs WAF scanning on chunks as they pass through:
+
+```rust
+pub struct StreamingWafBody<B> {
+    inner: B,
+    streaming_waf: Option<Arc<StreamingWafCore>>,
+    client_ip: IpAddr,
+    blocked: bool,
+    error_sent: bool,
+}
+
+impl<B> StreamingWafBody<B>
+where
+    B: http_body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Debug,
+{
+    pub fn new(inner: B, streaming_waf: Option<Arc<StreamingWafCore>>, client_ip: IpAddr) -> Self {
+        Self { inner, streaming_waf, client_ip, blocked: false, error_sent: false }
+    }
+}
+```
+
+**Key behavior**:
+- Implements `hyper::body::Body` for compatibility with hyper client
+- Polls inner body frames and scans each chunk with `streaming_waf.scan_chunk()`
+- If attack detected, returns error frame causing upstream request to fail
+- Metrics tracked via `maluwaf.http.streaming_body_blocked`
+
+**Usage pattern**:
+```rust
+let body_stream = StreamingWafBody::new(incoming_body, streaming_waf, client_ip);
+send_request_streaming(&client, method, url, body_stream, headers, timeout).await
+```
+
+**Limitation**: Full true streaming requires more refactoring to avoid body collection at HTTP server level. The infrastructure exists but the path to use it needs completion.
+
+## Type-Erased Body Infrastructure (2026-05-04)
+
+**Location**: `src/http_client/erased_pool.rs`
+
+For type-erased body handling in the connection pool, the following types were added:
+
+```rust
+pub trait ErasedBody: Send + Sync + 'static {
+    fn poll_frame(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>>;
+    fn size_hint(&self) -> SizeHint;
+}
+
+pub struct ErasedBodyImpl<B> {
+    inner: B,
+}
+
+impl<B> ErasedBodyImpl<B>
+where
+    B: HttpBody<Data = Bytes> + Send + Sync + Unpin + 'static,
+    B::Error: fmt::Debug + Send,
+{
+    pub fn new(inner: B) -> Box<dyn ErasedBody> { ... }
+}
+
+pub type BoxErasedBody = Box<dyn ErasedBody>;
+```
+
+**Key insight**: `ErasedBodyImpl` can wrap any `HttpBody<Data = Bytes>` including `StreamingWafBody`, enabling type-erased body handling at the connection pool level.
+
+**Current status**: Core infrastructure complete. Full connection pooling (Phases 2-5 of Option D) deferred due to hyper type system complexity.

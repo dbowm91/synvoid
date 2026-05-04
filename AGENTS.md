@@ -12,6 +12,7 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | DNS (DNSSEC, TSIG) | [`src/dns/AGENTS.override.md`](src/dns/AGENTS.override.md) | DNS server, DNSSEC, TSIG patterns |
 | WAF (Rule Matching) | [`src/waf/AGENTS.override.md`](src/waf/AGENTS.override.md) | WAF engine, attack detection |
 | HTTP Server | [`src/http/AGENTS.override.md`](src/http/AGENTS.override.md) | HTTP request handling |
+| HTTP Client | [`src/http_client/AGENTS.override.md`](src/http_client/AGENTS.override.md) | Upstream proxy, connection pooling |
 | HTTP/3 Server | [`src/http3/AGENTS.override.md`](src/http3/AGENTS.override.md) | HTTP/3 QUIC handling |
 | Plugin/WASM | [`src/plugin/AGENTS.override.md`](src/plugin/AGENTS.override.md) | WASM plugin runtime |
 | Upstream Proxy | [`src/proxy/AGENTS.override.md`](src/proxy/AGENTS.override.md) | Proxy routing, cache keys |
@@ -56,6 +57,8 @@ The following code paths execute on every request and must be optimized:
 - `src/http3/server.rs` — HTTP/3 QUIC request handling and proxying
 - `src/proxy/mod.rs` — Upstream proxy, cookie/cache key construction
 - `src/plugin/wasm_runtime.rs` — WASM plugin filter/transform per request
+- `src/http_client/mod.rs` — StreamingWafBody for streaming upstream WAF scanning
+- `src/metrics/collection.rs` — Stall metrics (hot when stall traffic high)
 
 ## General Conventions
 
@@ -127,6 +130,7 @@ cargo check --no-default-features --features mesh,dns
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
+| `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
 
 ## Multi-Process Architecture
 
