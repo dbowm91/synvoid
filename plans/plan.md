@@ -33,6 +33,45 @@ Do not remove these invariants while implementing the plan.
 
 ## P0: Preserve the Worker-Only Request Boundary
 
+### Status: ✅ COMPLETED (2026-05-04)
+
+- Added `tests/architecture_test.rs` documenting the architectural constraint
+- Enhanced logging in `src/startup/master.rs` with listener ownership labels:
+  - Admin server: `(owned by: MASTER process)`
+  - Worker spawn: `(each worker owns: HTTP/HTTPS/HTTP3 listeners)`
+- Decision: Admin server runs in Master as control-plane traffic (Option A from plan)
+
+## P0: Fix Mesh Backend Proxy Wiring
+
+### Status: ✅ COMPLETED (2026-05-04)
+
+- Added `BackendConfig::Mesh` variant to `src/config/site/backend.rs`
+- Added router handling for `BackendType::Mesh` at location and site level
+- Propagated `mesh_backend_pool` through `ServerSharedState`
+- Wired `mesh_backend_pool` to HTTP server via `with_mesh_backend_pool`
+- Config syntax: `backend: { type: mesh, upstream: "upstream-id" }`
+
+## P0: Stream Request Bodies Instead of Full Buffering
+
+### Status: ⚠️ PARTIALLY COMPLETED - Infrastructure exists, true streaming not implemented
+
+**What was verified:**
+- Chunk-based WAF scanning is fully implemented in `StreamingWafCore`
+- `collect_body_with_chunk_waf_impl` exists and performs per-chunk WAF scanning during collection
+- HTTP/3 server already demonstrates per-chunk WAF pattern
+
+**What remains deferred:**
+- True streaming to upstream (body collected fully before `send_request_streaming`)
+- `send_request_streaming` requires `Option<Bytes>` not a streaming body type
+- Implementation requires creating a `hyper::body::Body` implementation that wraps streaming WAF
+- Significant refactoring to thread body stream through the request path
+
+**Required for completion:**
+- Create a `StreamingWafBody` type implementing `hyper::body::Body` that performs WAF scanning during reads
+- Modify `send_request_streaming` to accept `impl hyper::body::Body` instead of `Option<Bytes>`
+- Add per-site/per-route buffering policy config (`auto`, `buffered`, `streaming`, `streaming_required`)
+- Add tests for true streaming with malicious content detection mid-stream
+
 ### Problem
 
 Reverse proxy/WAF traffic appears to run in `UnifiedServerWorker`, but the invariant is mostly documented rather than tested. Master still starts the admin HTTP server in-process, which may be acceptable if admin is explicitly control-plane traffic, but it conflicts with broad statements that Master must not accept external requests.
@@ -185,6 +224,24 @@ The HTTP request path collects the full body before backend dispatch. The later 
 - Incompatible features fail validation or intentionally fall back to bounded buffering with metrics.
 
 ## P0: Correct Forwarded Header Semantics
+
+### Status: ✅ COMPLETED (2026-05-04)
+
+- `ForwardedProtocol` enum added replacing boolean `is_tls` in `build_forward_headers`
+- HTTP server fixed to use `ForwardedProtocol::Http` (was incorrectly using `true`)
+- TLS server uses `ForwardedProtocol::Https`
+- HTTP/3 server uses `ForwardedProtocol::Https`
+- Tests added for protocol-specific `x-forwarded-proto` values
+
+## P0: Fix Listener/IP-Based Routing
+
+### Status: ✅ COMPLETED (2026-05-04)
+
+- Added `site_map: HashMap<String, Arc<SiteConfig>>` keyed by `site_id`
+- Added `cleaned_site_domain_suffixes` to avoid per-request `format!()` allocation
+- Fixed `route_with_local_addr` to use `site_map` instead of `domain_map` for site_id lookups
+- Fixed default server lookups to use `site_map`
+- Optimized `is_host_valid_for_site` to use precomputed suffixes
 
 ### Problem
 
