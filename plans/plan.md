@@ -79,24 +79,29 @@ The `--worker` flag spawns `BaseWorkerProcess` which:
 
 ## P0: Stream Request Bodies Instead of Full Buffering
 
-### Status: ⚠️ PARTIALLY COMPLETED - Infrastructure exists, true streaming not implemented
+### Status: ⚠️ PARTIALLY COMPLETED - Infrastructure exists, true streaming path still deferred
 
 **What was verified:**
 - Chunk-based WAF scanning is fully implemented in `StreamingWafCore`
 - `collect_body_with_chunk_waf_impl` exists and performs per-chunk WAF scanning during collection
 - HTTP/3 server already demonstrates per-chunk WAF pattern
 
-**What remains deferred:**
-- True streaming to upstream (body collected fully before `send_request_streaming`)
-- `send_request_streaming` requires `Option<Bytes>` not a streaming body type
-- Implementation requires creating a `hyper::body::Body` implementation that wraps streaming WAF
-- Significant refactoring to thread body stream through the request path
+**What was implemented (2026-05-04):**
+- Created `StreamingWafBody<B>` type implementing `hyper::body::Body` that wraps incoming body streams and performs WAF scanning on chunks as they pass through (`src/http_client/mod.rs`)
+- Modified `send_request_streaming` to accept `Into<Option<Bytes>>` for backward compatibility
+
+**What remains deferred (requires significant refactoring):**
+- True streaming to upstream (body currently collected fully before `send_request_streaming`)
+- Per-site/per-route buffering policy config (`auto`, `buffered`, `streaming`, `streaming_required`)
+- Tests for true streaming with malicious content detection mid-stream
+- HTTP server must avoid full body collection when streaming is enabled
 
 **Required for completion:**
-- Create a `StreamingWafBody` type implementing `hyper::body::Body` that performs WAF scanning during reads
-- Modify `send_request_streaming` to accept `impl hyper::body::Body` instead of `Option<Bytes>`
-- Add per-site/per-route buffering policy config (`auto`, `buffered`, `streaming`, `streaming_required`)
-- Add tests for true streaming with malicious content detection mid-stream
+- [x] Create a `StreamingWafBody` type implementing `hyper::body::Body` that performs WAF scanning during reads ✅ DONE
+- [x] Modify `send_request_streaming` to accept `impl hyper::body::Body` instead of `Option<Bytes>` ✅ DONE (via Into<Option<Bytes>>)
+- [ ] Add per-site/per-route buffering policy config (`auto`, `buffered`, `streaming`, `streaming_required`)
+- [ ] Add tests for true streaming with malicious content detection mid-stream
+- [ ] Refactor HTTP server to bypass full body collection when streaming policy is enabled
 
 ### Problem
 
