@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -21,7 +21,7 @@ use crate::proxy::{
 };
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
-use crate::waf::{FloodDecision, FloodProtector, WafCore};
+use crate::waf::{FloodDecision, FloodProtector, RequestSanitizer, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 
 pub struct Http3Server {
@@ -34,6 +34,7 @@ pub struct Http3Server {
     drain_state: Option<Arc<WorkerDrainState>>,
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
+    trusted_proxies: Vec<IpAddr>,
 }
 
 impl Http3Server {
@@ -42,11 +43,18 @@ impl Http3Server {
         config: Http3Config,
         router: Router,
         waf: Arc<WafCore>,
-        _main_config: MainConfig,
+        main_config: MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {
         let client =
             create_http_client_with_config(Duration::from_secs(5), 100, Duration::from_secs(30));
+
+        let trusted_proxies: Vec<IpAddr> = main_config
+            .server
+            .trusted_proxies
+            .iter()
+            .filter_map(|p| p.parse().ok())
+            .collect();
 
         Self {
             addr,
@@ -58,6 +66,7 @@ impl Http3Server {
             drain_state: None,
             metrics: None,
             shutdown_rx,
+            trusted_proxies,
         }
     }
 
@@ -225,17 +234,25 @@ impl Http3Server {
             None
         };
 
-        if self.waf.is_over_bandwidth_limit() {
-            tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
-            counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
-            return Ok(());
-        }
-
         let (request, mut request_stream) = resolver.resolve_request().await.map_err(|e| {
             counter!("maluwaf.http3.request.errors").increment(1);
             histogram!("maluwaf.http3.request.duration").record(start.elapsed().as_secs_f64());
             format!("Failed to resolve request: {}", e)
         })?;
+
+        let client_ip = {
+            let trusted_proxy_strings: Vec<String> = self.trusted_proxies.iter().map(|ip| ip.to_string()).collect();
+            let sanitizer = RequestSanitizer::new(trusted_proxy_strings, true);
+            sanitizer
+                .get_real_ip(request.headers(), client_ip)
+                .unwrap_or(client_ip)
+        };
+
+        if self.waf.is_over_bandwidth_limit() {
+            tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
+            counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+            return Ok(());
+        }
 
         let method = request.method().clone();
         let uri = request.uri().clone();
