@@ -85,7 +85,7 @@ Socket directories are created with:
 - `0o700` permissions
 - Ownership verification (current UID or root)
 - Symlink rejection via `symlink_metadata()`
-- **Planned**: Per-UID isolation in `/tmp/maluwaf-{uid}` (pending implementation)
+- Per-UID isolation via `get_user_socket_dir()` returning `/tmp/maluwaf-{uid}`
 
 ### 7. Lock File Acquisition
 
@@ -112,7 +112,7 @@ cargo fmt && cargo clippy --lib -- -D warnings
 
 ## Known Limitations
 
-- FreeBSD Capsicum: `cap_enter()` permanently enters capability mode - `is_supported()` just returns `true` without calling it
+- FreeBSD Capsicum: `is_capsicum_available()` checks `cap_getmode()` first - does not call `cap_enter()` unless sandbox is explicitly applied
 - macOS Seatbelt: Requires `macos-sandbox` feature flag to actually enforce
 - Windows sandbox: Filesystem restrictions NOT enforced (only process limits)
 - Non-Unix platforms: Socket FD passing not supported, returns `NotSupported`

@@ -114,7 +114,7 @@ cargo check --no-default-features --features dns
 cargo check --no-default-features --features mesh,dns
 ```
 
-**Note**: Core/mesh/dns profiles currently have compilation errors (~220/85/264 errors). These are being tracked in `plans/plan.md` section 4.2 (Architecture Gates).
+**Note**: Core profile (--no-default-features) compiles successfully as of 2026-05-04. Mesh and DNS profiles should also compile without errors.
 
 ## Known File Path Corrections
 
@@ -122,22 +122,6 @@ cargo check --no-default-features --features mesh,dns
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
-
-## Implementation Wave Organization
-
-When implementing work from `plans/plan.md`, follow this wave structure:
-
-| Wave | Focus | Parallel Tracks | Key Dependency |
-|------|-------|-----------------|---------------|
-| **0** | Architecture Gates (4.2) | No | Must lead |
-| **1** | **Security & Hardening** | **Yes (3 tracks)** | After Wave 0 |
-| **2** | **Architecture & Performance** | **Yes (3 tracks)** | After Wave 1 |
-| **3** | **Process & Runtime** | **Yes (2 tracks)** | After Wave 2 |
-| **4** | **Platform & Traffic** | **Yes (2 tracks)** | After Wave 0 |
-
-**Max Parallelism**: After Wave 0 completes, 10+ independent tracks can run in parallel.
-
-See `plans/plan.md` for detailed actionable items within each wave.
 
 ## Skills Reference
 

@@ -60,8 +60,9 @@ const MAX_NONCE_CACHE_SIZE: usize = 10_000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 ```
 
-- Nonce cache is dual-indexed (by_nonce HashSet + by_timestamp BTreeSet)
-- Eviction happens AFTER insert to maintain bound
+- Nonce cache uses `DashMap` for sharded concurrent access (reduced contention)
+- Cache key is `(signer_id, nonce)` tuple to prevent cross-channel conflicts
+- Eviction happens BEFORE insert when size limit reached
 - Timestamp must be within 60 seconds of current time
 
 ### Message Size Limits
@@ -103,11 +104,11 @@ Unsigned IPC is allowed for read-only operations (Status, HealthCheck) but:
 ## Security Notes
 
 1. **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for HMAC verification
-2. **Bounded cache**: Nonce cache is bounded to 10,000 entries
-3. **Key file security**: Files must be owned by current user, mode 0600, not symlinks
-4. **No hardcoded secrets**: `from_secret()` is test/dev only
-5. **Windows Security**: `WindowsSecurityDescriptorBuilder` creates DACLs granting `FILE_ALL_ACCESS` only to current user
-6. **Signing enforced by default**: `enforce_signing=true` is default for `IpcStream`; unsigned connections emit hard errors
+2. **Bounded cache**: Nonce cache is bounded to 10,000 entries, keyed by `(signer_id, nonce)`
+3. **Key file security**: Files must be owned by current user, mode 0600, not symlinks, not in world-writable directories
+4. **No hardcoded secrets**: `from_secret()` is documented as TEST ONLY with SHA-256 KDF
+5. **Windows Security**: `SecurityDescriptor::new_user_only()` creates DACLs granting `FILE_ALL_ACCESS` only to current user
+6. **Signing enforced by default**: `enforce_signing=true` is default for `IpcStream` with explicit signer constructors
 
 ## Testing
 
