@@ -1,10 +1,10 @@
-use std::collections::{BTreeSet, HashSet};
 use std::io::{self, Read, Write};
 use std::sync::{Arc, LazyLock};
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
+use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use sha3::Sha3_256;
 
@@ -62,77 +62,65 @@ pub fn increment_oversized_rejected() {
     OVERSIZED_REJECTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-struct NonceEntry {
-    nonce: [u8; 16],
-    timestamp: u64,
-}
-
-impl Ord for NonceEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.timestamp.cmp(&other.timestamp)
-    }
-}
-
-impl PartialOrd for NonceEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for NonceEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.nonce == other.nonce
-    }
-}
-
-impl Eq for NonceEntry {}
-
 struct NonceCache {
-    by_nonce: HashSet<[u8; 16]>,
-    by_timestamp: BTreeSet<NonceEntry>,
+    by_nonce: Vec<([u8; 16], u64)>,
 }
 
 impl NonceCache {
     fn new() -> Self {
         Self {
-            by_nonce: HashSet::new(),
-            by_timestamp: BTreeSet::new(),
+            by_nonce: Vec::new(),
         }
     }
 
     fn contains(&self, nonce: &[u8; 16]) -> bool {
-        self.by_nonce.contains(nonce)
+        self.by_nonce.iter().any(|(n, _)| *n == *nonce)
     }
 
     fn insert(&mut self, nonce: [u8; 16], timestamp: u64) {
-        let entry = NonceEntry { nonce, timestamp };
-        self.by_nonce.insert(nonce);
-        self.by_timestamp.insert(entry);
+        self.by_nonce.push((nonce, timestamp));
     }
 
-    fn evict_oldest(&mut self) {
-        while self.by_timestamp.len() > MAX_NONCE_CACHE_SIZE {
-            if let Some(oldest) = self.by_timestamp.pop_first() {
-                self.by_nonce.remove(&oldest.nonce);
+    fn evict_oldest(&mut self, max_size: usize) {
+        while self.by_nonce.len() > max_size {
+            if let Some(pos) = self
+                .by_nonce
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, &(_, ts))| ts)
+                .map(|(idx, _)| idx)
+            {
+                self.by_nonce.remove(pos);
             }
         }
     }
 }
 
-static NONCE_CACHE: LazyLock<parking_lot::Mutex<NonceCache>> =
-    LazyLock::new(|| parking_lot::Mutex::new(NonceCache::new()));
+type CacheKey = (u64, [u8; 16]);
+type ShardedNonceCache = DashMap<CacheKey, u64>;
+
+static NONCE_CACHE: LazyLock<ShardedNonceCache> = LazyLock::new(|| ShardedNonceCache::new());
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 
-fn check_and_insert_nonce(nonce: &[u8; 16], timestamp: u64) -> bool {
-    let mut cache = NONCE_CACHE.lock();
+fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> bool {
+    let key = (signer_id, *nonce);
 
-    if cache.contains(nonce) {
+    if NONCE_CACHE.get(&key).is_some() {
         return false;
     }
 
-    cache.insert(*nonce, timestamp);
-    cache.evict_oldest();
+    if NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE {
+        let oldest_key = NONCE_CACHE
+            .iter()
+            .min_by_key(|entry| *entry.value())
+            .map(|entry| entry.key().clone());
+        if let Some(key_to_remove) = oldest_key {
+            NONCE_CACHE.remove(&key_to_remove);
+        }
+    }
+
+    NONCE_CACHE.insert(key, timestamp);
     true
 }
 
@@ -151,20 +139,30 @@ fn verify_timestamp(timestamp: u64) -> bool {
 }
 
 pub struct IpcSigner {
+    signer_id: u64,
     key: [u8; 32],
 }
 
 impl IpcSigner {
     pub fn new(key: &[u8; 32]) -> Self {
-        Self { key: *key }
+        let signer_id = u64::from_le_bytes(key[..8].try_into().expect("key has at least 8 bytes"));
+        Self {
+            signer_id,
+            key: *key,
+        }
+    }
+
+    pub fn signer_id(&self) -> u64 {
+        self.signer_id
     }
 
     /// Derives an IPC signing key from a secret string.
     ///
-    /// **This should only be used for testing/development.** Production
-    /// deployments must use generated random session keys via
-    /// [`generate_session_key()`] and file-based key exchange to avoid
-    /// deterministic key material.
+    /// **DANGER - TEST ONLY**: This function uses raw SHA-256 without salt or
+    /// iterations, making it vulnerable to dictionary attacks. Production code
+    /// must use [`generate_session_key()`] and file-based key exchange to get
+    /// random session keys via [`try_from_env()`] or [`read_ipc_key_file()`].
+    #[cfg(test)]
     pub fn from_secret(secret: &str) -> Self {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -172,35 +170,68 @@ impl IpcSigner {
         let result = hasher.finalize();
         let mut key = [0u8; 32];
         key.copy_from_slice(&result);
-        Self { key }
+        Self::new(&key)
     }
 
     pub fn try_from_env() -> Option<Self> {
         #[cfg(unix)]
         {
-            use libc::O_EXCL;
+            use libc::O_NOFOLLOW;
             if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
-                let file = match std::fs::File::options()
+                let path = std::path::Path::new(&key_file);
+
+                if let Ok(meta) = path.metadata() {
+                    use std::os::unix::fs::MetadataExt;
+                    if meta.mode() & 0o222 != 0 {
+                        return None;
+                    }
+                    if meta.uid() != unsafe { libc::getuid() } as u32 {
+                        return None;
+                    }
+                }
+
+                let file = match std::fs::OpenOptions::new()
                     .read(true)
-                    .custom_flags(O_EXCL)
-                    .open(&key_file)
+                    .custom_flags(libc::O_RDONLY | O_NOFOLLOW | libc::O_CLOEXEC)
+                    .open(path)
                 {
                     Ok(f) => f,
                     Err(_) => return None,
                 };
+
                 let mut key_hex = String::new();
                 std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex)
                     .ok()?;
-                let _ = file;
-                std::fs::remove_file(&key_file).ok();
+                drop(file);
+                let _ = std::fs::remove_file(&key_file);
                 let key_hex = key_hex.trim();
                 let key = parse_hex_key(key_hex).ok()?;
-                return Some(Self { key });
+                return Some(Self::new(&key));
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+                let path = std::path::Path::new(&key_file);
+                let meta = match path.metadata() {
+                    Ok(m) => m,
+                    Err(_) => return None,
+                };
+                if meta.permissions().readonly() {
+                    return None;
+                }
+                if meta.len() < 64 || meta.len() > 128 {
+                    return None;
+                }
+                let key_hex = std::fs::read_to_string(path).ok()?;
+                let _ = std::fs::remove_file(path);
+                let key = parse_hex_key(key_hex.trim()).ok()?;
+                return Some(Self::new(&key));
             }
         }
         if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
             let key = parse_hex_key(key_hex.trim()).ok()?;
-            return Some(Self { key });
+            return Some(Self::new(&key));
         }
         None
     }
@@ -367,7 +398,7 @@ impl<R: Read> SignedReader<R> {
             ));
         }
 
-        if !check_and_insert_nonce(&nonce, timestamp) {
+        if !check_and_insert_nonce(self.signer.signer_id(), &nonce, timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "replay detected: duplicate nonce",
@@ -501,7 +532,7 @@ impl SignedIpcMessage {
             ));
         }
 
-        if !check_and_insert_nonce(&nonce, timestamp) {
+        if !check_and_insert_nonce(signer.signer_id(), &nonce, timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "replay detected: duplicate nonce",
@@ -566,7 +597,7 @@ impl SignedIpcMessage {
             ));
         }
 
-        if !check_and_insert_nonce(&nonce, timestamp) {
+        if !check_and_insert_nonce(signer.signer_id(), &nonce, timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "replay detected: duplicate nonce",
@@ -587,21 +618,30 @@ pub fn generate_session_key() -> [u8; 32] {
 
 #[cfg(unix)]
 fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
-    use std::fs::OpenOptions;
-    use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
+    use libc::O_NOFOLLOW;
 
-    let file = OpenOptions::new()
+    if let Ok(meta) = path.metadata() {
+        use std::os::unix::fs::MetadataExt;
+        if meta.mode() & 0o222 != 0 {
+            return None;
+        }
+        if meta.uid() != unsafe { libc::getuid() } as u32 {
+            return None;
+        }
+    }
+
+    let file = match std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_EXCL | libc::O_NOFOLLOW)
+        .custom_flags(libc::O_RDONLY | O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
-        .ok()?;
+    {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
 
-    let mut reader = std::io::BufReader::new(file);
     let mut key_hex = String::new();
-    reader.read_to_string(&mut key_hex).ok()?;
-    drop(reader);
-
+    std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex).ok()?;
+    drop(file);
     let _ = std::fs::remove_file(path);
 
     let key_hex = key_hex.trim();
@@ -681,8 +721,9 @@ mod tests {
     fn test_nonce_cache_reject_duplicate() {
         let nonce = [0xABu8; 16];
         let timestamp = 1234567890u64;
-        assert!(check_and_insert_nonce(&nonce, timestamp));
-        assert!(!check_and_insert_nonce(&nonce, timestamp));
+        let signer_id = 0u64;
+        assert!(check_and_insert_nonce(signer_id, &nonce, timestamp));
+        assert!(!check_and_insert_nonce(signer_id, &nonce, timestamp));
     }
 
     #[test]
