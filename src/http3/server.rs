@@ -376,8 +376,10 @@ impl Http3Server {
         match waf_decision {
             WafDecision::Stall => {
                 counter!("maluwaf.http3.requests.stalled").increment(1);
+                crate::metrics::record_stall_start();
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                        crate::metrics::record_stall_end();
                         tracing::debug!("Stall timeout reached, dropping connection");
                     }
                 }

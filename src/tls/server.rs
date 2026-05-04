@@ -858,9 +858,23 @@ impl HttpsServer {
             }
             crate::proxy::WafDecision::Stall => {
                 counter!("maluwaf.https.stalled").increment(1);
+                let current_stalled = crate::metrics::get_active_stalled_requests();
+                if current_stalled >= http_config.max_stalled_requests as u64 {
+                    crate::metrics::record_stall_rejected();
+                    tracing::warn!(
+                        "HTTPS stall rejected due to concurrency cap"
+                    );
+                    return Ok(Self::build_response(
+                        429,
+                        "Too many requests".to_string(),
+                        "text/plain",
+                    ));
+                }
+                crate::metrics::record_stall_start();
                 let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
                 tokio::select! {
                     _ = tokio::time::sleep(stall_timeout) => {
+                        crate::metrics::record_stall_end();
                         Ok(Self::build_response(408, "Request timeout".to_string(), "text/plain"))
                     }
                 }

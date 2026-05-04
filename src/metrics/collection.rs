@@ -139,6 +139,31 @@ pub fn get_proxy_cache_misses() -> u64 {
     PROXY_CACHE_MISSES.load(Ordering::Relaxed)
 }
 
+pub fn record_stall_start() {
+    ACTIVE_STALLED_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_stall_end() {
+    ACTIVE_STALLED_REQUESTS.fetch_sub(1, Ordering::Relaxed);
+    STALL_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_stall_rejected() {
+    STALL_REJECTED_CONCURRENCY_CAP.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_active_stalled_requests() -> u64 {
+    ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed)
+}
+
+pub fn get_stall_rejected_count() -> u64 {
+    STALL_REJECTED_CONCURRENCY_CAP.load(Ordering::Relaxed)
+}
+
+pub fn get_stall_timeouts() -> u64 {
+    STALL_TIMEOUTS.load(Ordering::Relaxed)
+}
+
 pub fn record_static_cache_hit() {
     STATIC_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
 }
