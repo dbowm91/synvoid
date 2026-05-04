@@ -224,7 +224,7 @@ Core profile now compiles with `--no-default-features` (verified 2026-05-04).
 | Per-site TLS client pooling | **COMPLETED** |
 | No retry in HTTP/TLS/HTTP3 direct paths | ProxyServer path only |
 | No cache in HTTP/HTTP3 direct paths | Partial |
-| HTTP/3 missing response header filtering | OPEN |
+| HTTP/3 missing response header filtering | **FIXED** | Uses `filter_response_headers_buf` and `apply_security_headers` |
 | Mesh has separate header/metric/retry implementation | OPEN |
 
 ### 5.3 Worker Runtime Split & Extension Policies
@@ -386,7 +386,7 @@ All 4 waves (W1-W4) implemented and verified.
 | 4.1 Architecture Profiles | DOCUMENTED | Track as guidance |
 | 4.2 Architecture Gates | **COMPLETED** | Core profile compiles |
 | 4.3 Control Plane Boundaries | DOCUMENTED | Keep mesh in worker |
-| 5.1 WAF Entrypoint Matrix | ACTIVE | ProxyServer query_string fixed |
+| 5.1 WAF Entrypoint Matrix | **COMPLETED** | HTTP/3 XFF sanitization fixed |
 | 5.2 Traffic Entrypoint Matrix | **COMPLETED** | TLS client pooling verified |
 | 5.3 Worker Runtime Split | **COMPLETED** | ExtensionRuntime trait |
 | 5.4 HTTP Server Pipeline | **COMPLETED** | Phase 1-3 extraction |
