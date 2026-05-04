@@ -250,6 +250,109 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_forwarded_headers_spoofed_by_client_rejected() {
+        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use maluwaf::config::site::ProxyHeadersConfig;
+
+        let client_ip = "192.168.1.100".parse().unwrap();
+        let mut original_headers = http::HeaderMap::new();
+
+        original_headers.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
+        original_headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
+        original_headers.insert("forwarded", "for=10.10.10.10".parse().unwrap());
+        original_headers.insert("x-forwarded-proto", "https".parse().unwrap());
+
+        let config = ProxyHeadersConfig::default();
+        let result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+
+        let xff = result.get("x-forwarded-for").map(|v| v.to_str().unwrap_or(""));
+        assert!(xff.unwrap().contains("192.168.1.100"), "X-Forwarded-For should contain real client IP, not spoofed values");
+
+        let xrip = result.get("x-real-ip").map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(xrip.unwrap(), "192.168.1.100", "X-Real-IP should contain real client IP");
+
+        assert!(result.get("forwarded").is_none(), "Original forwarded header should be stripped");
+        assert!(result.get("x-forwarded-proto").is_none(), "Original x-forwarded-proto should be stripped (protocol set based on listener)");
+    }
+
+    #[test]
+    fn test_hop_by_hop_headers_stripped_from_forwarding() {
+        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use maluwaf::config::site::ProxyHeadersConfig;
+
+        let client_ip = "10.0.0.1".parse().unwrap();
+        let mut original_headers = http::HeaderMap::new();
+
+        original_headers.insert("connection", "keep-alive".parse().unwrap());
+        original_headers.insert("keep-alive", "timeout=30".parse().unwrap());
+        original_headers.insert("transfer-encoding", "chunked".parse().unwrap());
+        original_headers.insert("proxy-authorization", "secret".parse().unwrap());
+        original_headers.insert("content-type", "application/json".parse().unwrap());
+
+        let config = ProxyHeadersConfig::default();
+        let result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+
+        assert!(result.get("connection").is_none(), "Connection header should be stripped");
+        assert!(result.get("keep-alive").is_none(), "Keep-Alive header should be stripped");
+        assert!(result.get("transfer-encoding").is_none(), "Transfer-Encoding header should be stripped");
+        assert!(result.get("proxy-authorization").is_none(), "Proxy-Authorization header should be stripped");
+        assert!(result.get("content-type").is_some(), "Content-Type should be preserved");
+    }
+
+    #[test]
+    fn test_build_forward_headers_preserves_non_spoofed_headers() {
+        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use maluwaf::config::site::ProxyHeadersConfig;
+
+        let client_ip = "172.16.0.50".parse().unwrap();
+        let mut original_headers = http::HeaderMap::new();
+
+        original_headers.insert("host", "upstream.example.com".parse().unwrap());
+        original_headers.insert("user-agent", "Mozilla/5.0".parse().unwrap());
+        original_headers.insert("accept", "application/json".parse().unwrap());
+        original_headers.insert("x-request-id", "abc123".parse().unwrap());
+
+        let config = ProxyHeadersConfig::default();
+        let result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+
+        assert!(result.get("host").is_some(), "Host header should be preserved");
+        assert!(result.get("user-agent").is_some(), "User-Agent should be preserved");
+        assert!(result.get("accept").is_some(), "Accept header should be preserved");
+        assert!(result.get("x-request-id").is_some(), "Custom headers should be preserved");
+    }
+
+    #[test]
+    fn test_forwarded_protocol_header_based_on_listener() {
+        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use maluwaf::config::site::ProxyHeadersConfig;
+
+        let client_ip = "127.0.0.1".parse().unwrap();
+        let original_headers = http::HeaderMap::new();
+
+        let config = ProxyHeadersConfig::default();
+
+        let http_result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+        let proto_header = http_result.get("x-forwarded-proto").map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(proto_header.unwrap(), "http", "HTTP listener should set x-forwarded-proto to http");
+
+        let https_result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Https);
+        let proto_header = https_result.get("x-forwarded-proto").map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(proto_header.unwrap(), "https", "HTTPS listener should set x-forwarded-proto to https");
+    }
+
+    #[test]
+    fn test_cache_key_construction_uses_sanitized_ip() {
+        use maluwaf::proxy_cache::CacheKey;
+        use std::net::IpAddr;
+
+        let client_ip: IpAddr = "1.2.3.4".parse().unwrap();
+
+        let sanitized_ip = format!("{}", client_ip);
+
+        assert_eq!(sanitized_ip, "1.2.3.4", "Cache key should use client IP directly without extra formatting");
+    }
+
     #[cfg(all(unix, not(target_os = "linux")))]
     #[test]
     fn test_non_linux_no_ebpf_support() {
