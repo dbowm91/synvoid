@@ -1,10 +1,10 @@
-# Knowledge Base: Deferred Items Incremental Implementation
+# Knowledge Base: Deferred Items
 
-This skill provides context on how deferred items from the original `plans/plan.md` were implemented incrementally.
+Implementation plan is complete. Remaining items are documented in `plans/plan.md`.
 
-## Completion Status (Wave 21 - 2026-05-02)
+## Current Status (2026-05-04)
 
-Most plan priorities have been completed or removed. Remaining items are documented in `plans/plan.md`.
+All plan items have been verified and completed. The plan file has been pruned to contain only deferred items.
 
 ## Architecture Documents
 
@@ -13,21 +13,35 @@ Key architecture documentation is available in the `architecture/` directory:
 - `architecture/deep_dive_review.md` — Layer 1-3 and 7 deep dive (IPC, WAF, Proxy, Foundation)
 - `architecture/layer_3_5_deep_dive.md` — Layer 3 & 5 deep dive (Proxy & Mesh, PQC, Trust Models)
 
-## Deferred Items (Not Implemented)
+## Verification Commands
 
-Remaining items tracked in `plans/plan.md`:
+```bash
+# All profiles should compile
+cargo check --no-default-features
+cargo check --no-default-features --features mesh
+cargo check --no-default-features --features dns
+cargo check --no-default-features --features mesh,dns
 
-### Systems Layer (Wave 3)
-- Deep WireGuard/TUN backend work, except where platform compile checks require gating
+# Security regression tests
+cargo test --test security_regression
+```
 
-### Distributed Layer (Wave 4)
-- Performance tuning of DHT routing and regional quorum selection
-- Major Raft storage schema changes unrelated to auth metadata
-- New mesh admin APIs for manual quorum or Raft management
-- Changing the public wire protocol beyond the minimum needed for signed context and auth
+## Completed Items (2026-05-04)
 
-## Removed Items
-- **Wave 2**: Admin UI/API redesign, config schema redesign, performance rewrites — not aligned with 100k node target
-- **Process isolation stubs**: MeshControlPlane and PluginExecution stubs removed (mesh runs in UnifiedServerWorker, Wasmtime provides sandboxing)
-- **Workspace decomposition**: WAF module extraction failed due to cross-dependencies; WafCore remains in main crate
-- **Foundational stack replacement**: Tokio/Hyper/Quinn works well; changing would be massive disruption
+The following major items were completed:
+- All 4 implementation waves (W1-W4)
+- All architecture profiles compile
+- All security hardening items
+- All buffer pool refactoring
+- All IPC consolidation
+- PID file lock ordering fix
+- Profile compilation fixes (mesh, dns, full)
+
+## Deferred Items
+
+Remaining deferred items are documented in `plans/plan.md` and include:
+- Testing infrastructure (Sandbox Leak Test, Socket Hijack Test)
+- Plugin isolation (GlobalWasmMemoryBudget wiring)
+- Health API integration
+- Config reload improvements
+- DHT routing optimization for 100k+ node scale

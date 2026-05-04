@@ -93,6 +93,7 @@ Confirmed pure Rust: `libinjectionrs`, `bcrypt`
 cargo test --lib --no-run    # Verify tests compile
 cargo test --lib <test_name> # Run targeted test
 cargo test --test integration_test
+cargo test --test security_regression  # Security regression tests
 cargo fmt && cargo clippy --lib -- -D warnings
 ```
 
@@ -114,7 +115,11 @@ cargo check --no-default-features --features dns
 cargo check --no-default-features --features mesh,dns
 ```
 
-**Note**: Core profile (--no-default-features) compiles successfully as of 2026-05-04. Mesh and DNS profiles should also compile without errors.
+**Note**: All profiles compile successfully as of 2026-05-04:
+- Core profile (`--no-default-features`) ✅
+- Mesh profile (`--no-default-features --features mesh`) ✅
+- DNS profile (`--no-default-features --features dns`) ✅
+- Full profile (`--no-default-features --features mesh,dns`) ✅
 
 ## Known File Path Corrections
 
