@@ -40,6 +40,21 @@ pub const HEADERS_TO_STRIP: &[&str] = &[
 
 pub const MAX_XFF_CHAIN_LENGTH: usize = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardedProtocol {
+    Http,
+    Https,
+}
+
+impl ForwardedProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ForwardedProtocol::Http => "http",
+            ForwardedProtocol::Https => "https",
+        }
+    }
+}
+
 static HOP_BY_HOP_HEADERS_SET: LazyLock<AHashSet<&'static str>> =
     LazyLock::new(|| HOP_BY_HOP_HEADERS.iter().copied().collect());
 
@@ -349,7 +364,7 @@ pub fn build_forward_headers(
     client_ip: std::net::IpAddr,
     original_headers: &http::HeaderMap,
     config: &ProxyHeadersConfig,
-    is_tls: bool,
+    protocol: ForwardedProtocol,
 ) -> http::HeaderMap {
     let mut forward_headers = http::HeaderMap::new();
 
@@ -414,7 +429,7 @@ pub fn build_forward_headers(
         forward_headers.insert(http::header::HeaderName::from_static("x-real-ip"), value);
     }
 
-    let proto = if is_tls { "https" } else { "http" };
+    let proto = protocol.as_str();
     if let Ok(value) = proto.parse::<http::HeaderValue>() {
         forward_headers.insert(
             http::header::HeaderName::from_static("x-forwarded-proto"),
@@ -632,7 +647,7 @@ mod tests {
         headers.insert("cookie", "session=abc".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let result = build_forward_headers(client_ip, &headers, &config, true);
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert_eq!(result.get("authorization").unwrap(), "Bearer token123");
         assert_eq!(result.get("content-type").unwrap(), "application/json");
@@ -651,7 +666,7 @@ mod tests {
         headers.insert("authorization", "Bearer token".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let result = build_forward_headers(client_ip, &headers, &config, true);
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert!(result.get("connection").is_none());
         assert!(result.get("keep-alive").is_none());
@@ -667,7 +682,7 @@ mod tests {
         headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let result = build_forward_headers(client_ip, &headers, &config, true);
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         let xff = result.get("x-forwarded-for").unwrap().to_str().unwrap();
         assert!(xff.contains("192.168.1.1"));
@@ -684,7 +699,7 @@ mod tests {
         let mut config = ProxyHeadersConfig::default();
         config.forward = vec!["content-type".to_string()];
 
-        let result = build_forward_headers(client_ip, &headers, &config, true);
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert!(result.get("authorization").is_none());
         assert_eq!(result.get("content-type").unwrap(), "application/json");
@@ -701,7 +716,7 @@ mod tests {
         let mut config = ProxyHeadersConfig::default();
         config.clear = vec!["x-custom".to_string()];
 
-        let result = build_forward_headers(client_ip, &headers, &config, true);
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert_eq!(result.get("authorization").unwrap(), "Bearer token");
         assert!(result.get("x-custom").is_none());
@@ -717,9 +732,42 @@ mod tests {
         let mut config = ProxyHeadersConfig::default();
         config.hide = vec!["x-sensitive".to_string()];
 
-        let result = build_forward_headers(client_ip, &headers, &config, true);
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert_eq!(result.get("authorization").unwrap(), "Bearer token");
         assert!(result.get("x-sensitive").is_none());
+    }
+
+    #[test]
+    fn forward_headers_sets_http_proto_for_plain_http() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let headers = http::HeaderMap::new();
+        let config = ProxyHeadersConfig::default();
+
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Http);
+
+        assert_eq!(result.get("x-forwarded-proto").unwrap(), "http");
+    }
+
+    #[test]
+    fn forward_headers_sets_https_proto_for_https() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let headers = http::HeaderMap::new();
+        let config = ProxyHeadersConfig::default();
+
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
+
+        assert_eq!(result.get("x-forwarded-proto").unwrap(), "https");
+    }
+
+    #[test]
+    fn forward_headers_http3_uses_https() {
+        let client_ip = "192.168.1.1".parse().unwrap();
+        let headers = http::HeaderMap::new();
+        let config = ProxyHeadersConfig::default();
+
+        let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
+
+        assert_eq!(result.get("x-forwarded-proto").unwrap(), "https");
     }
 }

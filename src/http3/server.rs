@@ -19,7 +19,7 @@ use crate::metrics::bandwidth::{
 use crate::metrics::WorkerMetrics;
 use crate::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers_buf,
-    PreparedUpstreamTarget, WafDecision,
+    ForwardedProtocol, PreparedUpstreamTarget, WafDecision,
 };
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
@@ -573,7 +573,7 @@ impl Http3Server {
                         .headers
                         .as_ref()
                         .unwrap_or(&DEFAULT_HEADERS_CONFIG),
-                    true, // HTTP/3 is always TLS
+                    ForwardedProtocol::Https, // HTTP/3 is always TLS
                 );
 
                 let body_to_send = if body_bytes.is_empty() {

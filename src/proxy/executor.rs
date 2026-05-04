@@ -13,7 +13,7 @@ use crate::proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyC
 use crate::utils;
 
 use super::cache::{build_cached_response, filter_sensitive_headers, get_cache_max_age_static};
-use super::headers::build_forward_headers;
+use super::headers::{build_forward_headers, ForwardedProtocol};
 use super::join_upstream_url;
 
 #[derive(Debug)]
@@ -200,7 +200,7 @@ impl ProxyExecutor {
             client_ip,
             headers,
             &crate::config::site::ProxyHeadersConfig::default(),
-            true,
+            ForwardedProtocol::Https,
         );
 
         match crate::http_client::send_request_with_body_headers_and_timeout(
@@ -286,7 +286,7 @@ impl ProxyExecutor {
             client_ip,
             original_headers,
             &crate::config::site::ProxyHeadersConfig::default(),
-            true,
+            ForwardedProtocol::Https,
         );
 
         tokio::spawn(async move {

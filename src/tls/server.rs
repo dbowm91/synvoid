@@ -37,7 +37,7 @@ use crate::metrics::bandwidth::{
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
-    PreparedUpstreamTarget, ProxyServer,
+    ForwardedProtocol, PreparedUpstreamTarget, ProxyServer,
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
@@ -1605,7 +1605,7 @@ impl HttpsServer {
                         .headers
                         .as_ref()
                         .unwrap_or(&ProxyHeadersConfig::default()),
-                    true,
+                    ForwardedProtocol::Https,
                 );
 
                 let resp = send_request_streaming(

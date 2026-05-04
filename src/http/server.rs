@@ -130,7 +130,7 @@ use crate::protocol::websocket::WebSocketHandler;
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     apply_response_size_limit, build_forward_headers, build_headers_to_filter,
-    filter_response_headers_buf, join_upstream_url, PreparedUpstreamTarget,
+    filter_response_headers_buf, join_upstream_url, ForwardedProtocol, PreparedUpstreamTarget,
 };
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
@@ -2889,7 +2889,7 @@ impl HttpServer {
                             .headers
                             .as_ref()
                             .unwrap_or(&ProxyHeadersConfig::default()),
-                        true,
+                        ForwardedProtocol::Http,
                     );
 
                     match send_request_streaming(

@@ -32,6 +32,8 @@ struct ServerSharedState {
     drain_state: Option<Arc<WorkerDrainState>>,
     #[cfg(feature = "mesh")]
     mesh_transport: Option<Arc<crate::mesh::transport::MeshTransportManager>>,
+    #[cfg(feature = "mesh")]
+    mesh_backend_pool: Option<Arc<crate::mesh::MeshBackendPool>>,
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
@@ -895,6 +897,8 @@ impl UnifiedServer {
             drain_state: self.drain_state.clone(),
             #[cfg(feature = "mesh")]
             mesh_transport: self.mesh_transport.clone(),
+            #[cfg(feature = "mesh")]
+            mesh_backend_pool: self.mesh_backend_pool.clone(),
             metrics: self.metrics.clone(),
             ipc: self.ipc.clone(),
             worker_id: self.worker_id,
@@ -1180,6 +1184,11 @@ impl UnifiedServer {
         #[cfg(feature = "mesh")]
         if let Some(mt) = state.mesh_transport.clone() {
             server = server.with_mesh_transport(Some(mt));
+        }
+
+        #[cfg(feature = "mesh")]
+        if let Some(pool) = state.mesh_backend_pool.clone() {
+            server = server.with_mesh_backend_pool(Some(pool));
         }
 
         if let Some(m) = state.metrics.clone() {
