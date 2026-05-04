@@ -13,7 +13,8 @@ use maluwaf::proxy::retry::{
 };
 use maluwaf::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers,
-    is_hop_by_hop_header, join_upstream_url, sanitize_request_path, ResponseSizeError,
+    is_hop_by_hop_header, join_upstream_url, sanitize_request_path, ForwardedProtocol,
+    ResponseSizeError,
 };
 use maluwaf::router::{BackendType, RouteResult, Router};
 use maluwaf::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
@@ -224,7 +225,7 @@ mod header_preservation_tests {
         headers.insert("accept", "application/json".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let forward = build_forward_headers(client_ip, &headers, &config, true);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert_eq!(forward.get("authorization").unwrap(), "Bearer secret-token");
         assert_eq!(forward.get("content-type").unwrap(), "application/json");
@@ -241,7 +242,7 @@ mod header_preservation_tests {
         headers.insert("upgrade", "websocket".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let forward = build_forward_headers(client_ip, &headers, &config, false);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Http);
 
         assert!(forward.get("connection").is_none());
         assert!(forward.get("keep-alive").is_none());
@@ -257,7 +258,7 @@ mod header_preservation_tests {
         headers.insert("proxy-authorization", "Basic dXNlcjpwYXNz".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let forward = build_forward_headers(client_ip, &headers, &config, false);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Http);
 
         assert!(forward.get("proxy-authenticate").is_none());
         assert!(forward.get("proxy-authorization").is_none());
@@ -269,7 +270,7 @@ mod header_preservation_tests {
         let headers = HeaderMap::new();
 
         let config = ProxyHeadersConfig::default();
-        let forward = build_forward_headers(client_ip, &headers, &config, true);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert_eq!(forward.get("x-forwarded-for").unwrap(), "203.0.113.5");
         assert_eq!(forward.get("x-real-ip").unwrap(), "203.0.113.5");
@@ -283,7 +284,7 @@ mod header_preservation_tests {
         headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let forward = build_forward_headers(client_ip, &headers, &config, false);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Http);
 
         let xff = forward.get("x-forwarded-for").unwrap().to_str().unwrap();
         assert!(xff.contains("203.0.113.5"));
@@ -329,7 +330,7 @@ mod header_preservation_tests {
         let mut config = ProxyHeadersConfig::default();
         config.hide = vec!["x-internal-secret".to_string()];
 
-        let forward = build_forward_headers(client_ip, &headers, &config, true);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert_eq!(forward.get("authorization").unwrap(), "Bearer token");
         assert!(forward.get("x-internal-secret").is_none());
@@ -346,7 +347,7 @@ mod header_preservation_tests {
         let mut config = ProxyHeadersConfig::default();
         config.forward = vec!["accept".to_string()];
 
-        let forward = build_forward_headers(client_ip, &headers, &config, true);
+        let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
         assert!(forward.get("authorization").is_none());
         assert!(forward.get("x-custom").is_none());
