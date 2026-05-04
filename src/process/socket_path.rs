@@ -72,11 +72,7 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
             }
         }
 
-        let uid = unsafe { libc::geteuid() };
-        let path = PathBuf::from("/tmp").join(format!("maluwaf-{}", uid));
-        let _ = create_secure_dir_atomic(&path);
-
-        path.join(name)
+        get_user_socket_dir().join(name)
     }
 
     #[cfg(windows)]
@@ -96,6 +92,14 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
         let _ = std::fs::create_dir_all(&path);
         path.join(name)
     }
+}
+
+#[cfg(unix)]
+pub fn get_user_socket_dir() -> PathBuf {
+    let uid = unsafe { libc::geteuid() };
+    let path = PathBuf::from("/tmp").join(format!("maluwaf-{}", uid));
+    let _ = create_secure_dir_atomic(&path);
+    path
 }
 
 pub fn get_master_socket_path() -> PathBuf {
