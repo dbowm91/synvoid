@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ipc::{MasterCommand, MasterStatus};
 use super::ipc_framing::{read_exact_message_sync, write_message_sync};
+use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
 pub struct CommandClient {
     socket_path: Option<PathBuf>,
@@ -68,8 +70,19 @@ impl CommandClient {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-        write_message_sync(&mut stream, &command)
-            .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+        if let Some(signer) = IpcSigner::try_from_env() {
+            let signed_data = SignedIpcMessage::serialize_signed(&command, &signer)
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+            stream
+                .write_all(&signed_data)
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+            stream
+                .flush()
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+        } else {
+            write_message_sync(&mut stream, &command)
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+        }
 
         let response: CommandResponse = read_exact_message_sync(&mut stream)
             .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;
@@ -93,8 +106,19 @@ impl CommandClient {
             .open(pipe_name)
             .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-        write_message_sync(&mut stream, &command)
-            .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+        if let Some(signer) = IpcSigner::try_from_env() {
+            let signed_data = SignedIpcMessage::serialize_signed(&command, &signer)
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+            stream
+                .write_all(&signed_data)
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+            stream
+                .flush()
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+        } else {
+            write_message_sync(&mut stream, &command)
+                .map_err(|e| CommandError::SendFailed(e.to_string()))?;
+        }
 
         let response: CommandResponse = read_exact_message_sync(&mut stream)
             .map_err(|e| CommandError::ReceiveFailed(e.to_string()))?;

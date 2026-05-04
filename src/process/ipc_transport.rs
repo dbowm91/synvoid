@@ -1,7 +1,6 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -18,7 +17,7 @@ use super::ipc_framing::{
 };
 use super::ipc_signed::IpcSigner;
 
-static WARNED_UNSIGNED: OnceLock<()> = OnceLock::new();
+
 
 pub struct IpcStream {
     #[cfg(unix)]
@@ -324,18 +323,12 @@ impl IpcStream {
             self.inner.flush().await?;
             Ok(())
         } else {
-            if self.enforce_signing {
-                tracing::error!(
-                    "IPC signing is enforced but no signer available - rejecting message"
-                );
-                return Err(io::Error::other(
-                    "IPC signing enforced but no signer configured",
-                ));
-            }
-            WARNED_UNSIGNED.get_or_init(|| {
-                tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
-            });
-            write_message(&mut self.inner, msg).await
+            tracing::error!(
+                "IPC signing is enforced but no signer configured - rejecting unsigned message"
+            );
+            Err(io::Error::other(
+                "IPC signing enforced but no signer configured",
+            ))
         }
     }
 
@@ -370,18 +363,12 @@ impl IpcStream {
                 Err(e) => Err(e),
             }
         } else {
-            if self.enforce_signing {
-                tracing::error!(
-                    "IPC signing is enforced but no signer available - rejecting connection"
-                );
-                return Err(io::Error::other(
-                    "IPC signing enforced but no signer configured",
-                ));
-            }
-            WARNED_UNSIGNED.get_or_init(|| {
-                tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
-            });
-            read_message(&mut self.inner, &mut self.read_buffer).await
+            tracing::error!(
+                "IPC signing is enforced but no signer configured - rejecting unsigned connection"
+            );
+            Err(io::Error::other(
+                "IPC signing enforced but no signer configured",
+            ))
         }
     }
 
@@ -399,18 +386,12 @@ impl IpcStream {
                 Err(_) => Ok(None),
             }
         } else {
-            if self.enforce_signing {
-                tracing::error!(
-                    "IPC signing is enforced but no signer available - rejecting connection"
-                );
-                return Err(io::Error::other(
-                    "IPC signing enforced but no signer configured",
-                ));
-            }
-            WARNED_UNSIGNED.get_or_init(|| {
-                tracing::warn!("Using unsigned IPC communication - this is insecure for production deployments");
-            });
-            read_message_with_timeout(&mut self.inner, &mut self.read_buffer, timeout_ms).await
+            tracing::error!(
+                "IPC signing is enforced but no signer configured - rejecting unsigned connection"
+            );
+            Err(io::Error::other(
+                "IPC signing enforced but no signer configured",
+            ))
         }
     }
 

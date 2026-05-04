@@ -1,5 +1,7 @@
+#![deny(unsafe_code)]
+
 use bytes::{Buf, BufMut, BytesMut};
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use parking_lot::Mutex;
 use std::sync::Arc;
 
 const SMALL_BUF_SIZE: usize = 4 * 1024;
@@ -55,159 +57,16 @@ impl PoolMetrics {
             BufferTier::Jumbo => (&self.jumbo_acquired, &self.jumbo_reused),
         };
 
-        acquire_counter.fetch_add(1, Ordering::Relaxed);
+        acquire_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if reused {
-            reuse_counter.fetch_add(1, Ordering::Relaxed);
+            reuse_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
-
-/// Lock-free Treiber stack for concurrent buffer storage.
-///
-/// # Safety Invariants
-///
-/// ## Ownership Model
-/// - `head` points to the top of the stack, or is null if empty.
-/// - Each `StackNode` is heap-allocated via `Box::into_raw` in `push` and
-///   reclaimed via `Box::from_raw` in `pop`. Ownership transfers atomically.
-/// - A node is either (a) uniquely owned by a thread performing `push` (before
-///   the CAS succeeds), (b) part of the stack (reachable from `head`), or (c)
-///   uniquely owned by a thread that just popped it (after CAS succeeds).
-///
-/// ## Memory Ordering
-/// - `push`: The `next` pointer write happens-before the `Release` CAS on `head`.
-///   On CAS failure we only rewrite `node.next` (no reordering hazard because the
-///   node is still exclusively owned by this thread).
-/// - `pop`: The `Acquire` load of `head` synchronizes-with the `Release` CAS from
-///   a `push`, ensuring we read a consistent `next` pointer. The `Release` on the
-///   pop CAS ensures prior writes to the removed node are visible before we reclaim
-///   it with `Box::from_raw`.
-/// - `len` is approximate (Relaxed). It is used only for capacity checks that do
-///   not require exact counts.
-///
-/// ## ABA Hazard Mitigation
-/// The classic ABA problem applies: thread A reads head P, thread B pops P and
-/// pushes it back, thread A's CAS succeeds on stale P. For this buffer pool the
-/// hazard is mitigated because:
-/// - Nodes hold `BytesMut` buffers that are only returned to the pool after the
-///   caller is completely done with them (via `PooledBuf::drop`).
-/// - The logical content of a node changes between pop and re-push (buffer is
-///   cleared then filled), so even if ABA occurs, the `next` pointer we read
-///   from a recycled node is still valid — it was set during the re-push.
-/// - In practice, the per-shard design means contention is low enough that ABA
-///   windows are negligible. If higher contention is needed, consider tagged
-///   pointers or epoch-based reclamation.
-///
-/// ## Precondition for `push`
-/// - `buf` must be a valid `BytesMut` (caller ensures this).
-/// - The stack's logical size should be < `cap` (enforced by `TierArena::release`).
-///
-/// ## Precondition for `pop`
-/// - None beyond the struct being initialized. Returns `None` if empty.
-struct TreiberStack {
-    head: AtomicPtr<StackNode>,
-    len: AtomicUsize,
-}
-
-/// Node in the Treiber stack. Ownership follows the model documented on
-/// [`TreiberStack`]: heap-allocated, lifetime managed by push/pop atomics.
-struct StackNode {
-    buf: BytesMut,
-    next: *mut StackNode,
-}
-
-impl TreiberStack {
-    fn new() -> Self {
-        Self {
-            head: AtomicPtr::new(std::ptr::null_mut()),
-            len: AtomicUsize::new(0),
-        }
-    }
-
-    fn push(&self, buf: BytesMut) {
-        let node = Box::into_raw(Box::new(StackNode {
-            buf,
-            next: std::ptr::null_mut(),
-        }));
-
-        let mut head = self.head.load(Ordering::Relaxed);
-        loop {
-            // SAFETY: `node` was just created via `Box::into_raw` a few lines
-            // above. No other thread has observed this pointer yet (we haven't
-            // published it via CAS), so we have exclusive mutable access. Writing
-            // `head` into `node.next` is safe because `head` is either null or a
-            // valid pointer previously published by another push (or the initial
-            // null).
-            unsafe {
-                (*node).next = head;
-            }
-            match self
-                .head
-                .compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed)
-            {
-                Ok(_) => {
-                    self.len.fetch_add(1, Ordering::Relaxed);
-                    return;
-                }
-                Err(h) => head = h,
-            }
-        }
-    }
-
-    fn pop(&self) -> Option<BytesMut> {
-        let mut head = self.head.load(Ordering::Acquire);
-        loop {
-            if head.is_null() {
-                return None;
-            }
-            match self.head.compare_exchange_weak(
-                head,
-                // SAFETY: `head` was loaded with `Acquire`, synchronizing with
-                // the `Release` CAS in `push`. At this point `head` is still the
-                // current stack top (verified by CAS below), so `(*head).next`
-                // is a valid read. The node is still in the stack and has not
-                // been freed.
-                unsafe { (*head).next },
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.len.fetch_sub(1, Ordering::Relaxed);
-                    // SAFETY: The CAS above succeeded, meaning we atomically
-                    // removed `head` from the stack. No other thread can reach
-                    // this node anymore. We now have unique ownership, so
-                    // converting back to `Box` and dropping is safe.
-                    let node = unsafe { Box::from_raw(head) };
-                    return Some(node.buf);
-                }
-                Err(h) => head = h,
-            }
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.len.load(Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    fn is_empty(&self) -> bool {
-        self.head.load(Ordering::Acquire).is_null()
-    }
-}
-
-// SAFETY: TreiberStack is safe to send between threads because:
-// - All shared state is accessed through atomic operations (AtomicPtr, AtomicUsize).
-// - Raw pointers inside StackNode are only dereferenced when the node is uniquely
-//   owned (during push before CAS, or after successful pop CAS).
-unsafe impl Send for TreiberStack {}
-// SAFETY: TreiberStack is safe to share between threads (&TreiberStack) because:
-// - `push` and `pop` use atomic CAS to modify the stack, ensuring no data race.
-// - `len` is only ever accessed via AtomicUsize with relaxed ordering (approximate).
-// - No interior mutability exists outside of atomic primitives.
-unsafe impl Sync for TreiberStack {}
 
 struct TierArena {
-    stack: TreiberStack,
+    stack: Mutex<Vec<BytesMut>>,
+    len: std::sync::atomic::AtomicUsize,
     buf_size: usize,
     cap: usize,
 }
@@ -215,14 +74,37 @@ struct TierArena {
 impl TierArena {
     fn new(buf_size: usize, cap: usize) -> Self {
         Self {
-            stack: TreiberStack::new(),
+            stack: Mutex::new(Vec::new()),
+            len: std::sync::atomic::AtomicUsize::new(0),
             buf_size,
             cap,
         }
     }
 
+    fn push(&self, buf: BytesMut) {
+        let mut stack = self.stack.lock();
+        if stack.len() < self.cap {
+            stack.push(buf);
+            self.len.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn pop(&self) -> Option<BytesMut> {
+        let mut stack = self.stack.lock();
+        if let Some(buf) = stack.pop() {
+            self.len.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            Some(buf)
+        } else {
+            None
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn acquire(&self, requested_size: usize) -> (BytesMut, BufferTier) {
-        if let Some(buf) = self.stack.pop() {
+        if let Some(buf) = self.pop() {
             let mut buf = buf;
             buf.resize(requested_size, 0);
             return (buf, self.tier());
@@ -233,10 +115,10 @@ impl TierArena {
     }
 
     fn release(&self, buf: BytesMut) {
-        if buf.capacity() > 0 && self.stack.len() < self.cap {
+        if buf.capacity() > 0 && self.len() < self.cap {
             let mut buf = buf;
             buf.clear();
-            self.stack.push(buf);
+            self.push(buf);
         }
     }
 
@@ -250,13 +132,6 @@ impl TierArena {
     }
 }
 
-/// Thread-local cache for buffer reuse, avoiding atomic operations on the
-/// shared TreiberStack for hot-path allocations.
-///
-/// Uses `RefCell<Vec<BytesMut>>` instead of raw pointer casts. This is safe
-/// because `thread_local!` guarantees each thread gets its own instance, so
-/// there is no aliasing risk. `RefCell` adds only a debug-mode borrow check
-/// (a single integer comparison) and no overhead in release builds.
 struct ThreadLocalCache {
     small: std::cell::RefCell<Vec<BytesMut>>,
     medium: std::cell::RefCell<Vec<BytesMut>>,
@@ -500,10 +375,10 @@ impl BufferPool {
         let mut jumbo_available = 0;
 
         for shard in &self.shards {
-            small_available += shard.small.stack.len();
-            medium_available += shard.medium.stack.len();
-            large_available += shard.large.stack.len();
-            jumbo_available += shard.jumbo.stack.len();
+            small_available += shard.small.len();
+            medium_available += shard.medium.len();
+            large_available += shard.large.len();
+            jumbo_available += shard.jumbo.len();
         }
 
         TLS_CACHE.with(|cache| {
@@ -518,14 +393,14 @@ impl BufferPool {
             medium_available,
             large_available,
             jumbo_available,
-            small_acquired: self.metrics.small_acquired.load(Ordering::Relaxed),
-            medium_acquired: self.metrics.medium_acquired.load(Ordering::Relaxed),
-            large_acquired: self.metrics.large_acquired.load(Ordering::Relaxed),
-            jumbo_acquired: self.metrics.jumbo_acquired.load(Ordering::Relaxed),
-            small_reused: self.metrics.small_reused.load(Ordering::Relaxed),
-            medium_reused: self.metrics.medium_reused.load(Ordering::Relaxed),
-            large_reused: self.metrics.large_reused.load(Ordering::Relaxed),
-            jumbo_reused: self.metrics.jumbo_reused.load(Ordering::Relaxed),
+            small_acquired: self.metrics.small_acquired.load(std::sync::atomic::Ordering::Relaxed),
+            medium_acquired: self.metrics.medium_acquired.load(std::sync::atomic::Ordering::Relaxed),
+            large_acquired: self.metrics.large_acquired.load(std::sync::atomic::Ordering::Relaxed),
+            jumbo_acquired: self.metrics.jumbo_acquired.load(std::sync::atomic::Ordering::Relaxed),
+            small_reused: self.metrics.small_reused.load(std::sync::atomic::Ordering::Relaxed),
+            medium_reused: self.metrics.medium_reused.load(std::sync::atomic::Ordering::Relaxed),
+            large_reused: self.metrics.large_reused.load(std::sync::atomic::Ordering::Relaxed),
+            jumbo_reused: self.metrics.jumbo_reused.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -1154,7 +1029,7 @@ mod tests {
                         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
                         let size = ((rng_state >> 33) as usize % (LARGE_BUF_SIZE * 2)).max(1);
                         let buf = BufferPool::acquire(size);
-                        assert_eq!(buf.len(), size);
+               assert_eq!(buf.len(), size);
                         drop(buf);
                     }
                 })

@@ -7,6 +7,7 @@ use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tokio::task::JoinHandle;
 
 use super::connect::connect_to_master_async;
+use super::context::RequestServices;
 use super::drain_state::WorkerDrainState;
 use super::metrics::WorkerMetrics;
 use crate::app_server::{GranianConfig, GranianSupervisor};
@@ -162,6 +163,7 @@ struct UnifiedServerWorkerState {
     stop_accepting_tx: Arc<TokioMutex<Option<tokio::sync::broadcast::Sender<()>>>>,
     unified_server: Arc<crate::server::UnifiedServer>,
     task_handles: Arc<TokioMutex<Vec<JoinHandle<()>>>>,
+    request_services: Arc<RequestServices>,
 }
 
 pub async fn run_unified_server_worker(
@@ -1186,6 +1188,19 @@ pub async fn run_unified_server_worker(
     let stop_accepting_sender = unified_server.get_stop_accepting_sender();
     let stop_accepting_tx = Arc::new(TokioMutex::new(Some(stop_accepting_sender)));
 
+    let request_services = {
+        #[cfg(feature = "mesh")]
+        {
+            let threat_intel = _threat_intel_manager.clone();
+            let yara_rules = crate::waf::get_yara_rules();
+            RequestServices::new(threat_intel, None, yara_rules, None, None)
+        }
+        #[cfg(not(feature = "mesh"))]
+        {
+            RequestServices::new(None, None, None)
+        }
+    };
+
     let state = UnifiedServerWorkerState {
         worker_id,
         metrics: metrics.clone(),
@@ -1201,6 +1216,7 @@ pub async fn run_unified_server_worker(
         stop_accepting_tx: stop_accepting_tx.clone(),
         unified_server: unified_server.clone(),
         task_handles: Arc::new(TokioMutex::new(Vec::new())),
+        request_services: Arc::new(request_services),
     };
 
     {

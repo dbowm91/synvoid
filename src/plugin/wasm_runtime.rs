@@ -786,8 +786,8 @@ impl WasmRuntime {
                 |mut caller: wasmtime::Caller<'_, RequestContext>,
                  key_ptr: i32,
                  key_len: i32,
-                 _out_ptr: i32,
-                 _out_max: i32|
+                 out_ptr: i32,
+                 out_max: i32|
                  -> i32 {
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,

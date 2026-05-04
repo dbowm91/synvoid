@@ -96,10 +96,19 @@ pub struct UploadValidator {
     malware_scanner: Option<Arc<MalwareScanner>>,
     config: UploadConfig,
     reload_lock: parking_lot::RwLock<()>,
+    yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
 }
 
 impl UploadValidator {
     pub fn new(config: UploadConfig) -> Result<Self, UploadValidationError> {
+        Self::new_with_yara_rules(config, None)
+    }
+
+    #[cfg(feature = "mesh")]
+    pub fn new_with_yara_rules(
+        config: UploadConfig,
+        yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+    ) -> Result<Self, UploadValidationError> {
         let sandbox_config = SandboxConfig::new(&config.sandbox_dir, &config.quarantine_dir);
         let sandbox = Arc::new(Sandbox::new(sandbox_config));
 
@@ -121,6 +130,37 @@ impl UploadValidator {
             malware_scanner,
             config,
             reload_lock: parking_lot::RwLock::new(()),
+            yara_rules,
+        })
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    pub fn new_with_yara_rules(
+        config: UploadConfig,
+        _yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
+    ) -> Result<Self, UploadValidationError> {
+        let sandbox_config = SandboxConfig::new(&config.sandbox_dir, &config.quarantine_dir);
+        let sandbox = Arc::new(Sandbox::new(sandbox_config));
+
+        let malware_scanner = if config.scan_with_yara {
+            let source = YaraRulesSource::from_config(
+                config.yara_rules_dir.clone().map(std::path::PathBuf::from),
+                true,
+            )
+            .unwrap_or(YaraRulesSource::Bundled);
+            let scanner =
+                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024)?;
+            Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
+        } else {
+            Some(Arc::new(MalwareScanner::with_yara(None)))
+        };
+
+        Ok(Self {
+            sandbox,
+            malware_scanner,
+            config,
+            reload_lock: parking_lot::RwLock::new(()),
+            yara_rules: None,
         })
     }
 
@@ -129,7 +169,7 @@ impl UploadValidator {
         {
             if let Some(scanner) = &self.malware_scanner {
                 if let Some(yara_scanner) = scanner.get_yara_scanner() {
-                    if let Some(yara_rules) = crate::waf::get_yara_rules() {
+                    if let Some(yara_rules) = &self.yara_rules {
                         let current_version = yara_scanner.get_version();
                         let new_version = yara_rules.get_current_version();
 
