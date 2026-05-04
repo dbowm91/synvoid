@@ -24,6 +24,8 @@ pub struct HttpConfig {
     pub pipeline_limit: usize,
     #[serde(default = "default_waf_stall_timeout")]
     pub waf_stall_timeout_secs: u64,
+    #[serde(default = "default_max_stalled_requests")]
+    pub max_stalled_requests: u32,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
     #[serde(default = "default_strict_protocol_validation")]
@@ -44,6 +46,7 @@ impl Default for HttpConfig {
             max_request_size: default_max_request_size(),
             pipeline_limit: default_pipeline_limit(),
             waf_stall_timeout_secs: default_waf_stall_timeout(),
+            max_stalled_requests: default_max_stalled_requests(),
             max_connections: default_max_connections(),
             strict_protocol_validation: default_strict_protocol_validation(),
             max_streaming_body_size: default_max_streaming_body_size(),
@@ -57,6 +60,10 @@ fn default_header_read_timeout() -> u64 {
 
 fn default_waf_stall_timeout() -> u64 {
     5
+}
+
+fn default_max_stalled_requests() -> u32 {
+    100
 }
 fn default_keep_alive_timeout() -> u64 {
     60

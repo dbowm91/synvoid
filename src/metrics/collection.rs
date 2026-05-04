@@ -14,6 +14,12 @@ pub(crate) static ATTACK_TYPE_COUNTER: LazyLock<DashMap<String, AtomicU64>> =
 pub(crate) static PROXY_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static PROXY_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
+pub(crate) static ACTIVE_STALLED_REQUESTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static STALL_REJECTED_CONCURRENCY_CAP: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static STALL_TIMEOUTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
 pub(crate) static STATIC_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static STATIC_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
