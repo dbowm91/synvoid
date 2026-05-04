@@ -40,16 +40,20 @@ pub struct Router {
     default_servers: HashMap<SocketAddr, String>,
     plugin_manager: Option<Arc<PluginManager>>,
     cleaned_site_domains: HashMap<String, Vec<Arc<str>>>,
+    cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>>,
     location_matchers: HashMap<String, LocationMatcher>,
+    site_map: HashMap<String, Arc<SiteConfig>>,
 }
 
 type SiteMaps = (
     HashMap<Arc<str>, Arc<SiteConfig>>,
     Vec<(Arc<str>, Arc<SiteConfig>)>,
     HashMap<String, Vec<Arc<str>>>,
+    HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Arc<StaticFileHandler>>,
     HashMap<SocketAddr, Vec<String>>,
     HashMap<SocketAddr, String>,
+    HashMap<String, Arc<SiteConfig>>,
 );
 
 #[derive(Clone)]
@@ -105,9 +109,11 @@ impl Router {
             domain_map,
             suffix_domain_map,
             cleaned_site_domains,
+            cleaned_site_domain_suffixes,
             static_handlers,
             listen_map,
             default_servers,
+            site_map,
         ) = Self::build_all_maps(
             main_config,
             sites,
@@ -128,7 +134,9 @@ impl Router {
             default_servers,
             plugin_manager: None,
             cleaned_site_domains,
+            cleaned_site_domain_suffixes,
             location_matchers,
+            site_map,
         };
 
         Self::log_configuration(&listen_map, &router.default_servers);
@@ -162,15 +170,21 @@ impl Router {
         let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
         let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
+        let mut cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>> = HashMap::new();
+        let mut site_map: HashMap<String, Arc<SiteConfig>> = HashMap::new();
 
         for (_site_id, config) in sites {
             let config_arc = Arc::new(config);
+            let site_id = config_arc.site_id();
+
+            site_map.insert(site_id.clone(), config_arc.clone());
 
             Self::build_domain_map_entry(
                 &config_arc,
                 &mut domain_map,
                 &mut suffix_domain_map,
                 &mut cleaned_site_domains,
+                &mut cleaned_site_domain_suffixes,
             );
 
             if config_arc.r#static.enabled.unwrap_or(false) {
@@ -199,9 +213,11 @@ impl Router {
             domain_map,
             suffix_domain_map,
             cleaned_site_domains,
+            cleaned_site_domain_suffixes,
             static_handlers,
             listen_map,
             default_servers,
+            site_map,
         )
     }
 
@@ -210,6 +226,7 @@ impl Router {
         domain_map: &mut HashMap<Arc<str>, Arc<SiteConfig>>,
         suffix_domain_map: &mut Vec<(Arc<str>, Arc<SiteConfig>)>,
         cleaned_site_domains: &mut HashMap<String, Vec<Arc<str>>>,
+        cleaned_site_domain_suffixes: &mut HashMap<String, Vec<Arc<str>>>,
     ) {
         let site_id = config_arc.site_id();
         let cleaned: Vec<Arc<str>> = config_arc
@@ -219,15 +236,18 @@ impl Router {
             .map(|d| Arc::from(Self::clean_domain(d).as_str()))
             .collect();
 
+        let mut suffixes: Vec<Arc<str>> = Vec::new();
         for clean_domain in &cleaned {
             if clean_domain.starts_with('.') || clean_domain.contains('*') {
                 suffix_domain_map.push((clean_domain.clone(), config_arc.clone()));
+                suffixes.push(clean_domain.clone());
             } else {
                 domain_map.insert(clean_domain.clone(), config_arc.clone());
             }
         }
 
-        cleaned_site_domains.insert(site_id, cleaned);
+        cleaned_site_domains.insert(site_id.clone(), cleaned);
+        cleaned_site_domain_suffixes.insert(site_id, suffixes);
     }
 
     fn initialize_static_handler(
@@ -385,11 +405,16 @@ impl Router {
 
     #[inline]
     fn is_host_valid_for_site(&self, clean_host: &str, site_config: &Arc<SiteConfig>) -> bool {
+        if let Some(suffixes) = self.cleaned_site_domain_suffixes.get(&site_config.site_id()) {
+            for suffix in suffixes {
+                if clean_host.ends_with(suffix.as_ref()) {
+                    return true;
+                }
+            }
+        }
         if let Some(cleaned) = self.cleaned_site_domains.get(&site_config.site_id()) {
             for clean_domain in cleaned {
-                if clean_host == clean_domain.as_ref()
-                    || clean_host.ends_with(&format!(".{}", clean_domain))
-                {
+                if clean_host == clean_domain.as_ref() {
                     return true;
                 }
             }
@@ -986,17 +1011,15 @@ impl Router {
         if let Some(addr) = local_addr {
             if let Some(site_ids) = self.listen_map.get(&addr) {
                 for site_id in site_ids {
-                    if let Some(site_config) = self.domain_map.get(site_id as &str) {
+                    if let Some(site_config) = self.site_map.get(site_id) {
                         if self.is_host_valid_for_site(&clean_host, site_config)
                             || site_config.site.domains.is_empty()
                         {
                             return self.route_to_target(site_config, path, &clean_host);
                         }
-                        if let Some(cleaned) = self.cleaned_site_domains.get(site_id) {
-                            for clean_domain in cleaned {
-                                if clean_host == clean_domain.as_ref()
-                                    || clean_host.ends_with(&format!(".{}", clean_domain))
-                                {
+                        if let Some(suffixes) = self.cleaned_site_domain_suffixes.get(site_id) {
+                            for suffix in suffixes {
+                                if clean_host.ends_with(suffix.as_ref()) {
                                     return self.route_to_target(site_config, path, &clean_host);
                                 }
                             }
@@ -1019,13 +1042,13 @@ impl Router {
         if clean_host.is_empty() || clean_host == "*" {
             if let Some(addr) = local_addr {
                 if let Some(default_site_id) = self.default_servers.get(&addr) {
-                    if let Some(site_config) = self.domain_map.get(default_site_id as &str) {
+                    if let Some(site_config) = self.site_map.get(default_site_id) {
                         return self.route_to_target(site_config, path, &clean_host);
                     }
                 }
             }
             if let Some(default_site_id) = self.default_servers.values().next() {
-                if let Some(site_config) = self.domain_map.get(default_site_id as &str) {
+                if let Some(site_config) = self.site_map.get(default_site_id) {
                     return self.route_to_target(site_config, path, &clean_host);
                 }
             }
@@ -1070,10 +1093,14 @@ impl Router {
         self.listen_map.clear();
         self.default_servers.clear();
         self.cleaned_site_domains.clear();
+        self.cleaned_site_domain_suffixes.clear();
+        self.site_map.clear();
 
         for (_site_id, config) in sites {
             let config_arc = Arc::new(config);
             let site_id_str = config_arc.site_id();
+
+            self.site_map.insert(site_id_str.clone(), config_arc.clone());
 
             let cleaned: Vec<Arc<str>> = config_arc
                 .site
@@ -1082,10 +1109,12 @@ impl Router {
                 .map(|d| Arc::from(Self::clean_domain(d).as_str()))
                 .collect();
 
+            let mut suffixes: Vec<Arc<str>> = Vec::new();
             for clean_domain in &cleaned {
                 if clean_domain.starts_with('.') || clean_domain.contains('*') {
                     self.suffix_domain_map
                         .push((clean_domain.clone(), config_arc.clone()));
+                    suffixes.push(clean_domain.clone());
                 } else {
                     self.domain_map
                         .insert(clean_domain.clone(), config_arc.clone());
@@ -1094,6 +1123,7 @@ impl Router {
 
             self.cleaned_site_domains
                 .insert(site_id_str.clone(), cleaned);
+            self.cleaned_site_domain_suffixes.insert(site_id_str.clone(), suffixes);
 
             if config_arc.r#static.enabled.unwrap_or(false) {
                 let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {
@@ -1198,7 +1228,9 @@ impl Default for Router {
             default_servers: HashMap::new(),
             plugin_manager: None,
             cleaned_site_domains: HashMap::new(),
+            cleaned_site_domain_suffixes: HashMap::new(),
             location_matchers: HashMap::new(),
+            site_map: HashMap::new(),
         }
     }
 }
