@@ -3,6 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use bytes::Bytes;
 use http::{HeaderMap, Method, Uri};
+use crate::proxy::ForwardedProtocol;
 use crate::waf::WafDecision;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,4 +175,43 @@ pub fn interpret_waf_decision(
 
 pub fn format_session_cookie(name: &str, value: &str, max_age: u64) -> String {
     format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", name, value, max_age)
+}
+
+pub trait ProtocolAdapter: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn is_tls(&self) -> bool;
+    fn supports_websocket(&self) -> bool;
+    fn forwarded_protocol(&self) -> ForwardedProtocol;
+}
+
+#[derive(Clone)]
+pub struct HttpProtocolAdapter;
+
+impl ProtocolAdapter for HttpProtocolAdapter {
+    fn name(&self) -> &'static str { "http" }
+    fn is_tls(&self) -> bool { false }
+    fn supports_websocket(&self) -> bool { true }
+    fn forwarded_protocol(&self) -> ForwardedProtocol { ForwardedProtocol::Http }
+}
+
+#[derive(Clone)]
+pub struct HttpsProtocolAdapter {
+    pub ja4_hash: Option<String>,
+}
+
+impl ProtocolAdapter for HttpsProtocolAdapter {
+    fn name(&self) -> &'static str { "https" }
+    fn is_tls(&self) -> bool { true }
+    fn supports_websocket(&self) -> bool { true }
+    fn forwarded_protocol(&self) -> ForwardedProtocol { ForwardedProtocol::Https }
+}
+
+#[derive(Clone)]
+pub struct Http3ProtocolAdapter;
+
+impl ProtocolAdapter for Http3ProtocolAdapter {
+    fn name(&self) -> &'static str { "http3" }
+    fn is_tls(&self) -> bool { true }
+    fn supports_websocket(&self) -> bool { false }
+    fn forwarded_protocol(&self) -> ForwardedProtocol { ForwardedProtocol::Https }
 }

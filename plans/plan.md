@@ -457,18 +457,18 @@ where
 
 ## P1: Unify HTTP, HTTPS, and HTTP/3 Behavior
 
-### Status: 🚧 IN PROGRESS - Phases 1-3 Complete (2026-05-05)
+### Status: 🚧 IN PROGRESS - Phases 1-4 Complete (2026-05-05)
 
 **Completed** (2026-05-05):
 - Phase 1: `WafResponseIntent` enum, `Protocol` enum, `TlsMetadata` struct, and `interpret_waf_decision()` in `src/server/waf_handler.rs`
 - Phase 2: Extended `WafContext` struct with full request context, `Protocol` enum, constructor helpers (`new_http`, `new_https`, `new_http3`)
 - Phase 3: Created `dispatch_to_upstream()` function in `src/proxy/dispatch.rs` with `DispatchParams` and `UpstreamDispatchError`
+- Phase 4: Created `ProtocolAdapter` trait and implementations (`HttpProtocolAdapter`, `HttpsProtocolAdapter`, `Http3ProtocolAdapter`) in `src/server/waf_handler.rs`
 
-**In Progress**:
-- Phase 4: Protocol adapter traits
+**Note**: Phase 4 is a minimal implementation with the trait and adapters. Full `write_response` integration would require significant refactoring of response handling in each server, which is deferred.
 
 **Files modified**:
-- `src/server/waf_handler.rs` (NEW) - WafResponseIntent, Protocol, TlsMetadata, WafContext, interpret_waf_decision, format_session_cookie
+- `src/server/waf_handler.rs` (NEW) - WafResponseIntent, Protocol, TlsMetadata, WafContext, ProtocolAdapter trait, interpret_waf_decision, format_session_cookie
 - `src/server/mod.rs` - Added `pub mod waf_handler`
 - `src/proxy/mod.rs` - Added `pub mod dispatch`
 - `src/proxy/dispatch.rs` (NEW) - DispatchParams, dispatch_to_upstream, UpstreamDispatchError
