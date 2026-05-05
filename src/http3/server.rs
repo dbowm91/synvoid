@@ -6,6 +6,7 @@ use tokio::sync::broadcast;
 use bytes::Bytes;
 use http::{header, StatusCode};
 use http_body_util::BodyExt;
+use http_body_util::Full;
 use metrics::{counter, gauge, histogram};
 
 use crate::config::site::ProxyHeadersConfig;
@@ -579,9 +580,9 @@ impl Http3Server {
                 );
 
                 let body_to_send = if body_bytes.is_empty() {
-                    None
+                    Full::new(Bytes::new())
                 } else {
-                    Some(Bytes::from(body_bytes))
+                    Full::new(Bytes::from(body_bytes))
                 };
 
                 let upstream_result = send_request_streaming(

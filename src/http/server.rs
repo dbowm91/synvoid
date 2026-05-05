@@ -2911,11 +2911,11 @@ impl HttpServer {
                         ForwardedProtocol::Http,
                     );
 
-                    match send_request_streaming(
+match send_request_streaming(
                         &forwarding_client,
                         method,
                         &upstream_target.url,
-                        Some(full_body_arc.as_ref().clone()),
+                        Full::new(full_body_arc.as_ref().clone()),
                         forward_header_map,
                         Some(upstream_target.timeout),
                     )

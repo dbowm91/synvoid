@@ -1626,7 +1626,7 @@ impl HttpsServer {
                     &client,
                     method.clone(),
                     &upstream_target.url,
-                    Some(body_bytes.clone()),
+                    Full::new(body_bytes.clone()),
                     forward_headers,
                     Some(upstream_target.timeout),
                 )
