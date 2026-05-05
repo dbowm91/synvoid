@@ -457,18 +457,18 @@ where
 
 ## P1: Unify HTTP, HTTPS, and HTTP/3 Behavior
 
-### Status: 🚧 IN PROGRESS - Phase 1 Complete (2026-05-05)
+### Status: 🚧 IN PROGRESS - Phases 1-2 Complete (2026-05-05)
 
 **Completed** (2026-05-05):
-- Phase 1: `WafResponseIntent` enum and `interpret_waf_decision()` in `src/server/waf_handler.rs`
-- Phase 2: `WafContext` struct for shared request data
+- Phase 1: `WafResponseIntent` enum, `Protocol` enum, `TlsMetadata` struct, and `interpret_waf_decision()` in `src/server/waf_handler.rs`
+- Phase 2: Extended `WafContext` struct with full request context, `Protocol` enum, constructor helpers (`new_http`, `new_https`, `new_http3`)
 
 **In Progress**:
 - Phase 3: Extract `dispatch_to_backend()` function
 - Phase 4: Protocol adapter traits
 
 **Files modified**:
-- `src/server/waf_handler.rs` (NEW) - WafResponseIntent, WafContext, interpret_waf_decision
+- `src/server/waf_handler.rs` (NEW) - WafResponseIntent, Protocol, TlsMetadata, WafContext, interpret_waf_decision, format_session_cookie
 - `src/server/mod.rs` - Added `pub mod waf_handler`
 
 ### Problem

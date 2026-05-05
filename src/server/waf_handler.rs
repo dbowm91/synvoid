@@ -1,6 +1,21 @@
-use std::net::IpAddr;
+use std::fmt;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+use bytes::Bytes;
+use http::{HeaderMap, Method, Uri};
 use crate::waf::WafDecision;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protocol {
+    Http,
+    Https,
+    Http3,
+}
+
+#[derive(Clone, Debug)]
+pub struct TlsMetadata {
+    pub ja4_hash: Option<String>,
+}
 
 #[derive(Clone, Debug)]
 pub enum WafResponseIntent {
@@ -18,12 +33,110 @@ pub enum WafResponseIntent {
     Pass,
 }
 
+#[derive(Clone, Debug)]
 pub struct WafContext {
     pub client_ip: IpAddr,
-    pub method: &'static str,
-    pub path: &'static str,
+    pub method: Method,
+    pub path: String,
+    pub query_string: Option<String>,
+    pub host: String,
+    pub headers: HeaderMap,
+    pub user_agent: Option<String>,
     pub is_tls: bool,
-    pub protocol: &'static str,
+    pub protocol: Protocol,
+    pub ja4_hash: Option<String>,
+    pub local_addr: Option<SocketAddr>,
+    pub remote_addr: SocketAddr,
+}
+
+impl fmt::Display for WafContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "WafContext {{ method: {}, path: {}, host: {}, is_tls: {}, protocol: {:?} }}",
+            self.method, self.path, self.host, self.is_tls, self.protocol
+        )
+    }
+}
+
+impl WafContext {
+    pub fn new_http(
+        method: Method,
+        path: String,
+        query_string: Option<String>,
+        host: String,
+        headers: HeaderMap,
+        client_ip: IpAddr,
+        remote_addr: SocketAddr,
+    ) -> Self {
+        Self {
+            client_ip,
+            method,
+            path,
+            query_string,
+            host,
+            headers,
+            user_agent: None,
+            is_tls: false,
+            protocol: Protocol::Http,
+            ja4_hash: None,
+            local_addr: None,
+            remote_addr,
+        }
+    }
+
+    pub fn new_https(
+        method: Method,
+        path: String,
+        query_string: Option<String>,
+        host: String,
+        headers: HeaderMap,
+        client_ip: IpAddr,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
+        ja4_hash: Option<String>,
+    ) -> Self {
+        Self {
+            client_ip,
+            method,
+            path,
+            query_string,
+            host,
+            headers,
+            user_agent: None,
+            is_tls: true,
+            protocol: Protocol::Https,
+            ja4_hash,
+            local_addr: Some(local_addr),
+            remote_addr,
+        }
+    }
+
+    pub fn new_http3(
+        method: Method,
+        path: String,
+        query_string: Option<String>,
+        host: String,
+        headers: HeaderMap,
+        client_ip: IpAddr,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
+    ) -> Self {
+        Self {
+            client_ip,
+            method,
+            path,
+            query_string,
+            host,
+            headers,
+            user_agent: None,
+            is_tls: true,
+            protocol: Protocol::Http3,
+            ja4_hash: None,
+            local_addr: Some(local_addr),
+            remote_addr,
+        }
+    }
 }
 
 pub fn interpret_waf_decision(
