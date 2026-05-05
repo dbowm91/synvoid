@@ -83,7 +83,7 @@ coverage/
 *.patch
 
 # Specific directories
-/var/lib/rustwaf/
+/var/lib/synvoid/
 
 # Backup files
 *~

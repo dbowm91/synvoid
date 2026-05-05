@@ -45,7 +45,7 @@ level = "info"
 access_log = true
 
 # Directory for access log files
-access_log_dir = "/var/log/rustwaf"
+access_log_dir = "/var/log/synvoid"
 
 # Access log format: "json" or "text"
 access_log_format = "json"
@@ -286,7 +286,7 @@ ai_crawlers_block = [
 
 # Challenge configuration
 [defaults.bot.challenge]
-cookie_name = "rustwaf_challenge"
+cookie_name = "synvoid_challenge"
 window_secs = 300
 
 # CSS honeypot configuration
@@ -451,7 +451,7 @@ request_timeout_secs = 30
 max_entries = 100000
 
 # Persistence file for blocked IPs
-persistence_file = "/var/lib/rustwaf/blocked_ips.json"
+persistence_file = "/var/lib/synvoid/blocked_ips.json"
 
 # =============================================================================
 # WORKER POOL CONFIGURATION
@@ -473,4 +473,4 @@ workers = 4
 enabled = true
 
 # Directory for persistent data
-data_dir = "/var/lib/rustwaf"
+data_dir = "/var/lib/synvoid"

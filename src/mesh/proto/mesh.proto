@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package mesh;
 
-option go_package = "github.com/maluwaf/mesh;mesh";
+option go_package = "github.com/synvoid/mesh;mesh";
 
 message MeshCapabilities {
     bool can_route = 1;
