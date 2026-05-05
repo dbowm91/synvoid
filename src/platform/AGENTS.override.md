@@ -16,7 +16,7 @@ This module covers foundational systems code including IPC, process management, 
 | `src/process/ipc_transport.rs` | Async IPC transport layer |
 | `src/process/socket_path.rs` | Secure socket directory management |
 | `src/process/pidfile.rs` | PID file and lock file management |
-| `crates/maluwaf-utils/src/buffer/pool.rs` | Custom buffer pool (sharded mutex + TLS cache) |
+| `crates/synvoid-utils/src/buffer/pool.rs` | Custom buffer pool (sharded mutex + TLS cache) |
 
 ## Critical Patterns
 
@@ -58,7 +58,7 @@ Key files:
 
 ### 4. Buffer Pool Safety
 
-The buffer pool (`crates/maluwaf-utils/src/buffer/pool.rs`) uses:
+The buffer pool (`crates/synvoid-utils/src/buffer/pool.rs`) uses:
 - **Sharded Mutex**: 8 shards with `parking_lot::Mutex<Vec<BytesMut>>` per tier. **Eliminates ABA vulnerability** that existed in the old TreiberStack design.
 - **ThreadLocalCache**: Uses `RefCell` for safe interior mutability (thread-local guarantees single-threaded access).
 
@@ -85,7 +85,7 @@ Socket directories are created with:
 - `0o700` permissions
 - Ownership verification (current UID or root)
 - Symlink rejection via `symlink_metadata()`
-- Per-UID isolation via `get_user_socket_dir()` returning `/tmp/maluwaf-{uid}`
+- Per-UID isolation via `get_user_socket_dir()` returning `/tmp/synvoid-{uid}`
 
 ### 7. Lock File Acquisition
 

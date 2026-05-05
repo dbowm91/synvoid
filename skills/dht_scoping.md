@@ -1,6 +1,6 @@
 # DHT Site Scoping
 
-MaluWAF operates in a multi-tenant environment where records (like proxy cache preferences, custom rules, upstreams) must be isolated per site.
+SynVoid operates in a multi-tenant environment where records (like proxy cache preferences, custom rules, upstreams) must be isolated per site.
 
 ## DhtKey Scoping
 

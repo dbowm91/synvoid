@@ -42,8 +42,8 @@ impl TarpitHandler {
             &path_seed,
         );
 
-        counter!("maluwaf.tarpit.requests").increment(1);
-        histogram!("maluwaf.tarpit.response_time").record(start.elapsed());
+        counter!("synvoid.tarpit.requests").increment(1);
+        histogram!("synvoid.tarpit.response_time").record(start.elapsed());
 
         content
     }

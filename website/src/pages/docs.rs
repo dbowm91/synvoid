@@ -12,7 +12,7 @@ pub fn Docs() -> Html {
                     "Getting Started",
                     "Quick start guide for new users",
                 ),
-                ("installation", "Installation", "Installing MaluWAF"),
+                ("installation", "Installation", "Installing SynVoid"),
                 (
                     "configuration",
                     "Configuration",
@@ -71,7 +71,7 @@ pub fn Docs() -> Html {
                 <div class="container">
                     <h1 class="text-5xl font-bold mb-4">{"Documentation"}</h1>
                     <p class="text-xl text-[var(--text-secondary)] max-w-[600px]">
-                        {"Everything you need to know about MaluWAF, from getting started to advanced configuration."}
+                        {"Everything you need to know about SynVoid, from getting started to advanced configuration."}
                     </p>
                 </div>
             </section>

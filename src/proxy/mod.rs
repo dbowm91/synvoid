@@ -317,7 +317,7 @@ impl ProxyServer {
                 }
                 Err(e) => {
                     tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
-                    counter!("maluwaf.traffic.connection_limited").increment(1);
+                    counter!("synvoid.traffic.connection_limited").increment(1);
                     return Err("connection_limit_exceeded".to_string());
                 }
             }
@@ -355,27 +355,27 @@ impl ProxyServer {
 
             match waf_decision {
                 WafDecision::Drop => {
-                    counter!("maluwaf.requests.dropped").increment(1);
+                    counter!("synvoid.requests.dropped").increment(1);
                     return Err("blackholed".to_string());
                 }
                 WafDecision::Stall => {
-                    counter!("maluwaf.requests.stalled").increment(1);
-                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    counter!("synvoid.requests.stalled").increment(1);
+                    histogram!("synvoid.request.duration").record(start.elapsed());
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                     std::future::pending::<()>().await;
                     return Err("stalled".to_string());
                 }
                 WafDecision::Block(_status_code, _message) => {
-                    counter!("maluwaf.requests.blocked").increment(1);
-                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    counter!("synvoid.requests.blocked").increment(1);
+                    histogram!("synvoid.request.duration").record(start.elapsed());
                     if drop {
                         return Err("dropped".to_string());
                     }
                     return Err("blocked".to_string());
                 }
                 WafDecision::Challenge(html) => {
-                    counter!("maluwaf.requests.challenged").increment(1);
-                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    counter!("synvoid.requests.challenged").increment(1);
+                    histogram!("synvoid.request.duration").record(start.elapsed());
                     return Ok(Response::builder()
                         .status(200)
                         .header("Content-Type", "text/html")
@@ -389,8 +389,8 @@ impl ProxyServer {
                     session_cookie_value,
                     session_cookie_max_age,
                 } => {
-                    counter!("maluwaf.requests.challenged").increment(1);
-                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    counter!("synvoid.requests.challenged").increment(1);
+                    histogram!("synvoid.request.duration").record(start.elapsed());
                     let cookie = format!(
                         "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
                         session_cookie_name, session_cookie_value, session_cookie_max_age
@@ -404,8 +404,8 @@ impl ProxyServer {
                         .unwrap_or_else(|_| crate::http::fallback_error_bytes()));
                 }
                 WafDecision::Tarpit(_) => {
-                    counter!("maluwaf.requests.tarpitted").increment(1);
-                    histogram!("maluwaf.request.duration").record(start.elapsed());
+                    counter!("synvoid.requests.tarpitted").increment(1);
+                    histogram!("synvoid.request.duration").record(start.elapsed());
                 }
                 WafDecision::Pass => {}
             }
@@ -460,7 +460,7 @@ impl ProxyServer {
                                         );
                                     }
                                     #[cfg(feature = "mesh")]
-                                    if let Some(ref threat_intel) = crate::waf::get_threat_intel() {
+                                    if let Some(ref threat_intel) = self.waf.get_threat_intel() {
                                         threat_intel.announce_local_block(
                                             client_ip,
                                             "upstream_error_probe".to_string(),
@@ -474,14 +474,14 @@ impl ProxyServer {
                     }
                 }
 
-                counter!("maluwaf.requests.proxied").increment(1);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
+                counter!("synvoid.requests.proxied").increment(1);
+                histogram!("synvoid.request.duration").record(start.elapsed());
                 Ok(response)
             }
             Err(e) => {
-                counter!("maluwaf.requests.upstream_error").increment(1);
+                counter!("synvoid.requests.upstream_error").increment(1);
                 tracing::error!("Upstream error: {}", e);
-                histogram!("maluwaf.request.duration").record(start.elapsed());
+                histogram!("synvoid.request.duration").record(start.elapsed());
                 Ok(Response::builder()
                     .status(502)
                     .body(bytes::Bytes::from_static(b"Bad Gateway"))
@@ -566,7 +566,7 @@ impl ProxyServer {
 
                         if let Some(cached) = cache.get(&cache_key).await {
                             tracing::debug!("Cache HIT for {}", path);
-                            counter!("maluwaf.proxy.cache.hit").increment(1);
+                            counter!("synvoid.proxy.cache.hit").increment(1);
                             cache.record_cache_hit();
                             record_proxy_cache_hit();
 
@@ -605,7 +605,7 @@ impl ProxyServer {
                                     .await;
                                 });
 
-                                counter!("maluwaf.proxy.cache.stale_while_revalidate").increment(1);
+                                counter!("synvoid.proxy.cache.stale_while_revalidate").increment(1);
                             }
 
                             let response = self.build_cached_response(&cached);
@@ -613,7 +613,7 @@ impl ProxyServer {
                         }
 
                         tracing::debug!("Cache MISS for {}", path);
-                        counter!("maluwaf.proxy.cache.miss").increment(1);
+                        counter!("synvoid.proxy.cache.miss").increment(1);
                         cache.record_cache_miss();
                         record_proxy_cache_miss();
 

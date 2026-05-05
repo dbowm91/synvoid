@@ -1,6 +1,6 @@
 # Serverless Functions
 
-MaluWAF supports serverless function execution via WebAssembly (WASM), allowing custom request handlers to be deployed as portable, sandboxed WASM modules.
+SynVoid supports serverless function execution via WebAssembly (WASM), allowing custom request handlers to be deployed as portable, sandboxed WASM modules.
 
 ## Overview
 
@@ -375,13 +375,13 @@ curl -H "Authorization: Bearer your-admin-token" \
 
 ```
 # Instance counts
-maluwaf_serverless_instances_total{function="auth-handler"}
-maluwaf_serverless_instances_idle{function="auth-handler"}
-maluwaf_serverless_instances_active{function="auth-handler"}
+synvoid_serverless_instances_total{function="auth-handler"}
+synvoid_serverless_instances_idle{function="auth-handler"}
+synvoid_serverless_instances_active{function="auth-handler"}
 
 # Request metrics
-maluwaf_serverless_requests_total{function="auth-handler"}
-maluwaf_serverless_duration_ms{function="auth-handler"}
+synvoid_serverless_requests_total{function="auth-handler"}
+synvoid_serverless_duration_ms{function="auth-handler"}
 ```
 
 ---

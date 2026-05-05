@@ -5,7 +5,7 @@ use crate::icmp_filter::{
 };
 use std::process::Command;
 
-const ANCHOR_NAME: &str = "maluwaf.icmp";
+const ANCHOR_NAME: &str = "synvoid.icmp";
 
 #[derive(Debug)]
 pub struct PfFilter {

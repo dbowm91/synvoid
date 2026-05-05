@@ -1,6 +1,6 @@
 # Sandboxing Guide
 
-MaluWAF uses OS-level sandboxing to limit the damage potential of a compromised process. The sandbox restricts what resources (files, network, process creation) a compromised worker process can access.
+SynVoid uses OS-level sandboxing to limit the damage potential of a compromised process. The sandbox restricts what resources (files, network, process creation) a compromised worker process can access.
 
 ## Supported Platforms
 
@@ -93,8 +93,8 @@ Path sandboxing on Windows would require separate mechanisms like AppContainer o
 ```toml
 [worker]
 sandbox_level = "strict"  # off, basic, or strict
-sandbox_read_paths = ["/var/lib/maluwaf", "/etc/maluwaf"]
-sandbox_write_paths = ["/var/lib/maluwaf", "/var/log/maluwaf"]
+sandbox_read_paths = ["/var/lib/synvoid", "/etc/synvoid"]
+sandbox_write_paths = ["/var/lib/synvoid", "/var/log/synvoid"]
 sandbox_no_access_paths = ["/etc/passwd", "/etc/shadow"]
 ```
 
@@ -104,8 +104,8 @@ sandbox_no_access_paths = ["/etc/passwd", "/etc/shadow"]
 use crate::platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
 let paths = SandboxPaths::new()
-    .add_read_path("/var/lib/maluwaf")
-    .add_write_path("/var/log/maluwaf");
+    .add_read_path("/var/lib/synvoid")
+    .add_write_path("/var/log/synvoid");
 
 let sandbox = ProcessSandbox::with_paths(SandboxLevel::Strict, paths)?;
 ```

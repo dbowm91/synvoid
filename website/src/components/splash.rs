@@ -60,7 +60,7 @@ pub fn Splash(props: &SplashProps) -> Html {
                             </svg>
                         </div>
                         <h1 style="font-size: 3.5rem; font-weight: 700; margin: 0; background: linear-gradient(135deg, #00d4aa 0%, #00ffcc 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; letter-spacing: -0.02em;">
-                            {"MaluWAF"}
+                            {"SynVoid"}
                         </h1>
                         <p style="color: #a0a0b0; font-size: 1.1rem; margin-top: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase;">
                             {"Web Application Firewall"}

@@ -872,7 +872,7 @@ impl MeshTransportManager {
                 if cached_at.elapsed() < Duration::from_secs(300) {
                     cache_hits.fetch_add(1, Ordering::Relaxed);
                     counter!(
-                        "maluwaf.mesh.{metric_prefix}_cache_hits",
+                        "synvoid.mesh.{metric_prefix}_cache_hits",
                         "upstream" => upstream_id.to_string()
                     )
                     .increment(1);
@@ -908,7 +908,7 @@ impl MeshTransportManager {
         let fetch_start = Instant::now();
         let Some(ref record_store) = self.record_store else {
             counter!(
-                "maluwaf.mesh.{metric_prefix}_dht_errors",
+                "synvoid.mesh.{metric_prefix}_dht_errors",
                 "type" => "no_record_store",
                 "upstream" => upstream_id.to_string()
             )
@@ -922,7 +922,7 @@ impl MeshTransportManager {
             Some(r) => r,
             None => {
                 counter!(
-                    "maluwaf.mesh.{metric_prefix}_dht_errors",
+                    "synvoid.mesh.{metric_prefix}_dht_errors",
                     "type" => "record_not_found",
                     "upstream" => upstream_id.to_string()
                 )
@@ -935,7 +935,7 @@ impl MeshTransportManager {
             Ok(v) => v,
             Err(e) => {
                 counter!(
-                    "maluwaf.mesh.{metric_prefix}_dht_errors",
+                    "synvoid.mesh.{metric_prefix}_dht_errors",
                     "type" => "utf8_error",
                     "upstream" => upstream_id.to_string()
                 )
@@ -949,7 +949,7 @@ impl MeshTransportManager {
             Ok(v) => v,
             Err(e) => {
                 counter!(
-                    "maluwaf.mesh.{metric_prefix}_dht_errors",
+                    "synvoid.mesh.{metric_prefix}_dht_errors",
                     "type" => "parse_error",
                     "upstream" => upstream_id.to_string()
                 )
@@ -970,12 +970,12 @@ impl MeshTransportManager {
         }
 
         counter!(
-            "maluwaf.mesh.{metric_prefix}_dht_fetches",
+            "synvoid.mesh.{metric_prefix}_dht_fetches",
             "status" => "success",
             "upstream" => upstream_id.to_string()
         )
         .increment(1);
-        histogram!("maluwaf.mesh.{metric_prefix}_dht_fetch_latency")
+        histogram!("synvoid.mesh.{metric_prefix}_dht_fetch_latency")
             .record(fetch_start.elapsed().as_secs_f64());
         tracing::debug!(
             "Fetched {} from DHT for upstream: {}",

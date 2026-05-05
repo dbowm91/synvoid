@@ -1,10 +1,10 @@
 # Producing Authoritative Threat Feeds
 
-This skill provides the technical specification and workflow for producing cryptographically signed threat intelligence feeds for MaluWAF.
+This skill provides the technical specification and workflow for producing cryptographically signed threat intelligence feeds for SynVoid.
 
 ## Feed Protocol Specification
 
-A MaluWAF threat feed is a signed JSON payload. Authenticity is ensured by an Ed25519 signature of a deterministic string representation of the indicators.
+A SynVoid threat feed is a signed JSON payload. Authenticity is ensured by an Ed25519 signature of a deterministic string representation of the indicators.
 
 ### 1. Payload Structure
 ```json
@@ -48,16 +48,16 @@ Global nodes can export their current threat database to a signed feed file.
 
 ```bash
 # Export all indicators as signed JSON
-maluwaf --export-threat-feed
+synvoid --export-threat-feed
 
 # Export with a specific signing key (32-byte raw Ed25519 private key)
-maluwaf --export-threat-feed --sign-with /path/to/private_key
+synvoid --export-threat-feed --sign-with /path/to/private_key
 
 # Export indicators filtered by site scope
-maluwaf --export-threat-feed --site-id mysite
+synvoid --export-threat-feed --site-id mysite
 
 # Combine options
-maluwaf --export-threat-feed --sign-with /path/to/private_key --site-id mysite
+synvoid --export-threat-feed --sign-with /path/to/private_key --site-id mysite
 ```
 
 Key loading precedence:

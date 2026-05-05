@@ -1,6 +1,6 @@
 # FastCGI Support
 
-MaluWAF supports direct FastCGI protocol proxying, providing better performance and more features than HTTP proxying for PHP-FPM and other FastCGI applications.
+SynVoid supports direct FastCGI protocol proxying, providing better performance and more features than HTTP proxying for PHP-FPM and other FastCGI applications.
 
 ## Why FastCGI?
 
@@ -81,7 +81,7 @@ These are passed to the FastCGI application:
 | `REQUEST_URI` | `/path` | Full request URI |
 | `DOCUMENT_ROOT` | `/var/www` | Document root |
 | `GATEWAY_INTERFACE` | `CGI/1.1` | Gateway interface |
-| `SERVER_SOFTWARE` | `MaluWAF` | Server software |
+| `SERVER_SOFTWARE` | `SynVoid` | Server software |
 | `REMOTE_ADDR` | `192.168.1.1` | Client IP |
 | `REMOTE_PORT` | `12345` | Client port |
 | `SERVER_ADDR` | `10.0.0.1` | Server IP |
@@ -303,9 +303,9 @@ keep_alive = true
 ## Metrics
 
 ```bash
-maluwaf_fastcgi_requests_total     # Total FastCGI requests
-maluwaf_fastcgi_duration_seconds   # Request duration
-maluwaf_fastcgi_errors             # Errors
+synvoid_fastcgi_requests_total     # Total FastCGI requests
+synvoid_fastcgi_duration_seconds   # Request duration
+synvoid_fastcgi_errors             # Errors
 ```
 
 ## See Also

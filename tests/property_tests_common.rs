@@ -17,14 +17,14 @@ proptest! {
                 }
             }
         }
-        let decoded = maluwaf::utils::urlencoding_decode(&encoded);
+        let decoded = synvoid::utils::urlencoding_decode(&encoded);
         prop_assert_eq!(decoded, input);
     }
 
     /// urlencoding_decode preserves strings without percent encoding
     #[test]
     fn url_decode_no_encoding_preserved(input in "[a-zA-Z0-9]{1,50}") {
-        let decoded = maluwaf::utils::urlencoding_decode(&input);
+        let decoded = synvoid::utils::urlencoding_decode(&input);
         prop_assert_eq!(decoded, input);
     }
 
@@ -32,14 +32,14 @@ proptest! {
     #[test]
     fn url_decode_plus_to_space(word1 in "[a-z]{1,5}", word2 in "[a-z]{1,5}") {
         let input = format!("{}+{}", word1, word2);
-        let decoded = maluwaf::utils::urlencoding_decode(&input);
+        let decoded = synvoid::utils::urlencoding_decode(&input);
         prop_assert_eq!(decoded, format!("{} {}", word1, word2));
     }
 
     /// InputNormalizer normalize idempotency: normalize(normalize(x)) == normalize(x)
     #[test]
     fn normalizer_idempotent(input in "[a-zA-Z0-9/._?=&%-]{1,100}") {
-        use maluwaf::waf::attack_detection::normalizer::InputNormalizer;
+        use synvoid::waf::attack_detection::normalizer::InputNormalizer;
         let normalizer = InputNormalizer::new();
         let first = normalizer.normalize(&input);
         let second = normalizer.normalize(first.as_str());
@@ -49,7 +49,7 @@ proptest! {
     /// InputNormalizer normalize produces non-empty output for non-empty input
     #[test]
     fn normalizer_preserves_nonempty(input in "[a-zA-Z0-9]{1,50}") {
-        use maluwaf::waf::attack_detection::normalizer::InputNormalizer;
+        use synvoid::waf::attack_detection::normalizer::InputNormalizer;
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize(&input);
         prop_assert!(!result.as_str().is_empty());
@@ -61,7 +61,7 @@ proptest! {
         prefix in "[a-z]{1,5}",
         suffix in "[a-z]{1,5}",
     ) {
-        use maluwaf::waf::attack_detection::normalizer::InputNormalizer;
+        use synvoid::waf::attack_detection::normalizer::InputNormalizer;
         let normalizer = InputNormalizer::new();
         // %20 is space
         let input = format!("{}%20{}", prefix, suffix);

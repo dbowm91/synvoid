@@ -1,10 +1,10 @@
 # WAF Mesh Networking
 
-MaluWAF supports peer-to-peer mesh networking for distributed DDoS mitigation, threat intelligence sharing, and coordinated protection via QUIC-based communication.
+SynVoid supports peer-to-peer mesh networking for distributed DDoS mitigation, threat intelligence sharing, and coordinated protection via QUIC-based communication.
 
 ## Opt-In by Default
 
-**Mesh networking is disabled by default.** A standalone MaluWAF instance operates completely independently without any WAF-to-WAF, server-WAF, or VPN-WAF connections.
+**Mesh networking is disabled by default.** A standalone SynVoid instance operates completely independently without any WAF-to-WAF, server-WAF, or VPN-WAF connections.
 
 To enable mesh networking:
 
@@ -21,7 +21,7 @@ max_peer_connections = 20
 
 ## Overview
 
-The WAF mesh enables multiple MaluWAF instances to communicate directly using QUIC, forming an intelligent protection network.
+The WAF mesh enables multiple SynVoid instances to communicate directly using QUIC, forming an intelligent protection network.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -331,7 +331,7 @@ authorized_genesis_keys = []
 
 ### Key Derivation from Genesis Key
 
-MaluWAF uses a hierarchical key derivation scheme from the genesis key:
+SynVoid uses a hierarchical key derivation scheme from the genesis key:
 
 ```
 Genesis Key
@@ -380,7 +380,7 @@ quic_enable_0rtt = false  # Default: false (disabled for security)
 
 ## Mesh Node Types
 
-MaluWAF mesh supports three node roles:
+SynVoid mesh supports three node roles:
 
 ### Global Nodes
 

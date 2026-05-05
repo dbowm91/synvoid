@@ -260,16 +260,16 @@ impl CertResolver {
 
         if self.config.prefer_post_quantum {
             tracing::debug!("TLS: post-quantum hybrid key exchange enabled (TLS 1.3)");
-            counter!("maluwaf.tls.post_quantum").increment(1);
+            counter!("synvoid.tls.post_quantum").increment(1);
         }
 
         let versions: &[&SupportedProtocolVersion] = if self.config.tls_1_3_only {
             tracing::info!("TLS: enforcing TLS 1.3 only (secure mode)");
-            counter!("maluwaf.tls.config").increment(1);
+            counter!("synvoid.tls.config").increment(1);
             &[&TLS13]
         } else if self.config.enable_tls_12_fallback {
             tracing::info!("TLS: allowing TLS 1.2 and TLS 1.3 (fallback enabled)");
-            counter!("maluwaf.tls.config", "mode" => "fallback_enabled").increment(1);
+            counter!("synvoid.tls.config", "mode" => "fallback_enabled").increment(1);
             tracing::warn!(
                 "TLS 1.2 enabled with fallback. CBC cipher suites are vulnerable to BEAST attacks. \
                 For secure environments, use tls_1_3_only = true or configure custom cipher suites."
@@ -281,7 +281,7 @@ impl CertResolver {
                 CBC cipher suites (TLS 1.2) are vulnerable to BEAST attacks. \
                 For production, set tls_1_3_only = true to enforce TLS 1.3 only."
             );
-            counter!("maluwaf.tls.config", "mode" => "backward_compat").increment(1);
+            counter!("synvoid.tls.config", "mode" => "backward_compat").increment(1);
             &[&TLS13, &TLS12]
         };
 

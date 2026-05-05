@@ -353,7 +353,7 @@ impl ProcessManager {
             let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
             match self.write_ipc_key_to_tempfile(&key_hex) {
                 Ok(path) => {
-                    cmd.env("MALUWAF_IPC_KEY_FILE", path);
+                    cmd.env("SYNVOID_IPC_KEY_FILE", path);
                 }
                 Err(e) => {
                     if self.config.allow_insecure_ipc_key {
@@ -362,7 +362,7 @@ impl ProcessManager {
                              (allow_insecure_ipc_key is set)",
                             e
                         );
-                        cmd.env("MALUWAF_IPC_KEY", key_hex);
+                        cmd.env("SYNVOID_IPC_KEY", key_hex);
                     } else {
                         panic!(
                             "Failed to write IPC key to temp file: {}. \
@@ -375,8 +375,8 @@ impl ProcessManager {
             }
         } else if self.config.allow_insecure_ipc_key {
             // Fallback: try to read IPC key from environment if not in config
-            if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
-                cmd.env("MALUWAF_IPC_KEY", key_hex);
+            if let Ok(key_hex) = std::env::var("SYNVOID_IPC_KEY") {
+                cmd.env("SYNVOID_IPC_KEY", key_hex);
             }
         }
 
@@ -396,7 +396,7 @@ impl ProcessManager {
 
         let temp_dir = std::env::temp_dir();
         let pid = std::process::id();
-        let file_path = temp_dir.join(format!("maluwaf_ipc_key_{}", pid));
+        let file_path = temp_dir.join(format!("synvoid_ipc_key_{}", pid));
 
         {
             // Try to create the file with create_new to prevent symlink attacks
@@ -455,7 +455,7 @@ impl ProcessManager {
         file_path
             .file_name()?
             .to_str()?
-            .strip_prefix("maluwaf_ipc_key_")?
+            .strip_prefix("synvoid_ipc_key_")?
             .parse()
             .ok()
     }
@@ -2169,14 +2169,14 @@ mod tests {
     #[test]
     fn test_key_file_symlink_rejected() {
         let temp_dir = std::env::temp_dir();
-        let symlink_path = temp_dir.join("maluwaf_ipc_key_symlink_test");
+        let symlink_path = temp_dir.join("synvoid_ipc_key_symlink_test");
 
         #[cfg(unix)]
         {
             use std::fs::OpenOptions;
             use std::os::unix::fs::symlink;
 
-            let target_file = temp_dir.join("maluwaf_ipc_key_real_target");
+            let target_file = temp_dir.join("synvoid_ipc_key_real_target");
             let _ = std::fs::remove_file(&target_file);
             let _ = std::fs::remove_file(&symlink_path);
 
@@ -2206,13 +2206,13 @@ mod tests {
     #[test]
     fn test_runtime_dir_symlink_rejected() {
         let temp_dir = std::env::temp_dir();
-        let runtime_path = temp_dir.join("maluwaf_runtime_symlink_test");
+        let runtime_path = temp_dir.join("synvoid_runtime_symlink_test");
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
 
-            let real_dir = temp_dir.join("maluwaf_runtime_real");
+            let real_dir = temp_dir.join("synvoid_runtime_real");
             let _ = std::fs::remove_dir_all(&real_dir);
             let _ = std::fs::remove_file(&runtime_path);
 

@@ -304,7 +304,7 @@ jobs:
         run: python scripts/check_imports.py
 
   miri-test:
-    name: Miri Test (maluwaf-utils)
+    name: Miri Test (synvoid-utils)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -314,9 +314,9 @@ jobs:
         with:
           components: miri
 
-      - name: Run miri tests on maluwaf-utils
+      - name: Run miri tests on synvoid-utils
         run: |
-          cargo miri test -p maluwaf-utils
+          cargo miri test -p synvoid-utils
         continue-on-error: true
 
   security-regression:

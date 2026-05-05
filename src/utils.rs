@@ -1,6 +1,6 @@
 //! Miscellaneous utility functions and types.
 //!
-//! This module provides common utilities used across the MaluWAF codebase:
+//! This module provides common utilities used across the SynVoid codebase:
 //!
 //! # Submodules
 //! - [`ratelimit`] - Rate limiting utilities

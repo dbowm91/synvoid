@@ -47,7 +47,7 @@ fn export_config_to_file(json: &str) {
     let document = window.document().unwrap();
     let a = document.create_element("a").unwrap();
     a.set_attribute("href", &url).unwrap();
-    a.set_attribute("download", "maluwaf-config.json").unwrap();
+    a.set_attribute("download", "synvoid-config.json").unwrap();
     let _ = a.dispatch_event(&web_sys::MouseEvent::new("click").unwrap());
 }
 
@@ -1084,13 +1084,13 @@ fn LoggingSection() -> Html {
 
     let log_level = use_state(|| "info".to_string());
     let access_log_format = use_state(|| "json".to_string());
-    let access_log_dir = use_state(|| "/var/log/rustwaf".to_string());
+    let access_log_dir = use_state(|| "/var/log/synvoid".to_string());
     let retention_days = use_state(|| "5".to_string());
     let max_entries_per_file = use_state(|| "50000".to_string());
 
     let original_log_level = use_state(|| "info".to_string());
     let original_access_log_format = use_state(|| "json".to_string());
-    let original_access_log_dir = use_state(|| "/var/log/rustwaf".to_string());
+    let original_access_log_dir = use_state(|| "/var/log/synvoid".to_string());
     let original_retention_days = use_state(|| "5".to_string());
     let original_max_entries_per_file = use_state(|| "50000".to_string());
 
@@ -1938,7 +1938,7 @@ fn AcmeSection() -> Html {
                         name={"cache_dir".to_string()}
                         value={(*cache_dir).clone()}
                         on_change={Callback::from(move |v: String| cache_dir.set(v))}
-                        placeholder="/var/lib/maluwaf/acme (optional)"
+                        placeholder="/var/lib/synvoid/acme (optional)"
                     />
                 </div>
 
@@ -2539,14 +2539,14 @@ fn BandwidthSection() -> Html {
     let action_on_limit = use_state(|| "block".to_string());
     let reset_mode = use_state(|| "rolling_30_days".to_string());
     let fixed_day = use_state(|| String::new());
-    let data_dir = use_state(|| "/var/lib/maluwaf".to_string());
+    let data_dir = use_state(|| "/var/lib/synvoid".to_string());
 
     let original_monthly_cap_ingress = use_state(|| "0".to_string());
     let original_monthly_cap_egress = use_state(|| "0".to_string());
     let original_action_on_limit = use_state(|| "block".to_string());
     let original_reset_mode = use_state(|| "rolling_30_days".to_string());
     let original_fixed_day = use_state(|| String::new());
-    let original_data_dir = use_state(|| "/var/lib/maluwaf".to_string());
+    let original_data_dir = use_state(|| "/var/lib/synvoid".to_string());
 
     let is_dirty = *monthly_cap_ingress != *original_monthly_cap_ingress
         || *monthly_cap_egress != *original_monthly_cap_egress
@@ -4496,7 +4496,7 @@ fn generate_preview_html(
         <div class="status">403</div>
         <h1>Forbidden</h1>
         <p>Access to this resource has been blocked by the WAF.</p>
-        <div class="footer">MaluWAF</div>
+        <div class="footer">SynVoid</div>
     </div>
 </body>
 </html>

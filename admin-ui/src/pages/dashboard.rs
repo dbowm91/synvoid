@@ -329,7 +329,7 @@ pub fn Dashboard() -> Html {
                     "p99_latency_ms": s.p99_latency_ms,
                     "peak_concurrent": s.peak_concurrent,
                 });
-                export_to_json(&data, "maluwaf-stats.json");
+                export_to_json(&data, "synvoid-stats.json");
             }
         })
     };
@@ -383,7 +383,7 @@ pub fn Dashboard() -> Html {
                     ],
                     vec!["Peak Concurrent".to_string(), s.peak_concurrent.to_string()],
                 ];
-                export_to_csv(&headers, &rows, "maluwaf-stats.csv");
+                export_to_csv(&headers, &rows, "synvoid-stats.csv");
             }
         })
     };

@@ -1,6 +1,6 @@
 # Upload Validation & Malware Scanning
 
-MaluWAF provides comprehensive file upload validation with optional YARA-based malware scanning to protect against malicious file uploads.
+SynVoid provides comprehensive file upload validation with optional YARA-based malware scanning to protect against malicious file uploads.
 
 ## Features
 
@@ -38,7 +38,7 @@ types = [
 [defaults.upload.scan_with_yara]
 enabled = true
 rules_dir = "rules/"
-quarantine_dir = "/var/lib/maluwafwaf/quarantine"
+quarantine_dir = "/var/lib/synvoidwaf/quarantine"
 
 # Scanning options
 [defaults.upload.scan_with_yara.options]
@@ -111,7 +111,7 @@ rules/
 rule Suspicious_Javascript {
     meta:
         description = "Detects suspicious JavaScript"
-        author = "MaluWAF"
+        author = "SynVoid"
         severity = 50
     
     strings:
@@ -161,16 +161,16 @@ Quarantined files are stored in the configured `quarantine_dir`:
 
 ```bash
 # List quarantined files
-ls -la /var/lib/maluwaf/quarantine/
+ls -la /var/lib/synvoid/quarantine/
 
 # View file metadata (stored alongside files)
-cat /var/lib/maluwaf/quarantine/.metadata.json
+cat /var/lib/synvoid/quarantine/.metadata.json
 
 # Delete quarantined file
-rm /var/lib/maluwaf/quarantine/suspicious_file.exe
+rm /var/lib/synvoid/quarantine/suspicious_file.exe
 
 # Restore file (move back to original location if known)
-mv /var/lib/maluwaf/quarantine/file.pdf /original/path/
+mv /var/lib/synvoid/quarantine/file.pdf /original/path/
 ```
 
 ### Monitoring via Metrics
@@ -183,7 +183,7 @@ Upload activity can be monitored through logs and the quarantine directory:
 
 ```bash
 # Check quarantined files count
-ls -la /var/lib/maluwaf/quarantine/ | wc -l
+ls -la /var/lib/synvoid/quarantine/ | wc -l
 ```
 
 **Internal Metrics Available:**
@@ -221,9 +221,9 @@ yara -C rules/ testfile
 
 ```bash
 # Check quarantine size
-du -sh /var/lib/maluwaf/quarantine
+du -sh /var/lib/synvoid/quarantine
 
-find /var/lib/maluwaf/quarantine -mtime +30 -delete
+find /var/lib/synvoid/quarantine -mtime +30 -delete
 ```
 
 ### Upload Failing
@@ -250,7 +250,7 @@ $response = file_get_contents(
 ```nginx
 # Nginx: Pass uploads through WAF
 location /upload {
-    proxy_pass http://maluwaf_backend;
+    proxy_pass http://synvoid_backend;
     # WAF handles validation
 }
 ```

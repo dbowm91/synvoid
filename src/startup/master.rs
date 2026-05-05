@@ -22,7 +22,7 @@ use crate::common::setup_panic_handler;
 
 pub fn run_master_mode(config_path: Option<PathBuf>, log_level: Option<String>) {
     let master_panic_log = format!(
-        "{}/maluwaf-master-panic.log",
+        "{}/synvoid-master-panic.log",
         std::env::temp_dir().display()
     );
     setup_panic_handler("MASTER", Some(&master_panic_log));
@@ -57,7 +57,7 @@ pub fn run_master_mode(config_path: Option<PathBuf>, log_level: Option<String>) 
 
     let worker_threads = main_config.tokio.worker_threads;
     tracing::info!(
-        "Starting RustWAF Master Process with {} worker threads",
+        "Starting synvoid Master Process with {} worker threads",
         worker_threads
     );
 
@@ -73,14 +73,14 @@ pub fn run_master_mode(config_path: Option<PathBuf>, log_level: Option<String>) 
 
     match result {
         Ok(Ok(())) => {
-            tracing::info!("RustWAF master process exited cleanly");
+            tracing::info!("synvoid master process exited cleanly");
         }
         Ok(Err(e)) => {
-            tracing::error!("RustWAF master process error: {}", e);
+            tracing::error!("synvoid master process error: {}", e);
             std::process::exit(1);
         }
         Err(panic_info) => {
-            tracing::error!("RustWAF master process panicked: {:?}", panic_info);
+            tracing::error!("synvoid master process panicked: {:?}", panic_info);
             std::process::exit(1);
         }
     }
@@ -93,7 +93,7 @@ pub fn run_overseer_mode(
     pid_manager: &crate::process::PidFileManager,
 ) {
     let overseer_panic_log = format!(
-        "{}/maluwaf-overseer-panic.log",
+        "{}/synvoid-overseer-panic.log",
         std::env::temp_dir().display()
     );
     setup_panic_handler("OVERSEER", Some(&overseer_panic_log));
@@ -136,7 +136,7 @@ pub fn run_overseer_mode(
         super::daemon::daemonize(pid_manager);
     }
 
-    tracing::info!("Starting RustWAF Overseer Process");
+    tracing::info!("Starting synvoid Overseer Process");
 
     // Create OverseerConfig from main config
     let overseer_config = OverseerConfig {
@@ -160,7 +160,7 @@ pub fn run_overseer_mode(
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/var/run"))
-        .join("maluwaf");
+        .join("synvoid");
 
     // Ensure runtime directory exists
     if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
@@ -187,14 +187,14 @@ pub fn run_overseer_mode(
 
     match result {
         Ok(Ok(())) => {
-            tracing::info!("RustWAF overseer process exited cleanly");
+            tracing::info!("synvoid overseer process exited cleanly");
         }
         Ok(Err(e)) => {
-            tracing::error!("RustWAF overseer process error: {}", e);
+            tracing::error!("synvoid overseer process error: {}", e);
             std::process::exit(1);
         }
         Err(panic_info) => {
-            tracing::error!("RustWAF overseer process panicked: {:?}", panic_info);
+            tracing::error!("synvoid overseer process panicked: {:?}", panic_info);
             std::process::exit(1);
         }
     }
@@ -246,7 +246,7 @@ async fn run_master(
     let log_level_for_process = log_level_override.clone();
     init_logging(&main_config.logging, log_level_override);
 
-    tracing::info!("Starting RustWAF - Multi-Process WAF");
+    tracing::info!("Starting synvoid - Multi-Process WAF");
     tracing::info!(
         "Main HTTP entry: http://{}:{}",
         main_config.server.host,
@@ -365,7 +365,7 @@ async fn run_master(
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        let pipe_name: Vec<u16> = std::ffi::OsStr::new("\\\\.\\pipe\\maluwaf-master")
+        let pipe_name: Vec<u16> = std::ffi::OsStr::new("\\\\.\\pipe\\synvoid-master")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -391,7 +391,7 @@ async fn run_master(
         }
     }
 
-    let ipc_session_key = if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+    let ipc_session_key = if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
         // Master passed IPC key via temp file (preferred over env var for security)
         match std::fs::read_to_string(&key_file) {
             Ok(key_hex) => {
@@ -628,7 +628,7 @@ async fn run_master(
 
     #[cfg(windows)]
     {
-        tracing::info!("Master IPC listening on Windows named pipe: \\\\.\\pipe\\maluwaf-master");
+        tracing::info!("Master IPC listening on Windows named pipe: \\\\.\\pipe\\synvoid-master");
 
         let pm_clone = process_manager.clone();
         let master_path = master_socket_path.clone();
@@ -789,13 +789,13 @@ async fn run_master(
         std::fs::remove_file(&master_socket_path)?;
     }
 
-    tracing::info!("RustWAF shutdown complete");
+    tracing::info!("synvoid shutdown complete");
     Ok(())
 }
 
 #[cfg(windows)]
 async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, _pipe_name: PathBuf) {
-    let listener = crate::process::ipc::WindowsIpcListener::new("maluwaf-master");
+    let listener = crate::process::ipc::WindowsIpcListener::new("synvoid-master");
 
     loop {
         match listener.accept() {
@@ -819,7 +819,7 @@ async fn windows_command_pipe_listener(
     config_manager: Arc<RwLock<ConfigManager>>,
     signer: Option<Arc<crate::process::IpcSigner>>,
 ) {
-    let listener = crate::process::ipc::WindowsIpcListener::new("maluwaf-commands");
+    let listener = crate::process::ipc::WindowsIpcListener::new("synvoid-commands");
 
     loop {
         match listener.accept() {
@@ -930,7 +930,7 @@ async fn handle_command_connection(
             if !authenticated {
                 tracing::error!(
                     "SECURITY: Rejected unauthenticated privileged command ({:?}) \
-                     on command pipe. Configure MALUWAF_IPC_KEY or MALUWAF_IPC_KEY_FILE \
+                     on command pipe. Configure SYNVOID_IPC_KEY or SYNVOID_IPC_KEY_FILE \
                      for signed IPC.",
                     command
                 );

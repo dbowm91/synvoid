@@ -1,6 +1,6 @@
 # Security Hardening Guide
 
-This guide covers security best practices for deploying MaluWAF in production.
+This guide covers security best practices for deploying SynVoid in production.
 
 ## Network Security
 
@@ -47,13 +47,13 @@ iptables -A INPUT -p tcp --dport 8081 -s 127.0.0.1 -j ACCEPT  # Admin local only
 [admin]
 enabled = true
 port = 8081
-token_env_var = "MALU_ADMIN_TOKEN"  # Don't store in config file
+token_env_var = "SYNVOID_ADMIN_TOKEN"  # Don't store in config file
 ```
 
 ### Generate Strong Tokens
 
 ```bash
-./maluwaf --generatetoken
+./synvoid --generatetoken
 # Output: a1b2c3d4e5f6... (64 character hex string)
 ```
 
@@ -75,7 +75,7 @@ For remote admin, use VPN or mesh tunnel.
 ```toml
 [security]
 ipc_enforce_signing = true
-ipc_session_key_env = "MALU_IPC_KEY"
+ipc_session_key_env = "SYNVOID_IPC_KEY"
 ```
 
 Generate a key:
@@ -186,27 +186,27 @@ action = "stall"  # Don't reveal blocked requests
 
 ```bash
 # Create dedicated user
-useradd -r -s /sbin/nologin maluwaf
+useradd -r -s /sbin/nologin synvoid
 
 # Set ownership
-chown -R maluwaf:maluwaf /etc/maluwaf
+chown -R synvoid:synvoid /etc/synvoid
 
 # Run as user
-su - maluwaf -s /bin/bash -c "/usr/local/bin/maluwaf"
+su - synvoid -s /bin/bash -c "/usr/local/bin/synvoid"
 ```
 
 ### Set Proper Permissions
 
 ```bash
 # Config files
-chmod 600 /etc/maluwaf/main.toml
-chmod 600 /etc/maluwaf/sites/*.toml
+chmod 600 /etc/synvoid/main.toml
+chmod 600 /etc/synvoid/sites/*.toml
 
 # Private keys
-chmod 600 /etc/maluwaf/certs/*.key
+chmod 600 /etc/synvoid/certs/*.key
 
 # Logs directory
-chown -R maluwaf:maluwaf /var/log/maluwaf
+chown -R synvoid:synvoid /var/log/synvoid
 ```
 
 ## Logging and Monitoring
@@ -217,7 +217,7 @@ chown -R maluwaf:maluwaf /var/log/maluwaf
 [logging]
 level = "info"
 access_log = true
-access_log_dir = "/var/log/maluwaf"
+access_log_dir = "/var/log/synvoid"
 access_log_format = "json"
 retention_days = 30
 ```
@@ -227,7 +227,7 @@ retention_days = 30
 Watch for attack patterns:
 
 ```bash
-tail -f /var/log/maluwaf/access.log | grep -i "attack\|blocked\|waf"
+tail -f /var/log/synvoid/access.log | grep -i "attack\|blocked\|waf"
 ```
 
 ### Set Up Metrics
@@ -239,9 +239,9 @@ port = 9090
 ```
 
 Prometheus metrics to monitor:
-- `maluwaf_attack_detected_total` - Attack frequency
-- `maluwaf_ratelimit_exceeded_total` - Rate limit hits
-- `maluwaf_waf_decision_total` - Block/challenge decisions
+- `synvoid_attack_detected_total` - Attack frequency
+- `synvoid_ratelimit_exceeded_total` - Rate limit hits
+- `synvoid_waf_decision_total` - Block/challenge decisions
 
 ## Docker Security
 
@@ -249,8 +249,8 @@ Prometheus metrics to monitor:
 
 ```yaml
 services:
-  maluwaf:
-    image: maluwaf:latest
+  synvoid:
+    image: synvoid:latest
     user: "1000:1000"  # Run as non-root user
     read_only: true    # Read-only filesystem
     cap_drop:          # Drop capabilities
@@ -261,10 +261,10 @@ services:
 
 ```yaml
 services:
-  maluwaf:
+  synvoid:
     environment:
-      - MALU_ADMIN_TOKEN=${ADMIN_TOKEN}
-      - MALU_IPC_KEY=${IPC_KEY}
+      - SYNVOID_ADMIN_TOKEN=${ADMIN_TOKEN}
+      - SYNVOID_IPC_KEY=${IPC_KEY}
     secrets:
       - admin_token
       - ipc_key

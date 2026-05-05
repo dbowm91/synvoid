@@ -5,7 +5,7 @@ use crate::icmp_filter::{
 };
 use std::process::Command;
 
-const ANCHOR_NAME: &str = "maluwaf.icmp";
+const ANCHOR_NAME: &str = "synvoid.icmp";
 
 #[derive(Debug)]
 pub struct PfBsdFilter {
@@ -106,7 +106,7 @@ impl PfBsdFilter {
             String::new()
         };
 
-        rules.push_str(&format!("# MaluWAF ICMP Filter Rules\n"));
+        rules.push_str(&format!("# SynVoid ICMP Filter Rules\n"));
 
         rules.push_str("table <icmp_flood> persist\n\n");
 

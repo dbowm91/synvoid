@@ -134,7 +134,7 @@ impl AcmeConfig {
                     });
                 }
             }
-            let temp_file = path.join(".maluwaf_acme_write_test");
+            let temp_file = path.join(".synvoid_acme_write_test");
             if let Err(e) = std::fs::write(&temp_file, b"") {
                 return Err(ConfigValidationError {
                     field: "tls.acme.cache_dir".to_string(),

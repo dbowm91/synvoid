@@ -259,7 +259,7 @@ max_response_size = 20971520  # 20MB
 # Example: Use app-server (Granian) for Python ASGI/RSGI/WSGI apps
 [proxy.backend]
 type = "app-server"
-# socket = "/tmp/rustwaf-example-com-app.sock"  # Optional: auto-generated if not specified
+# socket = "/tmp/synvoid-example-com-app.sock"  # Optional: auto-generated if not specified
 
 # =============================================================================
 # WORKER POOL
@@ -359,7 +359,7 @@ app_path = "main:app"  # Format: "module:app_variable"
 interface = "asgi"      # asgi, rsgi, wsgi
 workers = 4
 blocking_threads = 4
-socket_path = "/tmp/rustwaf-example-com-app.sock"
+socket_path = "/tmp/synvoid-example-com-app.sock"
 python_path = "/usr/bin/python3"
 working_directory = "/var/www/myapp"
 restart_on_failure = true

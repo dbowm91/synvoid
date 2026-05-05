@@ -77,13 +77,13 @@ impl AdminRateLimiter {
 
         if entry.requests_per_minute >= self.inner.config.requests_per_minute {
             super::metrics_events::record_rate_limited();
-            metrics::counter!("maluwaf.admin.rate_limited.minute").increment(1);
+            metrics::counter!("synvoid.admin.rate_limited.minute").increment(1);
             return false;
         }
 
         if entry.requests_per_second >= self.inner.config.requests_per_second {
             super::metrics_events::record_rate_limited();
-            metrics::counter!("maluwaf.admin.rate_limited.second").increment(1);
+            metrics::counter!("synvoid.admin.rate_limited.second").increment(1);
             return false;
         }
 

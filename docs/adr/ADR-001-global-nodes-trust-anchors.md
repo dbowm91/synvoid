@@ -7,7 +7,7 @@ Accepted
 2026-03-15
 
 ## Context
-MaluWAF uses a mesh network with multiple node roles (Global, Edge, Origin). There was a question about how global nodes are determined - should they be elected by consensus, or explicitly configured?
+SynVoid uses a mesh network with multiple node roles (Global, Edge, Origin). There was a question about how global nodes are determined - should they be elected by consensus, or explicitly configured?
 
 ## Decision
 **Global nodes are explicitly configured bootstrap nodes that serve as Certificate Authority and signing authority for the entire network.** They are NOT elected.

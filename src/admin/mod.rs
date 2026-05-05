@@ -1,4 +1,4 @@
-//! Admin dashboard and API for MaluWAF.
+//! Admin dashboard and API for SynVoid.
 //!
 //! Exposes an HTTP/HTTPS management interface built on Axum, providing
 //! site configuration, user management, metrics, alerting, WebSocket
@@ -14,7 +14,7 @@ pub mod metrics_events;
 mod middleware;
 pub mod openapi;
 mod prometheus_exporter;
-pub use openapi::MaluWafOpenApi;
+pub use openapi::synvoidOpenApi;
 mod rate_limit;
 pub mod schema;
 mod state;
@@ -791,7 +791,7 @@ fn build_router_from_state(
         .route("/api/openapi.json", get(openapi::get_openapi_json))
         .merge(
             SwaggerUi::new("/api/docs")
-                .url("/api/openapi.json", openapi::MaluWafOpenApi::openapi()),
+                .url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
         )
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))

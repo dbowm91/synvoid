@@ -173,11 +173,11 @@ impl UserspaceWireGuard {
             .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
 
             self.sessions.add_session(peer_session);
-            counter!("maluwaf.tunnel.wireguard.peers.added").increment(1);
+            counter!("synvoid.tunnel.wireguard.peers.added").increment(1);
         }
 
         self.running = true;
-        gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
+        gauge!("synvoid.tunnel.wireguard.running").set(1.0);
 
         tracing::info!(
             "boringtun WireGuard started with {} peers",
@@ -202,7 +202,7 @@ impl UserspaceWireGuard {
         }
 
         self.running = true;
-        gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
+        gauge!("synvoid.tunnel.wireguard.running").set(1.0);
 
         tracing::info!("WireGuard userspace peer session started (no tunnel - wireguard feature not compiled in)");
         Ok(())
@@ -258,7 +258,7 @@ impl UserspaceWireGuard {
             s.add_tx_bytes(data.len() as u64);
         });
 
-        counter!("maluwaf.tunnel.wireguard.packets.sent").increment(1);
+        counter!("synvoid.tunnel.wireguard.packets.sent").increment(1);
 
         Ok(())
     }
@@ -289,8 +289,8 @@ impl UserspaceWireGuard {
                                         tracing::trace!("Received packet from TUN: {} bytes, src={}", n, src);
                                     }
 
-                                    counter!("maluwaf.tunnel.wireguard.packets.received").increment(1);
-                                    counter!("maluwaf.tunnel.wireguard.bytes.received").increment(n as u64);
+                                    counter!("synvoid.tunnel.wireguard.packets.received").increment(1);
+                                    counter!("synvoid.tunnel.wireguard.bytes.received").increment(n as u64);
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
@@ -302,7 +302,7 @@ impl UserspaceWireGuard {
                             let packet = TunPacket::new(data);
                             match device.write_packet(packet.data()).await {
                                 Ok(_n) => {
-                                    counter!("maluwaf.tunnel.wireguard.packets.sent").increment(1);
+                                    counter!("synvoid.tunnel.wireguard.packets.sent").increment(1);
                                 }
                                 Err(e) => {
                                     tracing::trace!("TUN write error: {}", e);
@@ -332,7 +332,7 @@ impl TunnelTransport for UserspaceWireGuard {
 
     async fn stop(&mut self) {
         self.running = false;
-        gauge!("maluwaf.tunnel.wireguard.running").set(0.0);
+        gauge!("synvoid.tunnel.wireguard.running").set(0.0);
 
         for session in self.sessions.list_sessions() {
             self.sessions.remove_session(&session.id);

@@ -2,7 +2,7 @@
 
 ## Overview
 
-MaluWAF has two HTTP server implementations:
+SynVoid has two HTTP server implementations:
 1. **HttpServer** (`src/http/server.rs`) - handles plain HTTP
 2. **HttpsServer** (`src/tls/server.rs`) - handles TLS/SSL
 

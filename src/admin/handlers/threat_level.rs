@@ -13,8 +13,8 @@ use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
 
-const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/maluwaf/threat_level/history.db";
-const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/maluwaf/threat_level/backups";
+const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/synvoid/threat_level/history.db";
+const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/synvoid/threat_level/backups";
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ThreatLevelStatusResponse {
@@ -361,7 +361,7 @@ pub async fn list_backups(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
 ) -> Result<Json<BackupsListResponse>, StatusCode> {
-    let backup_dir = PathBuf::from("/var/lib/maluwaf/threat_level/backups");
+    let backup_dir = PathBuf::from("/var/lib/synvoid/threat_level/backups");
 
     let backups = tokio::task::spawn_blocking(move || SqliteBackup::list_backups(&backup_dir))
         .await

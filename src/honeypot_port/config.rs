@@ -103,7 +103,7 @@ impl Default for PortHoneypotConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            database_path: "/var/lib/maluwaf/honeypot.db".to_string(),
+            database_path: "/var/lib/synvoid/honeypot.db".to_string(),
             max_records: 1_000_000,
             retention_days: 90,
             flush_interval_secs: 60,

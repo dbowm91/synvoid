@@ -1,10 +1,10 @@
 # Attack Detection
 
-MaluWAF provides comprehensive attack detection across multiple vulnerability categories. This document explains how the detection pipeline works, how to interpret results, and how to debug detection issues.
+SynVoid provides comprehensive attack detection across multiple vulnerability categories. This document explains how the detection pipeline works, how to interpret results, and how to debug detection issues.
 
 ## Detection Pipeline Overview
 
-When a request enters MaluWAF, it passes through multiple detection layers. Understanding this flow helps you configure protection effectively and debug false positives/negatives.
+When a request enters SynVoid, it passes through multiple detection layers. Understanding this flow helps you configure protection effectively and debug false positives/negatives.
 
 ```
 Client Request
@@ -60,7 +60,7 @@ Each layer can independently block, challenge, or allow a request. The request i
 
 ## WAF Decision Types
 
-When MaluWAF makes a protection decision, it returns one of these:
+When SynVoid makes a protection decision, it returns one of these:
 
 | Decision | HTTP Code | Description |
 |----------|-----------|-------------|
@@ -322,7 +322,7 @@ allowed_domains = ["example.com", "trusted-site.com"]
 
 ### Viewing Detection Logs
 
-Enable detailed logging to understand what MaluWAF is detecting:
+Enable detailed logging to understand what SynVoid is detecting:
 
 ```bash
 # Set log level to debug
@@ -384,7 +384,7 @@ Check logs to see which detection type triggered:
 
 ```bash
 # Filter logs for WAF events
-tail -f /var/log/maluwaf/access.log | grep WAF
+tail -f /var/log/synvoid/access.log | grep WAF
 ```
 
 **Step 2: Understand the Payload**
@@ -393,7 +393,7 @@ Look at the actual request that triggered detection:
 
 ```bash
 # Enable debug logging and reproduce
-RUST_LOG=debug ./maluwaf -f
+RUST_LOG=debug ./synvoid -f
 
 # Make the request again
 curl -H "Host: example.com" "http://localhost/path?param=value"
@@ -475,9 +475,9 @@ action = "stall"  # Silent blocking for CMS
 Attack detection is tracked via Prometheus metrics:
 
 ```
-maluwaf_attack_detected{type="sqli"}
-maluwaf_attack_detected{type="xss"}
-maluwaf_attack_detected{type="ssrf"}
+synvoid_attack_detected{type="sqli"}
+synvoid_attack_detected{type="xss"}
+synvoid_attack_detected{type="ssrf"}
 # ... etc
 ```
 
@@ -485,23 +485,23 @@ maluwaf_attack_detected{type="ssrf"}
 
 | Metric | Description |
 |--------|-------------|
-| `maluwaf_attack_detected_total` | Counter of all detected attacks by type |
-| `maluwaf_waf_decision_total` | Decisions made (pass/block/challenge) |
-| `maluwaf_blocklist_size` | Number of blocked IPs |
-| `maluwaf_rate_limit_exceeded` | Rate limit violations |
+| `synvoid_attack_detected_total` | Counter of all detected attacks by type |
+| `synvoid_waf_decision_total` | Decisions made (pass/block/challenge) |
+| `synvoid_blocklist_size` | Number of blocked IPs |
+| `synvoid_rate_limit_exceeded` | Rate limit violations |
 
 ### Query Examples
 
 ```promql
 # Attack rate over time
-rate(maluwaf_attack_detected_total[5m])
+rate(synvoid_attack_detected_total[5m])
 
 # Top attack types
-topk(10, maluwaf_attack_detected_total)
+topk(10, synvoid_attack_detected_total)
 
 # Blocked request percentage
-sum(rate(maluwaf_waf_decision_total{decision="block"}[5m]))
-/ sum(rate(maluwaf_waf_decision_total[5m])) * 100
+sum(rate(synvoid_waf_decision_total{decision="block"}[5m]))
+/ sum(rate(synvoid_waf_decision_total[5m])) * 100
 ```
 
 ## See Also

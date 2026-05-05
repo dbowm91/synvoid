@@ -4,7 +4,7 @@ pub mod yara_rate_limit;
 //
 // # Single Admin Token Model
 //
-// MaluWAF implements a **single admin token authentication model** with a hybrid
+// SynVoid implements a **single admin token authentication model** with a hybrid
 // CSRF/session approach for browser clients:
 //
 // - **Bearer token requests**: Bypass CSRF validation (API clients)
@@ -51,7 +51,7 @@ pub struct ClientIp(pub String);
 
 static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
 
-const SESSION_COOKIE_NAME: &str = "maluwaf_session";
+const SESSION_COOKIE_NAME: &str = "synvoid_session";
 
 pub fn set_trusted_proxies(proxies: Vec<String>) {
     let mut guard = TRUSTED_PROXIES.write();

@@ -1,5 +1,5 @@
 mod overseer_health_check_tests {
-    use maluwaf::overseer::health::{EnhancedHealthConfig, ValidationMetrics};
+    use synvoid::overseer::health::{EnhancedHealthConfig, ValidationMetrics};
 
     #[test]
     fn test_validation_metrics_default() {

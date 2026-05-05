@@ -49,7 +49,7 @@ pub struct DnsSecConfig {
 }
 
 fn default_dnssec_key_path() -> String {
-    "/var/lib/maluwaf/dns/keys".to_string()
+    "/var/lib/synvoid/dns/keys".to_string()
 }
 
 fn default_rollover_interval() -> u32 {
@@ -255,11 +255,11 @@ pub struct TrustAnchorConfig {
 }
 
 fn default_db_path() -> String {
-    "/var/lib/maluwaf/dns/trust_anchors.db".to_string()
+    "/var/lib/synvoid/dns/trust_anchors.db".to_string()
 }
 
 fn default_trust_anchor_path() -> String {
-    "/var/lib/maluwaf/dns/trusted-key.key".to_string()
+    "/var/lib/synvoid/dns/trusted-key.key".to_string()
 }
 
 fn default_trust_anchor_refresh() -> u64 {

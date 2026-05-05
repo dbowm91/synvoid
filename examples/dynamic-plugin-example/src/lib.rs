@@ -1,14 +1,14 @@
 //
-// Dynamic Axum Plugin for RustWAF
+// Dynamic Axum Plugin for synvoid
 //
 // This example shows how to build an Axum app as a shared library
-// that can be loaded at runtime by RustWAF.
+// that can be loaded at runtime by synvoid.
 //
-// IMPORTANT: The ABI version must match RustWAF's version for stability.
-// RustWAF will log a warning if versions don't match.
+// IMPORTANT: The ABI version must match synvoid's version for stability.
+// synvoid will log a warning if versions don't match.
 //
 // Required exports:
-// - maluwaf_abi_version: C string pointer with version
+// - synvoid_abi_version: C string pointer with version
 // - create_router: Function that returns pointer to Router
 //
 
@@ -20,7 +20,7 @@ pub struct AbiVersion(*const std::ffi::c_char);
 unsafe impl Sync for AbiVersion {}
 
 #[no_mangle]
-pub static maluwaf_abi_version: AbiVersion = {
+pub static synvoid_abi_version: AbiVersion = {
     let version = concat!(env!("CARGO_PKG_VERSION"), "\0");
     AbiVersion(version.as_ptr() as *const std::ffi::c_char)
 };

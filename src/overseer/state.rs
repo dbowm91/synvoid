@@ -187,8 +187,8 @@ impl Persistence {
     pub fn new(data_dir: Option<PathBuf>) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| {
             dirs::home_dir()
-                .map(|h| h.join(".maluwaf"))
-                .unwrap_or_else(|| PathBuf::from(".maluwaf"))
+                .map(|h| h.join(".synvoid"))
+                .unwrap_or_else(|| PathBuf::from(".synvoid"))
         });
 
         let state_file = data_dir.join("overseer-state.json");

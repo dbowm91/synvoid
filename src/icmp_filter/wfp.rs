@@ -22,7 +22,7 @@ use crate::icmp_filter::{
 };
 use std::net::IpAddr;
 
-const SUBLAYER_NAME: &str = "Maluwaf_ICMP_Sublayer";
+const SUBLAYER_NAME: &str = "synvoid_ICMP_Sublayer";
 
 const IPPROTO_ICMP: u8 = 1;
 const IPPROTO_ICMPV6: u8 = 58;
@@ -144,7 +144,7 @@ impl WfpFilter {
                 |name: &str, layer: Layer, protocol: u8, tx: &Transaction| -> Result<u64> {
                     let mut builder = FilterBuilder::default()
                         .name(name)
-                        .description("Maluwaf ICMP block filter")
+                        .description("Synvoid ICMP block filter")
                         .action(ActionType::Block)
                         .layer(layer);
 
@@ -173,7 +173,7 @@ impl WfpFilter {
 
             if block_in {
                 let id = add_icmp_block(
-                    "Maluwaf_ICMP_Block_In_V4",
+                    "synvoid_ICMP_Block_In_V4",
                     Layer::InboundTransportV4,
                     IPPROTO_ICMP,
                     &transaction,
@@ -181,7 +181,7 @@ impl WfpFilter {
                 self.filter_ids.push(id);
 
                 let id = add_icmp_block(
-                    "Maluwaf_ICMP_Block_In_V6",
+                    "synvoid_ICMP_Block_In_V6",
                     Layer::InboundTransportV6,
                     IPPROTO_ICMPV6,
                     &transaction,
@@ -191,7 +191,7 @@ impl WfpFilter {
 
             if block_out {
                 let id = add_icmp_block(
-                    "Maluwaf_ICMP_Block_Out_V4",
+                    "synvoid_ICMP_Block_Out_V4",
                     Layer::OutboundTransportV4,
                     IPPROTO_ICMP,
                     &transaction,
@@ -199,7 +199,7 @@ impl WfpFilter {
                 self.filter_ids.push(id);
 
                 let id = add_icmp_block(
-                    "Maluwaf_ICMP_Block_Out_V6",
+                    "synvoid_ICMP_Block_Out_V6",
                     Layer::OutboundTransportV6,
                     IPPROTO_ICMPV6,
                     &transaction,
@@ -245,8 +245,8 @@ impl WfpFilter {
                     .value_bytes(&bytes);
 
                 let filter_id = FilterBuilder::default()
-                    .name(&format!("Maluwaf_ICMP_Exempt_{}", addr))
-                    .description("Maluwaf ICMP exempt filter")
+                    .name(&format!("synvoid_ICMP_Exempt_{}", addr))
+                    .description("Synvoid ICMP exempt filter")
                     .action(ActionType::Permit)
                     .layer(v4_layer)
                     .condition(condition)
@@ -261,8 +261,8 @@ impl WfpFilter {
                     .value_bytes(&addr.octets());
 
                 let filter_id = FilterBuilder::default()
-                    .name(&format!("Maluwaf_ICMPv6_Exempt_{}", ip))
-                    .description("Maluwaf ICMPv6 exempt filter")
+                    .name(&format!("synvoid_ICMPv6_Exempt_{}", ip))
+                    .description("Synvoid ICMPv6 exempt filter")
                     .action(ActionType::Permit)
                     .layer(v6_layer)
                     .condition(condition)
@@ -308,7 +308,7 @@ impl WfpFilter {
             };
 
             if block_in {
-                let name = format!("Maluwaf_ICMP_Type_{}_In", rule.icmp_type);
+                let name = format!("synvoid_ICMP_Type_{}_In", rule.icmp_type);
                 let mut builder = FilterBuilder::default()
                     .name(&name)
                     .description(rule.description.as_deref().unwrap_or("ICMP type filter"))
@@ -328,7 +328,7 @@ impl WfpFilter {
             }
 
             if block_out {
-                let name = format!("Maluwaf_ICMP_Type_{}_Out", rule.icmp_type);
+                let name = format!("synvoid_ICMP_Type_{}_Out", rule.icmp_type);
                 let mut builder = FilterBuilder::default()
                     .name(&name)
                     .description(rule.description.as_deref().unwrap_or("ICMP type filter"))
@@ -368,7 +368,7 @@ impl WfpFilter {
             };
 
             if block_in {
-                let name = format!("Maluwaf_ICMPv6_Type_{}_In", rule.icmp_type);
+                let name = format!("synvoid_ICMPv6_Type_{}_In", rule.icmp_type);
                 let mut builder = FilterBuilder::default()
                     .name(&name)
                     .description(rule.description.as_deref().unwrap_or("ICMPv6 type filter"))
@@ -388,7 +388,7 @@ impl WfpFilter {
             }
 
             if block_out {
-                let name = format!("Maluwaf_ICMPv6_Type_{}_Out", rule.icmp_type);
+                let name = format!("synvoid_ICMPv6_Type_{}_Out", rule.icmp_type);
                 let mut builder = FilterBuilder::default()
                     .name(&name)
                     .description(rule.description.as_deref().unwrap_or("ICMPv6 type filter"))

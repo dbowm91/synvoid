@@ -2032,7 +2032,7 @@ impl MeshTransport {
                 key_authorization,
             } => {
                 tracing::info!(
-                    "HTTP-01 challenge: storing key authorization for token {} at /.well-known/malu-challenge/{}",
+                    "HTTP-01 challenge: storing key authorization for token {} at /.well-known/synvoid-challenge/{}",
                     token,
                     token
                 );

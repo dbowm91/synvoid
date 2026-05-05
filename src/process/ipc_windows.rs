@@ -101,13 +101,13 @@ impl RawHandleExt for std::fs::File {
 }
 
 pub fn master_pipe_name() -> String {
-    "\\\\.\\pipe\\maluwaf-master".to_string()
+    "\\\\.\\pipe\\synvoid-master".to_string()
 }
 
 pub fn static_worker_pipe_name() -> String {
-    "\\\\.\\pipe\\maluwaf-static-worker".to_string()
+    "\\\\.\\pipe\\synvoid-static-worker".to_string()
 }
 
 pub fn commands_pipe_name() -> String {
-    "\\\\.\\pipe\\maluwaf-commands".to_string()
+    "\\\\.\\pipe\\synvoid-commands".to_string()
 }

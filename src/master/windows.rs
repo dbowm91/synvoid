@@ -15,7 +15,7 @@ use crate::process::{
 pub async fn windows_ipc_accept_loop(process_manager: Arc<ProcessManager>, pipe_name: PathBuf) {
     use std::os::windows::ffi::OsStrExt;
 
-    let pipe_name_str = format!("\\\\.\\pipe\\maluwaf-master");
+    let pipe_name_str = format!("\\\\.\\pipe\\synvoid-master");
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name_str)
         .encode_wide()
         .chain(std::iter::once(0))
@@ -89,7 +89,7 @@ pub async fn windows_command_pipe_listener(
 ) {
     use std::os::windows::ffi::OsStrExt;
 
-    let pipe_name_str = "\\\\.\\pipe\\maluwaf-commands";
+    let pipe_name_str = "\\\\.\\pipe\\synvoid-commands";
     let pipe_name_wide: Vec<u16> = std::ffi::OsStr::new(pipe_name_str)
         .encode_wide()
         .chain(std::iter::once(0))
@@ -234,7 +234,7 @@ async fn handle_command_connection(
             if !authenticated {
                 tracing::error!(
                     "SECURITY: Rejected unauthenticated privileged command ({:?}) \
-                     on command pipe. Configure MALUWAF_IPC_KEY or MALUWAF_IPC_KEY_FILE \
+                     on command pipe. Configure SYNVOID_IPC_KEY or SYNVOID_IPC_KEY_FILE \
                      for signed IPC.",
                     command
                 );

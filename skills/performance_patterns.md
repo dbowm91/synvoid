@@ -1,6 +1,6 @@
 # Performance Optimization Patterns
 
-This skill documents the performance optimization patterns used in the MaluWAF codebase.
+This skill documents the performance optimization patterns used in the SynVoid codebase.
 
 ## Core Principles
 
@@ -650,6 +650,39 @@ pub fn get_http_request_latencies() -> Vec<u64> {
 
 ---
 
+### WAF Stall/Tarpit Concurrency Safety (Wave P1)
+
+**Location**: `src/http/server.rs:1522-1544`, `src/tls/server.rs:859-878`, `src/http3/server.rs:377-387`
+
+**Issue**: At high traffic, unbounded stalled requests could consume worker tasks/connections and become a resource-exhaustion amplifier.
+
+**Pattern**: Bounded stall concurrency with metrics:
+```rust
+// Config: max_stalled_requests (default 100)
+let current_stalled = crate::metrics::get_active_stalled_requests();
+if current_stalled >= http_config.max_stalled_requests as u64 {
+    crate::metrics::record_stall_rejected();
+    return Ok(build_response(429, "Too many requests", "text/plain"));
+}
+crate::metrics::record_stall_start();
+
+// ... stall handling ...
+
+crate::metrics::record_stall_end(); // On timeout
+```
+
+**Metrics added** (`src/metrics/collection.rs`):
+- `ACTIVE_STALLED_REQUESTS` - current stalled request count
+- `STALL_REJECTED_CONCURRENCY_CAP` - rejected due to cap
+- `STALL_TIMEOUTS` - completed stall timeouts
+
+**Behavior**:
+- When stall cap reached, returns 429 instead of stalling
+- Prevents unbounded sleeping tasks at high traffic
+- Protects against resource exhaustion amplification attacks
+
+---
+
 ### Global Node Liveness Monitoring
 
 **Location**: `src/metrics/mod.rs:87-89,535-549`, `src/mesh/topology.rs:1559-1617`
@@ -751,7 +784,7 @@ impl AcmeConfig {
                 })?;
             }
             // Write test file
-            let test_file = path.join(".maluwaf_acme_write_test");
+            let test_file = path.join(".synvoid_acme_write_test");
             std::fs::write(&test_file, b"").map_err(|e| ConfigValidationError {
                 field: "tls.acme.cache_dir".to_string(),
                 message: format!("cache_dir is not writable: {}", e),

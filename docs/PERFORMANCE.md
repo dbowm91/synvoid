@@ -1,10 +1,10 @@
 # Performance & Latency Guide
 
-This guide covers performance tuning and latency optimization for MaluWAF deployments.
+This guide covers performance tuning and latency optimization for SynVoid deployments.
 
 ## Architecture Overview
 
-MaluWAF uses a multi-process architecture:
+SynVoid uses a multi-process architecture:
 - **Overseer**: Optional parent process for orchestration
 - **Master**: Administrative API, process management, IPC hub
 - **Workers**: Handle HTTP requests, apply WAF rules
@@ -13,7 +13,7 @@ MaluWAF uses a multi-process architecture:
 
 ### IPC Communication
 
-The master communicates with workers via Unix domain sockets (Unix) or named pipes (Windows). By default, MaluWAF uses exponential backoff for IPC polling:
+The master communicates with workers via Unix domain sockets (Unix) or named pipes (Windows). By default, SynVoid uses exponential backoff for IPC polling:
 
 - Initial poll interval: 1ms
 - Maximum poll interval: 50ms

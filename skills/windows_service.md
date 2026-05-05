@@ -20,8 +20,8 @@ Provides Windows service management capabilities:
 ```rust
 use crate::platform::service::windows_service::{ServiceConfig, WindowsServiceManager, SERVICE_NAME};
 
-let config = ServiceConfig::new("MaluWAF")
-    .with_display_name("MaluWAF Web Application Firewall")
+let config = ServiceConfig::new("SynVoid")
+    .with_display_name("SynVoid Web Application Firewall")
     .with_description("High-performance WAF with advanced attack detection")
     .with_auto_start(true);
 
@@ -78,7 +78,7 @@ firewall::inject_http_firewall_rule(8080)?;
 - Gracefully handles missing interfaces
 
 ### Firewall Rules
-- Rule names prefixed with "MaluWAF"
+- Rule names prefixed with "SynVoid"
 - Check for existing rules before adding
 - Support both UDP (QUIC) and TCP (HTTP/HTTPS)
 

@@ -1,6 +1,6 @@
 # DNS Mesh Integration
 
-MaluWAF integrates DNS server functionality with the mesh networking layer for distributed DNS resolution and DNSSEC validation.
+SynVoid integrates DNS server functionality with the mesh networking layer for distributed DNS resolution and DNSSEC validation.
 
 ## Node Roles
 
@@ -41,7 +41,7 @@ Verification is re-checked periodically. Failure removes the zone from the node'
 
 ## DNS Providers
 
-MaluWAF supports multiple DNS resolver modes:
+SynVoid supports multiple DNS resolver modes:
 
 | Provider | DNSSEC | Description |
 |----------|--------|-------------|
@@ -83,7 +83,7 @@ Each mesh session derives a per-node signing key from the QUIC session key via H
 signing_key = HKDF-SHA256(
     ikm  = quic_session_key,
     salt = node_id || peer_id,
-    info = "maluwaf-mesh-signing-v1",
+    info = "synvoid-mesh-signing-v1",
     len  = 32
 )
 ```

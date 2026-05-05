@@ -233,7 +233,7 @@ fn default_logo_url() -> Option<String> {
     None
 }
 fn default_title() -> String {
-    "MaluWAF".to_string()
+    "SynVoid".to_string()
 }
 fn default_show_logo() -> bool {
     true

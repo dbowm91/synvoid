@@ -239,7 +239,7 @@ async fn handle_apply(
                 if state.can_rollback() {
                     eprintln!();
                     eprintln!("Rollback is available. Run:");
-                    eprintln!("  maluwaf upgrade rollback");
+                    eprintln!("  synvoid upgrade rollback");
                 }
             }
 
@@ -316,8 +316,8 @@ async fn handle_recover(rollback: bool) -> Result<(), Box<dyn std::error::Error>
     } else {
         println!();
         println!("To recover, run one of:");
-        println!("  maluwaf upgrade rollback   - Rollback to previous version");
-        println!("  maluwaf upgrade recover --rollback - Auto rollback to previous version");
+        println!("  synvoid upgrade rollback   - Rollback to previous version");
+        println!("  synvoid upgrade recover --rollback - Auto rollback to previous version");
     }
 
     Ok(())

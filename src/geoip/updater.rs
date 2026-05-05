@@ -137,7 +137,7 @@ impl GeoIpUpdater {
             .database_path
             .as_ref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/var/lib/maluwaf/geoip"));
+            .unwrap_or_else(|| PathBuf::from("/var/lib/synvoid/geoip"));
 
         let editions: Vec<DatabaseEdition> = config
             .edition_ids

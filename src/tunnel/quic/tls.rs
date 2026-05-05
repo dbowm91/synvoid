@@ -66,7 +66,7 @@ impl QuicTlsConfig {
                 Configure proper TLS certificates via cert_path and key_path for production."
             );
 
-            let domain = self.cert_domain.as_deref().unwrap_or("maluwaf-tunnel");
+            let domain = self.cert_domain.as_deref().unwrap_or("synvoid-tunnel");
             let cert_dir = std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("certs");

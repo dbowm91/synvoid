@@ -2,10 +2,10 @@
 mod e2e_process_tests {
     use std::sync::Arc;
 
-    use maluwaf::config::OverseerConfig;
-    use maluwaf::process::ipc::{MessageCategory, UpgradeModePayload};
-    use maluwaf::process::ipc_transport::{IpcEndpoint, IpcListener, IpcStream};
-    use maluwaf::process::{
+    use synvoid::config::OverseerConfig;
+    use synvoid::process::ipc::{MessageCategory, UpgradeModePayload};
+    use synvoid::process::ipc_transport::{IpcEndpoint, IpcListener, IpcStream};
+    use synvoid::process::{
         generate_session_key, ErrorCode, ErrorSeverity, IpcSigner, Message, WorkerId,
     };
     use tempfile::TempDir;
@@ -66,9 +66,9 @@ mod e2e_process_tests {
             timestamp: 1000,
         };
         let signed_data =
-            maluwaf::process::SignedIpcMessage::serialize_signed(&msg, &client_signer).unwrap();
+            synvoid::process::SignedIpcMessage::serialize_signed(&msg, &client_signer).unwrap();
         let decoded: Message =
-            maluwaf::process::SignedIpcMessage::deserialize_signed(&signed_data, &server_signer)
+            synvoid::process::SignedIpcMessage::deserialize_signed(&signed_data, &server_signer)
                 .unwrap();
         match decoded {
             Message::WorkerStarted {
@@ -88,7 +88,7 @@ mod e2e_process_tests {
         let wrong_key = generate_session_key();
         let wrong_signer = IpcSigner::new(&wrong_key);
         let bad_result: Result<Message, _> =
-            maluwaf::process::SignedIpcMessage::deserialize_signed(&signed_data, &wrong_signer);
+            synvoid::process::SignedIpcMessage::deserialize_signed(&signed_data, &wrong_signer);
         assert!(bad_result.is_err());
     }
 
@@ -172,7 +172,7 @@ mod e2e_process_tests {
             },
             Message::WorkerShutdownComplete { id: WorkerId(4) },
             Message::MasterConfigReload {
-                config_path: "/etc/maluwaf/config.toml".to_string(),
+                config_path: "/etc/synvoid/config.toml".to_string(),
             },
             Message::MasterHealthCheck { timestamp: 9999 },
             Message::HealthCheckAck { timestamp: 10000 },

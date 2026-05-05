@@ -1691,7 +1691,7 @@ pub fn get_ipc_path(socket_path: &std::path::Path) -> String {
         let pipe_name = socket_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("maluwaf-master");
+            .unwrap_or("synvoid-master");
         format!("\\\\.\\pipe\\{}", pipe_name)
     }
 }
@@ -1723,7 +1723,7 @@ pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
         let pipe_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("maluwaf-master");
+            .unwrap_or("synvoid-master");
         let pipe_path = format!("\\\\.\\pipe\\{}", pipe_name);
 
         let mut attempts = 0;

@@ -97,6 +97,7 @@ use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
 #[cfg(feature = "mesh")]
 use crate::mesh::protocol::{ThreatSeverity, ThreatType};
+use crate::worker::context::RequestServices;
 #[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::theme::ThemeConfig;
@@ -224,6 +225,7 @@ pub struct WafCore {
     pub asn_tracker: Option<Arc<AsnTracker>>,
     test_mode: TestModeConfig,
     honeypot_ban_duration_secs: u64,
+    request_services: ArcSwapOption<RequestServices>,
 }
 
 #[derive(Clone, Default)]
@@ -568,7 +570,27 @@ impl WafCore {
             asn_tracker,
             test_mode,
             honeypot_ban_duration_secs,
+            request_services: ArcSwapOption::new(None),
         }
+    }
+
+    pub fn set_request_services(&self, services: Arc<RequestServices>) {
+        self.request_services.store(Some(services));
+    }
+
+    pub fn get_upload_validator(&self) -> Option<Arc<UploadValidator>> {
+        self.request_services
+            .load()
+            .as_ref()
+            .and_then(|rs| rs.upload_validator.clone())
+    }
+
+    #[cfg(feature = "mesh")]
+    pub fn get_threat_intel(&self) -> Option<Arc<ThreatIntelligenceManager>> {
+        self.request_services
+            .load()
+            .as_ref()
+            .and_then(|rs| rs.threat_intel.clone())
     }
 
     pub fn streaming(&self) -> Option<StreamingWafCore> {
@@ -613,7 +635,12 @@ impl WafCore {
             store.block_ip(client_ip, reason, duration, scope);
         }
         #[cfg(feature = "mesh")]
-        if let Some(ref threat_intel) = get_threat_intel() {
+        if let Some(ref threat_intel) = self
+            .request_services
+            .load()
+            .as_ref()
+            .and_then(|rs| rs.threat_intel.as_ref())
+        {
             threat_intel.announce_honeypot_indicator(
                 client_ip,
                 ThreatType::SuspiciousActivity,
@@ -637,7 +664,12 @@ impl WafCore {
             store.block_ip(client_ip, reason, duration, scope);
         }
         #[cfg(feature = "mesh")]
-        if let Some(ref threat_intel) = get_threat_intel() {
+        if let Some(ref threat_intel) = self
+            .request_services
+            .load()
+            .as_ref()
+            .and_then(|rs| rs.threat_intel.as_ref())
+        {
             threat_intel.announce_honeypot_indicator(
                 client_ip,
                 ThreatType::SuspiciousActivity,
@@ -1064,7 +1096,13 @@ impl WafCore {
 
         let dht_start = std::time::Instant::now();
         #[cfg(feature = "mesh")]
-        if let Some(decision) = self.check_dht_threat_lookup(client_ip) {
+        if let Some(decision) = self.check_dht_threat_lookup(
+            client_ip,
+            self.request_services
+                .load()
+                .as_ref()
+                .and_then(|rs| rs.threat_intel.as_ref()),
+        ) {
             crate::metrics::record_waf_check_timing(
                 "dht_threat",
                 dht_start.elapsed().as_millis() as u64,
@@ -1133,7 +1171,7 @@ impl WafCore {
 
             if let Some(result) = attack_detector.check_body_only(body) {
                 metrics::counter!(
-                    "maluwaf.attack_detected",
+                    "synvoid.attack_detected",
                     "type" => result.attack_type.to_string(),
                     "location" => result.input_location.to_string(),
                 )
@@ -1267,8 +1305,13 @@ impl WafCore {
     }
 
     #[cfg(feature = "mesh")]
-    fn check_dht_threat_lookup(&self, client_ip: IpAddr) -> Option<WafDecision> {
-        if let Some(ref threat_intel) = get_threat_intel() {
+    #[deprecated(since = "0.2.0", note = "Transition to RequestServices context")]
+    fn check_dht_threat_lookup(
+        &self,
+        client_ip: IpAddr,
+        threat_intel: Option<&Arc<ThreatIntelligenceManager>>,
+    ) -> Option<WafDecision> {
+        if let Some(threat_intel) = threat_intel {
             if let Some(indicator) =
                 threat_intel.lookup_local_indicator_by_ip(&client_ip.to_string())
             {
@@ -1452,7 +1495,7 @@ impl WafCore {
 
             if let Some(result) = first_attack_result {
                 metrics::counter!(
-                    "maluwaf.attack_detected",
+                    "synvoid.attack_detected",
                     "type" => result.attack_type.to_string(),
                     "location" => result.input_location.to_string(),
                 )
@@ -1508,7 +1551,7 @@ impl WafCore {
             if let Some(config) = self.attack_detection_config.load().as_ref() {
                 if config.anomaly_scoring.enabled {
                     if anomaly_score >= config.anomaly_scoring.threshold {
-                        metrics::counter!("maluwaf.anomaly_score_threshold_exceeded").increment(1);
+                        metrics::counter!("synvoid.anomaly_score_threshold_exceeded").increment(1);
                         if let Some(ref tl) = self.threat_level {
                             tl.record_attack();
                         }

@@ -1,5 +1,5 @@
 [package]
-name = "maluwaf-ebpf-flood"
+name = "synvoid-ebpf-flood"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,6 +9,6 @@ aya-ebpf-macros = "0.1"
 network-types = "0.1"
 
 [[bin]]
-name = "maluwaf-flood"
+name = "synvoid-flood"
 path = "src/main.rs"
 

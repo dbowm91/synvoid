@@ -1,6 +1,6 @@
 # Admin Web Interface
 
-MaluWAF includes a comprehensive web-based admin interface built with Yew (WebAssembly), providing real-time monitoring, configuration, and management capabilities.
+SynVoid includes a comprehensive web-based admin interface built with Yew (WebAssembly), providing real-time monitoring, configuration, and management capabilities.
 
 ## Access
 
@@ -184,7 +184,7 @@ The request logs table includes:
 
 ### Features
 
-- **System Logs** - MaluWAF internal logs
+- **System Logs** - SynVoid internal logs
 - **Log Levels** - Filter by debug, info, warn, error
 - **Search** - Search log entries
 - **Download** - Export log files
@@ -294,8 +294,8 @@ port = 8443
 
 [tls]
 enabled = true
-cert_path = "/etc/maluwaf/certs/admin.crt"
-key_path = "/etc/maluwaf/certs/admin.key"
+cert_path = "/etc/synvoid/certs/admin.crt"
+key_path = "/etc/synvoid/certs/admin.key"
 ```
 
 ## Customization
@@ -345,7 +345,7 @@ trunk build
 trunk serve
 ```
 
-The built assets are embedded in the MaluWAF binary.
+The built assets are embedded in the SynVoid binary.
 
 ## Technology Stack
 
@@ -358,7 +358,7 @@ The built assets are embedded in the MaluWAF binary.
 
 ## API Integration
 
-The admin UI communicates with the MaluWAF Admin API. All operations are available via REST endpoints documented in the main README.
+The admin UI communicates with the SynVoid Admin API. All operations are available via REST endpoints documented in the main README.
 
 ## See Also
 

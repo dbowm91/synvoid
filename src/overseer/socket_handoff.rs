@@ -334,7 +334,7 @@ impl SocketHandoffServer {
 
 #[cfg(windows)]
 fn get_windows_handoff_pipe_name() -> String {
-    "\\\\.\\pipe\\maluwaf-socket-handoff".to_string()
+    "\\\\.\\pipe\\synvoid-socket-handoff".to_string()
 }
 
 pub struct SocketHandoffClient {

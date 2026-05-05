@@ -32,7 +32,7 @@ impl SqlitePersistence {
             }
             base.join("history.db")
         } else {
-            PathBuf::from("/var/lib/maluwaf/threat_level/history.db")
+            PathBuf::from("/var/lib/synvoid/threat_level/history.db")
         };
 
         let conn = Connection::open(&db_path)
@@ -219,7 +219,7 @@ impl SqliteHistory {
             std::fs::create_dir_all(&base)?;
             base.join("history.db")
         } else {
-            PathBuf::from("/var/lib/maluwaf/threat_level/history.db")
+            PathBuf::from("/var/lib/synvoid/threat_level/history.db")
         };
 
         let conn = Connection::open(&db_path)
@@ -716,7 +716,7 @@ impl SqliteBackup {
             .canonicalize()
             .map_err(|e| std::io::Error::new(e.kind(), format!("Invalid path: {}", e)))?;
 
-        let expected_dir = Path::new("/var/lib/maluwaf/threat_level/backups");
+        let expected_dir = Path::new("/var/lib/synvoid/threat_level/backups");
         let expected_dir_canonical = expected_dir.canonicalize().map_err(|e| {
             std::io::Error::new(
                 e.kind(),
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_sqlite_history_basic() {
-        let temp_dir = env::temp_dir().join("maluwaf_test_history");
+        let temp_dir = env::temp_dir().join("synvoid_test_history");
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let history =

@@ -58,9 +58,9 @@ async fn setup_worker_ipc(
     worker_id: &WorkerId,
 ) -> Result<Arc<TokioMutex<AsyncIpcStream>>, Box<dyn std::error::Error + Send + Sync>> {
     // Read IPC session key from environment (passed via temp file by master)
-    let signer = if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+    let signer = if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
         crate::process::ipc_signed::read_ipc_key_file(&key_file)
-    } else if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+    } else if let Ok(key_hex) = std::env::var("SYNVOID_IPC_KEY") {
         if key_hex.len() == 64 {
             let mut key = [0u8; 32];
             let mut valid = true;
@@ -652,7 +652,7 @@ pub async fn run_unified_server_worker(
                 let ikm = node_id.as_bytes();
                 let hk = Hkdf::<Sha256>::new(None, ikm);
                 let mut okm = [0u8; 32];
-                hk.expand(b"maluwaf-mesh-signer", &mut okm)
+                hk.expand(b"synvoid-mesh-signer", &mut okm)
                     .expect("HKDF expand failed");
                 okm
             };
@@ -1200,6 +1200,10 @@ pub async fn run_unified_server_worker(
         }
     };
 
+    let request_services = Arc::new(request_services);
+
+    unified_server.get_waf().set_request_services(request_services.clone());
+
     let state = UnifiedServerWorkerState {
         worker_id,
         metrics: metrics.clone(),
@@ -1215,7 +1219,7 @@ pub async fn run_unified_server_worker(
         stop_accepting_tx: stop_accepting_tx.clone(),
         unified_server: unified_server.clone(),
         task_handles: Arc::new(TokioMutex::new(Vec::new())),
-        request_services: Arc::new(request_services),
+        request_services: request_services.clone(),
     };
 
     {

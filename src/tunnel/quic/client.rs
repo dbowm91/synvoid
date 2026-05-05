@@ -137,7 +137,7 @@ impl QuicTunnelClient {
             }
         }
 
-        gauge!("maluwaf.tunnel.quic.client.enabled").set(1.0);
+        gauge!("synvoid.tunnel.quic.client.enabled").set(1.0);
 
         Ok(())
     }
@@ -170,8 +170,8 @@ impl QuicTunnelClient {
                             .set_datagram_capabilities(&session.id, session.datagram_capabilities);
                     }
 
-                    counter!("maluwaf.tunnel.quic.client.connected").increment(1);
-                    gauge!("maluwaf.tunnel.quic.client.peers").increment(1.0);
+                    counter!("synvoid.tunnel.quic.client.connected").increment(1);
+                    gauge!("synvoid.tunnel.quic.client.peers").increment(1.0);
                     tracing::info!(
                         "Connected to QUIC peer: {} at {} (datagrams: {})",
                         peer_name,
@@ -197,7 +197,7 @@ impl QuicTunnelClient {
                         monitor.unregister_connection(&session.id);
                     }
 
-                    gauge!("maluwaf.tunnel.quic.client.peers").decrement(1.0);
+                    gauge!("synvoid.tunnel.quic.client.peers").decrement(1.0);
                 }
                 Err(e) => {
                     if let Some(ref monitor) = health_monitor {
@@ -210,7 +210,7 @@ impl QuicTunnelClient {
                             max_retries,
                             peer_name
                         );
-                        counter!("maluwaf.tunnel.quic.client.max_retries_exceeded").increment(1);
+                        counter!("synvoid.tunnel.quic.client.max_retries_exceeded").increment(1);
                         break;
                     }
 
@@ -225,7 +225,7 @@ impl QuicTunnelClient {
                         delay
                     );
 
-                    counter!("maluwaf.tunnel.quic.client.connection_errors").increment(1);
+                    counter!("synvoid.tunnel.quic.client.connection_errors").increment(1);
 
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => {}
@@ -367,7 +367,7 @@ impl QuicTunnelClient {
                     monitor.set_datagram_capabilities(&session.id, datagram_caps);
                 }
 
-                counter!("maluwaf.tunnel.quic.client.sessions").increment(1);
+                counter!("synvoid.tunnel.quic.client.sessions").increment(1);
                 Ok(session)
             }
             TunnelMessage::AuthFailure { reason } => {
@@ -544,7 +544,7 @@ impl QuicTunnelClient {
             .send_datagram(data.into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
 
-        counter!("maluwaf.tunnel.quic.client.datagrams.sent").increment(1);
+        counter!("synvoid.tunnel.quic.client.datagrams.sent").increment(1);
 
         if let Some(ref monitor) = self.health_monitor {
             monitor.record_packet_stats(&session.id, 1, 0);
@@ -598,7 +598,7 @@ impl QuicTunnelClient {
                 message,
             } => {
                 if success {
-                    counter!("maluwaf.tunnel.quic.client.udp_tunnels.opened").increment(1);
+                    counter!("synvoid.tunnel.quic.client.udp_tunnels.opened").increment(1);
                     Ok(UdpTunnel {
                         identifier,
                         peer_id: peer_id.to_string(),
@@ -662,7 +662,7 @@ impl QuicTunnelClient {
                 success, message, ..
             } => {
                 if success {
-                    counter!("maluwaf.tunnel.quic.client.streams.opened").increment(1);
+                    counter!("synvoid.tunnel.quic.client.streams.opened").increment(1);
                     Ok((send_stream, recv_stream))
                 } else {
                     let msg = message.unwrap_or_else(|| "Unknown error".to_string());
@@ -789,13 +789,13 @@ impl QuicTunnelClient {
             }
         };
 
-        counter!("maluwaf.tunnel.quic.client.streams.proxied").increment(1);
+        counter!("synvoid.tunnel.quic.client.streams.proxied").increment(1);
         let start = std::time::Instant::now();
 
         let result = tokio::try_join!(tcp_to_quic, quic_to_tcp);
 
-        histogram!("maluwaf.tunnel.quic.client.stream_duration").record(start.elapsed());
-        counter!("maluwaf.tunnel.quic.client.streams.closed").increment(1);
+        histogram!("synvoid.tunnel.quic.client.stream_duration").record(start.elapsed());
+        counter!("synvoid.tunnel.quic.client.streams.closed").increment(1);
 
         let _ = send_stream.finish();
 
@@ -866,7 +866,7 @@ impl UdpTunnel {
             .send_datagram(encoded.into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
 
-        counter!("maluwaf.tunnel.quic.client.udp_datagrams.sent").increment(1);
+        counter!("synvoid.tunnel.quic.client.udp_datagrams.sent").increment(1);
 
         Ok(())
     }

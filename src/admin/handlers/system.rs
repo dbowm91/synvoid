@@ -548,7 +548,7 @@ fn get_overseer_status_file_path() -> std::path::PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("/var/run"))
-        .join("maluwaf")
+        .join("synvoid")
         .join("overseer_status.json")
 }
 

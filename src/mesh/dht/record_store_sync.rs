@@ -808,7 +808,7 @@ impl RecordStoreManager {
         }
 
         if success_count >= write_quorum {
-            counter!("maluwaf.dht.quorum.achieved", "type" => "write").increment(1);
+            counter!("synvoid.dht.quorum.achieved", "type" => "write").increment(1);
             tracing::debug!(
                 "DHT write quorum achieved for {}: {}/{} peers",
                 record.key,
@@ -816,7 +816,7 @@ impl RecordStoreManager {
                 write_quorum
             );
         } else {
-            counter!("maluwaf.dht.quorum.failed", "type" => "write").increment(1);
+            counter!("synvoid.dht.quorum.failed", "type" => "write").increment(1);
             tracing::debug!(
                 "DHT write quorum NOT achieved for {}: {}/{} peers",
                 record.key,

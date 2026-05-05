@@ -1,14 +1,14 @@
 #![cfg(feature = "dns")]
 
-use maluwaf::config::dns::{RecursiveCacheConfig, RecursiveDnsConfig};
-use maluwaf::dns::firewall::{
+use synvoid::config::dns::{RecursiveCacheConfig, RecursiveDnsConfig};
+use synvoid::dns::firewall::{
     DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType,
 };
-use maluwaf::dns::recursive_cache::{
+use synvoid::dns::recursive_cache::{
     CachedRecord, RecursiveCacheKey, RecursiveDnsCache, RecursiveRecordType,
 };
-use maluwaf::dns::server::{DnsRateLimiter, RecordType};
-use maluwaf::dns::wire::{
+use synvoid::dns::server::{DnsRateLimiter, RecordType};
+use synvoid::dns::wire::{
     build_error_response, build_question, get_message_flags, get_message_id, RCODE_FORMERR,
     RCODE_NOERROR, RCODE_NXDOMAIN, RCODE_REFUSED, RCODE_SERVFAIL,
 };

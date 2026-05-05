@@ -200,8 +200,8 @@ impl QuicRuntime {
             .map_err(|e| format!("Failed to create QUIC endpoint: {}", e))?;
 
         tracing::info!("QUIC tunnel server listening on {}", bind_addr);
-        gauge!("maluwaf.tunnel.quic.server.enabled").set(1.0);
-        counter!("maluwaf.tunnel.quic.server.started").increment(1);
+        gauge!("synvoid.tunnel.quic.server.enabled").set(1.0);
+        counter!("synvoid.tunnel.quic.server.started").increment(1);
 
         {
             let mut endpoint_guard = self.endpoint.lock().await;
@@ -285,11 +285,11 @@ impl QuicRuntime {
                                         });
                                     }
 
-                                    counter!("maluwaf.tunnel.quic.server.connections").increment(1);
+                                    counter!("synvoid.tunnel.quic.server.connections").increment(1);
                                 }
                                 Err(e) => {
                                     tracing::warn!("QUIC connection failed from {}: {}", remote_addr, e);
-                                    counter!("maluwaf.tunnel.quic.server.connection_errors").increment(1);
+                                    counter!("synvoid.tunnel.quic.server.connection_errors").increment(1);
                                 }
                             }
                         }
@@ -369,7 +369,7 @@ impl QuicRuntime {
             monitor.set_datagram_capabilities(&session_id, datagram_caps);
         }
 
-        counter!("maluwaf.tunnel.quic.client.connections").increment(1);
+        counter!("synvoid.tunnel.quic.client.connections").increment(1);
         tracing::info!(
             "QUIC client connected to {} (session: {}, datagrams: {})",
             addr,
@@ -516,7 +516,7 @@ impl QuicRuntime {
             })
             .await;
 
-        gauge!("maluwaf.tunnel.quic.sessions").set(self.sessions.len() as f64);
+        gauge!("synvoid.tunnel.quic.sessions").set(self.sessions.len() as f64);
         tracing::debug!(
             "QUIC session added: {} (total: {})",
             session_id,
@@ -533,7 +533,7 @@ impl QuicRuntime {
             monitor.unregister_connection(session_id);
         }
 
-        gauge!("maluwaf.tunnel.quic.sessions").set(self.sessions.len() as f64);
+        gauge!("synvoid.tunnel.quic.sessions").set(self.sessions.len() as f64);
         tracing::debug!(
             "QUIC session removed: {} (remaining: {})",
             session_id,
@@ -613,7 +613,7 @@ impl QuicRuntime {
             .await
             .map_err(|e| format!("Failed to open bidirectional stream: {}", e))?;
 
-        counter!("maluwaf.tunnel.quic.streams.opened").increment(1);
+        counter!("synvoid.tunnel.quic.streams.opened").increment(1);
         Ok((send, recv))
     }
 
@@ -677,7 +677,7 @@ impl QuicRuntime {
             .send_datagram(data.clone().into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
 
-        counter!("maluwaf.tunnel.quic.datagrams.sent").increment(1);
+        counter!("synvoid.tunnel.quic.datagrams.sent").increment(1);
 
         if let Some(ref monitor) = self.health_monitor {
             monitor.record_packet_stats(session_id, 1, 0);
@@ -720,7 +720,7 @@ impl QuicRuntime {
 
         match result {
             Ok(data) => {
-                counter!("maluwaf.tunnel.quic.datagrams.received").increment(1);
+                counter!("synvoid.tunnel.quic.datagrams.received").increment(1);
                 data
             }
             Err(_) => Err("Datagram receive timeout".into()),
@@ -805,7 +805,7 @@ impl QuicConnection {
         conn.send_datagram(data.into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
 
-        counter!("maluwaf.tunnel.quic.datagrams.sent").increment(1);
+        counter!("synvoid.tunnel.quic.datagrams.sent").increment(1);
         Ok(())
     }
 }

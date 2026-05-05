@@ -1,10 +1,10 @@
 # Crypto & Post-Quantum Dependencies
 
-This skill documents the cryptographic dependencies in MaluWAF, security considerations, and architecture decisions.
+This skill documents the cryptographic dependencies in SynVoid, security considerations, and architecture decisions.
 
 ## Overview
 
-MaluWAF uses a multi-layered approach to cryptography:
+SynVoid uses a multi-layered approach to cryptography:
 - **TLS**: aws-lc-rs (C library, AWS-maintained)
 - **Signatures**: ed25519-dalek, libcrux-ml-dsa
 - **Key Exchange**: x25519-dalek (classical), pqc_kyber (post-quantum)
@@ -45,7 +45,7 @@ MaluWAF uses a multi-layered approach to cryptography:
 
 ### Hybrid Key Exchange
 
-MaluWAF uses a hybrid approach for post-quantum key exchange in the WASM PoW module:
+SynVoid uses a hybrid approach for post-quantum key exchange in the WASM PoW module:
 
 ```
 X25519 (classical) + pqc_kyber (post-quantum)

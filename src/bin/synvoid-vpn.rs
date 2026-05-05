@@ -6,12 +6,12 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use maluwaf::vpn_client::{ReconnectConfig, VpnClient, VpnClientConfig};
+use synvoid::vpn_client::{ReconnectConfig, VpnClient, VpnClientConfig};
 use server::start_server;
 
 #[derive(Parser, Debug)]
-#[command(name = "maluwaf-vpn")]
-#[command(about = "MaluWAF VPN Client - Connect to WAF as a VPN tunnel")]
+#[command(name = "synvoid-vpn")]
+#[command(about = "SynVoid VPN Client - Connect to WAF as a VPN tunnel")]
 #[command(version)]
 struct Args {
     #[command(subcommand)]
@@ -155,7 +155,7 @@ async fn run_connect(
 fn generate_sample_config(
     output: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let sample = r#"# MaluWAF VPN Client Configuration
+    let sample = r#"# SynVoid VPN Client Configuration
 # This file configures the VPN client to connect to a WAF server
 
 enabled = true

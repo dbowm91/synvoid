@@ -12,7 +12,7 @@ This directory contains detailed documentation for various subsystems.
 | `hybrid_post_quantum.md` | Post-quantum signature implementation |
 | `spin_wasm.md` | Spin WASM runtime |
 | `serverless_wasm.md` | Serverless WASM patterns |
-| `malu_mesh.md` | Mesh networking patterns |
+| `synvoid_mesh.md` | Mesh networking patterns |
 | `topology_visualizer.md` | Topology visualizer API |
 | `behavioral_intel.md` | Behavioral intelligence |
 | `performance_patterns.md` | Performance optimization patterns |

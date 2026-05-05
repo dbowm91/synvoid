@@ -2,7 +2,7 @@
 mod socket_handoff_tests {
     use std::net::TcpListener;
 
-    use maluwaf::overseer::socket_handoff::DualMasterHandoff;
+    use synvoid::overseer::socket_handoff::DualMasterHandoff;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -52,7 +52,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_timeout_handling() {
-        use maluwaf::overseer::socket_handoff::HANDOFF_TIMEOUT_SECS;
+        use synvoid::overseer::socket_handoff::HANDOFF_TIMEOUT_SECS;
 
         assert_eq!(
             HANDOFF_TIMEOUT_SECS, 30,
@@ -62,7 +62,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_message_roundtrip() {
-        use maluwaf::process::ipc::Message;
+        use synvoid::process::ipc::Message;
 
         // Test SocketHandoffComplete - uses success and fd_count fields
         let msg = Message::SocketHandoffComplete {
@@ -84,7 +84,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_request_message_roundtrip() {
-        use maluwaf::process::ipc::Message;
+        use synvoid::process::ipc::Message;
 
         // SocketHandoffRequest uses socket_path field
         let msg = Message::SocketHandoffRequest {
@@ -99,7 +99,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_ready_message_roundtrip() {
-        use maluwaf::process::ipc::Message;
+        use synvoid::process::ipc::Message;
 
         let msg = Message::SocketHandoffReady {
             ports: vec![8080, 8443],
@@ -115,7 +115,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_failed_message_roundtrip() {
-        use maluwaf::process::ipc::Message;
+        use synvoid::process::ipc::Message;
 
         let msg = Message::SocketHandoffFailed {
             error: "Test failure".to_string(),
@@ -131,7 +131,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_with_multiple_ports() {
-        use maluwaf::process::ipc::Message;
+        use synvoid::process::ipc::Message;
 
         let ports = vec![80, 443, 8080, 8443];
         let msg = Message::SocketHandoffReady {
@@ -153,7 +153,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_error_handling() {
-        use maluwaf::overseer::socket_handoff::SocketHandoffError;
+        use synvoid::overseer::socket_handoff::SocketHandoffError;
 
         let err = SocketHandoffError::Timeout;
         let err_msg = err.to_string();
@@ -162,7 +162,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_invalid_state_error() {
-        use maluwaf::overseer::socket_handoff::SocketHandoffError;
+        use synvoid::overseer::socket_handoff::SocketHandoffError;
 
         let err = SocketHandoffError::InvalidState("test state".to_string());
         let err_msg = err.to_string();

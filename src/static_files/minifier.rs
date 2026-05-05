@@ -144,9 +144,9 @@ pub struct MinifierConfig {
 impl MinifierConfig {
     pub fn from_site_config(site_id: &str, config: &SiteStaticConfig) -> Self {
         let enabled = config.enable_minification.unwrap_or(true);
-        let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
+        let global_cache_dir = std::env::var("SYNVOID_CACHE_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
+            .unwrap_or_else(|_| PathBuf::from("/var/cache/synvoid"));
 
         let minified_dir = global_cache_dir.join("minified").join(site_id);
 

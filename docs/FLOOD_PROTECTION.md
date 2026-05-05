@@ -1,6 +1,6 @@
 # Flood Protection
 
-MaluWAF provides multi-layer flood protection against various types of volumetric attacks. This document explains how each protection mechanism works and when to use different configurations.
+SynVoid provides multi-layer flood protection against various types of volumetric attacks. This document explains how each protection mechanism works and when to use different configurations.
 
 ## Understanding Flood Attacks
 
@@ -177,17 +177,17 @@ cleanup_interval_secs = 60
 All flood protection is tracked via Prometheus metrics:
 
 ```
-maluwaf.flood.syn_limited                    # SYN flood limited
-maluwaf.flood.connection_limited             # Connection rate limited
-maluwaf.flood.udp_limited                   # UDP flood limited
-maluwaf.syn_flood.half_open_count           # Current half-open connections
-maluwaf.connection_limiter.active          # Active connections
-maluwaf.connection_limiter.global_limited  # Global connection limit
-maluwaf.connection_limiter.ip_limited       # Per-IP connection limit
-maluwaf.ratelimit.blackhole_drop            # Blackholed requests
-maluwaf.ratelimit.blackhole_active          # Blackhole mode active
-maluwaf.ratelimit.global_limited            # Global rate limited
-maluwaf.ratelimit.ip_limited                # Per-IP rate limited
+synvoid.flood.syn_limited                    # SYN flood limited
+synvoid.flood.connection_limited             # Connection rate limited
+synvoid.flood.udp_limited                   # UDP flood limited
+synvoid.syn_flood.half_open_count           # Current half-open connections
+synvoid.connection_limiter.active          # Active connections
+synvoid.connection_limiter.global_limited  # Global connection limit
+synvoid.connection_limiter.ip_limited       # Per-IP connection limit
+synvoid.ratelimit.blackhole_drop            # Blackholed requests
+synvoid.ratelimit.blackhole_active          # Blackhole mode active
+synvoid.ratelimit.global_limited            # Global rate limited
+synvoid.ratelimit.ip_limited                # Per-IP rate limited
 ```
 
 ## Tuning Guidelines

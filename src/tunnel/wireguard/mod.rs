@@ -76,8 +76,8 @@ impl WireGuardServerWrapper {
 
         self.inner = Some(server);
 
-        counter!("maluwaf.tunnel.wireguard.server.started").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.server.enabled").set(1.0);
+        counter!("synvoid.tunnel.wireguard.server.started").increment(1);
+        gauge!("synvoid.tunnel.wireguard.server.enabled").set(1.0);
 
         Ok(())
     }

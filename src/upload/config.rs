@@ -148,11 +148,11 @@ fn default_sandbox_enabled() -> bool {
 }
 
 fn default_sandbox_dir() -> String {
-    "/var/lib/maluwaf/sandbox".to_string()
+    "/var/lib/synvoid/sandbox".to_string()
 }
 
 fn default_quarantine_dir() -> String {
-    "/var/lib/maluwaf/quarantine".to_string()
+    "/var/lib/synvoid/quarantine".to_string()
 }
 
 fn default_yara_timeout_ms() -> u64 {

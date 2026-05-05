@@ -1,10 +1,10 @@
-# MaluWAF
+# SynVoid
 
-A high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. MaluWAF provides comprehensive protection for multiple websites with advanced attack detection, flood mitigation, and bot blocking capabilities. For certain tech stacks MaluWAF provides a full rust alternative to traditional methods from application to client. It also provides for an experimental P2P CDN architecture using a mesh network.
+A high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. SynVoid provides comprehensive protection for multiple websites with advanced attack detection, flood mitigation, and bot blocking capabilities. For certain tech stacks SynVoid provides a full rust alternative to traditional methods from application to client. It also provides for an experimental P2P CDN architecture using a mesh network.
 
 ## Worker Architecture
 
-MaluWAF uses an overseer → master → worker model:
+SynVoid uses an overseer → master → worker model:
 - **Overseer**: Monitors master process health and handles zero-downtime updates
 - **Master**: Spawns and manages the worker, handles IPC
 - **Worker**: Single `UnifiedServer` with one Tokio runtime handles all request processing
@@ -71,7 +71,7 @@ My personal preference would be a more unified network over many fragmented ones
 
 ## Purpose
 
-This started as a project to learn rust, I wanted to do something similar to what nginx is doing. Thankfully tokio/hyper exist, so the groundwork for this isn't terribly difficult. Later it branched into learning about WAFs and the problems people are facing with scraper bots, especially AI scrapers. So MaluWAF is most mature at the reverse proxy and WAF layers.
+This started as a project to learn rust, I wanted to do something similar to what nginx is doing. Thankfully tokio/hyper exist, so the groundwork for this isn't terribly difficult. Later it branched into learning about WAFs and the problems people are facing with scraper bots, especially AI scrapers. So SynVoid is most mature at the reverse proxy and WAF layers.
 
 
 
@@ -79,12 +79,12 @@ This started as a project to learn rust, I wanted to do something similar to wha
 
 ```bash
 # Clone and build
-git clone https://github.com/maluwaf/maluwaf.git
-cd maluwaf
+git clone https://github.com/synvoid/synvoid.git
+cd synvoid
 cargo build --release
 
 # Run with default configuration
-./target/release/maluwaf
+./target/release/synvoid
 ```
 
 The WAF starts on:
@@ -136,9 +136,9 @@ Configuration is in `config/main.toml`. See [CONFIGURATION.md](docs/CONFIGURATIO
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MALU_CONFIG_DIR` | `./config` | Configuration directory |
+| `SYNVOID_CONFIG_DIR` | `./config` | Configuration directory |
 | `RUST_LOG` | `info` | Log level |
-| `MALU_ADMIN_TOKEN` | - | Admin API token |
+| `SYNVOID_ADMIN_TOKEN` | - | Admin API token |
 
 ## License
 

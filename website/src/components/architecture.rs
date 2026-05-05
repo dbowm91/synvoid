@@ -16,7 +16,7 @@ pub fn Architecture() -> Html {
                     <div class="flex items-center justify-center gap-4 flex-wrap">
                         <div class="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg px-6 py-4 font-medium whitespace-nowrap">{"Internet"}</div>
                         <span class="text-[var(--text-muted)] text-2xl">{"→"}</span>
-                        <div class="bg-[var(--bg-tertiary)] border-2 border-[var(--accent-primary)] rounded-lg px-6 py-4 font-medium whitespace-nowrap bg-[rgba(0,212,170,0.1)]">{"MaluWAF"}</div>
+                        <div class="bg-[var(--bg-tertiary)] border-2 border-[var(--accent-primary)] rounded-lg px-6 py-4 font-medium whitespace-nowrap bg-[rgba(0,212,170,0.1)]">{"SynVoid"}</div>
                         <span class="text-[var(--text-muted)] text-2xl">{"→"}</span>
                         <div class="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg px-6 py-4 font-medium whitespace-nowrap">{"Upstream Apps"}</div>
                     </div>

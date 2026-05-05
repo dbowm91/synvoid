@@ -1,6 +1,6 @@
 # Production Deployment Guide
 
-This guide covers production deployment of MaluWAF with security hardening, performance tuning, and operational best practices.
+This guide covers production deployment of SynVoid with security hardening, performance tuning, and operational best practices.
 
 ## Pre-Deployment Checklist
 
@@ -21,13 +21,13 @@ Generate a secure random token using the built-in CLI command:
 
 ```bash
 # Generate a new token and save it to config/main.toml
-./target/release/maluwafwafwaf --generatenewtoken
+./target/release/synvoidwafwaf --generatenewtoken
 
 # Generate and print a token (does not save to config)
-./target/release/maluwafwafwaf --generatetoken
+./target/release/synvoidwafwaf --generatetoken
 
 # Generate with custom config path
-./target/release/maluwafwafwaf --generatenewtoken --config-path /etc/maluwafwafwaf
+./target/release/synvoidwafwaf --generatenewtoken --config-path /etc/synvoidwafwaf
 ```
 
 Alternatively, generate manually:
@@ -60,16 +60,16 @@ iptables -A INPUT -p tcp --dport 9090 -j DROP
 ### 3. File Permissions
 
 ```bash
-# Create maluwafwaf user
-useradd -r -s /bin/false maluwafwafwaf
+# Create synvoidwaf user
+useradd -r -s /bin/false synvoidwafwaf
 
 # Set permissions
-chown -R maluwafwaf:maluwafwaf /opt/maluwafwaf
-chown -R maluwafwaf:maluwafwaf /var/log/maluwafwafwaf
-chown -R maluwafwaf:maluwafwaf /etc/maluwafwafwaf
+chown -R synvoidwaf:synvoidwaf /opt/synvoidwaf
+chown -R synvoidwaf:synvoidwaf /var/log/synvoidwafwaf
+chown -R synvoidwaf:synvoidwaf /etc/synvoidwafwaf
 
 # Restrict config access
-chmod 600 /etc/maluwafwafwaf/main.toml
+chmod 600 /etc/synvoidwafwaf/main.toml
 ```
 
 ### 4. Secrets Management
@@ -78,11 +78,11 @@ Never commit secrets to version control. Use environment variables or secrets ma
 
 ```bash
 # Environment variable
-export MALUWAF_ADMIN_TOKEN=$(cat /run/secrets/admin_token)
+export SYNVOID_ADMIN_TOKEN=$(cat /run/secrets/admin_token)
 
 # In systemd service
 [Service]
-EnvironmentFile=/etc/maluwafwafwaf/secrets.env
+EnvironmentFile=/etc/synvoidwafwaf/secrets.env
 ```
 
 ## Performance Tuning
@@ -91,15 +91,15 @@ EnvironmentFile=/etc/maluwafwafwaf/secrets.env
 
 ```bash
 # /etc/security/limits.conf
-maluwafwaf soft nofile 65536
-maluwafwaf hard nofile 65536
-maluwafwaf soft nproc 65535
-maluwafwaf hard nproc 65535
+synvoidwaf soft nofile 65536
+synvoidwaf hard nofile 65536
+synvoidwaf soft nproc 65535
+synvoidwaf hard nproc 65535
 ```
 
 ### Kernel Parameters
 
-Create `/etc/sysctl.d/99-maluwafwaf.conf`:
+Create `/etc/sysctl.d/99-synvoidwaf.conf`:
 
 ```ini
 # Network buffer sizes
@@ -134,7 +134,7 @@ vm.swappiness = 1
 
 Apply changes:
 ```bash
-sysctl -p /etc/sysctl.d/99-maluwafwaf.conf
+sysctl -p /etc/sysctl.d/99-synvoidwaf.conf
 ```
 
 ### Memory Configuration
@@ -163,7 +163,7 @@ Use a load balancer (HAProxy, nginx, cloud LB) with health checks:
 
 ```yaml
 # HAProxy example
-backend maluwafwaf
+backend synvoidwaf
     option httpchk GET /health
     http-check expect status 200
     server waf1 10.0.1.10:8080 check
@@ -175,7 +175,7 @@ backend maluwafwaf
 If using challenges, configure sticky sessions:
 
 ```haproxy
-backend maluwafwaf
+backend synvoidwaf
     balance source
     stick-table type ip size 1m expire 1h
     stick on src
@@ -187,34 +187,34 @@ backend maluwafwaf
 
 ```yaml
 groups:
-  - name: maluwafwaf
+  - name: synvoidwaf
     rules:
-      - alert: MaluWAFHighAttackRate
-        expr: rate(maluwafwaf_attack_detected_total[5m]) > 100
+      - alert: synvoidHighAttackRate
+        expr: rate(synvoidwaf_attack_detected_total[5m]) > 100
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "High attack detection rate"
 
-      - alert: MaluWAFBlackholeActive
-        expr: maluwafwaf_blackhole_active == 1
+      - alert: synvoidBlackholeActive
+        expr: synvoidwaf_blackhole_active == 1
         for: 1m
         labels:
           severity: critical
         annotations:
           summary: "WAF in blackhole mode - possible DDoS"
 
-      - alert: MaluWAFHighErrorRate
-        expr: rate(maluwafwaf_requests_upstream_error_total[5m]) / rate(maluwafwaf_requests_proxied_total[5m]) > 0.1
+      - alert: synvoidHighErrorRate
+        expr: rate(synvoidwaf_requests_upstream_error_total[5m]) / rate(synvoidwaf_requests_proxied_total[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "High upstream error rate"
 
-      - alert: MaluWAFHalfOpenConnections
-        expr: maluwafwaf_syn_flood_half_open_count > 500
+      - alert: synvoidHalfOpenConnections
+        expr: synvoidwaf_syn_flood_half_open_count > 500
         for: 2m
         labels:
           severity: warning
@@ -236,19 +236,19 @@ Key panels to include:
 
 ### Log Rotation
 
-Configure log rotation in `/etc/logrotate.d/maluwafwaf`:
+Configure log rotation in `/etc/logrotate.d/synvoidwaf`:
 
 ```
-/var/log/maluwafwaf/*.log {
+/var/log/synvoidwaf/*.log {
     daily
     rotate 7
     compress
     delaycompress
     missingok
     notifempty
-    create 0640 maluwaf maluwaf
+    create 0640 synvoid synvoid
     postrotate
-        systemctl reload maluwaf > /dev/null 2>&1 || true
+        systemctl reload synvoid > /dev/null 2>&1 || true
     endpostrotate
 }
 ```
@@ -262,12 +262,12 @@ Ship logs to centralized logging:
 filebeat.inputs:
   - type: log
     paths:
-      - /var/log/maluwafwaf/access.log
+      - /var/log/synvoidwaf/access.log
     json.keys_under_root: true
 
 output.elasticsearch:
   hosts: ["elasticsearch:9200"]
-  index: "maluwaf-%{+yyyy.MM.dd}"
+  index: "synvoid-%{+yyyy.MM.dd}"
 ```
 
 ## Capacity Planning
@@ -397,7 +397,7 @@ ss -s
 netstat -s | grep SYN
 
 # Check file descriptors
-lsof -p $(pgrep maluwaf) | wc -l
+lsof -p $(pgrep synvoid) | wc -l
 ```
 
 ### Debug Mode
@@ -410,7 +410,7 @@ RUST_LOG=debug cargo run
 
 # Systemd override
 [Service]
-Environment=RUST_LOG=debug,maluwaf=trace
+Environment=RUST_LOG=debug,synvoid=trace
 ```
 
 ## Maintenance
@@ -419,7 +419,7 @@ Environment=RUST_LOG=debug,maluwaf=trace
 
 ```bash
 # Validate configuration
-./target/release/maluwaf --configtest
+./target/release/synvoid --configtest
 
 # Reload without downtime
 curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/config/reload
@@ -429,10 +429,10 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/config/
 
 ```bash
 # Backup configuration
-tar -czvf maluwaf-config-$(date +%Y%m%d).tar.gz /etc/maluwaf/
+tar -czvf synvoid-config-$(date +%Y%m%d).tar.gz /etc/synvoid/
 
 # Backup blocklist (stored in data directory)
-cp /var/lib/maluwaf/blocks.json blocks-backup-$(date +%Y%m%d).json
+cp /var/lib/synvoid/blocks.json blocks-backup-$(date +%Y%m%d).json
 ```
 
 ### Upgrade
@@ -442,7 +442,7 @@ cp /var/lib/maluwaf/blocks.json blocks-backup-$(date +%Y%m%d).json
 cargo build --release
 
 # Graceful upgrade
-systemctl restart maluwaf
+systemctl restart synvoid
 
 # Or zero-downtime with two instances
 # (deploy new version on standby server)
@@ -477,17 +477,17 @@ systemctl restart maluwaf
 
 ```bash
 # Pull or build image
-docker pull maluwaf/maluwaf:latest
+docker pull synvoid/synvoid:latest
 
 # Run with basic config
 docker run -d \
-  --name maluwaf \
+  --name synvoid \
   -p 80:8080 \
   -p 443:8443 \
   -p 8081:8081 \
-  -v /path/to/config:/etc/maluwaf \
+  -v /path/to/config:/etc/synvoid \
   -e RUST_LOG=info \
-  maluwaf/maluwaf:latest
+  synvoid/synvoid:latest
 ```
 
 ### Docker Compose
@@ -497,21 +497,21 @@ docker run -d \
 version: '3.8'
 
 services:
-  maluwaf:
-    image: maluwaf/maluwaf:latest
-    container_name: maluwaf
+  synvoid:
+    image: synvoid/synvoid:latest
+    container_name: synvoid
     ports:
       - "80:8080"
       - "443:8443"
       - "8081:8081"
       - "9090:9090"
     volumes:
-      - ./config:/etc/maluwaf
-      - ./certs:/etc/maluwaf/certs
-      - ./logs:/var/log/maluwaf
+      - ./config:/etc/synvoid
+      - ./certs:/etc/synvoid/certs
+      - ./logs:/var/log/synvoid
     environment:
       - RUST_LOG=info
-      - MALU_CONFIG_DIR=/etc/maluwaf
+      - SYNVOID_CONFIG_DIR=/etc/synvoid
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
@@ -536,12 +536,12 @@ networks:
 
 ```bash
 docker run -d \
-  --name maluwaf \
+  --name synvoid \
   -p 80:8080 \
   -p 443:8443 \
-  -e MALU_ADMIN_TOKEN=${MALU_ADMIN_TOKEN} \
-  -e MALU_IPC_KEY=${MALU_IPC_KEY} \
-  maluwaf/maluwaf:latest
+  -e SYNVOID_ADMIN_TOKEN=${SYNVOID_ADMIN_TOKEN} \
+  -e SYNVOID_IPC_KEY=${SYNVOID_IPC_KEY} \
+  synvoid/synvoid:latest
 ```
 
 ## Kubernetes Deployment
@@ -549,26 +549,26 @@ docker run -d \
 ### Deployment YAML
 
 ```yaml
-# maluwaf-deployment.yaml
+# synvoid-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: maluwaf
+  name: synvoid
   labels:
-    app: maluwaf
+    app: synvoid
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: maluwaf
+      app: synvoid
   template:
     metadata:
       labels:
-        app: maluwaf
+        app: synvoid
     spec:
       containers:
-      - name: maluwaf
-        image: maluwaf/maluwaf:latest
+      - name: synvoid
+        image: synvoid/synvoid:latest
         ports:
         - containerPort: 8080
           name: http
@@ -579,16 +579,16 @@ spec:
         env:
         - name: RUST_LOG
           value: "info"
-        - name: MALU_ADMIN_TOKEN
+        - name: SYNVOID_ADMIN_TOKEN
           valueFrom:
             secretKeyRef:
-              name: maluwaf-secrets
+              name: synvoid-secrets
               key: admin-token
         volumeMounts:
         - name: config
-          mountPath: /etc/maluwaf
+          mountPath: /etc/synvoid
         - name: certs
-          mountPath: /etc/maluwaf/certs
+          mountPath: /etc/synvoid/certs
         resources:
           requests:
             memory: "256Mi"
@@ -611,24 +611,24 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: maluwaf-config
+          name: synvoid-config
       - name: certs
         secret:
-          secretName: maluwaf-certs
+          secretName: synvoid-certs
 ```
 
 ### Service YAML
 
 ```yaml
-# maluwaf-service.yaml
+# synvoid-service.yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: maluwaf
+  name: synvoid
 spec:
   type: LoadBalancer
   selector:
-    app: maluwaf
+    app: synvoid
   ports:
   - name: http
     port: 80
@@ -641,11 +641,11 @@ spec:
 ### ConfigMap
 
 ```yaml
-# maluwaf-configmap.yaml
+# synvoid-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: maluwaf-config
+  name: synvoid-config
 data:
   main.toml: |
     [server]
@@ -655,7 +655,7 @@ data:
     [admin]
     enabled = true
     port = 8081
-    token_env_var = "MALU_ADMIN_TOKEN"
+    token_env_var = "SYNVOID_ADMIN_TOKEN"
 
     [logging]
     level = "info"
@@ -664,11 +664,11 @@ data:
 ### Ingress (for Kubernetes with Ingress Controller)
 
 ```yaml
-# maluwaf-ingress.yaml
+# synvoid-ingress.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: maluwaf-ingress
+  name: synvoid-ingress
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
 spec:
@@ -680,7 +680,7 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: maluwaf
+            name: synvoid
             port:
               number: 80
 ```
@@ -688,16 +688,16 @@ spec:
 ### Horizontal Pod Autoscaler
 
 ```yaml
-# maluwaf-hpa.yaml
+# synvoid-hpa.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: maluwaf-hpa
+  name: synvoid-hpa
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: maluwaf
+    name: synvoid
   minReplicas: 2
   maxReplicas: 10
   metrics:

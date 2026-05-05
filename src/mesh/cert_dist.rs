@@ -11,7 +11,7 @@ use sha2::Sha256;
 
 const NONCE_SIZE: usize = 12;
 const DERIVED_KEY_SIZE: usize = 32;
-const HKDF_INFO: &[u8] = b"maluwaf-cert-dist";
+const HKDF_INFO: &[u8] = b"synvoid-cert-dist";
 
 #[derive(Debug, Clone)]
 pub struct EncryptedCertData {

@@ -1,10 +1,10 @@
-# Getting Started with MaluWAF
+# Getting Started with SynVoid
 
-Welcome to MaluWAF - a production-ready WAF and reverse proxy built for performance and ease of use.
+Welcome to SynVoid - a production-ready WAF and reverse proxy built for performance and ease of use.
 
 ## Table of Contents
 
-- [What is MaluWAF?](#what-is-maluwaf)
+- [What is SynVoid?](#what-is-synvoid)
 - [Quick Start](#quick-start)
 - [Practical Workflows](#practical-workflows)
   - [Protect a Simple PHP Application](#workflow-1-protect-a-simple-php-application)
@@ -18,9 +18,9 @@ Welcome to MaluWAF - a production-ready WAF and reverse proxy built for performa
 - [Getting Help](#getting-help)
 - [Command Line Options](#command-line-options)
 
-## What is MaluWAF?
+## What is SynVoid?
 
-MaluWAF is an all-in-one web application firewall and reverse proxy that provides:
+SynVoid is an all-in-one web application firewall and reverse proxy that provides:
 
 - **WAF Protection** - Multi-layer defense against common web attacks
 - **Reverse Proxy** - HTTP/1.1, HTTP/2, and HTTP/3 support
@@ -34,14 +34,14 @@ MaluWAF is an all-in-one web application firewall and reverse proxy that provide
 
 ```bash
 # Clone the repository
-git clone https://github.com/maluwaf/maluwaf.git
-cd maluwaf
+git clone https://github.com/synvoid/synvoid.git
+cd synvoid
 
 # Build
 cargo build --release
 
 # Run
-./target/release/maluwaf
+./target/release/synvoid
 ```
 
 ### 2. Basic Configuration
@@ -77,10 +77,10 @@ domains = ["example.com", "www.example.com"]
 default = "http://127.0.0.1:8000"
 ```
 
-### 4. Start MaluWAF
+### 4. Start SynVoid
 
 ```bash
-./maluwaf --config /path/to/main.toml
+./synvoid --config /path/to/main.toml
 ```
 
 ## Practical Workflows
@@ -89,7 +89,7 @@ This section provides step-by-step guides for common tasks.
 
 ### Workflow 1: Protect a Simple PHP Application
 
-This workflow shows how to set up MaluWAF in front of a PHP application with PHP-FPM.
+This workflow shows how to set up SynVoid in front of a PHP application with PHP-FPM.
 
 **Step 1: Ensure PHP-FPM is Running**
 
@@ -103,7 +103,7 @@ sudo systemctl start php-fpm
 
 **Step 2: Create Site Configuration**
 
-Create `/etc/maluwaf/sites/myapp.toml`:
+Create `/etc/synvoid/sites/myapp.toml`:
 
 ```toml
 [site]
@@ -161,17 +161,17 @@ block_ai_crawlers = true
 **Step 4: Verify Configuration**
 
 ```bash
-./maluwaf --configtest
+./synvoid --configtest
 ```
 
-**Step 5: Start MaluWAF**
+**Step 5: Start SynVoid**
 
 ```bash
 # Start in foreground to see logs
-./maluwaf -f --config /etc/maluwaf/main.toml
+./synvoid -f --config /etc/synvoid/main.toml
 
 # Or start as daemon
-./maluwaf --config /etc/maluwaf/main.toml
+./synvoid --config /etc/synvoid/main.toml
 ```
 
 **Step 6: Test Protection**
@@ -237,7 +237,7 @@ interface = "asgi"              # asgi, wsgi, rsgi
 workers = 4
 python_path = "/var/www/myapp/venv/bin/python"
 working_directory = "/var/www/myapp"
-socket_path = "/tmp/maluwaf-myapp.sock"
+socket_path = "/tmp/synvoid-myapp.sock"
 auto_install_granian = true     # Install granian if missing
 auto_detect_venv = true         # Auto-find virtual environment
 auto_detect_app = true          # Auto-detect app entry point
@@ -258,14 +258,14 @@ This workflow enables secure connections with modern protocol support.
 # Using certbot (Let's Encrypt)
 sudo certbot certonly --standalone -d example.com -d www.example.com
 
-# Copy certificates to MaluWAF directory
+# Copy certificates to SynVoid directory
 sudo cp /etc/letsencrypt/live/example.com/fullchain.pem \
-  /etc/maluwaf/certs/example.com.crt
+  /etc/synvoid/certs/example.com.crt
 sudo cp /etc/letsencrypt/live/example.com/privkey.pem \
-  /etc/maluwaf/certs/example.com.key
+  /etc/synvoid/certs/example.com.key
 
 # Set permissions
-sudo chmod 600 /etc/maluwaf/certs/example.com.key
+sudo chmod 600 /etc/synvoid/certs/example.com.key
 ```
 
 **Step 2: Configure TLS**
@@ -274,8 +274,8 @@ sudo chmod 600 /etc/maluwaf/certs/example.com.key
 [tls]
 enabled = true
 port = 443
-cert_path = "/etc/maluwaf/certs/example.com.crt"
-key_path = "/etc/maluwaf/certs/example.com.key"
+cert_path = "/etc/synvoid/certs/example.com.crt"
+key_path = "/etc/synvoid/certs/example.com.key"
 
 # TLS settings
 min_version = "1.2"
@@ -490,7 +490,7 @@ curl -H "Host: example.com" \
 
 ### Workflow 6: High Availability Setup
 
-This workflow sets up multiple MaluWAF nodes with master-worker architecture.
+This workflow sets up multiple SynVoid nodes with master-worker architecture.
 
 **Step 1: Configure First Master Node**
 
@@ -543,17 +543,17 @@ heartbeat_interval_ms = 300
 
 ```bash
 # On first node (will become leader)
-./maluwaf --overseer --config /etc/maluwaf/main.toml
+./synvoid --overseer --config /etc/synvoid/main.toml
 
 # On other nodes
-./maluwaf --overseer --config /etc/maluwaf/main.toml
+./synvoid --overseer --config /etc/synvoid/main.toml
 ```
 
 **Step 5: Start Masters**
 
 ```bash
 # Each master node
-./maluwaf --master --config /etc/maluwaf/main.toml
+./synvoid --master --config /etc/synvoid/main.toml
 ```
 
 **Step 6: Verify Cluster Status**
@@ -571,38 +571,38 @@ curl -H "Authorization: Bearer your-token" \
 ### 1. Simple Website
 
 ```
-Internet → MaluWAF → Static Files
+Internet → SynVoid → Static Files
 ```
 
 ### 2. PHP Application
 
 ```
-Internet → MaluWAF → PHP-FPM
+Internet → SynVoid → PHP-FPM
 ```
 
 ### 3. Python API
 
 ```
-Internet → MaluWAF → Granian (FastAPI/Django)
+Internet → SynVoid → Granian (FastAPI/Django)
 ```
 
 ### 4. High Availability
 
 ```
                     ┌──────────────┐
-               ┌───►│  MaluWAF #1  │───► App Server
+               ┌───►│  SynVoid #1  │───► App Server
 Internet ─────┤    └──────────────┘
                │    ┌──────────────┐
-               ├──►│  MaluWAF #2  │───► App Server
+               ├──►│  SynVoid #2  │───► App Server
                │    └──────────────┘
                │    ┌──────────────┐
-               └──►│  MaluWAF #3  │───► App Server
+               └──►│  SynVoid #3  │───► App Server
                     └──────────────┘
 ```
 
 ## Next Steps
 
-- [Architecture Overview](./ARCHITECTURE.md) - Learn how MaluWAF works
+- [Architecture Overview](./ARCHITECTURE.md) - Learn how SynVoid works
 - [Developer Guide](./DEVELOPER.md) - Technical deep-dive
 - [Configuration Reference](./CONFIGURATION.md) - All config options
 - [Deployment Guide](./DEPLOYMENT.md) - Production setups
@@ -617,37 +617,37 @@ Internet ─────┤    └──────────────┘
 
 ### Process Modes
 
-MaluWAF supports multiple process types (typically managed by the overseer):
+SynVoid supports multiple process types (typically managed by the overseer):
 
 ```bash
-./maluwaf                      # Standalone mode (default, single process)
-./maluwaf --worker            # Run as worker (handles requests)
-./maluwaf --worker-id <ID>    # Worker ID for multi-worker setups
-./maluwaf --static-worker     # Run as static file worker
-./maluwaf --static-worker-id <ID>  # Static worker ID
-./maluwaf --unified-server-worker   # Run as unified HTTP/HTTPS/HTTP3 worker
-./maluwaf --unified-worker-id <ID>  # Unified worker ID
-./maluwaf --worker-threads <COUNT>   # Number of tokio threads for worker
+./synvoid                      # Standalone mode (default, single process)
+./synvoid --worker            # Run as worker (handles requests)
+./synvoid --worker-id <ID>    # Worker ID for multi-worker setups
+./synvoid --static-worker     # Run as static file worker
+./synvoid --static-worker-id <ID>  # Static worker ID
+./synvoid --unified-server-worker   # Run as unified HTTP/HTTPS/HTTP3 worker
+./synvoid --unified-worker-id <ID>  # Unified worker ID
+./synvoid --worker-threads <COUNT>   # Number of tokio threads for worker
 ```
 
 ### Operational Commands
 
 ```bash
-./maluwaf --configtest              # Validate config files and exit
-./maluwaf --status                  # Show status of running instance
-./maluwaf --stop                    # Stop running instance
-./maluwaf --restart                 # Restart instance (stop + start)
-./maluwaf --rehash                  # Reload configuration (graceful)
-./maluwaf --generatetoken           # Generate and print admin token
-./maluwaf --generatenewtoken        # Generate and save token to config
-./maluwaf -f                        # Run in foreground (don't daemonize)
+./synvoid --configtest              # Validate config files and exit
+./synvoid --status                  # Show status of running instance
+./synvoid --stop                    # Stop running instance
+./synvoid --restart                 # Restart instance (stop + start)
+./synvoid --rehash                  # Reload configuration (graceful)
+./synvoid --generatetoken           # Generate and print admin token
+./synvoid --generatenewtoken        # Generate and save token to config
+./synvoid -f                        # Run in foreground (don't daemonize)
 ```
 
 ### Configuration Options
 
 ```bash
-./maluwaf --config-path /etc/maluwaf   # Custom config directory
-./maluwaf -l debug                     # Set log level (trace/debug/info/warn/error)
+./synvoid --config-path /etc/synvoid   # Custom config directory
+./synvoid -l debug                     # Set log level (trace/debug/info/warn/error)
 ```
 
 ### Test Modes
@@ -655,22 +655,22 @@ MaluWAF supports multiple process types (typically managed by the overseer):
 Disable specific protections for load testing:
 
 ```bash
-./maluwaf --test challenge-off      # Disable challenges
-./maluwaf --test ratelimit-off     # Disable rate limiting
-./maluwaf --test attack-off        # Disable attack detection
-./maluwaf --test bot-off           # Disable bot protection
-./maluwaf --test flood-off         # Disable flood protection
-./maluwaf --test all-off           # Disable all protections
+./synvoid --test challenge-off      # Disable challenges
+./synvoid --test ratelimit-off     # Disable rate limiting
+./synvoid --test attack-off        # Disable attack detection
+./synvoid --test bot-off           # Disable bot protection
+./synvoid --test flood-off         # Disable flood protection
+./synvoid --test all-off           # Disable all protections
 
 # Combine multiple flags
-./maluwaf --test challenge-off --test ratelimit-off
+./synvoid --test challenge-off --test ratelimit-off
 ```
 
 ### Other Options
 
 ```bash
-./maluwaf --reuse-port              # Enable SO_REUSEPORT for socket binding
-./maluwaf --force                   # Required when using --test all-off
-./maluwaf -V, --version             # Print version
-./maluwaf -h, --help                # Print help
+./synvoid --reuse-port              # Enable SO_REUSEPORT for socket binding
+./synvoid --force                   # Required when using --test all-off
+./synvoid -V, --version             # Print version
+./synvoid -h, --help                # Print help
 ```

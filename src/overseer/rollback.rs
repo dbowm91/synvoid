@@ -12,8 +12,8 @@ impl RollbackManager {
     pub fn new(data_dir: Option<PathBuf>) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| {
             dirs::home_dir()
-                .map(|h| h.join(".maluwaf"))
-                .unwrap_or_else(|| PathBuf::from(".maluwaf"))
+                .map(|h| h.join(".synvoid"))
+                .unwrap_or_else(|| PathBuf::from(".synvoid"))
         });
         Self {
             persistence: Persistence::new(Some(data_dir)),
@@ -172,8 +172,8 @@ impl RollbackManager {
                     if path.is_file() {
                         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-                        if filename.starts_with("maluwaf-") {
-                            let version = filename.trim_start_matches("maluwaf-").to_string();
+                        if filename.starts_with("synvoid-") {
+                            let version = filename.trim_start_matches("synvoid-").to_string();
                             let metadata = std::fs::metadata(&path).ok();
 
                             versions.push(VersionInfo {
@@ -251,7 +251,7 @@ mod tests {
             .state_file
             .to_str()
             .unwrap()
-            .contains(".maluwaf"));
+            .contains(".synvoid"));
     }
 
     #[test]

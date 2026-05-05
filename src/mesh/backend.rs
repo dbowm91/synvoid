@@ -465,7 +465,7 @@ pub async fn initialize_mesh_transports(
 
     quic_transport_inner.set_verification_manager(transport_manager.get_verification_manager());
 
-    let db_path = std::path::PathBuf::from("/var/lib/maluwaf");
+    let db_path = std::path::PathBuf::from("/var/lib/synvoid");
     if let Some(erm) = crate::mesh::raft::edge_replica::create_edge_replica_manager(Some(db_path)) {
         quic_transport_inner.set_edge_replica_manager(Arc::new(erm));
         tracing::info!("Edge replica manager initialized");

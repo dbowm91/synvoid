@@ -2,7 +2,7 @@
 
 ## Role
 
-Global nodes are the root of trust for the entire MaluWAF mesh network. They function as a Certificate Authority (CA) and directory authority — analogous to Tor directory authorities but for service exposure rather than anonymity.
+Global nodes are the root of trust for the entire SynVoid mesh network. They function as a Certificate Authority (CA) and directory authority — analogous to Tor directory authorities but for service exposure rather than anonymity.
 
 **Global nodes are explicitly configured, never elected.** This is a deliberate security design: trust must be bootstrapped from known-good nodes, not derived from peer consensus.
 

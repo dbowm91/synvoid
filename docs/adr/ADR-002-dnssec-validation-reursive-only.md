@@ -7,7 +7,7 @@ Accepted
 2026-03-20
 
 ## Context
-MaluWAF supports multiple DNS resolver providers: Google, Cloudflare, System, Custom, and Recursive. DNSSEC validation was being discussed for all providers.
+SynVoid supports multiple DNS resolver providers: Google, Cloudflare, System, Custom, and Recursive. DNSSEC validation was being discussed for all providers.
 
 ## Decision
 **DNSSEC validation is implemented ONLY for the `Recursive` provider.** The following providers do NOT perform DNSSEC validation (they are stub/forwarding resolvers):

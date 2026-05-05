@@ -31,7 +31,7 @@ impl Component for Sidebar {
             <nav class="w-64 bg-secondary border-r border-default min-h-screen flex flex-col">
                 <div class="p-4 border-b border-default">
                     <h1 class="text-xl font-bold accent">
-                        { "MaluWAF" }
+                        { "SynVoid" }
                     </h1>
                     <p class="text-sm text-secondary">{"Admin Dashboard"}</p>
                 </div>

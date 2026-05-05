@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::config::site::proxy::BodyBufferingPolicy;
+
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 pub struct HeaderOverride {
     pub name: String,
@@ -172,6 +174,8 @@ pub struct LocationConfig {
     pub serverless: Option<crate::config::serverless::ServerlessConfig>,
     #[serde(default)]
     pub spin: Option<SpinLocationConfig>,
+    #[serde(default)]
+    pub body_buffering_policy: Option<BodyBufferingPolicy>,
 }
 
 impl LocationConfig {

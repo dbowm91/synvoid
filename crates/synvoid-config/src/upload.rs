@@ -40,8 +40,8 @@ impl Default for UploadDefaults {
             memory_threshold: "10MB".to_string(),
             scan_with_yara: true,
             sandbox_enabled: true,
-            sandbox_dir: "/var/lib/maluwaf/sandbox".to_string(),
-            quarantine_dir: "/var/lib/maluwaf/quarantine".to_string(),
+            sandbox_dir: "/var/lib/synvoid/sandbox".to_string(),
+            quarantine_dir: "/var/lib/synvoid/quarantine".to_string(),
             yara_rules_dir: None,
             yara_timeout_ms: 30000,
             archive_max_depth: 3,
@@ -97,10 +97,10 @@ fn default_sandbox_enabled() -> bool {
     true
 }
 fn default_sandbox_dir() -> String {
-    "/var/lib/maluwaf/sandbox".to_string()
+    "/var/lib/synvoid/sandbox".to_string()
 }
 fn default_quarantine_dir() -> String {
-    "/var/lib/maluwaf/quarantine".to_string()
+    "/var/lib/synvoid/quarantine".to_string()
 }
 fn default_yara_timeout_ms() -> u64 {
     30000

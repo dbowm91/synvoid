@@ -1,6 +1,6 @@
-//! # MaluWAF — Multi-Process Web Application Firewall
+//! # SynVoid — Multi-Process Web Application Firewall
 //!
-//! MaluWAF is a high-performance WAF with a multi-process architecture:
+//! SynVoid is a high-performance WAF with a multi-process architecture:
 //! - **Overseer**: Manages master process lifecycle, upgrades, health monitoring
 //! - **Master**: Parent process that spawns/manages workers, handles IPC
 //! - **Worker**: Handles HTTP requests via Unix domain sockets
@@ -43,7 +43,7 @@ pub mod app_server;
 pub mod auth;
 pub mod block_store;
 pub mod buffer {
-    pub use maluwaf_utils::buffer::pool;
+    pub use synvoid_utils::buffer::pool;
     pub use pool::{BufferPool, PooledBuf};
 }
 pub mod captcha;
@@ -79,7 +79,7 @@ pub mod proxy;
 pub mod proxy_cache;
 pub mod router;
 pub mod serder;
-pub use maluwaf_utils::serialization;
+pub use synvoid_utils::serialization;
 pub mod server;
 pub mod serverless;
 pub mod spin;

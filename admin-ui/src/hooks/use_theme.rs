@@ -1,7 +1,7 @@
 use crate::types::{ThemeResponse, UpdateThemeRequest};
 use yew::prelude::*;
 
-const STORAGE_KEY: &str = "maluwaf-theme";
+const STORAGE_KEY: &str = "synvoid-theme";
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Theme {

@@ -98,7 +98,7 @@ impl CommandClient {
 
     #[cfg(windows)]
     fn send_via_named_pipe(&self, command: MasterCommand) -> Result<String, CommandError> {
-        let pipe_name = "\\\\.\\pipe\\maluwaf-commands";
+        let pipe_name = "\\\\.\\pipe\\synvoid-commands";
 
         let mut stream = std::fs::OpenOptions::new()
             .read(true)
@@ -174,10 +174,10 @@ impl CommandClient {
         let _socket_path = self.socket_path.as_ref()?;
 
         let data_dir = dirs::data_dir()
-            .map(|d| d.join(".maluwaf"))
-            .unwrap_or_else(|| PathBuf::from(".maluwaf"));
+            .map(|d| d.join(".synvoid"))
+            .unwrap_or_else(|| PathBuf::from(".synvoid"));
 
-        let pid_file = data_dir.join("maluwafwaf.pid");
+        let pid_file = data_dir.join("synvoidwaf.pid");
         if pid_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&pid_file) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -214,7 +214,7 @@ impl CommandClient {
                 }
             }
             super::ipc::CommandMethod::NamedPipe => {
-                let pipe_name = "\\\\.\\pipe\\maluwaf-commands";
+                let pipe_name = "\\\\.\\pipe\\synvoid-commands";
 
                 let mut stream = std::fs::OpenOptions::new()
                     .read(true)

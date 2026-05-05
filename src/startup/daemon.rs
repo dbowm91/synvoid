@@ -73,14 +73,14 @@ pub fn acquire_pid_file() -> PidFileManager {
         Ok(true) => pid_manager,
         Ok(false) => {
             eprintln!(
-                "RustWAF is already running (PID: {:?})",
+                "synvoid is already running (PID: {:?})",
                 pid_manager.get_pid()
             );
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!(
-                "Error acquiring PID file: {}. RustWAF may already be running.",
+                "Error acquiring PID file: {}. synvoid may already be running.",
                 e
             );
             std::process::exit(1);

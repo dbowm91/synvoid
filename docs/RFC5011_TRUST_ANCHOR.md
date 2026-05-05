@@ -1,4 +1,4 @@
-# RFC 5011 Trust Anchor Management in MaluWAF
+# RFC 5011 Trust Anchor Management in SynVoid
 
 > **Related Documentation:** [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) | [WAF Mesh](WAF_MESH.md) | [Troubleshooting](TROUBLESHOOTING.md)
 
@@ -15,7 +15,7 @@
 
 ---
 
-This document describes RFC 5011 automated trust anchor management implementation in MaluWAF for DNSSEC validation.
+This document describes RFC 5011 automated trust anchor management implementation in SynVoid for DNSSEC validation.
 
 ## What is RFC 5011?
 
@@ -27,7 +27,7 @@ Traditionally, DNSSEC required operators to manually update trust anchors whenev
 - **Validation via CDS/CDNSKEY records** published by the zone itself
 - **Time-based observation periods** to detect key compromises
 
-MaluWAF implements RFC 5011 for the root zone by default, enabling automatic key management for DNSSEC validation.
+SynVoid implements RFC 5011 for the root zone by default, enabling automatic key management for DNSSEC validation.
 
 ## Trust Anchor State Machine
 
@@ -84,7 +84,7 @@ Keys progress through the following states based on RFC 5011:
 
 ### Supported Algorithms
 
-MaluWAF only accepts modern DNSSEC algorithms. Deprecated algorithms are rejected:
+SynVoid only accepts modern DNSSEC algorithms. Deprecated algorithms are rejected:
 
 | Algorithm | Name | Status |
 |-----------|------|--------|
@@ -105,8 +105,8 @@ Trust anchor behavior is controlled via the `TrustAnchorConfig` struct:
 ```toml
 [dns.recursive.trust_anchors]
 enabled = true
-anchor_file_path = "/var/lib/maluwaf/dns/trusted-key.key"
-db_path = "/var/lib/maluwaf/dns/trust_anchors.db"
+anchor_file_path = "/var/lib/synvoid/dns/trusted-key.key"
+db_path = "/var/lib/synvoid/dns/trust_anchors.db"
 refresh_interval_secs = 3600
 pending_observation_days = 30
 revocation_grace_days = 30
@@ -120,8 +120,8 @@ allow_key_rotation = true
 | Field | Default | Description |
 |-------|---------|-------------|
 | `enabled` | `false` | Enable RFC 5011 trust anchor management |
-| `anchor_file_path` | `/var/lib/maluwaf/dns/trusted-key.key` | Initial trust anchor file in RFC 5011 format (DNSKEY record format) |
-| `db_path` | `/var/lib/maluwaf/dns/trust_anchors.db` | SQLite database path for persistent anchor storage |
+| `anchor_file_path` | `/var/lib/synvoid/dns/trusted-key.key` | Initial trust anchor file in RFC 5011 format (DNSKEY record format) |
+| `db_path` | `/var/lib/synvoid/dns/trust_anchors.db` | SQLite database path for persistent anchor storage |
 | `refresh_interval_secs` | `3600` | How often to refresh and process anchor state transitions |
 | `pending_observation_days` | `30` | Time a new key spends in Pending state before becoming Valid (RFC 5011 Section 3.2) |
 | `revocation_grace_days` | `30` | Time after REVOKE bit before key is Removed (RFC 5011 Section 4) |
@@ -138,8 +138,8 @@ dnssec_validation = true
 
 [dns.recursive.trust_anchors]
 enabled = true
-anchor_file_path = "/var/lib/maluwaf/dns/trusted-key.key"
-db_path = "/var/lib/maluwaf/dns/trust_anchors.db"
+anchor_file_path = "/var/lib/synvoid/dns/trusted-key.key"
+db_path = "/var/lib/synvoid/dns/trust_anchors.db"
 refresh_interval_secs = 3600
 
 # RFC 5011 timing parameters (all in days)
@@ -155,7 +155,7 @@ allow_key_rotation = true
 
 ### Initial Anchor Loading
 
-On startup, MaluWAF loads initial trust anchors from the anchor file:
+On startup, SynVoid loads initial trust anchors from the anchor file:
 
 1. Reads the file at `anchor_file_path`
 2. Parses DNSKEY records (expects format like `trusted-key.key` from IANA)
@@ -164,7 +164,7 @@ On startup, MaluWAF loads initial trust anchors from the anchor file:
 
 ### Key Observation Flow
 
-When MaluWAF receives DNSKEY responses:
+When SynVoid receives DNSKEY responses:
 
 1. **`observe_dnskey_at_root()`** is called for each DNSKEY
 2. If key is new → enters **Seen** state
@@ -316,7 +316,7 @@ This prevents an attacker from substituting keys during a rollover.
 
 ### Public Key Change Rejection
 
-MaluWAF rejects any key whose public key doesn't match previously observed value. This includes:
+SynVoid rejects any key whose public key doesn't match previously observed value. This includes:
 - Different key material for same key-tag
 - Re-use of key-tag with new key (potential attack)
 
@@ -360,7 +360,7 @@ The anchor file should contain DNSKEY records in standard zone file format:
 - Algorithm can be 8 (RSASHA256), 13 (ECDSAP256SHA256), 15 (ED25519), or 16 (ED448)
 - Multiple keys can be defined (for algorithm rollover)
 
-MaluWAF provides bundled default anchors for the root zone that are updated with each release.
+SynVoid provides bundled default anchors for the root zone that are updated with each release.
 
 ## See Also
 

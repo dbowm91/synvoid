@@ -9,10 +9,10 @@ use std::io::Read;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
-const DEFAULT_RUSTWAF_DIR: &str = ".maluwaf";
-const PID_FILE: &str = "maluwaf.pid";
+const DEFAULT_SYNVOID_DIR: &str = ".synvoid";
+const PID_FILE: &str = "synvoid.pid";
 const STATUS_FILE: &str = "status.json";
-const SOCKET_FILE: &str = "maluwaf.sock";
+const SOCKET_FILE: &str = "synvoid.sock";
 const OVERSEER_LOCK_FILE: &str = "overseer.lock";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,11 +32,11 @@ impl PidFileManager {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(DEFAULT_RUSTWAF_DIR);
+            .join(DEFAULT_SYNVOID_DIR);
 
         if !data_dir.exists() {
             if let Err(e) = fs::create_dir_all(&data_dir) {
-                tracing::warn!("Failed to create maluwaf data directory: {}", e);
+                tracing::warn!("Failed to create synvoid data directory: {}", e);
             }
         }
 
@@ -49,7 +49,7 @@ impl PidFileManager {
     pub fn with_custom_dir(dir: PathBuf) -> Self {
         if !dir.exists() {
             if let Err(e) = fs::create_dir_all(&dir) {
-                tracing::warn!("Failed to create maluwaf data directory: {}", e);
+                tracing::warn!("Failed to create synvoid data directory: {}", e);
             }
         }
         Self {
@@ -369,7 +369,7 @@ impl OverseerLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(DEFAULT_RUSTWAF_DIR);
+            .join(DEFAULT_SYNVOID_DIR);
 
         let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
 
@@ -446,7 +446,7 @@ impl OverseerLockFile {
     pub fn cleanup_stale_locks(max_age_secs: u64) {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(DEFAULT_RUSTWAF_DIR);
+            .join(DEFAULT_SYNVOID_DIR);
 
         let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
 
@@ -559,7 +559,7 @@ impl OverseerLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(DEFAULT_RUSTWAF_DIR);
+            .join(DEFAULT_SYNVOID_DIR);
 
         let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
 

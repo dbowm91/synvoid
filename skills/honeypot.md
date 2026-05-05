@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MaluWAF honeypot system provides deception-based detection with two main components: URL honeypot and port honeypot. Both integrate with the threat intelligence mesh for sharing indicators.
+The SynVoid honeypot system provides deception-based detection with two main components: URL honeypot and port honeypot. Both integrate with the threat intelligence mesh for sharing indicators.
 
 ## Components
 

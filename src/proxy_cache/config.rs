@@ -23,7 +23,7 @@ impl Default for ProxyCacheSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            path: PathBuf::from("/var/cache/maluwaf/proxy"),
+            path: PathBuf::from("/var/cache/synvoid/proxy"),
             max_memory_size: 100 * 1024 * 1024, // 100MB
             max_disk_size: 1024 * 1024 * 1024,  // 1GB
             inactive: Duration::from_secs(3600),
@@ -70,7 +70,7 @@ impl ProxyCacheSettings {
 
         let cache_path = path
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/var/cache/maluwaf/proxy"));
+            .unwrap_or_else(|| PathBuf::from("/var/cache/synvoid/proxy"));
 
         let max_disk_size = max_size
             .as_ref()

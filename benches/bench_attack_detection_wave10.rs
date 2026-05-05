@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use http::{HeaderMap, Method};
-use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 use std::sync::Arc;
 
 fn benchmark_attack_detection_common(c: &mut Criterion) {

@@ -10,7 +10,7 @@ We release security patches for the latest released version. We recommend users 
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within MaluWAF, please send an email to the maintainers. All security vulnerabilities will be promptly addressed.
+If you discover a security vulnerability within SynVoid, please send an email to the maintainers. All security vulnerabilities will be promptly addressed.
 
 Please include the following information:
 
@@ -24,7 +24,7 @@ Please include the following information:
 
 ## Security Features
 
-MaluWAF includes several security features:
+SynVoid includes several security features:
 
 ### Attack Detection
 - SQL Injection (via libinjection)
@@ -71,7 +71,7 @@ For production deployments:
 
 ## IPC Security
 
-MaluWaf supports HMAC-signed IPC communication between the master process and workers. This prevents unauthorized workers from connecting to the master.
+SynVoid supports HMAC-signed IPC communication between the master process and workers. This prevents unauthorized workers from connecting to the master.
 
 ### Configuration
 
@@ -82,13 +82,13 @@ ipc_enforce_signing = true
 
 # Environment variable containing 64-character hex session key
 # Generate with: xxd -l 32 -p /dev/urandom
-ipc_session_key_env = "MALU_IPC_KEY"
+ipc_session_key_env = "SYNVOID_IPC_KEY"
 ```
 
 ### Setup
 
 1. Generate a secure key: `xxd -l 32 -p /dev/urandom`
-2. Set the environment variable: `export MALU_IPC_KEY="<your-key>"`
+2. Set the environment variable: `export SYNVOID_IPC_KEY="<your-key>"`
 3. Enable enforcement: Set `ipc_enforce_signing = true`
 
 Without IPC signing enabled, any process on the same machine can connect to the master IPC socket.
@@ -214,7 +214,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 - **Analysis**:
   - The `rsa` crate is a transitive dependency via yara-x
   - yara-x uses RSA only for optional YARA rule signature verification
-  - MaluWAF uses **ed25519-dalek** for YARA rule feed signature verification (not RSA)
+  - SynVoid uses **ed25519-dalek** for YARA rule feed signature verification (not RSA)
   - The RSA functionality is loaded but never invoked in the current code path
 - **Recommendation**: No action required unless you enable RSA-based YARA rule signing
 

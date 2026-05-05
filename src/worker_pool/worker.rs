@@ -127,11 +127,11 @@ impl Worker {
                         match waf.check_request(None, client_ip, http_method.as_str(), &path_str, user_agent.as_deref()).await {
                             WafDecision::Block(status, message) => {
                                 metrics.blocked.fetch_add(1, Ordering::Relaxed);
-                                counter!("maluwaf.requests.blocked").increment(1);
+                                counter!("synvoid.requests.blocked").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("synvoid.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                 
                                 let body = waf.error_page_manager.render_page(status, Some(&message));
@@ -143,11 +143,11 @@ impl Worker {
                             }
                             WafDecision::Challenge(html) => {
                                 metrics.challenged.fetch_add(1, Ordering::Relaxed);
-                                counter!("maluwaf.requests.challenged").increment(1);
+                                counter!("synvoid.requests.challenged").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("synvoid.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                 
                                 Ok(Response::builder()
@@ -159,11 +159,11 @@ impl Worker {
                             }
                             WafDecision::ChallengeWithCookie { html, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
                                 metrics.challenged.fetch_add(1, Ordering::Relaxed);
-                                counter!("maluwaf.requests.challenged").increment(1);
+                                counter!("synvoid.requests.challenged").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("synvoid.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                 
                                 let cookie = format!("{}={}; path=/; max-age={}; Secure; SameSite=Strict", session_cookie_name, session_cookie_value, session_cookie_max_age);
@@ -177,11 +177,11 @@ impl Worker {
                             }
                             WafDecision::Tarpit(_) => {
                                 metrics.blocked.fetch_add(1, Ordering::Relaxed);
-                                counter!("maluwaf.requests.tarpitted").increment(1);
+                                counter!("synvoid.requests.tarpitted").increment(1);
                                 let elapsed = start.elapsed().as_millis() as u64;
                                 metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                 metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                histogram!("synvoid.worker.request_duration").record(elapsed as f64);
                                 metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                 
                                 Ok(Response::builder()
@@ -210,12 +210,12 @@ impl Worker {
                                         }
                                         
                                         metrics.proxied.fetch_add(1, Ordering::Relaxed);
-                                        counter!("maluwaf.requests.proxied").increment(1);
+                                        counter!("synvoid.requests.proxied").increment(1);
                                         
                                         let elapsed = start.elapsed().as_millis() as u64;
                                         metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                         metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                        histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                        histogram!("synvoid.worker.request_duration").record(elapsed as f64);
                                         metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                         
                                         Ok(builder.body(body).expect("Failed to build proxied response"))
@@ -226,7 +226,7 @@ impl Worker {
                                         let elapsed = start.elapsed().as_millis() as u64;
                                         metrics.total_latency_ms.fetch_add(elapsed, Ordering::Relaxed);
                                         metrics.request_count_for_latency.fetch_add(1, Ordering::Relaxed);
-                                        histogram!("maluwaf.worker.request_duration").record(elapsed as f64);
+                                        histogram!("synvoid.worker.request_duration").record(elapsed as f64);
                                         metrics.current_concurrent.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
                                         
                                         Ok(Response::builder()

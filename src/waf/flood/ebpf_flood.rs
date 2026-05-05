@@ -108,9 +108,9 @@ impl EbpfSynFloodProtector {
 
     fn load_ebpf_bytecode() -> Result<Vec<u8>, EbpfFloodError> {
         let bytecode_paths = vec![
-            "/usr/lib/maluwaf/ebpf/maluwaf-flood.bpf".to_string(),
-            "/usr/local/lib/maluwaf/ebpf/maluwaf-flood.bpf".to_string(),
-            "./ebpf-flood/target/bpfel-unknown-none/release/maluwaf-flood".to_string(),
+            "/usr/lib/synvoid/ebpf/synvoid-flood.bpf".to_string(),
+            "/usr/local/lib/synvoid/ebpf/synvoid-flood.bpf".to_string(),
+            "./ebpf-flood/target/bpfel-unknown-none/release/synvoid-flood".to_string(),
         ];
 
         for path in &bytecode_paths {

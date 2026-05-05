@@ -305,7 +305,7 @@ impl MeshConfig {
         let entropy = uuid.as_bytes();
         let hk = Hkdf::<Sha256>::new(None, entropy);
         let mut okm = [0u8; 32];
-        hk.expand(b"maluwaf-global-node-key", &mut okm)?;
+        hk.expand(b"synvoid-global-node-key", &mut okm)?;
         Ok(hex::encode(okm))
     }
 

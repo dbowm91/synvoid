@@ -72,15 +72,15 @@ fn get_doc_title(name: &str) -> String {
 
 fn get_doc_description(name: &str) -> String {
     match name {
-        "getting-started" => "Get up and running with MaluWAF in minutes".to_string(),
+        "getting-started" => "Get up and running with SynVoid in minutes".to_string(),
         "configuration" => "Complete configuration file reference and examples".to_string(),
-        "architecture" => "Understanding how MaluWAF works under the hood".to_string(),
+        "architecture" => "Understanding how SynVoid works under the hood".to_string(),
         "attack-detection" => "Learn about WAF attack detection mechanisms".to_string(),
         "flood-protection" => "Protect against DDoS and flood attacks".to_string(),
-        "deployment" => "Deploy MaluWAF to production".to_string(),
+        "deployment" => "Deploy SynVoid to production".to_string(),
         "api-reference" => "Complete REST API documentation".to_string(),
         "troubleshooting" => "Solutions to common issues".to_string(),
-        "developer" => "Contributing to MaluWAF development".to_string(),
+        "developer" => "Contributing to SynVoid development".to_string(),
         _ => "Documentation".to_string(),
     }
 }
@@ -89,7 +89,7 @@ fn get_doc_content(name: &str) -> String {
     match name {
         "getting-started" => r#"
             <h2 id="overview">Overview</h2>
-            <p>This guide will help you get MaluWAF up and running in just a few minutes.</p>
+            <p>This guide will help you get SynVoid up and running in just a few minutes.</p>
             
             <h2 id="requirements">Requirements</h2>
             <ul>
@@ -99,15 +99,15 @@ fn get_doc_content(name: &str) -> String {
             </ul>
             
             <h2 id="installation">Installation</h2>
-            <pre><code>git clone https://github.com/maluwaf/maluwaf.git
-cd maluwaf
+            <pre><code>git clone https://github.com/synvoid/synvoid.git
+cd synvoid
 cargo build --release</code></pre>
             
             <h2 id="quick-start">Quick Start</h2>
-            <p>Run MaluWAF with the default configuration:</p>
-            <pre><code>./target/release/maluwaf</code></pre>
+            <p>Run SynVoid with the default configuration:</p>
+            <pre><code>./target/release/synvoid</code></pre>
             
-            <p>By default, MaluWAF will:</p>
+            <p>By default, SynVoid will:</p>
             <ul>
                 <li>Listen on port 80 and 443</li>
                 <li>Serve a default landing page</li>
@@ -116,14 +116,14 @@ cargo build --release</code></pre>
             
             <h2 id="next-steps">Next Steps</h2>
             <ul>
-                <li><a href="/docs/configuration">Configure MaluWAF</a> for your needs</li>
+                <li><a href="/docs/configuration">Configure SynVoid</a> for your needs</li>
                 <li>Set up <a href="/docs/attack-detection">attack detection</a> rules</li>
                 <li>Configure <a href="/docs/deployment">production deployment</a></li>
             </ul>
         "#.to_string(),
         "configuration" => r#"
             <h2 id="overview">Configuration File</h2>
-            <p>MaluWAF uses TOML configuration files. The default configuration file is <code>main.toml</code>.</p>
+            <p>SynVoid uses TOML configuration files. The default configuration file is <code>main.toml</code>.</p>
             
             <h2 id="structure">Configuration Structure</h2>
             <pre><code>[main]
@@ -149,7 +149,7 @@ address = "127.0.0.1:8080"</code></pre>
             <h2 id="waf">WAF Configuration</h2>
             <pre><code>[waf]
 enabled = true
-rules_dir = "/etc/maluwaf/rules"
+rules_dir = "/etc/synvoid/rules"
 
 [waf.attack_detection]
 sqli = true
@@ -158,7 +158,7 @@ cmd_injection = true</code></pre>
         "#.to_string(),
         "architecture" => r#"
             <h2 id="overview">Architecture Overview</h2>
-            <p>MaluWAF uses a multi-process architecture designed for reliability and performance.</p>
+            <p>SynVoid uses a multi-process architecture designed for reliability and performance.</p>
             
             <h2 id="processes">Process Model</h2>
             <ul>
@@ -169,7 +169,7 @@ cmd_injection = true</code></pre>
             
             <h2 id="request-flow">Request Flow</h2>
             <ol>
-                <li>Client connects to MaluWAF</li>
+                <li>Client connects to SynVoid</li>
                 <li>Worker processes the request</li>
                 <li>WAF rules are evaluated</li>
                 <li>Request is proxied to upstream</li>
@@ -185,7 +185,7 @@ cmd_injection = true</code></pre>
         "#.to_string(),
         "attack-detection" => r#"
             <h2 id="overview">Attack Detection</h2>
-            <p>MaluWAF provides comprehensive attack detection against OWASP Top 10 vulnerabilities.</p>
+            <p>SynVoid provides comprehensive attack detection against OWASP Top 10 vulnerabilities.</p>
             
             <h2 id="detection-types">Detection Types</h2>
             
@@ -214,7 +214,7 @@ ssrf = true</code></pre>
         "#.to_string(),
         "flood-protection" => r#"
             <h2 id="overview">Flood Protection</h2>
-            <p>MaluWAF includes multiple layers of flood protection.</p>
+            <p>SynVoid includes multiple layers of flood protection.</p>
             
             <h2 id="types">Protection Types</h2>
             
@@ -243,16 +243,16 @@ max_packets_per_second = 10000</code></pre>
         "#.to_string(),
         "deployment" => r#"
             <h2 id="overview">Deployment</h2>
-            <p>MaluWAF can be deployed in various ways depending on your infrastructure.</p>
+            <p>SynVoid can be deployed in various ways depending on your infrastructure.</p>
             
             <h2 id="docker">Docker</h2>
-            <pre><code>docker run -p 80:80 -p 443:443 -v $(pwd)/config:/config maluwaf/maluwaf</code></pre>
+            <pre><code>docker run -p 80:80 -p 443:443 -v $(pwd)/config:/config synvoid/synvoid</code></pre>
             
             <h2 id="kubernetes">Kubernetes</h2>
-            <pre><code>helm install maluwaf maluwaf/maluwaf</code></pre>
+            <pre><code>helm install synvoid synvoid/synvoid</code></pre>
             
             <h2 id="binary">Binary</h2>
-            <pre><code>./maluwaf --config /etc/maluwaf/main.toml</code></pre>
+            <pre><code>./synvoid --config /etc/synvoid/main.toml</code></pre>
             
             <h2 id="requirements">System Requirements</h2>
             <ul>
@@ -264,7 +264,7 @@ max_packets_per_second = 10000</code></pre>
         "#.to_string(),
         "api-reference" => r#"
             <h2 id="overview">API Reference</h2>
-            <p>The admin API provides programmatic access to MaluWAF configuration.</p>
+            <p>The admin API provides programmatic access to SynVoid configuration.</p>
             
             <h2 id="authentication">Authentication</h2>
             <p>All API requests require an <code>X-Admin-Token</code> header.</p>
@@ -285,12 +285,12 @@ max_packets_per_second = 10000</code></pre>
         "#.to_string(),
         "troubleshooting" => r#"
             <h2 id="overview">Troubleshooting</h2>
-            <p>Solutions to common issues with MaluWAF.</p>
+            <p>Solutions to common issues with SynVoid.</p>
             
             <h2 id="common-issues">Common Issues</h2>
             
             <h3>Connection Refused</h3>
-            <p>Check that MaluWAF is running and the port is not blocked by firewall.</p>
+            <p>Check that SynVoid is running and the port is not blocked by firewall.</p>
             
             <h3>Upstream Errors</h3>
             <p>Verify the upstream server is running and accessible.</p>
@@ -305,11 +305,11 @@ level = "debug"</code></pre>
         "#.to_string(),
         "developer" => r#"
             <h2 id="overview">Developer Guide</h2>
-            <p>Welcome to MaluWAF development!</p>
+            <p>Welcome to SynVoid development!</p>
             
             <h2 id="setup">Development Setup</h2>
-            <pre><code>git clone https://github.com/maluwaf/maluwaf.git
-cd maluwaf
+            <pre><code>git clone https://github.com/synvoid/synvoid.git
+cd synvoid
 cargo build</code></pre>
             
             <h2 id="project-structure">Project Structure</h2>

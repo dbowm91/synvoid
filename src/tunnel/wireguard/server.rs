@@ -68,8 +68,8 @@ impl WireGuardServer {
 
         self.runtime = Some(runtime);
 
-        counter!("maluwaf.tunnel.wireguard.server.started").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.server.running").set(1.0);
+        counter!("synvoid.tunnel.wireguard.server.started").increment(1);
+        gauge!("synvoid.tunnel.wireguard.server.running").set(1.0);
 
         tracing::info!(
             "WireGuard server started on port {}",
@@ -83,8 +83,8 @@ impl WireGuardServer {
             runtime.stop().await;
         }
 
-        counter!("maluwaf.tunnel.wireguard.server.stopped").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.server.running").set(0.0);
+        counter!("synvoid.tunnel.wireguard.server.stopped").increment(1);
+        gauge!("synvoid.tunnel.wireguard.server.running").set(0.0);
 
         tracing::info!("WireGuard server stopped");
     }
@@ -108,8 +108,8 @@ impl WireGuardServer {
             runtime.add_peer(peer)?;
         }
 
-        counter!("maluwaf.tunnel.wireguard.server.peers.added").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.server.peers.count").set(self.peers.len() as f64);
+        counter!("synvoid.tunnel.wireguard.server.peers.added").increment(1);
+        gauge!("synvoid.tunnel.wireguard.server.peers.count").set(self.peers.len() as f64);
 
         tracing::info!("Added WireGuard peer: {}", public_key);
         Ok(public_key)
@@ -124,8 +124,8 @@ impl WireGuardServer {
                 runtime.remove_peer(public_key)?;
             }
 
-            counter!("maluwaf.tunnel.wireguard.server.peers.removed").increment(1);
-            gauge!("maluwaf.tunnel.wireguard.server.peers.count").set(self.peers.len() as f64);
+            counter!("synvoid.tunnel.wireguard.server.peers.removed").increment(1);
+            gauge!("synvoid.tunnel.wireguard.server.peers.count").set(self.peers.len() as f64);
 
             tracing::info!("Removed WireGuard peer: {}", public_key);
         }

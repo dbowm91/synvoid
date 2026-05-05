@@ -2,14 +2,14 @@
 
 //! Fuzz target for IPC message handling.
 //!
-//! Tests deserialization and validation of [`maluwaf::process::Message`]
+//! Tests deserialization and validation of [`synvoid::process::Message`]
 //! variants from arbitrary byte input, including signed IPC messages
 //! with randomly generated keys. Verifies that malformed input is
 //! rejected without panicking.
 
 use libfuzzer_sys::fuzz_target;
-use maluwaf::process::ipc_signed::{IpcSigner, SignedIpcMessage};
-use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+use synvoid::process::ipc_signed::{IpcSigner, SignedIpcMessage};
+use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
@@ -50,9 +50,9 @@ fuzz_target!(|data: &[u8]| {
     // Test ThreatIndicatorAnnounce
     let _ = Message::ThreatIndicatorAnnounce {
         worker_id: 0,
-        threat_type: maluwaf::process::ThreatIndicatorType::IpBlock,
+        threat_type: synvoid::process::ThreatIndicatorType::IpBlock,
         indicator_value: fuzz_string.clone(),
-        severity: maluwaf::process::ThreatSeverityLevel::Medium,
+        severity: synvoid::process::ThreatSeverityLevel::Medium,
         reason: fuzz_string.clone(),
         ttl_seconds: 3600,
         site_scope: fuzz_string.clone(),

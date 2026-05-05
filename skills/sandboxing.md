@@ -1,10 +1,10 @@
 # OS Sandboxing Patterns
 
-This skill documents the sandboxing implementations used in the MaluWAF codebase for OS-level process confinement.
+This skill documents the sandboxing implementations used in the SynVoid codebase for OS-level process confinement.
 
 ## Overview
 
-MaluWAF implements platform-specific sandboxing using available OS mechanisms:
+SynVoid implements platform-specific sandboxing using available OS mechanisms:
 
 | Platform | Mechanism | Module | Feature Flag |
 |---------|-----------|--------|--------------|
@@ -196,7 +196,7 @@ extern "C" {
 }
 ```
 
-Enable with: `macos-sandbox = ["dep:maluwaf/macos-sandbox"]`
+Enable with: `macos-sandbox = ["dep:synvoid/macos-sandbox"]`
 
 ## Linux Landlock
 

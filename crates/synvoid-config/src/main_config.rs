@@ -223,7 +223,7 @@ impl MainConfig {
                 port: 8081,
                 bind_address: "127.0.0.1".to_string(),
                 token: String::new(),
-                token_env_var: Some("MALU_ADMIN_TOKEN".to_string()),
+                token_env_var: Some("SYNVOID_ADMIN_TOKEN".to_string()),
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),

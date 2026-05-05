@@ -7,7 +7,7 @@
 //! serialize/deserialize roundtrips do not panic on malformed input.
 
 use libfuzzer_sys::fuzz_target;
-use maluwaf::serialization::{deserialize, serialize};
+use synvoid::serialization::{deserialize, serialize};
 
 fuzz_target!(|data: &[u8]| {
     // Test postcard deserialization with various message types

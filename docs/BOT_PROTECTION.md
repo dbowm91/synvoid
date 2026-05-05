@@ -1,6 +1,6 @@
 # Bot Protection
 
-MaluWAF provides comprehensive bot detection and mitigation to protect your applications from automated traffic, scrapers, and AI crawlers.
+SynVoid provides comprehensive bot detection and mitigation to protect your applications from automated traffic, scrapers, and AI crawlers.
 
 ## Overview
 
@@ -188,7 +188,7 @@ curl -H "Host: example.com" \
 
 1. Check which bot category is blocking:
 ```bash
-tail -f /var/log/maluwaf/access.log | grep -i bot
+tail -f /var/log/synvoid/access.log | grep -i bot
 ```
 
 2. Add to allowlist:
@@ -231,10 +231,10 @@ enabled = false  # Disable JS challenge
 Track bot detection via Prometheus:
 
 ```
-maluwaf_bot_detected{type="scraper"}
-maluwaf_bot_detected{type="ai_crawler"}
-maluwaf_bot_challenged
-maluwaf_bot_blocked
+synvoid_bot_detected{type="scraper"}
+synvoid_bot_detected{type="ai_crawler"}
+synvoid_bot_challenged
+synvoid_bot_blocked
 ```
 
 ## See Also

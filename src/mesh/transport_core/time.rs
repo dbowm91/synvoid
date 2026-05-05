@@ -12,7 +12,7 @@ pub fn validate_system_time() {
     if now_unix < MIN_REASONABLE_TIMESTAMP {
         let offset = MIN_REASONABLE_TIMESTAMP.saturating_sub(now_unix);
         TIME_VALIDATION_ERRORS.fetch_add(1, Ordering::SeqCst);
-        counter!("maluwaf.mesh.time_validation.errors", "reason" => "clock_behind").increment(1);
+        counter!("synvoid.mesh.time_validation.errors", "reason" => "clock_behind").increment(1);
         tracing::error!(
             "System time appears incorrect: {} (Unix timestamp), expected at least {}. \
             Please sync NTP! Clock is off by approximately {} seconds ({} years)",
@@ -24,7 +24,7 @@ pub fn validate_system_time() {
     } else if now_unix > MAX_REASONABLE_TIMESTAMP {
         let offset = now_unix.saturating_sub(MAX_REASONABLE_TIMESTAMP);
         TIME_VALIDATION_ERRORS.fetch_add(1, Ordering::SeqCst);
-        counter!("maluwaf.mesh.time_validation.errors", "reason" => "clock_ahead").increment(1);
+        counter!("synvoid.mesh.time_validation.errors", "reason" => "clock_ahead").increment(1);
         tracing::error!(
             "System time appears incorrect: {} (Unix timestamp), expected at most {}. \
             Please sync NTP! Clock is off by approximately {} seconds ({} years)",
@@ -34,7 +34,7 @@ pub fn validate_system_time() {
             offset / 31536000
         );
     } else {
-        counter!("maluwaf.mesh.time_validation.valid").increment(1);
+        counter!("synvoid.mesh.time_validation.valid").increment(1);
         tracing::info!("System time validated: {} (Unix timestamp)", now_unix);
     }
 }

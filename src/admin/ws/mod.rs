@@ -14,7 +14,7 @@ use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 
-const ADMIN_WS_COOKIE_NAME: &str = "maluwaf_ws_token";
+const ADMIN_WS_COOKIE_NAME: &str = "synvoid_ws_token";
 
 fn get_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers

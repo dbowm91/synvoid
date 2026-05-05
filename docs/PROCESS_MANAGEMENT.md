@@ -1,6 +1,6 @@
 # Overseer Process Management
 
-MaluWAF uses a three-tier process architecture (Overseer → Master → Worker) for maximum reliability and upgrade flexibility. This document covers how to manage the overseer process using systemd or cron.
+SynVoid uses a three-tier process architecture (Overseer → Master → Worker) for maximum reliability and upgrade flexibility. This document covers how to manage the overseer process using systemd or cron.
 
 ## Process Architecture
 
@@ -36,7 +36,7 @@ MaluWAF uses a three-tier process architecture (Overseer → Master → Worker) 
 
 1. Copy the service file:
 ```bash
-sudo cp contrib/systemd/maluwaf.service /etc/systemd/system/
+sudo cp contrib/systemd/synvoid.service /etc/systemd/system/
 ```
 
 2. Reload systemd:
@@ -46,32 +46,32 @@ sudo systemctl daemon-reload
 
 3. Enable and start:
 ```bash
-sudo systemctl enable maluwaf
-sudo systemctl start maluwaf
+sudo systemctl enable synvoid
+sudo systemctl start synvoid
 ```
 
 ### Service Management
 
 ```bash
 # Check status
-sudo systemctl status maluwaf
+sudo systemctl status synvoid
 
 # View logs
-sudo journalctl -u maluwaf -f
+sudo journalctl -u synvoid -f
 
 # Restart service
-sudo systemctl restart maluwaf
+sudo systemctl restart synvoid
 
 # Stop service
-sudo systemctl stop maluwaf
+sudo systemctl stop synvoid
 
 # Reload configuration (sends SIGHUP)
-sudo systemctl reload maluwaf
+sudo systemctl reload synvoid
 ```
 
 ### systemd Watchdog
 
-The service file includes watchdog support. The overseer will automatically restart if it becomes unresponsive for 30 seconds. To enable watchdog notifications from MaluWAF, set:
+The service file includes watchdog support. The overseer will automatically restart if it becomes unresponsive for 30 seconds. To enable watchdog notifications from SynVoid, set:
 
 ```bash
 # In your environment or service file
@@ -95,7 +95,7 @@ For systems without systemd (Alpine Linux, older distributions, containers), use
 The `--watchdog` flag checks if an overseer is running and starts one if not:
 
 ```bash
-maluwaf --watchdog
+synvoid --watchdog
 ```
 
 This is idempotent - safe to run multiple times.
@@ -106,18 +106,18 @@ Add to crontab (`crontab -e`):
 
 ```cron
 # Check every minute
-* * * * * /usr/local/bin/maluwaf --watchdog >> /var/log/maluwaf/watchdog.log 2>&1
+* * * * * /usr/local/bin/synvoid --watchdog >> /var/log/synvoid/watchdog.log 2>&1
 
 # Or every 5 minutes
-*/5 * * * * /usr/local/bin/maluwaf --watchdog >> /var/log/maluwaf/watchdog.log 2>&1
+*/5 * * * * /usr/local/bin/synvoid --watchdog >> /var/log/synvoid/watchdog.log 2>&1
 ```
 
 ### cron with Log Rotation
 
-Create `/etc/logrotate.d/maluwaf`:
+Create `/etc/logrotate.d/synvoid`:
 
 ```
-/var/log/maluwaf/*.log {
+/var/log/synvoid/*.log {
     daily
     rotate 7
     compress
@@ -134,8 +134,8 @@ Create `/etc/logrotate.d/maluwaf`:
 
 ```dockerfile
 FROM alpine:latest
-COPY maluwaf /usr/local/bin/
-CMD ["maluwaf", "--overseer", "--foreground"]
+COPY synvoid /usr/local/bin/
+CMD ["synvoid", "--overseer", "--foreground"]
 ```
 
 ### Kubernetes
@@ -144,29 +144,29 @@ CMD ["maluwaf", "--overseer", "--foreground"]
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: maluwaf
+  name: synvoid
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: maluwaf
+      app: synvoid
   template:
     metadata:
       labels:
-        app: maluwaf
+        app: synvoid
     spec:
       containers:
-      - name: maluwaf
-        image: maluwaf:latest
-        command: ["maluwaf", "--overseer", "--foreground"]
+      - name: synvoid
+        image: synvoid:latest
+        command: ["synvoid", "--overseer", "--foreground"]
         livenessProbe:
           exec:
-            command: ["maluwaf", "--status"]
+            command: ["synvoid", "--status"]
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           exec:
-            command: ["maluwaf", "--status"]
+            command: ["synvoid", "--status"]
           initialDelaySeconds: 5
           periodSeconds: 10
 ```
@@ -176,22 +176,22 @@ spec:
 For systems using supervisord:
 
 ```ini
-[program:maluwaf]
-command=/usr/local/bin/maluwaf --overseer --foreground
-directory=/opt/maluwaf
+[program:synvoid]
+command=/usr/local/bin/synvoid --overseer --foreground
+directory=/opt/synvoid
 user=root
 autostart=true
 autorestart=true
 startsecs=5
 startretries=3
-stdout_logfile=/var/log/maluwaf/stdout.log
-stderr_logfile=/var/log/maluwaf/stderr.log
+stdout_logfile=/var/log/synvoid/stdout.log
+stderr_logfile=/var/log/synvoid/stderr.log
 environment=RUST_LOG="info"
 ```
 
 ## Lock File
 
-The overseer creates a lock file at `~/.maluwaf/overseer.lock` containing its PID. This prevents multiple overseer instances and allows the watchdog to detect running instances.
+The overseer creates a lock file at `~/.synvoid/overseer.lock` containing its PID. This prevents multiple overseer instances and allows the watchdog to detect running instances.
 
 ## IPC Session Key Architecture
 
@@ -218,7 +218,7 @@ The IPC session key secures communication between the master and worker processe
 - **File permissions 0600**: Only the owner can read/write the key file
 - **Immediate deletion**: Temp file is deleted after reading, leaving no trace
 - **No env var exposure**: Keys don't appear in process environment (viewable via `/proc/PID/environ`)
-- **Fallback**: Falls back to `MALUWAF_IPC_KEY` env var only if `allow_insecure_ipc_key = true` (default: fail-hard)
+- **Fallback**: Falls back to `SYNVOID_IPC_KEY` env var only if `allow_insecure_ipc_key = true` (default: fail-hard)
 
 ### Configuration
 
@@ -231,10 +231,10 @@ allow_insecure_ipc_key = false  # Default: false (fail if temp file unavailable)
 
 ```bash
 # Check if temp file exists during startup (race condition indicator)
-ls -la /tmp/maluwaf-ipc-key-* 2>/dev/null || echo "Temp file cleaned up (good)"
+ls -la /tmp/synvoid-ipc-key-* 2>/dev/null || echo "Temp file cleaned up (good)"
 
 # Verify key file permissions if startup fails
-strace -e trace=file maluwaf 2>&1 | grep MALUWAF_IPC_KEY
+strace -e trace=file synvoid 2>&1 | grep SYNVOID_IPC_KEY
 ```
 
 ## State Machine
@@ -313,7 +313,7 @@ The overseer maintains a state machine to coordinate upgrades, handle failures, 
 
 ### State Persistence
 
-The overseer persists state to `~/.maluwaf/overseer-state.json`:
+The overseer persists state to `~/.synvoid/overseer-state.json`:
 
 ```json
 {
@@ -333,10 +333,10 @@ This enables recovery after crashes or power failures.
 
 ```bash
 # Quick status check
-maluwaf --status
+synvoid --status
 
 # Returns exit code 0 if running, 1 if not
-maluwaf --status && echo "Running" || echo "Not running"
+synvoid --status && echo "Running" || echo "Not running"
 ```
 
 ### HTTP Health Endpoint
@@ -350,8 +350,8 @@ The unified server worker exposes:
 
 When using systemd or cron, upgrades are handled automatically:
 
-1. Stage the new binary: `maluwaf upgrade stage /path/to/new/binary`
-2. Apply the upgrade: `maluwaf upgrade apply`
+1. Stage the new binary: `synvoid upgrade stage /path/to/new/binary`
+2. Apply the upgrade: `synvoid upgrade apply`
 
 The overseer coordinates zero-downtime upgrades by:
 1. Spawning a new master with the upgraded binary
@@ -365,46 +365,46 @@ The overseer coordinates zero-downtime upgrades by:
 
 1. Check if already running:
 ```bash
-cat ~/.maluwaf/overseer.lock
-ps aux | grep maluwaf
+cat ~/.synvoid/overseer.lock
+ps aux | grep synvoid
 ```
 
 2. Remove stale lock file:
 ```bash
-rm ~/.maluwaf/overseer.lock
+rm ~/.synvoid/overseer.lock
 ```
 
 3. Check logs:
 ```bash
 # systemd
-journalctl -u maluwaf -n 100
+journalctl -u synvoid -n 100
 
 # cron
-tail -f /var/log/maluwaf/watchdog.log
+tail -f /var/log/synvoid/watchdog.log
 ```
 
 ### Master keeps restarting
 
 1. Check master crash logs:
 ```bash
-cat /tmp/maluwaf-panic.log
+cat /tmp/synvoid-panic.log
 ```
 
 2. Check configuration:
 ```bash
-maluwaf --configtest
+synvoid --configtest
 ```
 
 3. Increase restart limits in overseer state:
 ```bash
-cat ~/.maluwaf/overseer-state.json
+cat ~/.synvoid/overseer-state.json
 ```
 
 ### Recovery from failed upgrade
 
 The overseer automatically detects incomplete upgrades and attempts recovery:
 
-1. On startup, it checks `~/.maluwaf/overseer-state.json`
+1. On startup, it checks `~/.synvoid/overseer-state.json`
 2. If state is `DualMasterActive`, `DrainingOldMaster`, etc., it:
    - Checks if new master is alive → promotes it
    - Checks if old master is alive → restores it
@@ -412,7 +412,7 @@ The overseer automatically detects incomplete upgrades and attempts recovery:
 
 Manual recovery:
 ```bash
-maluwaf upgrade recover
+synvoid upgrade recover
 ```
 
 ## See Also

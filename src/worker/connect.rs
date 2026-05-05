@@ -165,11 +165,11 @@ pub fn connect_to_master_with_retry(
 }
 
 fn try_load_ipc_signer() -> Option<Arc<IpcSigner>> {
-    if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+    if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
         if let Some(key) = crate::process::ipc_signed::read_ipc_key_file(&key_file) {
             return Some(key);
         }
-    } else if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+    } else if let Ok(key_hex) = std::env::var("SYNVOID_IPC_KEY") {
         if key_hex.len() == 64 {
             let mut key = [0u8; 32];
             let mut valid = true;

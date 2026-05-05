@@ -237,7 +237,7 @@ cargo fmt
 cargo clippy -- -D warnings
 
 # Check specific module compiles
-cargo check --lib -p maluwaf
+cargo check --lib -p synvoid
 ```
 
 ---

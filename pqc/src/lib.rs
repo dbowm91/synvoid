@@ -1,4 +1,4 @@
-//! Post-Quantum Cryptography utilities for MaluWAF
+//! Post-Quantum Cryptography utilities for SynVoid
 //!
 //! This crate provides post-quantum cryptographic primitives, focusing on
 //! ML-KEM-768/1024 (FIPS 203) for key encapsulation and ML-DSA-44 (FIPS 204) for

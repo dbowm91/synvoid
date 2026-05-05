@@ -69,8 +69,8 @@ impl WireGuardClient {
 
         self.runtime = Some(runtime);
 
-        counter!("maluwaf.tunnel.wireguard.client.connected").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.client.status").set(1.0);
+        counter!("synvoid.tunnel.wireguard.client.connected").increment(1);
+        gauge!("synvoid.tunnel.wireguard.client.status").set(1.0);
 
         tracing::info!("WireGuard client connected");
         Ok(())
@@ -81,8 +81,8 @@ impl WireGuardClient {
             runtime.stop().await;
         }
 
-        counter!("maluwaf.tunnel.wireguard.client.disconnected").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.client.status").set(0.0);
+        counter!("synvoid.tunnel.wireguard.client.disconnected").increment(1);
+        gauge!("synvoid.tunnel.wireguard.client.status").set(0.0);
 
         tracing::info!("WireGuard client disconnected");
     }

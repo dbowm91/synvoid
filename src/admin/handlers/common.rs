@@ -20,7 +20,7 @@ pub type OptionalAuth = Option<TypedHeader<Authorization<Bearer>>>;
 ///
 /// # Current Model
 ///
-/// MaluWAF uses a **single admin token model**. Only one role exists: `Admin`.
+/// SynVoid uses a **single admin token model**. Only one role exists: `Admin`.
 /// All authenticated users receive the `Admin` role regardless of which credentials
 /// are used (bearer token or session cookie).
 ///

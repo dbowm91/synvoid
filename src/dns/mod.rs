@@ -1,4 +1,4 @@
-//! DNS Server module for MaluWAF
+//! DNS Server module for SynVoid
 //!
 //! This module provides an authoritative DNS server,
 //! with support for:

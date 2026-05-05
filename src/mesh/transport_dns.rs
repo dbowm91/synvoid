@@ -1106,7 +1106,7 @@ impl MeshTransport {
             expected_token
         );
 
-        let txt_query = format!("_maluwaf-challenge.{}", domain);
+        let txt_query = format!("_synvoid-challenge.{}", domain);
 
         match &self.dns_resolver {
             Some(resolver) => match resolver.lookup_txt(&txt_query).await {

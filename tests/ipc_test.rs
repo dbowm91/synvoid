@@ -1,11 +1,11 @@
 #[cfg(unix)]
 mod ipc_tests {
-    use maluwaf::process::ipc::{
+    use synvoid::process::ipc::{
         BlockEntryData, ErrorCode, ErrorSeverity, Message, RequestLogPayload, RulePatternData,
         ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel, UpgradeModePayload,
         WorkerId, WorkerMetricsPayload, WorkerStatusInfo,
     };
-    use maluwaf::process::{ipc_transport::IpcStream, IpcEndpoint};
+    use synvoid::process::{ipc_transport::IpcStream, IpcEndpoint};
     use tempfile::TempDir;
     use tokio::net::UnixListener;
 
@@ -117,8 +117,8 @@ mod ipc_tests {
         let msg = Message::WorkerError {
             id: WorkerId(3),
             error: "connection timeout".to_string(),
-            severity: maluwaf::process::ErrorSeverity::Error,
-            error_code: maluwaf::process::ErrorCode::Unknown,
+            severity: synvoid::process::ErrorSeverity::Error,
+            error_code: synvoid::process::ErrorCode::Unknown,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
@@ -131,8 +131,8 @@ mod ipc_tests {
             } => {
                 assert_eq!(id, WorkerId(3));
                 assert_eq!(error, "connection timeout");
-                assert_eq!(severity, maluwaf::process::ErrorSeverity::Error);
-                assert_eq!(error_code, maluwaf::process::ErrorCode::Unknown);
+                assert_eq!(severity, synvoid::process::ErrorSeverity::Error);
+                assert_eq!(error_code, synvoid::process::ErrorCode::Unknown);
             }
             _ => panic!("Expected WorkerError"),
         }
@@ -158,13 +158,13 @@ mod ipc_tests {
     #[test]
     fn test_roundtrip_master_config_reload() {
         let msg = Message::MasterConfigReload {
-            config_path: "/etc/maluwaf/main.toml".to_string(),
+            config_path: "/etc/synvoid/main.toml".to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
         match decoded {
             Message::MasterConfigReload { config_path } => {
-                assert_eq!(config_path, "/etc/maluwaf/main.toml");
+                assert_eq!(config_path, "/etc/synvoid/main.toml");
             }
             _ => panic!("Expected MasterConfigReload"),
         }
@@ -463,12 +463,12 @@ mod ipc_tests {
         let path = endpoint.socket_path();
 
         assert!(path.to_string_lossy().contains("test-socket"));
-        assert!(path.to_string_lossy().contains("maluwaf"));
+        assert!(path.to_string_lossy().contains("synvoid"));
     }
 
     #[test]
     fn test_ipc_message_validation_rejects_long_strings() {
-        use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+        use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
         let long_error = "x".repeat(100_000);
         let msg = Message::WorkerError {
@@ -491,7 +491,7 @@ mod ipc_tests {
 
     #[test]
     fn test_ipc_message_validation_rejects_long_paths() {
-        use maluwaf::process::Message;
+        use synvoid::process::Message;
 
         let long_path = "/".repeat(5000);
         let msg = Message::MasterConfigReload {
@@ -501,14 +501,14 @@ mod ipc_tests {
         assert!(result.is_err());
 
         let valid_msg = Message::MasterConfigReload {
-            config_path: "/etc/maluwaf/config.toml".to_string(),
+            config_path: "/etc/synvoid/config.toml".to_string(),
         };
         assert!(valid_msg.validate().is_ok());
     }
 
     #[test]
     fn test_ipc_signed_message_hmac_verification() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -535,7 +535,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_empty_data() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -546,7 +546,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_very_long_data() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -558,7 +558,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_all_zero_data() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -570,7 +570,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_all_ones_data() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -582,7 +582,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_partial_tamper() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -599,7 +599,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_duplicate_nonce_rejected() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -614,7 +614,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_wrong_key_rejected() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key1 = generate_session_key();
         let key2 = generate_session_key();
@@ -630,7 +630,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_single_bit_change_rejected() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -647,10 +647,10 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_truncated_message() {
-        use maluwaf::process::ipc_signed::{generate_session_key, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, SignedIpcMessage};
 
         let key = generate_session_key();
-        let signer = maluwaf::process::ipc_signed::IpcSigner::new(&key);
+        let signer = synvoid::process::ipc_signed::IpcSigner::new(&key);
 
         let short_data = vec![0x00; 10];
         let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&short_data, &signer);
@@ -659,7 +659,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_zero_hmac_rejected() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -671,7 +671,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_message_with_null_bytes() {
-        use maluwaf::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -757,7 +757,7 @@ mod ipc_tests {
     roundtrip_test!(
         test_roundtrip_master_config_reload_full,
         Message::MasterConfigReload {
-            config_path: "/etc/maluwaf/main.toml".to_string(),
+            config_path: "/etc/synvoid/main.toml".to_string(),
         }
     );
 
@@ -1219,8 +1219,8 @@ mod ipc_tests {
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_prepare,
         Message::OverseerUpgradePrepare {
-            binary_path: "/usr/bin/maluwaf-new".to_string(),
-            config_path: Some("/etc/maluwaf/new.toml".to_string()),
+            binary_path: "/usr/bin/synvoid-new".to_string(),
+            config_path: Some("/etc/synvoid/new.toml".to_string()),
             version: "2.0.0".to_string(),
         }
     );
@@ -1323,8 +1323,8 @@ mod ipc_tests {
     roundtrip_test!(
         test_roundtrip_overseer_dual_master_prepare,
         Message::OverseerDualMasterPrepare {
-            binary_path: "/usr/bin/maluwaf".to_string(),
-            config_path: Some("/etc/maluwaf/config.toml".to_string()),
+            binary_path: "/usr/bin/synvoid".to_string(),
+            config_path: Some("/etc/synvoid/config.toml".to_string()),
             version: "2.0.0".to_string(),
         }
     );
@@ -1588,13 +1588,13 @@ mod ipc_tests {
 
     #[test]
     fn test_ipc_message_validation_edge_cases() {
-        use maluwaf::process::Message;
+        use synvoid::process::Message;
 
         let empty_error = Message::WorkerError {
             id: WorkerId(1),
             error: String::new(),
-            severity: maluwaf::process::ErrorSeverity::Warning,
-            error_code: maluwaf::process::ErrorCode::Unknown,
+            severity: synvoid::process::ErrorSeverity::Warning,
+            error_code: synvoid::process::ErrorCode::Unknown,
         };
         assert!(empty_error.validate().is_ok());
 

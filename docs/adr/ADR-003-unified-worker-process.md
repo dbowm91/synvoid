@@ -7,7 +7,7 @@ Accepted
 2026-04-01
 
 ## Context
-MaluWAF originally planned a multi-process architecture with separate worker processes for HTTP, HTTPS, and AppServer workloads. The architecture evolved to a unified worker process.
+SynVoid originally planned a multi-process architecture with separate worker processes for HTTP, HTTPS, and AppServer workloads. The architecture evolved to a unified worker process.
 
 ## Decision
 **The worker uses a single `UnifiedServer` with one tokio async event loop** that handles all workload types (HTTP, HTTPS, AppServer/Granian) concurrently via cooperative scheduling.

@@ -67,7 +67,7 @@ impl AcmeManager {
         let cache_dir = config
             .cache_dir
             .clone()
-            .unwrap_or_else(|| PathBuf::from("/var/lib/maluwaf/acme"));
+            .unwrap_or_else(|| PathBuf::from("/var/lib/synvoid/acme"));
 
         let credentials_path = cache_dir.join("account_credentials.json");
 
@@ -330,7 +330,7 @@ impl AcmeManager {
             .config
             .cache_dir
             .clone()
-            .unwrap_or_else(|| PathBuf::from("/var/lib/maluwaf/acme"));
+            .unwrap_or_else(|| PathBuf::from("/var/lib/synvoid/acme"));
 
         let cert_path = cache_dir.join(format!("{}.pem", domain));
         let key_path = cache_dir.join(format!("{}.key", domain));

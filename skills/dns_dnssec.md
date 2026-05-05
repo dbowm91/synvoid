@@ -1,8 +1,8 @@
-# MaluWAF DNS & DNSSEC Architecture Skill
+# SynVoid DNS & DNSSEC Architecture Skill
 
 ## Overview
 
-MaluWAF implements a dual-mode DNS system:
+SynVoid implements a dual-mode DNS system:
 1. **Recursive Resolver** - For resolving external domains (uses hickory-dns)
 2. **Authoritative Server** - For hosting zones with DNSSEC signing
 

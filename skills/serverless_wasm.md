@@ -2,7 +2,7 @@
 
 ## Overview
 
-This skill documents the serverless function architecture in MaluWAF, including the WASM runtime, instance pooling, and mesh serverless integration.
+This skill documents the serverless function architecture in SynVoid, including the WASM runtime, instance pooling, and mesh serverless integration.
 
 ## Key Components
 

@@ -160,8 +160,8 @@ impl Default for TrustAnchorConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            db_path: "/var/lib/maluwaf/dns/trust_anchors.db".to_string(),
-            anchor_file_path: "/var/lib/maluwaf/dns/trusted-key.key".to_string(),
+            db_path: "/var/lib/synvoid/dns/trust_anchors.db".to_string(),
+            anchor_file_path: "/var/lib/synvoid/dns/trusted-key.key".to_string(),
             refresh_interval_secs: 3600,
             pending_observation_days: 30,
             revocation_grace_days: 30,

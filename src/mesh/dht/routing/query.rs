@@ -219,7 +219,7 @@ impl DhtQuery {
         let value_count = self.responses.iter().filter(|r| r.value.is_some()).count();
         if value_count >= self.quorum && !self.completed {
             self.completed = true;
-            counter!("maluwaf.dht.quorum.achieved", "type" => "read").increment(1);
+            counter!("synvoid.dht.quorum.achieved", "type" => "read").increment(1);
             tracing::debug!("DHT read quorum achieved: {}/{}", value_count, self.quorum);
         }
     }

@@ -26,7 +26,7 @@ cargo +nightly build --target bpfel-unknown-none -Z build-std=core --release
 ```
 
 The compiled eBPF bytecode will be at:
-`target/bpfel-unknown-none/release/maluwaf-icmp`
+`target/bpfel-unknown-none/release/synvoid-icmp`
 
 ## Architecture
 

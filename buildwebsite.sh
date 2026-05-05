@@ -4,7 +4,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEBSITE_DIR="$SCRIPT_DIR/website"
 
-echo "Building MaluWAF Website..."
+echo "Building SynVoid Website..."
 
 # Build frontend with trunk
 echo "Building frontend (trunk)"

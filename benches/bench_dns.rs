@@ -4,7 +4,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::net::IpAddr;
 
 fn benchmark_rate_limiter(c: &mut Criterion) {
-    use maluwaf::dns::server::DnsRateLimiter;
+    use synvoid::dns::server::DnsRateLimiter;
 
     let limiter = DnsRateLimiter::new(1000, 2000);
     let ip: IpAddr = "192.168.1.1".parse().unwrap();
@@ -15,7 +15,7 @@ fn benchmark_rate_limiter(c: &mut Criterion) {
 }
 
 fn benchmark_zone_serial(c: &mut Criterion) {
-    use maluwaf::dns::server::Zone;
+    use synvoid::dns::server::Zone;
 
     c.bench_function("zone_serial_increment", |b| {
         b.iter(|| {

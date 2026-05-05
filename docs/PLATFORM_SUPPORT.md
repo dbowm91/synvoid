@@ -1,6 +1,6 @@
 # Platform Support
 
-MaluWAF is designed to run on multiple platforms with consistent functionality where possible. This document outlines the support matrix and platform-specific considerations.
+SynVoid is designed to run on multiple platforms with consistent functionality where possible. This document outlines the support matrix and platform-specific considerations.
 
 ## Support Matrix
 
@@ -59,10 +59,10 @@ MaluWAF is designed to run on multiple platforms with consistent functionality w
 Standard Linux distributions (Ubuntu, Debian, CentOS, RHEL, Fedora) using glibc.
 
 **Default paths:**
-- Data: `/var/lib/maluwaf`
-- Config: `/etc/maluwaf`
-- Logs: `/var/log/maluwaf`
-- Runtime: `/run/maluwaf`
+- Data: `/var/lib/synvoid`
+- Config: `/etc/synvoid`
+- Logs: `/var/log/synvoid`
+- Runtime: `/run/synvoid`
 
 **Features:**
 - Full `SO_REUSEPORT` support for zero-downtime upgrades
@@ -88,7 +88,7 @@ cargo build --target x86_64-unknown-linux-musl --release
 **Docker:**
 ```dockerfile
 FROM alpine:latest
-RUN apk add --no-cache maluwaf
+RUN apk add --no-cache synvoid
 # or build from source
 ```
 
@@ -97,10 +97,10 @@ RUN apk add --no-cache maluwaf
 Full support on both Intel (x86_64) and Apple Silicon (aarch64).
 
 **Default paths:**
-- Data: `~/.local/share/maluwaf`
-- Config: `~/.config/maluwaf`
-- Logs: `~/.local/log/maluwaf`
-- Runtime: `$TMPDIR/maluwaf-runtime`
+- Data: `~/.local/share/synvoid`
+- Config: `~/.config/synvoid`
+- Logs: `~/.local/log/synvoid`
+- Runtime: `$TMPDIR/synvoid-runtime`
 
 **Notes:**
 - Uses launchd for service management instead of systemd
@@ -111,10 +111,10 @@ Full support on both Intel (x86_64) and Apple Silicon (aarch64).
 Full support with native FreeBSD paths.
 
 **Default paths:**
-- Data: `/var/db/maluwaf`
-- Config: `/usr/local/etc/maluwaf`
-- Logs: `/var/log/maluwaf`
-- Runtime: `/var/run/maluwaf`
+- Data: `/var/db/synvoid`
+- Config: `/usr/local/etc/synvoid`
+- Logs: `/var/log/synvoid`
+- Runtime: `/var/run/synvoid`
 
 **Installation:**
 ```bash
@@ -123,22 +123,22 @@ cargo build --release
 ```
 
 **Service management:**
-Create `/usr/local/etc/rc.d/maluwaf` for rc.d integration.
+Create `/usr/local/etc/rc.d/synvoid` for rc.d integration.
 
 ### Windows
 
 Windows support uses named pipes instead of Unix sockets for IPC.
 
 **Default paths:**
-- Data: `%PROGRAMDATA%\maluwaf`
-- Config: `%PROGRAMDATA%\maluwaf\config`
-- Logs: `%PROGRAMDATA%\maluwaf\logs`
-- Named Pipes: `\\.\pipe\maluwaf-*`
+- Data: `%PROGRAMDATA%\synvoid`
+- Config: `%PROGRAMDATA%\synvoid\config`
+- Logs: `%PROGRAMDATA%\synvoid\logs`
+- Named Pipes: `\\.\pipe\synvoid-*`
 
 **IPC Differences:**
-- Master IPC: `\\.\pipe\maluwaf-master`
-- Worker IPC: `\\.\pipe\maluwaf-worker-*`
-- Commands: `\\.\pipe\maluwaf-commands`
+- Master IPC: `\\.\pipe\synvoid-master`
+- Worker IPC: `\\.\pipe\synvoid-worker-*`
+- Commands: `\\.\pipe\synvoid-commands`
 
 **Upgrade Mode:**
 Windows uses "port swap" mode for upgrades:
@@ -152,8 +152,8 @@ For true zero-downtime without a load balancer, Windows socket duplication (WSAD
 **Windows Service:**
 ```powershell
 # Register as Windows Service (recommended for production)
-sc.exe create MaluWAF binPath="C:\Program Files\MaluWAF\maluwaf.exe --service"
-sc.exe start MaluWAF
+sc.exe create SynVoid binPath="C:\Program Files\SynVoid\synvoid.exe --service"
+sc.exe start SynVoid
 ```
 
 ## Feature Flags
@@ -162,7 +162,7 @@ Control compile-time features via Cargo features:
 
 ```toml
 [dependencies]
-maluwaf = { version = "0.1", features = ["socket-handoff", "daemonize"] }
+synvoid = { version = "0.1", features = ["socket-handoff", "daemonize"] }
 ```
 
 | Feature | Default | Description |
@@ -196,7 +196,7 @@ FROM --platform=$TARGETPLATFORM rust:latest AS builder
 RUN cargo build --release
 
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim
-COPY --from=builder /app/target/release/maluwaf /usr/local/bin/
+COPY --from=builder /app/target/release/synvoid /usr/local/bin/
 ```
 
 ## Performance Considerations

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::platform::PlatformError;
 
-pub const SERVICE_NAME: &str = "maluwaf";
-pub const SERVICE_DISPLAY_NAME: &str = "MaluWAF Web Application Firewall";
+pub const SERVICE_NAME: &str = "synvoid";
+pub const SERVICE_DISPLAY_NAME: &str = "SynVoid Web Application Firewall";
 pub const SERVICE_DESCRIPTION: &str =
     "High-performance Web Application Firewall with advanced attack detection and bot mitigation";
 
@@ -76,7 +76,7 @@ impl UnixServiceManager {
 
     fn install_bsd(&self, config: &ServiceConfig) -> Result<(), PlatformError> {
         let binary_path = config.binary_path.clone().unwrap_or_else(|| {
-            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("maluwaf"))
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("synvoid"))
         });
 
         let rc_script = format!(
@@ -94,7 +94,7 @@ impl UnixServiceManager {
 name="{name}"
 rcvar=$(set_rcvar)
 command="{binary_path}"
-command_args="--config /etc/maluwaf/config.toml"
+command_args="--config /etc/synvoid/config.toml"
 pidfile="/var/run/{{name}}.pid"
 procname="${{command}}"
 
@@ -185,7 +185,7 @@ run_rc_command "$1"
         let rc_conf_line = format!("{}_enable=\"YES\"", name);
 
         let rc_conf_path = if cfg!(target_os = "freebsd") {
-            "/etc/rc.conf.d/maluwaf"
+            "/etc/rc.conf.d/synvoid"
         } else {
             "/etc/rc.conf.local"
         };
@@ -235,7 +235,7 @@ run_rc_command "$1"
         }
 
         let rc_conf_path = if cfg!(target_os = "freebsd") {
-            "/etc/rc.conf.d/maluwaf"
+            "/etc/rc.conf.d/synvoid"
         } else {
             "/etc/rc.conf.local"
         };
@@ -378,19 +378,19 @@ run_rc_command "$1"
 
     fn install_linux(&self, config: &ServiceConfig) -> Result<(), PlatformError> {
         let binary_path = config.binary_path.clone().unwrap_or_else(|| {
-            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("maluwaf"))
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("synvoid"))
         });
 
         let unit_content = format!(
             "[Unit]\n\
              Description={}\n\
              After=network.target\n\
-             Documentation=https://maluwaf.dev\n\
+             Documentation=https://synvoid.dev\n\
              \n\
              [Service]\n\
              Type=simple\n\
-             ExecStart={} --config /etc/maluwaf/config.toml\n\
-             WorkingDirectory=/var/lib/maluwaf\n\
+             ExecStart={} --config /etc/synvoid/config.toml\n\
+             WorkingDirectory=/var/lib/synvoid\n\
              Restart=always\n\
              RestartSec=5\n\
              LimitNOFILE=65536\n\

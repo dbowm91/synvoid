@@ -198,7 +198,7 @@ pub struct DhtAntiEntropyRequestSignable<'a> {
     pub timestamp: u64,
 }
 
-pub const SNAPSHOT_REQUEST_PROTOCOL_VERSION: &str = "maluwaf:dht-snapshot:v1";
+pub const SNAPSHOT_REQUEST_PROTOCOL_VERSION: &str = "synvoid:dht-snapshot:v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtSnapshotRequestSignable<'a> {
@@ -332,7 +332,7 @@ pub struct QuorumProofSignable<'a> {
     pub protocol_version: &'a str,
 }
 
-pub const QUORUM_PROOF_PROTOCOL_VERSION: &str = "maluwaf:dht-quorum:v1";
+pub const QUORUM_PROOF_PROTOCOL_VERSION: &str = "synvoid:dht-quorum:v1";
 
 pub fn get_quorum_proof_signable_content(
     request_id: &str,

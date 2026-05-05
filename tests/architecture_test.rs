@@ -1,4 +1,4 @@
-//! Architecture Tests for MaluWAF Multi-Process Design
+//! Architecture Tests for SynVoid Multi-Process Design
 //!
 //! These tests verify critical architectural constraints:
 //! 1. UnifiedServer must NEVER be instantiated in the startup/master process paths
@@ -68,6 +68,6 @@ fn verify_unified_server_not_accessible_from_startup() {
     // that is only available in the worker module.
     //
     // UNCOMMENTING the line below should cause a COMPILE ERROR:
-    // use maluwaf::server::UnifiedServer;
+    // use synvoid::server::UnifiedServer;
     // let _ = UnifiedServer::new(...); // This MUST NOT compile from startup!
 }

@@ -1,4 +1,4 @@
-//! Raft consensus module for MaluWAF Global Control Plane
+//! Raft consensus module for SynVoid Global Control Plane
 //!
 //! This module provides Raft integration for the Global Node tier,
 //! enabling strong consistency for OrgPublicKey and ThreatIntel records.

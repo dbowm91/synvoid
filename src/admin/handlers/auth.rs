@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::super::state::AdminState;
 use super::common::StatusResponse;
 
-const SESSION_COOKIE_NAME: &str = "maluwaf_session";
+const SESSION_COOKIE_NAME: &str = "synvoid_session";
 
 pub async fn create_session(
     State(state): State<Arc<AdminState>>,
@@ -45,7 +45,7 @@ pub async fn create_session(
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
         HeaderValue::from_str(&cookie).unwrap_or_else(|_| {
-            HeaderValue::from_static("maluwaf_session=error; Path=/; HttpOnly")
+            HeaderValue::from_static("synvoid_session=error; Path=/; HttpOnly")
         }),
     );
 

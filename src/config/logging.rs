@@ -193,14 +193,14 @@ pub struct ElasticsearchConfig {
 
 impl ElasticsearchConfig {
     pub fn resolved_api_key(&self) -> Option<String> {
-        std::env::var("MALU_ES_API_KEY")
+        std::env::var("SYNVOID_ES_API_KEY")
             .ok()
             .or_else(|| self.api_key.clone())
     }
 }
 
 fn default_es_index() -> String {
-    "maluwaf-logs".to_string()
+    "synvoid-logs".to_string()
 }
 
 fn default_es_batch_size() -> usize {
@@ -228,13 +228,13 @@ pub struct LokiConfig {
 
 impl LokiConfig {
     pub fn resolved_username(&self) -> Option<String> {
-        std::env::var("MALU_LOKI_USERNAME")
+        std::env::var("SYNVOID_LOKI_USERNAME")
             .ok()
             .or_else(|| self.username.clone())
     }
 
     pub fn resolved_password(&self) -> Option<String> {
-        std::env::var("MALU_LOKI_PASSWORD")
+        std::env::var("SYNVOID_LOKI_PASSWORD")
             .ok()
             .or_else(|| self.password.clone())
     }

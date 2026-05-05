@@ -710,12 +710,12 @@ mod core_openapi {
     #[derive(OpenApi)]
     #[openapi(
             info(
-                title = "MaluWAF Admin API",
+                title = "SynVoid Admin API",
                 version = "1.0.0",
-                description = "REST API for managing MaluWAF - Multi-Process Web Application Firewall",
+                description = "REST API for managing SynVoid - Multi-Process Web Application Firewall",
                 contact(
-                    name = "MaluWAF Support",
-                    url = "https://github.com/anomalyco/maluwaf"
+                    name = "SynVoid Support",
+                    url = "https://github.com/anomalyco/synvoid"
                 )
             ),
             servers(
@@ -1046,12 +1046,12 @@ mod mesh_openapi {
     #[derive(OpenApi)]
     #[openapi(
             info(
-                title = "MaluWAF Admin API",
+                title = "SynVoid Admin API",
                 version = "1.0.0",
-                description = "REST API for managing MaluWAF - Multi-Process Web Application Firewall",
+                description = "REST API for managing SynVoid - Multi-Process Web Application Firewall",
                 contact(
-                    name = "MaluWAF Support",
-                    url = "https://github.com/anomalyco/maluwaf"
+                    name = "SynVoid Support",
+                    url = "https://github.com/anomalyco/synvoid"
                 )
             ),
             servers(
@@ -1373,19 +1373,19 @@ mod mesh_openapi {
 }
 
 #[cfg(not(feature = "mesh"))]
-pub use core_openapi::CoreOpenApi as MaluWafOpenApi;
+pub use core_openapi::CoreOpenApi as synvoidOpenApi;
 
 #[cfg(feature = "mesh")]
-pub use mesh_openapi::MeshOpenApi as MaluWafOpenApi;
+pub use mesh_openapi::MeshOpenApi as synvoidOpenApi;
 
-impl MaluWafOpenApi {
+impl synvoidOpenApi {
     pub fn openapi_json() -> Json<openapi::OpenApi> {
         Json(Self::openapi())
     }
 }
 
 pub async fn get_openapi_json() -> Json<openapi::OpenApi> {
-    Json(MaluWafOpenApi::openapi())
+    Json(synvoidOpenApi::openapi())
 }
 
 #[cfg(test)]
@@ -1394,9 +1394,9 @@ mod tests {
 
     #[test]
     fn test_openapi_required_fields() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
-        assert_eq!(openapi.info.title, "MaluWAF Admin API");
+        assert_eq!(openapi.info.title, "SynVoid Admin API");
         assert_eq!(openapi.info.version.as_str(), "1.0.0");
         assert!(openapi.info.description.is_some());
         assert!(openapi.info.contact.is_some());
@@ -1409,7 +1409,7 @@ mod tests {
 
     #[test]
     fn test_openapi_paths_exist() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         assert!(!openapi.paths.paths.is_empty());
 
@@ -1433,7 +1433,7 @@ mod tests {
 
     #[test]
     fn test_openapi_paths_have_operations() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         for path_key in openapi.paths.paths.keys() {
             let has_operation = openapi
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn test_openapi_components_schemas() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         assert!(openapi.components.is_some());
         let components = openapi.components.unwrap();
@@ -1480,7 +1480,7 @@ mod tests {
 
     #[test]
     fn test_openapi_tags_defined() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         assert!(openapi.tags.is_some());
         let tags = openapi.tags.unwrap();
@@ -1495,7 +1495,7 @@ mod tests {
 
     #[test]
     fn test_openapi_paths_have_tags() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         for path_key in openapi.paths.paths.keys() {
             if let Some(operation) = openapi
@@ -1511,7 +1511,7 @@ mod tests {
 
     #[test]
     fn test_openapi_servers_defined() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         assert!(
             openapi.servers.is_some(),
@@ -1533,7 +1533,7 @@ mod tests {
 
     #[test]
     fn test_openapi_paths_accessible() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         for path_key in openapi.paths.paths.keys() {
             let operation_exists = openapi
@@ -1563,7 +1563,7 @@ mod tests {
 
     #[test]
     fn test_openapi_tags_have_descriptions() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         assert!(openapi.tags.is_some(), "Tags should be defined");
         let tags = openapi.tags.unwrap();
@@ -1579,7 +1579,7 @@ mod tests {
 
     #[test]
     fn test_openapi_path_count_reasonable() {
-        let openapi = MaluWafOpenApi::openapi();
+        let openapi = synvoidOpenApi::openapi();
 
         let path_count = openapi.paths.paths.len();
         assert!(

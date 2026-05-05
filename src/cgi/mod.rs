@@ -218,7 +218,7 @@ impl CgiHandler {
 
         env.insert("SERVER_PROTOCOL".to_string(), "HTTP/1.1".to_string());
         env.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
-        env.insert("SERVER_SOFTWARE".to_string(), "MaluWAF".to_string());
+        env.insert("SERVER_SOFTWARE".to_string(), "SynVoid".to_string());
 
         if let Some(addr) = client_ip {
             env.insert("REMOTE_ADDR".to_string(), addr.to_string());

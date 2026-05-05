@@ -123,7 +123,7 @@ where
 - Implements `hyper::body::Body` for compatibility with hyper client
 - Polls inner body frames and scans each chunk with `streaming_waf.scan_chunk()`
 - If attack detected, returns error frame causing upstream request to fail
-- Metrics tracked via `maluwaf.http.streaming_body_blocked`
+- Metrics tracked via `synvoid.http.streaming_body_blocked`
 
 **Usage pattern**:
 ```rust

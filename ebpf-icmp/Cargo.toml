@@ -1,5 +1,5 @@
 [package]
-name = "maluwaf-ebpf-icmp"
+name = "synvoid-ebpf-icmp"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,6 +9,6 @@ aya-ebpf-macros = "0.1"
 network-types = "0.1"
 
 [[bin]]
-name = "maluwaf-icmp"
+name = "synvoid-icmp"
 path = "src/main.rs"
 

@@ -879,11 +879,11 @@ impl MeshCertManager {
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params.distinguished_name.push(
             rcgen::DnType::CommonName,
-            format!("MaluWAF CA - {}", self.node_id),
+            format!("SynVoid CA - {}", self.node_id),
         );
         params
             .distinguished_name
-            .push(rcgen::DnType::OrganizationName, "MaluWAF");
+            .push(rcgen::DnType::OrganizationName, "SynVoid");
 
         let key_pair = rcgen::KeyPair::generate().map_err(|e| {
             MeshCertError::ConfigError(format!("Failed to generate CA key pair: {}", e))

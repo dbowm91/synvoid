@@ -4,8 +4,8 @@
 mod tests {
     #[test]
     fn test_dns_zone_record_structure() {
-        use maluwaf::dns::DnsZoneRecord;
-        use maluwaf::dns::RecordType;
+        use synvoid::dns::DnsZoneRecord;
+        use synvoid::dns::RecordType;
 
         let record = DnsZoneRecord {
             name: "@".to_string(),
@@ -21,7 +21,7 @@ mod tests {
 
     #[test]
     fn test_dns_zone_creation() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let zone = Zone::new("example.com".to_string());
         assert_eq!(zone.origin, "example.com");
@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn test_dns_zone_increment_serial() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let mut zone = Zone::new("example.com".to_string());
         assert_eq!(zone.serial, 0);
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_zone_history_tracking() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType, Zone};
+        use synvoid::dns::{DnsZoneRecord, RecordType, Zone};
 
         let mut zone = Zone::new("example.com".to_string());
 
@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_zone_history_limit() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType, Zone};
+        use synvoid::dns::{DnsZoneRecord, RecordType, Zone};
 
         let mut zone = Zone::new("example.com".to_string());
 
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_serial_comparison_wraps() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         assert!(Zone::serial_is_more_recent(1, 0xFFFFFFFF));
         assert!(!Zone::serial_is_more_recent(0xFFFFFFFF, 1));
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn test_dns_config_defaults() {
-        use maluwaf::config::dns::{DnsConfig, DnsMode};
+        use synvoid::config::dns::{DnsConfig, DnsMode};
 
         let config = DnsConfig::default();
         assert!(!config.enabled);
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_dns_ratelimit_config_defaults() {
-        use maluwaf::config::dns::{DnsRateLimitConfig, DnsRateLimitMode};
+        use synvoid::config::dns::{DnsRateLimitConfig, DnsRateLimitMode};
 
         let config = DnsRateLimitConfig::default();
         assert_eq!(config.mode, DnsRateLimitMode::Shared);
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_dns_rrl_config_defaults() {
-        use maluwaf::config::dns::DnsRrlConfig;
+        use synvoid::config::dns::DnsRrlConfig;
 
         let config = DnsRrlConfig {
             enabled: true,
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_dnssec_config_defaults() {
-        use maluwaf::config::dns::DnsSecConfig;
+        use synvoid::config::dns::DnsSecConfig;
 
         let config = DnsSecConfig::default();
         assert!(!config.enabled);
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn test_tsig_key_config_defaults() {
-        use maluwaf::config::dns::{TsigAlgorithm, TsigKeyConfig};
+        use synvoid::config::dns::{TsigAlgorithm, TsigKeyConfig};
 
         let config = TsigKeyConfig::default();
         assert!(config.name.is_empty());
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_dns_firewall_action_variants() {
-        use maluwaf::dns::DnsFirewallAction;
+        use synvoid::dns::DnsFirewallAction;
 
         let allow = DnsFirewallAction::Allow;
         assert!(matches!(allow, DnsFirewallAction::Allow));
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_connection_limits_defaults() {
-        use maluwaf::dns::ConnectionLimits;
+        use synvoid::dns::ConnectionLimits;
 
         let mut limits = ConnectionLimits::new(1000, 5000, 4096, 65535, 100, 30, 60);
         limits.disable_graceful_degradation();
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_dns_cache_basic_operations() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(1000, 3600, 60);
 
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_edns_options_creation() {
-        use maluwaf::dns::edns::EdnsOptions;
+        use synvoid::dns::edns::EdnsOptions;
 
         let options = EdnsOptions::default();
         assert_eq!(options.version, 0);
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_wire_parse_query_name() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         // Test simple domain name
         let name_bytes = vec![
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_wire_build_question() {
-        use maluwaf::dns::wire::build_question;
+        use synvoid::dns::wire::build_question;
 
         let question = build_question("example.com", 1, 1); // A record, IN class
         assert!(question.len() > 0);
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_wire_build_response_header() {
-        use maluwaf::dns::wire::{build_response_header, MessageFlags};
+        use synvoid::dns::wire::{build_response_header, MessageFlags};
 
         let flags = MessageFlags {
             is_response: true,
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_wire_get_message_flags() {
-        use maluwaf::dns::wire::get_message_flags;
+        use synvoid::dns::wire::get_message_flags;
 
         // Standard query with RD bit set (0x0100)
         let query = vec![
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_wire_error_response() {
-        use maluwaf::dns::wire::{build_error_response, RCODE_NXDOMAIN};
+        use synvoid::dns::wire::{build_error_response, RCODE_NXDOMAIN};
 
         let query = vec![
             0x12, 0x34, // ID
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_dns_query_validator_limits() {
-        use maluwaf::dns::DnsQueryValidator;
+        use synvoid::dns::DnsQueryValidator;
 
         let validator = DnsQueryValidator::new();
 
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_rate_limiter_basic() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
 
         let limiter = DnsRateLimiter::new(100, 50);
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_dns_zone_with_soa_record() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType, Zone};
+        use synvoid::dns::{DnsZoneRecord, RecordType, Zone};
 
         let mut zone = Zone::new("example.com".to_string());
 
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_dns_zone_get_previous_version() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType, Zone};
+        use synvoid::dns::{DnsZoneRecord, RecordType, Zone};
 
         let mut zone = Zone::new("example.com".to_string());
 
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_extended_dns_error_codes() {
-        use maluwaf::dns::edns::ExtendedDnsError;
+        use synvoid::dns::edns::ExtendedDnsError;
 
         assert_eq!(
             ExtendedDnsError::from_u16(0),
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_extended_dns_error_encode_decode() {
-        use maluwaf::dns::edns::{ExtendedDnsError, ExtendedDnsErrorOption};
+        use synvoid::dns::edns::{ExtendedDnsError, ExtendedDnsErrorOption};
 
         let error = ExtendedDnsErrorOption::new(ExtendedDnsError::StaleAnswer);
         let encoded = error.encode();
@@ -440,8 +440,8 @@ mod tests {
 
     #[test]
     fn test_record_type_conversion() {
-        use maluwaf::dns::server::RecordTypeExt;
-        use maluwaf::dns::RecordType;
+        use synvoid::dns::server::RecordTypeExt;
+        use synvoid::dns::RecordType;
 
         // Test that common record types can be converted
         assert_eq!(RecordType::A.to_u16(), 1);
@@ -457,8 +457,8 @@ mod tests {
 
     #[test]
     fn test_record_type_is_signed() {
-        use maluwaf::dns::server::RecordTypeExt;
-        use maluwaf::dns::RecordType;
+        use synvoid::dns::server::RecordTypeExt;
+        use synvoid::dns::RecordType;
 
         // Most record types should be signed in DNSSEC responses
         assert!(RecordType::A.is_signed());
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_rcode_constants() {
-        use maluwaf::dns::{
+        use synvoid::dns::{
             RCODE_FORMERR, RCODE_NOERROR, RCODE_NOTIMP, RCODE_NXDOMAIN, RCODE_REFUSED,
             RCODE_SERVFAIL,
         };
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_error_response_servfail() {
-        use maluwaf::dns::{build_error_response, RCODE_SERVFAIL};
+        use synvoid::dns::{build_error_response, RCODE_SERVFAIL};
 
         let query = vec![
             0x12, 0x34, // ID
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_error_response_formerr() {
-        use maluwaf::dns::{build_error_response, RCODE_FORMERR};
+        use synvoid::dns::{build_error_response, RCODE_FORMERR};
 
         let query = vec![
             0xAB, 0xCD, // ID
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_error_response_refused() {
-        use maluwaf::dns::{build_error_response, RCODE_REFUSED};
+        use synvoid::dns::{build_error_response, RCODE_REFUSED};
 
         let query = vec![
             0x01, 0x02, // ID
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_error_response_preserves_question() {
-        use maluwaf::dns::{build_error_response, RCODE_NXDOMAIN};
+        use synvoid::dns::{build_error_response, RCODE_NXDOMAIN};
 
         let query = vec![
             0x99, 0x88, // ID
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_anycast_health_check_query_building() {
-        use maluwaf::dns::anycast::AnycastSocketManager;
+        use synvoid::dns::anycast::AnycastSocketManager;
 
         let domain = "_healthcheck.local";
 
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_anycast_health_check_invalid_domain() {
-        use maluwaf::dns::anycast::AnycastSocketManager;
+        use synvoid::dns::anycast::AnycastSocketManager;
 
         let empty_domain = "";
         let packet = AnycastSocketManager::build_health_check_query(0x1234, empty_domain);
@@ -633,8 +633,8 @@ mod tests {
 
     #[test]
     fn test_anycast_serial_comparison_remote_newer() {
-        use maluwaf::dns::anycast_sync::AnycastZoneSync;
-        use maluwaf::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
+        use synvoid::dns::anycast_sync::AnycastZoneSync;
+        use synvoid::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
 
         let local = 100u32;
         let remote = 200u32;
@@ -648,8 +648,8 @@ mod tests {
 
     #[test]
     fn test_anycast_serial_comparison_local_newer() {
-        use maluwaf::dns::anycast_sync::AnycastZoneSync;
-        use maluwaf::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
+        use synvoid::dns::anycast_sync::AnycastZoneSync;
+        use synvoid::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
 
         let local = 200u32;
         let remote = 100u32;
@@ -663,8 +663,8 @@ mod tests {
 
     #[test]
     fn test_anycast_serial_comparison_equal() {
-        use maluwaf::dns::anycast_sync::AnycastZoneSync;
-        use maluwaf::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
+        use synvoid::dns::anycast_sync::AnycastZoneSync;
+        use synvoid::dns::anycast_sync::{SerialComparison, ZoneSyncDecision};
 
         let serial = 100u32;
 
@@ -677,9 +677,9 @@ mod tests {
 
     #[test]
     fn test_anycast_serial_wrap_around() {
-        use maluwaf::dns::anycast_sync::AnycastZoneSync;
-        use maluwaf::dns::anycast_sync::SerialComparison;
-        use maluwaf::dns::anycast_sync::ZoneSyncDecision;
+        use synvoid::dns::anycast_sync::AnycastZoneSync;
+        use synvoid::dns::anycast_sync::SerialComparison;
+        use synvoid::dns::anycast_sync::ZoneSyncDecision;
 
         let local = u32::MAX - 100;
         let remote = 50u32;
@@ -693,8 +693,8 @@ mod tests {
 
     #[test]
     fn test_anycast_zone_sync_decision_reject_wrap_around() {
-        use maluwaf::dns::anycast_sync::AnycastZoneSync;
-        use maluwaf::dns::anycast_sync::ZoneSyncDecision;
+        use synvoid::dns::anycast_sync::AnycastZoneSync;
+        use synvoid::dns::anycast_sync::ZoneSyncDecision;
 
         let local = 50u32;
         let remote = u32::MAX - 100;
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_query_validator_valid_query() {
-        use maluwaf::dns::DnsQueryValidator;
+        use synvoid::dns::DnsQueryValidator;
 
         let validator = DnsQueryValidator::new();
 
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn test_query_validator_invalid_label_length() {
-        use maluwaf::dns::DnsQueryValidator;
+        use synvoid::dns::DnsQueryValidator;
 
         let validator = DnsQueryValidator::new();
 
@@ -755,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_query_validator_too_many_labels() {
-        use maluwaf::dns::DnsQueryValidator;
+        use synvoid::dns::DnsQueryValidator;
 
         let validator = DnsQueryValidator::new();
 
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn test_query_validator_invalid_query_type_zero() {
-        use maluwaf::dns::DnsQueryValidator;
+        use synvoid::dns::DnsQueryValidator;
 
         let validator = DnsQueryValidator::new();
 
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_query_validator_query_too_small() {
-        use maluwaf::dns::DnsQueryValidator;
+        use synvoid::dns::DnsQueryValidator;
 
         let validator = DnsQueryValidator::new();
 

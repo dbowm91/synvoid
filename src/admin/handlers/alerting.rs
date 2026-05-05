@@ -135,7 +135,7 @@ pub async fn test_webhook(
         metric: "test".to_string(),
         value: 1.0,
         threshold: 0.0,
-        message: "This is a test alert from MaluWAF".to_string(),
+        message: "This is a test alert from SynVoid".to_string(),
     };
 
     alert_manager

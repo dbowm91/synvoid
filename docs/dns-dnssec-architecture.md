@@ -11,16 +11,16 @@ Validation is enabled via `dnssec_validation = true` in `[dns.recursive]` config
 
 ## DNSSEC Validation in Forwarding Mode
 
-When operating as a forwarding resolver, MaluWAF does **not** perform full DNSSEC validation itself. Instead it relies on the upstream recursive resolver:
+When operating as a forwarding resolver, SynVoid does **not** perform full DNSSEC validation itself. Instead it relies on the upstream recursive resolver:
 
 1. Client sends query with `DO` (DNSSEC OK) bit.
-2. MaluWAF forwards to upstream with `DO` bit set.
+2. SynVoid forwards to upstream with `DO` bit set.
 3. Upstream returns RRSIG + DNSKEY/NSEC/NSEC3 records alongside the answer.
-4. MaluWAF verifies the AD (Authenticated Data) bit from upstream and, if set, propagates it to the client.
+4. SynVoid verifies the AD (Authenticated Data) bit from upstream and, if set, propagates it to the client.
 
 ## NSEC3 Support
 
-MaluWAF generates NSEC3 records for authoritative zones it serves. Supported hash algorithms:
+SynVoid generates NSEC3 records for authoritative zones it serves. Supported hash algorithms:
 
 | Algorithm | Hash | Status |
 |-----------|------|--------|

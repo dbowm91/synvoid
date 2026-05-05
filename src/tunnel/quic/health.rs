@@ -229,13 +229,13 @@ impl QuicHealthMonitor {
     pub fn register_connection(&self, session_id: String, peer_id: Option<String>) {
         let health = ConnectionHealth::new(session_id.clone(), peer_id.clone());
         self.connections.insert(session_id, health);
-        gauge!("maluwaf.tunnel.quic.health.monitored_connections")
+        gauge!("synvoid.tunnel.quic.health.monitored_connections")
             .set(self.connections.len() as f64);
     }
 
     pub fn unregister_connection(&self, session_id: &str) {
         self.connections.remove(session_id);
-        gauge!("maluwaf.tunnel.quic.health.monitored_connections")
+        gauge!("synvoid.tunnel.quic.health.monitored_connections")
             .set(self.connections.len() as f64);
     }
 
@@ -256,7 +256,7 @@ impl QuicHealthMonitor {
             health.record_rtt(rtt);
             health.update_quality(&self.config);
 
-            histogram!("maluwaf.tunnel.quic.health.rtt").record(rtt.as_secs_f64() * 1000.0);
+            histogram!("synvoid.tunnel.quic.health.rtt").record(rtt.as_secs_f64() * 1000.0);
 
             if health.consecutive_successes == self.config.recovery_threshold
                 && (old_quality == ConnectionQuality::Failed
@@ -268,7 +268,7 @@ impl QuicHealthMonitor {
                         session_id: session_id.to_string(),
                         peer_id: health.peer_id.clone(),
                     });
-                counter!("maluwaf.tunnel.quic.health.recovered").increment(1);
+                counter!("synvoid.tunnel.quic.health.recovered").increment(1);
             }
 
             if old_quality != health.quality {
@@ -292,7 +292,7 @@ impl QuicHealthMonitor {
             health.last_failure = Some(Instant::now());
             health.update_quality(&self.config);
 
-            counter!("maluwaf.tunnel.quic.health.failures").increment(1);
+            counter!("synvoid.tunnel.quic.health.failures").increment(1);
 
             if health.consecutive_failures >= self.config.failure_threshold {
                 let _ = self

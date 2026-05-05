@@ -7,16 +7,16 @@ use sha2::Sha256;
 
 const NONCE_SIZE: usize = 12;
 const DERIVED_KEY_SIZE: usize = 32;
-const HKDF_INFO: &[u8] = b"maluwaf-tier-key-encrypt";
-const TRANSMISSION_HKDF_INFO: &[u8] = b"maluwaf-tier-key-transmit";
+const HKDF_INFO: &[u8] = b"synvoid-tier-key-encrypt";
+const TRANSMISSION_HKDF_INFO: &[u8] = b"synvoid-tier-key-transmit";
 
-const HKDF_INFO_ORG: &[u8] = b"maluwaf-privileged-org";
-const HKDF_INFO_MEMBER_CERT: &[u8] = b"maluwaf-privileged-member-cert";
-const HKDF_INFO_GLOBAL_NODE_LIST: &[u8] = b"maluwaf-privileged-global-node-list";
-const HKDF_INFO_ORG_NAME_RESERVATION: &[u8] = b"maluwaf-privileged-org-name-reservation";
-const HKDF_INFO_DNS_ZONE: &[u8] = b"maluwaf-privileged-dns-zone";
-const HKDF_INFO_DNS_DOMAIN_REG: &[u8] = b"maluwaf-privileged-dns-domain-reg";
-const HKDF_INFO_ANYCAST_NODE: &[u8] = b"maluwaf-privileged-anycast-node";
+const HKDF_INFO_ORG: &[u8] = b"synvoid-privileged-org";
+const HKDF_INFO_MEMBER_CERT: &[u8] = b"synvoid-privileged-member-cert";
+const HKDF_INFO_GLOBAL_NODE_LIST: &[u8] = b"synvoid-privileged-global-node-list";
+const HKDF_INFO_ORG_NAME_RESERVATION: &[u8] = b"synvoid-privileged-org-name-reservation";
+const HKDF_INFO_DNS_ZONE: &[u8] = b"synvoid-privileged-dns-zone";
+const HKDF_INFO_DNS_DOMAIN_REG: &[u8] = b"synvoid-privileged-dns-domain-reg";
+const HKDF_INFO_ANYCAST_NODE: &[u8] = b"synvoid-privileged-anycast-node";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrivilegedRecordType {

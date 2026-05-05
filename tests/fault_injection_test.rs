@@ -8,7 +8,7 @@ mod tests {
     async fn test_worker_crash_recovery() {
         // This test requires a built binary.
         // We'll skip it if not running in a CI-like environment with the binary available.
-        let binary_path = "./target/debug/maluwaf";
+        let binary_path = "./target/debug/synvoid";
         if !std::path::Path::new(binary_path).exists() {
             tracing::warn!(
                 "Skipping test_worker_crash_recovery: binary not found at {}",
@@ -32,7 +32,7 @@ mod tests {
         // In a real test we'd use IPC or status command, but here we'll grep
         let output = Command::new("pgrep")
             .arg("-f")
-            .arg("maluwaf.*--unified-server-worker")
+            .arg("synvoid.*--unified-server-worker")
             .output()
             .expect("Failed to run pgrep");
 
@@ -56,7 +56,7 @@ mod tests {
         while start.elapsed() < Duration::from_secs(15) {
             let output = Command::new("pgrep")
                 .arg("-f")
-                .arg("maluwaf.*--unified-server-worker")
+                .arg("synvoid.*--unified-server-worker")
                 .output()
                 .expect("Failed to run pgrep");
 

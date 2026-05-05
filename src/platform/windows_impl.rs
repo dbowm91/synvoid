@@ -233,7 +233,7 @@ impl IpcListener for WindowsIpcListener {
         let pipe_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("maluwaf");
+            .unwrap_or("synvoid");
 
         Ok(Self {
             pipe_path: format!("\\\\.\\pipe\\{}", pipe_name),
@@ -299,7 +299,7 @@ impl IpcStream for WindowsIpcStream {
         let pipe_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("maluwaf");
+            .unwrap_or("synvoid");
 
         let pipe_path = format!("\\\\.\\pipe\\{}", pipe_name);
 

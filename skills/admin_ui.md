@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Admin UI is a Yew-based WASM frontend that communicates with the MaluWAF backend via REST APIs. It is located in `admin-ui/` and builds to WASM + JavaScript via Trunk.
+The Admin UI is a Yew-based WASM frontend that communicates with the SynVoid backend via REST APIs. It is located in `admin-ui/` and builds to WASM + JavaScript via Trunk.
 
 ## Project Structure
 

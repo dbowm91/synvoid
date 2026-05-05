@@ -49,6 +49,15 @@ Use `ServerlessWafMode` enum (`enforce|log|off`) instead of boolean `serverless_
 - `log`: WAF runs but doesn't block
 - `off`: WAF disabled
 
+### Stall/Tarpit Concurrency Safety
+
+Stall actions can exhaust worker resources at high traffic. Use bounded stall with metrics:
+- `max_stalled_requests` config limits concurrent stalls (default 100)
+- Metrics: `ACTIVE_STALLED_REQUESTS`, `STALL_REJECTED_CONCURRENCY_CAP`, `STALL_TIMEOUTS`
+- When cap reached, return 429 instead of stalling
+
+See `skills/performance_patterns.md` for implementation details.
+
 ## Skills Reference
 
 - `skills/streaming_waf.md` — Streaming WAF engine patterns

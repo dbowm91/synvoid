@@ -1,6 +1,6 @@
 # Traffic Shaping
 
-MaluWAF provides token bucket-based traffic shaping to control bandwidth allocation, prevent resource exhaustion, and ensure fair distribution of resources across sites and clients.
+SynVoid provides token bucket-based traffic shaping to control bandwidth allocation, prevent resource exhaustion, and ensure fair distribution of resources across sites and clients.
 
 ## Overview
 
@@ -175,12 +175,12 @@ burst_mbps = 1500
 ## Prometheus Metrics
 
 ```bash
-maluwaf_traffic_shaper_packets_total     # Total packets processed
-maluwaf_traffic_shaper_packets_dropped   # Dropped packets
-maluwaf_traffic_shaper_packets_queued    # Queued packets
-maluwaf_traffic_shaper_tokens_available  # Available tokens
-maluwaf_traffic_shaper_bucket_empty_total # Bucket empty events
-maluwaf_traffic_shaper_wait_seconds      # Wait time in queue
+synvoid_traffic_shaper_packets_total     # Total packets processed
+synvoid_traffic_shaper_packets_dropped   # Dropped packets
+synvoid_traffic_shaper_packets_queued    # Queued packets
+synvoid_traffic_shaper_tokens_available  # Available tokens
+synvoid_traffic_shaper_bucket_empty_total # Bucket empty events
+synvoid_traffic_shaper_wait_seconds      # Wait time in queue
 ```
 
 ## Monitoring
@@ -189,8 +189,8 @@ maluwaf_traffic_shaper_wait_seconds      # Wait time in queue
 
 ```bash
 # Via Prometheus
-maluwaf_traffic_shaper_packets_dropped
-maluwaf_traffic_shaper_packets_queued
+synvoid_traffic_shaper_packets_dropped
+synvoid_traffic_shaper_packets_queued
 ```
 
 ### Identify Issues

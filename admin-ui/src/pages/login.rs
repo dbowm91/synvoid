@@ -93,7 +93,7 @@ pub fn Login() -> Html {
         <div class="min-h-screen flex items-center justify-center bg-primary">
             <div class="bg-secondary rounded-lg border border-default p-8 w-full max-w-md">
                 <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold text-primary mb-2">{ "MaluWAF Admin" }</h1>
+                    <h1 class="text-3xl font-bold text-primary mb-2">{ "SynVoid Admin" }</h1>
                     <p class="text-secondary">{ "Enter your admin token to access the dashboard" }</p>
                 </div>
 

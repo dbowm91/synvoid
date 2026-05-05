@@ -4,24 +4,24 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use http::HeaderMap;
-use maluwaf::config::site::ProxyHeadersConfig;
-use maluwaf::config::site::RetryConfig;
-use maluwaf::config::{MainConfig, SiteConfig};
-use maluwaf::proxy::headers::HEADERS_TO_STRIP;
-use maluwaf::proxy::retry::{
+use synvoid::config::site::ProxyHeadersConfig;
+use synvoid::config::site::RetryConfig;
+use synvoid::config::{MainConfig, SiteConfig};
+use synvoid::proxy::headers::HEADERS_TO_STRIP;
+use synvoid::proxy::retry::{
     calculate_backoff, is_idempotent_method, is_retryable_status, should_retry_request,
 };
-use maluwaf::proxy::{
+use synvoid::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers,
     is_hop_by_hop_header, join_upstream_url, sanitize_request_path, ForwardedProtocol,
     ResponseSizeError,
 };
-use maluwaf::router::{BackendType, RouteResult, Router};
-use maluwaf::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
+use synvoid::router::{BackendType, RouteResult, Router};
+use synvoid::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
 
 #[cfg(test)]
 mod echo_server_harness_tests {
-    use maluwaf::test_utils::echo::{start_echo_server, EchoResponse};
+    use synvoid::test_utils::echo::{start_echo_server, EchoResponse};
 
     #[tokio::test]
     async fn test_echo_server_starts_and_captures() {

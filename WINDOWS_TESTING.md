@@ -12,9 +12,9 @@ This document outlines the Windows support implementation and what needs to be t
 - **Protocol**: Same 4-byte length prefix + JSON framing as Unix
 
 ### 2. Named Pipe Paths
-- Master IPC: `\\.\pipe\maluwaf-master`
-- Static worker IPC: `\\.\pipe\maluwaf-static-worker`
-- CLI commands: `\\.\pipe\maluwaf-commands`
+- Master IPC: `\\.\pipe\synvoid-master`
+- Static worker IPC: `\\.\pipe\synvoid-static-worker`
+- CLI commands: `\\.\pipe\synvoid-commands`
 
 ### 3. Signal Handling
 - Ctrl+C handler works on Windows (via tokio)

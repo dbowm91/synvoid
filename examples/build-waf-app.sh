@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Build script for creating a custom RustWAF binary with embedded Axum app
+# Build script for creating a custom synvoid binary with embedded Axum app
 #
 # Usage:
 #   ./build.sh                    # Build release binary
@@ -30,12 +30,12 @@ echo "Building in $MODE mode..."
 # Build the combined binary
 # This expects your app to be in ./myapp/ with a Cargo.toml
 cargo build --$MODE \
-    --package rustwaf \
+    --package synvoid \
     --features axum-embedded
 
 echo ""
 echo "Build complete!"
-echo "Binary: target/$MODE/rustwaf"
+echo "Binary: target/$MODE/synvoid"
 echo ""
 echo "To run:"
-echo "  ./target/$MODE/rustwaf --config config/main.toml"
+echo "  ./target/$MODE/synvoid --config config/main.toml"

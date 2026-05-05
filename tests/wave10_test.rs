@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod waf_anomaly_scoring_tests {
     use http::{HeaderMap, Method};
-    use maluwaf::waf::attack_detection::{
+    use synvoid::waf::attack_detection::{
         AnomalyScoringConfig, AttackDetectionConfig, AttackDetector,
     };
 
@@ -207,7 +207,7 @@ mod waf_anomaly_scoring_tests {
 
 #[cfg(test)]
 mod waf_streaming_tests {
-    use maluwaf::waf::attack_detection::{
+    use synvoid::waf::attack_detection::{
         AttackDetectionConfig, AttackDetector, StreamingWafDecision,
     };
     use std::sync::Arc;
@@ -286,7 +286,7 @@ mod waf_streaming_tests {
         let detection = result.unwrap();
         assert_eq!(
             detection.attack_type,
-            maluwaf::waf::attack_detection::AttackType::Sqli
+            synvoid::waf::attack_detection::AttackType::Sqli
         );
     }
 
@@ -381,7 +381,7 @@ mod waf_streaming_tests {
 #[cfg(test)]
 mod waf_false_positive_tests {
     use http::{HeaderMap, Method};
-    use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
     #[test]
     fn test_false_positive_normal_api_request() {
@@ -539,7 +539,7 @@ mod waf_false_positive_tests {
 
 #[cfg(test)]
 mod mesh_proxy_circuit_breaker_tests {
-    use maluwaf::mesh::proxy::{CircuitState, ProviderStats, BLOCK_BROADCAST_FAILURE_THRESHOLD};
+    use synvoid::mesh::proxy::{CircuitState, ProviderStats, BLOCK_BROADCAST_FAILURE_THRESHOLD};
     use std::time::Instant;
 
     #[test]
@@ -736,7 +736,7 @@ mod mesh_proxy_circuit_breaker_tests {
 #[cfg(test)]
 mod mesh_proxy_tiered_cache_tests {
     use bytes::Bytes;
-    use maluwaf::mesh::proxy::{TieredTransformCache, TransformCacheEntry};
+    use synvoid::mesh::proxy::{TieredTransformCache, TransformCacheEntry};
 
     #[test]
     fn test_tiered_cache_creation() {
@@ -833,7 +833,7 @@ mod mesh_proxy_tiered_cache_tests {
 #[cfg(test)]
 mod waf_attack_coverage_tests {
     use http::{HeaderMap, Method};
-    use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector, AttackType};
+    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector, AttackType};
 
     fn check_detects_attack(
         path: &str,
@@ -1489,8 +1489,8 @@ mod entropy_calculation_tests {
 
 #[cfg(test)]
 mod overseer_lifecycle_tests {
-    use maluwaf::overseer::drain_manager::DrainManager;
-    use maluwaf::process::WorkerId;
+    use synvoid::overseer::drain_manager::DrainManager;
+    use synvoid::process::WorkerId;
     use parking_lot::RwLock;
     use std::sync::Arc;
 

@@ -1,6 +1,6 @@
 # Rate Limiting
 
-MaluWAF provides flexible rate limiting to protect your services from abuse, DoS attacks, and excessive usage.
+SynVoid provides flexible rate limiting to protect your services from abuse, DoS attacks, and excessive usage.
 
 ## Overview
 
@@ -247,10 +247,10 @@ When threat level increases, rate limits are automatically tightened.
 Track rate limiting via Prometheus:
 
 ```
-maluwaf_ratelimit_exceeded_total          # Total rate limit hits
-maluwaf_ratelimit_exceeded{limit="ip"}    # Per-IP limits
-maluwaf_ratelimit_exceeded{limit="global"} # Global limits
-maluwaf_ratelimit_active                  # Currently rate-limited IPs
+synvoid_ratelimit_exceeded_total          # Total rate limit hits
+synvoid_ratelimit_exceeded{limit="ip"}    # Per-IP limits
+synvoid_ratelimit_exceeded{limit="global"} # Global limits
+synvoid_ratelimit_active                  # Currently rate-limited IPs
 ```
 
 ## See Also

@@ -14,8 +14,8 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            sandbox_dir: PathBuf::from("/var/lib/maluwaf/sandbox"),
-            quarantine_dir: PathBuf::from("/var/lib/maluwaf/quarantine"),
+            sandbox_dir: PathBuf::from("/var/lib/synvoid/sandbox"),
+            quarantine_dir: PathBuf::from("/var/lib/synvoid/quarantine"),
             sandbox_level: crate::platform::SandboxLevel::Off,
         }
     }

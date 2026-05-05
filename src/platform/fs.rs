@@ -69,23 +69,23 @@ impl PlatformPaths {
             Platform::Linux | Platform::LinuxMusl => {
                 let data = std::env::var_os("XDG_DATA_DIRS")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/lib/maluwaf"));
+                    .unwrap_or_else(|| PathBuf::from("/var/lib/synvoid"));
 
                 let config = std::env::var_os("XDG_CONFIG_DIRS")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/etc/maluwaf"));
+                    .unwrap_or_else(|| PathBuf::from("/etc/synvoid"));
 
                 let log = std::env::var_os("XDG_LOG_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/log/maluwaf"));
+                    .unwrap_or_else(|| PathBuf::from("/var/log/synvoid"));
 
                 let cache = std::env::var_os("XDG_CACHE_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/cache/maluwaf"));
+                    .unwrap_or_else(|| PathBuf::from("/var/cache/synvoid"));
 
                 let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-                    .map(|s| PathBuf::from(s).join("maluwaf"))
-                    .unwrap_or_else(|| PathBuf::from("/run/maluwaf"));
+                    .map(|s| PathBuf::from(s).join("synvoid"))
+                    .unwrap_or_else(|| PathBuf::from("/run/synvoid"));
 
                 (data, config, log, cache, runtime)
             }
@@ -96,23 +96,23 @@ impl PlatformPaths {
                     .unwrap_or_else(|| PathBuf::from("/tmp"));
 
                 (
-                    home.join(".local/share/maluwaf"),
-                    home.join(".config/maluwaf"),
-                    home.join(".local/log/maluwaf"),
-                    home.join(".cache/maluwaf"),
+                    home.join(".local/share/synvoid"),
+                    home.join(".config/synvoid"),
+                    home.join(".local/log/synvoid"),
+                    home.join(".cache/synvoid"),
                     std::env::var_os("TMPDIR")
                         .map(PathBuf::from)
                         .unwrap_or_else(|| PathBuf::from("/tmp"))
-                        .join("maluwaf-runtime"),
+                        .join("synvoid-runtime"),
                 )
             }
 
             Platform::FreeBSD | Platform::OpenBSD | Platform::NetBSD => (
-                PathBuf::from("/var/db/maluwaf"),
-                PathBuf::from("/usr/local/etc/maluwaf"),
-                PathBuf::from("/var/log/maluwaf"),
-                PathBuf::from("/var/cache/maluwaf"),
-                PathBuf::from("/var/run/maluwaf"),
+                PathBuf::from("/var/db/synvoid"),
+                PathBuf::from("/usr/local/etc/synvoid"),
+                PathBuf::from("/var/log/synvoid"),
+                PathBuf::from("/var/cache/synvoid"),
+                PathBuf::from("/var/run/synvoid"),
             ),
 
             Platform::Windows => {
@@ -125,20 +125,20 @@ impl PlatformPaths {
                     .unwrap_or_else(|| PathBuf::from("."));
 
                 (
-                    program_data.join("maluwaf"),
-                    program_data.join("maluwaf").join("config"),
-                    program_data.join("maluwaf").join("logs"),
-                    app_data.join("maluwaf").join("cache"),
-                    app_data.join("maluwaf").join("runtime"),
+                    program_data.join("synvoid"),
+                    program_data.join("synvoid").join("config"),
+                    program_data.join("synvoid").join("logs"),
+                    app_data.join("synvoid").join("cache"),
+                    app_data.join("synvoid").join("runtime"),
                 )
             }
 
             Platform::Unknown => (
-                PathBuf::from("/var/lib/maluwaf"),
-                PathBuf::from("/etc/maluwaf"),
-                PathBuf::from("/var/log/maluwaf"),
-                PathBuf::from("/var/cache/maluwaf"),
-                PathBuf::from("/run/maluwaf"),
+                PathBuf::from("/var/lib/synvoid"),
+                PathBuf::from("/etc/synvoid"),
+                PathBuf::from("/var/log/synvoid"),
+                PathBuf::from("/var/cache/synvoid"),
+                PathBuf::from("/run/synvoid"),
             ),
         };
 
@@ -192,11 +192,11 @@ impl PlatformPaths {
     }
 
     pub fn pid_file(&self) -> PathBuf {
-        self.runtime_dir.join("maluwaf.pid")
+        self.runtime_dir.join("synvoid.pid")
     }
 
     pub fn socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("maluwaf.sock")
+        self.runtime_dir.join("synvoid.sock")
     }
 
     pub fn ipc_path(&self, name: &str) -> PathBuf {
@@ -204,16 +204,16 @@ impl PlatformPaths {
     }
 
     pub fn master_socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("maluwaf-master.sock")
+        self.runtime_dir.join("synvoid-master.sock")
     }
 
     pub fn static_worker_socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("maluwaf-static-worker.sock")
+        self.runtime_dir.join("synvoid-static-worker.sock")
     }
 
     pub fn unified_worker_socket_path(&self, worker_id: usize) -> PathBuf {
         self.runtime_dir
-            .join(format!("maluwaf-unified-{}.sock", worker_id))
+            .join(format!("synvoid-unified-{}.sock", worker_id))
     }
 
     pub fn panic_log_path(&self, name: &str) -> PathBuf {

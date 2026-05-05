@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 ///   ed25519-dalek: SigningKey::generate(&mut rand::rng())
 ///
 /// Configure via `waf.rule_feed.public_key` in the TOML config, or set the
-/// MALUWAF_RULE_FEED_PUBLIC_KEY environment variable.
+/// SYNVOID_RULE_FEED_PUBLIC_KEY environment variable.
 ///
 /// If this placeholder remains, a random key is generated at startup and all
 /// rule feed signature verifications will fail (rules will not be applied).

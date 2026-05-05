@@ -861,7 +861,7 @@ impl UnifiedServer {
             if let Some(ref plugin_dir) = main_config.plugins.wasm.plugins.first().map(|p| {
                 std::path::Path::new(&p.path)
                     .parent()
-                    .unwrap_or(std::path::Path::new("/opt/maluwaf/plugins"))
+                    .unwrap_or(std::path::Path::new("/opt/synvoid/plugins"))
                     .to_path_buf()
             }) {
                 if plugin_dir.is_dir() {

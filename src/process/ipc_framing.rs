@@ -263,7 +263,7 @@ pub fn encode_pipe_name(name: &str) -> Vec<u16> {
 }
 
 pub fn endpoint_to_pipe_name(endpoint: &str) -> String {
-    format!("\\\\.\\pipe\\maluwaf-{}", endpoint)
+    format!("\\\\.\\pipe\\synvoid-{}", endpoint)
 }
 
 pub fn endpoint_to_socket_path(endpoint: &str) -> std::path::PathBuf {
@@ -315,7 +315,7 @@ mod tests {
     fn test_endpoint_to_pipe_name() {
         let endpoint = "worker-1";
         let name = endpoint_to_pipe_name(endpoint);
-        assert_eq!(name, "\\\\.\\pipe\\maluwaf-worker-1");
+        assert_eq!(name, "\\\\.\\pipe\\synvoid-worker-1");
     }
 
     #[test]

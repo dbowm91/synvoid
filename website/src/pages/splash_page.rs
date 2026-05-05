@@ -8,7 +8,7 @@ pub fn SplashPage() -> Html {
     let on_click_copy = {
         let copied = copied.clone();
         Callback::from(move |_| {
-            let code = "git clone https://github.com/maluwaf/maluwaf.git\ncd maluwaf\ncargo build --release\n./target/release/maluwaf";
+            let code = "git clone https://github.com/synvoid/synvoid.git\ncd synvoid\ncargo build --release\n./target/release/synvoid";
             if let Some(window) = web_sys::window() {
                 let navigator = window.navigator();
                 let clipboard = navigator.clipboard();
@@ -114,12 +114,12 @@ pub fn SplashPage() -> Html {
                             </button>
                         </div>
                         <pre class="p-5 overflow-x-auto font-mono text-sm leading-relaxed"><code><span class="text-[#6a737d]">{"# Clone and build"}</span>
-    <span class="text-[#ff79c6]">{"git"}</span><span class="text-[#f0f0f5]">{" clone https://github.com/maluwaf/maluwaf.git"}</span>
-    <span class="text-[#ff79c6]">{"cd"}</span><span class="text-[#f0f0f5]">{" maluwaf"}</span>
+    <span class="text-[#ff79c6]">{"git"}</span><span class="text-[#f0f0f5]">{" clone https://github.com/synvoid/synvoid.git"}</span>
+    <span class="text-[#ff79c6]">{"cd"}</span><span class="text-[#f0f0f5]">{" synvoid"}</span>
     <span class="text-[#ff79c6]">{"cargo"}</span><span class="text-[#f0f0f5]">{" build --release"}</span>
 
     <span class="text-[#6a737d]">{"# Run with default config"}</span>
-    <span class="text-[#50fa7b]">{"."}</span><span class="text-[#f0f0f5]">{"/target/release/maluwaf"}</span></code></pre>
+    <span class="text-[#50fa7b]">{"."}</span><span class="text-[#f0f0f5]">{"/target/release/synvoid"}</span></code></pre>
                     </div>
                 </div>
             </section>
@@ -192,7 +192,7 @@ pub fn SplashPage() -> Html {
                             <span class="text-[var(--text-muted)] text-3xl">{"→"}</span>
                             <div class="glass-card rounded-xl px-8 py-5 font-medium whitespace-nowrap border-2 border-[var(--accent-primary)] bg-[rgba(0,212,170,0.1)]">
                                 <div class="text-2xl mb-2">{"🛡️"}</div>
-                                <div class="text-[var(--accent-primary)]">{"MaluWAF"}</div>
+                                <div class="text-[var(--accent-primary)]">{"SynVoid"}</div>
                             </div>
                             <span class="text-[var(--text-muted)] text-3xl">{"→"}</span>
                             <div class="glass-card rounded-xl px-8 py-5 font-medium whitespace-nowrap">
@@ -237,10 +237,10 @@ pub fn SplashPage() -> Html {
                             <path d="M25 50 L35 40 L45 50 L55 40" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
                             <circle cx="40" cy="40" r="6" fill="#00d4aa"/>
                         </svg>
-                        <span class="text-[var(--text-secondary)]">{"MaluWAF - Open Source WAF"}</span>
+                        <span class="text-[var(--text-secondary)]">{"SynVoid - Open Source WAF"}</span>
                     </div>
                     <div class="flex items-center gap-8 text-[var(--text-secondary)]">
-                        <a href="https://github.com/maluwaf/maluwaf" class="hover:text-[var(--accent-primary)] transition-colors">{"GitHub"}</a>
+                        <a href="https://github.com/synvoid/synvoid" class="hover:text-[var(--accent-primary)] transition-colors">{"GitHub"}</a>
                         <a href="/docs" class="hover:text-[var(--accent-primary)] transition-colors">{"Documentation"}</a>
                     </div>
                 </div>

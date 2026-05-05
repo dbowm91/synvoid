@@ -152,7 +152,7 @@ impl Router {
             .map(|base| {
                 let mut path = PathBuf::from(base);
                 path.pop();
-                path.join("maluwaf-static-worker.sock")
+                path.join("synvoid-static-worker.sock")
             })
             .unwrap_or_else(|| PlatformPaths::new().static_worker_socket_path())
     }
@@ -523,10 +523,10 @@ impl Router {
                     BackendConfig::AxumDynamic { socket, plugin } => {
                         let socket = socket
                             .clone()
-                            .unwrap_or_else(|| "/run/maluwaf/axum.sock".to_string());
+                            .unwrap_or_else(|| "/run/synvoid/axum.sock".to_string());
                         let plugin = plugin
                             .clone()
-                            .unwrap_or_else(|| "/opt/maluwaf/plugins/app.so".to_string());
+                            .unwrap_or_else(|| "/opt/synvoid/plugins/app.so".to_string());
                         RouteResult::Found(RouteTarget {
                             site_id: Arc::from(site_id.as_str()),
                             upstream: Arc::from(format!("http://{}", socket)),
@@ -825,10 +825,10 @@ impl Router {
                 BackendConfig::AxumDynamic { socket, plugin } => {
                     let socket = socket
                         .clone()
-                        .unwrap_or_else(|| "/run/maluwaf/axum.sock".to_string());
+                        .unwrap_or_else(|| "/run/synvoid/axum.sock".to_string());
                     let plugin = plugin
                         .clone()
-                        .unwrap_or_else(|| "/opt/maluwaf/plugins/app.so".to_string());
+                        .unwrap_or_else(|| "/opt/synvoid/plugins/app.so".to_string());
                     return RouteResult::Found(RouteTarget {
                         site_id: Arc::from(site_id.as_str()),
                         upstream: Arc::from(format!("http://{}", socket)),

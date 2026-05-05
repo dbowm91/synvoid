@@ -9,7 +9,7 @@ pub fn Hero() -> Html {
     let on_click = {
         let copied = copied.clone();
         Callback::from(move |_| {
-            let code = "git clone https://github.com/maluwaf/maluwaf.git\ncd maluwaf\ncargo build --release\n./target/release/maluwaf";
+            let code = "git clone https://github.com/synvoid/synvoid.git\ncd synvoid\ncargo build --release\n./target/release/synvoid";
             if let Some(window) = window() {
                 let navigator = window.navigator();
                 let clipboard = navigator.clipboard();
@@ -62,12 +62,12 @@ pub fn Hero() -> Html {
                             </button>
                         </div>
                         <pre class="p-5 overflow-x-auto font-mono text-sm leading-relaxed"><code><span class="text-[#6a737d]">{"# Clone and build"}</span>
-    <span class="text-[#ff79c6]">{"git"}</span><span class="text-[#f0f0f5]">{" clone https://github.com/maluwaf/maluwaf.git"}</span>
-    <span class="text-[#ff79c6]">{"cd"}</span><span class="text-[#f0f0f5]">{" maluwaf"}</span>
+    <span class="text-[#ff79c6]">{"git"}</span><span class="text-[#f0f0f5]">{" clone https://github.com/synvoid/synvoid.git"}</span>
+    <span class="text-[#ff79c6]">{"cd"}</span><span class="text-[#f0f0f5]">{" synvoid"}</span>
     <span class="text-[#ff79c6]">{"cargo"}</span><span class="text-[#f0f0f5]">{" build --release"}</span>
 
     <span class="text-[#6a737d]">{"# Run with default config"}</span>
-    <span class="text-[#50fa7b]">{"."}</span><span class="text-[#f0f0f5]">{"/target/release/maluwaf"}</span></code></pre>
+    <span class="text-[#50fa7b]">{"."}</span><span class="text-[#f0f0f5]">{"/target/release/synvoid"}</span></code></pre>
                     </div>
                 </div>
             </section>

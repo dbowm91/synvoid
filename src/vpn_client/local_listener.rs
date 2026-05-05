@@ -69,7 +69,7 @@ impl UdpClientTracker {
 
     fn register(&self, addr: SocketAddr) -> bool {
         if self.timestamps.len() >= MAX_UDP_CLIENTS {
-            counter!("maluwaf.vpn.client.udp.client_map_full").increment(1);
+            counter!("synvoid.vpn.client.udp.client_map_full").increment(1);
             return false;
         }
 
@@ -112,7 +112,7 @@ impl UdpClientTracker {
         }
 
         let remaining = self.timestamps.len();
-        gauge!("maluwaf.vpn.client.udp.active_clients").set(remaining as f64);
+        gauge!("synvoid.vpn.client.udp.active_clients").set(remaining as f64);
     }
 
     fn client_count(&self) -> usize {
@@ -209,7 +209,7 @@ impl LocalListener {
                             let conn = connection.clone();
                             let map = mapping.clone();
 
-                            counter!("maluwaf.vpn.client.tcp.connections").increment(1);
+                            counter!("synvoid.vpn.client.tcp.connections").increment(1);
 
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_tcp_connection(tcp_stream, conn, map).await {
@@ -350,13 +350,13 @@ impl LocalListener {
             }
         };
 
-        counter!("maluwaf.vpn.client.tcp.streams").increment(1);
+        counter!("synvoid.vpn.client.tcp.streams").increment(1);
 
         let result = tokio::try_join!(tcp_to_quic, quic_to_tcp);
 
         let _ = send_stream.finish();
 
-        counter!("maluwaf.vpn.client.tcp.streams_closed").increment(1);
+        counter!("synvoid.vpn.client.tcp.streams_closed").increment(1);
 
         result.map(|_| ())
     }
@@ -462,7 +462,7 @@ impl LocalListener {
             }
         });
 
-        counter!("maluwaf.vpn.client.udp.tunnels").increment(1);
+        counter!("synvoid.vpn.client.udp.tunnels").increment(1);
 
         Ok(())
     }
@@ -491,7 +491,7 @@ impl LocalListener {
                                     "UDP client map full, dropping packet from {}",
                                     client_addr
                                 );
-                                counter!("maluwaf.vpn.client.udp.client_dropped").increment(1);
+                                counter!("synvoid.vpn.client.udp.client_dropped").increment(1);
                                 continue;
                             }
 
@@ -510,7 +510,7 @@ impl LocalListener {
                                     match connection.send_datagram(encoded.into()) { Err(e) => {
                                         tracing::debug!("Failed to send UDP datagram: {}", e);
                                     } _ => {
-                                        counter!("maluwaf.vpn.client.udp.packets_sent").increment(1);
+                                        counter!("synvoid.vpn.client.udp.packets_sent").increment(1);
                                     }}
                                 }
                             }
@@ -551,7 +551,7 @@ impl LocalListener {
                                     if let Err(e) = socket.send_to(&msg.data, client_addr).await {
                                         tracing::debug!("Failed to send UDP to client {}: {}", client_addr, e);
                                     } else {
-                                        counter!("maluwaf.vpn.client.udp.packets_recv").increment(1);
+                                        counter!("synvoid.vpn.client.udp.packets_recv").increment(1);
                                     }
                                 } else {
                                     tracing::trace!(

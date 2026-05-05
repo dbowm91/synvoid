@@ -23,7 +23,7 @@ fn connect_to_static_worker(socket_path: &PathBuf) -> io::Result<IpcStream> {
 
 #[cfg(windows)]
 fn connect_to_static_worker(_socket_path: &PathBuf) -> io::Result<IpcStream> {
-    let pipe_name = "\\\\.\\pipe\\maluwaf-static-worker";
+    let pipe_name = "\\\\.\\pipe\\synvoid-static-worker";
 
     let mut attempts = 0;
     let max_attempts = 10;

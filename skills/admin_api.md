@@ -1,6 +1,6 @@
 # Admin API Patterns
 
-This skill covers the Admin API implementation patterns for MaluWAF, including config handlers, versioning, and status retrieval.
+This skill covers the Admin API implementation patterns for SynVoid, including config handlers, versioning, and status retrieval.
 
 **Note**: This codebase uses utoipa 5 (upgraded from utoipa 4 on 2026-04-26). Some API changes apply:
 - OpenAPI tests use `HttpMethod` enum instead of `PathItemType`
@@ -174,7 +174,7 @@ fn get_overseer_status_file_path() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/var/run"))
-        .join("maluwaf")
+        .join("synvoid")
         .join("overseer_status.json")
 }
 
@@ -365,14 +365,14 @@ Mutating operations in these handlers include audit logging:
 Prometheus metrics are exported on `127.0.0.1:9090/metrics` when `config.main.metrics.enabled` is true.
 
 Key admin metrics:
-- `maluwaf_admin_auth_failures_total`
-- `maluwaf_admin_auth_lockouts_total`
-- `maluwaf_admin_rate_limited_total`
-- `maluwaf_admin_csrf_failures_total`
-- `maluwaf_admin_audit_write_failures_total`
-- `maluwaf_admin_ws_clients` (gauge)
-- `maluwaf_admin_alert_delivery_success_total`
-- `maluwaf_admin_alert_delivery_failure_total`
+- `synvoid_admin_auth_failures_total`
+- `synvoid_admin_auth_lockouts_total`
+- `synvoid_admin_rate_limited_total`
+- `synvoid_admin_csrf_failures_total`
+- `synvoid_admin_audit_write_failures_total`
+- `synvoid_admin_ws_clients` (gauge)
+- `synvoid_admin_alert_delivery_success_total`
+- `synvoid_admin_alert_delivery_failure_total`
 
 ## Health Status
 

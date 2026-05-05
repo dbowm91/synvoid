@@ -14,19 +14,19 @@ pub fn Deployment() -> Html {
                         <div class="text-5xl mb-5">{"🐳"}</div>
                         <h3 class="text-xl mb-3">{"Docker"}</h3>
                         <p class="text-[var(--text-secondary)] text-sm mb-5">{"Run anywhere with our official Docker image"}</p>
-                        <code class="bg-[var(--bg-tertiary)] px-3 py-1 rounded text-sm text-[var(--accent-primary)]">{"docker run -p 80:80 maluwaf/maluwaf"}</code>
+                        <code class="bg-[var(--bg-tertiary)] px-3 py-1 rounded text-sm text-[var(--accent-primary)]">{"docker run -p 80:80 synvoid/synvoid"}</code>
                     </div>
                     <div class="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-8 text-center transition-all hover:border-[var(--accent-primary)] hover:translate-y-[-4px]">
                         <div class="text-5xl mb-5">{"☸️"}</div>
                         <h3 class="text-xl mb-3">{"Kubernetes"}</h3>
                         <p class="text-[var(--text-secondary)] text-sm mb-5">{"Native K8s support with Helm charts"}</p>
-                        <code class="bg-[var(--bg-tertiary)] px-3 py-1 rounded text-sm text-[var(--accent-primary)]">{"helm install maluwaf"}</code>
+                        <code class="bg-[var(--bg-tertiary)] px-3 py-1 rounded text-sm text-[var(--accent-primary)]">{"helm install synvoid"}</code>
                     </div>
                     <div class="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-8 text-center transition-all hover:border-[var(--accent-primary)] hover:translate-y-[-4px]">
                         <div class="text-5xl mb-5">{"⚙️"}</div>
                         <h3 class="text-xl mb-3">{"Binary"}</h3>
                         <p class="text-[var(--text-secondary)] text-sm mb-5">{"Standalone binary for any Linux system"}</p>
-                        <code class="bg-[var(--bg-tertiary)] px-3 py-1 rounded text-sm text-[var(--accent-primary)]">{"./maluwaf --config main.toml"}</code>
+                        <code class="bg-[var(--bg-tertiary)] px-3 py-1 rounded text-sm text-[var(--accent-primary)]">{"./synvoid --config main.toml"}</code>
                     </div>
                 </div>
             </div>

@@ -1,16 +1,16 @@
 #![cfg(feature = "mesh")]
 
-use maluwaf::mesh::config::MeshNodeRole;
-use maluwaf::mesh::dht::keys::DhtKey;
-use maluwaf::mesh::dht::merkle::MerkleTree;
-use maluwaf::mesh::dht::routing::{
+use synvoid::mesh::config::MeshNodeRole;
+use synvoid::mesh::dht::keys::DhtKey;
+use synvoid::mesh::dht::merkle::MerkleTree;
+use synvoid::mesh::dht::routing::{
     GeoInfo, GeoRoutingConfig, KBucket, NodeId, PeerContact, PersistedContact,
     PersistedRoutingTable, RegionalHub, RegionalHubConfig, RoutingTable, K_SIZE,
 };
-use maluwaf::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager};
-use maluwaf::mesh::dht::stake::{SlashReason, StakeConfig, StakeLevel, StakeManager};
-use maluwaf::mesh::dht::store::{DhtRecord, DhtRecordStore, RecordMetadata};
-use maluwaf::mesh::dht::DhtRateLimiter;
+use synvoid::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType, TtlManager};
+use synvoid::mesh::dht::stake::{SlashReason, StakeConfig, StakeLevel, StakeManager};
+use synvoid::mesh::dht::store::{DhtRecord, DhtRecordStore, RecordMetadata};
+use synvoid::mesh::dht::DhtRateLimiter;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -255,7 +255,7 @@ fn test_signed_record_roundtrip() {
         SignedRecordType::Upstream,
     );
 
-    let signer = RecordSigner::new(Some(maluwaf::mesh::protocol::MeshMessageSigner::new(
+    let signer = RecordSigner::new(Some(synvoid::mesh::protocol::MeshMessageSigner::new(
         [0u8; 32],
     )));
     let verifying_key = signer.get_verifying_key();
@@ -507,7 +507,7 @@ fn test_persisted_contact() {
 
 #[test]
 fn test_validate_message_timestamp() {
-    use maluwaf::mesh::dht::signed::{
+    use synvoid::mesh::dht::signed::{
         validate_message_timestamp, DHT_MESSAGE_TIMESTAMP_WINDOW_SECS,
     };
 
@@ -1062,7 +1062,7 @@ fn test_sync_to_regional_hub() {
 
 #[test]
 fn test_record_store_basic_operations() {
-    use maluwaf::mesh::dht::store::DhtRecordStore;
+    use synvoid::mesh::dht::store::DhtRecordStore;
 
     let store = DhtRecordStore::new();
     let key = "test_key".to_string();
@@ -1077,7 +1077,7 @@ fn test_record_store_basic_operations() {
 
 #[test]
 fn test_record_store_insert_and_retrieve() {
-    use maluwaf::mesh::dht::store::DhtRecordStore;
+    use synvoid::mesh::dht::store::DhtRecordStore;
 
     let store = DhtRecordStore::new();
     let key = "insert_test".to_string();
@@ -1092,7 +1092,7 @@ fn test_record_store_insert_and_retrieve() {
 
 #[test]
 fn test_record_store_multiple_keys_same_prefix() {
-    use maluwaf::mesh::dht::store::DhtRecordStore;
+    use synvoid::mesh::dht::store::DhtRecordStore;
 
     let store = DhtRecordStore::new();
 
@@ -1126,7 +1126,7 @@ fn test_record_store_multiple_keys_same_prefix() {
 
 #[test]
 fn test_record_store_clear_preserves_nothing() {
-    use maluwaf::mesh::dht::store::DhtRecordStore;
+    use synvoid::mesh::dht::store::DhtRecordStore;
 
     let store = DhtRecordStore::new();
     store.put(DhtRecord::new("k1".to_string(), b"v1".to_vec(), None));
@@ -1142,7 +1142,7 @@ fn test_record_store_clear_preserves_nothing() {
 
 #[test]
 fn test_signed_record_with_ttl() {
-    use maluwaf::mesh::dht::signed::{SignedDhtRecord, SignedRecordType};
+    use synvoid::mesh::dht::signed::{SignedDhtRecord, SignedRecordType};
 
     let record = SignedDhtRecord::new(
         "test:key".to_string(),
@@ -1156,7 +1156,7 @@ fn test_signed_record_with_ttl() {
 
 #[test]
 fn test_ttl_manager_different_record_types() {
-    use maluwaf::mesh::dht::signed::{SignedRecordType, TtlManager};
+    use synvoid::mesh::dht::signed::{SignedRecordType, TtlManager};
 
     let manager = TtlManager::new();
 
@@ -1176,7 +1176,7 @@ fn test_ttl_manager_different_record_types() {
 
 #[test]
 fn test_validate_message_timestamp_edge_cases() {
-    use maluwaf::mesh::dht::signed::{
+    use synvoid::mesh::dht::signed::{
         validate_message_timestamp, DHT_MESSAGE_TIMESTAMP_WINDOW_SECS,
     };
 
@@ -1251,7 +1251,7 @@ fn test_geo_info_distance_calculation() {
 
 #[test]
 fn test_persisted_bucket_roundtrip() {
-    use maluwaf::mesh::dht::routing::PersistedBucket;
+    use synvoid::mesh::dht::routing::PersistedBucket;
 
     let bucket = PersistedBucket {
         index: 0,
@@ -1268,7 +1268,7 @@ fn test_persisted_bucket_roundtrip() {
 
 #[test]
 fn test_record_signer_produces_valid_signature() {
-    use maluwaf::mesh::dht::signed::RecordSigner;
+    use synvoid::mesh::dht::signed::RecordSigner;
 
     let mut record = SignedDhtRecord::new(
         "test:key".to_string(),
@@ -1277,7 +1277,7 @@ fn test_record_signer_produces_valid_signature() {
         SignedRecordType::Upstream,
     );
 
-    let signer = RecordSigner::new(Some(maluwaf::mesh::protocol::MeshMessageSigner::new(
+    let signer = RecordSigner::new(Some(synvoid::mesh::protocol::MeshMessageSigner::new(
         [0x42u8; 32],
     )));
     let verifying_key = signer.get_verifying_key();
@@ -1297,7 +1297,7 @@ fn test_record_signer_produces_valid_signature() {
 
 #[test]
 fn test_stake_manager_initial_state() {
-    use maluwaf::mesh::dht::stake::StakeManager;
+    use synvoid::mesh::dht::stake::StakeManager;
 
     let config = StakeConfig::default();
     let manager = StakeManager::new(config, "test-node".to_string(), false);
@@ -1314,7 +1314,7 @@ fn test_stake_manager_initial_state() {
 
 #[test]
 fn test_dht_rate_limiter_different_peers_independent() {
-    use maluwaf::mesh::dht::DhtRateLimiter;
+    use synvoid::mesh::dht::DhtRateLimiter;
 
     let limiter = DhtRateLimiter::new(2, 60);
 
@@ -1367,9 +1367,9 @@ fn test_dht_key_privileged_vs_public() {
 // ── ThreatIntelligence Tests ─────────────────────────────────────
 
 mod threat_intel_tests {
-    use maluwaf::mesh::config::MeshNodeRole;
-    use maluwaf::mesh::protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
-    use maluwaf::mesh::threat_intel::{
+    use synvoid::mesh::config::MeshNodeRole;
+    use synvoid::mesh::protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
+    use synvoid::mesh::threat_intel::{
         ThreatIndicatorEntry, ThreatIntelligenceConfig, ThreatIntelligenceConfigInternal,
         ThreatIntelligenceManager,
     };
@@ -1377,7 +1377,7 @@ mod threat_intel_tests {
     use std::sync::Arc;
 
     fn create_test_manager(role: MeshNodeRole) -> ThreatIntelligenceManager {
-        use maluwaf::config::DenyListLimitsConfig;
+        use synvoid::config::DenyListLimitsConfig;
         let config = ThreatIntelligenceConfigInternal {
             enabled: true,
             push_enabled: false,
@@ -1388,7 +1388,7 @@ mod threat_intel_tests {
             min_ttl_seconds: 60,
             max_indicators_per_message: 50,
             hub_only_mode: false,
-            reputation_config: maluwaf::mesh::reputation::ReputationConfig {
+            reputation_config: synvoid::mesh::reputation::ReputationConfig {
                 enabled: false,
                 ..Default::default()
             },
@@ -1400,7 +1400,7 @@ mod threat_intel_tests {
             fingerprint_ttl_secs: 3600,
             high_severity_threshold: 70,
         };
-        let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
+        let block_store = Arc::new(synvoid::block_store::BlockStore::new(
             true,
             None,
             DenyListLimitsConfig {
@@ -1412,7 +1412,7 @@ mod threat_intel_tests {
     }
 
     fn make_indicator(ip: &str, threat_type: ThreatType) -> ThreatIndicator {
-        let now = maluwaf::mesh::safe_unix_timestamp();
+        let now = synvoid::mesh::safe_unix_timestamp();
         ThreatIndicator {
             threat_type,
             indicator_value: ip.to_string(),
@@ -1579,7 +1579,7 @@ mod threat_intel_tests {
     #[test]
     fn test_handle_incoming_threat_rejects_expired() {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
-        manager.update_global_nodes(vec![maluwaf::mesh::protocol::MeshPeerInfo {
+        manager.update_global_nodes(vec![synvoid::mesh::protocol::MeshPeerInfo {
             node_id: "global-1".to_string(),
             address: "192.168.1.1".to_string(),
             role: MeshNodeRole::GLOBAL,
@@ -1594,7 +1594,7 @@ mod threat_intel_tests {
             dns_serving_healthy: false,
         }]);
 
-        let now = maluwaf::mesh::safe_unix_timestamp();
+        let now = synvoid::mesh::safe_unix_timestamp();
         let expired_indicator = ThreatIndicator {
             threat_type: ThreatType::IpBlock,
             indicator_value: "5.6.7.8".to_string(),
@@ -1644,7 +1644,7 @@ mod threat_intel_tests {
     fn test_handle_incoming_threat_rejects_global_node_ip() {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
         manager.register_peer("peer-node".to_string(), MeshNodeRole::EDGE);
-        manager.update_global_nodes(vec![maluwaf::mesh::protocol::MeshPeerInfo {
+        manager.update_global_nodes(vec![synvoid::mesh::protocol::MeshPeerInfo {
             node_id: "global-1".to_string(),
             address: "192.168.1.1".to_string(),
             role: MeshNodeRole::GLOBAL,
@@ -1686,7 +1686,7 @@ mod threat_intel_tests {
     fn test_handle_incoming_threat_expired() {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
         manager.register_peer("peer-node".to_string(), MeshNodeRole::GLOBAL);
-        let now = maluwaf::mesh::safe_unix_timestamp();
+        let now = synvoid::mesh::safe_unix_timestamp();
         let indicator = ThreatIndicator {
             threat_type: ThreatType::IpBlock,
             indicator_value: "5.6.7.8".to_string(),
@@ -1760,7 +1760,7 @@ mod threat_intel_tests {
         let msg = manager.create_sync_request();
 
         match msg {
-            maluwaf::mesh::protocol::MeshMessage::ThreatSyncRequest { .. } => {}
+            synvoid::mesh::protocol::MeshMessage::ThreatSyncRequest { .. } => {}
             _ => panic!("Expected ThreatSyncRequest"),
         }
     }
@@ -1771,7 +1771,7 @@ mod threat_intel_tests {
         let msg = manager.create_sync_response("req-123", 0);
 
         match msg {
-            maluwaf::mesh::protocol::MeshMessage::ThreatSyncResponse { .. } => {}
+            synvoid::mesh::protocol::MeshMessage::ThreatSyncResponse { .. } => {}
             _ => panic!("Expected ThreatSyncResponse"),
         }
     }
@@ -1814,7 +1814,7 @@ mod threat_intel_tests {
 
     #[test]
     fn test_hub_only_mode_skips_push() {
-        use maluwaf::config::DenyListLimitsConfig;
+        use synvoid::config::DenyListLimitsConfig;
         let config_internal = ThreatIntelligenceConfigInternal {
             enabled: true,
             push_enabled: true,
@@ -1825,7 +1825,7 @@ mod threat_intel_tests {
             min_ttl_seconds: 60,
             max_indicators_per_message: 50,
             hub_only_mode: true,
-            reputation_config: maluwaf::mesh::reputation::ReputationConfig {
+            reputation_config: synvoid::mesh::reputation::ReputationConfig {
                 enabled: false,
                 ..Default::default()
             },
@@ -1838,7 +1838,7 @@ mod threat_intel_tests {
             high_severity_threshold: 70,
         };
 
-        let block_store = Arc::new(maluwaf::block_store::BlockStore::new(
+        let block_store = Arc::new(synvoid::block_store::BlockStore::new(
             true,
             None,
             DenyListLimitsConfig {

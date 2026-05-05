@@ -1,6 +1,6 @@
 # Plugins
 
-MaluWAF supports two plugin systems for extending functionality:
+SynVoid supports two plugin systems for extending functionality:
 
 1. **WASM Plugins** - Sandboxed WebAssembly modules for request filtering and response transformation
 2. **Native Axum Plugins** - Shared library plugins that extend routing capabilities
@@ -9,7 +9,7 @@ MaluWAF supports two plugin systems for extending functionality:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      MaluWAF                            │
+│                      SynVoid                            │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │              Plugin Runtime                      │   │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────────┐    │   │
@@ -34,7 +34,7 @@ WebAssembly plugins run in a sandboxed environment for safe execution of custom 
 ```toml
 [plugins]
 enabled = true
-plugins_dir = "/etc/maluwafwaf/plugins"
+plugins_dir = "/etc/synvoidwaf/plugins"
 watch_for_changes = true
 
 # Resource limits
@@ -152,7 +152,7 @@ wasm-bindgen = "0.2"
 ```bash
 cd plugin
 cargo build --release --target wasm32-wasi
-cp target/wasm32-wasi/release/my_waf_plugin.wasm /etc/maluwafwaf/plugins/
+cp target/wasm32-wasi/release/my_waf_plugin.wasm /etc/synvoidwaf/plugins/
 ```
 
 ## Plugin API
@@ -206,7 +206,7 @@ pub fn transform_response(
 Place `.wasm` files in plugins directory:
 
 ```
-/etc/maluwafwaf/plugins/
+/etc/synvoidwaf/plugins/
 ├── my_plugin.wasm
 ├── auth_plugin.wasm
 └── rate_limit.wasm
@@ -253,7 +253,7 @@ Verify plugin integrity:
 ```toml
 [plugins]
 require_signed = true
-signing_key_path = "/etc/maluwafwaf/keys/plugin.key"
+signing_key_path = "/etc/synvoidwaf/keys/plugin.key"
 ```
 
 ## Troubleshooting
@@ -262,10 +262,10 @@ signing_key_path = "/etc/maluwafwaf/keys/plugin.key"
 
 ```bash
 # Check plugin file
-ls -la /etc/maluwafwaf/plugins/
+ls -la /etc/synvoidwaf/plugins/
 
 # Validate WASM
-wasm-validate /etc/maluwafwaf/plugins/my_plugin.wasm
+wasm-validate /etc/synvoidwaf/plugins/my_plugin.wasm
 ```
 
 ### Execution Timeout
@@ -289,11 +289,11 @@ max_memory_mb = 64
 ## Metrics
 
 ```bash
-maluwaf_plugin_load_total       # Plugins loaded
-maluwaf_plugin_execution_total  # Total executions
-maluwaf_plugin_block_total      # Blocks by plugins
-maluwaf_plugin_error_total     # Plugin errors
-maluwaf_plugin_duration_ms      # Execution duration
+synvoid_plugin_load_total       # Plugins loaded
+synvoid_plugin_execution_total  # Total executions
+synvoid_plugin_block_total      # Blocks by plugins
+synvoid_plugin_error_total     # Plugin errors
+synvoid_plugin_duration_ms      # Execution duration
 ```
 
 ## Best Practices
@@ -309,7 +309,7 @@ maluwaf_plugin_duration_ms      # Execution duration
 
 ## Native Axum Plugins
 
-Native plugins are shared libraries that extend MaluWAF's routing capabilities using the Axum web framework. They offer better performance than WASM but require more careful security considerations.
+Native plugins are shared libraries that extend SynVoid's routing capabilities using the Axum web framework. They offer better performance than WASM but require more careful security considerations.
 
 ### Supported Formats
 
@@ -328,7 +328,7 @@ use axum::{Router, routing::get};
 
 // ABI version symbol (required for compatibility check)
 #[no_mangle]
-pub static maluwaf_abi_version: *const std::ffi::c_char = 
+pub static synvoid_abi_version: *const std::ffi::c_char = 
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const std::ffi::c_char;
 
 // Factory function that creates the router
@@ -350,7 +350,7 @@ async fn my_handler() -> &'static str {
 ```toml
 # Cargo.toml
 [package]
-name = "my-maluwaf-plugin"
+name = "my-synvoid-plugin"
 version = "0.1.0"
 edition = "2021"
 
@@ -368,7 +368,7 @@ cargo build --release --target x86_64-unknown-linux-gnu
 # Build for macOS
 cargo build --release --target x86_64-apple-darwin
 
-# Output: target/release/libmy_maluwaf_plugin.so (or .dylib)
+# Output: target/release/libmy_synvoid_plugin.so (or .dylib)
 ```
 
 ### Configuration
@@ -379,21 +379,21 @@ enabled = true
 
 [[plugins.axum.plugins]]
 name = "my-plugin"
-path = "/etc/maluwaf/plugins/my_plugin.so"
+path = "/etc/synvoid/plugins/my_plugin.so"
 ```
 
 ### Security Validations
 
-MaluWAF performs the following security checks when loading native plugins:
+SynVoid performs the following security checks when loading native plugins:
 
 1. **Symlink Prevention** - Rejects plugin files that are symlinks
 2. **Permission Check** - Warns if permissions are not 755 or 500 (Unix)
 3. **Extension Validation** - Only accepts proper shared library extensions
-4. **ABI Version Check** - Validates `maluwaf_abi_version` symbol exists
+4. **ABI Version Check** - Validates `synvoid_abi_version` symbol exists
 
 ### Security Considerations
 
-> **Warning:** Native plugins run in the same process as MaluWAF and have full access to system resources. Only load plugins from trusted sources.
+> **Warning:** Native plugins run in the same process as SynVoid and have full access to system resources. Only load plugins from trusted sources.
 
 - Native plugins are **not sandboxed**
 - They can access files, network, and system calls

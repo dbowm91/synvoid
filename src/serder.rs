@@ -17,7 +17,7 @@
 //! ```toml
 //! # Cargo.toml
 //! [features]
-//! rkyv = ["maluwaf/rkyv"]
+//! rkyv = ["synvoid/rkyv"]
 //! ```
 //!
 //! ### Step 2: Identify compatible types

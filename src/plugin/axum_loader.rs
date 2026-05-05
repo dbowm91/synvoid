@@ -104,7 +104,7 @@ pub fn load_plugin(path: &Path) -> Result<(Arc<Router<()>>, String), AxumPluginE
         let lib = Library::new(path).map_err(|e| AxumPluginError::LoadFailed(e.to_string()))?;
 
         let version: Symbol<*const std::ffi::c_char> = lib
-            .get(b"maluwaf_abi_version")
+            .get(b"synvoid_abi_version")
             .map_err(|e| AxumPluginError::SymbolNotFound(e.to_string()))?;
 
         let plugin_version = std::ffi::CStr::from_ptr(*version)
@@ -151,7 +151,7 @@ pub fn create_plugin_library_example() -> &'static str {
 use axum::{Router, routing::get};
 
 #[no_mangle]
-pub static maluwaf_abi_version: *const std::ffi::c_char = concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const std::ffi::c_char;
+pub static synvoid_abi_version: *const std::ffi::c_char = concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const std::ffi::c_char;
 
 #[no_mangle]
 pub extern "C" fn create_router() -> *mut Router<()> {

@@ -60,12 +60,12 @@ pub fn load_directory_template(template_path: &str) -> Result<String, super::Sta
         ))
     })?;
 
-    if !canonical.starts_with(std::path::PathBuf::from("/etc/maluwaf/").as_path())
-        && !canonical.starts_with(std::path::PathBuf::from("/var/lib/maluwaf/").as_path())
+    if !canonical.starts_with(std::path::PathBuf::from("/etc/synvoid/").as_path())
+        && !canonical.starts_with(std::path::PathBuf::from("/var/lib/synvoid/").as_path())
         && !canonical.starts_with(std::path::PathBuf::from("/var/www/").as_path())
     {
         return Err(super::StaticError::Internal(format!(
-            "Template path must be within allowed directories (/etc/maluwaf, /var/lib/maluwaf, /var/www): {}",
+            "Template path must be within allowed directories (/etc/synvoid, /var/lib/synvoid, /var/www): {}",
             template_path
         )));
     }
@@ -172,7 +172,7 @@ pub fn render_custom_template(
         .collect();
     html = html.replace("{{rows}}", &rows);
 
-    html = html.replace("{{site_name}}", "MaluWAF");
+    html = html.replace("{{site_name}}", "SynVoid");
     html = html.replace("{{title}}", &format!("Index of {}", url_path));
 
     Ok(html)

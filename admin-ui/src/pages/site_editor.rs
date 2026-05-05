@@ -1067,7 +1067,7 @@ fn generate_error_page_preview(
         <div class="status">403</div>
         <h1>Forbidden</h1>
         <p>Access to this resource has been blocked by the WAF.</p>
-        <div class="footer">MaluWAF</div>
+        <div class="footer">SynVoid</div>
     </div>
 </body>
 </html>

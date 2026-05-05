@@ -210,7 +210,7 @@ pub struct IcmpFilterConfig {
 }
 
 fn default_table_name() -> String {
-    "maluwaf_icmp".to_string()
+    "synvoid_icmp".to_string()
 }
 
 impl Default for IcmpFilterConfig {
@@ -376,7 +376,7 @@ mod tests {
         assert!(config.exempt_ips.is_empty());
         assert!(config.icmp_type_rules.is_empty());
         assert!(config.icmpv6_type_rules.is_empty());
-        assert_eq!(config.table_name, "maluwaf_icmp");
+        assert_eq!(config.table_name, "synvoid_icmp");
     }
 
     #[test]

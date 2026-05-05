@@ -1,8 +1,8 @@
 # Developer & DevOps Guide
 
-Technical deep-dive into MaluWAF's design decisions, deployment patterns, and integration capabilities.
+Technical deep-dive into SynVoid's design decisions, deployment patterns, and integration capabilities.
 
-## Why MaluWAF?
+## Why SynVoid?
 
 ### Design Philosophy
 
@@ -15,7 +15,7 @@ Technical deep-dive into MaluWAF's design decisions, deployment patterns, and in
 
 ### Tokio + Hyper Foundation
 
-MaluWAF's reverse proxy uses Rust's async ecosystem for maximum performance:
+SynVoid's reverse proxy uses Rust's async ecosystem for maximum performance:
 
 ```rust
 // Simplified connection handling
@@ -39,7 +39,7 @@ async fn handle_connection(conn: TcpStream) {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MaluWAF Worker Pool                      │
+│                    SynVoid Worker Pool                      │
 └─────────────────────────────────────────────────────────────┘
 
                     ┌──────────────┐
@@ -160,7 +160,7 @@ socket = "127.0.0.1:9000"
 
 ### Granian (Python WSGI/ASGI/RSGI)
 
-Granian runs as a child process supervised by MaluWAF:
+Granian runs as a child process supervised by SynVoid:
 
 ```toml
 [site.granian]
@@ -178,7 +178,7 @@ python_path = "/opt/myapp"
 - No separate process supervisor needed
 - Automatic restart on crash
 - Minimal memory (shares worker memory space)
-- Request/response through MaluWAF directly
+- Request/response through SynVoid directly
 
 ### CGI (Legacy)
 
@@ -280,19 +280,19 @@ keepalive_timeout = 60
 
 ```bash
 # WAF metrics
-maluwaf_waf_blocked_total
-maluwaf_waf_allowed_total
-maluwaf_attack_sqli_total
-maluwaf_attack_xss_total
+synvoid_waf_blocked_total
+synvoid_waf_allowed_total
+synvoid_attack_sqli_total
+synvoid_attack_xss_total
 
 # Connection metrics  
-maluwaf_connections_active
-maluwaf_connections_accepted
-maluwaf_connections_closed
+synvoid_connections_active
+synvoid_connections_accepted
+synvoid_connections_closed
 
 # Upstream metrics
-maluwaf_upstream_response_time
-maluwaf_upstream_errors
+synvoid_upstream_response_time
+synvoid_upstream_errors
 ```
 
 ### Health Checks
@@ -340,13 +340,13 @@ ss -s
 netstat -s | grep SYN
 
 # Check file descriptors
-lsof -p $(pgrep maluwaf) | wc -l
+lsof -p $(pgrep synvoid) | wc -l
 ```
 
 ### Debug Mode
 
 ```bash
-RUST_LOG=debug ./maluwaf
+RUST_LOG=debug ./synvoid
 ```
 
 ### Common Issues
@@ -365,15 +365,15 @@ RUST_LOG=debug ./maluwaf
 ```yaml
 version: '3.8'
 services:
-  maluwaf:
-    image: maluwaf:latest
+  synvoid:
+    image: synvoid:latest
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"  # HTTP/3
     volumes:
-      - ./config:/etc/maluwaf
-      - ./sites:/etc/maluwaf/sites
+      - ./config:/etc/synvoid
+      - ./sites:/etc/synvoid/sites
     environment:
       - RUST_LOG=info
 ```
@@ -385,14 +385,14 @@ apiDeployment:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: maluwaf
+  name: synvoid
 spec:
   replicas: 3
   template:
     spec:
       containers:
-      - name: maluwaf
-        image: maluwaf:latest
+      - name: synvoid
+        image: synvoid:latest
         ports:
         - containerPort: 80
         - containerPort: 443

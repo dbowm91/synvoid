@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use crate::platform::PlatformError;
 
-pub const SERVICE_NAME: &str = "MaluWAF";
-pub const SERVICE_DISPLAY_NAME: &str = "MaluWAF Web Application Firewall";
+pub const SERVICE_NAME: &str = "SynVoid";
+pub const SERVICE_DISPLAY_NAME: &str = "SynVoid Web Application Firewall";
 pub const SERVICE_DESCRIPTION: &str =
     "High-performance Web Application Firewall with advanced attack detection and bot mitigation";
 
@@ -155,7 +155,7 @@ impl Default for WindowsServiceManager {
 impl ServiceControl for WindowsServiceManager {
     fn install(&self, config: &ServiceConfig) -> Result<(), PlatformError> {
         let binary_path = config.binary_path.clone().unwrap_or_else(|| {
-            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("maluwaf.exe"))
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("synvoid.exe"))
         });
 
         let output = std::process::Command::new("sc")

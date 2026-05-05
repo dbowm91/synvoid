@@ -1,11 +1,11 @@
 # Architectural Deep Dive Review
 
-Based on a comprehensive analysis of the foundational layers (1, 2, 3, and 7), here is a detailed review of MaluWAF's architecture, security posture, and performance characteristics.
+Based on a comprehensive analysis of the foundational layers (1, 2, 3, and 7), here is a detailed review of SynVoid's architecture, security posture, and performance characteristics.
 
 ## Layer 1: Process & Lifecycle Management (IPC & Orchestration)
 
 **Are we achieving zero downtime updates?**
-Yes. MaluWAF successfully achieves zero-downtime updates on Unix/Linux systems. This is implemented via a "Dual-Master" handoff phase where the `Overseer` process uses Unix Domain Sockets and `SCM_RIGHTS` (`src/process/socket_fd.rs` and `src/overseer/socket_handoff.rs`) to pass listening file descriptors from the old Master to the new one. The new version can start accepting connections before the old one is gracefully drained.
+Yes. SynVoid successfully achieves zero-downtime updates on Unix/Linux systems. This is implemented via a "Dual-Master" handoff phase where the `Overseer` process uses Unix Domain Sockets and `SCM_RIGHTS` (`src/process/socket_fd.rs` and `src/overseer/socket_handoff.rs`) to pass listening file descriptors from the old Master to the new one. The new version can start accepting connections before the old one is gracefully drained.
 
 **Is the IPC mechanism secure?**
 Highly secure. The architecture strictly isolates the control plane from the data plane:

@@ -1,5 +1,5 @@
 //
-// Example: Building RustWAF with embedded Axum application
+// Example: Building synvoid with embedded Axum application
 //
 // This example shows how to create a custom WAF binary that includes
 // your Axum/Yew application directly compiled in.
@@ -9,7 +9,7 @@
 // 1. Add this crate as a dependency in your app's Cargo.toml:
 //
 // [dependencies]
-// rustwaf = { path = "/path/to/rustwaf", features = ["axum-embedded"] }
+// synvoid = { path = "/path/to/synvoid", features = ["axum-embedded"] }
 // myapp = { path = "./myapp" }
 //
 // 2. Create your app router in myapp/src/lib.rs:
@@ -35,7 +35,7 @@
 // [site.backend]
 // type = "axum-dynamic"
 // plugin = "/opt/myapp/libmyapp.so"
-// socket = "/run/rustwaf/app.sock"
+// socket = "/run/synvoid/app.sock"
 //
 // Build your app as a shared library:
 // cargo build --release -C rustflags="-C link-args=-shared" -p myapp
@@ -52,13 +52,13 @@ pub fn create_app() -> Router {
 }
 
 async fn index() -> &'static str {
-    "Hello from RustWAF with embedded Axum app!"
+    "Hello from synvoid with embedded Axum app!"
 }
 
 async fn health() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "status": "healthy",
-        "service": "rustwaf-app"
+        "service": "synvoid-app"
     }))
 }
 

@@ -111,7 +111,7 @@ impl SharedWafState {
             }
         }
         
-        gauge!("maluwaf.persistence.last_save").set(
+        gauge!("synvoid.persistence.last_save").set(
             crate::utils::safe_unix_timestamp() as f64
         );
     }

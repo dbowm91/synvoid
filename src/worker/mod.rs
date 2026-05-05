@@ -40,7 +40,7 @@ pub use unified_server::{
 
 pub fn setup_worker_panic_handler() {
     let worker_panic_log = format!(
-        "{}/maluwaf-worker-panic.log",
+        "{}/synvoid-worker-panic.log",
         std::env::temp_dir().display()
     );
     setup_panic_handler("WORKER", Some(&worker_panic_log));
@@ -236,7 +236,7 @@ pub async fn run_static_worker(
 
     #[cfg(windows)]
     {
-        let listener = crate::process::ipc::WindowsIpcListener::new("rustwaf-static-worker");
+        let listener = crate::process::ipc::WindowsIpcListener::new("synvoid-static-worker");
         let socket_state = state.clone();
         use std::sync::atomic::{AtomicU32, Ordering};
         let active_connections = Arc::new(AtomicU32::new(0));
@@ -656,7 +656,7 @@ mod tests {
     fn test_static_worker_args_creation() {
         let args = StaticWorkerArgs {
             worker_id: 1,
-            config_path: PathBuf::from("/etc/maluwaf"),
+            config_path: PathBuf::from("/etc/synvoid"),
             master_socket: PathBuf::from("/tmp/master.sock"),
             static_worker_socket: PathBuf::from("/tmp/static.sock"),
             log_level: Some("debug".to_string()),
@@ -664,7 +664,7 @@ mod tests {
         };
 
         assert_eq!(args.worker_id, 1);
-        assert_eq!(args.config_path, PathBuf::from("/etc/maluwaf"));
+        assert_eq!(args.config_path, PathBuf::from("/etc/synvoid"));
         assert_eq!(args.master_socket, PathBuf::from("/tmp/master.sock"));
         assert_eq!(args.static_worker_socket, PathBuf::from("/tmp/static.sock"));
         assert_eq!(args.log_level, Some("debug".to_string()));
@@ -675,7 +675,7 @@ mod tests {
     fn test_static_worker_args_default_log_level() {
         let args = StaticWorkerArgs {
             worker_id: 0,
-            config_path: PathBuf::from("/etc/maluwaf"),
+            config_path: PathBuf::from("/etc/synvoid"),
             master_socket: PathBuf::from("/tmp/master.sock"),
             static_worker_socket: PathBuf::from("/tmp/static.sock"),
             log_level: None,
@@ -877,7 +877,7 @@ mod tests {
             enable_brotli: true,
             gzip_level: 9,
             brotli_level: 11,
-            minified_dir: std::env::temp_dir().join("maluwaf-test-cache"),
+            minified_dir: std::env::temp_dir().join("synvoid-test-cache"),
             enable_cache: true,
             cache_max_entries: 100,
             cache_ttl_secs: 3600,
@@ -917,7 +917,7 @@ mod tests {
             enable_brotli: true,
             gzip_level: 9,
             brotli_level: 11,
-            minified_dir: std::env::temp_dir().join("maluwaf-test-cache"),
+            minified_dir: std::env::temp_dir().join("synvoid-test-cache"),
             enable_cache: true,
             cache_max_entries: 100,
             cache_ttl_secs: 3600,
@@ -946,7 +946,7 @@ mod tests {
             enable_brotli: true,
             gzip_level: 9,
             brotli_level: 11,
-            minified_dir: std::env::temp_dir().join("maluwaf-test-cache"),
+            minified_dir: std::env::temp_dir().join("synvoid-test-cache"),
             enable_cache: true,
             cache_max_entries: 100,
             cache_ttl_secs: 3600,
@@ -975,7 +975,7 @@ mod tests {
             enable_brotli: true,
             gzip_level: 9,
             brotli_level: 11,
-            minified_dir: std::env::temp_dir().join("maluwaf-test-cache"),
+            minified_dir: std::env::temp_dir().join("synvoid-test-cache"),
             enable_cache: true,
             cache_max_entries: 100,
             cache_ttl_secs: 3600,
@@ -1015,7 +1015,7 @@ mod tests {
             enable_brotli: true,
             gzip_level: 9,
             brotli_level: 11,
-            minified_dir: std::env::temp_dir().join("maluwaf-test-cache"),
+            minified_dir: std::env::temp_dir().join("synvoid-test-cache"),
             enable_cache: true,
             cache_max_entries: 100,
             cache_ttl_secs: 3600,
@@ -1073,7 +1073,7 @@ mod tests {
             enable_brotli: true,
             gzip_level: 9,
             brotli_level: 11,
-            minified_dir: std::env::temp_dir().join("maluwaf-test-cache"),
+            minified_dir: std::env::temp_dir().join("synvoid-test-cache"),
             enable_cache: true,
             cache_max_entries: 100,
             cache_ttl_secs: 3600,

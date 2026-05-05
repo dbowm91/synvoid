@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Complete configuration reference for MaluWAF.
+Complete configuration reference for SynVoid.
 
 ## Table of Contents
 
@@ -64,7 +64,7 @@ token = "your-secure-random-token-here"
 [logging]
 level = "info"
 access_log = true
-access_log_dir = "/var/log/maluwaf"
+access_log_dir = "/var/log/synvoid"
 access_log_format = "json"
 retention_days = 5
 ```
@@ -90,7 +90,7 @@ port = 9090
 
 ### MIME Types
 
-MaluWAF includes a built-in list of common MIME types for file extension lookup (used by static file serving and upload detection). You can customize this by providing an nginx-style `mime.types` file.
+SynVoid includes a built-in list of common MIME types for file extension lookup (used by static file serving and upload detection). You can customize this by providing an nginx-style `mime.types` file.
 
 ```toml
 [mimes]
@@ -124,7 +124,7 @@ See `config/mimes/mime.types` for a complete example.
 
 MIME types can be reloaded without restarting the server:
 
-- **CLI**: `maluwaf rehash`
+- **CLI**: `synvoid rehash`
 - **Admin API**: `POST /api/config/reload`
 
 This is useful when you've added new MIME type mappings and want to apply them without downtime.
@@ -278,8 +278,8 @@ alt_svc_max_age = 86400
 ```toml
 [tls]
 enabled = true
-cert_path = "/etc/maluwaf/certs/server.crt"
-key_path = "/etc/maluwaf/certs/server.key"
+cert_path = "/etc/synvoid/certs/server.crt"
+key_path = "/etc/synvoid/certs/server.key"
 port = 443
 tls_1_3_only = true
 prefer_post_quantum = true
@@ -287,7 +287,7 @@ prefer_post_quantum = true
 
 ### Post-Quantum TLS
 
-MaluWAF supports hybrid post-quantum TLS key exchange for long-term security against quantum computers:
+SynVoid supports hybrid post-quantum TLS key exchange for long-term security against quantum computers:
 
 ```toml
 [tls]
@@ -296,7 +296,7 @@ prefer_post_quantum = true  # Use hybrid PQ KEX (default: true)
 
 **Why these defaults:**
 - `prefer_post_quantum = true` protects against future quantum computers that could break classical key exchange; there is no performance penalty when clients also support PQ
-- PQ is disabled by default in other WAFs due to compatibility concerns, but MaluWAF's implementation gracefully falls back if clients don't support it
+- PQ is disabled by default in other WAFs due to compatibility concerns, but SynVoid's implementation gracefully falls back if clients don't support it
 - Only disable if you encounter interoperability issues with legacy clients that don't support hybrid PQ key exchange
 
 ### 0-RTT (Early Data)
@@ -341,7 +341,7 @@ Automatic certificate management via ACME protocol:
 enabled = true
 email = "admin@example.com"
 domains = ["example.com", "www.example.com"]
-cache_dir = "/var/lib/maluwaf/acme"
+cache_dir = "/var/lib/synvoid/acme"
 challenge_type = "Http01"  # or "Dns01" (requires dns feature)
 terms_of_service_agreed = true  # Required for Let's Encrypt
 staging = false  # Use Let's Encrypt staging for testing
@@ -354,7 +354,7 @@ staging = false  # Use Let's Encrypt staging for testing
 ```toml
 [tls.client_auth]
 enabled = false
-ca_cert_path = "/etc/maluwaf/certs/ca.crt"
+ca_cert_path = "/etc/synvoid/certs/ca.crt"
 ```
 
 ## Traffic Shaping
@@ -416,7 +416,7 @@ types = ["image/jpeg", "image/png", "image/gif", "application/pdf"]
 [defaults.upload.scan_with_yara]
 enabled = true
 rules_dir = "rules/"
-quarantine_dir = "/var/lib/maluwaf/quarantine"
+quarantine_dir = "/var/lib/synvoid/quarantine"
 ```
 
 **Why these defaults:**
@@ -460,10 +460,10 @@ auth_token = "server-secret"
 [tunnel.quic.client]
 enabled = false
 
-cert_path = "/etc/maluwaf/certs/tunnel.crt"
-key_path = "/etc/maluwaf/certs/tunnel.key"
+cert_path = "/etc/synvoid/certs/tunnel.crt"
+key_path = "/etc/synvoid/certs/tunnel.key"
 auto_generate_certs = true
-cert_domain = "tunnel.maluwaf.local"
+cert_domain = "tunnel.synvoid.local"
 ```
 
 ## IP Feeds
@@ -697,7 +697,7 @@ per_minute = 100
 ## File Structure
 
 ```
-/etc/maluwaf/
+/etc/synvoid/
 ├── main.toml                 # Main configuration
 ├── sites/
 │   ├── example.com.toml     # Site-specific config
@@ -720,7 +720,7 @@ per_minute = 100
 | Mistake | Problem | Solution |
 |---------|---------|----------|
 | TLS Passthrough bypassing WAF | When `tls_passthrough = true`, all L7 WAF inspection (SQLi, XSS, etc.) is bypassed | Use `tls_passthrough_enforce_waf = true` to still apply WAF rules |
-| Port conflicts | Default ports 8080, 8081, 9090 may be in use | Check ports are available before starting MaluWAF |
+| Port conflicts | Default ports 8080, 8081, 9090 may be in use | Check ports are available before starting SynVoid |
 | Trusted proxies misconfiguration | X-Forwarded-For header not working | Ensure client IP is in `trusted_proxies` list |
 | Weak admin token | Using default or short tokens exposes admin API | Use a strong, random token in production |
 | Mesh network isolation | Different mesh networks can see each other | Use `network_id` to isolate different mesh deployments |

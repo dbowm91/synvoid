@@ -7,7 +7,7 @@
 //! panicking.
 
 use libfuzzer_sys::fuzz_target;
-use maluwaf::mesh::protocol::ProtocolError;
+use synvoid::mesh::protocol::ProtocolError;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() >= 4 {

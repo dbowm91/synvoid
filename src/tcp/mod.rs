@@ -61,7 +61,7 @@ impl TcpProxy {
                     detection_result.protocol.as_str(),
                     client_addr
                 );
-                metrics::counter!("maluwaf.tcp.protocol_mismatch").increment(1);
+                metrics::counter!("synvoid.tcp.protocol_mismatch").increment(1);
                 return Ok(());
             }
             FilterAction::Stall => {
@@ -71,7 +71,7 @@ impl TcpProxy {
                     detection_result.protocol.as_str(),
                     client_addr
                 );
-                metrics::counter!("maluwaf.tcp.protocol_stalled").increment(1);
+                metrics::counter!("synvoid.tcp.protocol_stalled").increment(1);
                 return Ok(());
             }
             FilterAction::Allow => {}

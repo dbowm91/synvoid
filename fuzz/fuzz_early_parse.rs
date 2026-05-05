@@ -7,7 +7,7 @@
 //! HTTP requests without panicking.
 
 use libfuzzer_sys::fuzz_target;
-use maluwaf::http::early_parse::EarlyHttpParser;
+use synvoid::http::early_parse::EarlyHttpParser;
 
 fuzz_target!(|data: &[u8]| {
     let _ = EarlyHttpParser::parse(data);

@@ -13,7 +13,7 @@ pub fn SinglePage() -> Html {
                     <div class="singlepage-nav-inner">
                         <a href="/" class="singlepage-logo">
                             <div class="singlepage-logo-icon">{"M"}</div>
-                            <span>{"MaluWAF"}</span>
+                            <span>{"SynVoid"}</span>
                         </a>
                         <div class="singlepage-nav-links">
                             <a href="#hero" class="singlepage-nav-link">{"Home"}</a>
@@ -22,7 +22,7 @@ pub fn SinglePage() -> Html {
                             <a href="#architecture" class="singlepage-nav-link">{"Architecture"}</a>
                             <a href="#deployment" class="singlepage-nav-link">{"Deploy"}</a>
                             <a href="/docs" class="singlepage-nav-link">{"Docs"}</a>
-                            <a href="https://github.com/maluwaf/maluwaf" target="_blank" rel="noopener noreferrer" class="singlepage-nav-link">{"GitHub"}</a>
+                            <a href="https://github.com/synvoid/synvoid" target="_blank" rel="noopener noreferrer" class="singlepage-nav-link">{"GitHub"}</a>
                             <a href="http://localhost:8081" class="singlepage-cta">{"Admin"}</a>
                         </div>
                     </div>
@@ -56,12 +56,12 @@ pub fn SinglePage() -> Html {
                                     <span>{"Quick Start"}</span>
                                 </div>
                                 <pre><code><span class="singlepage-code-comment">{"# Clone and build"}</span>
-    <span class="singlepage-code-cmd">{"git"}</span><span class="singlepage-code-text">{" clone https://github.com/maluwaf/maluwaf.git"}</span>
-    <span class="singlepage-code-cmd">{"cd"}</span><span class="singlepage-code-text">{" maluwaf"}</span>
+    <span class="singlepage-code-cmd">{"git"}</span><span class="singlepage-code-text">{" clone https://github.com/synvoid/synvoid.git"}</span>
+    <span class="singlepage-code-cmd">{"cd"}</span><span class="singlepage-code-text">{" synvoid"}</span>
     <span class="singlepage-code-cmd">{"cargo"}</span><span class="singlepage-code-text">{" build --release"}</span>
 
     <span class="singlepage-code-comment">{"# Run"}</span>
-    <span class="singlepage-code-success">{"."}</span><span class="singlepage-code-text">{"/target/release/maluwaf"}</span></code></pre>
+    <span class="singlepage-code-success">{"."}</span><span class="singlepage-code-text">{"/target/release/synvoid"}</span></code></pre>
                             </div>
                         </div>
                     </section>
@@ -170,7 +170,7 @@ pub fn SinglePage() -> Html {
                         <div class="singlepage-architecture-diagram">
                             <div class="singlepage-arch-node singlepage-arch-internet">{"Internet"}</div>
                             <span class="singlepage-arch-arrow">{"→"}</span>
-                            <div class="singlepage-arch-node singlepage-arch-waf">{"MaluWAF"}</div>
+                            <div class="singlepage-arch-node singlepage-arch-waf">{"SynVoid"}</div>
                             <span class="singlepage-arch-arrow">{"→"}</span>
                             <div class="singlepage-arch-node singlepage-arch-upstream">{"Upstream Apps"}</div>
                         </div>
@@ -198,19 +198,19 @@ pub fn SinglePage() -> Html {
                                 <div class="singlepage-deploy-icon">{"🐳"}</div>
                                 <h3>{"Docker"}</h3>
                                 <p>{"Run anywhere with our official Docker image"}</p>
-                                <code>{"docker run -p 80:80 maluwaf/maluwaf"}</code>
+                                <code>{"docker run -p 80:80 synvoid/synvoid"}</code>
                             </div>
                             <div class="singlepage-deploy-card">
                                 <div class="singlepage-deploy-icon">{"☸️"}</div>
                                 <h3>{"Kubernetes"}</h3>
                                 <p>{"Native K8s support with Helm charts"}</p>
-                                <code>{"helm install maluwaf"}</code>
+                                <code>{"helm install synvoid"}</code>
                             </div>
                             <div class="singlepage-deploy-card">
                                 <div class="singlepage-deploy-icon">{"⚙️"}</div>
                                 <h3>{"Binary"}</h3>
                                 <p>{"Standalone binary for any Linux system"}</p>
-                                <code>{"./maluwaf --config main.toml"}</code>
+                                <code>{"./synvoid --config main.toml"}</code>
                             </div>
                         </div>
                     </section>
@@ -221,7 +221,7 @@ pub fn SinglePage() -> Html {
                         <div class="singlepage-footer-brand">
                             <div class="singlepage-logo">
                                 <div class="singlepage-logo-icon">{"M"}</div>
-                                <span>{"MaluWAF"}</span>
+                                <span>{"SynVoid"}</span>
                             </div>
                             <p>{"High-performance Web Application Firewall built in Rust."}</p>
                         </div>
@@ -235,14 +235,14 @@ pub fn SinglePage() -> Html {
                             </div>
                             <div class="singlepage-footer-col">
                                 <h4>{"Community"}</h4>
-                                <a href="https://github.com/maluwaf/maluwaf" target="_blank" rel="noopener noreferrer">{"GitHub"}</a>
-                                <a href="https://github.com/maluwaf/maluwaf/issues" target="_blank" rel="noopener noreferrer">{"Issues"}</a>
+                                <a href="https://github.com/synvoid/synvoid" target="_blank" rel="noopener noreferrer">{"GitHub"}</a>
+                                <a href="https://github.com/synvoid/synvoid/issues" target="_blank" rel="noopener noreferrer">{"Issues"}</a>
                                 <a href="/docs/changelog">{"Changelog"}</a>
                             </div>
                         </div>
                     </div>
                     <div class="singlepage-footer-bottom">
-                        <span>{"© 2024 MaluWAF Project. Open source under MIT license."}</span>
+                        <span>{"© 2024 SynVoid Project. Open source under MIT license."}</span>
                     </div>
                 </footer>
             </div>

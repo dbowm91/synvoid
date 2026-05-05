@@ -26,7 +26,7 @@ pub struct SpawnConfig {
 impl SpawnConfig {
     pub fn for_current_binary(config_path: PathBuf, mode: ProcessMode) -> Self {
         Self {
-            binary_path: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("maluwaf")),
+            binary_path: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("synvoid")),
             config_path,
             mode,
             master_socket: None,

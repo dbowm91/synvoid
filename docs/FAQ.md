@@ -1,16 +1,16 @@
 # Frequently Asked Questions
 
-Common questions about MaluWAF.
+Common questions about SynVoid.
 
 ## General
 
-### What is MaluWAF?
+### What is SynVoid?
 
-MaluWAF is a high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. It provides attack detection, bot mitigation, flood protection, and can operate as a distributed mesh network for DDoS mitigation.
+SynVoid is a high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. It provides attack detection, bot mitigation, flood protection, and can operate as a distributed mesh network for DDoS mitigation.
 
-### How does MaluWAF compare to NGINX with ModSecurity?
+### How does SynVoid compare to NGINX with ModSecurity?
 
-| Feature | MaluWAF | NGINX + ModSecurity |
+| Feature | SynVoid | NGINX + ModSecurity |
 |---------|---------|---------------------|
 | **Language** | Rust (memory safe) | C |
 | **HTTP/3 Support** | Native | Via module |
@@ -79,15 +79,15 @@ Start at Level 2 and adjust based on your observations.
 
 ## Performance
 
-### How many requests can MaluWAF handle?
+### How many requests can SynVoid handle?
 
-Performance depends on your hardware, but MaluWAF is designed for high throughput:
+Performance depends on your hardware, but SynVoid is designed for high throughput:
 - Single instance: 10,000+ req/s on modern hardware
 - With worker scaling: Scales to available CPU cores
 
 See [PERFORMANCE.md](./PERFORMANCE.md) for tuning tips.
 
-### Does MaluWAF support HTTP/3?
+### Does SynVoid support HTTP/3?
 
 Yes. Enable HTTP/3 in your configuration:
 
@@ -123,7 +123,7 @@ No. UDP services (DNS, VoIP, gaming) cannot be proxied through the mesh due to p
 [admin]
 enabled = true
 port = 8081
-token_env_var = "MALU_ADMIN_TOKEN"  # Use env var instead of config
+token_env_var = "SYNVOID_ADMIN_TOKEN"  # Use env var instead of config
 ```
 
 ### Is IPC between processes secure?
@@ -133,7 +133,7 @@ Enable IPC signing in production:
 ```toml
 [security]
 ipc_enforce_signing = true
-ipc_session_key_env = "MALU_IPC_KEY"
+ipc_session_key_env = "SYNVOID_IPC_KEY"
 ```
 
 Generate a key with: `xxd -l 32 -p /dev/urandom`
@@ -150,7 +150,7 @@ paranoia_level = 1
 
 2. Check logs for what's being blocked:
 ```bash
-tail -f /var/log/maluwaf/access.log | grep WAF
+tail -f /var/log/synvoid/access.log | grep WAF
 ```
 
 3. Add exceptions for specific paths:
@@ -182,6 +182,6 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for more issues.
 
 ## Getting Help
 
-- GitHub Issues: https://github.com/maluwaf/maluwaf/issues
+- GitHub Issues: https://github.com/synvoid/synvoid/issues
 - Documentation: Check the docs/ folder
 - Configuration Examples: See examples/ directory

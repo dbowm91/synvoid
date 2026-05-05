@@ -169,8 +169,8 @@ impl TunnelTransport for WireGuardRuntime {
         self.backend = Some(backend);
         self.running = true;
 
-        gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
-        counter!("maluwaf.tunnel.wireguard.started").increment(1);
+        gauge!("synvoid.tunnel.wireguard.running").set(1.0);
+        counter!("synvoid.tunnel.wireguard.started").increment(1);
 
         tracing::info!("WireGuard runtime started");
         Ok(())
@@ -185,7 +185,7 @@ impl TunnelTransport for WireGuardRuntime {
         }
 
         self.running = false;
-        gauge!("maluwaf.tunnel.wireguard.running").set(0.0);
+        gauge!("synvoid.tunnel.wireguard.running").set(0.0);
 
         tracing::info!("WireGuard runtime stopped");
     }

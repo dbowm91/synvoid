@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-MaluNet is a novel approach to web application security and content delivery that combines a high-performance Web Application Firewall (WAF) built in Rust with an experimental peer-to-peer (P2P) CDN architecture. The project addresses critical limitations in traditional CDN-based DDoS mitigation by enabling collaborative defense through a mesh network of MaluWAF nodes. This white paper provides a comprehensive technical overview of the system, its architecture, and its innovative approach to distributed web security.
+MaluNet is a novel approach to web application security and content delivery that combines a high-performance Web Application Firewall (WAF) built in Rust with an experimental peer-to-peer (P2P) CDN architecture. The project addresses critical limitations in traditional CDN-based DDoS mitigation by enabling collaborative defense through a mesh network of SynVoid nodes. This white paper provides a comprehensive technical overview of the system, its architecture, and its innovative approach to distributed web security.
 
 ---
 
@@ -73,7 +73,7 @@ Traditional Content Delivery Networks (CDNs) address these challenges through ma
 
 ### 1.2 Project Overview
 
-MaluNet was conceived as a response to these limitations. At its core, MaluWAF serves as a WAF with special considerations for modern threats, including elevated levels of abusive scraping. The system is built on a reverse proxy architecture heavily inspired by Nginx, implemented in Rust for memory safety and performance.
+MaluNet was conceived as a response to these limitations. At its core, SynVoid serves as a WAF with special considerations for modern threats, including elevated levels of abusive scraping. The system is built on a reverse proxy architecture heavily inspired by Nginx, implemented in Rust for memory safety and performance.
 
 The experimental P2P component—MaluNet—proposes a collaborative alternative to traditional CDNs. By enabling individual WAF nodes to coordinate through a mesh network, the system aims to provide DDoS mitigation capabilities traditionally only available to large organizations, while maintaining trust guarantees through cryptographic verification.
 
@@ -95,19 +95,19 @@ The Rust ecosystem provides mature libraries for networking that have proven the
 
 ### 2.2 Reverse Proxy Architecture
 
-MaluWAF implements an nginx-inspired reverse proxy architecture using Tokio and Hyper, fundamentally changing how network requests are processed compared to traditional thread-per-connection models.
+SynVoid implements an nginx-inspired reverse proxy architecture using Tokio and Hyper, fundamentally changing how network requests are processed compared to traditional thread-per-connection models.
 
 Traditional web servers often use a thread-per-connection or process-per-connection model, where each incoming request is assigned its own execution context. This approach is conceptually simple but introduces significant overhead when handling thousands of concurrent connections. Each thread or process consumes memory, requires context switching, and introduces latency when switching between tasks. Modern high-traffic sites may need to handle tens of thousands of simultaneous connections, making the traditional approach impractical.
 
-MaluWAF instead employs non-blocking I/O combined with cooperative multitasking. Rather than dedicating a thread to each connection, a single thread can manage thousands of connections by registering interest in I/O events and resuming tasks only when their data is ready. When a connection is waiting for data, the thread can process other connections. This approach dramatically increases the number of connections a single server can handle, limited primarily by file descriptor limits rather than available threads.
+SynVoid instead employs non-blocking I/O combined with cooperative multitasking. Rather than dedicating a thread to each connection, a single thread can manage thousands of connections by registering interest in I/O events and resuming tasks only when their data is ready. When a connection is waiting for data, the thread can process other connections. This approach dramatically increases the number of connections a single server can handle, limited primarily by file descriptor limits rather than available threads.
 
-Connection pooling and HTTP keep-alive work together to reduce the overhead of establishing new connections. When MaluWAF proxies requests to upstream servers, it maintains a pool of persistent connections rather than creating a new connection for each request. This eliminates the TCP handshake and TLS negotiation latency for the majority of requests, significantly improving response times. The keep-alive mechanism allows multiple HTTP requests to reuse the same underlying TCP connection, with the connection being returned to the pool when idle and reused when needed.
+Connection pooling and HTTP keep-alive work together to reduce the overhead of establishing new connections. When SynVoid proxies requests to upstream servers, it maintains a pool of persistent connections rather than creating a new connection for each request. This eliminates the TCP handshake and TLS negotiation latency for the majority of requests, significantly improving response times. The keep-alive mechanism allows multiple HTTP requests to reuse the same underlying TCP connection, with the connection being returned to the pool when idle and reused when needed.
 
 HTTP/2 multiplexing builds on this foundation by allowing multiple requests to be sent concurrently over a single connection. Unlike HTTP/1.1, which requires responses to be received in the order requests were sent, HTTP/2 can interleave multiple request and response streams. This eliminates head-of-line blocking where a slow request delays subsequent requests on the same connection. For proxying multiple simultaneous client requests to the same upstream, this represents a significant performance improvement.
 
 HTTP/3 support introduces QUIC as the transport protocol, building on UDP rather than TCP. QUIC eliminates the head-of-line blocking that can occur at the transport layer, provides built-in encryption, and supports 0-RTT connection establishment that allows resumed connections to begin transmitting data immediately without waiting for a handshake. For mobile clients that frequently switch networks or experience intermittent connectivity, QUIC's connection migration capabilities maintain sessions across network changes.
 
-The architecture supports multiple upstream protocols to accommodate diverse application stacks. FastCGI provides a standard interface for communicating with external application servers, particularly common with PHP deployments through PHP-FPM. For Python applications, Granian enables direct integration with WSGI, ASGI, and RSGI applications, allowing Python frameworks like Django, Flask, FastAPI, and Starlette to run with MaluWAF handling the HTTP layer while Granian manages the Python runtime. This integration eliminates the need for a separate application server process, reducing deployment complexity and improving performance through shared-memory communication.
+The architecture supports multiple upstream protocols to accommodate diverse application stacks. FastCGI provides a standard interface for communicating with external application servers, particularly common with PHP deployments through PHP-FPM. For Python applications, Granian enables direct integration with WSGI, ASGI, and RSGI applications, allowing Python frameworks like Django, Flask, FastAPI, and Starlette to run with SynVoid handling the HTTP layer while Granian manages the Python runtime. This integration eliminates the need for a separate application server process, reducing deployment complexity and improving performance through shared-memory communication.
 
 ---
 
@@ -127,7 +127,7 @@ Traditional CDNs address these concerns through centralized governance—custome
 
 ### 3.2 MaluNet's Hierarchical Trust Model
 
-MaluNet proposes a P2P CDN composed of individual MaluWAF nodes with a hierarchical structure:
+MaluNet proposes a P2P CDN composed of individual SynVoid nodes with a hierarchical structure:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -151,7 +151,7 @@ MaluNet proposes a P2P CDN composed of individual MaluWAF nodes with a hierarchi
 
 **Global Nodes**: Serve as the single source of truth in the network. They maintain the complete network topology, act as directory servers for peer discovery, and aggregate routes to upstream services. Global nodes function analogously to Tor's directory authorities, though the purpose is nearly opposite—exposing services rather than providing anonymity.
 
-**Mesh Nodes**: Function either as edge nodes (accepting client connections) or origin nodes (connecting to backend servers). Any MaluWAF instance can operate in either role, enabling flexible deployment topologies.
+**Mesh Nodes**: Function either as edge nodes (accepting client connections) or origin nodes (connecting to backend servers). Any SynVoid instance can operate in either role, enabling flexible deployment topologies.
 
 ### 3.3 Gossip Protocol and DHT Overlay
 
@@ -415,7 +415,7 @@ With traditional TCP proxying, each edge node must bind to unique ports. With QU
 
 #### Historical: WireGuard (Removed)
 
-**Note**: WireGuard was removed from MaluWAF in 2025. All mesh communication now uses QUIC exclusively, which provides equivalent performance with additional benefits like stream multiplexing and connection migration.
+**Note**: WireGuard was removed from SynVoid in 2025. All mesh communication now uses QUIC exclusively, which provides equivalent performance with additional benefits like stream multiplexing and connection migration.
 
 #### Protocol Selection Guidelines
 
@@ -650,7 +650,7 @@ X-MaluNet-Origin: example.com
 
 The edge node responds with injected JavaScript that will perform the key exchange:
 ```html
-<script src="/malu-net-client.js" 
+<script src="/synvoid-net-client.js" 
         data-origin="node-12345"
         data-global="global-1.mesh.example.com:5001">
 </script>
@@ -683,7 +683,7 @@ const keyExchangeRequest = {
 
 Client connects directly to a global node (bypassing edge):
 ```http
-POST /_malu/keyexchange HTTP/3
+POST /_synvoid/keyexchange HTTP/3
 Content-Type: application/json
 
 {
@@ -780,7 +780,7 @@ Clients can resume previous sessions:
 ```http
 GET / HTTP/1.1
 Host: example.com
-Cookie: malu_sess=resumption_token
+Cookie: synvoid_sess=resumption_token
 ```
 
 The origin verifies the resumption token and issues a fresh session key without full key exchange.
@@ -803,11 +803,11 @@ The origin verifies the resumption token and issues a fresh session key without 
 
 ## 7. Attack Detection
 
-MaluWAF provides comprehensive attack detection across multiple vulnerability categories, implemented as a multi-layer protection pipeline.
+SynVoid provides comprehensive attack detection across multiple vulnerability categories, implemented as a multi-layer protection pipeline.
 
 ### 7.1 Detection Methods
 
-MaluWAF implements a multi-layered detection approach, combining pattern matching, grammar analysis, and protocol validation. The detection pipeline processes requests through distinct stages, each optimized for specific vulnerability classes.
+SynVoid implements a multi-layered detection approach, combining pattern matching, grammar analysis, and protocol validation. The detection pipeline processes requests through distinct stages, each optimized for specific vulnerability classes.
 
 #### SQL Injection Detection (libinjection)
 
@@ -840,7 +840,7 @@ XSS detection employs **context-aware HTML parsing**, recognizing that the same 
 - **URL Context**: `<a href="userinput">`
 - **CSS Context**: `<style>div { color: userinput }</style>`
 
-**Why Context Matters**: The string `javascript:alert(1)` is harmless in data state but dangerous in an href attribute. Similarly, `<img onerror=alert(1)>` requires an event handler attribute context to execute. MaluWAF's parser determines the exact context and validates accordingly.
+**Why Context Matters**: The string `javascript:alert(1)` is harmless in data state but dangerous in an href attribute. Similarly, `<img onerror=alert(1)>` requires an event handler attribute context to execute. SynVoid's parser determines the exact context and validates accordingly.
 
 **Detection Techniques**:
 - Tag detection: Identifying HTML tags in user input (`<script>`, `<iframe>`, `<object>`)
@@ -945,7 +945,7 @@ Paranoia levels provide configurable sensitivity thresholds, allowing operators 
 - **Command Injection**: Even single metacharacters may trigger blocks, extensive command name dictionary
 - **Additional Checks**: Enables extra detections like header injection, response splitting
 
-**Transitioning Between Levels**: When deploying MaluWAF, we recommend:
+**Transitioning Between Levels**: When deploying SynVoid, we recommend:
 
 1. Begin at Level 1 with `action = "log"` for 48-72 hours
 2. Review logs for false positives and adjust rules accordingly
@@ -957,7 +957,7 @@ The threat level system can automate paranoia level adjustments based on attack 
 
 ### 7.3 Response Actions
 
-When an attack is detected, MaluWAF can respond in several ways. Each response type serves different operational goals and has distinct implementation characteristics.
+When an attack is detected, SynVoid can respond in several ways. Each response type serves different operational goals and has distinct implementation characteristics.
 
 **Log**: The request proceeds normally after recording detection details. This mode serves several purposes:
 
@@ -1004,7 +1004,7 @@ The response action can be configured globally or per-attack-type, enabling fine
 
 ## 8. Flood Protection
 
-MaluWAF implements multi-layer flood protection against volumetric attacks. Unlike application-layer attack detection which inspects request content, flood protection operates at connection and packet levels to prevent resource exhaustion before request processing begins.
+SynVoid implements multi-layer flood protection against volumetric attacks. Unlike application-layer attack detection which inspects request content, flood protection operates at connection and packet levels to prevent resource exhaustion before request processing begins.
 
 ### 8.1 SYN Flood Protection
 
@@ -1012,12 +1012,12 @@ SYN floods exploit the TCP three-way handshake by sending SYN packets without co
 
 #### SYN Proxy Implementation
 
-MaluWAF implements a SYN proxy that shields upstream servers from SYN flood attacks:
+SynVoid implements a SYN proxy that shields upstream servers from SYN flood attacks:
 
 ```
-Standard TCP Handshake:          MaluWAF SYN Proxy:
+Standard TCP Handshake:          SynVoid SYN Proxy:
 
-Client    Server                 Client    MaluWAF    Upstream
+Client    Server                 Client    SynVoid    Upstream
   │         │                      │          │          │
   │────SYN─►│                      │────SYN─►│          │
   │         │                      │◄──SYN-ACK│          │
@@ -1029,16 +1029,16 @@ Client    Server                 Client    MaluWAF    Upstream
 ```
 
 **How the SYN Proxy Works**:
-1. Client sends SYN to MaluWAF (not the upstream)
-2. MaluWAF responds with SYN-ACK (completing handshake with client)
-3. MaluWAF establishes its own connection to the upstream
-4. Once both connections are established, MaluWAF transparently forwards traffic
+1. Client sends SYN to SynVoid (not the upstream)
+2. SynVoid responds with SYN-ACK (completing handshake with client)
+3. SynVoid establishes its own connection to the upstream
+4. Once both connections are established, SynVoid transparently forwards traffic
 
 This approach ensures that even if thousands of malicious SYN packets arrive, the upstream server only sees legitimate completed connections.
 
 #### Half-Open Connection Tracking
 
-MaluWAF maintains a connection table tracking half-open connections:
+SynVoid maintains a connection table tracking half-open connections:
 
 - **Per-IP Limits**: Maximum half-open connections per source IP (default: 10)
 - **Global Limits**: Total half-open connections across all IPs (default: 1,000)
@@ -1055,7 +1055,7 @@ To prevent memory accumulation from expired connections:
 
 ### 8.2 Connection Rate Limiting
 
-Beyond SYN floods, MaluWAF limits connection rates to prevent connection exhaustion attacks.
+Beyond SYN floods, SynVoid limits connection rates to prevent connection exhaustion attacks.
 
 #### Token Bucket Algorithm
 
@@ -1095,7 +1095,7 @@ This allows a client to open 10 connections immediately, then 1 per second there
 
 #### Per-IP vs Global Limits
 
-MaluWAF implements hierarchical rate limiting:
+SynVoid implements hierarchical rate limiting:
 
 | Level | Scope | Purpose |
 |-------|-------|---------|
@@ -1106,11 +1106,11 @@ Both levels operate independently—a client can be blocked by either limit.
 
 ### 8.3 UDP Flood Protection
 
-UDP floods amplify attack traffic by exploiting the connectionless nature of UDP. MaluWAF provides per-port UDP rate limiting to mitigate these attacks.
+UDP floods amplify attack traffic by exploiting the connectionless nature of UDP. SynVoid provides per-port UDP rate limiting to mitigate these attacks.
 
 #### The O(1) Slotted Counter Design
 
-Traditional rate limiting often uses per-IP hash tables requiring O(n) operations. MaluWAF's **slotted counter** design achieves O(1) performance:
+Traditional rate limiting often uses per-IP hash tables requiring O(n) operations. SynVoid's **slotted counter** design achieves O(1) performance:
 
 ```
 Slotted Counter Architecture:
@@ -1134,7 +1134,7 @@ IP: 10.0.0.1    → hash() → slot 892
 - Atomic increments: Single CPU instruction to increment counter
 
 **Per-Port Rate Limiting**:
-UDP services like DNS are common amplification targets. MaluWAF tracks per-port packet rates:
+UDP services like DNS are common amplification targets. SynVoid tracks per-port packet rates:
 
 ```
 UDP Port Rate Tracking:
@@ -1162,7 +1162,7 @@ DNS amplification attacks exploit the difference between query and response size
 2. Attacker sends small DNS queries with "ANY" type
 3. DNS server sends large responses to victim
 
-MaluWAF's per-port limiting prevents this by:
+SynVoid's per-port limiting prevents this by:
 - Limiting responses per second to each port
 - Blocking queries to closed DNS resolvers
 - Tracking suspicious query patterns
@@ -1176,7 +1176,7 @@ During sustained DDoS attacks, even sophisticated filtering can be overwhelmed. 
 ```
 Normal Operation:                    Blackhole Mode:
 
-Internet ──► MaluWAF ──► Upstream    Internet ──► MaluWAF (╳) ──► Upstream
+Internet ──► SynVoid ──► Upstream    Internet ──► SynVoid (╳) ──► Upstream
               │                              │
               └── Valid requests             └── All traffic dropped
                    forwarded
@@ -1225,11 +1225,11 @@ When blackhole duration expires:
 
 ### 9.1 AI Crawler Blocking
 
-The proliferation of AI-powered web scrapers has created new challenges for website operators. Unlike traditional crawlers that identify themselves through standard user-agent strings, AI scrapers often disguise as browsers or use rapidly rotating identities. MaluWAF addresses this through multiple detection strategies.
+The proliferation of AI-powered web scrapers has created new challenges for website operators. Unlike traditional crawlers that identify themselves through standard user-agent strings, AI scrapers often disguise as browsers or use rapidly rotating identities. SynVoid addresses this through multiple detection strategies.
 
 #### The isbot Integration
 
-MaluWAF integrates with **isbot**, a comprehensive crawler detection library that maintains an up-to-date database of known bot signatures:
+SynVoid integrates with **isbot**, a comprehensive crawler detection library that maintains an up-to-date database of known bot signatures:
 
 **How isbot Works**:
 1. Parses the User-Agent HTTP header
@@ -1244,7 +1244,7 @@ MaluWAF integrates with **isbot**, a comprehensive crawler detection library tha
 
 #### AI Crawler Identification
 
-Beyond isbot, MaluWAF employs additional heuristics to identify AI scrapers:
+Beyond isbot, SynVoid employs additional heuristics to identify AI scrapers:
 
 **Behavioral Signals**:
 - **Request Pattern Analysis**: AI scrapers often exhibit uniform timing between requests (mechanical precision unlike human browsing patterns)
@@ -1252,7 +1252,7 @@ Beyond isbot, MaluWAF employs additional heuristics to identify AI scrapers:
 - **Header Analysis**: Missing or inconsistent headers that browsers normally include (Accept-Language, Accept-Encoding, Referer)
 - **JavaScript Disabled**: Requests that never execute JavaScript, indicating programmatic rather than browser-based access
 
-**Signature Updates**: The AI crawler landscape evolves rapidly. MaluWAF's detection signatures are regularly updated to address new scrapers, and operators can add custom patterns for specific unwanted crawlers.
+**Signature Updates**: The AI crawler landscape evolves rapidly. SynVoid's detection signatures are regularly updated to address new scrapers, and operators can add custom patterns for specific unwanted crawlers.
 
 #### Blocking Strategies
 
@@ -1407,7 +1407,7 @@ Honeypots are decoy resources designed to detect and categorize automated access
 **The Fundamental Principle**:
 Human users navigate websites by following visible links and interacting with displayed content. They cannot see or access content that isn't rendered in their browser. Automated scrapers, however, parse raw HTML and may follow any URL they encounter—including hidden ones.
 
-MaluWAF creates honeypot endpoints that:
+SynVoid creates honeypot endpoints that:
 1. Appear as valid links in the HTML source
 2. Are invisible to human users through CSS styling
 3. Trigger bot detection when accessed
@@ -1440,7 +1440,7 @@ Links with specific attributes that distinguish them from real navigation:
 - URLs containing obvious bait patterns (e.g., `/admin`, `/login`, `/backup`)
 
 **Proactive Scanning Detection**:
-Beyond passive honeypots, MaluWAF can detect proactive scanning:
+Beyond passive honeypots, SynVoid can detect proactive scanning:
 
 **Common Vulnerability Scanning**:
 Requests to known vulnerability paths indicate reconnaissance:
@@ -1500,13 +1500,13 @@ Known security scanners (legitimate vulnerability assessment tools) can be white
 
 ## 10. Upload Validation and Malware Scanning
 
-File uploads represent a significant attack vector—malicious files can compromise servers, spread malware, or exfiltrate data. MaluWAF provides comprehensive upload protection through multiple validation layers.
+File uploads represent a significant attack vector—malicious files can compromise servers, spread malware, or exfiltrate data. SynVoid provides comprehensive upload protection through multiple validation layers.
 
 ### 10.1 File Upload Protection
 
 #### MIME Type Validation
 
-MIME type validation determines file type to enforce security policies. MaluWAF supports two approaches:
+MIME type validation determines file type to enforce security policies. SynVoid supports two approaches:
 
 **HTTP Content-Type Header**:
 The simplest approach—trusting the client's declared content type:
@@ -1517,7 +1517,7 @@ Content-Type: image/png
 Fast but trivially bypassed (attacker can declare anything).
 
 **Magic Bytes Detection**:
-For higher security, MaluWAF inspects file contents (magic bytes):
+For higher security, SynVoid inspects file contents (magic bytes):
 ```
 File Signatures (first bytes):
 JPEG:    FF D8 FF
@@ -1527,7 +1527,7 @@ ZIP:     50 4B 03 04
 EXE:     4D 5A
 ```
 
-MaluWAF analyzes the first 8-16 bytes against known signatures, providing defense against:
+SynVoid analyzes the first 8-16 bytes against known signatures, providing defense against:
 - Extension spoofing (`malware.exe.png`)
 - MIME type spoofing
 - Double extensions (`shell.php.jpg`)
@@ -1562,14 +1562,14 @@ max_files = 10                # Files per request
 
 #### Multipart Handling
 
-HTTP file uploads use multipart/form-data encoding. MaluWAF parses multipart requests to:
+HTTP file uploads use multipart/form-data encoding. SynVoid parses multipart requests to:
 - Extract individual file parts
 - Validate each part's size and type
 - Reject malformed multipart requests (defenses against parser attacks)
 
 ### 10.2 YARA-Based Malware Scanning
 
-For environments requiring malware detection, MaluWAF integrates **YARA**—the pattern matching tool used by security researchers and antivirus products.
+For environments requiring malware detection, SynVoid integrates **YARA**—the pattern matching tool used by security researchers and antivirus products.
 
 #### What is YARA?
 
@@ -1604,19 +1604,19 @@ rule encrypted_payload {
 }
 ```
 
-#### How MaluWAF Uses YARA
+#### How SynVoid Uses YARA
 
 **Rule Loading**:
 ```toml
 [site.upload.yara]
 enabled = true
-rules_dir = "/etc/maluwaf/yara-rules"
+rules_dir = "/etc/synvoid/yara-rules"
 
 # Include built-in rules
 include_builtin = true
 ```
 
-MaluWAF loads all `.yar` and `.yara` files from the rules directory at startup. Rules can be organized into categories.
+SynVoid loads all `.yar` and `.yara` files from the rules directory at startup. Rules can be organized into categories.
 
 **Scanning Process**:
 ```
@@ -1666,7 +1666,7 @@ When YARA rules match, files enter quarantine:
          ▼
    ┌─────────────┐
    │   Quarantine│ ← Move to isolated storage
-   │   Directory │   /var/lib/maluwaf/quarantine/
+   │   Directory │   /var/lib/synvoid/quarantine/
    └──────┬──────┘
           │
           ▼
@@ -1691,21 +1691,21 @@ When YARA rules match, files enter quarantine:
 **Quarantine Management**:
 ```bash
 # View quarantined files
-maluwafctl quarantine list
+synvoidctl quarantine list
 
 # Release false positive
-maluwafctl quarantine release <file-id>
+synvoidctl quarantine release <file-id>
 
 # Permanently delete
-maluwafctl quarantine delete <file-id>
+synvoidctl quarantine delete <file-id>
 
 # Get file for analysis
-maluwafctl quarantine fetch <file-id> --output /tmp/
+synvoidctl quarantine fetch <file-id> --output /tmp/
 ```
 
 #### Integration with External Threat Intelligence
 
-MaluWAF can enrich YARA scanning with external threat data:
+SynVoid can enrich YARA scanning with external threat data:
 
 ```toml
 [site.upload.yara.threat_intel]
@@ -1749,7 +1749,7 @@ In a distributed P2P network, establishing trust between nodes is critical. Malu
 
 ### 11.1 Continuous Monitoring
 
-MaluWAF nodes continuously monitor their own health and the health of the network around them:
+SynVoid nodes continuously monitor their own health and the health of the network around them:
 
 #### Path Health
 
@@ -2016,7 +2016,7 @@ Trust Score = 0.4×behavior + 0.20×uptime + 0.25×consistency + 0.15×identity
 
 ### 12.1 Overseer > Master > Worker Model
 
-MaluWAF uses a hierarchical process model designed for high availability, horizontal scalability, and zero-downtime operation.
+SynVoid uses a hierarchical process model designed for high availability, horizontal scalability, and zero-downtime operation.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -2079,7 +2079,7 @@ Raft Leader Election:
       │  (Leader)      │                 │
 ```
 
-**How Raft Works in MaluWAF**:
+**How Raft Works in SynVoid**:
 1. **Leader Election**: On startup or leader failure, overseers request votes
 2. **Log Replication**: Leader broadcasts configuration changes to followers
 3. **Commitment**: Changes commit when majority acknowledge receipt
@@ -2168,7 +2168,7 @@ struct IpcMessage {
 
 #### Socket FD Passing (Zero-Downtime Upgrades)
 
-For zero-downtime upgrades, MaluWAF passes listening socket file descriptors to new processes:
+For zero-downtime upgrades, SynVoid passes listening socket file descriptors to new processes:
 
 ```
 Upgrade Sequence:
@@ -2223,7 +2223,7 @@ Shared memory regions allow:
 
 ### 12.3 Platform Considerations
 
-MaluWAF achieves best performance on Linux:
+SynVoid achieves best performance on Linux:
 
 | Feature | Linux | macOS | Windows |
 |---------|-------|-------|---------|
@@ -2278,7 +2278,7 @@ MaluWAF achieves best performance on Linux:
 Simple deployment for small to medium websites:
 
 ```
-Internet → MaluWAF → PHP-FPM
+Internet → SynVoid → PHP-FPM
               │
               └──→ Static Files
 ```
@@ -2292,7 +2292,7 @@ Load Balancer
       │
    ┌──┼──┐
    ▼  ▼  ▼
-MaluWAF MaluWAF MaluWAF
+SynVoid SynVoid SynVoid
    │     │     │
    ▼     ▼     ▼
  App1   App2   App3

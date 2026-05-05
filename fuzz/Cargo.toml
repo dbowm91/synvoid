@@ -1,5 +1,5 @@
 [package]
-name = "maluwaf-fuzz"
+name = "synvoid-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-maluwaf = { path = ".." }
+synvoid = { path = ".." }
 http = "1"
 postcard = "1"
 

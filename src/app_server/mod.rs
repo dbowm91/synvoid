@@ -108,7 +108,7 @@ impl AppServerConfig {
         if let Some(ref path) = self.socket_path {
             path.clone()
         } else {
-            std::env::temp_dir().join(format!("maluwaf-{}-app-{}.sock", site_id, worker_id))
+            std::env::temp_dir().join(format!("synvoid-{}-app-{}.sock", site_id, worker_id))
         }
     }
 }

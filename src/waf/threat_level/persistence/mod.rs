@@ -42,8 +42,8 @@ mod persistence {
                 (site_path.unwrap_or(global_path.clone()), global_path)
             } else {
                 (
-                    PathBuf::from("/var/lib/maluwaf/threat_level/baseline_global.json"),
-                    PathBuf::from("/var/lib/maluwaf/threat_level/baseline_global.json"),
+                    PathBuf::from("/var/lib/synvoid/threat_level/baseline_global.json"),
+                    PathBuf::from("/var/lib/synvoid/threat_level/baseline_global.json"),
                 )
             };
 
@@ -366,7 +366,7 @@ mod persistence {
 
         #[test]
         fn test_persistence_roundtrip() {
-            let temp_dir = std::env::temp_dir().join("maluwaf_test_baseline");
+            let temp_dir = std::env::temp_dir().join("synvoid_test_baseline");
             let persistence = BaselinePersistence::new(Some(temp_dir.clone()), None);
 
             let baselines = vec![BaselineStats {

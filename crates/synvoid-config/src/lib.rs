@@ -1,4 +1,4 @@
-//! Configuration types and defaults for MaluWAF.
+//! Configuration types and defaults for SynVoid.
 //!
 //! Provides strongly-typed configuration structs for all subsystems
 //! including site configs, DNS, mesh, admin, and TLS settings.

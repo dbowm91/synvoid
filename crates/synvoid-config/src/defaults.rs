@@ -699,7 +699,7 @@ fn default_error_codes() -> Vec<u16> {
 ///
 /// Modes:
 /// - `generic`: Plain HTML, no styling - default for stealth/undetectable WAF
-/// - `styled`: Modern styled pages with MaluWAF branding
+/// - `styled`: Modern styled pages with SynVoid branding
 /// - `custom`: User-defined directory (requires custom_directory to be set)
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct ErrorPagesDefaults {

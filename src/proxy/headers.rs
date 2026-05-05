@@ -386,6 +386,7 @@ pub fn build_forward_headers(
         if name_str.eq_ignore_ascii_case("x-forwarded-for")
             || name_str.eq_ignore_ascii_case("x-real-ip")
             || name_str.eq_ignore_ascii_case("forwarded")
+            || name_str.eq_ignore_ascii_case("x-forwarded-proto")
         {
             continue;
         }

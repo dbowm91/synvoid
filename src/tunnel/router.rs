@@ -78,7 +78,7 @@ impl TunnelRouter {
 
             self.start_tunnel_services(runtime.clone()).await?;
 
-            gauge!("maluwaf.tunnel.quic.enabled").set(1.0);
+            gauge!("synvoid.tunnel.quic.enabled").set(1.0);
             tracing::info!("QUIC tunnel router started");
         } else {
             tracing::info!("QUIC tunnel disabled");

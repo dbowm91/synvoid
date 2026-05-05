@@ -106,14 +106,14 @@ impl UdpFloodProtector {
 
         let global = self.global_counter.fetch_add(1, Ordering::Relaxed) + 1;
         if global > self.global_rate as u64 {
-            metrics::counter!("maluwaf.udp_flood.global_limited").increment(1);
+            metrics::counter!("synvoid.udp_flood.global_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let slot = self.ip_to_slot(ip);
         let ip_count = self.per_ip_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if ip_count > self.per_ip_rate {
-            metrics::counter!("maluwaf.udp_flood.ip_limited").increment(1);
+            metrics::counter!("synvoid.udp_flood.ip_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -121,7 +121,7 @@ impl UdpFloodProtector {
             let port_count = self.per_port_counters[p as usize].fetch_add(1, Ordering::Relaxed) + 1;
             let port_threshold = self.global_rate / 100;
             if port_count > port_threshold {
-                metrics::counter!("maluwaf.udp_flood.port_limited").increment(1);
+                metrics::counter!("synvoid.udp_flood.port_limited").increment(1);
                 return FloodDecision::RateLimited;
             }
 
@@ -138,28 +138,28 @@ impl UdpFloodProtector {
             53 => {
                 let count = self.dns_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
                 if count > self.protocol_limits.dns_limit {
-                    metrics::counter!("maluwaf.udp_flood.dns_limited").increment(1);
+                    metrics::counter!("synvoid.udp_flood.dns_limited").increment(1);
                     return FloodDecision::RateLimited;
                 }
             }
             123 => {
                 let count = self.ntp_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
                 if count > self.protocol_limits.ntp_limit {
-                    metrics::counter!("maluwaf.udp_flood.ntp_limited").increment(1);
+                    metrics::counter!("synvoid.udp_flood.ntp_limited").increment(1);
                     return FloodDecision::RateLimited;
                 }
             }
             161 | 162 => {
                 let count = self.snmp_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
                 if count > self.protocol_limits.snmp_limit {
-                    metrics::counter!("maluwaf.udp_flood.snmp_limited").increment(1);
+                    metrics::counter!("synvoid.udp_flood.snmp_limited").increment(1);
                     return FloodDecision::RateLimited;
                 }
             }
             1900 => {
                 let count = self.ssdp_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
                 if count > self.protocol_limits.ssdp_limit {
-                    metrics::counter!("maluwaf.udp_flood.ssdp_limited").increment(1);
+                    metrics::counter!("synvoid.udp_flood.ssdp_limited").increment(1);
                     return FloodDecision::RateLimited;
                 }
             }
@@ -184,7 +184,7 @@ impl UdpFloodProtector {
             let mut tracker = self.amplification_tracker.write();
 
             if tracker.len() >= MAX_AMPLIFICATION_ENTRIES {
-                metrics::counter!("maluwaf.udp_flood.amplification_tracker_full").increment(1);
+                metrics::counter!("synvoid.udp_flood.amplification_tracker_full").increment(1);
                 return false;
             }
 
@@ -202,7 +202,7 @@ impl UdpFloodProtector {
 
             if total_ratio > self.protocol_limits.amplification_threshold {
                 self.amplification_alert.store(true, Ordering::Relaxed);
-                metrics::counter!("maluwaf.udp_flood.amplification_detected").increment(1);
+                metrics::counter!("synvoid.udp_flood.amplification_detected").increment(1);
                 return true;
             }
         }

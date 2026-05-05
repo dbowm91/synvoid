@@ -1,6 +1,6 @@
-# Threat Intelligence in MaluWAF
+# Threat Intelligence in SynVoid
 
-MaluWAF implements a distributed threat intelligence system that shares indicators across mesh nodes to provide coordinated protection against malicious actors.
+SynVoid implements a distributed threat intelligence system that shares indicators across mesh nodes to provide coordinated protection against malicious actors.
 
 ## Table of Contents
 
@@ -161,7 +161,7 @@ YARA rules follow the standard YARA format:
 rule SuspiciousPEHeader {
     meta:
         description = "Detects PE file with suspicious characteristics"
-        author = "MaluWAF Threat Intel"
+        author = "SynVoid Threat Intel"
         date = "2024-01-15"
     strings:
         $mz_header = "MZ"

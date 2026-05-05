@@ -1,6 +1,6 @@
 # AGENTS.md - Developer Guide for AI Agents
 
-This is the **repository index** for AI agents working on the MaluWAF codebase.
+This is the **repository index** for AI agents working on the SynVoid codebase.
 
 ## Modular Agent Guidance
 
@@ -25,7 +25,7 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 
 ## Project Overview
 
-MaluWAF is a WAF (Web Application Firewall) with a multi-process architecture:
+SynVoid is a WAF (Web Application Firewall) with a multi-process architecture:
 - **Overseer** (`src/overseer/`): Manages master process lifecycle, upgrades, health monitoring
 - **Master** (`src/master/`): Parent process that spawns/manages workers, handles IPC
 - **Worker** (`src/worker/`): Handles HTTP requests and communicates via IPC
@@ -39,7 +39,7 @@ Key reference documents in `architecture/` directory:
 
 ### Scalability Target
 
-MaluWAF is designed for **high scalability** with targets well in excess of **1000K requests/second** (1 million RPS).
+SynVoid is designed for **high scalability** with targets well in excess of **1000K requests/second** (1 million RPS).
 
 This has several implications:
 - **Every allocation matters**: At 1000K rps, even small per-request allocations compound to millions/sec
@@ -102,7 +102,7 @@ cargo fmt && cargo clippy --lib -- -D warnings
 
 ### Architecture Profile Gates
 
-MaluWAF supports feature-gated profiles. Verify compilation for each profile:
+SynVoid supports feature-gated profiles. Verify compilation for each profile:
 
 ```bash
 # Core profile (minimal)
@@ -134,7 +134,7 @@ cargo check --no-default-features --features mesh,dns
 
 ## Multi-Process Architecture
 
-MaluWAF uses a multi-process architecture designed for **high scalability (1M+ RPS)** with **millions of tenants**:
+SynVoid uses a multi-process architecture designed for **high scalability (1M+ RPS)** with **millions of tenants**:
 
 ### Process Hierarchy
 

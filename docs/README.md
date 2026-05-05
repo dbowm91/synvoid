@@ -1,6 +1,6 @@
-# MaluWAF Documentation
+# SynVoid Documentation
 
-Welcome to the MaluWAF documentation. This index provides quick access to all documentation.
+Welcome to the SynVoid documentation. This index provides quick access to all documentation.
 
 ## Quick Links
 
@@ -46,7 +46,7 @@ Welcome to the MaluWAF documentation. This index provides quick access to all do
 
 ## Advanced Features
 
-MaluWAF includes additional features for specific use cases:
+SynVoid includes additional features for specific use cases:
 
 | Document | Description |
 |----------|-------------|
@@ -74,7 +74,7 @@ MaluWAF includes additional features for specific use cases:
 
 ## Additional Resources
 
-- [GitHub Repository](https://github.com/maluwaf/maluwaf)
+- [GitHub Repository](https://github.com/synvoid/synvoid)
 - [Example Configurations](../config/)
 - [Example Sites](../config/sites/)
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines

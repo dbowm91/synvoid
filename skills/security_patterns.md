@@ -2,7 +2,7 @@
 
 ## Overview
 
-This skill documents the security patterns implemented for the MaluWAF codebase.
+This skill documents the security patterns implemented for the SynVoid codebase.
 
 ## Critical Security Fixes (Wave 4)
 
@@ -223,8 +223,8 @@ pub fn load_directory_template(template_path: &str) -> Result<String, StaticErro
 
     // 3. Canonicalize and verify within allowed directories
     let canonical = fs::canonicalize(path)?;
-    if !canonical.starts_with(Path::new("/etc/maluwaf/").as_path())
-        && !canonical.starts_with(Path::new("/var/lib/maluwaf/").as_path())
+    if !canonical.starts_with(Path::new("/etc/synvoid/").as_path())
+        && !canonical.starts_with(Path::new("/var/lib/synvoid/").as_path())
         && !canonical.starts_with(Path::new("/var/www/").as_path())
     {
         return Err(StaticError::Internal(
@@ -1584,7 +1584,39 @@ pub fn should_retry_request(method: &Method, config: &RetryConfig) -> bool {
 
 **Fix**: Changed default to forward all end-to-end headers:
 - Strip hop-by-hop headers (Connection, Keep-Alive, TE, etc.)
-- Sanitize spoofable forwarded headers from client
+- Sanitize spoofable forwarded headers from client (X-Forwarded-For, X-Real-IP, Forwarded, X-Forwarded-Proto)
 - Respect `clear`/`hide` config for explicit removals
 - Apply `set` overrides for header values
+
+**Implementation**: In `build_forward_headers()`, the following headers are skipped during the forward loop and replaced with sanitized values:
+- `x-forwarded-for` → replaced with validated XFF + real client IP
+- `x-real-ip` → replaced with real client IP
+- `forwarded` → stripped entirely
+- `x-forwarded-proto` → stripped (listener protocol inserted separately)
+
+### Security Regression Tests (Wave P1)
+
+**Location**: `tests/security_regression.rs`
+
+Added tests validating header sanitization security:
+
+1. **`test_forwarded_headers_spoofed_by_client_rejected`**:
+   - Spoofed X-Forwarded-For, X-Real-IP, Forwarded headers are stripped
+   - Replaced with sanitized real client IP
+   - X-Forwarded-Proto set based on listener protocol, not client-supplied value
+
+2. **`test_hop_by_hop_headers_stripped_from_forwarding`**:
+   - Connection, Keep-Alive, Transfer-Encoding, Proxy-Authorization stripped
+   - End-to-end headers (Content-Type, Host, User-Agent, etc.) preserved
+
+3. **`test_build_forward_headers_preserves_non_spoofed_headers`**:
+   - Host, User-Agent, Accept, and custom headers preserved
+   - Only spoofable headers are replaced
+
+4. **`test_forwarded_protocol_header_based_on_listener`**:
+   - HTTP listener sets x-forwarded-proto to "http"
+   - HTTPS listener sets x-forwarded-proto to "https"
+   - Ensures protocol cannot be spoofed by client
+
+These tests ensure proxy security defaults are enforced and prevent regression.
 ```

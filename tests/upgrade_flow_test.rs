@@ -1,5 +1,5 @@
 mod upgrade_flow_tests {
-    use maluwaf::overseer::state::{OverseerState, UpgradeState};
+    use synvoid::overseer::state::{OverseerState, UpgradeState};
 
     #[test]
     fn test_upgrade_state_default() {

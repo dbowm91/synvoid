@@ -148,7 +148,7 @@ impl HealthChecker {
                             .consecutive_failures
                             .store(0, std::sync::atomic::Ordering::Relaxed);
                         tracing::info!("Backend {} recovered", backend.url);
-                        counter!("maluwaf.upstream.backend_recovered").increment(1);
+                        counter!("synvoid.upstream.backend_recovered").increment(1);
                     }
                 }
             } else {
@@ -166,7 +166,7 @@ impl HealthChecker {
                         backend.url,
                         failures
                     );
-                    counter!("maluwaf.upstream.backend_unhealthy").increment(1);
+                    counter!("synvoid.upstream.backend_unhealthy").increment(1);
                 }
             }
         }

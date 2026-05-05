@@ -509,11 +509,11 @@ impl HttpServer {
                             if let Some(ref fp) = flood_protector {
                                 match fp.check_tcp_connection(client_ip) {
                                     FloodDecision::Blackholed => {
-                                        counter!("maluwaf.http.flood_blackhole").increment(1);
+                                        counter!("synvoid.http.flood_blackhole").increment(1);
                                         continue;
                                     }
                                     FloodDecision::RateLimited => {
-                                        counter!("maluwaf.http.flood_limited").increment(1);
+                                        counter!("synvoid.http.flood_limited").increment(1);
                                         continue;
                                     }
                                     FloodDecision::Allowed => {}
@@ -549,7 +549,7 @@ impl HttpServer {
                                             continue;
                                         }
                                         if is_tls_client_hello(&peek_buf[..n]) {
-                                            counter!("maluwaf.http.tls_on_http_port").increment(1);
+                                            counter!("synvoid.http.tls_on_http_port").increment(1);
                                             tracing::debug!(
                                                 "Rejected TLS connection on HTTP port from {}",
                                                 client_ip
@@ -557,7 +557,7 @@ impl HttpServer {
                                             continue;
                                         }
                                         if !is_valid_http_request_start(&peek_buf[..n]) {
-                                            counter!("maluwaf.http.invalid_protocol").increment(1);
+                                            counter!("synvoid.http.invalid_protocol").increment(1);
                                             tracing::debug!(
                                                 "Rejected non-HTTP connection on HTTP port from {}",
                                                 client_ip
@@ -766,7 +766,7 @@ impl HttpServer {
         // Serve HTTP-01 challenges for mesh ownership verification
         #[cfg(all(feature = "mesh", feature = "dns"))]
         if let Some(ref mt) = mesh_transport {
-            if let Some(token) = path.strip_prefix("/.well-known/malu-challenge/") {
+            if let Some(token) = path.strip_prefix("/.well-known/synvoid-challenge/") {
                 if !token.is_empty() && !token.contains('/') {
                     if let Some(key_authorization) = mt.get_http01_challenge(token) {
                         tracing::debug!(
@@ -799,7 +799,7 @@ impl HttpServer {
                 Ok(token) => Some(token),
                 Err(e) => {
                     tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
-                    counter!("maluwaf.traffic.connection_limited").increment(1);
+                    counter!("synvoid.traffic.connection_limited").increment(1);
                     let ipc_clone = ipc.clone();
                     let worker_id_clone = worker_id;
                     Self::send_request_log_if_enabled(
@@ -896,7 +896,7 @@ impl HttpServer {
         let early_decision = waf.check_early(client_ip, &path, cookies, None);
         match early_decision {
             crate::proxy::WafDecision::Drop => {
-                counter!("maluwaf.http.early_drop").increment(1);
+                counter!("synvoid.http.early_drop").increment(1);
                 http_conn.request_drop();
                 let ipc_clone = ipc.clone();
                 let worker_id_clone = worker_id;
@@ -1104,7 +1104,7 @@ impl HttpServer {
                         "Large request body blocked by WAF at offset {}",
                         offset
                     );
-                    counter!("maluwaf.http.large_body_blocked").increment(1);
+                    counter!("synvoid.http.large_body_blocked").increment(1);
                     return Ok(Self::build_response_with_alt_svc(
                         403,
                         "Request blocked by WAF".to_string(),
@@ -1139,7 +1139,7 @@ impl HttpServer {
         // SECTION 11: Honeypot & Challenge Asset Handling
         // ============================================================================
         if path.starts_with(HONEYPOT_PREFIX) {
-            counter!("maluwaf.honeypot.hit").increment(1);
+            counter!("synvoid.honeypot.hit").increment(1);
             tracing::info!("HTTP honeypot accessed: {} by {}", path, client_ip);
             waf.block_ip_for_honeypot(
                 client_ip,
@@ -1422,7 +1422,7 @@ impl HttpServer {
                             site_id,
                             e
                         );
-                        counter!("maluwaf.traffic.connection_limited").increment(1);
+                        counter!("synvoid.traffic.connection_limited").increment(1);
                         let ipc_clone = ipc.clone();
                         let worker_id_clone = worker_id;
                         Self::send_request_log_if_enabled(
@@ -1496,7 +1496,7 @@ impl HttpServer {
             // SECTION 14: WAF Decision Handling (drop, stall, block, challenge, pass)
             // ============================================================================
             crate::proxy::WafDecision::Drop => {
-                counter!("maluwaf.http.blackhole_drop").increment(1);
+                counter!("synvoid.http.blackhole_drop").increment(1);
                 http_conn.request_drop();
                 let ipc_clone = ipc.clone();
                 let worker_id_clone = worker_id;
@@ -1520,7 +1520,7 @@ impl HttpServer {
                 return Ok(resp);
             }
             crate::proxy::WafDecision::Stall => {
-                counter!("maluwaf.http.stalled").increment(1);
+                counter!("synvoid.http.stalled").increment(1);
                 let current_stalled = crate::metrics::get_active_stalled_requests();
                 if current_stalled >= http_config.max_stalled_requests as u64 {
                     crate::metrics::record_stall_rejected();
@@ -2758,7 +2758,7 @@ impl HttpServer {
                     .and_then(|v| v.to_str().ok());
                 if let Some(ct) = content_type {
                     if crate::upload::is_upload_content_type(ct) {
-                        if let Some(upload_validator) = crate::waf::get_upload_validator() {
+                        if let Some(upload_validator) = waf.get_upload_validator() {
                             let effective_config = upload_validator.get_effective_config(&path);
                             if effective_config.scan_with_yara
                                 || effective_config.max_size_bytes > 0
@@ -3537,12 +3537,12 @@ match send_request_streaming(
             Ok(up) => up,
             Err(e) => {
                 tracing::error!("WebSocket upgrade failed: {}", e);
-                counter!("maluwaf.websocket.upgrade_failed").increment(1);
+                counter!("synvoid.websocket.upgrade_failed").increment(1);
                 return;
             }
         };
 
-        counter!("maluwaf.websocket.connections").increment(1);
+        counter!("synvoid.websocket.connections").increment(1);
 
         let ws_stream =
             WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
@@ -3565,12 +3565,12 @@ match send_request_streaming(
             Ok(ws) => ws,
             Err(e) => {
                 tracing::error!("Failed to connect to upstream WebSocket: {}", e);
-                counter!("maluwaf.websocket.upstream_failed").increment(1);
+                counter!("synvoid.websocket.upstream_failed").increment(1);
                 return;
             }
         };
 
-        counter!("maluwaf.websocket.upstream_connected").increment(1);
+        counter!("synvoid.websocket.upstream_connected").increment(1);
 
         let (mut upstream_tx, mut upstream_rx) = upstream_ws.split();
 
@@ -3625,7 +3625,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket message blocked by WAF"
                         );
-                        counter!("maluwaf.websocket.blocked").increment(1);
+                        counter!("synvoid.websocket.blocked").increment(1);
                         let _ = upstream_tx.close().await;
                         should_close_clone.stop();
                         break;
@@ -3635,7 +3635,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket message logged by WAF"
                         );
-                        counter!("maluwaf.websocket.logged").increment(1);
+                        counter!("synvoid.websocket.logged").increment(1);
                     }
                     WafAction::Allow => {}
                     WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
@@ -3700,7 +3700,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket upstream response blocked by WAF"
                         );
-                        counter!("maluwaf.websocket.blocked").increment(1);
+                        counter!("synvoid.websocket.blocked").increment(1);
                         let _ = client_tx.close().await;
                         should_close.stop();
                         break;
@@ -3710,7 +3710,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket upstream response logged by WAF"
                         );
-                        counter!("maluwaf.websocket.logged").increment(1);
+                        counter!("synvoid.websocket.logged").increment(1);
                     }
                     WafAction::Allow => {}
                     WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
@@ -3734,7 +3734,7 @@ match send_request_streaming(
             _ = upstream_to_client => {}
         }
 
-        counter!("maluwaf.websocket.closed").increment(1);
+        counter!("synvoid.websocket.closed").increment(1);
         tracing::debug!("WebSocket connection closed");
     }
 
@@ -3751,12 +3751,12 @@ match send_request_streaming(
             Ok(up) => up,
             Err(e) => {
                 tracing::error!("WebSocket upgrade to AppServer failed: {}", e);
-                counter!("maluwaf.websocket.upgrade_failed").increment(1);
+                counter!("synvoid.websocket.upgrade_failed").increment(1);
                 return;
             }
         };
 
-        counter!("maluwaf.websocket.connections").increment(1);
+        counter!("synvoid.websocket.connections").increment(1);
 
         let ws_stream =
             WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
@@ -3775,12 +3775,12 @@ match send_request_streaming(
             Ok(ws) => ws,
             Err(e) => {
                 tracing::error!("Failed to connect to AppServer WebSocket: {}", e);
-                counter!("maluwaf.websocket.upstream_failed").increment(1);
+                counter!("synvoid.websocket.upstream_failed").increment(1);
                 return;
             }
         };
 
-        counter!("maluwaf.websocket.upstream_connected").increment(1);
+        counter!("synvoid.websocket.upstream_connected").increment(1);
 
         let (mut upstream_tx, mut upstream_rx) = upstream_ws.split();
 
@@ -3835,7 +3835,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket message blocked by WAF"
                         );
-                        counter!("maluwaf.websocket.blocked").increment(1);
+                        counter!("synvoid.websocket.blocked").increment(1);
                         let _ = upstream_tx.close().await;
                         should_close_clone.stop();
                         break;
@@ -3845,7 +3845,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket message logged by WAF"
                         );
-                        counter!("maluwaf.websocket.logged").increment(1);
+                        counter!("synvoid.websocket.logged").increment(1);
                     }
                     WafAction::Allow => {}
                     WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
@@ -3910,7 +3910,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket appserver response blocked by WAF"
                         );
-                        counter!("maluwaf.websocket.blocked").increment(1);
+                        counter!("synvoid.websocket.blocked").increment(1);
                         let _ = client_tx.close().await;
                         should_close.stop();
                         break;
@@ -3920,7 +3920,7 @@ match send_request_streaming(
                             client_ip = %client_ip,
                             "WebSocket appserver response logged by WAF"
                         );
-                        counter!("maluwaf.websocket.logged").increment(1);
+                        counter!("synvoid.websocket.logged").increment(1);
                     }
                     WafAction::Allow => {}
                     WafAction::Challenge | WafAction::Stall | WafAction::TarPit => {
@@ -3944,7 +3944,7 @@ match send_request_streaming(
             _ = upstream_to_client => {}
         }
 
-        counter!("maluwaf.websocket.closed").increment(1);
+        counter!("synvoid.websocket.closed").increment(1);
         tracing::debug!("AppServer WebSocket connection closed");
     }
 
@@ -4012,7 +4012,7 @@ match send_request_streaming(
         }
 
         tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
-        counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+        counter!("synvoid.bandwidth.limit_exceeded").increment(1);
 
         let path_owned = path.to_string();
         let start_elapsed = start.elapsed().as_millis() as u64;
@@ -4181,7 +4181,7 @@ match send_request_streaming(
         }
 
         let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
-            .unwrap_or_else(|_| "/var/run/maluwaf-static-worker.sock".to_string());
+            .unwrap_or_else(|_| "/var/run/synvoid-static-worker.sock".to_string());
 
         if static_worker_socket.is_empty() {
             return body;

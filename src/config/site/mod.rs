@@ -49,8 +49,8 @@ pub use network::{
 };
 pub use protocol_features::{SiteGrpcConfig, SiteWebSocketConfig};
 pub use proxy::{
-    BufferingConfig, ProxyCacheConfig, ProxyHeadersConfig, ProxyUpstreamConfig, RetryConfig,
-    SiteProxyConfig, UpstreamTlsConfig, WasmOnError,
+    BodyBufferingPolicy, BufferingConfig, ProxyCacheConfig, ProxyHeadersConfig,
+    ProxyUpstreamConfig, RetryConfig, SiteProxyConfig, UpstreamTlsConfig, WasmOnError,
 };
 pub use ratelimit::{
     EndpointRateLimitConfig, GlobalRateLimitOverride, IpRateLimitOverride, SiteRateLimitConfig,

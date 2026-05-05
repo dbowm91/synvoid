@@ -6,7 +6,7 @@
 //! verifies that malformed input is handled gracefully without panics.
 
 use libfuzzer_sys::fuzz_target;
-use maluwaf::serialization::{deserialize, serialize};
+use synvoid::serialization::{deserialize, serialize};
 
 fuzz_target!(|data: &[u8]| {
     // Test deserializing as String

@@ -1,13 +1,13 @@
-# MaluWAF WASM Guest ABI Specification
+# SynVoid WASM Guest ABI Specification
 
 > Version: 1.0  
 > Status: Stable
 
-This document describes the Application Binary Interface (ABI) for WASM plugins running in the MaluWAF guest environment.
+This document describes the Application Binary Interface (ABI) for WASM plugins running in the SynVoid guest environment.
 
 ## Overview
 
-MaluWAF supports WASM-based request filtering and response transformation plugins. Plugins run in a sandboxed WASM environment using [Wasmtime](https://github.com/bytecodealliance/wasmtime) as the runtime.
+SynVoid supports WASM-based request filtering and response transformation plugins. Plugins run in a sandboxed WASM environment using [Wasmtime](https://github.com/bytecodealliance/wasmtime) as the runtime.
 
 ## Memory Layout
 
@@ -427,11 +427,11 @@ level = "debug"  # Shows filter decisions, memory operations
 ```
 
 Metrics available:
-- `maluwaf_wasm_invocations_total` - Total plugin calls
-- `maluwaf_wasm_decisions_total{decision="pass|block|challenge"}` - Decision counts
-- `maluwaf_wasm_errors_total` - Error counts
-- `maluwaf_wasm_duration_seconds` - Execution time histogram
-- `maluwaf_wasm_fuel_consumed_total` - Fuel usage
+- `synvoid_wasm_invocations_total` - Total plugin calls
+- `synvoid_wasm_decisions_total{decision="pass|block|challenge"}` - Decision counts
+- `synvoid_wasm_errors_total` - Error counts
+- `synvoid_wasm_duration_seconds` - Execution time histogram
+- `synvoid_wasm_fuel_consumed_total` - Fuel usage
 
 ## Version History
 

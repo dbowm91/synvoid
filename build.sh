@@ -9,7 +9,7 @@ WASM_POW_DIR="$PROJECT_ROOT/src/wasm_pow"
 ADMIN_UI_DIR="$PROJECT_ROOT/admin-ui"
 DIST_DIR="$ADMIN_UI_DIR/dist"
 
-echo "MaluWAF Production Build Script"
+echo "SynVoid Production Build Script"
 echo ""
 
 check_command() {
@@ -169,7 +169,7 @@ echo ""
 echo "Step 5: Building Main Application"
 
 if [ -f "$PROJECT_ROOT/Cargo.toml" ]; then
-    echo "  Building maluwaf..."
+    echo "  Building synvoid..."
 
     BUILD_FEATURES=""
     if [ "$1" = "--with-wireguard" ]; then
@@ -188,10 +188,10 @@ echo ""
 echo "Step 6: Generating OpenAPI TypeScript Client"
 
 if command -v npx &> /dev/null; then
-    if [ -f "$PROJECT_ROOT/target/release/maluwaf" ]; then
+    if [ -f "$PROJECT_ROOT/target/release/synvoid" ]; then
         echo "  Generating OpenAPI spec..."
         OPENAPI_JSON="$PROJECT_ROOT/openapi.json"
-        "$PROJECT_ROOT/target/release/maluwaf" --export-openapi > "$OPENAPI_JSON"
+        "$PROJECT_ROOT/target/release/synvoid" --export-openapi > "$OPENAPI_JSON"
 
         if [ -f "$OPENAPI_JSON" ]; then
             echo "  Generating TypeScript client..."
@@ -221,11 +221,11 @@ echo ""
 echo "Build Complete"
 echo ""
 echo "Output files:"
-echo "  - Main binary: target/release/maluwaf"
+echo "  - Main binary: target/release/synvoid"
 echo "  - Static files: static/"
 echo "  - OpenAPI spec: openapi.json"
 if [ -d "$DIST_DIR" ]; then
     echo "  - Admin UI: admin-ui/dist/"
 fi
 echo ""
-echo "To run: ./target/release/maluwaf --config config/main.toml"
+echo "To run: ./target/release/synvoid --config config/main.toml"

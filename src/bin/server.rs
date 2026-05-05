@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::{broadcast, RwLock};
 
-use maluwaf::vpn_client::config::Protocol as VpnProtocol;
-use maluwaf::vpn_client::{ClientPortMapping, VpnClient, VpnClientConfig};
+use synvoid::vpn_client::config::Protocol as VpnProtocol;
+use synvoid::vpn_client::{ClientPortMapping, VpnClient, VpnClientConfig};
 
 pub struct VpnState {
     pub client: RwLock<Option<VpnClient>>,
@@ -127,7 +127,7 @@ async fn get_status(State(state): State<Arc<VpnState>>) -> Json<StatusResponse> 
         let s = c.get_stats();
         (c.is_connected(), s)
     } else {
-        (false, maluwaf::vpn_client::VpnStats::default())
+        (false, synvoid::vpn_client::VpnStats::default())
     };
 
     let port_mappings: Vec<PortMappingResponse> = config
@@ -195,7 +195,7 @@ async fn connect(
 
     if let Some(t) = req.transport {
         if t.eq_ignore_ascii_case("wireguard") {
-            config = config.with_transport(maluwaf::vpn_client::TransportType::WireGuard);
+            config = config.with_transport(synvoid::vpn_client::TransportType::WireGuard);
         }
     }
 
@@ -310,7 +310,7 @@ fn get_dashboard_html() -> &'static str {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MaluWAF VPN Dashboard</title>
+    <title>SynVoid VPN Dashboard</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         :root { --bg-primary: #0a0a0f; --bg-secondary: #12121a; --bg-tertiary: #1a1a24; --bg-card: #16161f; --text-primary: #f0f0f5; --text-secondary: #9090a0; --accent-primary: #00d4aa; --accent-secondary: #00b894; --accent-glow: rgba(0,212,170,0.3); --border-color: #2a2a3a; --blue: #3b82f6; --red: #dc2626; }
@@ -677,6 +677,6 @@ pub async fn start_server(addr: &str, api_key: Option<String>) {
 #[tokio::main]
 async fn main() {
     tracing::info!(
-        "Use 'maluwaf --help' to see available commands. This binary is not yet fully implemented."
+        "Use 'synvoid --help' to see available commands. This binary is not yet fully implemented."
     );
 }

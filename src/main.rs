@@ -3,23 +3,23 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[cfg(feature = "mesh")]
-use maluwaf::master::handle_export_threat_feed;
-use maluwaf::master::{
+use synvoid::master::handle_export_threat_feed;
+use synvoid::master::{
     handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
     handle_stop,
 };
-use maluwaf::worker::{
+use synvoid::worker::{
     run_static_worker, run_unified_server_worker, setup_unified_server_panic_handler,
     setup_worker_panic_handler,
 };
 
-use maluwaf::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
-use maluwaf::startup::daemon::acquire_pid_file;
-use maluwaf::startup::master::{run_master_mode, run_overseer_mode};
-use maluwaf::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
+use synvoid::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
+use synvoid::startup::daemon::acquire_pid_file;
+use synvoid::startup::master::{run_master_mode, run_overseer_mode};
+use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
 
 #[derive(Parser, Debug)]
-#[command(name = "maluwaf")]
+#[command(name = "synvoid")]
 #[command(about = "Multi-Process Web Application Firewall")]
 #[command(version)]
 struct Args {
@@ -183,7 +183,7 @@ fn main() {
     }
 
     if args.export_openapi {
-        use maluwaf::config::MainConfig;
+        use synvoid::config::MainConfig;
         let schema = schemars::schema_for!(MainConfig);
         println!(
             "{}",
@@ -193,8 +193,8 @@ fn main() {
     }
 
     if args.export_api_spec {
-        use maluwaf::admin::openapi::MaluWafOpenApi;
-        let spec = MaluWafOpenApi::openapi_json();
+        use synvoid::admin::openapi::synvoidOpenApi;
+        let spec = synvoidOpenApi::openapi_json();
         println!(
             "{}",
             serde_json::to_string_pretty(&spec.0).unwrap_or_default()
@@ -207,7 +207,7 @@ fn main() {
         {
             use base64::engine::general_purpose::URL_SAFE_NO_PAD;
             use base64::Engine;
-            use maluwaf::mesh::config::GenesisKeyConfig;
+            use synvoid::mesh::config::GenesisKeyConfig;
 
             let genesis = GenesisKeyConfig::generate();
             let genesis_b64 = URL_SAFE_NO_PAD.encode(genesis.private_key.unwrap());
@@ -239,7 +239,7 @@ fn main() {
     if args.show_node_info {
         #[cfg(feature = "mesh")]
         {
-            use maluwaf::config::MainConfig;
+            use synvoid::config::MainConfig;
 
             let config_path = args
                 .config_path
@@ -314,12 +314,12 @@ fn main() {
     }
 
     if args.hash_token.is_some() {
-        use maluwaf::admin::hash_admin_token_with_cost;
+        use synvoid::admin::hash_admin_token_with_cost;
         let token = match args.hash_token.flatten() {
             Some(t) => t,
             None => {
                 eprintln!("Error: Token argument required");
-                eprintln!("Usage: maluwaf --hash-token <TOKEN>");
+                eprintln!("Usage: synvoid --hash-token <TOKEN>");
                 std::process::exit(1);
             }
         };
@@ -339,7 +339,7 @@ fn main() {
     }
 
     if let Some(pattern) = args.checkregex {
-        use maluwaf::utils::check_regex_complexity;
+        use synvoid::utils::check_regex_complexity;
         let result = check_regex_complexity(&pattern);
         if result.safe {
             println!("✓ Pattern is safe: {}", pattern);

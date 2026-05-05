@@ -177,7 +177,7 @@ impl IpcSigner {
         #[cfg(unix)]
         {
             use libc::O_NOFOLLOW;
-            if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+            if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
                 let path = std::path::Path::new(&key_file);
 
                 if let Ok(meta) = path.metadata() {
@@ -211,7 +211,7 @@ impl IpcSigner {
         }
         #[cfg(not(unix))]
         {
-            if let Ok(key_file) = std::env::var("MALUWAF_IPC_KEY_FILE") {
+            if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
                 let path = std::path::Path::new(&key_file);
                 let meta = match path.metadata() {
                     Ok(m) => m,
@@ -229,7 +229,7 @@ impl IpcSigner {
                 return Some(Self::new(&key));
             }
         }
-        if let Ok(key_hex) = std::env::var("MALUWAF_IPC_KEY") {
+        if let Ok(key_hex) = std::env::var("SYNVOID_IPC_KEY") {
             let key = parse_hex_key(key_hex.trim()).ok()?;
             return Some(Self::new(&key));
         }

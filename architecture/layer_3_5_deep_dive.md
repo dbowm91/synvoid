@@ -1,11 +1,11 @@
 # Architectural Deep Dive: Layers 3 & 5 (Proxy & Mesh)
 
-This document provides an in-depth review of MaluWAF's Layer 3 (Proxy & Routing) and Layer 5 (Mesh & Distributed Systems), focusing on Post-Quantum Cryptography (PQC), Dependency Alignment, Trust Models, and the complexities of peer-to-peer (P2P) communication.
+This document provides an in-depth review of SynVoid's Layer 3 (Proxy & Routing) and Layer 5 (Mesh & Distributed Systems), focusing on Post-Quantum Cryptography (PQC), Dependency Alignment, Trust Models, and the complexities of peer-to-peer (P2P) communication.
 
 ## 1. Post-Quantum Cryptography (PQC) Support
 
 **Are we supporting PQC fully?**
-Yes, MaluWAF is exceptionally forward-looking in its PQC implementation. It achieves "Quantum-Ready" status across both the data plane (Layer 3) and the control plane (Layer 5):
+Yes, SynVoid is exceptionally forward-looking in its PQC implementation. It achieves "Quantum-Ready" status across both the data plane (Layer 3) and the control plane (Layer 5):
 
 *   **Layer 3 (TLS & Proxy):** Uses the `rustls` crate with the `aws-lc-rs` backend and the `prefer-post-quantum` configuration flag. This enables hybrid key exchange algorithms (e.g., X25519Kyber768Draft00 or X25519MLKEM768) during TLS 1.3 handshakes for incoming client traffic.
 *   **Layer 5 (Mesh Control Plane):** 
@@ -49,10 +49,10 @@ The trust model follows a robust, SPIFFE-like hierarchical chain:
 Yes. The `validate_peer_role` function strictly enforces role boundaries. An Origin node cannot simply announce itself to the DHT as an Edge node. To claim the `EDGE` role, it must provide a `MemberCertificate` explicitly signed by an `OrgPublicKey` that has been authorized by the Global quorum. Origin nodes can join the mesh to *receive* traffic and threat updates, but they are algorithmically prohibited from routing traffic or acting as authoritative DHT storage nodes.
 
 **Can malicious origin nodes attack the system? What protections exist?**
-MaluWAF anticipates malicious origins and protects against them:
+SynVoid anticipates malicious origins and protects against them:
 1.  **DHT Poisoning:** The `DhtAccessControl` layer restricts what Origin nodes can write. They cannot overwrite `verified_upstream:` routes, `tier_claim:` roles, or Global threat intelligence feeds. They are restricted to writing their own localized telemetry.
 2.  **Sybil / DoS Attacks:** Edge nodes joining the network must compute a **Proof of Work (PoW)** (`validate_edge_node_pow`). This makes it computationally expensive for an attacker to spin up thousands of fake Origin/Edge nodes to exhaust QUIC connection pools.
 3.  **Threat Feed Isolation:** Threat feeds require strict Ed25519 signatures from the Global tier. A compromised Origin node cannot inject fake blocked IPs into the global `ThreatIntelligenceManager`.
 
 ## Summary
-MaluWAF’s Layer 3 and 5 are highly advanced, leveraging state-of-the-art PQC and robust cryptographic trust chains. However, the decision to build a bespoke Kademlia-based state synchronization engine for the control plane introduces severe operational complexity. Long-term maintenance would benefit significantly from migrating the Global tier to a standard Raft consensus model.
+SynVoid’s Layer 3 and 5 are highly advanced, leveraging state-of-the-art PQC and robust cryptographic trust chains. However, the decision to build a bespoke Kademlia-based state synchronization engine for the control plane introduces severe operational complexity. Long-term maintenance would benefit significantly from migrating the Global tier to a standard Raft consensus model.

@@ -2,7 +2,7 @@
 
 > **Note:** WireGuard VPN has been removed from the codebase. QUIC Tunnels are now the primary transport for site-to-site connectivity.
 
-MaluWAF supports multiple tunnel types for site-to-site connectivity and WAF clustering:
+SynVoid supports multiple tunnel types for site-to-site connectivity and WAF clustering:
 
 1. **WAF Peers** - Peer-to-peer communication between WAF instances
 2. **QUIC Tunnels** - High-performance tunnels between WAF nodes
@@ -33,10 +33,10 @@ dedicated_worker = true
 max_concurrent_streams = 100
 
 # TLS certificates
-cert_path = "/etc/maluwafwaf/certs/tunnel.crt"
-key_path = "/etc/maluwafwaf/certs/tunnel.key"
+cert_path = "/etc/synvoidwaf/certs/tunnel.crt"
+key_path = "/etc/synvoidwaf/certs/tunnel.key"
 auto_generate_certs = true
-cert_domain = "tunnel.maluwaf.local"
+cert_domain = "tunnel.synvoid.local"
 
 [tunnel.quic.server]
 enabled = true
@@ -81,18 +81,18 @@ upstream = "10.0.1.10:80"
 
 ### QUIC Tunnel Metrics
 ```bash
-maluwaf_tunnel_quic_server_enabled    # Server status
-maluwaf_tunnel_quic_server_connections # Active connections
-maluwaf_tunnel_quic_client_connections  # Client connections
-maluwaf_tunnel_quic_health_rtt          # Round-trip time
-maluwaf_tunnel_quic_health_monitored_connections
-maluwaf_tunnel_quic_health_recovered    # Recovered connections
-maluwaf_tunnel_quic_health_failures     # Connection failures
-maluwaf_tunnel_quic_sessions            # Active sessions
+synvoid_tunnel_quic_server_enabled    # Server status
+synvoid_tunnel_quic_server_connections # Active connections
+synvoid_tunnel_quic_client_connections  # Client connections
+synvoid_tunnel_quic_health_rtt          # Round-trip time
+synvoid_tunnel_quic_health_monitored_connections
+synvoid_tunnel_quic_health_recovered    # Recovered connections
+synvoid_tunnel_quic_health_failures     # Connection failures
+synvoid_tunnel_quic_sessions            # Active sessions
 
 # TCP tunnel metrics
-maluwaf_tcp_quic_tunnel_streams_opened
-maluwaf_tcp_quic_tunnel_streams_closed
+synvoid_tcp_quic_tunnel_streams_opened
+synvoid_tcp_quic_tunnel_streams_closed
 ```
 
 ## Use Cases

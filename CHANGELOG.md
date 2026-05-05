@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to MaluWAF will be documented in this file.
+All notable changes to SynVoid will be documented in this file.
 
 ## [Planned]
 
@@ -79,7 +79,7 @@ All notable changes to MaluWAF will be documented in this file.
 - Initial feature planning
 - Early proof of concept
 
-[Unreleased]: https://github.com/maluwaf/maluwaf/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/maluwaf/maluwaf/releases/tag/v1.0.0
-[0.9.0]: https://github.com/maluwaf/maluwaf/releases/tag/v0.9.0
-[0.1.0]: https://github.com/maluwaf/maluwaf/releases/tag/v0.1.0
+[Unreleased]: https://github.com/synvoid/synvoid/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/synvoid/synvoid/releases/tag/v1.0.0
+[0.9.0]: https://github.com/synvoid/synvoid/releases/tag/v0.9.0
+[0.1.0]: https://github.com/synvoid/synvoid/releases/tag/v0.1.0

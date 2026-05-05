@@ -176,7 +176,7 @@ impl QuicTunnelServer {
         let connection_rx = self.runtime.start_server().await?;
         self.connection_rx = Some(connection_rx);
 
-        gauge!("maluwaf.tunnel.quic.server.enabled").set(1.0);
+        gauge!("synvoid.tunnel.quic.server.enabled").set(1.0);
 
         Ok(())
     }
@@ -240,7 +240,7 @@ impl QuicTunnelServer {
                                 Ok(p) => p,
                                 Err(_) => {
                                     tracing::warn!("Connection limit semaphore closed, rejecting new connection");
-                                    counter!("maluwaf.tunnel.quic.server.rejected").increment(1);
+                                    counter!("synvoid.tunnel.quic.server.rejected").increment(1);
                                     continue;
                                 }
                             };
@@ -315,7 +315,7 @@ impl QuicTunnelServer {
                 ..
             } => {
                 if let Err(e) = validate_client_id(&client_id) {
-                    counter!("maluwaf.tunnel.quic.server.validation_errors").increment(1);
+                    counter!("synvoid.tunnel.quic.server.validation_errors").increment(1);
                     let error = TunnelMessage::AuthFailure {
                         reason: format!("Invalid client_id: {}", e.reason),
                     };
@@ -326,7 +326,7 @@ impl QuicTunnelServer {
 
                 for identifier in mappings.keys() {
                     if let Err(e) = validate_identifier(identifier) {
-                        counter!("maluwaf.tunnel.quic.server.validation_errors").increment(1);
+                        counter!("synvoid.tunnel.quic.server.validation_errors").increment(1);
                         let error = TunnelMessage::AuthFailure {
                             reason: format!("Invalid mapping identifier: {}", e.reason),
                         };
@@ -338,7 +338,7 @@ impl QuicTunnelServer {
 
                 for mapping in mappings.values() {
                     if let Err(e) = validate_port(mapping.port) {
-                        counter!("maluwaf.tunnel.quic.server.validation_errors").increment(1);
+                        counter!("synvoid.tunnel.quic.server.validation_errors").increment(1);
                         let error = TunnelMessage::AuthFailure {
                             reason: format!("Invalid port in mapping: {}", e.reason),
                         };
@@ -349,7 +349,7 @@ impl QuicTunnelServer {
                 }
 
                 if !auth_rate_limiter.check_and_record(&client_id) {
-                    counter!("maluwaf.tunnel.quic.server.auth_rate_limited").increment(1);
+                    counter!("synvoid.tunnel.quic.server.auth_rate_limited").increment(1);
                     let error = TunnelMessage::AuthFailure {
                         reason: "Too many authentication attempts. Please try again later."
                             .to_string(),
@@ -367,7 +367,7 @@ impl QuicTunnelServer {
                             reason: "Invalid credentials".to_string(),
                         };
                         write_message(&mut send_stream, &error).await?;
-                        counter!("maluwaf.tunnel.quic.server.auth_failures").increment(1);
+                        counter!("synvoid.tunnel.quic.server.auth_failures").increment(1);
                         return Ok(());
                     }
                 };
@@ -430,8 +430,8 @@ impl QuicTunnelServer {
                 write_message(&mut send_stream, &ack).await?;
                 let _ = send_stream.finish();
 
-                counter!("maluwaf.tunnel.quic.server.sessions").increment(1);
-                gauge!("maluwaf.tunnel.quic.server.active_sessions").increment(1.0);
+                counter!("synvoid.tunnel.quic.server.sessions").increment(1);
+                gauge!("synvoid.tunnel.quic.server.active_sessions").increment(1.0);
 
                 tracing::info!(
                     "QUIC session established: {} for client {} (access: {:?}, datagrams: {})",
@@ -450,7 +450,7 @@ impl QuicTunnelServer {
                 ..
             } => {
                 if let Err(e) = validate_peer_id(&peer_id) {
-                    counter!("maluwaf.tunnel.quic.server.validation_errors").increment(1);
+                    counter!("synvoid.tunnel.quic.server.validation_errors").increment(1);
                     let error = TunnelMessage::AuthFailure {
                         reason: format!("Invalid peer_id: {}", e.reason),
                     };
@@ -460,7 +460,7 @@ impl QuicTunnelServer {
                 }
 
                 if !auth_rate_limiter.check_and_record(&peer_id) {
-                    counter!("maluwaf.tunnel.quic.server.peer_auth_rate_limited").increment(1);
+                    counter!("synvoid.tunnel.quic.server.peer_auth_rate_limited").increment(1);
                     let error = TunnelMessage::AuthFailure {
                         reason: "Too many authentication attempts. Please try again later."
                             .to_string(),
@@ -477,7 +477,7 @@ impl QuicTunnelServer {
                             reason: "Invalid peer credentials".to_string(),
                         };
                         write_message(&mut send_stream, &error).await?;
-                        counter!("maluwaf.tunnel.quic.server.peer_auth_failures").increment(1);
+                        counter!("synvoid.tunnel.quic.server.peer_auth_failures").increment(1);
                         return Ok(());
                     }
                 };
@@ -533,7 +533,7 @@ impl QuicTunnelServer {
                 write_message(&mut send_stream, &ack).await?;
                 let _ = send_stream.finish();
 
-                counter!("maluwaf.tunnel.quic.server.peer_sessions").increment(1);
+                counter!("synvoid.tunnel.quic.server.peer_sessions").increment(1);
 
                 tracing::info!(
                     "QUIC peer session established: {} for peer {} (datagrams: {})",
@@ -574,7 +574,7 @@ impl QuicTunnelServer {
         QUIC_TUNNEL_REGISTRY.unregister(&session_id).await;
         runtime.remove_session(&session_id).await;
 
-        gauge!("maluwaf.tunnel.quic.server.active_sessions").decrement(1.0);
+        gauge!("synvoid.tunnel.quic.server.active_sessions").decrement(1.0);
         tracing::info!("Session {} ended", session_id);
 
         result
@@ -599,7 +599,7 @@ impl QuicTunnelServer {
                                     tracing::debug!("Stream error: {}", e);
                                 }
                                 session.active_streams.fetch_sub(1, Ordering::Relaxed);
-                                histogram!("maluwaf.tunnel.quic.server.stream_duration").record(start.elapsed());
+                                histogram!("synvoid.tunnel.quic.server.stream_duration").record(start.elapsed());
                             });
                         }
                         Err(quinn::ConnectionError::ApplicationClosed(_)) => {
@@ -675,7 +675,7 @@ impl QuicTunnelServer {
                         "Port access denied for session {} (client: {}, access: {:?}): requested={}, upstream={}",
                         session.id, session.client_id, session.access_level, port, upstream_port
                     );
-                    counter!("maluwaf.tunnel.quic.server.access_denied", 
+                    counter!("synvoid.tunnel.quic.server.access_denied", 
                         "type" => "stream", "client" => session.client_id.clone())
                     .increment(1);
 
@@ -709,7 +709,7 @@ impl QuicTunnelServer {
 
                 match tcp_result {
                     Ok(Ok(upstream_tcp)) => {
-                        counter!("maluwaf.tunnel.quic.server.streams.opened").increment(1);
+                        counter!("synvoid.tunnel.quic.server.streams.opened").increment(1);
 
                         let ack = TunnelMessage::StreamOpenAck {
                             identifier: identifier.clone(),
@@ -734,7 +734,7 @@ impl QuicTunnelServer {
                             identifier,
                             e
                         );
-                        counter!("maluwaf.tunnel.quic.server.streams.upstream_failed").increment(1);
+                        counter!("synvoid.tunnel.quic.server.streams.upstream_failed").increment(1);
 
                         let ack = TunnelMessage::StreamOpenAck {
                             identifier: identifier.clone(),
@@ -752,7 +752,7 @@ impl QuicTunnelServer {
                             upstream_addr,
                             identifier
                         );
-                        counter!("maluwaf.tunnel.quic.server.streams.upstream_timeout")
+                        counter!("synvoid.tunnel.quic.server.streams.upstream_timeout")
                             .increment(1);
 
                         let ack = TunnelMessage::StreamOpenAck {
@@ -783,7 +783,7 @@ impl QuicTunnelServer {
                         session.access_level,
                         port
                     );
-                    counter!("maluwaf.tunnel.quic.server.access_denied", 
+                    counter!("synvoid.tunnel.quic.server.access_denied", 
                         "type" => "udp", "client" => session.client_id.clone())
                     .increment(1);
 
@@ -811,7 +811,7 @@ impl QuicTunnelServer {
                     return Ok(());
                 }
 
-                counter!("maluwaf.tunnel.quic.server.udp_tunnels.opened").increment(1);
+                counter!("synvoid.tunnel.quic.server.udp_tunnels.opened").increment(1);
 
                 let ack = TunnelMessage::UdpTunnelOpenAck {
                     identifier: identifier.clone(),
@@ -950,7 +950,7 @@ impl QuicTunnelServer {
                                 MAX_CLIENT_MAPPINGS,
                                 client_addr
                             );
-                            counter!("maluwaf.tunnel.quic.server.udp_tunnels.client_map_full")
+                            counter!("synvoid.tunnel.quic.server.udp_tunnels.client_map_full")
                                 .increment(1);
                             continue;
                         }
@@ -961,7 +961,7 @@ impl QuicTunnelServer {
                         if len >= 2 && dns_id_map_for_local.len() < MAX_DNS_IDS {
                             let dns_id = u16::from_be_bytes([data[0], data[1]]);
                             dns_id_map_for_local.insert(dns_id, client_addr);
-                            counter!("maluwaf.tunnel.quic.server.udp_tunnels.dns_tracked")
+                            counter!("synvoid.tunnel.quic.server.udp_tunnels.dns_tracked")
                                 .increment(1);
                         }
 
@@ -981,7 +981,7 @@ impl QuicTunnelServer {
                                 tracing::warn!(
                                     "UDP backpressure: too many pending datagrams, dropping packet"
                                 );
-                                counter!("maluwaf.tunnel.quic.server.udp_tunnels.backpressure")
+                                counter!("synvoid.tunnel.quic.server.udp_tunnels.backpressure")
                                     .increment(1);
                                 continue;
                             }
@@ -998,7 +998,7 @@ impl QuicTunnelServer {
                                     }
                                     _ => {
                                         counter!(
-                                            "maluwaf.tunnel.quic.server.udp_tunnels.forwarded"
+                                            "synvoid.tunnel.quic.server.udp_tunnels.forwarded"
                                         )
                                         .increment(1);
                                     }
@@ -1009,7 +1009,7 @@ impl QuicTunnelServer {
                                     encoded.len(),
                                     max_size
                                 );
-                                counter!("maluwaf.tunnel.quic.server.udp_tunnels.oversized")
+                                counter!("synvoid.tunnel.quic.server.udp_tunnels.oversized")
                                     .increment(1);
                             }
                         }
@@ -1074,7 +1074,7 @@ impl QuicTunnelServer {
                                         e
                                     );
                                 } else {
-                                    counter!("maluwaf.tunnel.quic.server.udp_tunnels.forwarded")
+                                    counter!("synvoid.tunnel.quic.server.udp_tunnels.forwarded")
                                         .increment(1);
                                 }
                             } else {
@@ -1106,7 +1106,7 @@ impl QuicTunnelServer {
                                             );
                                         } else {
                                             counter!(
-                                                "maluwaf.tunnel.quic.server.udp_tunnels.forwarded"
+                                                "synvoid.tunnel.quic.server.udp_tunnels.forwarded"
                                             )
                                             .increment(1);
                                         }
@@ -1185,7 +1185,7 @@ impl QuicTunnelServer {
         }
 
         tracing::debug!("UDP tunnel {} closed", identifier);
-        counter!("maluwaf.tunnel.quic.server.udp_tunnels.closed").increment(1);
+        counter!("synvoid.tunnel.quic.server.udp_tunnels.closed").increment(1);
 
         Ok(())
     }
@@ -1311,11 +1311,11 @@ impl QuicTunnelServer {
             }
         };
 
-        counter!("maluwaf.tunnel.quic.server.streams.proxied").increment(1);
+        counter!("synvoid.tunnel.quic.server.streams.proxied").increment(1);
 
         let result = tokio::try_join!(quic_to_tcp, tcp_to_quic);
 
-        counter!("maluwaf.tunnel.quic.server.streams.closed").increment(1);
+        counter!("synvoid.tunnel.quic.server.streams.closed").increment(1);
 
         let _ = send_stream.finish();
 
@@ -1385,7 +1385,7 @@ impl QuicTunnelServer {
         }
 
         if config.server.allow_unauthenticated {
-            counter!("maluwaf.tunnel.quic.server.allow_unauthenticated_misconfigured").increment(1);
+            counter!("synvoid.tunnel.quic.server.allow_unauthenticated_misconfigured").increment(1);
             tracing::error!(
                 "SECURITY REJECTION: allow_unauthenticated=true but missing confirmation. \
                 To enable unauthenticated access, you must set \

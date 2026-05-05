@@ -8,7 +8,7 @@
 
 use http::Method;
 use libfuzzer_sys::fuzz_target;
-use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 3 {

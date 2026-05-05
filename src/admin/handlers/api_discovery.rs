@@ -702,7 +702,7 @@ pub async fn get_api_discovery(
     let categories = get_api_endpoints();
 
     Ok(Json(ApiDiscoveryResponse {
-        name: "MaluWAF Admin API".to_string(),
+        name: "SynVoid Admin API".to_string(),
         version: "1.0.0".to_string(),
         openapi_url: "/api/openapi.json".to_string(),
         docs_url: "/api/docs".to_string(),

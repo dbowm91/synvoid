@@ -147,7 +147,7 @@ impl DoqServer {
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
-                counter!("maluwaf.doq.connection.errors").increment(1);
+                counter!("synvoid.doq.connection.errors").increment(1);
                 return Err(format!("DoQ handshake failed: {}", e));
             }
         };
@@ -163,12 +163,12 @@ impl DoqServer {
                 client_ip,
                 e
             );
-            counter!("maluwaf.doq.connection.rejected").increment(1);
+            counter!("synvoid.doq.connection.rejected").increment(1);
             return Err(format!("Source address validation failed: {}", e));
         }
 
-        gauge!("maluwaf.doq.connections").increment(1.0);
-        counter!("maluwaf.doq.connections.total").increment(1);
+        gauge!("synvoid.doq.connections").increment(1.0);
+        counter!("synvoid.doq.connections.total").increment(1);
 
         loop {
             match connection.accept_bi().await {
@@ -192,7 +192,7 @@ impl DoqServer {
             }
         }
 
-        gauge!("maluwaf.doq.connections").decrement(1.0);
+        gauge!("synvoid.doq.connections").decrement(1.0);
         Ok(())
     }
 
@@ -244,14 +244,14 @@ impl DoqServer {
         let start = std::time::Instant::now();
 
         let query_buf = Self::read_query(&mut recv).await?;
-        counter!("maluwaf.doq.queries.total").increment(1);
+        counter!("synvoid.doq.queries.total").increment(1);
 
         let response = {
             let dns_server_guard = dns_server.read();
             let server = match dns_server_guard.as_ref() {
                 Some(s) => s,
                 None => {
-                    counter!("maluwaf.doq.query.errors").increment(1);
+                    counter!("synvoid.doq.query.errors").increment(1);
                     return Err("DNS server not configured".to_string());
                 }
             };
@@ -262,10 +262,10 @@ impl DoqServer {
         match response {
             Some(resp) => {
                 Self::write_response(&mut send, &resp).await?;
-                histogram!("maluwaf.doq.query.duration").record(start.elapsed().as_secs_f64());
+                histogram!("synvoid.doq.query.duration").record(start.elapsed().as_secs_f64());
             }
             None => {
-                counter!("maluwaf.doq.query.errors").increment(1);
+                counter!("synvoid.doq.query.errors").increment(1);
             }
         }
 

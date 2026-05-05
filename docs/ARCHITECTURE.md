@@ -1,14 +1,14 @@
-# MaluWAF Architecture
+# SynVoid Architecture
 
 A production-ready WAF and reverse proxy built for high-performance, high-availability deployments with mesh networking capabilities.
 
 ## Overview
 
-MaluWAF combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. It's designed for ease of deployment while providing enterprise-grade protection and performance.
+SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. It's designed for ease of deployment while providing enterprise-grade protection and performance.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              MaluWAF Architecture                            │
+│                              SynVoid Architecture                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                                      Internet
@@ -163,7 +163,7 @@ The WAF implements multiple protection layers:
 
 ### 3. Overseer > Master-Worker Model
 
-For high availability, MaluWAF uses a hierarchical node model:
+For high availability, SynVoid uses a hierarchical node model:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -233,7 +233,7 @@ For high availability, MaluWAF uses a hierarchical node model:
 
 ### 4. WAF-WAF Mesh Networking
 
-MaluWAF supports QUIC-based peer-to-peer mesh networking for distributed protection:
+SynVoid supports QUIC-based peer-to-peer mesh networking for distributed protection:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -282,11 +282,11 @@ MaluWAF supports QUIC-based peer-to-peer mesh networking for distributed protect
 
 ### 5. Metrics Collection
 
-MaluWAF collects comprehensive metrics across all components, with per-site attribution for billing, quota management, and traffic analysis.
+SynVoid collects comprehensive metrics across all components, with per-site attribution for billing, quota management, and traffic analysis.
 
 #### Per-Site Bandwidth Tracking
 
-MaluWAF tracks bandwidth at multiple levels for comprehensive traffic accounting:
+SynVoid tracks bandwidth at multiple levels for comprehensive traffic accounting:
 
 | Category | Direction | Description |
 |----------|-----------|-------------|
@@ -297,7 +297,7 @@ MaluWAF tracks bandwidth at multiple levels for comprehensive traffic accounting
 
 ## Built-in Application Support
 
-MaluWAF handles common web serving scenarios without external dependencies:
+SynVoid handles common web serving scenarios without external dependencies:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -366,7 +366,7 @@ Simple deployment for small to medium websites:
 │           Standalone Setup               │
 └─────────────────────────────────────────┘
 
-Internet ──► MaluWAF ──► PHP-FPM / Granian
+Internet ──► SynVoid ──► PHP-FPM / Granian
                │
                └──► Static Files
 ```
@@ -388,7 +388,7 @@ Production-grade deployment with failover:
        │            │            │
        ▼            ▼            ▼
 ┌─────────┐ ┌─────────┐ ┌─────────┐
-│ MaluWAF │ │ MaluWAF │ │ MaluWAF │
+│ SynVoid │ │ SynVoid │ │ SynVoid │
 │ Overseer│ │ Overseer│ │ Overseer│
 └────┬────┘ └────┬────┘ └────┬────┘
      │           │           │
@@ -464,22 +464,22 @@ Distributed WAF mesh for large-scale attacks:
 ## Quick Start
 
 ```bash
-# Start MaluWAF with default configuration
-./maluwaf
+# Start SynVoid with default configuration
+./synvoid
 
 # Enable HTTP/3 (QUIC)
-./maluwaf --config http3-enabled.toml
+./synvoid --config http3-enabled.toml
 
 # Start in HA cluster mode
-./maluwaf --overseer --master --workers 4
+./synvoid --overseer --master --workers 4
 
 # Connect to WAF mesh
-./maluwaf --mesh --role edge --seeds global-node:5001
+./synvoid --mesh --role edge --seeds global-node:5001
 ```
 
 ## Next Steps
 
-- [Getting Started](./GETTING_STARTED.md) - Get started with MaluWAF
+- [Getting Started](./GETTING_STARTED.md) - Get started with SynVoid
 - [Configuration Reference](./CONFIGURATION.md) - Full configuration options
 - [Attack Detection](./ATTACK_DETECTION.md) - WAF detection rules
 - [WAF Mesh](./WAF_MESH.md) - Mesh networking

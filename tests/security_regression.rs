@@ -7,14 +7,14 @@ mod tests {
 
     #[test]
     fn test_ipc_auth_bypass_rejected() {
-        use maluwaf::process::ipc_signed::{IpcSigner, SignedIpcMessage};
-        use maluwaf::process::Message;
+        use synvoid::process::ipc_signed::{IpcSigner, SignedIpcMessage};
+        use synvoid::process::Message;
 
-        let key = maluwaf::process::ipc_signed::generate_session_key();
+        let key = synvoid::process::ipc_signed::generate_session_key();
         let signer = IpcSigner::new(&key);
 
         let command = Message::WorkerStarted {
-            id: maluwaf::process::WorkerId(1),
+            id: synvoid::process::WorkerId(1),
             pid: 1234,
             port: 8080,
             timestamp: 1234567890,
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn test_key_file_symlink_rejected() {
-        use maluwaf::process::ipc_signed::IpcSigner;
+        use synvoid::process::ipc_signed::IpcSigner;
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDir::new().unwrap();
@@ -52,9 +52,9 @@ mod tests {
         let symlink_path = temp_dir.path().join("key_symlink");
         std::os::unix::fs::symlink(&key_path, &symlink_path).unwrap();
 
-        std::env::set_var("MALUWAF_IPC_KEY_FILE", symlink_path.to_str().unwrap());
+        std::env::set_var("SYNVOID_IPC_KEY_FILE", symlink_path.to_str().unwrap());
         let result = IpcSigner::try_from_env();
-        std::env::remove_var("MALUWAF_IPC_KEY_FILE");
+        std::env::remove_var("SYNVOID_IPC_KEY_FILE");
 
         assert!(
             result.is_none(),
@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn test_key_file_world_writable_rejected() {
-        use maluwaf::process::ipc_signed::IpcSigner;
+        use synvoid::process::ipc_signed::IpcSigner;
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDir::new().unwrap();
@@ -73,9 +73,9 @@ mod tests {
         fs::write(&key_path, "a".repeat(64).as_bytes()).unwrap();
         fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
 
-        std::env::set_var("MALUWAF_IPC_KEY_FILE", key_path.to_str().unwrap());
+        std::env::set_var("SYNVOID_IPC_KEY_FILE", key_path.to_str().unwrap());
         let result = IpcSigner::try_from_env();
-        std::env::remove_var("MALUWAF_IPC_KEY_FILE");
+        std::env::remove_var("SYNVOID_IPC_KEY_FILE");
 
         assert!(
             result.is_none(),
@@ -86,7 +86,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_pidfile_lock_prevents_concurrent_access() {
-        use maluwaf::process::pidfile::PidFileManager;
+        use synvoid::process::pidfile::PidFileManager;
         use std::time::Instant;
 
         let temp_dir = TempDir::new().unwrap();
@@ -110,21 +110,21 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_pidfile_not_truncated_on_conflict() {
-        use maluwaf::process::pidfile::PidFileManager;
+        use synvoid::process::pidfile::PidFileManager;
 
         let temp_dir = TempDir::new().unwrap();
         let mut manager1 = PidFileManager::with_custom_dir(temp_dir.path().to_path_buf());
 
         manager1.try_acquire(1234, "v1.0.0").unwrap();
 
-        let content_before = fs::read_to_string(temp_dir.path().join("maluwaf.pid")).unwrap();
+        let content_before = fs::read_to_string(temp_dir.path().join("synvoid.pid")).unwrap();
         assert!(content_before.contains("1234"));
 
         let mut manager2 = PidFileManager::with_custom_dir(temp_dir.path().to_path_buf());
         let acquired2 = manager2.try_acquire(5678, "v2.0.0").unwrap();
         assert!(!acquired2, "Second acquire should fail");
 
-        let content_after = fs::read_to_string(temp_dir.path().join("maluwaf.pid")).unwrap();
+        let content_after = fs::read_to_string(temp_dir.path().join("synvoid.pid")).unwrap();
         assert_eq!(
             content_before, content_after,
             "PID file must not be truncated when second acquire fails"
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_ipc_signer_rejects_key_file_with_symlink() {
-        use maluwaf::process::ipc_signed::IpcSigner;
+        use synvoid::process::ipc_signed::IpcSigner;
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDir::new().unwrap();
@@ -171,9 +171,9 @@ mod tests {
         let symlink_key = temp_dir.path().join("key_link.txt");
         std::os::unix::fs::symlink(&real_key, &symlink_key).unwrap();
 
-        std::env::set_var("MALUWAF_IPC_KEY_FILE", symlink_key.to_str().unwrap());
+        std::env::set_var("SYNVOID_IPC_KEY_FILE", symlink_key.to_str().unwrap());
         let result = IpcSigner::try_from_env();
-        std::env::remove_var("MALUWAF_IPC_KEY_FILE");
+        std::env::remove_var("SYNVOID_IPC_KEY_FILE");
 
         assert!(
             result.is_none(),
@@ -184,7 +184,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_read_ipc_key_file_rejects_symlink() {
-        use maluwaf::process::ipc_signed::read_ipc_key_file;
+        use synvoid::process::ipc_signed::read_ipc_key_file;
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDir::new().unwrap();
@@ -207,7 +207,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_read_ipc_key_file_rejects_world_writable() {
-        use maluwaf::process::ipc_signed::read_ipc_key_file;
+        use synvoid::process::ipc_signed::read_ipc_key_file;
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDir::new().unwrap();
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_unprivileged_bpf_check() {
         #[cfg(feature = "icmp-filter")]
-        use maluwaf::icmp_filter::platform::{has_privilege_for, is_admin, FilterOperation};
+        use synvoid::icmp_filter::platform::{has_privilege_for, is_admin, FilterOperation};
 
         #[cfg(not(feature = "icmp-filter"))]
         {
@@ -252,8 +252,8 @@ mod tests {
 
     #[test]
     fn test_forwarded_headers_spoofed_by_client_rejected() {
-        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
-        use maluwaf::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use synvoid::config::site::ProxyHeadersConfig;
 
         let client_ip = "192.168.1.100".parse().unwrap();
         let mut original_headers = http::HeaderMap::new();
@@ -273,13 +273,15 @@ mod tests {
         assert_eq!(xrip.unwrap(), "192.168.1.100", "X-Real-IP should contain real client IP");
 
         assert!(result.get("forwarded").is_none(), "Original forwarded header should be stripped");
-        assert!(result.get("x-forwarded-proto").is_none(), "Original x-forwarded-proto should be stripped (protocol set based on listener)");
+
+        let xfp = result.get("x-forwarded-proto").map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(xfp.unwrap(), "http", "x-forwarded-proto should be set based on listener, not client spoofed value");
     }
 
     #[test]
     fn test_hop_by_hop_headers_stripped_from_forwarding() {
-        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
-        use maluwaf::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use synvoid::config::site::ProxyHeadersConfig;
 
         let client_ip = "10.0.0.1".parse().unwrap();
         let mut original_headers = http::HeaderMap::new();
@@ -302,8 +304,8 @@ mod tests {
 
     #[test]
     fn test_build_forward_headers_preserves_non_spoofed_headers() {
-        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
-        use maluwaf::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use synvoid::config::site::ProxyHeadersConfig;
 
         let client_ip = "172.16.0.50".parse().unwrap();
         let mut original_headers = http::HeaderMap::new();
@@ -324,8 +326,8 @@ mod tests {
 
     #[test]
     fn test_forwarded_protocol_header_based_on_listener() {
-        use maluwaf::proxy::headers::{build_forward_headers, ForwardedProtocol};
-        use maluwaf::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
+        use synvoid::config::site::ProxyHeadersConfig;
 
         let client_ip = "127.0.0.1".parse().unwrap();
         let original_headers = http::HeaderMap::new();
@@ -343,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_cache_key_construction_uses_sanitized_ip() {
-        use maluwaf::proxy_cache::CacheKey;
+        use synvoid::proxy_cache::CacheKey;
         use std::net::IpAddr;
 
         let client_ip: IpAddr = "1.2.3.4".parse().unwrap();
@@ -357,7 +359,7 @@ mod tests {
     #[test]
     fn test_non_linux_no_ebpf_support() {
         #[cfg(feature = "icmp-filter")]
-        use maluwaf::icmp_filter::platform::{has_privilege_for, FilterOperation};
+        use synvoid::icmp_filter::platform::{has_privilege_for, FilterOperation};
 
         #[cfg(feature = "icmp-filter")]
         {

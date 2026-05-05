@@ -1,6 +1,6 @@
-# MaluWAF Architectural Modules
+# SynVoid Architectural Modules
 
-This document categorizes the discrete modules of the MaluWAF codebase into logical layers to facilitate understanding and future code reviews.
+This document categorizes the discrete modules of the SynVoid codebase into logical layers to facilitate understanding and future code reviews.
 
 ### 1. Process & Lifecycle Management (The Orchestration Layer)
 These modules handle the hierarchical process model and ensure the system remains stable and updatable.

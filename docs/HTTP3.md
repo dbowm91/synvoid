@@ -1,6 +1,6 @@
 # HTTP/3 (QUIC) Support
 
-MaluWAF provides full support for HTTP/3 (QUIC protocol), offering improved performance and security over traditional HTTP/2.
+SynVoid provides full support for HTTP/3 (QUIC protocol), offering improved performance and security over traditional HTTP/2.
 
 ## Why HTTP/3?
 
@@ -34,8 +34,8 @@ trusted_proxies = ["127.0.0.1", "::1"]
 
 [tls]
 enabled = true
-cert_path = "/etc/maluwafwaf/certs/server.crt"
-key_path = "/etc/maluwafwaf/certs/server.key"
+cert_path = "/etc/synvoidwaf/certs/server.crt"
+key_path = "/etc/synvoidwaf/certs/server.key"
 port = 443
 prefer_post_quantum = true  # Enable post-quantum key exchange
 
@@ -78,7 +78,7 @@ enabled = true  # Enable HTTP/3 for this site
 4. All subsequent requests use HTTP/3
 
 ```
-Client                  MaluWAF                Upstream
+Client                  SynVoid                Upstream
   |                         |                         |
   |--- HTTPS (HTTP/2) ----->|                         |
   |<-- Alt-Svc: h3=":443" -|                         |
@@ -95,32 +95,32 @@ HTTP/3-specific metrics available at port 9090:
 
 ```bash
 # Active connections
-maluwaf_http3_connections
+synvoid_http3_connections
 
 # Total requests
-maluwaf_http3_requests_total
+synvoid_http3_requests_total
 
 # Request duration
-maluwaf_http3_request_duration_seconds
+synvoid_http3_request_duration_seconds
 
 # Flood protection
-maluwaf_http3_flood_limited
-maluwaf_http3_connection_limited
-maluwaf_http3_flood_blackhole
+synvoid_http3_flood_limited
+synvoid_http3_connection_limited
+synvoid_http3_flood_blackhole
 
 # Errors
-maluwaf_http3_connection_errors
-maluwaf_http3_request_errors
+synvoid_http3_connection_errors
+synvoid_http3_request_errors
 
 # Response types
-maluwaf_http3_responses
-maluwaf_http3_requests_stalled
-maluwaf_http3_requests_blocked
-maluwaf_http3_requests_challenged
-maluwaf_http3_requests_tarpitted
-maluwaf_http3_blackhole_drop
-maluwaf_http3_requests_not_found
-maluwaf_http3_request_body_too_large
+synvoid_http3_responses
+synvoid_http3_requests_stalled
+synvoid_http3_requests_blocked
+synvoid_http3_requests_challenged
+synvoid_http3_requests_tarpitted
+synvoid_http3_blackhole_drop
+synvoid_http3_requests_not_found
+synvoid_http3_request_body_too_large
 ```
 
 ## Troubleshooting

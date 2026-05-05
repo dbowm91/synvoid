@@ -4,7 +4,7 @@
 mod zone_tests {
     #[test]
     fn test_zone_creation() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let zone = Zone::new("example.com".to_string());
         assert_eq!(zone.origin, "example.com");
@@ -19,7 +19,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_serial_increment() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let mut zone = Zone::new("example.com".to_string());
         assert_eq!(zone.serial, 0);
@@ -40,7 +40,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_serial_arithmetic() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         assert!(Zone::serial_is_more_recent(2, 1));
         assert!(!Zone::serial_is_more_recent(1, 2));
@@ -58,7 +58,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_serial_overflow() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let mut zone = Zone::new("example.com".to_string());
         zone.serial = u32::MAX;
@@ -71,7 +71,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_serial_history_preserved() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType, Zone};
+        use synvoid::dns::{DnsZoneRecord, RecordType, Zone};
 
         let mut zone = Zone::new("example.com".to_string());
         zone.records.insert(
@@ -95,7 +95,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_serial_history_limit() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let mut zone = Zone::new("example.com".to_string());
         for _ in 0..60 {
@@ -109,7 +109,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_get_previous_version() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType, Zone};
+        use synvoid::dns::{DnsZoneRecord, RecordType, Zone};
 
         let mut zone = Zone::new("example.com".to_string());
         zone.records.insert(
@@ -133,7 +133,7 @@ mod zone_tests {
 
     #[test]
     fn test_zone_get_previous_version_nonexistent() {
-        use maluwaf::dns::Zone;
+        use synvoid::dns::Zone;
 
         let zone = Zone::new("example.com".to_string());
         let prev = zone.get_previous_version(9999);
@@ -145,7 +145,7 @@ mod zone_tests {
 mod wire_format_tests {
     #[test]
     fn test_wire_parse_simple_query_name() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let name_bytes = vec![
             0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00,
@@ -156,7 +156,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_parse_root_label() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let root_bytes = vec![0x00];
         let name = parse_query_name(&root_bytes, 0);
@@ -165,7 +165,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_parse_subdomain() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let name_bytes = vec![
             0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c',
@@ -177,7 +177,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_parse_empty_buffer() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let empty_bytes: Vec<u8> = vec![];
         let name = parse_query_name(&empty_bytes, 0);
@@ -186,7 +186,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_parse_truncated_label() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let truncated = vec![0x07, b'e', b'x'];
         let name = parse_query_name(&truncated, 0);
@@ -195,7 +195,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_parse_deep_subdomain() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let name_bytes = vec![
             0x01, b'a', 0x01, b'b', 0x01, b'c', 0x01, b'd', 0x03, b'c', b'o', b'm', 0x00,
@@ -206,7 +206,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_parse_with_offset() {
-        use maluwaf::dns::wire::parse_query_name;
+        use synvoid::dns::wire::parse_query_name;
 
         let mut bytes = vec![0xFF, 0xFF];
         bytes.extend_from_slice(&[
@@ -218,7 +218,7 @@ mod wire_format_tests {
 
     #[test]
     fn test_wire_build_question_roundtrip() {
-        use maluwaf::dns::wire::{build_question, parse_query_name};
+        use synvoid::dns::wire::{build_question, parse_query_name};
 
         let question = build_question("www.example.com", 1, 1);
         assert!(question.len() > 4);
@@ -232,7 +232,7 @@ mod wire_format_tests {
 mod rate_limiter_tests {
     #[test]
     fn test_rate_limiter_allows_within_limit() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(100, 10);
         for _ in 0..10 {
@@ -245,7 +245,7 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_rejects_over_limit() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(1, 2);
         assert!(limiter.check().is_ok());
@@ -258,7 +258,7 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_ip_based() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
 
         let limiter = DnsRateLimiter::new(100, 50);
@@ -271,7 +271,7 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_ip_exhaustion() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
 
         let limiter = DnsRateLimiter::new(100, 50);
@@ -284,7 +284,7 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_zero_burst() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(10, 0);
         assert!(
@@ -295,7 +295,7 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_independent_ips() {
-        use maluwaf::dns::DnsRateLimiter;
+        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
 
         let limiter = DnsRateLimiter::new(100, 50);
@@ -311,7 +311,7 @@ mod rate_limiter_tests {
 mod cache_tests {
     #[test]
     fn test_cache_basic_operations() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(1000, 3600, 60);
         let key = CacheKey::new("example.com".to_string(), RecordType::A, None);
@@ -326,7 +326,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_eviction() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(3, 3600, 60);
 
@@ -340,7 +340,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_ttl_expiry() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(100, 1, 1);
         let key = CacheKey::new("ttl-test.example.com".to_string(), RecordType::A, None);
@@ -354,7 +354,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_clear() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(100, 3600, 60);
         let key = CacheKey::new("clear-test.example.com".to_string(), RecordType::AAAA, None);
@@ -368,7 +368,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_different_types() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(100, 3600, 60);
 
@@ -387,7 +387,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_invalidate_zone() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(100, 3600, 60);
 
@@ -408,7 +408,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_stats() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(100, 3600, 60);
         let stats = cache.stats();
@@ -425,7 +425,7 @@ mod cache_tests {
 
     #[test]
     fn test_cache_zero_ttl_not_inserted() {
-        use maluwaf::dns::{CacheKey, DnsCache, RecordType};
+        use synvoid::dns::{CacheKey, DnsCache, RecordType};
 
         let cache = DnsCache::new(100, 3600, 0);
         let key = CacheKey::new("zero-ttl.example.com".to_string(), RecordType::A, None);
@@ -442,7 +442,7 @@ mod cache_tests {
 mod firewall_tests {
     #[test]
     fn test_firewall_action_variants() {
-        use maluwaf::dns::DnsFirewallAction;
+        use synvoid::dns::DnsFirewallAction;
         use std::time::Duration;
 
         assert!(matches!(DnsFirewallAction::Allow, DnsFirewallAction::Allow));
@@ -470,7 +470,7 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_default_action() {
-        use maluwaf::dns::{DnsFirewall, DnsFirewallAction};
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction};
         use std::net::IpAddr;
 
         let fw = DnsFirewall::new();
@@ -489,7 +489,7 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_add_and_remove_rule() {
-        use maluwaf::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
 
         let mut fw = DnsFirewall::new();
 
@@ -513,7 +513,7 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_domain_block() {
-        use maluwaf::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
         use std::net::IpAddr;
 
         let mut fw = DnsFirewall::new();
@@ -544,7 +544,7 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_subnet_block() {
-        use maluwaf::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
         use std::net::IpAddr;
 
         let mut fw = DnsFirewall::new();
@@ -572,7 +572,7 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_disabled_rule_skipped() {
-        use maluwaf::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
         use std::net::IpAddr;
 
         let mut fw = DnsFirewall::new();
@@ -599,7 +599,7 @@ mod firewall_tests {
 mod server_struct_tests {
     #[test]
     fn test_dns_zone_record_fields() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType};
+        use synvoid::dns::{DnsZoneRecord, RecordType};
 
         let record = DnsZoneRecord {
             name: "www".to_string(),
@@ -618,7 +618,7 @@ mod server_struct_tests {
 
     #[test]
     fn test_dns_zone_record_with_priority() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType};
+        use synvoid::dns::{DnsZoneRecord, RecordType};
 
         let record = DnsZoneRecord {
             name: "@".to_string(),
@@ -634,7 +634,7 @@ mod server_struct_tests {
 
     #[test]
     fn test_dns_zone_record_clone() {
-        use maluwaf::dns::{DnsZoneRecord, RecordType};
+        use synvoid::dns::{DnsZoneRecord, RecordType};
 
         let record = DnsZoneRecord {
             name: "ns1".to_string(),
@@ -652,7 +652,7 @@ mod server_struct_tests {
 
     #[test]
     fn test_cache_key_equality() {
-        use maluwaf::dns::{CacheKey, RecordType};
+        use synvoid::dns::{CacheKey, RecordType};
 
         let key1 = CacheKey::new("example.com".to_string(), RecordType::A, None);
         let key2 = CacheKey::new("example.com".to_string(), RecordType::A, None);
@@ -664,7 +664,7 @@ mod server_struct_tests {
 
     #[test]
     fn test_cache_key_ordering() {
-        use maluwaf::dns::{CacheKey, RecordType};
+        use synvoid::dns::{CacheKey, RecordType};
 
         let key_a = CacheKey::new("a.example.com".to_string(), RecordType::A, None);
         let key_b = CacheKey::new("b.example.com".to_string(), RecordType::A, None);

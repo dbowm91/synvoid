@@ -2,7 +2,7 @@
 
 ## Overview
 
-Wave 6-7 implemented Raft consensus for the MaluWAF Global Control Plane, replacing the previous quorum-based signature approach that required 2/3 of Global nodes to manually sign records.
+Wave 6-7 implemented Raft consensus for the SynVoid Global Control Plane, replacing the previous quorum-based signature approach that required 2/3 of Global nodes to manually sign records.
 
 ## Architecture
 

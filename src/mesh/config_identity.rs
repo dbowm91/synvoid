@@ -258,7 +258,7 @@ impl NodeIdentityConfig {
         use hkdf::Hkdf;
         use sha2::Sha256;
 
-        const INFO: &[u8] = b"maluwaf-global-node-signing-key";
+        const INFO: &[u8] = b"synvoid-global-node-signing-key";
 
         let hk = Hkdf::<Sha256>::new(Some(genesis_key), INFO);
         let mut okm = [0u8; 32];

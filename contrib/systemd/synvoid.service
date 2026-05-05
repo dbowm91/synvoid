@@ -1,6 +1,6 @@
 [Unit]
 Description=MaluWAF - Multi-Process Web Application Firewall
-Documentation=https://github.com/maluwaf/maluwaf
+Documentation=https://github.com/synvoid/synvoid
 After=network-online.target
 Wants=network-online.target
 
@@ -8,8 +8,8 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/opt/maluwaf
-ExecStart=/usr/local/bin/maluwaf --overseer --foreground
+WorkingDirectory=/opt/synvoid
+ExecStart=/usr/local/bin/synvoid --overseer --foreground
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s
@@ -23,11 +23,11 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/maluwaf /var/log/maluwaf /var/run/maluwaf
+ReadWritePaths=/opt/synvoid /var/log/synvoid /var/run/synvoid
 
 # Environment
 Environment=RUST_LOG=info
-Environment=MALUWAF_CONFIG_PATH=/opt/maluwaf/config
+Environment=SYNVOID_CONFIG_PATH=/opt/synvoid/config
 
 # Watchdog support (optional - for systemd watchdog)
 WatchdogSec=30s

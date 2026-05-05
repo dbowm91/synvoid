@@ -4,7 +4,7 @@
  * INJECTION WARNING: This module shells out to `netsh` via std::process::Command.
  * The rule name and port arguments are constructed from format strings. The port
  * is a u16 (cannot contain injection characters). Rule names are constructed from
- * a fixed prefix ("MaluWAF HTTP/3 QUIC Port " or "MaluWAF HTTP Port ") plus a
+ * a fixed prefix ("SynVoid HTTP/3 QUIC Port " or "SynVoid HTTP Port ") plus a
  * u16 port number, so they are also safe. However, if this code is extended to
  * accept user-supplied strings for rule names or other netsh arguments, those
  * MUST be validated against shell injection (e.g., reject characters like '"', '&',
@@ -20,7 +20,7 @@ fn is_safe_rule_name(name: &str) -> bool {
 }
 
 pub fn inject_quic_firewall_rule(port: u16) -> Result<(), String> {
-    let rule_name = format!("MaluWAF HTTP/3 QUIC Port {}", port);
+    let rule_name = format!("SynVoid HTTP/3 QUIC Port {}", port);
     debug_assert!(is_safe_rule_name(&rule_name), "rule name failed safety check");
 
     if let Ok(exists) = check_rule_exists(&rule_name) {
@@ -58,7 +58,7 @@ pub fn inject_quic_firewall_rule(port: u16) -> Result<(), String> {
 }
 
 pub fn remove_quic_firewall_rule(port: u16) -> Result<(), String> {
-    let rule_name = format!("MaluWAF HTTP/3 QUIC Port {}", port);
+    let rule_name = format!("SynVoid HTTP/3 QUIC Port {}", port);
 
     let output = Command::new("netsh")
         .args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rule_name)])
@@ -86,7 +86,7 @@ fn check_rule_exists(rule_name: &str) -> Result<bool, String> {
 }
 
 pub fn inject_http_firewall_rule(port: u16) -> Result<(), String> {
-    let rule_name = format!("MaluWAF HTTP Port {}", port);
+    let rule_name = format!("SynVoid HTTP Port {}", port);
 
     if let Ok(exists) = check_rule_exists(&rule_name) {
         if exists {

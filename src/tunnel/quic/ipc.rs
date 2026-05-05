@@ -332,8 +332,8 @@ impl MultiplexConnection {
             info.bytes_sent += frame.payload.len() as u64;
         }
 
-        counter!("maluwaf.tunnel.ipc.frames_sent").increment(1);
-        histogram!("maluwaf.tunnel.ipc.frame_size").record(frame.payload.len() as f64);
+        counter!("synvoid.tunnel.ipc.frames_sent").increment(1);
+        histogram!("synvoid.tunnel.ipc.frame_size").record(frame.payload.len() as f64);
 
         Ok(())
     }
@@ -376,16 +376,16 @@ impl MultiplexConnection {
                         is_closed: false,
                     },
                 );
-                counter!("maluwaf.tunnel.ipc.streams_created").increment(1);
+                counter!("synvoid.tunnel.ipc.streams_created").increment(1);
             } else if frame.is_fin() || frame.is_rst() {
                 if let Some(mut info) = self.streams.get_mut(&frame.stream_id) {
                     info.is_closed = true;
                 }
                 self.streams.remove(&frame.stream_id);
-                counter!("maluwaf.tunnel.ipc.streams_closed").increment(1);
+                counter!("synvoid.tunnel.ipc.streams_closed").increment(1);
             }
 
-            counter!("maluwaf.tunnel.ipc.frames_received").increment(1);
+            counter!("synvoid.tunnel.ipc.frames_received").increment(1);
             return Ok(Some(frame));
         }
 

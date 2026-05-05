@@ -14,7 +14,7 @@ pub fn Footer() -> Html {
                             <div class="w-9 h-9 bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] rounded-lg flex items-center justify-center font-mono font-bold text-lg text-[var(--bg-primary)]">
                                 {"M"}
                             </div>
-                            <span class="text-xl font-bold text-[var(--text-primary)]">{"MaluWAF"}</span>
+                            <span class="text-xl font-bold text-[var(--text-primary)]">{"SynVoid"}</span>
                         </a>
                         <p class="text-[var(--text-secondary)] mt-4 text-sm max-w-[280px]">
                             {"High-performance Web Application Firewall and reverse proxy built in Rust for modern web infrastructure."}
@@ -36,17 +36,17 @@ pub fn Footer() -> Html {
                     </div>
                     <div>
                         <h4 class="text-xs uppercase tracking-wider text-[var(--text-muted)] mb-5">{"Community"}</h4>
-                        <a href="https://github.com/maluwaf/maluwaf" target="_blank" rel="noopener noreferrer" class="block text-[var(--text-secondary)] no-underline py-1.5 text-sm transition-colors hover:text-[var(--accent-primary)]">{"GitHub"}</a>
-                        <a href="https://github.com/maluwaf/maluwaf/issues" target="_blank" rel="noopener noreferrer" class="block text-[var(--text-secondary)] no-underline py-1.5 text-sm transition-colors hover:text-[var(--accent-primary)]">{"Issues"}</a>
+                        <a href="https://github.com/synvoid/synvoid" target="_blank" rel="noopener noreferrer" class="block text-[var(--text-secondary)] no-underline py-1.5 text-sm transition-colors hover:text-[var(--accent-primary)]">{"GitHub"}</a>
+                        <a href="https://github.com/synvoid/synvoid/issues" target="_blank" rel="noopener noreferrer" class="block text-[var(--text-secondary)] no-underline py-1.5 text-sm transition-colors hover:text-[var(--accent-primary)]">{"Issues"}</a>
                         <a href="/docs/developer" class="block text-[var(--text-secondary)] no-underline py-1.5 text-sm transition-colors hover:text-[var(--accent-primary)]">{"Contributing"}</a>
                         <a href="/docs/changelog" class="block text-[var(--text-secondary)] no-underline py-1.5 text-sm transition-colors hover:text-[var(--accent-primary)]">{"Changelog"}</a>
                     </div>
                 </div>
                 <div class="flex justify-between items-center pt-8 border-t border-[var(--border-color)]">
-                    <span class="text-[var(--text-muted)] text-sm">{"© 2024 MaluWAF Project. Open source under MIT license."}</span>
+                    <span class="text-[var(--text-muted)] text-sm">{"© 2024 SynVoid Project. Open source under MIT license."}</span>
                     <div class="flex gap-6">
-                        <a href="https://github.com/maluwaf/maluwaf/stargazers" class="text-[var(--text-muted)] text-sm no-underline transition-colors hover:text-[var(--text-primary)]">{"Stars"}</a>
-                        <a href="https://github.com/maluwaf/maluwaf/fork" class="text-[var(--text-muted)] text-sm no-underline transition-colors hover:text-[var(--text-primary)]">{"Fork"}</a>
+                        <a href="https://github.com/synvoid/synvoid/stargazers" class="text-[var(--text-muted)] text-sm no-underline transition-colors hover:text-[var(--text-primary)]">{"Stars"}</a>
+                        <a href="https://github.com/synvoid/synvoid/fork" class="text-[var(--text-muted)] text-sm no-underline transition-colors hover:text-[var(--text-primary)]">{"Fork"}</a>
                     </div>
                 </div>
             </div>

@@ -32,7 +32,7 @@ pub fn setup_panic_handler(process_name: &str, log_file: Option<&str>) {
         }
         if let Some(temp_dir) = std::env::temp_dir().to_str() {
             let default_panic_path = format!(
-                "{}/maluwaf-{}-panic.log",
+                "{}/synvoid-{}-panic.log",
                 temp_dir,
                 name.to_lowercase().replace(' ', "-")
             );
@@ -46,5 +46,5 @@ pub fn setup_panic_handler(process_name: &str, log_file: Option<&str>) {
 }
 
 pub fn setup_default_panic_handler() {
-    setup_panic_handler("maluwaf", None);
+    setup_panic_handler("synvoid", None);
 }

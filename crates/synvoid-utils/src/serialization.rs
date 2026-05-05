@@ -12,7 +12,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use maluwaf_utils::serialization::{serialize, deserialize};
+//! use synvoid_utils::serialization::{serialize, deserialize};
 //! use serde::{Serialize, Deserialize};
 //!
 //! #[derive(Serialize, Deserialize, PartialEq, Debug)]

@@ -1,10 +1,10 @@
 # IPC Hardening Patterns
 
-This skill documents the IPC signing, replay protection, and authentication patterns in the MaluWAF codebase.
+This skill documents the IPC signing, replay protection, and authentication patterns in the SynVoid codebase.
 
 ## Overview
 
-MaluWAF uses signed IPC for privileged operations with HMAC-SHA3-256 verification and bounded replay protection.
+SynVoid uses signed IPC for privileged operations with HMAC-SHA3-256 verification and bounded replay protection.
 
 ## Wire Format
 
@@ -45,8 +45,8 @@ impl IpcSigner {
 ### Key Loading
 
 Keys can be loaded from:
-1. **File** (`MALUWAF_IPC_KEY_FILE`): 64 hex chars, deleted after reading
-2. **Env** (`MALUWAF_IPC_KEY`): 64 hex chars directly
+1. **File** (`SYNVOID_IPC_KEY_FILE`): 64 hex chars, deleted after reading
+2. **Env** (`SYNVOID_IPC_KEY`): 64 hex chars directly
 3. **Secret** (`IpcSigner::from_secret()`): SHA-256 of string — **TEST/DEV ONLY**
 
 Unix key file uses `O_EXCL | O_NOFOLLOW` to prevent symlink attacks.

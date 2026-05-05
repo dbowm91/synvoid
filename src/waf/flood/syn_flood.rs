@@ -67,20 +67,20 @@ impl SynFloodProtector {
 
         let current = self.global_counter.fetch_add(1, Ordering::Relaxed) + 1;
         if current > self.global_rate as u64 {
-            metrics::counter!("maluwaf.syn_flood.global_limited").increment(1);
+            metrics::counter!("synvoid.syn_flood.global_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let slot = self.ip_to_slot(ip);
         let ip_count = self.per_ip_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if ip_count > self.per_ip_rate {
-            metrics::counter!("maluwaf.syn_flood.ip_limited").increment(1);
+            metrics::counter!("synvoid.syn_flood.ip_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
         let half_open = self.half_open_total.load(Ordering::Relaxed);
         if half_open > self.half_open_max {
-            metrics::counter!("maluwaf.syn_flood.half_open_exceeded").increment(1);
+            metrics::counter!("synvoid.syn_flood.half_open_exceeded").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -92,7 +92,7 @@ impl SynFloodProtector {
             let mut map = self.half_open_ips.write();
 
             if map.len() >= MAX_HALF_OPEN_ENTRIES {
-                metrics::counter!("maluwaf.syn_flood.half_open_map_full").increment(1);
+                metrics::counter!("synvoid.syn_flood.half_open_map_full").increment(1);
                 return;
             }
 
@@ -106,8 +106,8 @@ impl SynFloodProtector {
             entry.last_seen = now;
 
             let half_open = self.half_open_total.fetch_add(1, Ordering::Relaxed) + 1;
-            metrics::counter!("maluwaf.syn_flood.half_open").increment(1);
-            metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
+            metrics::counter!("synvoid.syn_flood.half_open").increment(1);
+            metrics::gauge!("synvoid.syn_flood.half_open_count").set(half_open as f64);
         }
 
         self.maybe_cleanup();
@@ -138,7 +138,7 @@ impl SynFloodProtector {
                 .half_open_total
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
             let half_open = self.half_open_total.load(Ordering::Relaxed);
-            metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
+            metrics::gauge!("synvoid.syn_flood.half_open_count").set(half_open as f64);
         }
     }
 
@@ -197,7 +197,7 @@ impl SynFloodProtector {
                     v.checked_sub(removed_count)
                 });
             let half_open = self.half_open_total.load(Ordering::Relaxed);
-            metrics::gauge!("maluwaf.syn_flood.half_open_count").set(half_open as f64);
+            metrics::gauge!("synvoid.syn_flood.half_open_count").set(half_open as f64);
             tracing::debug!("Cleaned up {} stale half-open connections", removed_count);
         }
     }

@@ -35,8 +35,8 @@ impl WgTunnelRegistry {
         let session_id = session.session_id.clone();
         self.sessions.insert(session_id.clone(), session);
 
-        counter!("maluwaf.tunnel.wireguard.sessions.created").increment(1);
-        gauge!("maluwaf.tunnel.wireguard.sessions.active").set(self.sessions.len() as f64);
+        counter!("synvoid.tunnel.wireguard.sessions.created").increment(1);
+        gauge!("synvoid.tunnel.wireguard.sessions.active").set(self.sessions.len() as f64);
 
         tracing::debug!(
             "WireGuard session registered: {} (total: {})",
@@ -47,8 +47,8 @@ impl WgTunnelRegistry {
 
     pub fn unregister(&self, session_id: &str) {
         if self.sessions.remove(session_id).is_some() {
-            counter!("maluwaf.tunnel.wireguard.sessions.closed").increment(1);
-            gauge!("maluwaf.tunnel.wireguard.sessions.active").set(self.sessions.len() as f64);
+            counter!("synvoid.tunnel.wireguard.sessions.closed").increment(1);
+            gauge!("synvoid.tunnel.wireguard.sessions.active").set(self.sessions.len() as f64);
 
             tracing::debug!(
                 "WireGuard session unregistered: {} (remaining: {})",

@@ -59,8 +59,8 @@ impl Orchestrator {
     ) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| {
             dirs::home_dir()
-                .map(|h| h.join(".maluwaf"))
-                .unwrap_or_else(|| PathBuf::from(".maluwaf"))
+                .map(|h| h.join(".synvoid"))
+                .unwrap_or_else(|| PathBuf::from(".synvoid"))
         });
         let persistence = Persistence::new(Some(data_dir.clone()));
         let state = persistence.load().unwrap_or_default();
@@ -217,7 +217,7 @@ impl Orchestrator {
             let _ = fs::create_dir_all(&bin_dir);
 
             let backup_name = format!(
-                "maluwaf-v{}-{}",
+                "synvoid-v{}-{}",
                 state.current_version.as_deref().unwrap_or("unknown"),
                 timestamp
             );

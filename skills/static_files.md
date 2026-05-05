@@ -52,7 +52,7 @@ pub struct SiteStaticThemeConfig {
 Template path in TOML config:
 ```toml
 [site.static.theme]
-directory_template_path = "/etc/maluwaf/templates/directory.html"
+directory_template_path = "/etc/synvoid/templates/directory.html"
 preset = "dark"
 ```
 
@@ -65,7 +65,7 @@ Custom templates support these placeholders (similar to Handlebars):
 | `{{url_path}}` | Current URL path (e.g., `/images/`) |
 | `{{parent_link}}` | HTML link to parent directory (tr with colspan=3) |
 | `{{rows}}` | File/folder entries as HTML tr elements |
-| `{{site_name}}` | Site name (defaults to "RustWAF") |
+| `{{site_name}}` | Site name (defaults to "synvoid") |
 | `{{title}}` | Page title (e.g., "Index of /images/") |
 
 ### Example Template
@@ -145,7 +145,7 @@ pub struct StaticLocation {
 [site.static]
 locations = [
     { path = "/public", root = "/var/www/public", theme = { preset = "dark" } },
-    { path = "/docs", root = "/var/www/docs", theme = { preset = "light", directory_template_path = "/etc/maluwaf/docs-template.html" } }
+    { path = "/docs", root = "/var/www/docs", theme = { preset = "light", directory_template_path = "/etc/synvoid/docs-template.html" } }
 ]
 ```
 

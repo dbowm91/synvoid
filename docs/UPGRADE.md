@@ -1,6 +1,6 @@
 # Breaking Changes & Upgrade Guide
 
-This document tracks breaking changes between versions and provides guidance for upgrading MaluWAF.
+This document tracks breaking changes between versions and provides guidance for upgrading SynVoid.
 
 ## Version 1.0.0 (Initial Release)
 
@@ -73,7 +73,7 @@ If memory usage increases after upgrading:
 
 2. Restart with fresh rate limit counters:
    ```bash
-   # Stop MaluWAF completely, then restart
+   # Stop SynVoid completely, then restart
    ```
 
 ### Rate Limiting Too Aggressive
@@ -101,18 +101,18 @@ enable_js_challenge = false  # Disable JavaScript challenges
 
 ### Zero-Downtime Upgrade
 
-MaluWAF supports zero-downtime upgrades using the upgrade system:
+SynVoid supports zero-downtime upgrades using the upgrade system:
 
 ```bash
 # Stage the new binary
-./maluwaf upgrade stage /path/to/new/maluwaf
+./synvoid upgrade stage /path/to/new/synvoid
 
 # Apply when ready
-./maluwaf upgrade apply
+./synvoid upgrade apply
 
 # Or use Admin API
 curl -X POST -H "Authorization: Bearer <token>" \
-  -d '{"binary_path": "/path/to/new/maluwaf"}' \
+  -d '{"binary_path": "/path/to/new/synvoid"}' \
   http://localhost:8081/api/upgrade
 ```
 
@@ -121,7 +121,7 @@ curl -X POST -H "Authorization: Bearer <token>" \
 If the upgrade causes issues:
 
 ```bash
-./maluwaf upgrade rollback
+./synvoid upgrade rollback
 ```
 
 ### Manual Upgrade
@@ -135,18 +135,18 @@ For manual upgrades without the built-in system:
 
 ```bash
 # Stop gracefully
-./maluwaf --stop
+./synvoid --stop
 
 # Replace binary
-cp /path/to/new/maluwaf /usr/local/bin/maluwaf
+cp /path/to/new/synvoid /usr/local/bin/synvoid
 
 # Start
-./maluwaf --config /etc/maluwaf/main.toml
+./synvoid --config /etc/synvoid/main.toml
 ```
 
 ## Configuration Version Compatibility
 
-| Config Version | MaluWAF Version | Notes |
+| Config Version | SynVoid Version | Notes |
 |----------------|-----------------|-------|
 | 1.0 | 1.0.0+ | Current format |
 
@@ -154,6 +154,6 @@ cp /path/to/new/maluwaf /usr/local/bin/maluwaf
 
 If you encounter issues during upgrade:
 
-1. Check logs: `RUST_LOG=debug ./maluwaf`
-2. Verify configuration: `./maluwaf --configtest`
-3. Report issues at: https://github.com/maluwaf/maluwaf/issues
+1. Check logs: `RUST_LOG=debug ./synvoid`
+2. Verify configuration: `./synvoid --configtest`
+3. Report issues at: https://github.com/synvoid/synvoid/issues

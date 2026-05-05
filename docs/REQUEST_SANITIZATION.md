@@ -1,10 +1,10 @@
 # Request Sanitization
 
-MaluWAF sanitizes incoming requests to protect your upstream servers from malformed, malicious, or potentially problematic input. This document explains what sanitization happens and how to configure it.
+SynVoid sanitizes incoming requests to protect your upstream servers from malformed, malicious, or potentially problematic input. This document explains what sanitization happens and how to configure it.
 
 ## Overview
 
-Request sanitization in MaluWAF operates at multiple levels:
+Request sanitization in SynVoid operates at multiple levels:
 
 1. **Header Sanitization** - Cleaning HTTP headers
 2. **Path Sanitization** - Normalizing request paths
@@ -14,7 +14,7 @@ Request sanitization in MaluWAF operates at multiple levels:
 
 ### Hop-by-Hop Headers
 
-MaluWAF automatically removes hop-by-hop headers that should not be forwarded to upstream servers:
+SynVoid automatically removes hop-by-hop headers that should not be forwarded to upstream servers:
 
 | Header | Why It's Removed |
 |--------|------------------|
@@ -48,7 +48,7 @@ remove_powered_by_header = true   # Remove X-Powered-By header
 
 ### URL Normalization
 
-MaluWAF normalizes request paths before processing:
+SynVoid normalizes request paths before processing:
 
 1. **Double encoding** - `%252e` → `%2e` → `.`
 2. **Null bytes** - `/etc/passwd%00.txt` → `/etc/passwd`
@@ -69,7 +69,7 @@ custom_patterns = []
 
 ## Trusted Proxy Handling
 
-When MaluWAF sits behind a load balancer or CDN, it needs to correctly identify the original client IP and protocol.
+When SynVoid sits behind a load balancer or CDN, it needs to correctly identify the original client IP and protocol.
 
 ### Configuration
 
@@ -96,13 +96,13 @@ sanitize_forwarded_headers = true
 ### Example
 
 ```
-Client → CDN (1.2.3.4) → MaluWAF (10.0.0.1) → Upstream
+Client → CDN (1.2.3.4) → SynVoid (10.0.0.1) → Upstream
 
-Request received by MaluWAF:
+Request received by SynVoid:
   X-Forwarded-For: 203.0.113.50
   X-Forwarded-Proto: https
 
-MaluWAF detects:
+SynVoid detects:
   - Request from trusted proxy (1.2.3.4)
   - Original client: 203.0.113.50
   - Original protocol: https
@@ -117,7 +117,7 @@ Without proper sanitization, attackers can spoof X-Forwarded-* headers to:
 - Appear as trusted internal IPs
 - Inject malicious values
 
-### How MaluWAF Protects
+### How SynVoid Protects
 
 When `sanitize_forwarded_headers = true`:
 
@@ -141,7 +141,7 @@ max_request_size = 1048576  # 1MB default
 
 ### Content-Type Validation
 
-MaluWAF can validate Content-Type headers:
+SynVoid can validate Content-Type headers:
 
 ```toml
 [defaults.security]
@@ -155,7 +155,7 @@ allowed_content_types = [
 
 ### Request Smuggling Prevention
 
-MaluWAF detects HTTP request smuggling attacks:
+SynVoid detects HTTP request smuggling attacks:
 
 ```toml
 [defaults.attack_detection.request_smuggling]

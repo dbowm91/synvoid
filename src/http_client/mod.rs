@@ -178,7 +178,7 @@ where
                                     client_ip = %this.client_ip,
                                     "Request blocked by streaming WAF mid-body"
                                 );
-                                metrics::counter!("maluwaf.http.streaming_body_blocked").increment(1);
+                                metrics::counter!("synvoid.http.streaming_body_blocked").increment(1);
                                 this.blocked = true;
                                 return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                                     std::io::ErrorKind::PermissionDenied,

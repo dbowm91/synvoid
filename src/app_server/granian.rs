@@ -228,7 +228,7 @@ impl GranianConfig {
         if self.socket_path.is_none() {
             let uuid = uuid::Uuid::new_v4().to_string()[..8].to_string();
             self.socket_path = Some(std::env::temp_dir().join(format!(
-                "maluwaf-{}-{}-app-{}.sock",
+                "synvoid-{}-{}-app-{}.sock",
                 site_id, uuid, worker_id
             )));
         }
@@ -286,7 +286,7 @@ impl GranianConfig {
             path.clone()
         } else {
             std::env::temp_dir().join(format!(
-                "maluwaf-{}-app-{}.sock",
+                "synvoid-{}-app-{}.sock",
                 self.site_id, self.worker_id
             ))
         }

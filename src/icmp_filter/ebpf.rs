@@ -130,9 +130,9 @@ impl EbpfFilter {
             vec![path.to_string()]
         } else {
             vec![
-                "/usr/lib/maluwaf/ebpf/maluwaf-icmp.bpf".to_string(),
-                "/usr/local/lib/maluwaf/ebpf/maluwaf-icmp.bpf".to_string(),
-                "./ebpf-icmp/target/bpfel-unknown-none/release/maluwaf-icmp".to_string(),
+                "/usr/lib/synvoid/ebpf/synvoid-icmp.bpf".to_string(),
+                "/usr/local/lib/synvoid/ebpf/synvoid-icmp.bpf".to_string(),
+                "./ebpf-icmp/target/bpfel-unknown-none/release/synvoid-icmp".to_string(),
             ]
         };
 

@@ -55,5 +55,5 @@ fn default_preload_on_startup() -> Option<bool> {
 }
 
 fn default_minified_base_dir() -> Option<String> {
-    Some("/var/cache/maluwaf/minified".to_string())
+    Some("/var/cache/synvoid/minified".to_string())
 }

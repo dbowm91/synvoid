@@ -64,7 +64,7 @@ impl ConnectionLimiter {
             let _ =
                 self.active_connections
                     .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
-            metrics::counter!("maluwaf.connection_limiter.max_reached").increment(1);
+            metrics::counter!("synvoid.connection_limiter.max_reached").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -73,7 +73,7 @@ impl ConnectionLimiter {
             let _ =
                 self.active_connections
                     .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
-            metrics::counter!("maluwaf.connection_limiter.global_limited").increment(1);
+            metrics::counter!("synvoid.connection_limiter.global_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -86,7 +86,7 @@ impl ConnectionLimiter {
             let _ =
                 self.active_connections
                     .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
-            metrics::counter!("maluwaf.connection_limiter.ip_limited").increment(1);
+            metrics::counter!("synvoid.connection_limiter.ip_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
@@ -95,7 +95,7 @@ impl ConnectionLimiter {
         self.per_ip_minute[slot].fetch_add(1, Ordering::Relaxed);
 
         let active = self.active_connections.load(Ordering::Relaxed);
-        metrics::gauge!("maluwaf.connection_limiter.active").set(active as f64);
+        metrics::gauge!("synvoid.connection_limiter.active").set(active as f64);
 
         FloodDecision::Allowed
     }
@@ -104,7 +104,7 @@ impl ConnectionLimiter {
         let _ = self
             .active_connections
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-        metrics::gauge!("maluwaf.connection_limiter.active")
+        metrics::gauge!("synvoid.connection_limiter.active")
             .set(self.active_connections.load(Ordering::Relaxed) as f64);
     }
 

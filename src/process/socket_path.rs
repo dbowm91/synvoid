@@ -58,7 +58,7 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
     #[cfg(unix)]
     {
         if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            let path = PathBuf::from(runtime_dir).join("maluwaf");
+            let path = PathBuf::from(runtime_dir).join("synvoid");
             if create_secure_dir_atomic(&path).is_ok() {
                 return path.join(name);
             }
@@ -66,7 +66,7 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
 
         let var_run = PathBuf::from("/var/run");
         if var_run.exists() {
-            let path = var_run.join("maluwaf");
+            let path = var_run.join("synvoid");
             if create_secure_dir_atomic(&path).is_ok() {
                 return path.join(name);
             }
@@ -81,14 +81,14 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
         let local_app_data = env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        let path = local_app_data.join("maluwaf");
+        let path = local_app_data.join("synvoid");
         let _ = std::fs::create_dir_all(&path);
         path.join(name)
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        let path = PathBuf::from("/tmp").join("maluwaf");
+        let path = PathBuf::from("/tmp").join("synvoid");
         let _ = std::fs::create_dir_all(&path);
         path.join(name)
     }
@@ -97,7 +97,7 @@ pub fn get_secure_socket_path(name: &str) -> PathBuf {
 #[cfg(unix)]
 pub fn get_user_socket_dir() -> PathBuf {
     let uid = unsafe { libc::geteuid() };
-    let path = PathBuf::from("/tmp").join(format!("maluwaf-{}", uid));
+    let path = PathBuf::from("/tmp").join(format!("synvoid-{}", uid));
     let _ = create_secure_dir_atomic(&path);
     path
 }
@@ -206,7 +206,7 @@ fn get_platform_dir_impl(env_var: &str, default: &str, suffix: Option<&str>) -> 
     {
         std::env::var_os(env_var)
             .map(|s| {
-                let mut p = PathBuf::from(s).join("maluwaf");
+                let mut p = PathBuf::from(s).join("synvoid");
                 if let Some(s) = suffix {
                     p = p.join(s);
                 }
@@ -226,7 +226,7 @@ fn get_platform_dir_impl(env_var: &str, default: &str, suffix: Option<&str>) -> 
         std::env::var_os("PROGRAMDATA")
             .or_else(|| std::env::var_os("LOCALAPPDATA"))
             .map(|s| {
-                let mut p = PathBuf::from(s).join("maluwaf");
+                let mut p = PathBuf::from(s).join("synvoid");
                 if let Some(s) = suffix {
                     p = p.join(s);
                 }
@@ -252,13 +252,13 @@ fn get_platform_dir_impl(env_var: &str, default: &str, suffix: Option<&str>) -> 
 }
 
 pub fn get_platform_data_dir() -> PathBuf {
-    get_platform_dir_impl("XDG_DATA_DIRS", "/var/lib/maluwaf", None)
+    get_platform_dir_impl("XDG_DATA_DIRS", "/var/lib/synvoid", None)
 }
 
 pub fn get_platform_log_dir() -> PathBuf {
-    get_platform_dir_impl("XDG_LOG_DIR", "/var/log/maluwaf", Some("logs"))
+    get_platform_dir_impl("XDG_LOG_DIR", "/var/log/synvoid", Some("logs"))
 }
 
 pub fn get_platform_cache_dir() -> PathBuf {
-    get_platform_dir_impl("XDG_CACHE_DIR", "/var/cache/maluwaf", Some("cache"))
+    get_platform_dir_impl("XDG_CACHE_DIR", "/var/cache/synvoid", Some("cache"))
 }

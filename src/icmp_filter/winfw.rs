@@ -29,7 +29,7 @@ use crate::icmp_filter::{
 };
 use std::net::IpAddr;
 
-const RULE_PREFIX: &str = "Maluwaf_ICMP";
+const RULE_PREFIX: &str = "synvoid_ICMP";
 
 #[derive(Debug)]
 pub struct WinFwFilter {
@@ -134,7 +134,7 @@ impl WinFwFilter {
                     .direction(direction)
                     .enabled(true)
                     .protocol(protocol)
-                    .description("Maluwaf ICMP blocking rule")
+                    .description("Synvoid ICMP blocking rule")
                     .profiles(profiles);
 
                 if let Some(iface_list) = ifaces {
@@ -239,7 +239,7 @@ impl WinFwFilter {
             .enabled(true)
             .protocol(protocol)
             .remote_addresses([*ip].into_iter().collect())
-            .description("Maluwaf ICMP exempt rule")
+            .description("Synvoid ICMP exempt rule")
             .profiles(profiles);
 
         if let Some(iface_list) = interfaces {
@@ -298,7 +298,7 @@ impl WinFwFilter {
                     .description(
                         rule.description
                             .as_deref()
-                            .unwrap_or("Maluwaf ICMP type filter"),
+                            .unwrap_or("Synvoid ICMP type filter"),
                     )
                     .profiles(profiles);
 
@@ -324,7 +324,7 @@ impl WinFwFilter {
                     .description(
                         rule.description
                             .as_deref()
-                            .unwrap_or("Maluwaf ICMP type filter"),
+                            .unwrap_or("Synvoid ICMP type filter"),
                     )
                     .profiles(profiles);
 
@@ -364,7 +364,7 @@ impl WinFwFilter {
                     .description(
                         rule.description
                             .as_deref()
-                            .unwrap_or("Maluwaf ICMPv6 type filter"),
+                            .unwrap_or("Synvoid ICMPv6 type filter"),
                     )
                     .profiles(profiles);
 
@@ -393,7 +393,7 @@ impl WinFwFilter {
                     .description(
                         rule.description
                             .as_deref()
-                            .unwrap_or("Maluwaf ICMPv6 type filter"),
+                            .unwrap_or("Synvoid ICMPv6 type filter"),
                     )
                     .profiles(profiles);
 

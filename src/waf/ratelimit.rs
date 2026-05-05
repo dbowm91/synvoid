@@ -269,14 +269,14 @@ impl RateLimiterManager {
         match self.state.global_limiter.check_and_increment() {
             RateLimitDecision::Allowed => RateLimitResult::Allowed,
             RateLimitDecision::Limited { limit_type } => {
-                counter!("maluwaf.ratelimit.global_limited").increment(1);
+                counter!("synvoid.ratelimit.global_limited").increment(1);
                 RateLimitResult::Limited {
                     limit_type: limit_type.to_string(),
                     retry_after_millis: 1000,
                 }
             }
             RateLimitDecision::Blackholed => {
-                counter!("maluwaf.ratelimit.blackholed").increment(1);
+                counter!("synvoid.ratelimit.blackholed").increment(1);
                 RateLimitResult::Blackholed
             }
         }

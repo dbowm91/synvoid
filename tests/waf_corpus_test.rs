@@ -6,7 +6,7 @@ use std::path::PathBuf;
 mod waf_corpus_tests {
     use super::*;
     use http::HeaderMap;
-    use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
     use std::net::IpAddr;
 
     fn fixtures_dir() -> PathBuf {
@@ -24,14 +24,14 @@ mod waf_corpus_tests {
         query_string: Option<&str>,
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
-    ) -> Option<maluwaf::waf::attack_detection::AttackDetectionResult> {
+    ) -> Option<synvoid::waf::attack_detection::AttackDetectionResult> {
         detector
             .check_request(method, path, query_string, headers, body)
             .0
     }
 
     fn check_result_matches_expected(
-        result: Option<&maluwaf::waf::attack_detection::AttackDetectionResult>,
+        result: Option<&synvoid::waf::attack_detection::AttackDetectionResult>,
         expected: ExpectedResult,
     ) -> bool {
         match expected {
@@ -416,7 +416,7 @@ mod waf_corpus_tests {
 
     #[tokio::test]
     async fn test_waf_full_request_path() {
-        use maluwaf::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+        use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
         let fixtures = RequestFixture::load_all(&fixtures_dir());
         let detector = AttackDetector::new(AttackDetectionConfig::default());

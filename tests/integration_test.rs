@@ -1,4 +1,4 @@
-use maluwaf::process::WorkerId;
+use synvoid::process::WorkerId;
 use std::path::PathBuf;
 
 #[cfg(test)]
@@ -7,7 +7,7 @@ mod tests {
 
     #[test]
     fn test_process_message_types() {
-        use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+        use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
         let worker_started = Message::WorkerStarted {
             id: WorkerId(1),
@@ -32,7 +32,7 @@ mod tests {
 
     #[test]
     fn test_worker_id_serialization() {
-        use maluwaf::process::WorkerId;
+        use synvoid::process::WorkerId;
 
         let id = WorkerId(42);
         assert_eq!(id.as_usize(), 42);
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn test_overseer_config_serialization() {
-        use maluwaf::overseer::process::OverseerConfig;
+        use synvoid::overseer::process::OverseerConfig;
 
         let config = OverseerConfig {
             config_path: Some(PathBuf::from("/test/config")),
@@ -65,7 +65,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drain_state_transitions() {
-        use maluwaf::worker::drain_state::WorkerDrainState;
+        use synvoid::worker::drain_state::WorkerDrainState;
 
         let state = WorkerDrainState::new();
 
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_master_health_check() {
-        use maluwaf::overseer::process::MasterHealth;
+        use synvoid::overseer::process::MasterHealth;
 
         let healthy = MasterHealth {
             process_alive: true,
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_master_health_partial_failure() {
-        use maluwaf::overseer::process::MasterHealth;
+        use synvoid::overseer::process::MasterHealth;
 
         let partial = MasterHealth {
             process_alive: true,
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_ipc_socket_path_generation() {
-        use maluwaf::process::socket_path::{
+        use synvoid::process::socket_path::{
             get_master_socket_path, get_versioned_master_socket_path,
         };
 
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_process_manager_config() {
-        use maluwaf::process::manager::ProcessManagerConfig;
+        use synvoid::process::manager::ProcessManagerConfig;
 
         let config = ProcessManagerConfig {
             min_workers: 2,
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_ipc_message_serialization() {
-        use maluwaf::process::Message;
+        use synvoid::process::Message;
 
         let worker_started = Message::WorkerStarted {
             id: WorkerId(1),
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_heartbeat_message() {
-        use maluwaf::process::{Message, WorkerId};
+        use synvoid::process::{Message, WorkerId};
 
         let heartbeat = Message::WorkerHeartbeat {
             id: WorkerId(1),
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_request_log_message() {
-        use maluwaf::process::{Message, RequestLogPayload, WorkerId};
+        use synvoid::process::{Message, RequestLogPayload, WorkerId};
 
         let request_log = Message::WorkerRequestLog {
             id: WorkerId(1),
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_request_log_payload_default() {
-        use maluwaf::process::RequestLogPayload;
+        use synvoid::process::RequestLogPayload;
 
         let payload = RequestLogPayload {
             timestamp: 1234567890,
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_messages() {
-        use maluwaf::process::Message;
+        use synvoid::process::Message;
 
         let graceful_shutdown = Message::MasterShutdown {
             graceful: true,
@@ -272,7 +272,7 @@ mod tests {
         ));
 
         let shutdown_complete = Message::WorkerShutdownComplete {
-            id: maluwaf::process::WorkerId(1),
+            id: synvoid::process::WorkerId(1),
         };
 
         assert!(matches!(
@@ -283,21 +283,21 @@ mod tests {
 
     #[test]
     fn test_config_reload_message() {
-        use maluwaf::process::Message;
+        use synvoid::process::Message;
 
         let reload = Message::MasterConfigReload {
-            config_path: "/etc/maluwaf/main.toml".to_string(),
+            config_path: "/etc/synvoid/main.toml".to_string(),
         };
 
         assert!(matches!(reload, Message::MasterConfigReload { .. }));
         if let Message::MasterConfigReload { config_path } = reload {
-            assert!(config_path.contains("maluwaf"));
+            assert!(config_path.contains("synvoid"));
         }
     }
 
     #[test]
     fn test_overseer_config_defaults() {
-        use maluwaf::overseer::process::OverseerConfig;
+        use synvoid::overseer::process::OverseerConfig;
 
         let config = OverseerConfig::default();
 
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_drain_manager_basic() {
-        use maluwaf::overseer::drain_manager::DrainManager;
+        use synvoid::overseer::drain_manager::DrainManager;
 
         let manager = DrainManager::new(100);
 
@@ -323,8 +323,8 @@ mod tests {
 
     #[test]
     fn test_connection_tracker() {
-        use maluwaf::overseer::connection_tracker::ConnectionTracker;
-        use maluwaf::process::WorkerId;
+        use synvoid::overseer::connection_tracker::ConnectionTracker;
+        use synvoid::process::WorkerId;
 
         let tracker = ConnectionTracker::new();
 
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_health_check_config() {
-        use maluwaf::overseer::health::EnhancedHealthConfig;
+        use synvoid::overseer::health::EnhancedHealthConfig;
 
         let config = EnhancedHealthConfig::default();
 
@@ -351,11 +351,11 @@ mod tests {
 
     #[test]
     fn test_spawn_config() {
-        use maluwaf::overseer::spawn::{ProcessMode, SpawnConfig};
+        use synvoid::overseer::spawn::{ProcessMode, SpawnConfig};
 
         let config = SpawnConfig {
-            binary_path: PathBuf::from("/usr/bin/maluwaf"),
-            config_path: PathBuf::from("/etc/maluwaf"),
+            binary_path: PathBuf::from("/usr/bin/synvoid"),
+            config_path: PathBuf::from("/etc/synvoid"),
             mode: ProcessMode::Master,
             master_socket: None,
             upgrade_mode: false,
@@ -366,12 +366,12 @@ mod tests {
             socket_ports: vec![],
         };
 
-        assert!(config.binary_path.to_string_lossy().contains("maluwaf"));
+        assert!(config.binary_path.to_string_lossy().contains("synvoid"));
     }
 
     #[test]
     fn test_verbose_request_logging_config() {
-        use maluwaf::config::logging::VerboseRequestLoggingConfig;
+        use synvoid::config::logging::VerboseRequestLoggingConfig;
 
         let config = VerboseRequestLoggingConfig {
             enabled: true,
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_verbose_request_logging_config_defaults() {
-        use maluwaf::config::logging::VerboseRequestLoggingConfig;
+        use synvoid::config::logging::VerboseRequestLoggingConfig;
 
         let config = VerboseRequestLoggingConfig::default();
 
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_upgrade_mode_detection() {
-        use maluwaf::overseer::mode::{detect_upgrade_mode, UpgradeMode};
+        use synvoid::overseer::mode::{detect_upgrade_mode, UpgradeMode};
 
         let mode = detect_upgrade_mode();
 
@@ -425,7 +425,7 @@ mod tests {
 
         #[allow(dead_code)]
         mod waf_body_inspection_tests {
-            use maluwaf::proxy::{
+            use synvoid::proxy::{
                 build_headers_to_filter, sanitize_request_path, MAX_XFF_CHAIN_LENGTH,
             };
 
@@ -476,7 +476,7 @@ mod tests {
 
         #[allow(dead_code)]
         mod dnssec_validation_tests {
-            use maluwaf::dns::dnssec_validation::{
+            use synvoid::dns::dnssec_validation::{
                 calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
                 compute_dnskey_canonical, compute_ds_digest, count_labels,
             };
@@ -641,7 +641,7 @@ mod tests {
 
         #[allow(dead_code)]
         mod upload_scanning_tests {
-            use maluwaf::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
+            use synvoid::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
 
             #[test]
             fn test_no_excluded_categories_is_empty() {
@@ -662,8 +662,8 @@ mod tests {
 
         #[allow(dead_code)]
         mod mesh_threat_propagation_tests {
-            use maluwaf::mesh::protocol::ThreatSeverity;
-            use maluwaf::mesh::threat_intel::ThreatIntelligenceConfig;
+            use synvoid::mesh::protocol::ThreatSeverity;
+            use synvoid::mesh::threat_intel::ThreatIntelligenceConfig;
 
             #[test]
             fn test_threat_severity_ordering() {
@@ -674,7 +674,7 @@ mod tests {
 
             #[test]
             fn test_threat_type_variants() {
-                use maluwaf::mesh::protocol::ThreatType;
+                use synvoid::mesh::protocol::ThreatType;
                 let variants = vec![
                     ThreatType::IpBlock,
                     ThreatType::IpThrottle,
@@ -712,7 +712,7 @@ mod tests {
 
         #[allow(dead_code)]
         mod honeypot_mesh_flow_tests {
-            use maluwaf::mesh::config::MeshNodeRole;
+            use synvoid::mesh::config::MeshNodeRole;
 
             #[test]
             fn test_mesh_node_role_is_global() {
@@ -734,7 +734,7 @@ mod tests {
 
         #[allow(dead_code)]
         mod yara_mesh_distribution_tests {
-            use maluwaf::mesh::yara_rules::{
+            use synvoid::mesh::yara_rules::{
                 BroadcastAckStatus, BroadcastAckTracker, RuleChangeTracker,
             };
 
@@ -856,7 +856,7 @@ mod tests {
 
     #[test]
     fn test_worker_metrics_default() {
-        use maluwaf::worker::metrics::WorkerMetrics;
+        use synvoid::worker::metrics::WorkerMetrics;
 
         let metrics = WorkerMetrics::default();
 
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_worker_metrics_recording() {
-        use maluwaf::worker::metrics::WorkerMetrics;
+        use synvoid::worker::metrics::WorkerMetrics;
         use std::sync::atomic::Ordering;
 
         let metrics = WorkerMetrics::default();
@@ -894,9 +894,9 @@ mod tests {
 
 #[cfg(test)]
 mod worker_crash_recovery_tests {
-    use maluwaf::overseer::socket_handoff::SocketHandoffError;
-    use maluwaf::process::ipc::MessageCategory;
-    use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+    use synvoid::overseer::socket_handoff::SocketHandoffError;
+    use synvoid::process::ipc::MessageCategory;
+    use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
     #[test]
     fn test_worker_crash_error_message() {
@@ -974,7 +974,7 @@ mod worker_crash_recovery_tests {
     #[test]
     fn test_socket_handoff_request_message() {
         let handoff_req = Message::SocketHandoffRequest {
-            socket_path: "/tmp/maluwaf/socket-handoff.sock".to_string(),
+            socket_path: "/tmp/synvoid/socket-handoff.sock".to_string(),
         };
 
         assert!(matches!(handoff_req, Message::SocketHandoffRequest { .. }));
@@ -1039,7 +1039,7 @@ mod worker_crash_recovery_tests {
 
     #[test]
     fn test_worker_error_severity_levels() {
-        use maluwaf::process::ErrorSeverity;
+        use synvoid::process::ErrorSeverity;
 
         let warning = ErrorSeverity::Warning;
         let error = ErrorSeverity::Error;
@@ -1052,7 +1052,7 @@ mod worker_crash_recovery_tests {
 
     #[test]
     fn test_worker_error_codes() {
-        use maluwaf::process::ErrorCode;
+        use synvoid::process::ErrorCode;
 
         assert_eq!(ErrorCode::WorkerPanic.to_string(), "worker_panic");
         assert_eq!(
@@ -1078,7 +1078,7 @@ mod worker_crash_recovery_tests {
         };
 
         let socket_handoff_req = Message::SocketHandoffRequest {
-            socket_path: "/tmp/maluwaf/socket-handoff.sock".to_string(),
+            socket_path: "/tmp/synvoid/socket-handoff.sock".to_string(),
         };
 
         let socket_handoff_ready = Message::SocketHandoffReady {
@@ -1127,7 +1127,7 @@ mod worker_crash_recovery_tests {
 
     #[test]
     fn test_worker_status_enum() {
-        use maluwaf::process::WorkerStatus;
+        use synvoid::process::WorkerStatus;
 
         let starting = WorkerStatus::Starting;
         let ready = WorkerStatus::Ready;
@@ -1177,7 +1177,7 @@ mod worker_crash_recovery_tests {
 
 #[cfg(test)]
 mod mesh_transport_tests {
-    use maluwaf::mesh::transport_core::{
+    use synvoid::mesh::transport_core::{
         MeshTransportError, MAX_REASONABLE_TIMESTAMP, MIN_REASONABLE_TIMESTAMP,
     };
 
@@ -1252,8 +1252,8 @@ mod mesh_transport_tests {
 
 #[cfg(test)]
 mod rate_limit_tests {
-    use maluwaf::utils::ratelimit::{IpRateLimiter, RateLimitResult, RateLimitStatsProvider};
-    use maluwaf::waf::ratelimit::core::{IpRateLimitConfig, SlottedIpRateLimiter};
+    use synvoid::utils::ratelimit::{IpRateLimiter, RateLimitResult, RateLimitStatsProvider};
+    use synvoid::waf::ratelimit::core::{IpRateLimitConfig, SlottedIpRateLimiter};
 
     #[test]
     fn test_slotted_ip_rate_limiter_ip_rate_limiter_trait() {
@@ -1308,7 +1308,7 @@ mod tls_config_tests {
 
     #[test]
     fn test_tls_config_default() {
-        use maluwaf::tls::config::InternalTlsConfig;
+        use synvoid::tls::config::InternalTlsConfig;
 
         let config = InternalTlsConfig::default();
 
@@ -1324,7 +1324,7 @@ mod tls_config_tests {
 
     #[test]
     fn test_acme_config_default() {
-        use maluwaf::tls::config::InternalAcmeConfig;
+        use synvoid::tls::config::InternalAcmeConfig;
 
         let config = InternalAcmeConfig::default();
 
@@ -1337,7 +1337,7 @@ mod tls_config_tests {
 
     #[test]
     fn test_client_auth_config_default() {
-        use maluwaf::tls::config::InternalClientAuthConfig;
+        use synvoid::tls::config::InternalClientAuthConfig;
 
         let config = InternalClientAuthConfig::default();
 
@@ -1347,7 +1347,7 @@ mod tls_config_tests {
 
     #[test]
     fn test_tls_config_with_values() {
-        use maluwaf::tls::config::{
+        use synvoid::tls::config::{
             InternalAcmeChallengeType, InternalAcmeConfig, InternalClientAuthConfig,
             InternalTlsConfig,
         };
@@ -1390,8 +1390,8 @@ mod tls_config_tests {
 
 #[cfg(test)]
 mod block_store_tests {
-    use maluwaf::block_store::{BlockEntry, BlockStore, BlockStoreStats};
-    use maluwaf::config::DenyListLimitsConfig;
+    use synvoid::block_store::{BlockEntry, BlockStore, BlockStoreStats};
+    use synvoid::config::DenyListLimitsConfig;
     use std::net::IpAddr;
     use tempfile::TempDir;
 
@@ -1456,7 +1456,7 @@ mod block_store_tests {
 
 #[cfg(test)]
 mod mesh_protocol_roundtrip_tests {
-    use maluwaf::mesh::protocol::{AckStatus, HealthStatus, LookupType, MeshMessage};
+    use synvoid::mesh::protocol::{AckStatus, HealthStatus, LookupType, MeshMessage};
 
     fn roundtrip(msg: &MeshMessage) -> MeshMessage {
         let encoded = msg.encode().expect("encode failed");
@@ -1778,7 +1778,7 @@ mod mesh_protocol_roundtrip_tests {
 
 #[cfg(test)]
 mod ipc_serialization_tests {
-    use maluwaf::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+    use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
     fn roundtrip(msg: &Message) -> Message {
         let json = serde_json::to_string(msg).expect("serialize");
@@ -1867,12 +1867,12 @@ mod ipc_serialization_tests {
     #[test]
     fn master_config_reload_roundtrip() {
         let msg = Message::MasterConfigReload {
-            config_path: "/etc/maluwaf/main.toml".to_string(),
+            config_path: "/etc/synvoid/main.toml".to_string(),
         };
         let decoded = roundtrip(&msg);
         match decoded {
             Message::MasterConfigReload { config_path } => {
-                assert_eq!(config_path, "/etc/maluwaf/main.toml");
+                assert_eq!(config_path, "/etc/synvoid/main.toml");
             }
             _ => panic!("wrong variant"),
         }
@@ -2002,7 +2002,7 @@ mod ipc_serialization_tests {
     // ── Admin config validation tests ────────────────────────────────
 
     mod admin_config_tests {
-        use maluwaf::config::admin::{AdminConfig, AdminCorsConfig, AdminRateLimitConfig};
+        use synvoid::config::admin::{AdminConfig, AdminCorsConfig, AdminRateLimitConfig};
 
         #[test]
         fn test_admin_config_valid() {
@@ -2204,7 +2204,7 @@ mod atomic_counter_safety_tests {
 
 #[cfg(test)]
 mod signature_verification_tests {
-    use maluwaf::mesh::cert::{sign_ed25519, sign_hmac, verify_ed25519, verify_hmac};
+    use synvoid::mesh::cert::{sign_ed25519, sign_hmac, verify_ed25519, verify_hmac};
 
     #[test]
     fn test_verify_ed25519_valid_signature() {
@@ -2334,7 +2334,7 @@ mod signature_verification_tests {
 
 #[cfg(test)]
 mod xff_validation_tests {
-    use maluwaf::proxy::{validate_and_truncate_xff, MAX_XFF_CHAIN_LENGTH};
+    use synvoid::proxy::{validate_and_truncate_xff, MAX_XFF_CHAIN_LENGTH};
 
     #[test]
     fn test_validate_and_truncate_xff_empty() {
@@ -2437,7 +2437,7 @@ mod xff_validation_tests {
 
 #[cfg(test)]
 mod whitelist_semantics_tests {
-    use maluwaf::waf::WhitelistConfig;
+    use synvoid::waf::WhitelistConfig;
 
     fn create_whitelist_config(paths: Vec<String>, ips: Vec<String>) -> WhitelistConfig {
         WhitelistConfig {
@@ -2495,8 +2495,8 @@ mod whitelist_semantics_tests {
 
 #[cfg(test)]
 mod hub_only_mode_tests {
-    use maluwaf::mesh::config::MeshNodeRole;
-    use maluwaf::mesh::threat_intel::ThreatIntelligenceConfig;
+    use synvoid::mesh::config::MeshNodeRole;
+    use synvoid::mesh::threat_intel::ThreatIntelligenceConfig;
 
     #[test]
     fn test_hub_only_mode_default_disabled() {
@@ -2561,8 +2561,8 @@ mod hub_only_mode_tests {
 
 #[cfg(test)]
 mod yara_manager_lifecycle_tests {
-    use maluwaf::mesh::config::MeshNodeRole;
-    use maluwaf::mesh::yara_rules::{
+    use synvoid::mesh::config::MeshNodeRole;
+    use synvoid::mesh::yara_rules::{
         YaraRuleSubmissionStatus, YaraRulesManager, YaraRulesManagerConfig,
     };
 
@@ -2676,8 +2676,8 @@ mod proxy_pipeline_tests {
     use ahash::AHashSet;
     use bytes::Bytes;
     use http_body_util::Full;
-    use maluwaf::http_client::{get, post_json};
-    use maluwaf::proxy::{
+    use synvoid::http_client::{get, post_json};
+    use synvoid::proxy::{
         filter_response_headers, filter_response_headers_buf, is_hop_by_hop_header,
         sanitize_request_path,
     };
@@ -2910,7 +2910,7 @@ mod proxy_pipeline_tests {
 
         let client = tokio::spawn(async move {
             let url = format!("http://{}/test", bind_addr);
-            let client = maluwaf::http_client::create_http_client_with_config(
+            let client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(5),
                 10,
                 Duration::from_secs(30),
@@ -2950,7 +2950,7 @@ mod proxy_pipeline_tests {
 
         let client = tokio::spawn(async move {
             let url = format!("http://{}/api/data", bind_addr);
-            let http_client = maluwaf::http_client::create_http_client_with_config(
+            let http_client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(5),
                 10,
                 Duration::from_secs(30),
@@ -2991,7 +2991,7 @@ mod proxy_pipeline_tests {
 
         let client = tokio::spawn(async move {
             let url = format!("http://{}/error", bind_addr);
-            let client = maluwaf::http_client::create_http_client_with_config(
+            let client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(5),
                 10,
                 Duration::from_secs(30),
@@ -3029,7 +3029,7 @@ mod proxy_pipeline_tests {
 
         let client = tokio::spawn(async move {
             let url = format!("http://{}/test", bind_addr);
-            let http_client = maluwaf::http_client::create_http_client_with_config(
+            let http_client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(5),
                 10,
                 Duration::from_secs(30),
@@ -3076,7 +3076,7 @@ mod proxy_pipeline_tests {
 
         let client = tokio::spawn(async move {
             let url = format!("http://{}/test", bind_addr);
-            let client = maluwaf::http_client::create_http_client_with_config(
+            let client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(5),
                 10,
                 Duration::from_secs(30),
@@ -3103,7 +3103,7 @@ mod proxy_pipeline_tests {
 
         let client = tokio::spawn(async move {
             let url = "http://127.0.0.1:0/test";
-            let client = maluwaf::http_client::create_http_client_with_config(
+            let client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(1),
                 10,
                 Duration::from_secs(30),
@@ -3120,7 +3120,7 @@ mod proxy_pipeline_tests {
     async fn test_forward_request_invalid_url() {
         let client = tokio::spawn(async move {
             let url = "http://[invalid:::]/test";
-            let client = maluwaf::http_client::create_http_client_with_config(
+            let client = synvoid::http_client::create_http_client_with_config(
                 Duration::from_secs(5),
                 10,
                 Duration::from_secs(30),
@@ -3136,8 +3136,8 @@ mod proxy_pipeline_tests {
 
 #[cfg(test)]
 mod http_server_handler_tests {
-    use maluwaf::config::MainConfig;
-    use maluwaf::http::shared_handler::SharedRequestHandler;
+    use synvoid::config::MainConfig;
+    use synvoid::http::shared_handler::SharedRequestHandler;
 
     fn make_test_config() -> MainConfig {
         MainConfig::default()
@@ -3243,7 +3243,7 @@ mod http_server_handler_tests {
 
 #[cfg(test)]
 mod early_http_parser_tests {
-    use maluwaf::http::early_parse::EarlyHttpParser;
+    use synvoid::http::early_parse::EarlyHttpParser;
 
     #[test]
     fn test_parse_get_root() {
@@ -3395,8 +3395,8 @@ mod early_http_parser_tests {
 
 #[cfg(test)]
 mod response_builder_tests {
-    use maluwaf::config::MainConfig;
-    use maluwaf::http::response_builder::{
+    use synvoid::config::MainConfig;
+    use synvoid::http::response_builder::{
         build_json_response, build_response_with_alt_svc, build_response_with_cookie,
         error_response_bytes, error_response_full, reason_phrase,
     };
@@ -3469,8 +3469,8 @@ mod response_builder_tests {
 #[cfg(test)]
 mod http_security_header_tests {
     use http::Response;
-    use maluwaf::config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
-    use maluwaf::http::headers::{
+    use synvoid::config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
+    use synvoid::http::headers::{
         compute_websocket_accept_key, inject_cors_headers, inject_security_headers,
         is_websocket_upgrade,
     };
@@ -3610,10 +3610,10 @@ mod http_security_header_tests {
 
 #[cfg(test)]
 mod acme_workflow_tests {
-    use maluwaf::config::tls::{AcmeChallengeType, AcmeConfig, TlsConfig};
-    use maluwaf::tls::acme::AcmeError;
-    use maluwaf::tls::config::{InternalAcmeChallengeType, InternalAcmeConfig};
-    use maluwaf::tls::AcmeDnsChallenge;
+    use synvoid::config::tls::{AcmeChallengeType, AcmeConfig, TlsConfig};
+    use synvoid::tls::acme::AcmeError;
+    use synvoid::tls::config::{InternalAcmeChallengeType, InternalAcmeConfig};
+    use synvoid::tls::AcmeDnsChallenge;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -3944,7 +3944,7 @@ mod acme_workflow_tests {
 
     #[test]
     fn test_internal_acme_config_from_main_config() {
-        use maluwaf::config::AcmeConfig as MainAcmeConfig;
+        use synvoid::config::AcmeConfig as MainAcmeConfig;
 
         let main_config = MainAcmeConfig {
             enabled: true,
@@ -3970,7 +3970,7 @@ mod acme_workflow_tests {
 #[cfg(test)]
 mod waf_attack_detection_tests {
     use http::HeaderMap;
-    use maluwaf::waf::attack_detection::{
+    use synvoid::waf::attack_detection::{
         AttackDetectionConfig, AttackDetector, AttackType, InputLocation,
     };
 

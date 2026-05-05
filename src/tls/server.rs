@@ -327,13 +327,13 @@ impl HttpsServer {
                             if let Some(ref fp) = flood_protector {
                                 match fp.check_tcp_connection(client_ip) {
                                     FloodDecision::Blackholed => {
-                                        counter!("maluwaf.tls.flood_blackhole").increment(1);
+                                        counter!("synvoid.tls.flood_blackhole").increment(1);
                                         tracing::debug!("TLS connection blackholed for {}", client_ip);
                                         drop(stream);
                                         continue;
                                     }
                                     FloodDecision::RateLimited => {
-                                        counter!("maluwaf.tls.flood_limited").increment(1);
+                                        counter!("synvoid.tls.flood_limited").increment(1);
                                         tracing::debug!("TLS connection rate limited for {}", client_ip);
                                         drop(stream);
                                         continue;
@@ -377,7 +377,7 @@ impl HttpsServer {
                                 let mut peek_buf = [0u8; 16];
                                 if let Ok(1..) = socket.peek(&mut peek_buf) {
                                     if is_valid_http_request_start(&peek_buf) {
-                                        counter!("maluwaf.tls.http_on_tls_port").increment(1);
+                                        counter!("synvoid.tls.http_on_tls_port").increment(1);
                                         tracing::debug!(
                                             "Rejected HTTP connection on TLS port from {}",
                                             client_ip
@@ -391,8 +391,8 @@ impl HttpsServer {
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
-                                        counter!("maluwaf.tls.handshakes").increment(1);
-                                        counter!("maluwaf.tls.handshakes", "result" => "success").increment(1);
+                                        counter!("synvoid.tls.handshakes").increment(1);
+                                        counter!("synvoid.tls.handshakes", "result" => "success").increment(1);
                                         tracing::debug!(
                                             "TLS handshake completed for {}",
                                             client_addr
@@ -403,7 +403,7 @@ impl HttpsServer {
 
                                         if is_http2 {
                                             tracing::debug!("Negotiated HTTP/2 for {}", client_addr);
-                                            counter!("maluwaf.tls.alpn", "protocol" => "h2").increment(1);
+                                            counter!("synvoid.tls.alpn", "protocol" => "h2").increment(1);
 
                                             let https_conn = Arc::new(HttpsConnection::new(tls_stream));
                                             let https_conn_clone = https_conn.clone();
@@ -475,7 +475,7 @@ impl HttpsServer {
                                                 }
                                             });
                                         } else {
-                                            counter!("maluwaf.tls.alpn", "protocol" => "http1.1").increment(1);
+                                            counter!("synvoid.tls.alpn", "protocol" => "http1.1").increment(1);
 
                                             let https_conn = Arc::new(HttpsConnection::new(tls_stream));
                                             let https_conn_clone = https_conn.clone();
@@ -550,12 +550,12 @@ impl HttpsServer {
                                         }
                                     }
                                     Err(e) => {
-                                        counter!("maluwaf.tls.handshakes").increment(1);
-                                        counter!("maluwaf.tls.handshakes", "result" => "failed").increment(1);
+                                        counter!("synvoid.tls.handshakes").increment(1);
+                                        counter!("synvoid.tls.handshakes", "result" => "failed").increment(1);
 
                                         let error_str = e.to_string().to_lowercase();
                                         if error_str.contains("version") || error_str.contains("protocol") {
-                                            counter!("maluwaf.tls.handshakes", "reason" => "version_mismatch").increment(1);
+                                            counter!("synvoid.tls.handshakes", "reason" => "version_mismatch").increment(1);
                                             tracing::warn!(
                                                 "TLS handshake failed due to protocol version mismatch for {}: {}. \
                                                 Consider enabling enable_tls_12_fallback if legacy clients need TLS 1.2 support.",
@@ -563,9 +563,9 @@ impl HttpsServer {
                                                 e
                                             );
                                         } else if error_str.contains("certificate") || error_str.contains("cert") {
-                                            counter!("maluwaf.tls.handshakes", "reason" => "certificate_error").increment(1);
+                                            counter!("synvoid.tls.handshakes", "reason" => "certificate_error").increment(1);
                                         } else {
-                                            counter!("maluwaf.tls.handshakes", "reason" => "other").increment(1);
+                                            counter!("synvoid.tls.handshakes", "reason" => "other").increment(1);
                                         }
 
                                         tracing::debug!(
@@ -637,7 +637,7 @@ impl HttpsServer {
 
         if waf.is_over_bandwidth_limit() {
             tracing::warn!("Monthly bandwidth limit exceeded - returning 503");
-            counter!("maluwaf.bandwidth.limit_exceeded").increment(1);
+            counter!("synvoid.bandwidth.limit_exceeded").increment(1);
             return Ok(Self::build_response(
                 503,
                 "Monthly Bandwidth Limit Exceeded".to_string(),
@@ -672,7 +672,7 @@ impl HttpsServer {
         let early_decision = waf.check_early(client_ip, &path, cookies, None);
         match early_decision {
             crate::proxy::WafDecision::Drop => {
-                counter!("maluwaf.https.early_drop").increment(1);
+                counter!("synvoid.https.early_drop").increment(1);
                 http_conn.request_drop();
                 let resp = Response::new(Full::new(Bytes::from_static(&[])).boxed());
                 return Ok(resp);
@@ -726,7 +726,7 @@ impl HttpsServer {
         }
 
         if path.starts_with(HONEYPOT_PREFIX) {
-            counter!("maluwaf.honeypot.hit").increment(1);
+            counter!("synvoid.honeypot.hit").increment(1);
             tracing::info!("HTTPS honeypot accessed: {} by {}", path, client_ip);
             waf.block_ip_for_honeypot(
                 client_ip,
@@ -800,7 +800,7 @@ impl HttpsServer {
             None
         } else if body_bytes.len() > max_body_size {
             tracing::warn!(client = %client_ip, size = body_bytes.len(), "HTTPS request body exceeds max size");
-            counter!("maluwaf.https.request.body_too_large").increment(1);
+            counter!("synvoid.https.request.body_too_large").increment(1);
             None
         } else {
             Some(&body_bytes)
@@ -851,13 +851,13 @@ impl HttpsServer {
 
         match waf_decision {
             crate::proxy::WafDecision::Drop => {
-                counter!("maluwaf.https.blackhole_drop").increment(1);
+                counter!("synvoid.https.blackhole_drop").increment(1);
                 http_conn.request_drop();
                 let resp = Response::new(Full::new(Bytes::from_static(&[])).boxed());
                 Ok(resp)
             }
             crate::proxy::WafDecision::Stall => {
-                counter!("maluwaf.https.stalled").increment(1);
+                counter!("synvoid.https.stalled").increment(1);
                 let current_stalled = crate::metrics::get_active_stalled_requests();
                 if current_stalled >= http_config.max_stalled_requests as u64 {
                     crate::metrics::record_stall_rejected();
@@ -955,7 +955,7 @@ impl HttpsServer {
                     .and_then(|v| v.to_str().ok());
                 if let Some(ct) = content_type {
                     if crate::upload::is_upload_content_type(ct) {
-                        if let Some(upload_validator) = crate::waf::get_upload_validator() {
+                        if let Some(upload_validator) = waf.get_upload_validator() {
                             let effective_config = upload_validator.get_effective_config(&path);
                             if effective_config.scan_with_yara
                                 || effective_config.max_size_bytes > 0
@@ -1872,7 +1872,7 @@ pub async fn proxy_raw_tcp(
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut upstream = tokio::net::TcpStream::connect(upstream_addr).await?;
-    counter!("maluwaf.tls.passthrough.connection").increment(1);
+    counter!("synvoid.tls.passthrough.connection").increment(1);
 
     // Forward the already-read ClientHello to upstream
     upstream.write_all(&client_hello_bytes).await?;
@@ -1914,7 +1914,7 @@ pub async fn proxy_raw_tcp(
         }
     }
 
-    counter!("maluwaf.tls.passthrough.completed").increment(1);
+    counter!("synvoid.tls.passthrough.completed").increment(1);
     Ok(())
 }
 

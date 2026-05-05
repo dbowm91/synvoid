@@ -1,6 +1,6 @@
 # Threat Level System
 
-MaluWAF includes an intelligent threat level system that automatically adjusts protection based on detected attack patterns and traffic behavior.
+SynVoid includes an intelligent threat level system that automatically adjusts protection based on detected attack patterns and traffic behavior.
 
 ## Overview
 
@@ -66,7 +66,7 @@ history_flush_interval_secs = 60
 use_sqlite_history = true
 
 [threat_level.persistence]
-baseline_persist_path = "/var/lib/maluwafwaf/baseline.json"
+baseline_persist_path = "/var/lib/synvoidwaf/baseline.json"
 ```
 
 ### Configuration Options
@@ -245,12 +245,12 @@ curl -X DELETE -H "Authorization: Bearer <token>" \
 ## Prometheus Metrics
 
 ```bash
-maluwaf_threat_level_current      # Current threat level (1-5)
-maluwaf_threat_level_score        # Current threat score
-maluwaf_threat_level_baseline     # Baseline score
-maluwaf_threat_level_samples      # Samples collected
-maluwaf_threat_escalations_total  # Total escalations
-maluwaf_threat_deescalations_total # Total de-escalations
+synvoid_threat_level_current      # Current threat level (1-5)
+synvoid_threat_level_score        # Current threat score
+synvoid_threat_level_baseline     # Baseline score
+synvoid_threat_level_samples      # Samples collected
+synvoid_threat_escalations_total  # Total escalations
+synvoid_threat_deescalations_total # Total de-escalations
 ```
 
 ## Threat Level Actions
@@ -470,13 +470,13 @@ Watch these metrics to understand your baseline:
 
 ```bash
 # Current threat level
-curl -s http://localhost:9090/metrics | grep maluwaf_threat_level_current
+curl -s http://localhost:9090/metrics | grep synvoid_threat_level_current
 
 # Current score vs baseline
-curl -s http://localhost:9090/metrics | grep maluwaf_threat_level_score
+curl -s http://localhost:9090/metrics | grep synvoid_threat_level_score
 
 # Escalation rate
-curl -s http://localhost:9090/metrics | grep maluwaf_threat_escalations
+curl -s http://localhost:9090/metrics | grep synvoid_threat_escalations
 ```
 
 Set up alerts for:

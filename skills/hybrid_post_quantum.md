@@ -1,6 +1,6 @@
 # Hybrid Post-Quantum Mesh Signatures
 
-This skill provides guidance for implementing and using hybrid Ed25519 + ML-DSA-44 signatures for mesh messages in MaluWAF.
+This skill provides guidance for implementing and using hybrid Ed25519 + ML-DSA-44 signatures for mesh messages in SynVoid.
 
 ## Overview
 

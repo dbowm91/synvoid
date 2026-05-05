@@ -1,8 +1,8 @@
-# MaluWAF Mesh & DHT Architecture Skill
+# SynVoid Mesh & DHT Architecture Skill
 
 ## Overview
 
-MaluWAF uses a mesh network architecture with DHT-based service discovery for multi-origin routing. This skill provides context for working with the mesh transport, DHT keys, and upstream routing.
+SynVoid uses a mesh network architecture with DHT-based service discovery for multi-origin routing. This skill provides context for working with the mesh transport, DHT keys, and upstream routing.
 
 ## Node Roles
 
@@ -378,12 +378,12 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 
 
 - `src/mesh/tier_key_encryption.rs` - `TierKeyEncryption` struct with AES-256-GCM
-- Master key derived from `node_identity.private_key` via HKDF("maluwaf-tier-key-master")
+- Master key derived from `node_identity.private_key` via HKDF("synvoid-tier-key-master")
 - `handle_tier_key_announce` encrypts before DHT storage on global nodes
 - Non-global nodes skip encryption (they don't store tier keys in DHT)
 
 
-- Session key from ML-KEM session used to derive transmission key via HKDF("maluwaf-tier-key-transmit")
+- Session key from ML-KEM session used to derive transmission key via HKDF("synvoid-tier-key-transmit")
 - `encrypt_for_transmission()` / `decrypt_for_transmission()` methods added
 - Both send and receive paths handle encrypted tier keys with fallback to plaintext
 
@@ -395,7 +395,7 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 ```rust
 signing_key = HKDF-SHA256(
     IKM = genesis_key (32 bytes),
-    info = "maluwaf-global-node-signing-key",
+    info = "synvoid-global-node-signing-key",
     salt = node's public_key (32 bytes)
 )
 ```
@@ -418,16 +418,16 @@ signing_key = HKDF-SHA256(
 **Usage**:
 ```bash
 # First node - generate genesis key
-$ maluwaf --genesis
+$ synvoid --genesis
 Genesis key generated. Add to config:
   [mesh.node_identity]
   genesis_key_base64 = "..."
 
 # Start first node (derives signing key, starts as global)
-$ maluwaf
+$ synvoid
 
 # Second node - copy genesis from first node, add to config, start
-$ maluwaf
+$ synvoid
 ```
 
 **Verification on Global Node Announce**:

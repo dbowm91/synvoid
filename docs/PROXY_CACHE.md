@@ -1,6 +1,6 @@
 # Proxy Cache
 
-MaluWAF includes a built-in HTTP response cache to reduce upstream load, improve response times, and handle traffic spikes more effectively.
+SynVoid includes a built-in HTTP response cache to reduce upstream load, improve response times, and handle traffic spikes more effectively.
 
 ## Overview
 
@@ -26,7 +26,7 @@ proxy_cache_enable = true
 proxy_cache_enable = true
 
 # Storage
-proxy_cache_path = "/var/cache/maluwaf/proxy"
+proxy_cache_path = "/var/cache/synvoid/proxy"
 proxy_cache_max_size = "1G"
 proxy_cache_memory_max = "256M"
 proxy_cache_disk_max = "1G"
@@ -111,7 +111,7 @@ proxy_cache_key = "$scheme$host$uri$args";
 
 ## Vary Header Support
 
-When Vary is enabled, MaluWAF stores separate cache entries for different header combinations:
+When Vary is enabled, SynVoid stores separate cache entries for different header combinations:
 
 ```toml
 proxy_cache_vary_by = ["Accept-Encoding", "Accept-Language"]
@@ -147,15 +147,15 @@ Cache statistics are available through Prometheus metrics:
 
 ```bash
 # View cache metrics
-curl http://localhost:9090/metrics | grep maluwaf_cache
+curl http://localhost:9090/metrics | grep synvoid_cache
 ```
 
 ### Prometheus Metrics
 
 ```bash
-maluwaf.proxy.cache.hit                   # Cache hits
-maluwaf.proxy.cache.miss                  # Cache misses
-maluwaf.proxy.cache.stale_while_revalidate # Stale-while-revalidate served
+synvoid.proxy.cache.hit                   # Cache hits
+synvoid.proxy.cache.miss                  # Cache misses
+synvoid.proxy.cache.stale_while_revalidate # Stale-while-revalidate served
 ```
 
 ## Use Cases

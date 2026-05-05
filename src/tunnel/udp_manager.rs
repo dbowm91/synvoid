@@ -141,7 +141,7 @@ impl UdpTunnelManager {
             _ => return Err("Unexpected response to UdpTunnelOpen".into()),
         }
 
-        counter!("maluwaf.tunnel.udp.tunnels.opened").increment(1);
+        counter!("synvoid.tunnel.udp.tunnels.opened").increment(1);
 
         let (response_tx, response_rx) = mpsc::channel::<UdpResponse>(256);
 
@@ -162,7 +162,7 @@ impl UdpTunnelManager {
         };
 
         self.tunnels.insert(key.clone(), tunnel.clone());
-        gauge!("maluwaf.tunnel.udp.tunnels.active").set(self.tunnels.len() as f64);
+        gauge!("synvoid.tunnel.udp.tunnels.active").set(self.tunnels.len() as f64);
 
         self.spawn_response_handler(tunnel.clone(), recv_stream, response_rx);
 
@@ -191,8 +191,8 @@ impl UdpTunnelManager {
                             }
 
                             if let Some((_, pending)) = pending_requests.remove(&msg.sequence) {
-                                counter!("maluwaf.tunnel.udp.responses.routed").increment(1);
-                                histogram!("maluwaf.tunnel.udp.response_latency")
+                                counter!("synvoid.tunnel.udp.responses.routed").increment(1);
+                                histogram!("synvoid.tunnel.udp.response_latency")
                                     .record(pending.timestamp.elapsed().as_millis() as f64);
 
                                 // Route response back to client
@@ -266,8 +266,8 @@ impl UdpTunnelManager {
         }
 
         if removed > 0 {
-            counter!("maluwaf.tunnel.udp.tunnels.cleaned").increment(removed as u64);
-            gauge!("maluwaf.tunnel.udp.tunnels.active").set(self.tunnels.len() as f64);
+            counter!("synvoid.tunnel.udp.tunnels.cleaned").increment(removed as u64);
+            gauge!("synvoid.tunnel.udp.tunnels.active").set(self.tunnels.len() as f64);
             tracing::debug!("Cleaned up {} idle UDP tunnels", removed);
         }
     }
@@ -311,7 +311,7 @@ impl ActiveUdpTunnel {
             },
         );
 
-        counter!("maluwaf.tunnel.udp.requests.tracked").increment(1);
+        counter!("synvoid.tunnel.udp.requests.tracked").increment(1);
 
         self.send(data, client_addr).await
     }
@@ -342,8 +342,8 @@ impl ActiveUdpTunnel {
             .send_datagram(encoded.into())
             .map_err(|e| format!("Failed to send datagram: {}", e))?;
 
-        counter!("maluwaf.tunnel.udp.datagrams.sent").increment(1);
-        histogram!("maluwaf.tunnel.udp.packet_size").record(data.len() as f64);
+        counter!("synvoid.tunnel.udp.datagrams.sent").increment(1);
+        histogram!("synvoid.tunnel.udp.packet_size").record(data.len() as f64);
 
         Ok(())
     }
@@ -354,7 +354,7 @@ impl ActiveUdpTunnel {
         _client_addr: SocketAddr,
         sequence: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        counter!("maluwaf.tunnel.udp.stream_fallback").increment(1);
+        counter!("synvoid.tunnel.udp.stream_fallback").increment(1);
 
         let (mut send_stream, _) = self
             .connection
@@ -377,8 +377,8 @@ impl ActiveUdpTunnel {
             .finish()
             .map_err(|e| format!("Failed to finish stream: {}", e))?;
 
-        counter!("maluwaf.tunnel.udp.streams.sent").increment(1);
-        histogram!("maluwaf.tunnel.udp.large_packet_size").record(data.len() as f64);
+        counter!("synvoid.tunnel.udp.streams.sent").increment(1);
+        histogram!("synvoid.tunnel.udp.large_packet_size").record(data.len() as f64);
 
         Ok(())
     }

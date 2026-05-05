@@ -28,7 +28,7 @@ impl Default for SyslogConfig {
     fn default() -> Self {
         Self {
             facility: SyslogFacility::Daemon,
-            app_name: "maluwaf".to_string(),
+            app_name: "synvoid".to_string(),
             pid: true,
         }
     }

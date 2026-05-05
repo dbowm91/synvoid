@@ -1,4 +1,4 @@
-//! Mesh networking subsystem for MaluWAF.
+//! Mesh networking subsystem for SynVoid.
 //!
 //! Provides peer-to-peer connectivity, DHT-based service discovery,
 //! encrypted transport (QUIC, WireGuard), multi-tenant organization

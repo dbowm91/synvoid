@@ -4,7 +4,7 @@ This skill documents the implementation of dynamic WAF rule updates, local persi
 
 ## Overview
 
-MaluWAF supports automatic rule updates via a signed feed. Rules are fetched, verified cryptographically (Ed25519), persisted locally for offline use, and synchronized across multiple worker processes without restarts.
+SynVoid supports automatic rule updates via a signed feed. Rules are fetched, verified cryptographically (Ed25519), persisted locally for offline use, and synchronized across multiple worker processes without restarts.
 
 ## Key Components
 
@@ -65,8 +65,8 @@ The `get_merged_patterns` function combines three sources of rules:
 
 ## Monitoring
 
-- `maluwaf.waf.rule_update_success`: Counter incremented on successful application.
-- `maluwaf.waf.rule_update_failure`: Counter incremented on verification or application failure.
+- `synvoid.waf.rule_update_success`: Counter incremented on successful application.
+- `synvoid.waf.rule_update_failure`: Counter incremented on verification or application failure.
 - `current_version`: Exposed via Admin API /status endpoint.
 
 ---

@@ -1814,7 +1814,7 @@ impl MeshProxy {
         }
 
         let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
-            .unwrap_or_else(|_| "/var/run/maluwaf-static-worker.sock".to_string());
+            .unwrap_or_else(|_| "/var/run/synvoid-static-worker.sock".to_string());
 
         if static_worker_socket.is_empty() {
             return body;

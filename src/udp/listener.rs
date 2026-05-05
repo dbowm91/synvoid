@@ -361,11 +361,11 @@ impl UdpListenerPool {
                                 use crate::waf::FloodDecision;
                                 match fp.check_udp(client_ip) {
                                     FloodDecision::Blackholed => {
-                                        counter!("maluwaf.udp.flood_blackhole").increment(1);
+                                        counter!("synvoid.udp.flood_blackhole").increment(1);
                                         continue;
                                     }
                                     FloodDecision::RateLimited => {
-                                        counter!("maluwaf.udp.flood_limited").increment(1);
+                                        counter!("synvoid.udp.flood_limited").increment(1);
                                         continue;
                                     }
                                     FloodDecision::Allowed => {}
@@ -373,7 +373,7 @@ impl UdpListenerPool {
                             }
 
                             if !rate_limiter.check(client_ip) {
-                                counter!("maluwaf.udp.rate_limited").increment(1);
+                                counter!("synvoid.udp.rate_limited").increment(1);
                                 continue;
                             }
 
@@ -390,28 +390,28 @@ impl UdpListenerPool {
                                             detection_result.protocol.as_str(),
                                             client_addr
                                         );
-                                        counter!("maluwaf.udp.protocol_rejected").increment(1);
-                                        histogram!("maluwaf.udp.packet_duration").record(start.elapsed());
+                                        counter!("synvoid.udp.protocol_rejected").increment(1);
+                                        histogram!("synvoid.udp.packet_duration").record(start.elapsed());
                                         continue;
                                     }
                                     UdpFilterAction::RateLimit { rate } => {
                                         if rate_limiter.check_with_limit(client_ip, rate) {
-                                            counter!("maluwaf.udp.protocol_rate_limited").increment(1);
+                                            counter!("synvoid.udp.protocol_rate_limited").increment(1);
                                             continue;
                                         }
                                     }
                                     UdpFilterAction::Allow => {
-                                        counter!("maluwaf.udp.protocol_allowed").increment(1);
+                                        counter!("synvoid.udp.protocol_allowed").increment(1);
                                     }
                                     UdpFilterAction::Challenge => {
-                                        counter!("maluwaf.udp.protocol_challenged").increment(1);
+                                        counter!("synvoid.udp.protocol_challenged").increment(1);
                                         continue;
                                     }
                                 }
                             }
 
                             if n > config.max_packet_size {
-                                counter!("maluwaf.udp.oversized_packet").increment(1);
+                                counter!("synvoid.udp.oversized_packet").increment(1);
                                 continue;
                             }
 
@@ -443,8 +443,8 @@ impl UdpListenerPool {
                                         Some(manager) => {
                                             match manager.send(peer, *port, data, client_addr).await {
                                                 Ok(_) => {
-                                                    counter!("maluwaf.udp.quic_tunnel.packets_sent").increment(1);
-                                                    counter!("maluwaf.udp.quic_tunnel.datagram_used").increment(1);
+                                                    counter!("synvoid.udp.quic_tunnel.packets_sent").increment(1);
+                                                    counter!("synvoid.udp.quic_tunnel.datagram_used").increment(1);
                                                     Ok(n)
                                                 }
                                                 Err(e) => {
@@ -471,8 +471,8 @@ impl UdpListenerPool {
                                                                 false,
                                                             ).await {
                                                                 Ok(_) => {
-                                                                    counter!("maluwaf.udp.quic_tunnel.packets_sent").increment(1);
-                                                                    counter!("maluwaf.udp.quic_tunnel.stream_fallback").increment(1);
+                                                                    counter!("synvoid.udp.quic_tunnel.packets_sent").increment(1);
+                                                                    counter!("synvoid.udp.quic_tunnel.stream_fallback").increment(1);
                                                                     Ok(n)
                                                                 }
                                                                 Err(e) => {
@@ -505,8 +505,8 @@ impl UdpListenerPool {
 
                             match send_result {
                                 Ok(_sent) => {
-                                    counter!("maluwaf.udp.packets_forwarded").increment(1);
-                                    gauge!("maluwaf.udp.packet_size").set(n as f64);
+                                    counter!("synvoid.udp.packets_forwarded").increment(1);
+                                    gauge!("synvoid.udp.packet_size").set(n as f64);
 
                                     let upstream_str = match &upstream_addr {
                                         UpstreamAddress::Tcp(addr) => addr.to_string(),
@@ -520,11 +520,11 @@ impl UdpListenerPool {
                                 }
                                 Err(e) => {
                                     tracing::debug!("Failed to forward UDP packet: {}", e);
-                                    counter!("maluwaf.udp.forward_error").increment(1);
+                                    counter!("synvoid.udp.forward_error").increment(1);
                                 }
                             }
 
-                            histogram!("maluwaf.udp.packet_duration").record(start.elapsed());
+                            histogram!("synvoid.udp.packet_duration").record(start.elapsed());
                         }
                         Err(e) => {
                             tracing::error!("UDP recv error: {}", e);

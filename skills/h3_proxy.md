@@ -4,7 +4,7 @@ This skill documents the HTTP/3 (QUIC) proxy architecture, integration with the 
 
 ## Overview
 
-MaluWAF provides full HTTP/3 support via the `quinn` and `h3` crates. The implementation acts as a reverse proxy, terminating QUIC/TLS connections and forwarding requests to upstreams.
+SynVoid provides full HTTP/3 support via the `quinn` and `h3` crates. The implementation acts as a reverse proxy, terminating QUIC/TLS connections and forwarding requests to upstreams.
 
 ## Key Components
 
@@ -72,10 +72,10 @@ while let Some(chunk) = upstream_body.frame().await {
 ## Observability
 
 Metrics are exposed via the global registry:
-- `maluwaf.http3.connections` (gauge)
-- `maluwaf.http3.requests.total` (counter)
-- `maluwaf.http3.requests.blocked` (counter)
-- `maluwaf.http3.request.duration` (histogram)
+- `synvoid.http3.connections` (gauge)
+- `synvoid.http3.requests.total` (counter)
+- `synvoid.http3.requests.blocked` (counter)
+- `synvoid.http3.request.duration` (histogram)
 
 ---
 

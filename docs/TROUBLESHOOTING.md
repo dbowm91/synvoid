@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common issues and solutions for MaluWAF.
+Common issues and solutions for SynVoid.
 
 ## Table of Contents
 
@@ -174,7 +174,7 @@ curl -H "Authorization: Bearer <token>" \
 
 Generate new token:
 ```bash
-./maluwaf --generatenewtoken
+./synvoid --generatenewtoken
 ```
 
 ### Config Not Reloading
@@ -201,8 +201,8 @@ Or restart the service.
 **Solutions**:
 ```bash
 # Check directory exists and is writable
-mkdir -p /var/log/maluwaf
-chown -R maluwaf:maluwaf /var/log/maluwaf
+mkdir -p /var/log/synvoid
+chown -R synvoid:synvoid /var/log/synvoid
 ```
 
 ### Log Level Too Verbose
@@ -218,7 +218,7 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 
 Or set in environment:
 ```bash
-RUST_LOG=warn ./maluwaf
+RUST_LOG=warn ./synvoid
 ```
 
 ## Metrics Issues
@@ -254,8 +254,8 @@ port = 9090
 ```toml
 [tls]
 enabled = true
-cert_path = "/etc/maluwaf/certs/tls.crt"
-key_path = "/etc/maluwaf/certs/tls.key"
+cert_path = "/etc/synvoid/certs/tls.crt"
+key_path = "/etc/synvoid/certs/tls.key"
 ```
 
 ## Debugging Steps
@@ -263,7 +263,7 @@ key_path = "/etc/maluwaf/certs/tls.key"
 ### Enable Debug Logging
 
 ```bash
-RUST_LOG=debug ./maluwaf
+RUST_LOG=debug ./synvoid
 ```
 
 ### Check System Status
@@ -290,7 +290,7 @@ curl -H "Authorization: Bearer <token>" \
 ## Getting Help
 
 If issues persist:
-1. Check logs at `/var/log/maluwaf/`
+1. Check logs at `/var/log/synvoid/`
 2. Enable debug logging
 3. Review configuration
 4. Open an issue on GitHub with:
@@ -347,7 +347,7 @@ If issues persist:
 
 3. Review mesh logs:
    ```bash
-   RUST_LOG=debug ./maluwaf 2>&1 | grep mesh
+   RUST_LOG=debug ./synvoid 2>&1 | grep mesh
    ```
 
 ### High Memory Usage with Mesh

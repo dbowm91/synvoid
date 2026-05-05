@@ -10,6 +10,35 @@ thread_local! {
     static NORMALIZE_CHARS: RefCell<Vec<char>> = RefCell::new(Vec::with_capacity(4096));
 }
 
+#[inline]
+fn hex_char_to_nibble(c: char) -> Option<u8> {
+    match c {
+        '0'..='9' => Some(c as u8 - b'0'),
+        'a'..='f' => Some(c as u8 - b'a' + 10),
+        'A'..='F' => Some(c as u8 - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[inline]
+fn hex_chars_to_u32(chars: &[char]) -> Option<u32> {
+    let mut result = 0u32;
+    for &c in chars {
+        result = result << 4 | hex_char_to_nibble(c)? as u32;
+    }
+    Some(result)
+}
+
+#[inline]
+fn hex_chars_to_u8(chars: &[char]) -> Option<u8> {
+    if chars.len() < 2 {
+        return None;
+    }
+    let high = hex_char_to_nibble(chars[0])?;
+    let low = hex_char_to_nibble(chars[1])?;
+    Some((high << 4) | low)
+}
+
 #[derive(Clone)]
 pub struct InputNormalizer {
     max_decode_passes: usize,
@@ -28,7 +57,7 @@ impl InputNormalizer {
         Self::default()
     }
 
-    pub fn normalize(&self, input: &str) -> NormalizedInput {
+    pub fn normalize<'a>(&self, input: &'a str) -> NormalizedInput<'a> {
         NORMALIZE_BUFFER.with(|buf_cell| {
             NORMALIZE_CHARS.with(|chars_cell| {
                 let mut buffer = buf_cell.borrow_mut();
@@ -61,8 +90,14 @@ impl InputNormalizer {
                 buffer.clear();
                 self.apply_normalizations_with_chars(&mut buffer, &mut chars);
 
+                let normalized = if buffer.as_str() == input {
+                    Cow::Borrowed(input)
+                } else {
+                    Cow::Owned(buffer.clone())
+                };
+
                 NormalizedInput {
-                    normalized: buffer.clone(),
+                    normalized,
                     lowercased: Cow::Owned(buffer.to_lowercase()),
                     passes,
                 }
@@ -76,8 +111,7 @@ impl InputNormalizer {
             match chars[i] {
                 '%' => {
                     if i + 5 < chars.len() && chars[i + 1] == 'u' {
-                        let hex: String = chars[i + 2..=i + 5].iter().collect();
-                        if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+                        if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6]) {
                             if code_point != 0 {
                                 if let Some(ch) = char::from_u32(code_point) {
                                     input.push(ch);
@@ -88,8 +122,7 @@ impl InputNormalizer {
                         }
                     }
                     if i + 2 < chars.len() {
-                        let hex: String = chars[i + 1..=i + 2].iter().collect();
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        if let Some(byte) = hex_chars_to_u8(&chars[i + 1..i + 3]) {
                             if byte != 0 {
                                 input.push(byte as char);
                             }
@@ -109,8 +142,7 @@ impl InputNormalizer {
                         match chars[i + 1] {
                             'x' | 'X' => {
                                 if i + 3 < chars.len() {
-                                    let hex: String = chars[i + 2..=i + 3].iter().collect();
-                                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                    if let Some(byte) = hex_chars_to_u8(&chars[i + 2..i + 4]) {
                                         if byte != 0 {
                                             input.push(byte as char);
                                         }
@@ -124,8 +156,7 @@ impl InputNormalizer {
                             }
                             'u' | 'U' => {
                                 if i + 5 < chars.len() {
-                                    let hex: String = chars[i + 2..=i + 5].iter().collect();
-                                    if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
+                                    if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6]) {
                                         if code_point != 0 {
                                             if let Some(ch) = char::from_u32(code_point) {
                                                 input.push(ch);
@@ -404,25 +435,25 @@ impl InputNormalizer {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct NormalizedInput {
-    pub normalized: String,
+pub struct NormalizedInput<'a> {
+    pub normalized: Cow<'a, str>,
     pub lowercased: Cow<'static, str>,
     pub passes: usize,
 }
 
-impl std::fmt::Display for NormalizedInput {
+impl<'a> std::fmt::Display for NormalizedInput<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.normalized)
     }
 }
 
-impl AsRef<str> for NormalizedInput {
+impl<'a> AsRef<str> for NormalizedInput<'a> {
     fn as_ref(&self) -> &str {
         &self.normalized
     }
 }
 
-impl NormalizedInput {
+impl<'a> NormalizedInput<'a> {
     pub fn as_str(&self) -> &str {
         &self.normalized
     }
@@ -436,20 +467,20 @@ impl NormalizedInput {
     }
 }
 
-pub struct NormalizedInputs {
-    pub path: Option<NormalizedInput>,
-    pub query_string: Option<NormalizedInput>,
-    pub headers: Vec<(Arc<str>, NormalizedInput)>,
-    pub body: Option<NormalizedInput>,
+pub struct NormalizedInputs<'a> {
+    pub path: Option<NormalizedInput<'a>>,
+    pub query_string: Option<NormalizedInput<'a>>,
+    pub headers: Vec<(Arc<str>, NormalizedInput<'a>)>,
+    pub body: Option<NormalizedInput<'static>>,
 }
 
-impl NormalizedInputs {
+impl<'a> NormalizedInputs<'a> {
     pub fn normalize_all(
         normalizer: &InputNormalizer,
-        path: Option<&str>,
-        query_string: Option<&str>,
-        headers: &http::HeaderMap,
-        body: Option<&[u8]>,
+        path: Option<&'a str>,
+        query_string: Option<&'a str>,
+        headers: &'a http::HeaderMap,
+        body: Option<&'a [u8]>,
     ) -> Self {
         let path = path.map(|p| normalizer.normalize(p));
         let query_string = query_string.map(|qs| normalizer.normalize(qs));
@@ -463,7 +494,12 @@ impl NormalizedInputs {
 
         let body = body.map(|b| {
             let s = String::from_utf8_lossy(b);
-            normalizer.normalize(&s)
+            let ni = normalizer.normalize(&s);
+            NormalizedInput {
+                normalized: Cow::Owned(ni.normalized.into_owned()),
+                lowercased: ni.lowercased,
+                passes: ni.passes,
+            }
         });
 
         Self {
@@ -575,5 +611,36 @@ mod tests {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("a\\x00b%00c\\u0000d&#0;e");
         assert_eq!(result.normalized, "abcde");
+    }
+
+    #[test]
+    fn test_benign_input_uses_borrowed_cow() {
+        let normalizer = InputNormalizer::new();
+        let input = "/api/users/123";
+        let result = normalizer.normalize(input);
+        match result.normalized {
+            Cow::Borrowed(s) => assert_eq!(s, input),
+            Cow::Owned(_) => panic!("Expected Cow::Borrowed for benign input"),
+        }
+    }
+
+    #[test]
+    fn test_modified_input_uses_owned_cow() {
+        let normalizer = InputNormalizer::new();
+        let input = "%3Cscript%3E";
+        let result = normalizer.normalize(input);
+        match result.normalized {
+            Cow::Borrowed(_) => panic!("Expected Cow::Owned for modified input"),
+            Cow::Owned(s) => assert_eq!(s, "<script>"),
+        }
+    }
+
+    #[test]
+    fn test_normalized_input_as_str_works() {
+        let normalizer = InputNormalizer::new();
+        let input = "/api/users";
+        let result = normalizer.normalize(input);
+        assert_eq!(result.as_str(), input);
+        assert_eq!(result.as_ref(), input);
     }
 }

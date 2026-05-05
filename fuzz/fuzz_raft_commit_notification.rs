@@ -7,7 +7,7 @@
 //! panicking.
 
 use libfuzzer_sys::fuzz_target;
-use maluwaf::mesh::protocol::MeshMessage;
+use synvoid::mesh::protocol::MeshMessage;
 
 fuzz_target!(|data: &[u8]| {
     let _ = MeshMessage::decode(data);

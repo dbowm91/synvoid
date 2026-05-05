@@ -2,7 +2,7 @@
 name = "pqc"
 version = "0.1.0"
 edition = "2021"
-description = "Post-Quantum Cryptography utilities for MaluWAF"
+description = "Post-Quantum Cryptography utilities for SynVoid"
 
 [dependencies]
 aws-lc-rs = { version = "1", features = ["unstable"] }

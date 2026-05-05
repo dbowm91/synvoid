@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MaluWAF bot detection system identifies and blocks automated clients (bots, crawlers, scrapers) using multiple detection methods including User-Agent analysis, JA3/JA4 fingerprinting, and configurable bot policies.
+The SynVoid bot detection system identifies and blocks automated clients (bots, crawlers, scrapers) using multiple detection methods including User-Agent analysis, JA3/JA4 fingerprinting, and configurable bot policies.
 
 ## Architecture
 

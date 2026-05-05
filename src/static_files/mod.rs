@@ -157,9 +157,9 @@ impl StaticFileHandler {
 
         if !enabled {
             let minified_cache_dir = config.minified_dir.as_ref().map(|_d| {
-                let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
+                let global_cache_dir = std::env::var("SYNVOID_CACHE_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
+                    .unwrap_or_else(|_| PathBuf::from("/var/cache/synvoid"));
                 global_cache_dir.join("minified").join(&site_id)
             });
 
@@ -229,9 +229,9 @@ impl StaticFileHandler {
         let gzip_types = config.gzip_types.clone().unwrap_or_else(default_gzip_types);
 
         let minified_cache_dir = config.minified_dir.as_ref().map(|_d| {
-            let global_cache_dir = std::env::var("RUSTWAF_CACHE_DIR")
+            let global_cache_dir = std::env::var("SYNVOID_CACHE_DIR")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("/var/cache/maluwaf"));
+                .unwrap_or_else(|_| PathBuf::from("/var/cache/synvoid"));
             global_cache_dir.join("minified").join(&site_id)
         });
 
@@ -291,7 +291,7 @@ impl StaticFileHandler {
         if_modified_since: Option<&str>,
         range_header: Option<&str>,
     ) -> Result<StaticResponse, StaticError> {
-        counter!("maluwaf.static.requests").increment(1);
+        counter!("synvoid.static.requests").increment(1);
 
         let location = self
             .get_matching_location(path)
@@ -315,7 +315,7 @@ impl StaticFileHandler {
         }
 
         if metadata.len() > self.max_file_size {
-            histogram!("maluwaf.static.file_too_large").record(metadata.len() as f64);
+            histogram!("synvoid.static.file_too_large").record(metadata.len() as f64);
             return Err(StaticError::FileTooLarge(format!(
                 "File exceeds max size of {} bytes",
                 self.max_file_size
@@ -561,7 +561,7 @@ impl StaticFileHandler {
                         .map_err(|e| StaticError::Internal(e.to_string()))?;
                     headers.push(("Content-Encoding".to_string(), "br".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                    histogram!("maluwaf.static.served_compressed").record(1.0);
+                    histogram!("synvoid.static.served_compressed").record(1.0);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
@@ -575,7 +575,7 @@ impl StaticFileHandler {
                         .map_err(|e| StaticError::Internal(e.to_string()))?;
                     headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                    histogram!("maluwaf.static.served_compressed").record(1.0);
+                    histogram!("synvoid.static.served_compressed").record(1.0);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
                         headers,
@@ -596,8 +596,8 @@ impl StaticFileHandler {
                             .map_err(|e| StaticError::Internal(e.to_string()))?;
                         headers.push(("Content-Encoding".to_string(), "br".to_string()));
                         headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                        histogram!("maluwaf.static.served_compressed").record(1.0);
-                        counter!("maluwaf.static.compression_served", "encoding" => "brotli_precompressed", "site" => self.site_id.clone()).increment(1);
+                        histogram!("synvoid.static.served_compressed").record(1.0);
+                        counter!("synvoid.static.compression_served", "encoding" => "brotli_precompressed", "site" => self.site_id.clone()).increment(1);
                         return Ok(StaticResponse {
                             status: StatusCode::OK,
                             headers,
@@ -611,8 +611,8 @@ impl StaticFileHandler {
                             .map_err(|e| StaticError::Internal(e.to_string()))?;
                         headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                         headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                        histogram!("maluwaf.static.served_compressed").record(1.0);
-                        counter!("maluwaf.static.compression_served", "encoding" => "gzip_precompressed", "site" => self.site_id.clone()).increment(1);
+                        histogram!("synvoid.static.served_compressed").record(1.0);
+                        counter!("synvoid.static.compression_served", "encoding" => "gzip_precompressed", "site" => self.site_id.clone()).increment(1);
                         return Ok(StaticResponse {
                             status: StatusCode::OK,
                             headers,
@@ -642,9 +642,9 @@ impl StaticFileHandler {
                 if compressed.len() < body.len() {
                     headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
                     headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                    histogram!("maluwaf.static.served_gzip_otf").record(1.0);
-                    counter!("maluwaf.static.compression_served", "encoding" => "gzip_otf", "site" => self.site_id.clone()).increment(1);
-                    histogram!("maluwaf.static.compression_ratio", "encoding" => "gzip")
+                    histogram!("synvoid.static.served_gzip_otf").record(1.0);
+                    counter!("synvoid.static.compression_served", "encoding" => "gzip_otf", "site" => self.site_id.clone()).increment(1);
+                    histogram!("synvoid.static.compression_ratio", "encoding" => "gzip")
                         .record(body.len() as f64 / compressed.len() as f64);
                     return Ok(StaticResponse {
                         status: StatusCode::OK,
@@ -655,7 +655,7 @@ impl StaticFileHandler {
             }
         }
 
-        counter!("maluwaf.static.served").increment(1);
+        counter!("synvoid.static.served").increment(1);
 
         let body = if self.enable_zero_copy && body.len() > 4096 {
             StaticResponseBody::Buffered(path.to_path_buf())
@@ -839,7 +839,7 @@ impl StaticFileHandler {
                 })
             }
             Err(e) => {
-                counter!("maluwaf.static.errors").increment(1);
+                counter!("synvoid.static.errors").increment(1);
                 let status = e.status_code();
                 let body = match &e {
                     StaticError::NotFound(path) => format!("404 Not Found: {}", path),

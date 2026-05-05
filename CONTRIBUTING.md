@@ -1,4 +1,4 @@
-# Contributing to MaluWAF
+# Contributing to SynVoid
 
 We welcome contributions from the community! Whether you're reporting bugs, suggesting features, or submitting pull requests, here's how you can help.
 
@@ -21,8 +21,8 @@ We welcome contributions from the community! Whether you're reporting bugs, sugg
 
 ```bash
 # Clone the repository
-git clone https://github.com/maluwaf/maluwaf.git
-cd maluwaf
+git clone https://github.com/synvoid/synvoid.git
+cd synvoid
 
 # Build in release mode
 cargo build --release
@@ -31,7 +31,7 @@ cargo build --release
 cargo test
 
 # Run with default configuration
-./target/release/maluwaf
+./target/release/synvoid
 ```
 
 ### Code Style
@@ -82,7 +82,7 @@ When reporting issues:
    - Configuration files (if relevant)
 
 3. **Include**:
-   - Version of MaluWAF being used
+   - Version of SynVoid being used
    - Operating system details
    - Any relevant configuration snippets
 
@@ -109,7 +109,7 @@ Releases are handled by maintainers:
 
 ## Security Issues
 
-For security vulnerabilities, please email security@maluwaf.com directly instead of using the public issue tracker.
+For security vulnerabilities, please email security@synvoid.com directly instead of using the public issue tracker.
 
 ## License
 

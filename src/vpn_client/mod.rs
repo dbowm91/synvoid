@@ -232,8 +232,8 @@ impl VpnClient {
 
                 self.connection = Some(VpnConnection::Quic { session });
 
-                counter!("maluwaf.vpn.client.connected").increment(1);
-                gauge!("maluwaf.vpn.client.sessions").set(1.0);
+                counter!("synvoid.vpn.client.connected").increment(1);
+                gauge!("synvoid.vpn.client.sessions").set(1.0);
                 self.stats.connected().await;
 
                 tracing::info!("VPN session established");
@@ -265,8 +265,8 @@ impl VpnClient {
 
         self.connection = Some(VpnConnection::WireGuard);
 
-        counter!("maluwaf.vpn.client.wireguard.connected").increment(1);
-        gauge!("maluwaf.vpn.client.wireguard.status").set(1.0);
+        counter!("synvoid.vpn.client.wireguard.connected").increment(1);
+        gauge!("synvoid.vpn.client.wireguard.status").set(1.0);
 
         tracing::info!("WireGuard VPN connection established");
 
@@ -282,16 +282,16 @@ impl VpnClient {
         match self.connection.take() {
             Some(VpnConnection::Quic { session }) => {
                 session.connection.close(0u32.into(), b"Client disconnect");
-                counter!("maluwaf.vpn.client.disconnected").increment(1);
-                gauge!("maluwaf.vpn.client.sessions").set(0.0);
+                counter!("synvoid.vpn.client.disconnected").increment(1);
+                gauge!("synvoid.vpn.client.sessions").set(0.0);
             }
             Some(VpnConnection::WireGuard) => {
                 if let Some(runtime) = &self.wg_runtime {
                     let mut rt = runtime.lock().await;
                     rt.stop().await;
                 }
-                counter!("maluwaf.vpn.client.wireguard.disconnected").increment(1);
-                gauge!("maluwaf.vpn.client.wireguard.status").set(0.0);
+                counter!("synvoid.vpn.client.wireguard.disconnected").increment(1);
+                gauge!("synvoid.vpn.client.wireguard.status").set(0.0);
             }
             None => {}
         }
@@ -346,7 +346,7 @@ impl VpnClient {
                     listener.start().await?;
 
                     self.local_listeners.insert(identifier.clone(), listener);
-                    counter!("maluwaf.vpn.client.port_mappings").increment(1);
+                    counter!("synvoid.vpn.client.port_mappings").increment(1);
 
                     tracing::info!("Port mapping established: {}", identifier);
                 }
@@ -392,7 +392,7 @@ impl VpnClient {
                 listener.start().await?;
 
                 self.local_listeners.insert(identifier.clone(), listener);
-                counter!("maluwaf.vpn.client.port_mappings").increment(1);
+                counter!("synvoid.vpn.client.port_mappings").increment(1);
 
                 tracing::info!("Added port mapping: {}", identifier);
             }

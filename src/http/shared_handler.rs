@@ -311,15 +311,15 @@ pub enum BodyCollectionProtocol {
 impl BodyCollectionProtocol {
     fn counter_blocked(&self) -> &'static str {
         match self {
-            BodyCollectionProtocol::Http => "maluwaf.http.streaming_body_blocked",
-            BodyCollectionProtocol::Https => "maluwaf.https.streaming_body_blocked",
+            BodyCollectionProtocol::Http => "synvoid.http.streaming_body_blocked",
+            BodyCollectionProtocol::Https => "synvoid.https.streaming_body_blocked",
         }
     }
 
     fn counter_too_large(&self) -> &'static str {
         match self {
-            BodyCollectionProtocol::Http => "maluwaf.http.streaming_body_too_large",
-            BodyCollectionProtocol::Https => "maluwaf.https.streaming_body_too_large",
+            BodyCollectionProtocol::Http => "synvoid.http.streaming_body_too_large",
+            BodyCollectionProtocol::Https => "synvoid.https.streaming_body_too_large",
         }
     }
 }

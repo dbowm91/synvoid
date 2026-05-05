@@ -16,7 +16,7 @@ This document describes the design for automatic WAF rule updates using a signed
 
 ```
 ┌─────────────────┐     HTTPS      ┌──────────────────┐
-│  Rule Provider  │ ──────────────▶│  MaluWAF Client  │
+│  Rule Provider  │ ──────────────▶│  SynVoid Client  │
 │  (your server)  │                │                  │
 │                 │◀───────────────│  - Fetch rules   │
 │  - Rules JSON   │   JSON+Sig     │  - Verify sig    │

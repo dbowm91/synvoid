@@ -1,6 +1,6 @@
 #[cfg(unix)]
 mod drain_e2e_tests {
-    use maluwaf::process::{IpcEndpoint, IpcListener, Message, WorkerId};
+    use synvoid::process::{IpcEndpoint, IpcListener, Message, WorkerId};
     use tempfile::TempDir;
 
     fn temp_endpoint(temp_dir: &TempDir, name: &str) -> IpcEndpoint {

@@ -4,6 +4,28 @@ use utoipa::ToSchema;
 
 use super::backend::{BackendConfig, CgiConfig, FastCgiConfig, LocationConfig, PhpConfig};
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyBufferingPolicy {
+    #[default]
+    Auto,
+    Buffered,
+    Streaming,
+    StreamingRequired,
+}
+
+impl BodyBufferingPolicy {
+    pub fn should_stream(&self, content_length: Option<u64>, threshold: u64) -> bool {
+        match self {
+            BodyBufferingPolicy::Auto => {
+                content_length.map(|cl| cl > threshold).unwrap_or(true)
+            }
+            BodyBufferingPolicy::Streaming | BodyBufferingPolicy::StreamingRequired => true,
+            BodyBufferingPolicy::Buffered => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WasmOnError {
@@ -55,10 +77,20 @@ pub struct SiteProxyConfig {
 
     #[serde(default = "default_wasm_on_error")]
     pub wasm_on_error: WasmOnError,
+
+    #[serde(default)]
+    pub body_buffering_policy: BodyBufferingPolicy,
+
+    #[serde(default = "default_streaming_threshold")]
+    pub streaming_threshold_bytes: u64,
 }
 
 fn default_wasm_on_error() -> WasmOnError {
     WasmOnError::FailOpen
+}
+
+fn default_streaming_threshold() -> u64 {
+    256 * 1024
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

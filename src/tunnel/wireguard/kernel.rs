@@ -343,12 +343,12 @@ impl KernelWireGuard {
                                 Ok(stats) => {
                                     for peer in &stats.peers {
                                         if let Some(handshake) = peer.latest_handshake {
-                                            gauge!("maluwaf.tunnel.wireguard.peer.handshake")
+                                            gauge!("synvoid.tunnel.wireguard.peer.handshake")
                                                 .set(handshake as f64);
                                         }
-                                        counter!("maluwaf.tunnel.wireguard.peer.rx")
+                                        counter!("synvoid.tunnel.wireguard.peer.rx")
                                             .absolute(peer.transfer_rx);
-                                        counter!("maluwaf.tunnel.wireguard.peer.tx")
+                                        counter!("synvoid.tunnel.wireguard.peer.tx")
                                             .absolute(peer.transfer_tx);
                                     }
                                 }
@@ -387,7 +387,7 @@ impl TunnelTransport for KernelWireGuard {
                     .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
 
                     self.sessions.add_session(peer_session);
-                    counter!("maluwaf.tunnel.wireguard.peers.added").increment(1);
+                    counter!("synvoid.tunnel.wireguard.peers.added").increment(1);
                 }
                 Err(e) => {
                     tracing::error!("Failed to add peer {}: {}", peer_config.public_key, e);
@@ -408,9 +408,9 @@ impl TunnelTransport for KernelWireGuard {
         self.start_stats_collector().await;
 
         self.running = true;
-        gauge!("maluwaf.tunnel.wireguard.running").set(1.0);
+        gauge!("synvoid.tunnel.wireguard.running").set(1.0);
 
-        counter!("maluwaf.tunnel.wireguard.started").increment(1);
+        counter!("synvoid.tunnel.wireguard.started").increment(1);
         tracing::info!(
             "Kernel WireGuard started with {} peers",
             self.config.peers.len()
@@ -422,7 +422,7 @@ impl TunnelTransport for KernelWireGuard {
         let _ = self.teardown_interface().await;
 
         self.running = false;
-        gauge!("maluwaf.tunnel.wireguard.running").set(0.0);
+        gauge!("synvoid.tunnel.wireguard.running").set(0.0);
 
         for session in self.sessions.list_sessions() {
             self.sessions.remove_session(&session.id);

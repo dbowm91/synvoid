@@ -1,10 +1,10 @@
 #[cfg(unix)]
 mod process_lifecycle_tests {
-    use maluwaf::process::ipc::{
+    use synvoid::process::ipc::{
         ErrorCode, ErrorSeverity, Message, MessageCategory, ThreatIndicatorType,
         ThreatSeverityLevel, UpgradeModePayload, WorkerId,
     };
-    use maluwaf::process::IpcEndpoint;
+    use synvoid::process::IpcEndpoint;
 
     #[test]
     fn test_worker_id_display() {
@@ -29,7 +29,7 @@ mod process_lifecycle_tests {
 
         let path_str = path.to_string_lossy();
         assert!(path_str.contains("test-worker"));
-        assert!(path_str.contains("maluwaf"));
+        assert!(path_str.contains("synvoid"));
     }
 
     #[test]
@@ -159,7 +159,7 @@ mod process_lifecycle_tests {
     #[test]
     fn test_message_not_drain_non_drain_messages() {
         let msg = Message::MasterConfigReload {
-            config_path: "/etc/maluwaf/config.toml".to_string(),
+            config_path: "/etc/synvoid/config.toml".to_string(),
         };
 
         assert!(!msg.is_drain());

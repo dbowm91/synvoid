@@ -1,4 +1,4 @@
-//! WebDAV support for MaluWAF
+//! WebDAV support for SynVoid
 //!
 //! This module implements WebDAV (Web-based Distributed Authoring and Versioning) protocol
 //! support using Axum. WebDAV extends HTTP with methods for collaborative file management.

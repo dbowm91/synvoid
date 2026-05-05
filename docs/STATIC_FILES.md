@@ -1,10 +1,10 @@
 # Static Files & Optimization
 
-MaluWAF provides built-in static file serving with automatic optimization features including minification, compression, and caching.
+SynVoid provides built-in static file serving with automatic optimization features including minification, compression, and caching.
 
 ## Overview
 
-MaluWAF can serve static files directly with the following optimizations:
+SynVoid can serve static files directly with the following optimizations:
 
 - **Minification** - Remove whitespace and comments from HTML, CSS, and JavaScript
 - **Compression** - Serve pre-compressed versions (gzip, Brotli) or compress on-the-fly
@@ -96,14 +96,14 @@ preset = "dark"
 
 ## Directory Listing Theme
 
-MaluWAF supports customizable directory listing with themes:
+SynVoid supports customizable directory listing with themes:
 
 ```toml
 [site.static.theme]
 preset = "dark"  # or "light"
 
 # Or use custom template
-directory_template_path = "/etc/maluwaf/templates/directory.html"
+directory_template_path = "/etc/synvoid/templates/directory.html"
 ```
 
 **Available presets:** `dark`, `light`
@@ -112,14 +112,14 @@ directory_template_path = "/etc/maluwaf/templates/directory.html"
 - `{{url_path}}` - current URL path
 - `{{parent_link}}` - parent directory link
 - `{{rows}}` - file/folder entries
-- `{{site_name}}` - site name (RustWAF)
+- `{{site_name}}` - site name (synvoid)
 - `{{title}}` - page title ("Index of {url_path}")
 
 ## Minification
 
 ### Worker Architecture
 
-MaluWAF uses a dedicated worker process for static file minification to avoid impacting request-handling performance:
+SynVoid uses a dedicated worker process for static file minification to avoid impacting request-handling performance:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -169,7 +169,7 @@ MaluWAF uses a dedicated worker process for static file minification to avoid im
 
 ### Pre-Compressed Files
 
-MaluWAF automatically serves pre-compressed files if they exist:
+SynVoid automatically serves pre-compressed files if they exist:
 
 ```
 /var/www/static/
@@ -181,7 +181,7 @@ MaluWAF automatically serves pre-compressed files if they exist:
 └── app.js
 ```
 
-When a client sends `Accept-Encoding: br, gzip`, MaluWAF checks for pre-compressed versions first.
+When a client sends `Accept-Encoding: br, gzip`, SynVoid checks for pre-compressed versions first.
 
 ### Compression Priority
 
@@ -213,7 +213,7 @@ cache_ttl_seconds = 3600
 
 ### Cache Headers
 
-MaluWAF automatically sets appropriate cache headers:
+SynVoid automatically sets appropriate cache headers:
 
 | Header | Value |
 |--------|-------|
@@ -225,7 +225,7 @@ MaluWAF automatically sets appropriate cache headers:
 
 ### Path Traversal Protection
 
-MaluWAF automatically blocks path traversal attempts:
+SynVoid automatically blocks path traversal attempts:
 
 ```bash
 # This will be blocked
@@ -248,14 +248,14 @@ block_hidden_files = true  # Blocks .htaccess, .git, .env, etc.
 
 ```bash
 # View static file metrics
-curl http://localhost:9090/metrics | grep maluwaf_static
+curl http://localhost:9090/metrics | grep synvoid_static
 
 # Key metrics
-maluwaf_static_requests_total    # Total requests
-maluwaf_static_bytes_served      # Bytes served
-maluwaf_static_cache_hits       # Cache hits
-maluwaf_static_cache_misses      # Cache misses
-maluwaf_static_compression_saved # Bytes saved by compression
+synvoid_static_requests_total    # Total requests
+synvoid_static_bytes_served      # Bytes served
+synvoid_static_cache_hits       # Cache hits
+synvoid_static_cache_misses      # Cache misses
+synvoid_static_compression_saved # Bytes saved by compression
 ```
 
 ## Performance Tuning
@@ -305,7 +305,7 @@ done
 
 If you're migrating from Nginx:
 
-| Nginx Directive | MaluWAF Equivalent |
+| Nginx Directive | SynVoid Equivalent |
 |-----------------|-------------------|
 | `gzip on` | `enable_compression = true` |
 | `gzip_types text/html` | Automatic |

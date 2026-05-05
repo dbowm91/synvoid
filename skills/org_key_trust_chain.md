@@ -2,7 +2,7 @@
 
 ## Overview
 
-MaluWAF uses a hierarchical trust chain for mesh node authentication:
+SynVoid uses a hierarchical trust chain for mesh node authentication:
 `Genesis Key` → `Global Nodes (2/3 Quorum)` → `Org Keys` → `Member Certificates` → `Edge Nodes`
 
 This skill provides context for working with organization keys, quorum signatures, and member certificates.

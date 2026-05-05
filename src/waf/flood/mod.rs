@@ -96,7 +96,7 @@ impl SynFloodBackendWrapper {
                 FloodBackend::Userspace => 0.0,
                 FloodBackend::Ebpf => 1.0,
             };
-            metrics::gauge!("maluwaf.flood.syn_backend").set(backend_value);
+            metrics::gauge!("synvoid.flood.syn_backend").set(backend_value);
         }
 
         tracing::info!("Using SYN flood protection backend: {}", actual_backend);
@@ -252,13 +252,13 @@ impl FloodProtector {
         }
 
         if let FloodDecision::RateLimited = self.syn_protector.check_syn(ip) {
-            metrics::counter!("maluwaf.flood.syn_limited").increment(1);
+            metrics::counter!("synvoid.flood.syn_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 
         match self.connection_limiter.try_register_connection(ip) {
             FloodDecision::RateLimited => {
-                metrics::counter!("maluwaf.flood.connection_limited").increment(1);
+                metrics::counter!("synvoid.flood.connection_limited").increment(1);
                 return FloodDecision::RateLimited;
             }
             FloodDecision::Allowed => {}
@@ -290,7 +290,7 @@ impl FloodProtector {
         }
 
         if let FloodDecision::RateLimited = self.udp_protector.check_packet(ip) {
-            metrics::counter!("maluwaf.flood.udp_limited").increment(1);
+            metrics::counter!("synvoid.flood.udp_limited").increment(1);
             return FloodDecision::RateLimited;
         }
 

@@ -304,7 +304,7 @@ impl TcpListenerPool {
         let connection_semaphore = self.connection_semaphore.clone();
         let buffer_size = self.buffer_size;
 
-        gauge!("maluwaf.tcp.pool.max_connections").set(self.config.max_connections as f64);
+        gauge!("synvoid.tcp.pool.max_connections").set(self.config.max_connections as f64);
 
         for instance in listeners {
             let config = instance.config.clone();
@@ -425,11 +425,11 @@ impl TcpListenerPool {
                             if let Some(ref fp) = flood_protector {
                                 match fp.check_tcp_connection(client_ip) {
                                     FloodDecision::Blackholed => {
-                                        counter!("maluwaf.tcp.flood_blackhole").increment(1);
+                                        counter!("synvoid.tcp.flood_blackhole").increment(1);
                                         continue;
                                     }
                                     FloodDecision::RateLimited => {
-                                        counter!("maluwaf.tcp.flood_limited").increment(1);
+                                        counter!("synvoid.tcp.flood_limited").increment(1);
                                         continue;
                                     }
                                     FloodDecision::Allowed => {}
@@ -439,18 +439,18 @@ impl TcpListenerPool {
 
                             if let Some(ref rl) = rate_limiter {
                                 if rl.is_in_blackhole() {
-                                    counter!("maluwaf.tcp.blackhole_drop").increment(1);
+                                    counter!("synvoid.tcp.blackhole_drop").increment(1);
                                     continue;
                                 }
 
                                 match rl.check_global() {
                                     RateLimitResult::Blackholed => {
-                                        counter!("maluwaf.tcp.blackhole_drop").increment(1);
+                                        counter!("synvoid.tcp.blackhole_drop").increment(1);
                                         continue;
                                     }
                                     RateLimitResult::Limited { limit_type, .. } => {
                                         tracing::debug!("TCP global rate limited: {}", limit_type);
-                                        counter!("maluwaf.tcp.rate_limited").increment(1);
+                                        counter!("synvoid.tcp.rate_limited").increment(1);
                                         continue;
                                     }
                                     RateLimitResult::Allowed => {}
@@ -461,7 +461,7 @@ impl TcpListenerPool {
                                 match sem.clone().try_acquire_owned() {
                                     Ok(p) => Some(p),
                                     Err(_) => {
-                                        counter!("maluwaf.tcp.connection_limit_exceeded").increment(1);
+                                        counter!("synvoid.tcp.connection_limit_exceeded").increment(1);
                                         continue;
                                     }
                                 }
@@ -512,11 +512,11 @@ impl TcpListenerPool {
             match rl.check_rate_limit(Some("global"), client_ip).await {
                 RateLimitResult::Limited { limit_type, .. } => {
                     tracing::debug!("TCP rate limited: {} for {}", limit_type, client_ip);
-                    counter!("maluwaf.tcp.ip_rate_limited").increment(1);
+                    counter!("synvoid.tcp.ip_rate_limited").increment(1);
                     return Ok(());
                 }
                 RateLimitResult::Blackholed => {
-                    counter!("maluwaf.tcp.blackhole_drop").increment(1);
+                    counter!("synvoid.tcp.blackhole_drop").increment(1);
                     return Ok(());
                 }
                 RateLimitResult::Allowed => {}
@@ -537,9 +537,9 @@ impl TcpListenerPool {
                         detection_result.protocol.as_str(),
                         client_addr
                     );
-                    counter!("maluwaf.tcp.protocol_rejected").increment(1);
+                    counter!("synvoid.tcp.protocol_rejected").increment(1);
                     Self::stall_connection(client_stream, socket_options).await;
-                    histogram!("maluwaf.tcp.connection_duration").record(start.elapsed());
+                    histogram!("synvoid.tcp.connection_duration").record(start.elapsed());
                     return Ok(());
                 }
                 FilterAction::Stall => {
@@ -550,13 +550,13 @@ impl TcpListenerPool {
                         detection_result.protocol.as_str(),
                         client_addr
                     );
-                    counter!("maluwaf.tcp.protocol_stalled").increment(1);
+                    counter!("synvoid.tcp.protocol_stalled").increment(1);
                     Self::stall_connection(client_stream, socket_options).await;
-                    histogram!("maluwaf.tcp.connection_duration").record(start.elapsed());
+                    histogram!("synvoid.tcp.connection_duration").record(start.elapsed());
                     return Ok(());
                 }
                 FilterAction::Allow => {
-                    counter!("maluwaf.tcp.protocol_allowed").increment(1);
+                    counter!("synvoid.tcp.protocol_allowed").increment(1);
                 }
             }
         }
@@ -715,7 +715,7 @@ impl TcpListenerPool {
                     }
                 }
 
-                counter!("maluwaf.tcp.quic_tunnel.streams.opened").increment(1);
+                counter!("synvoid.tcp.quic_tunnel.streams.opened").increment(1);
 
                 let (mut client_read, mut client_write) = client_stream.split();
                 let identifier_ref = identifier.clone();
@@ -805,14 +805,14 @@ impl TcpListenerPool {
 
                 let _ = send_stream.finish();
 
-                counter!("maluwaf.tcp.quic_tunnel.streams.closed").increment(1);
+                counter!("synvoid.tcp.quic_tunnel.streams.closed").increment(1);
 
                 result?;
             }
         }
 
-        counter!("maluwaf.tcp.connections_proxied").increment(1);
-        histogram!("maluwaf.tcp.connection_duration").record(start.elapsed());
+        counter!("synvoid.tcp.connections_proxied").increment(1);
+        histogram!("synvoid.tcp.connection_duration").record(start.elapsed());
 
         Ok(())
     }

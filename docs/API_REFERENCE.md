@@ -1,6 +1,6 @@
 # API Reference
 
-MaluWAF provides a RESTful Admin API for managing the WAF, configuring sites, monitoring traffic, and handling threat intelligence. All endpoints require `Authorization: Bearer <token>` header unless otherwise noted.
+SynVoid provides a RESTful Admin API for managing the WAF, configuring sites, monitoring traffic, and handling threat intelligence. All endpoints require `Authorization: Bearer <token>` header unless otherwise noted.
 
 ## Base URL
 
@@ -24,10 +24,10 @@ curl -H "Authorization: Bearer your-admin-token" \
 
 ```bash
 # Generate and print a new token (does not save it)
-./maluwaf --generatetoken
+./synvoid --generatetoken
 
 # Generate and save to config
-./maluwaf --generatenewtoken
+./synvoid --generatenewtoken
 ```
 
 ## Response Format
