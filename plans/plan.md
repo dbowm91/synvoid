@@ -457,19 +457,21 @@ where
 
 ## P1: Unify HTTP, HTTPS, and HTTP/3 Behavior
 
-### Status: 🚧 IN PROGRESS - Phases 1-2 Complete (2026-05-05)
+### Status: 🚧 IN PROGRESS - Phases 1-3 Complete (2026-05-05)
 
 **Completed** (2026-05-05):
 - Phase 1: `WafResponseIntent` enum, `Protocol` enum, `TlsMetadata` struct, and `interpret_waf_decision()` in `src/server/waf_handler.rs`
 - Phase 2: Extended `WafContext` struct with full request context, `Protocol` enum, constructor helpers (`new_http`, `new_https`, `new_http3`)
+- Phase 3: Created `dispatch_to_upstream()` function in `src/proxy/dispatch.rs` with `DispatchParams` and `UpstreamDispatchError`
 
 **In Progress**:
-- Phase 3: Extract `dispatch_to_backend()` function
 - Phase 4: Protocol adapter traits
 
 **Files modified**:
 - `src/server/waf_handler.rs` (NEW) - WafResponseIntent, Protocol, TlsMetadata, WafContext, interpret_waf_decision, format_session_cookie
 - `src/server/mod.rs` - Added `pub mod waf_handler`
+- `src/proxy/mod.rs` - Added `pub mod dispatch`
+- `src/proxy/dispatch.rs` (NEW) - DispatchParams, dispatch_to_upstream, UpstreamDispatchError
 
 ### Problem
 

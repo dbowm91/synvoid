@@ -8,6 +8,7 @@
 
 pub mod cache;
 pub mod client_registry;
+pub mod dispatch;
 pub mod executor;
 pub mod headers;
 pub mod retry;
@@ -16,6 +17,7 @@ pub use executor::{
     apply_response_size_limit, build_upstream_request, PreparedUpstreamTarget, ResponseSizeError,
     UpstreamResponsePolicy,
 };
+pub use dispatch::{dispatch_to_upstream, DispatchParams, UpstreamDispatchError};
 pub use headers::{
     apply_response_header_transforms, build_forward_headers, build_headers_to_filter,
     filter_response_headers, filter_response_headers_buf, filter_response_headers_buf_with_str_set,
