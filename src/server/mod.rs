@@ -23,6 +23,8 @@ use crate::utils::parse_host_port;
 use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 
+pub mod waf_handler;
+
 #[derive(Clone)]
 struct ServerSharedState {
     config: Arc<RwLock<ConfigManager>>,

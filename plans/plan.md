@@ -41,14 +41,18 @@ The following items have been completed and verified:
 
 ## P0/P1: True Streaming via Type-Erased Connection Pool
 
-### Status: 🚧 IN PROGRESS - Option D Implementation (Partial Completion: Phases 1, 6 partially)
+**Status**: 🚧 IN PROGRESS - Phase 1 Complete, Phases 2-5 Deferred (2026-05-04)
 
 **Completed** (2026-05-04):
 - Phase 1: Core trait definitions (ErasedBody, ErasedBodyImpl, PoolKey, BoxErasedBody)
 - Phase 6: StreamingWafBody can be wrapped by ErasedBodyImpl
 
-**Not Completed**:
+**Deferred**:
 - Phase 2-5: Connection pooling infrastructure (deferred due to hyper type complexity)
+
+**Files modified in this wave**:
+- `src/http_client/erased_pool.rs` (NEW) - Type-erased body infrastructure
+- `src/http_client/mod.rs` - Exports new types
 
 ### Problem
 
@@ -453,7 +457,19 @@ where
 
 ## P1: Unify HTTP, HTTPS, and HTTP/3 Behavior
 
-### Status: ⚠️ DEFERRED - Requires significant architectural refactoring
+### Status: 🚧 IN PROGRESS - Phase 1 Complete (2026-05-05)
+
+**Completed** (2026-05-05):
+- Phase 1: `WafResponseIntent` enum and `interpret_waf_decision()` in `src/server/waf_handler.rs`
+- Phase 2: `WafContext` struct for shared request data
+
+**In Progress**:
+- Phase 3: Extract `dispatch_to_backend()` function
+- Phase 4: Protocol adapter traits
+
+**Files modified**:
+- `src/server/waf_handler.rs` (NEW) - WafResponseIntent, WafContext, interpret_waf_decision
+- `src/server/mod.rs` - Added `pub mod waf_handler`
 
 ### Problem
 
