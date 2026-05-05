@@ -36,6 +36,7 @@ The following items have been completed and verified:
 - **P1: Harden Proxy Security Defaults** ✅ (2026-05-04) - Security regression tests in `tests/security_regression.rs`
 - **P1: Scale Routing - Create routing benchmarks** ✅ (2026-05-04) - `benches/bench_routing.rs` with domain/location matching benchmarks
 - **P0/P1: Streaming Infrastructure** ✅ (2026-05-04) - `BodyBufferingPolicy` config, `send_request_streaming` updated to accept `Full<Bytes>`
+- **P1: Unify HTTP/HTTPS/HTTP3 - Phases 1-4** ✅ (2026-05-05) - WafResponseIntent, WafContext, ProtocolAdapter trait, dispatch_to_upstream
 
 ---
 
@@ -589,11 +590,29 @@ cargo bench --bench bench_erased_pool  # After Phase 8
 
 These items are deferred but documented for future agents:
 
+### P1: Replace Deprecated Global Service Access (Next Priority)
+
+**Problem**: `get_threat_intel`, `get_yara_rules`, `get_upload_validator` globals still used in request paths.
+
+**Current state**: `RequestServices` exists in `UnifiedServerWorkerState` but is NOT threaded through to request handlers.
+
+**Analysis completed** (2026-05-05):
+- Hot paths identified: `check_dht_threat_lookup()` in WAF, upload validation in HTTP/TLS servers
+- `RequestServices` holds: threat_intel, upload_validator, yara_rules, plugin_manager, serverless_registry
+- Needed: Thread `Arc<RequestServices>` through WAF `check_request_full()` and upload validation
+
+**Next step**: Thread `RequestServices` through protocol-agnostic pipeline:
+1. Add `request_services: Arc<RequestServices>` parameter to WAF core methods
+2. Pass `RequestServices` from `UnifiedServerWorkerState` to HTTP/TLS handlers
+3. Remove deprecated global singleton access
+
 ### P1: Reduce Proxy Hot-Path Allocations
 
 **Problem**: Header forwarding, response filtering, cache keys, URL joining, and body cloning allocate per request.
 
-**Next step**: Benchmark `build_forward_headers` and other hot paths before optimizing.
+**Status**: Deferred - needs benchmarking first
+
+**Next step**: Create benchmark for `build_forward_headers` to establish baseline before optimizing
 
 ### P1: Replace Deprecated Global Service Access
 
