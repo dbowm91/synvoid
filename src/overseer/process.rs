@@ -406,7 +406,21 @@ impl OverseerProcess {
 
         let master_pid = self.master_child.as_ref().map(|c| c.id());
         let (master_status, workers) = if self.master_child.is_some() {
-            ("Running".to_string(), Vec::new())
+            let status = futures::executor::block_on(self.get_master_status());
+            match status {
+                Some(s) => (
+                    "Running".to_string(),
+                    s.workers
+                        .into_iter()
+                        .map(|w| WorkerStatusInfo {
+                            id: w.id as u32,
+                            status: w.status,
+                            connections: w.requests,
+                        })
+                        .collect(),
+                ),
+                None => ("Running".to_string(), Vec::new()),
+            }
         } else {
             ("Stopped".to_string(), Vec::new())
         };
@@ -629,7 +643,7 @@ impl OverseerProcess {
 
     pub async fn apply_upgrade(
         &mut self,
-        _timeout_secs: u64,
+        timeout_secs: u64,
         drain_timeout_secs: u64,
     ) -> Result<(), UpgradeError> {
         let state = self.orchestrator.get_state().await;
@@ -672,7 +686,7 @@ impl OverseerProcess {
             return Err(UpgradeError::SpawnFailed(e.to_string()));
         }
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(timeout_secs)).await;
 
         let health = self.check_master_health().map_err(|e| {
             UpgradeError::ValidationFailed(vec![(
