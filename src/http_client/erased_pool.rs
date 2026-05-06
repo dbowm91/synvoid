@@ -147,10 +147,9 @@ impl Http1PooledConnection {
         &mut self,
         request: http::Request<BoxErasedBody>,
     ) -> Result<http::Response<hyper::body::Incoming>, std::io::Error> {
-        let sender = self.sender.take().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "connection already used")
+        let sender = self.sender.as_mut().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "sender missing - connection not initialized")
         })?;
-        let mut sender = sender;
         sender.send_request(request).await.map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::Other, format!("request failed: {}", e))
         })
@@ -352,6 +351,8 @@ impl ErasedHttpClient {
             conn.send_request(request).await
         };
 
+        self.pool.checkin(key, conn).await;
+
         result
     }
 
@@ -447,5 +448,65 @@ mod tests {
         let conn = Http2PooledConnection::new(authority);
         assert_eq!(conn.protocol(), HttpProtocol::Http2);
         assert!(!conn.is_available());
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_checkout_checkin_reuse() {
+        use std::net::SocketAddr;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+
+        let pool = ErasedConnectionPool::new(10);
+
+        let key = PoolKey {
+            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
+            is_http2: false,
+        };
+
+        let initial_idle = pool.idle_count(&key).await;
+        assert_eq!(initial_idle, 0);
+
+        let mut conn = pool.checkout(key.clone()).await.unwrap();
+        assert!(conn.is_connected());
+
+        let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_addr: SocketAddr = echo_listener.local_addr().unwrap();
+        let echo_key = PoolKey {
+            authority: format!("{}:{}", echo_addr.ip(), echo_addr.port()).parse().unwrap(),
+            is_http2: false,
+        };
+
+        pool.checkin(echo_key.clone(), conn).await;
+
+        let after_checkin_idle = pool.idle_count(&echo_key).await;
+        assert_eq!(after_checkin_idle, 1);
+
+        let reconnected_conn = pool.checkout(echo_key.clone()).await.unwrap();
+        assert!(reconnected_conn.is_connected());
+        assert_eq!(pool.idle_count(&echo_key).await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_respects_max_idle() {
+        let pool = ErasedConnectionPool::new(2);
+
+        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
+        let key = PoolKey {
+            authority: authority.to_string(),
+            is_http2: false,
+        };
+
+        assert_eq!(pool.idle_count(&key).await, 0);
+    }
+
+    #[test]
+    fn test_sender_is_some_in_new_for_test() {
+        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
+        let conn = Http1PooledConnection::new_for_test(authority);
+
+        assert_eq!(conn.protocol(), HttpProtocol::Http1);
+        assert!(!conn.is_available(), "new_for_test creates stub with is_available false");
     }
 }
