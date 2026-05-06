@@ -1,0 +1,58 @@
+# Worker Architecture & Unified Server
+
+The Worker process is the data plane of SynVoid, responsible for high-performance request handling and security enforcement. The centerpiece of the worker is the **Unified Server**.
+
+## The Unified Server
+
+The Unified Server is designed to handle multiple protocols and transport layers within a single Tokio async runtime. This architecture is more efficient than the traditional multi-process model (like NGINX's worker processes) because it minimizes context switching and allows for fine-grained cooperative multitasking.
+
+### Key Capabilities
+
+- **Protocol Support:**
+  - **HTTP/1.1 & HTTP/2:** Handled via `Hyper` with custom connection management.
+  - **HTTP/3 (QUIC):** Handled via `Quinn`, providing 0-RTT handshakes and improved performance on lossy networks.
+  - **TCP & UDP Proxying:** Generic stream and packet proxying with WAF protections.
+- **Unified Event Loop:** A single `tokio::select!` based loop (or multiple spawned tasks) manages all incoming connections across all listeners.
+- **Dynamic Site Configuration:** The Unified Server can handle thousands of domains (sites) concurrently, each with its own WAF rules, upstreams, and security policies.
+
+---
+
+## Internal Components
+
+### 1. Listener Pools
+- **`TcpListenerPool`:** Manages a collection of TCP listeners. It handles auto-tuning based on available parallelism and manages TLS termination.
+- **`UdpListenerPool`:** Handles UDP packet reception, protocol detection, and forwarding. Includes protection against reflection/amplification attacks.
+
+### 2. WAF Pipeline
+Every request passing through the Unified Server is processed by the **WAF Pipeline**. This pipeline is modular and executes in stages:
+1.  **Connection Phase:** IP-based rate limiting, CIDR filtering, and flood protection.
+2.  **Protocol Phase:** Validates HTTP methods, headers, and protocol-level constraints.
+3.  **Request Phase:** Deep packet inspection for SQLi, XSS, etc. (using `WafCore` and `AttackDetector`).
+4.  **Bot Detection:** Challenges (JS/CAPTCHA), behavioral analysis, and honeypot matching.
+
+### 3. Upstream Management
+- **Connection Pooling:** Maintains persistent connections to backend servers (PHP-FPM, Granian, etc.) to reduce latency.
+- **Health Monitoring:** Actively and passively monitors backend health to ensure reliable routing.
+- **Load Balancing:** Supports multiple algorithms for distributing traffic across upstream pools.
+
+---
+
+## Request Flow
+
+1.  **Accept:** A connection is accepted by a `ListenerPool`.
+2.  **Negotiate:** TLS handshake (if applicable) and protocol negotiation (ALPN).
+3.  **Route:** The `Router` matches the request (Host header and Path) to a specific `SiteConfig`.
+4.  **Protect:** The request passes through the `WafCore` pipeline.
+5.  **Serve/Proxy:**
+    - If it's a static file, the `StaticHandler` serves it.
+    - If it's a dynamic request, it's proxied to the configured upstream (FastCGI, HTTP, etc.).
+    - If it's a serverless function, the `WasmRuntime` executes it.
+6.  **Transform:** The response is processed (headers sanitized, compressed) before being sent back to the client.
+
+---
+
+## Resource Management
+
+- **Buffer Pooling:** To minimize allocations and GC pressure, the worker uses a `BufferPool` for IO operations.
+- **Concurrency Control:** Semaphores and channels are used to limit the number of concurrent requests per site and globally, preventing resource exhaustion.
+- **Zero-Copy:** Where possible, SynVoid utilizes zero-copy techniques for moving data between network buffers and application handlers.

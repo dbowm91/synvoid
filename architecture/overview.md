@@ -1,61 +1,58 @@
-# SynVoid Architectural Modules
+# SynVoid Architectural Overview
 
-This document categorizes the discrete modules of the SynVoid codebase into logical layers to facilitate understanding and future code reviews.
+SynVoid is a high-performance Web Application Firewall (WAF) and reverse proxy written in Rust. It is designed to be highly modular, scalable, and resilient, utilizing a multi-process model and a unified async worker architecture.
 
-### 1. Process & Lifecycle Management (The Orchestration Layer)
-These modules handle the hierarchical process model and ensure the system remains stable and updatable.
-*   **`overseer/`**: The supervisor layer. Manages zero-downtime upgrades, process health monitoring, and the complex `SCM_RIGHTS` socket handoff between generations of the application.
-*   **`master/`**: The coordinator. Acts as the parent to worker processes, handling signals and managing IPC channels.
-*   **`worker/`**: The execution layer. Contains the logic for the `UnifiedServer`, which is the main entry point for request processing.
-*   **`startup/`**: Bootstrapping logic for different process modes (Overseer, Master, Worker).
-*   **`process/`**: Internal IPC communication protocols and process state management.
+## Bird's Eye View
 
-### 2. WAF & Security (The Protection Layer)
-The core security engine that inspects traffic and makes decisions.
-*   **`waf/`**: The central WAF coordinator.
-    *   `attack_detection/`: Specialized detectors for SQLi, XSS, SSRF, Command Injection, etc., utilizing both pattern matching and `libinjection`.
-    *   `flood/`: Connection and rate-based flood mitigation (including eBPF hooks).
-    *   `ratelimit/`: Granular rate limiting (sliding window, leaky bucket) at the IP and site levels.
-    *   `bot.rs`: Bot detection using User-Agent analysis and JA3/JA4 TLS fingerprinting.
-    *   `rule_feed.rs`: Management of dynamic security rules and YARA signatures.
-*   **`integrity/`**: Request and response integrity checks.
-*   **`captcha/` & `challenge/`**: Mechanisms for JavaScript challenges and CAPTCHA-based verification.
-*   **`tarpit/`**: "Slow-HTTP" mitigation and silent stalling to waste attacker resources.
+The system is organized around three primary process types and several core functional subsystems.
 
-### 3. Proxy & Routing (The Traffic Layer)
-Handles how requests are received, parsed, and forwarded to upstreams.
-*   **`proxy/`**: The reverse proxy engine. Manages request/response header transformations, retries, and buffering.
-*   **`router/`**: Domain and path-based routing that maps incoming requests to specific `SiteConfig` objects.
-*   **`upstream/`**: Load balancing and health checking for backend servers.
-*   **`listener/`**: Protocol-agnostic listener pool (TCP, UDP, QUIC) that feeds connections into the worker.
-*   **`http/` & `http3/`**: Implementations and wrappers for HTTP/1.1, H2, and H3/QUIC protocols.
-*   **`tls/`**: TLS termination, SNI handling, and ACME (Let's Encrypt) integration.
+### 1. Process Model & Lifecycle
+SynVoid employs a hierarchical process model to ensure high availability and zero-downtime operations.
 
-### 4. Application Handlers (The Content Layer)
-Built-in servers for specific types of content, reducing the need for external backends.
-*   **`static_files/`**: High-performance static content serving with minification (`lightningcss`) and compression.
-*   **`php/` & `fastcgi/`**: Native FastCGI client for PHP-FPM and other CGI-based apps.
-*   **`app_server/`**: Support for "Granian-style" Python (ASGI/WSGI) hosting.
-*   **`serverless/` & `spin/`**: Experimental WASM-based serverless function execution.
+- **[Process Lifecycle & Execution Model](process_lifecycle.md)**: The supervisor-coordinator-worker hierarchy.
+- **[Worker Architecture & Unified Server](worker_architecture.md)**: The high-performance data plane.
 
-### 5. Mesh & Distributed Systems (The P2P Layer)
-The most complex part of the system, enabling multi-node collaboration.
-*   **`mesh/`**: The root of the P2P system.
-    *   `dht/`: Distributed Hash Table for peer discovery and threat intelligence sharing.
-    *   `transport/`: QUIC-based WAF-to-WAF communication.
-    *   `topology/`: Tracking the health and routes of the global mesh network.
-    *   `kem/` & `ml_dsa.rs`: Post-Quantum Cryptography implementations for secure peer identity.
-*   **`tunnel/`**: Logic for established secure tunnels between WAF nodes or WAF-to-VPN clients.
+### 2. Networking & Protocol Layer
+Handles the low-level communication and protocol negotiation.
 
-### 6. Admin & Observability (The Management Layer)
-*   **`admin/`**: The Axum-based REST API for configuring the WAF and retrieving stats.
-*   **`metrics/`**: Prometheus-compatible metrics collection for every sub-component.
-*   **`logging/`**: Structured JSON logging and real-time log streaming via WebSockets.
-*   **`geoip/`**: MaxMind integration for location-based filtering.
+- **[Networking & Protocols](networking_deep_dive.md)**: Support for HTTP/1, HTTP/2, HTTP/3, and TLS.
 
-### 7. Core Utilities & System (The Foundation)
-*   **`config/`**: TOML configuration parsing and validation with hot-reloading support.
-*   **`serialization/`**: Optimized data handling using `rkyv` (zero-copy) and `postcard`.
-*   **`buffer/`**: Specialized memory management for request/response bodies.
-*   **`utils/`**: Shared error types, URL encoding helpers, and common extensions.
-*   **`platform/`**: OS-specific abstractions (Linux-specific optimizations vs. Windows fallbacks).
+### 3. Core Proxy Logic
+The engine that routes and manages requests.
+
+- **[Request Routing & Upstream Management](routing_deep_dive.md)**: Domain-based routing and load balancing.
+
+### 4. WAF & Security Pipeline
+Multi-layered protection against various threats.
+
+- **[WAF Security Pipeline](waf_deep_dive.md)**: The core security engine and protection layers.
+
+### 5. Mesh & Distributed Systems
+Optional capabilities for clustering and P2P CDN functionality.
+
+- **[SynVoid Mesh & P2P Networking](mesh_deep_dive.md)**: Distributed DDoS defense and threat intelligence sharing.
+
+### 6. Application Handlers
+Native support for various application types.
+
+- **[Application Handlers](app_handlers.md)**: Static files, PHP-FPM, Python, and WASM.
+
+### 7. Management & Observability
+- **[Admin API & UI](admin.md)**: RESTful API and a dedicated Tailwind-based frontend for management.
+- **[Metrics & Logging](observability.md)**: Prometheus metrics and structured JSON logging.
+
+---
+
+## Detailed Component Documentation Index
+
+| Component | Documentation | Primary Source Path |
+|-----------|---------------|---------------------|
+| Process Lifecycle | [Overseer & Master Deep Dive](process_lifecycle.md) | `src/overseer/`, `src/master/` |
+| Unified Worker | [Worker Architecture](worker_architecture.md) | `src/worker/`, `src/server/` |
+| Networking | [Transport & Protocols](networking_deep_dive.md) | `src/listener/`, `src/http/`, `src/http3/` |
+| Security | [WAF Security Pipeline](waf_deep_dive.md) | `src/waf/`, `src/filter/`, `src/challenge/` |
+| Mesh | [Mesh & P2P Networking](mesh_deep_dive.md) | `src/mesh/` |
+| Routing | [Request Routing & Upstreams](routing_deep_dive.md) | `src/router/`, `src/upstream/` |
+| App Handlers | [Application Support](app_handlers.md) | `src/static_files/`, `src/php/`, `src/serverless/` |
+
+*This overview is intended as a living document to guide developers through the SynVoid architecture.*
