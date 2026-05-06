@@ -299,12 +299,19 @@ impl UdpListenerPool {
             }
         };
 
-        let _upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
+        let upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
             UpstreamAddress::Tcp(_) => None,
-            UpstreamAddress::Unix(path) => match std::os::unix::net::UnixDatagram::bind(path) {
-                Ok(s) => Some(UnixDatagram::from_std(s).ok()).flatten(),
+            UpstreamAddress::Unix(path) => match UnixDatagram::unbound() {
+                Ok(s) => {
+                    if let Err(e) = s.connect(path) {
+                        tracing::error!("Failed to connect Unix datagram to {}: {}", path.display(), e);
+                        None
+                    } else {
+                        Some(s)
+                    }
+                }
                 Err(e) => {
-                    tracing::error!("Failed to bind Unix socket {}: {}", path.display(), e);
+                    tracing::error!("Failed to create Unix datagram socket: {}", e);
                     None
                 }
             },
@@ -427,16 +434,17 @@ impl UdpListenerPool {
                                     }
                                 }
                                 UpstreamAddress::Unix(path) => {
-                                    let data_owned = data.to_vec();
-                                    let path_owned = path.clone();
-                                    tokio::task::spawn_blocking(move || {
-                                        match std::os::unix::net::UnixDatagram::unbound() {
-                                            Ok(socket) => socket.send_to(&data_owned, &path_owned),
-                                            Err(e) => Err(e),
-                                        }
-                                    }).await.unwrap_or_else(|e| {
-                                        Err(std::io::Error::other(e.to_string()))
-                                    })
+                                    if let Some(ref socket) = upstream_unix_socket {
+                                        socket.send(data).await
+                                    } else {
+                                        Err(std::io::Error::new(
+                                            std::io::ErrorKind::NotConnected,
+                                            format!(
+                                                "Unix upstream socket not available for {}",
+                                                path.display()
+                                            ),
+                                        ))
+                                    }
                                 }
                                 UpstreamAddress::QuicTunnel { peer, port } => {
                                     match get_udp_tunnel_manager() {

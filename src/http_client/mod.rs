@@ -134,7 +134,7 @@ impl hyper::body::Body for EmptyBody {
 /// This enables true streaming: body is scanned and forwarded without full buffering.
 pub struct StreamingWafBody<B> {
     inner: B,
-    streaming_waf: Option<Arc<crate::waf::attack_detection::StreamingWafCore>>,
+    streaming_waf: Option<crate::waf::attack_detection::StreamingWafCore>,
     client_ip: IpAddr,
     blocked: bool,
     error_sent: bool,
@@ -147,7 +147,7 @@ where
 {
     pub fn new(
         inner: B,
-        streaming_waf: Option<Arc<crate::waf::attack_detection::StreamingWafCore>>,
+        streaming_waf: Option<crate::waf::attack_detection::StreamingWafCore>,
         client_ip: IpAddr,
     ) -> Self {
         Self {
@@ -188,7 +188,7 @@ where
         match std::pin::Pin::new(&mut this.inner).poll_frame(cx) {
             std::task::Poll::Ready(Some(Ok(frame))) => {
                 if let Some(data) = frame.data_ref() {
-                    if let Some(ref sw) = this.streaming_waf {
+                    if let Some(ref mut sw) = this.streaming_waf {
                         match sw.scan_chunk(&data) {
                             crate::waf::attack_detection::StreamingWafDecision::Block(_, _) => {
                                 tracing::warn!(

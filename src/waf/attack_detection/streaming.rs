@@ -2,13 +2,12 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use parking_lot::RwLock;
 
 use crate::waf::attack_detection::{AttackDetectionResult, AttackDetector};
 use crate::buffer::{BufferPool, PooledBuf};
 
 const DEFAULT_CHUNK_SIZE: usize = 4096;
-const DEFAULT_MAX_BUFFERED_CHUNKS: usize = 64;
+const DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub enum StreamingWafDecision {
@@ -20,8 +19,8 @@ pub enum StreamingWafDecision {
 pub struct StreamingWafCore {
     inner: Arc<AttackDetector>,
     chunk_size: usize,
-    max_buffered_chunks: usize,
-    state: RwLock<StreamingState>,
+    max_buffered_bytes: usize,
+    state: StreamingState,
 }
 
 #[derive(Debug, PartialEq)]
@@ -51,8 +50,8 @@ impl StreamingWafCore {
         Self {
             inner,
             chunk_size: DEFAULT_CHUNK_SIZE,
-            max_buffered_chunks: DEFAULT_MAX_BUFFERED_CHUNKS,
-            state: RwLock::new(StreamingState {
+            max_buffered_bytes: DEFAULT_MAX_BUFFERED_BYTES,
+            state: StreamingState {
                 pending_chunks: VecDeque::new(),
                 current_input: String::with_capacity(DEFAULT_CHUNK_SIZE * 4),
                 chunks_processed: 0,
@@ -61,20 +60,20 @@ impl StreamingWafCore {
                 boundary: None,
                 multipart_state: MultipartState::None,
                 trailing_window: BufferPool::acquire(0),
-            }),
+            },
         }
     }
 
     pub fn with_config(
         inner: Arc<AttackDetector>,
         chunk_size: usize,
-        max_buffered_chunks: usize,
+        max_buffered_bytes: usize,
     ) -> Self {
         Self {
             inner,
             chunk_size,
-            max_buffered_chunks,
-            state: RwLock::new(StreamingState {
+            max_buffered_bytes,
+            state: StreamingState {
                 pending_chunks: VecDeque::new(),
                 current_input: String::with_capacity(chunk_size * 4),
                 chunks_processed: 0,
@@ -83,48 +82,42 @@ impl StreamingWafCore {
                 boundary: None,
                 multipart_state: MultipartState::None,
                 trailing_window: BufferPool::acquire(0),
-            }),
+            },
         }
     }
 
-    pub fn set_multipart_boundary(&self, boundary: &str) {
-        let mut state = self.state.write();
+    pub fn set_multipart_boundary(&mut self, boundary: &str) {
+        let state = &mut self.state;
         state.boundary = Some(format!("--{}", boundary));
         state.multipart_state = MultipartState::LookingForBoundary;
     }
 
     /// Scans a chunk of data. Optimized for 1M+ RPS by using a persistent string buffer.
-    pub fn scan_chunk(&self, chunk: &[u8]) -> StreamingWafDecision {
-        let mut state = self.state.write();
-
-        if state.chunks_processed >= self.max_buffered_chunks {
+    pub fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
+        if self.state.bytes_seen.saturating_add(chunk.len()) > self.max_buffered_bytes {
             return StreamingWafDecision::Block(
                 413,
-                "Request body too large: buffer overflow".to_string(),
+                "Request body too large: byte limit exceeded".to_string(),
             );
         }
 
-        state.bytes_seen += chunk.len();
-        state.chunks_processed += 1;
+        self.state.bytes_seen += chunk.len();
+        self.state.chunks_processed += 1;
 
-        if state.boundary.is_some() {
-            self.process_multipart_chunk(&mut state, chunk)
+        if self.state.boundary.is_some() {
+            self.process_multipart_chunk(chunk)
         } else {
-            self.process_regular_chunk(&mut state, chunk)
+            self.process_regular_chunk(chunk)
         }
     }
 
-    fn process_regular_chunk(
-        &self,
-        state: &mut StreamingState,
-        chunk: &[u8],
-    ) -> StreamingWafDecision {
+    fn process_regular_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
         // Use fragmented scan to avoid merging buffers
         if let Some(result) = self.inner.check_body_fragments(&[
-            state.trailing_window.as_slice(),
+            self.state.trailing_window.as_slice(),
             chunk,
         ]) {
-            state.last_result = Some(result.clone());
+            self.state.last_result = Some(result.clone());
             return StreamingWafDecision::Block(
                 result.get_block_status().unwrap_or(403),
                 format!("Attack detected: {:?}", result.attack_type),
@@ -132,37 +125,30 @@ impl StreamingWafCore {
         }
 
         // Update trailing window
-        state.trailing_window.clear();
+        self.state.trailing_window.clear();
         let window_start = chunk.len().saturating_sub(TRAILING_WINDOW_SIZE);
-        state
+        self.state
             .trailing_window
             .extend_from_slice(&chunk[window_start..]);
 
         StreamingWafDecision::Continue
     }
 
-    fn process_multipart_chunk(
-        &self,
-        state: &mut StreamingState,
-        chunk: &[u8],
-    ) -> StreamingWafDecision {
-        let boundary = state.boundary.clone().unwrap();
+    fn process_multipart_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
+        let boundary = self.state.boundary.clone().unwrap();
         let mut current_pos = 0;
 
-        // Use a thread-local merge buffer instead of Vec::with_capacity
-        // Actually, we can just use a local Vec for now if it's small, 
-        // but the task said "Reduce ... allocation overhead ... to zero".
-        // Let's use a temporary merge buffer from BufferPool.
-        let mut combined = BufferPool::acquire(state.trailing_window.len() + chunk.len());
-        combined.as_mut_slice()[..state.trailing_window.len()].copy_from_slice(state.trailing_window.as_slice());
-        combined.as_mut_slice()[state.trailing_window.len()..].copy_from_slice(chunk);
+        let mut combined = BufferPool::acquire(self.state.trailing_window.len() + chunk.len());
+        combined.as_mut_slice()[..self.state.trailing_window.len()]
+            .copy_from_slice(self.state.trailing_window.as_slice());
+        combined.as_mut_slice()[self.state.trailing_window.len()..].copy_from_slice(chunk);
 
         while current_pos < combined.len() {
-            match &mut state.multipart_state {
+            match &mut self.state.multipart_state {
                 MultipartState::LookingForBoundary => {
                     let remaining = &combined[current_pos..];
-                    if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
-                        state.multipart_state = MultipartState::ReadingHeaders {
+                    if let Some(pos) = Self::find_bytes(remaining, boundary.as_bytes()) {
+                        self.state.multipart_state = MultipartState::ReadingHeaders {
                             buffer: BufferPool::acquire(0),
                         };
                         current_pos += pos + boundary.len();
@@ -181,9 +167,9 @@ impl StreamingWafCore {
                         // Parse headers to see if it's a file
                         let header_str = String::from_utf8_lossy(buffer.as_slice()).to_lowercase();
                         if header_str.contains("filename=") {
-                            state.multipart_state = MultipartState::SkippingFile;
+                            self.state.multipart_state = MultipartState::SkippingFile;
                         } else {
-                            state.multipart_state = MultipartState::ReadingField {
+                            self.state.multipart_state = MultipartState::ReadingField {
                                 buffer: BufferPool::acquire(0),
                             };
                         }
@@ -194,14 +180,14 @@ impl StreamingWafCore {
                 }
                 MultipartState::ReadingField { buffer } => {
                     let remaining = &combined[current_pos..];
-                    if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
+                    if let Some(pos) = Self::find_bytes(remaining, boundary.as_bytes()) {
                         let field_data = &remaining[..pos];
                         buffer.extend_from_slice(field_data);
 
                         // Scan the field
                         let field_str = String::from_utf8_lossy(buffer.as_slice());
                         if let Some(result) = self.inner.check_body_only_via_normalized(&field_str) {
-                            state.last_result = Some(result.clone());
+                            self.state.last_result = Some(result.clone());
                             return StreamingWafDecision::Block(
                                 result.get_block_status().unwrap_or(403),
                                 format!(
@@ -211,7 +197,7 @@ impl StreamingWafCore {
                             );
                         }
 
-                        state.multipart_state = MultipartState::ReadingHeaders {
+                        self.state.multipart_state = MultipartState::ReadingHeaders {
                             buffer: BufferPool::acquire(0),
                         };
                         current_pos += pos + boundary.len();
@@ -222,8 +208,8 @@ impl StreamingWafCore {
                 }
                 MultipartState::SkippingFile => {
                     let remaining = &combined[current_pos..];
-                    if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
-                        state.multipart_state = MultipartState::ReadingHeaders {
+                    if let Some(pos) = Self::find_bytes(remaining, boundary.as_bytes()) {
+                        self.state.multipart_state = MultipartState::ReadingHeaders {
                             buffer: BufferPool::acquire(0),
                         };
                         current_pos += pos + boundary.len();
@@ -232,16 +218,16 @@ impl StreamingWafCore {
                     }
                 }
                 MultipartState::None => {
-                    state.multipart_state = MultipartState::LookingForBoundary;
+                    self.state.multipart_state = MultipartState::LookingForBoundary;
                 }
             }
         }
 
         // Update trailing window to handle split boundaries/headers
-        state.trailing_window.clear();
+        self.state.trailing_window.clear();
         let window_size = boundary.len() + 4; // enough for boundary + CRLF CRLF
         let window_start = combined.len().saturating_sub(window_size);
-        state
+        self.state
             .trailing_window
             .extend_from_slice(&combined[window_start..]);
 
@@ -249,20 +235,19 @@ impl StreamingWafCore {
     }
 
     pub fn finalize(&self) -> Option<AttackDetectionResult> {
-        let state = self.state.read();
-        state.last_result.clone()
+        self.state.last_result.clone()
     }
 
     pub fn bytes_seen(&self) -> usize {
-        self.state.read().bytes_seen
+        self.state.bytes_seen
     }
 
     pub fn chunks_processed(&self) -> usize {
-        self.state.read().chunks_processed
+        self.state.chunks_processed
     }
 
-    pub fn reset(&self) {
-        let mut state = self.state.write();
+    pub fn reset(&mut self) {
+        let state = &mut self.state;
         state.pending_chunks.clear();
         state.current_input.clear();
         state.chunks_processed = 0;
@@ -273,7 +258,7 @@ impl StreamingWafCore {
         state.trailing_window = BufferPool::acquire(0);
     }
 
-    fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.is_empty() {
             return Some(0);
         }
@@ -302,7 +287,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::new(Arc::new(detector));
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
 
         let result = streaming.scan_chunk(b"hello world");
         assert!(matches!(result, StreamingWafDecision::Continue));
@@ -314,7 +299,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::new(Arc::new(detector));
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
 
         let result = streaming.scan_chunk(b"1' OR '1'='1");
         assert!(matches!(result, StreamingWafDecision::Block(..)));
@@ -326,8 +311,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::with_config(Arc::new(detector), 1024, 2);
-
+        let mut streaming = StreamingWafCore::with_config(Arc::new(detector), 1024, 12);
         streaming.scan_chunk(b"chunk1");
         streaming.scan_chunk(b"chunk2");
         let result = streaming.scan_chunk(b"chunk3");
@@ -340,7 +324,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::new(Arc::new(detector));
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
 
         streaming.scan_chunk(b"test");
         assert_eq!(streaming.chunks_processed(), 1);
@@ -355,7 +339,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::new(Arc::new(detector));
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
 
         // "1' OR '1'='1" split into two chunks
         streaming.scan_chunk(b"1' OR ");
@@ -369,7 +353,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::new(Arc::new(detector));
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
         streaming.set_multipart_boundary("boundary");
 
         let multipart_data = b"--boundary\r\n\
@@ -394,7 +378,7 @@ mod tests {
 
         let config = AttackDetectionConfig::default();
         let detector = AttackDetector::new(config);
-        let streaming = StreamingWafCore::new(Arc::new(detector));
+        let mut streaming = StreamingWafCore::new(Arc::new(detector));
         streaming.set_multipart_boundary("boundary");
 
         // Attack payload inside a file should be skipped if we strictly follow the requirement

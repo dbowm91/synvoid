@@ -603,11 +603,11 @@ impl WafCore {
     pub fn streaming_with_config(
         &self,
         chunk_size: usize,
-        max_buffered_chunks: usize,
+        max_buffered_bytes: usize,
     ) -> Option<StreamingWafCore> {
         self.attack_detector.load().as_ref().map(|d| {
             d.clone()
-                .streaming_with_config(chunk_size, max_buffered_chunks)
+                .streaming_with_config(chunk_size, max_buffered_bytes)
         })
     }
 

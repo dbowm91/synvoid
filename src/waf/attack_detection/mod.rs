@@ -1170,9 +1170,9 @@ impl AttackDetector {
     pub fn streaming_with_config(
         self: Arc<Self>,
         chunk_size: usize,
-        max_buffered_chunks: usize,
+        max_buffered_bytes: usize,
     ) -> StreamingWafCore {
-        StreamingWafCore::with_config(self, chunk_size, max_buffered_chunks)
+        StreamingWafCore::with_config(self, chunk_size, max_buffered_bytes)
     }
 
     fn check_jwt(

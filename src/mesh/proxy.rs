@@ -1020,7 +1020,8 @@ impl MeshProxy {
             headers.remove(name);
         }
 
-        // Collect request body upfront since we need to send it multiple times
+        // Explicit retry/replay policy: for provider fanout and retries we currently require
+        // a replayable in-memory request body.
         let body_bytes = match req.into_body().collect().await {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
@@ -1031,6 +1032,16 @@ impl MeshProxy {
                 )));
             }
         };
+        // Bound replay buffer size to avoid unbounded per-request memory under multi-provider retry.
+        const MAX_REPLAY_BODY_BYTES: usize = 8 * 1024 * 1024;
+        if body_bytes.len() > MAX_REPLAY_BODY_BYTES {
+            metrics::counter!("synvoid.mesh.proxy.retry_body_too_large").increment(1);
+            return Err(MeshProxyError::SendFailed(format!(
+                "Request body too large for retry replay: {} > {} bytes",
+                body_bytes.len(),
+                MAX_REPLAY_BODY_BYTES
+            )));
+        }
 
         let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<(
             String,

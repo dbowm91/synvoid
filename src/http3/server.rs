@@ -330,7 +330,7 @@ impl Http3Server {
         };
 
         let mut body_bytes = Vec::new();
-        let streaming_waf = self.waf.streaming();
+        let mut streaming_waf = self.waf.streaming();
 
         if !stream_scanned_upstream_mode {
             while let Ok(Some(chunk)) = request_stream.recv_data().await {
@@ -361,7 +361,7 @@ impl Http3Server {
                 let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
 
                 // 1. Streaming scan
-                if let Some(sw) = streaming_waf.as_ref() {
+                if let Some(sw) = streaming_waf.as_mut() {
                     if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
                     {
                         counter!("synvoid.http3.requests.blocked").increment(1);
@@ -696,7 +696,7 @@ impl Http3Server {
                     let mut chunk_to_scan = chunk;
                     let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
 
-                    if let Some(sw) = streaming_waf.as_ref() {
+                    if let Some(sw) = streaming_waf.as_mut() {
                         if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
                         {
                             let _ = tx
@@ -994,12 +994,31 @@ impl Http3Server {
                                     }
                                 }
                             } else {
-                                let mut body_bytes = Vec::new();
+                                let mut streamed_total = 0usize;
                                 while let Some(chunk) = upstream_body.frame().await {
                                     match chunk {
                                         Ok(frame) => {
                                             if let Some(data) = frame.data_ref() {
-                                                body_bytes.extend_from_slice(data.as_ref());
+                                                streamed_total = streamed_total.saturating_add(data.len());
+                                                if let Some(max_size) = upstream_target.max_response_size {
+                                                    if streamed_total > max_size {
+                                                        tracing::warn!(
+                                                            "Response body exceeds size limit for {}",
+                                                            upstream_target.url
+                                                        );
+                                                        break;
+                                                    }
+                                                }
+                                                request_stream.send_data(data.clone()).await?;
+                                                let data_len = data.len() as u64;
+                                                if let Some(ref bw) = bandwidth {
+                                                    bw.record_egress(
+                                                        data_len,
+                                                        BandwidthProtocol::Http3,
+                                                        EgressDirection::Proxied,
+                                                    );
+                                                    bw.record_site_egress(&host, data_len);
+                                                }
                                             }
                                         }
                                         Err(e) => {
@@ -1007,28 +1026,6 @@ impl Http3Server {
                                             break;
                                         }
                                     }
-                                }
-                                let body_len = body_bytes.len() as u64;
-                                if let Some(ref bw) = bandwidth {
-                                    bw.record_egress(
-                                        body_len,
-                                        BandwidthProtocol::Http3,
-                                        EgressDirection::Proxied,
-                                    );
-                                    bw.record_site_egress(&host, body_len);
-                                }
-                                if apply_response_size_limit(
-                                    &body_bytes,
-                                    upstream_target.max_response_size,
-                                )
-                                .is_err()
-                                {
-                                    tracing::warn!(
-                                        "Response body exceeds size limit for {}",
-                                        upstream_target.url
-                                    );
-                                } else if !body_bytes.is_empty() {
-                                    request_stream.send_data(body_bytes.into()).await?;
                                 }
                             }
 

@@ -872,7 +872,7 @@ impl HttpsServer {
                     &target.site_id,
                     tls_config.as_ref(),
                 );
-                let streaming_waf = waf.streaming().map(Arc::new);
+                let streaming_waf = waf.streaming();
                 let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                 let erased_body = ErasedBodyImpl::new(stream_body);
                 match send_request_streaming_generic(
