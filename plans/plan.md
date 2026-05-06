@@ -614,33 +614,124 @@ These items are deferred but documented for future agents:
 
 **Next step**: Create benchmark for `build_forward_headers` to establish baseline before optimizing
 
+### P2: Proxy Hot-Path Allocations - Detailed Assessment
+
+**Location**: `src/proxy/headers.rs:build_forward_headers`, `src/proxy/mod.rs`
+
+**Known Allocation Points**:
+1. `build_forward_headers` - Creates new `HeaderMap`, iterates headers, clones values for forwarding
+2. `validate_and_truncate_xff` - Creates `String` for XFF chain manipulation
+3. `CacheKey` construction - 4 heap-allocated `String` fields (scheme, method, host, uri)
+4. URL joining in proxy dispatch - string concatenation for upstream URL construction
+
+**Benchmark Status**: `benches/bench_proxy_headers.rs` exists with `build_forward_headers` benchmarks but no baseline measurements documented.
+
+**Recommended Approach**:
+1. Run existing benchmark to establish baseline (ns/op, allocations)
+2. Identify highest-impact allocations (likely header cloning and XFF string building)
+3. Apply patterns from `skills/performance_patterns.md`:
+   - Pre-allocated thread-local buffers for XFF
+   - `Cow<str>` for zero-copy header name handling
+   - Avoid cloning when forwarding headers
+
+**Impact at 1M RPS**: Even 100 bytes extra per request = 100MB/s allocation pressure.
+
+### P2: Cache and Revalidation Scalability - Detailed Assessment
+
+**Location**: `src/proxy_cache/store.rs` (SWR logic), `src/proxy_cache/revalidation.rs`
+
+**Problem**: Stale-while-revalidate creates unbounded background task bursts when:
+1. Multiple stale entries expire simultaneously
+2. Invalidation triggers mass revalidation
+3. Each revalidation spawns a task without backpressure
+
+**Current State**: Code review suggests tasks are spawned via `tokio::spawn` without semaphore limiting concurrent revalidations.
+
+**Observability**: Not clear if this has been observed in production or is theoretical based on code analysis.
+
+**Recommended Approach**:
+1. Add metrics for background revalidation tasks (active count, queued count)
+2. Implement bounded task queue with semaphore
+3. Add circuit breaker for revalidation storms
+
+**Pattern Reference**: `skills/performance_patterns.md` lines 417-440 show semaphore-based broadcast backpressure pattern that could apply.
+
+### P2: Mesh Proxy Provider Selection - Detailed Assessment
+
+**Location**: `src/mesh/proxy.rs:785-853` (`proxy_to_peer_with_fallback`)
+
+**Current State**: First-success-wins pattern already implemented:
+```rust
+// Fire all concurrently, race to first success
+let (tx, mut rx) = mpsc::channel(providers.len());
+for provider in providers {
+    tokio::spawn(async move {
+        match provider.proxy_request(request.clone()).await {
+            Ok(resp) => let _ = tx.send(Ok(resp)).await,
+            Err(e) => let _ = tx.send(Err(e)).await,
+        }
+    });
+}
+```
+
+**Potential Issue**: "Unbounded" may refer to:
+1. DHT lookup for provider discovery being O(n) on provider count
+2. No bounds on how many providers can be discovered
+3. Memory unbounded if many providers respond slowly
+
+**Recommended Approach**:
+1. Profile provider lookup latency under load
+2. Add caching for provider results with TTL
+3. Add timeout on DHT lookup operations
+
+### P2: Performance Verification Gates - Detailed Assessment
+
+**Location**: Need to identify/create central metrics collection point
+
+**Problem**: 1M RPS target needs measurable budgets, currently no defined gates.
+
+**Recommended Metrics to Establish**:
+1. **Latency budgets**: p50, p95, p99 request latency per RPS tier
+2. **Allocation budgets**: bytes allocated per request (target < 1KB)
+3. **WAF throughput**: requests/second per worker thread
+4. **Proxy throughput**: upstream requests/second per connection pool
+
+**Current Benchmark Infrastructure**:
+- `benches/bench_proxy_headers.rs` - header forwarding
+- `benches/bench_attack_detection.rs` - WAF detection
+- `benches/bench_routing.rs` - domain/location matching
+- `benches/bench_proxy_cache.rs` - cache operations
+
+**Recommended Approach**:
+1. Create unified benchmark runner that outputs JSON metrics
+2. Define explicit pass/fail gates for each benchmark
+3. Add to CI to prevent regression
+
+### P2: Summary and Priority Recommendation
+
+| Item | Impact | Effort | Risk | Priority |
+|------|--------|--------|------|----------|
+| Proxy Allocations | High (compounds at 1M RPS) | Medium | Low | 1 |
+| Cache SWR Bounds | High (can cause thundering herd) | Medium | Medium | 2 |
+| Mesh Provider Selection | Medium (if DHT lookup is issue) | High | High | 3 |
+| Performance Gates | High (enables measurement) | Low | Low | 1 |
+
+**Suggested First Steps**:
+1. Run `bench_proxy_headers` baseline to quantify current state
+2. Add allocation metrics to proxy hot path
+3. Implement one optimization and measure improvement
+
+---
+
 ### P1: Replace Deprecated Global Service Access
 
 **Problem**: `get_threat_intel`, `get_yara_rules`, `get_upload_validator` globals still used in request paths.
 
 **Next step**: Thread `RequestServices` through protocol-agnostic pipeline after unification.
 
-### P2: Cache and Revalidation Scalability
-
-**Problem**: Stale-while-revalidate and invalidation can create unbounded background task bursts.
-
-**Next step**: Requires bounded queue implementation.
-
-### P2: Mesh Proxy Provider Selection
-
-**Problem**: Mesh provider lookup may be unbounded DHT/topology operation.
-
-**Next step**: Requires mesh internals review after P0 mesh wiring completion.
-
-### P2: Performance Verification Gates
-
-**Problem**: 1M RPS aspiration needs measurable hot-path budgets.
-
-**Next step**: Create benchmark infrastructure and define performance budgets.
-
 ---
 
-## Reference Documents
+## P2: Deferred Items (Detailed Assessment Above)
 
 - [`docs/adr/ADR-003-unified-worker-process.md`](../docs/adr/ADR-003-unified-worker-process.md) — Unified worker architecture ADR
 - [`skills/streaming_waf.md`](../skills/streaming_waf.md) — StreamingWafBody implementation details
