@@ -371,6 +371,7 @@ impl Http3Server {
                 user_agent.as_deref(),
                 None,
                 None,
+                None,
             )
             .await;
 

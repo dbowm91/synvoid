@@ -999,6 +999,7 @@ impl WafCore {
             user_agent,
             None,
             None,
+            None,
         )
         .await
     }
@@ -1044,6 +1045,7 @@ impl WafCore {
         user_agent: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
+        services: Option<Arc<RequestServices>>,
     ) -> WafDecision {
         if self.whitelist.contains(&client_ip) {
             return WafDecision::Pass;
@@ -1098,8 +1100,7 @@ impl WafCore {
         #[cfg(feature = "mesh")]
         if let Some(decision) = self.check_dht_threat_lookup(
             client_ip,
-            self.request_services
-                .load()
+            services
                 .as_ref()
                 .and_then(|rs| rs.threat_intel.as_ref()),
         ) {

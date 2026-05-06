@@ -1487,6 +1487,7 @@ impl HttpServer {
                     user_agent.as_deref(),
                     None,
                     Some(&target.site_config.bot),
+                    None,
                 )
                 .await
             };
