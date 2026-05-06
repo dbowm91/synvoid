@@ -723,11 +723,84 @@ pub mod windows {
             true
         }
 
-        // Windows Job Objects provide process resource controls (memory limits,
-        // kill-on-close) and mitigation policies (DEP, ASLR), but do NOT provide
-        // filesystem path sandboxing, network restrictions, or child process
-        // spawning restrictions. Path sandboxing would require a separate mechanism
-        // such as AppContainer or DACLs which is not implemented here.
+        fn apply_file_restrictions(&self, paths: &[&Path]) -> Result<(), SandboxError> {
+            use windows_sys::Win32::Security::{
+                GetNamedSecurityInfoW, SetNamedSecurityInfoW, DACL_SECURITY_INFORMATION,
+                SE_FILE_OBJECT,
+            };
+
+            for path in paths {
+                let path_str = match path.to_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let mut path_wide: Vec<u16> =
+                    path_str.encode_utf16().chain(std::iter::once(0)).collect();
+
+                let mut sd: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR =
+                    std::ptr::null_mut();
+
+                let result = unsafe {
+                    GetNamedSecurityInfoW(
+                        path_wide.as_ptr(),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        &mut sd,
+                    )
+                };
+
+                if result != 0 {
+                    tracing::warn!(
+                        "GetNamedSecurityInfoW failed for {}: {}",
+                        path.display(),
+                        result
+                    );
+                    continue;
+                }
+
+                let restrict_dacl = match crate::platform::SecurityDescriptor::new_user_only() {
+                    Ok(sd) => sd,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create restrictive DACL for {}: {}",
+                            path.display(),
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                let set_result = unsafe {
+                    SetNamedSecurityInfoW(
+                        path_wide.as_mut_ptr(),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        Some(restrict_dacl.as_ptr() as *mut _),
+                        std::ptr::null_mut(),
+                    )
+                };
+
+                if set_result != 0 {
+                    tracing::warn!(
+                        "SetNamedSecurityInfoW failed for {}: {}",
+                        path.display(),
+                        set_result
+                    );
+                } else {
+                    tracing::debug!("Applied restrictive DACL to {}", path.display());
+                }
+            }
+
+            Ok(())
+        }
+
         fn apply_job_object(&self) -> Result<(), SandboxError> {
             use std::ffi::OsStr;
             use std::os::windows::ffi::OsStrExt;
@@ -901,6 +974,11 @@ pub mod windows {
 
             if self.level == SandboxLevel::Strict {
                 self.apply_mitigation_policies()?;
+                self.apply_file_restrictions(read_paths)?;
+                self.apply_file_restrictions(write_paths)?;
+                for path in denied_paths {
+                    self.apply_file_restrictions(&[path])?;
+                }
             }
 
             self.applied.store(true, Ordering::SeqCst);
@@ -930,9 +1008,9 @@ pub mod windows {
 
         fn capabilities(&self) -> SandboxCapabilities {
             SandboxCapabilities {
-                read_path_allowlist: false,
-                write_path_allowlist: false,
-                deny_paths: false,
+                read_path_allowlist: self.level == SandboxLevel::Strict,
+                write_path_allowlist: self.level == SandboxLevel::Strict,
+                deny_paths: self.level == SandboxLevel::Strict,
                 process_limits: true,
                 network_restrictions: false,
                 child_process_restrictions: false,
