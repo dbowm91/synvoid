@@ -41,6 +41,15 @@ struct StreamingState {
 - `finalize(&self) -> Option<AttackDetectionResult>` - Get final detection result
 - `reset(&self)` - Reset state for reuse
 
+**Important**: Use `.clear()` on `PooledBuf` instead of `BufferPool::acquire(0)` in `reset()`:
+```rust
+// CORRECT - reuses buffer from pool
+state.trailing_window.clear();
+
+// WRONG - unnecessary allocation
+state.trailing_window = BufferPool::acquire(0);
+```
+
 ### 3. StreamingWafDecision Enum
 ```rust
 pub enum StreamingWafDecision {

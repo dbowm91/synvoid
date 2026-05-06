@@ -85,6 +85,28 @@ Stall actions can exhaust worker resources at high traffic. Use bounded stall wi
 
 See `skills/performance_patterns.md` for implementation details.
 
+## Wave 2 Fixes Verified (2026-05-06)
+
+### IPC-4: TokenBucket Refill Precision
+
+Fixed in `src/process/ipc_rate_limit.rs:132-141`. The original formula:
+```rust
+let ticks = ((elapsed.as_millis() as u64).saturating_mul(self.refill_rate)) / 1000;
+```
+
+Had precision loss for small elapsed times. Fixed to:
+```rust
+let elapsed_secs = elapsed.as_secs();
+let elapsed_fractional_ms = elapsed.subsec_millis() as u64;
+let ticks = elapsed_secs
+    .saturating_mul(self.refill_rate)
+    .saturating_add((elapsed_fractional_ms * self.refill_rate) / 1000);
+```
+
+### PL-4: Drain Metrics Inaccuracy
+
+Fixed in `src/worker/drain_state.rs:185-190`. Original `fetch_add(active, SeqCst)` when `active == 0` was logging stale values. Changed to `fetch_add(1, SeqCst)` to properly count each drain completion.
+
 ## RequestServices Context Pattern (Wave 3)
 
 **Status**: ✅ COMPLETE (2026-05-06)
