@@ -1,6 +1,6 @@
 # SynVoid Implementation Plan
 
-**Status**: 🏗️ IN PROGRESS - Wave 4 (2026-05-06)
+**Status**: ✅ ALL WAVES COMPLETE (2026-05-06)
 **Target**: 1M RPS with streaming WAF, plus bug fixes and security hardening
 **Consolidated from**: `plans/*.md` review (now removed)
 
@@ -346,4 +346,27 @@ PoW uses plain `Sha256::digest()` at line 118. Adding HMAC would require protoco
 ---
 
 **Last Updated**: 2026-05-06
-**Verification Status**: Wave 1 verified complete. All items confirmed correct or fixed. Wave 2 in progress.
+**Verification Status**: ✅ ALL WAVES COMPLETE
+
+## Summary of Changes
+
+### Wave 1: Critical Security & Compile Fixes (Completed)
+- APP-2: Fixed Granian socket URL from `http://unix:{}:{}` to `http://unix:{}{}` format
+- Verified all other items (WAF-1, WAF-2, MESH-1/2/3, NET-1/6, APP-3/4, ROUT-1/2, IPC-1/2) were already correct
+
+### Wave 2: IPC & Process Lifecycle Hardening (Completed)
+- IPC-4: Fixed TokenBucket refill precision using separate elapsed_secs and fractional_ms calculation
+- PL-4: Fixed drain metrics - changed from `fetch_add(active, SeqCst)` where active=0 to `fetch_add(1, SeqCst)`
+- Verified all other items (IPC-3/5/6/7/8, PL-1/2/3/5/6/7/8) were already correct
+
+### Wave 3: WAF Core Streaming Optimization (Completed)
+- WSTREAM-4: Fixed `reset()` to use `.clear()` instead of `BufferPool::acquire(0)`
+- Verified all other items (WSTREAM-1/2/3/5/6/7/8) were already implemented
+
+### Wave 4: Remaining High/Medium Priority Fixes (Completed)
+- WAF-8: Fixed hex_chars_to_u32 overflow by adding length check > 8
+- Verified all other items (NET-2/3/4, WAF-4/9, etc.) were already correct
+
+### AGENTS and Skills Updates (Completed)
+- Updated WAF AGENTS.override.md with IPC-4 and PL-4 fix documentation
+- Updated streaming_waf.md skill with .clear() vs BufferPool::acquire(0) guidance
