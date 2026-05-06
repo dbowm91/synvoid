@@ -1488,7 +1488,7 @@ pub async fn run_unified_server_worker(
                         "Received threat feed update with {} indicators from Master",
                         indicators.len()
                     );
-                    if let Some(threat_intel) = crate::waf::get_threat_intel() {
+                    if let Some(threat_intel) = &ipc_state.request_services.threat_intel {
                         for indicator_data in &indicators {
                             let threat_type = match indicator_data.threat_type {
                                 crate::process::ipc::ThreatIndicatorType::IpBlock => {
