@@ -7,7 +7,8 @@ The HTTP client module (`src/http_client/`) provides upstream proxy connections 
 ## Key Files
 
 - `src/http_client/mod.rs` - Main client implementation with `HttpClient`, `StreamingWafBody`, and helper functions
-- `src/http_client/erased_pool.rs` - Type-erased body traits for connection pooling (Phase 1 complete)
+- `src/http_client/erased_pool.rs` - Type-erased body traits and connection pooling
+- `src/http_client/typed_pool.rs` - TypedConnectionPool for per-host body-typed clients
 
 ## Important Patterns
 
@@ -30,7 +31,7 @@ pub struct StreamingWafBody<B> {
 }
 ```
 
-### 3. Type-Erased Body (Phase 1)
+### 3. Type-Erased Body (Phase 1) ✅ Complete
 ```rust
 pub trait ErasedBody: Send + Sync + 'static { ... }
 pub struct ErasedBodyImpl<B> { inner: B }
@@ -39,15 +40,51 @@ pub type BoxErasedBody = Box<dyn ErasedBody>;
 
 ## True Streaming via Type-Erased Connection Pool
 
-**Status**: Phase 1 complete. Phases 2-5 deferred due to hyper type complexity.
+**Status**: ✅ COMPLETE (2026-05-06) - All phases implemented
 
-**Problem**: `hyper::Client<C, B>` is parametric over body type `B`. You cannot pass `StreamingWafBody<...>` to a client typed for `Full<Bytes>`.
+**Key insight**: Box at connection checkout level, not per-request. Connection checkout happens ~10K-100K times/second (amortized over many requests), vs 1M times/second for per-request boxing.
 
-**Solution**: Type-erased connection pool that boxes at connection checkout (10K-100K/sec) not per-request (1M/sec).
+### Implemented Components
 
-**Files to modify when resuming**:
-- `src/http_client/erased_pool.rs` - Complete Phases 2-5 (HTTP/1 adapter, connection pool)
-- `src/http_client/mod.rs` - Add ErasedHttpClient
+**Http1PooledConnection** (erased_pool.rs):
+```rust
+pub struct Http1PooledConnection {
+    io: Option<TokioIo<tokio::net::TcpStream>>,
+    authority: http::uri::Authority,
+    sender: Option<http1_client::SendRequest<BoxErasedBody>>,
+}
+```
+- Async constructor takes TcpStream, wraps in TokioIo, performs handshake
+- `send_request()` takes ownership, returns type-erased response
+- `send_request_and_take_back()` returns connection after request for pool reuse
+
+**ErasedConnectionPool**:
+```rust
+pub struct ErasedConnectionPool {
+    inner: Arc<Mutex<HashMap<PoolKey, VecDeque<Http1PooledConnection>>>>,
+    max_idle_per_host: usize,
+    connect_timeout: Duration,
+}
+```
+- `checkout()` - creates new connection via `Http1PooledConnection::new()`
+- `checkin()` - returns connection to pool for reuse
+- `idle_count()` and `total_idle_count()` for monitoring
+
+**ErasedHttpClient**:
+```rust
+pub struct ErasedHttpClient {
+    pool: Arc<ErasedConnectionPool>,
+    connector: Arc<dyn ErasedConnector>,
+}
+```
+- Primary interface for type-erased HTTP requests
+- `send_request()` with pool checkout/checkin
+
+### Remaining Integration (Phase 9)
+
+Integration into `http/server.rs` proxy path is pending:
+- Wire `BodyBufferingPolicy::Streaming` to use `ErasedHttpClient`
+- Requires adding `ErasedHttpClient` to `HttpServer` struct
 
 ## Verification Commands
 

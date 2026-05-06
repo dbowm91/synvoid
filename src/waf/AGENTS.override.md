@@ -1,6 +1,14 @@
 # WAF Module - AGENTS.override.md
 
-Specialized guidance for WAF engine and attack detection.
+## Module Overview
+
+The WAF module (`src/waf/`) provides attack detection, request sanitization, and response handling.
+
+## Key Files
+
+- `src/waf/mod.rs` - WafCore, request handling, threat intel integration
+- `src/waf/attack_detection/` - Rule matching and detection engines
+- `src/server/waf_handler.rs` - WafResponseIntent, ProtocolAdapter trait, WafContext
 
 ## Hot Path
 
@@ -58,7 +66,63 @@ Stall actions can exhaust worker resources at high traffic. Use bounded stall wi
 
 See `skills/performance_patterns.md` for implementation details.
 
+## RequestServices Context Pattern (Wave 3)
+
+**Status**: ✅ COMPLETE (2026-05-06)
+
+**Problem**: Accessing global services (Threat Intel, Yara) via `ArcSwap` in hot path causes CPU cache contention.
+
+**Solution**: Thread `Arc<RequestServices>` through WafContext instead of using atomic loads.
+
+### Key Changes
+
+1. **WafContext** now holds `Arc<RequestServices>`:
+   ```rust
+   pub struct WafContext {
+       pub services: Arc<RequestServices>,
+       // ... other fields
+   }
+   ```
+
+2. **WafCore::check_request_full** accepts optional services:
+   ```rust
+   pub fn check_request_full(
+       &self,
+       path: &str,
+       query_string: Option<&str>,
+       body: Option<&[u8]>,
+       services: Option<Arc<RequestServices>>,
+   ) -> WafDecision
+   ```
+
+3. **Usage pattern**:
+   - `services` parameter defaults to `None`
+   - When `None`, falls back to `self.request_services.load()` (backward compat)
+   - When `Some(services)`, uses passed services (eliminates atomic load)
+
+4. **All callers updated** to pass `None` as the services parameter to maintain API compatibility. Future work: replace `None` with actual services from context.
+
+## ProtocolAdapter send_waf_response (Wave 2)
+
+**Status**: ✅ COMPLETE (2026-05-06)
+
+Added `send_waf_response` to `ProtocolAdapter` trait in `src/server/waf_handler.rs`:
+```rust
+async fn send_waf_response(
+    &self,
+    intent: WafResponseIntent,
+) -> Result<http::Response<Full<Bytes>>, anyhow::Error>;
+```
+
+Implemented for:
+- `HttpProtocolAdapter`
+- `HttpsProtocolAdapter`
+- `Http3ProtocolAdapter`
+
+Note: The adapters return the built response; actual wire sending is done by the caller.
+
 ## Skills Reference
 
 - `skills/streaming_waf.md` — Streaming WAF engine patterns
 - `skills/security_patterns.md` — Constant-time comparison, path traversal, XSS prevention
+- `skills/performance_patterns.md` — Performance optimization patterns
