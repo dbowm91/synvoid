@@ -5,8 +5,11 @@
 //! over many requests, vs 1M times/second for per-request boxing.
 
 use bytes::Bytes;
+use http::{Request, Response};
 use http_body::Body as HttpBody;
 use hyper::body::{Frame, SizeHint};
+use hyper::client::conn::http1 as http1_client;
+use hyper_util::rt::TokioIo;
 use std::error::Error;
 use std::fmt;
 use std::pin::Pin;
@@ -87,19 +90,56 @@ where
 
 pub type BoxErasedBody = Box<dyn ErasedBody>;
 
+pub trait PooledConnection: Send + Sync + 'static {
+    fn protocol(&self) -> HttpProtocol;
+    fn is_available(&self) -> bool;
+    fn box_body<B>(body: B) -> BoxErasedBody
+    where
+        B: hyper::body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+        B::Error: fmt::Debug + Send;
+}
+
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct PoolKey {
     pub authority: String,
     pub is_http2: bool,
 }
 
-pub trait PooledConnection: Send + Sync + 'static {
-    fn protocol(&self) -> HttpProtocol;
-    fn is_available(&self) -> bool;
+pub struct Http1PooledConnection {
+    io: Option<TokioIo<tokio::net::TcpStream>>,
+    authority: http::uri::Authority,
+}
+
+impl Http1PooledConnection {
+    pub fn new(
+        io: TokioIo<tokio::net::TcpStream>,
+        authority: http::uri::Authority,
+    ) -> Self {
+        Self { io: Some(io), authority }
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(authority: http::uri::Authority) -> Self {
+        Self { io: None, authority }
+    }
+}
+
+impl PooledConnection for Http1PooledConnection {
+    fn protocol(&self) -> HttpProtocol {
+        HttpProtocol::Http1
+    }
+
+    fn is_available(&self) -> bool {
+        self.io.is_some()
+    }
+
     fn box_body<B>(body: B) -> BoxErasedBody
     where
-        B: hyper::body::Body<Data = Bytes> + Send + 'static,
-        B::Error: fmt::Debug + Send;
+        B: hyper::body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+        B::Error: fmt::Debug + Send,
+    {
+        Box::new(ErasedBodyImpl { inner: body })
+    }
 }
 
 #[cfg(test)]
@@ -165,5 +205,13 @@ mod tests {
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
         assert_eq!(key1.clone(), key1);
+    }
+
+    #[test]
+    fn test_http1_pooled_connection_is_available() {
+        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
+        let conn = Http1PooledConnection::new_for_test(authority);
+        assert_eq!(conn.protocol(), HttpProtocol::Http1);
+        assert!(!conn.is_available());
     }
 }
