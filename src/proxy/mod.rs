@@ -953,7 +953,7 @@ impl ProxyServer {
                     if retry_enabled
                         && should_retry_method
                         && is_retryable_status_impl(status, retry_config.unwrap())
-                        && attempt <= max_retries
+                        && attempt < max_retries
                     {
                         if let Some(ref be) = current_backend {
                             pool.mark_failed(&be.url);
@@ -1001,7 +1001,7 @@ impl ProxyServer {
                         pool.mark_failed(&be.url);
                     }
 
-                    if retry_enabled && should_retry_method && attempt <= max_retries {
+                    if retry_enabled && should_retry_method && attempt < max_retries {
                         continue;
                     }
 

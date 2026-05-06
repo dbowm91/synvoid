@@ -157,7 +157,7 @@ impl ServerlessInstance {
 }
 
 impl InstancePool {
-    pub fn new(config: InstancePoolConfig, function_definition: FunctionDefinition) -> Self {
+    pub fn new(config: InstancePoolConfig, function_definition: FunctionDefinition) -> Result<Self, InstancePoolError> {
         let wasm_path = std::path::Path::new(&function_definition.name).with_extension("wasm");
         let runtime = crate::plugin::WasmPluginManager::new()
             .load_plugin_with_limits(
@@ -165,17 +165,16 @@ impl InstancePool {
                 crate::plugin::WasmResourceLimits {
                     max_memory_mb: function_definition.memory_mb.unwrap_or(64),
                     max_table_elements: None,
-                    max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(0),
+                    max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(1000000),
                     timeout_seconds: function_definition.timeout_seconds.unwrap_or(30),
                     max_instances: function_definition.max_instances.unwrap_or(10),
                     memory_budget_mb: None,
                     wasi_enabled: false,
                     allowed_dht_prefixes: Vec::new(),
                 },
-            )
-            .expect("Failed to load serverless function");
+            )?;
 
-        Self {
+        Ok(Self {
             config,
             function_definition,
             runtime,
@@ -187,7 +186,7 @@ impl InstancePool {
             shutdown_tx: tokio::sync::watch::channel(()).0,
             mode: RwLock::new(InstancePoolMode::Pool),
             last_mode_used: RwLock::new(InstancePoolMode::Pool),
-        }
+        })
     }
 
     pub async fn initialize(&self) -> Result<(), InstancePoolError> {
