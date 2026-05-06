@@ -152,6 +152,7 @@ pub struct ProxyCache {
     host_index: DashMap<String, Vec<CacheKey>>,
     inflight_requests: InflightRequestsMap,
     site_memory_usage: DashMap<String, AtomicU64>,
+    revalidation_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl Clone for ProxyCache {
@@ -167,6 +168,7 @@ impl Clone for ProxyCache {
             host_index: DashMap::new(),
             inflight_requests: self.inflight_requests.clone(),
             site_memory_usage: DashMap::new(),
+            revalidation_semaphore: self.revalidation_semaphore.clone(),
         }
     }
 }
@@ -196,7 +198,7 @@ impl ProxyCache {
         let (shutdown_tx, _) = tokio::sync::watch::channel(());
         Self {
             entries: cache,
-            settings: RwLock::new(settings),
+            settings: RwLock::new(settings.clone()),
             disk_path,
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
@@ -205,6 +207,9 @@ impl ProxyCache {
             host_index: DashMap::new(),
             inflight_requests: Arc::new(DashMap::new()),
             site_memory_usage: DashMap::new(),
+            revalidation_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                settings.max_concurrent_revalidations,
+            )),
         }
     }
 
@@ -214,6 +219,10 @@ impl ProxyCache {
 
     pub fn settings(&self) -> Arc<ProxyCacheSettings> {
         Arc::new(self.settings.read().clone())
+    }
+
+    pub fn revalidation_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
+        self.revalidation_semaphore.clone()
     }
 
     #[cfg(feature = "mesh")]

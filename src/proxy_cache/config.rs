@@ -17,6 +17,7 @@ pub struct ProxyCacheSettings {
     pub min_uses: u32,
     pub key_pattern: String,
     pub vary_by: Vec<String>,
+    pub max_concurrent_revalidations: usize,
 }
 
 impl Default for ProxyCacheSettings {
@@ -24,8 +25,8 @@ impl Default for ProxyCacheSettings {
         Self {
             enabled: false,
             path: PathBuf::from("/var/cache/synvoid/proxy"),
-            max_memory_size: 100 * 1024 * 1024, // 100MB
-            max_disk_size: 1024 * 1024 * 1024,  // 1GB
+            max_memory_size: 100 * 1024 * 1024,
+            max_disk_size: 1024 * 1024 * 1024,
             inactive: Duration::from_secs(3600),
             use_temp_file: true,
             valid_status: vec![200, 301, 302, 304],
@@ -39,11 +40,12 @@ impl Default for ProxyCacheSettings {
                 "http_503".to_string(),
                 "http_504".to_string(),
             ],
-            stale_while_revalidate: Some(Duration::from_secs(86400)), // 24 hours
-            stale_if_error: Some(Duration::from_secs(3600)),          // 1 hour
+            stale_while_revalidate: Some(Duration::from_secs(86400)),
+            stale_if_error: Some(Duration::from_secs(3600)),
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec!["Accept-Encoding".to_string()],
+            max_concurrent_revalidations: 100,
         }
     }
 }
@@ -65,6 +67,7 @@ impl ProxyCacheSettings {
         _disk_max: Option<String>,
         stale_while_revalidate: Option<u64>,
         stale_if_error: Option<u64>,
+        max_concurrent_revalidations: Option<usize>,
     ) -> Self {
         let enabled = enable.unwrap_or(false);
 
@@ -101,6 +104,7 @@ impl ProxyCacheSettings {
             key_pattern: key
                 .unwrap_or_else(|| "$scheme$request_method$host$request_uri".to_string()),
             vary_by,
+            max_concurrent_revalidations: max_concurrent_revalidations.unwrap_or(100),
         }
     }
 

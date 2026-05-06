@@ -1456,6 +1456,7 @@ impl HttpsServer {
                                 cache_cfg.disk_max.clone(),
                                 cache_cfg.stale_while_revalidate,
                                 cache_cfg.stale_if_error,
+                                None,
                             );
 
                             let cache = Arc::new(ProxyCache::new(settings));

@@ -265,6 +265,7 @@ impl ProxyServer {
                 cc.disk_max.clone(),
                 cc.stale_while_revalidate,
                 cc.stale_if_error,
+                None,
             );
 
             let cache = Arc::new(ProxyCache::new(settings));
@@ -589,6 +590,14 @@ impl ProxyServer {
                                 );
 
                                 tokio::spawn(async move {
+                                    let semaphore = cache_clone.revalidation_semaphore();
+                                    let permit = match semaphore.acquire().await {
+                                        Ok(p) => p,
+                                        Err(_) => {
+                                            tracing::warn!("Revalidation semaphore closed");
+                                            return;
+                                        }
+                                    };
                                     tracing::debug!(
                                         "Triggering background revalidation for {}",
                                         path_owned
@@ -603,6 +612,7 @@ impl ProxyServer {
                                         reval_headers,
                                     )
                                     .await;
+                                    drop(permit);
                                 });
 
                                 counter!("synvoid.proxy.cache.stale_while_revalidate").increment(1);
