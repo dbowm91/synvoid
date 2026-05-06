@@ -2,7 +2,8 @@ use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use bytes::Bytes;
-use http::{HeaderMap, Method, Uri};
+use http::{HeaderMap, Method, Response, Uri};
+use http_body_util::Full;
 use crate::proxy::ForwardedProtocol;
 use crate::waf::WafDecision;
 
@@ -182,6 +183,7 @@ pub trait ProtocolAdapter: Send + Sync {
     fn is_tls(&self) -> bool;
     fn supports_websocket(&self) -> bool;
     fn forwarded_protocol(&self) -> ForwardedProtocol;
+    fn build_waf_response(&self, intent: &WafResponseIntent) -> http::Response<Full<Bytes>>;
 }
 
 #[derive(Clone)]
@@ -192,6 +194,58 @@ impl ProtocolAdapter for HttpProtocolAdapter {
     fn is_tls(&self) -> bool { false }
     fn supports_websocket(&self) -> bool { true }
     fn forwarded_protocol(&self) -> ForwardedProtocol { ForwardedProtocol::Http }
+
+    fn build_waf_response(&self, intent: &WafResponseIntent) -> http::Response<Full<Bytes>> {
+        match intent {
+            WafResponseIntent::Drop => {
+                http::Response::builder()
+                    .status(http::StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Stall { duration: _ } => {
+                http::Response::builder()
+                    .status(http::StatusCode::REQUEST_TIMEOUT)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Block { status, body, content_type } => {
+                http::Response::builder()
+                    .status(http::StatusCode::from_u16(*status).unwrap_or(http::StatusCode::FORBIDDEN))
+                    .header(http::header::CONTENT_TYPE, *content_type)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Challenge { body } => {
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "text/html")
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::ChallengeWithCookie { body, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                let cookie = format!(
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    session_cookie_name, session_cookie_value, session_cookie_max_age
+                );
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "text/html")
+                    .header(http::header::SET_COOKIE, &cookie)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::TarPit { body } => {
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Pass => {
+                panic!("build_waf_response called with Pass intent - this should be handled elsewhere")
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -204,6 +258,58 @@ impl ProtocolAdapter for HttpsProtocolAdapter {
     fn is_tls(&self) -> bool { true }
     fn supports_websocket(&self) -> bool { true }
     fn forwarded_protocol(&self) -> ForwardedProtocol { ForwardedProtocol::Https }
+
+    fn build_waf_response(&self, intent: &WafResponseIntent) -> http::Response<Full<Bytes>> {
+        match intent {
+            WafResponseIntent::Drop => {
+                http::Response::builder()
+                    .status(http::StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Stall { duration: _ } => {
+                http::Response::builder()
+                    .status(http::StatusCode::REQUEST_TIMEOUT)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Block { status, body, content_type } => {
+                http::Response::builder()
+                    .status(http::StatusCode::from_u16(*status).unwrap_or(http::StatusCode::FORBIDDEN))
+                    .header(http::header::CONTENT_TYPE, *content_type)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Challenge { body } => {
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "text/html")
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::ChallengeWithCookie { body, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                let cookie = format!(
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    session_cookie_name, session_cookie_value, session_cookie_max_age
+                );
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "text/html")
+                    .header(http::header::SET_COOKIE, &cookie)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::TarPit { body } => {
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Pass => {
+                panic!("build_waf_response called with Pass intent - this should be handled elsewhere")
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -214,4 +320,56 @@ impl ProtocolAdapter for Http3ProtocolAdapter {
     fn is_tls(&self) -> bool { true }
     fn supports_websocket(&self) -> bool { false }
     fn forwarded_protocol(&self) -> ForwardedProtocol { ForwardedProtocol::Https }
+
+    fn build_waf_response(&self, intent: &WafResponseIntent) -> http::Response<Full<Bytes>> {
+        match intent {
+            WafResponseIntent::Drop => {
+                http::Response::builder()
+                    .status(http::StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Stall { duration: _ } => {
+                http::Response::builder()
+                    .status(http::StatusCode::REQUEST_TIMEOUT)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Block { status, body, content_type } => {
+                http::Response::builder()
+                    .status(http::StatusCode::from_u16(*status).unwrap_or(http::StatusCode::FORBIDDEN))
+                    .header(http::header::CONTENT_TYPE, *content_type)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Challenge { body } => {
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "text/html")
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::ChallengeWithCookie { body, session_cookie_name, session_cookie_value, session_cookie_max_age } => {
+                let cookie = format!(
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    session_cookie_name, session_cookie_value, session_cookie_max_age
+                );
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "text/html")
+                    .header(http::header::SET_COOKIE, &cookie)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::TarPit { body } => {
+                http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            }
+            WafResponseIntent::Pass => {
+                panic!("build_waf_response called with Pass intent - this should be handled elsewhere")
+            }
+        }
+    }
 }
