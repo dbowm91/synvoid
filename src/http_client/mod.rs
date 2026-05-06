@@ -757,6 +757,40 @@ pub async fn send_request_streaming(
     Ok(response)
 }
 
+pub async fn send_request_streaming_generic<B>(
+    client: &Client<HttpsConnector<HttpConnector>, B>,
+    method: Method,
+    url: &str,
+    body: B,
+    headers: http::HeaderMap,
+    timeout: Option<Duration>,
+) -> Result<Response<Incoming>>
+where
+    B: http_body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+    B::Error: std::fmt::Debug + Send + Sync + std::error::Error,
+{
+    let uri: Uri = url.parse()?;
+    let mut req_builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(body)
+        .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+    *req_builder.headers_mut() = headers;
+    let req = req_builder;
+
+    let response = if let Some(t) = timeout {
+        match tokio::time::timeout(t, client.request(req)).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
+        }
+    } else {
+        client.request(req).await?
+    };
+
+    Ok(response)
+}
+
 pub async fn send_request_erased_streaming(
     client: &ErasedHttpClient,
     method: Method,
