@@ -85,6 +85,9 @@ coverage/
 # Specific directories
 /var/lib/synvoid/
 
+# Website build output
+website/dist/
+
 # Backup files
 *~
 
