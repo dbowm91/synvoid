@@ -516,7 +516,7 @@ impl Http3Server {
                     bw.record_site_egress(&host, body_len);
                 }
                 let cookie = format!(
-                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                     session_cookie_name, session_cookie_value, session_cookie_max_age
                 );
                 let response = http::Response::builder()

@@ -932,7 +932,7 @@ impl HttpServer {
                 session_cookie_max_age,
             } => {
                 let cookie = format!(
-                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                     session_cookie_name, session_cookie_value, session_cookie_max_age
                 );
                 let ipc_clone = ipc.clone();
@@ -1391,7 +1391,7 @@ impl HttpServer {
                     session_cookie_max_age,
                 } => {
                     let cookie = format!(
-                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                         session_cookie_name, session_cookie_value, session_cookie_max_age
                     );
                     return Ok(Self::build_response_with_cookie(
@@ -1712,7 +1712,7 @@ impl HttpServer {
                     let verified_cookie_name = waf.challenge_manager.css_verified_cookie_name();
                     let window_secs = waf.challenge_manager.css_window_secs();
                     let cookie = format!(
-                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                         verified_cookie_name, "verified", window_secs
                     );
                     let response = Response::builder()
@@ -1941,7 +1941,7 @@ impl HttpServer {
                     rm.record_egress(body_len, EgressDirection::Challenged);
                 }
                 let cookie = format!(
-                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                    "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                     session_cookie_name, session_cookie_value, session_cookie_max_age
                 );
                 let ipc_clone = ipc.clone();
