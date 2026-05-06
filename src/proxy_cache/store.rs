@@ -830,6 +830,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         }
     }
 
@@ -880,6 +881,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         };
 
         let cache = ProxyCache::new(settings);
@@ -923,6 +925,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         };
 
         let cache = ProxyCache::new(settings);
@@ -1087,6 +1090,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         };
 
         let cache1 = ProxyCache::new(settings);
@@ -1125,6 +1129,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         };
 
         let cache = ProxyCache::new(settings);
@@ -1283,6 +1288,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         };
         let cache = ProxyCache::new(settings);
 
@@ -1343,6 +1349,7 @@ mod tests {
             min_uses: 1,
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
+            max_concurrent_revalidations: 100,
         };
 
         let cache = ProxyCache::new(settings);
