@@ -330,7 +330,7 @@ impl Http3Server {
         };
 
         let mut body_bytes = Vec::new();
-        let streaming_waf = self.waf.streaming();
+        let mut streaming_waf = self.waf.streaming();
 
         if !stream_scanned_upstream_mode {
             while let Ok(Some(chunk)) = request_stream.recv_data().await {
@@ -361,7 +361,7 @@ impl Http3Server {
                 let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
 
                 // 1. Streaming scan
-                if let Some(sw) = streaming_waf.as_ref() {
+                if let Some(sw) = streaming_waf.as_mut() {
                     if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
                     {
                         counter!("synvoid.http3.requests.blocked").increment(1);
@@ -696,7 +696,7 @@ impl Http3Server {
                     let mut chunk_to_scan = chunk;
                     let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
 
-                    if let Some(sw) = streaming_waf.as_ref() {
+                    if let Some(sw) = streaming_waf.as_mut() {
                         if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
                         {
                             let _ = tx
@@ -965,8 +965,6 @@ impl Http3Server {
                                 .body(())
                                 .map_err(|e| format!("Failed to build response: {}", e))?;
 
-                            request_stream.send_response(response).await?;
-
                             const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB
 
                             if body_len > ZERO_COPY_THRESHOLD {
@@ -1000,16 +998,49 @@ impl Http3Server {
                                         Ok(frame) => {
                                             if let Some(data) = frame.data_ref() {
                                                 body_bytes.extend_from_slice(data.as_ref());
+                                                if let Some(max_size) = upstream_target.max_response_size {
+                                                    if body_bytes.len() > max_size {
+                                                        tracing::warn!(
+                                                            "Response body exceeds size limit for {}",
+                                                            upstream_target.url
+                                                        );
+                                                        let body = Bytes::from("Bad Gateway");
+                                                        let response = http::Response::builder()
+                                                            .status(StatusCode::BAD_GATEWAY)
+                                                            .header(header::CONTENT_TYPE, "text/plain")
+                                                            .body(())
+                                                            .map_err(|e| format!("Failed to build response: {}", e))?;
+                                                        request_stream.send_response(response).await?;
+                                                        request_stream.send_data(body).await?;
+                                                        request_stream.finish().await?;
+                                                        if let Some(ref metrics) = self.metrics {
+                                                            metrics.record_site_upstream_failure(&site_id);
+                                                        }
+                                                        return Ok(());
+                                                    }
+                                                }
                                             }
                                         }
                                         Err(e) => {
                                             tracing::error!("Error reading upstream body: {}", e);
-                                            break;
+                                            let body = Bytes::from("Bad Gateway");
+                                            let response = http::Response::builder()
+                                                .status(StatusCode::BAD_GATEWAY)
+                                                .header(header::CONTENT_TYPE, "text/plain")
+                                                .body(())
+                                                .map_err(|e| format!("Failed to build response: {}", e))?;
+                                            request_stream.send_response(response).await?;
+                                            request_stream.send_data(body).await?;
+                                            request_stream.finish().await?;
+                                            if let Some(ref metrics) = self.metrics {
+                                                metrics.record_site_upstream_failure(&site_id);
+                                            }
+                                            return Ok(());
                                         }
                                     }
                                 }
-                                let body_len = body_bytes.len() as u64;
                                 if let Some(ref bw) = bandwidth {
+                                    let body_len = body_bytes.len() as u64;
                                     bw.record_egress(
                                         body_len,
                                         BandwidthProtocol::Http3,
@@ -1017,17 +1048,8 @@ impl Http3Server {
                                     );
                                     bw.record_site_egress(&host, body_len);
                                 }
-                                if apply_response_size_limit(
-                                    &body_bytes,
-                                    upstream_target.max_response_size,
-                                )
-                                .is_err()
-                                {
-                                    tracing::warn!(
-                                        "Response body exceeds size limit for {}",
-                                        upstream_target.url
-                                    );
-                                } else if !body_bytes.is_empty() {
+                                request_stream.send_response(response).await?;
+                                if !body_bytes.is_empty() {
                                     request_stream.send_data(body_bytes.into()).await?;
                                 }
                             }

@@ -1227,7 +1227,7 @@ impl HttpServer {
                         &target.site_id,
                         tls_config.as_ref(),
                     );
-                    let streaming_waf = waf.streaming().map(Arc::new);
+                    let streaming_waf = waf.streaming();
                     let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                     let erased_body = ErasedBodyImpl::new(stream_body);
 
@@ -3188,7 +3188,11 @@ impl HttpServer {
                 const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB - stream above this size
 
                 let streaming_threshold = target.site_config.proxy.streaming_threshold_bytes;
-                let use_erased_client = !needs_body_transform
+                // Request body is already fully buffered at this point (`full_body_arc`).
+                // Do not route through "streaming" request APIs with `Full<Bytes>`, which adds
+                // boxing/cloning overhead without preserving ingress streaming semantics.
+                let use_erased_client = false
+                    && !needs_body_transform
                     && !crate::http_client::is_quictunnel_url(&target.upstream)
                     && target.site_config.proxy.body_buffering_policy
                         == crate::config::site::BodyBufferingPolicy::Streaming

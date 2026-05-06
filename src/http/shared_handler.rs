@@ -388,7 +388,7 @@ where
                         ))));
                     }
 
-                    if let Some(sw) = &this.streaming_waf {
+                    if let Some(sw) = &mut this.streaming_waf {
                         if let StreamingWafDecision::Block(_, _) = sw.scan_chunk(&chunk) {
                             tracing::warn!(
                                 client_ip = %this.client_ip,

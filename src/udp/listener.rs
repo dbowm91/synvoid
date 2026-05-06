@@ -299,15 +299,9 @@ impl UdpListenerPool {
             }
         };
 
-        let _upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
+        let mut upstream_unix_socket: Option<UnixDatagram> = match &upstream_addr {
             UpstreamAddress::Tcp(_) => None,
-            UpstreamAddress::Unix(path) => match std::os::unix::net::UnixDatagram::bind(path) {
-                Ok(s) => Some(UnixDatagram::from_std(s).ok()).flatten(),
-                Err(e) => {
-                    tracing::error!("Failed to bind Unix socket {}: {}", path.display(), e);
-                    None
-                }
-            },
+            UpstreamAddress::Unix(path) => Self::connect_unix_datagram(path),
             UpstreamAddress::QuicTunnel { .. } => None,
         };
 
@@ -427,16 +421,52 @@ impl UdpListenerPool {
                                     }
                                 }
                                 UpstreamAddress::Unix(path) => {
-                                    let data_owned = data.to_vec();
-                                    let path_owned = path.clone();
-                                    tokio::task::spawn_blocking(move || {
-                                        match std::os::unix::net::UnixDatagram::unbound() {
-                                            Ok(socket) => socket.send_to(&data_owned, &path_owned),
-                                            Err(e) => Err(e),
+                                    let needs_reconnect = upstream_unix_socket.is_none();
+                                    if needs_reconnect {
+                                        upstream_unix_socket = Self::connect_unix_datagram(path);
+                                    }
+
+                                    if let Some(ref socket) = upstream_unix_socket {
+                                        match socket.send(data).await {
+                                            Ok(sent) => Ok(sent),
+                                            Err(e) => {
+                                                if matches!(
+                                                    e.kind(),
+                                                    std::io::ErrorKind::NotConnected
+                                                        | std::io::ErrorKind::ConnectionRefused
+                                                        | std::io::ErrorKind::AddrNotAvailable
+                                                ) {
+                                                    tracing::warn!(
+                                                        "Unix datagram send failed for {}: {}, retrying connect",
+                                                        path.display(),
+                                                        e
+                                                    );
+                                                    upstream_unix_socket = Self::connect_unix_datagram(path);
+                                                    if let Some(ref socket) = upstream_unix_socket {
+                                                        socket.send(data).await
+                                                    } else {
+                                                        Err(std::io::Error::new(
+                                                            std::io::ErrorKind::NotConnected,
+                                                            format!(
+                                                                "Unix upstream socket not available for {}",
+                                                                path.display()
+                                                            ),
+                                                        ))
+                                                    }
+                                                } else {
+                                                    Err(e)
+                                                }
+                                            }
                                         }
-                                    }).await.unwrap_or_else(|e| {
-                                        Err(std::io::Error::other(e.to_string()))
-                                    })
+                                    } else {
+                                        Err(std::io::Error::new(
+                                            std::io::ErrorKind::NotConnected,
+                                            format!(
+                                                "Unix upstream socket not available for {}",
+                                                path.display()
+                                            ),
+                                        ))
+                                    }
                                 }
                                 UpstreamAddress::QuicTunnel { peer, port } => {
                                     match get_udp_tunnel_manager() {
@@ -542,6 +572,26 @@ impl UdpListenerPool {
 
     pub fn listener_count(&self) -> usize {
         self.listeners.read().len()
+    }
+
+    fn connect_unix_datagram(path: &std::path::Path) -> Option<UnixDatagram> {
+        match UnixDatagram::unbound() {
+            Ok(socket) => match socket.connect(path) {
+                Ok(()) => Some(socket),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to connect Unix datagram to {}: {}",
+                        path.display(),
+                        e
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to create Unix datagram socket: {}", e);
+                None
+            }
+        }
     }
 }
 
