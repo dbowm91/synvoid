@@ -115,7 +115,8 @@ use crate::http::response_helpers::{self, build_websocket_response};
 use crate::http::validation_helpers::validate_websocket_upgrade;
 use crate::http_client::{
     create_http_client_with_config, send_request_erased_streaming, send_request_streaming,
-    send_request_with_body_and_timeout, ErasedHttpClient, HttpClient, UpstreamTlsConfig,
+    send_request_with_body_and_timeout, ErasedBodyImpl, ErasedHttpClient, HttpClient,
+    StreamingWafBody, UpstreamTlsConfig,
 };
 #[cfg(feature = "mesh")]
 use crate::mesh::config::MeshConfig;
@@ -1136,7 +1137,252 @@ impl HttpServer {
             }
         }
 
-        
+        // ============================================================================
+        // SECTION 9.5: Upstream Streaming Fast Path (no request buffering)
+        // ============================================================================
+        // This path keeps request ingress as a stream for upstream proxying when:
+        // - backend is plain upstream
+        // - policy allows streaming
+        // - no body/response transforms are needed
+        // All other paths fall through to the existing buffered flow.
+        let content_length_u64: Option<u64> = parts
+            .headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok());
+        let can_stream_request = matches!(target.backend_type, crate::router::BackendType::Upstream)
+            && target
+                .site_config
+                .proxy
+                .body_buffering_policy
+                .should_stream(
+                    content_length_u64,
+                    target.site_config.proxy.streaming_threshold_bytes,
+                )
+            && !crate::http_client::is_quictunnel_url(&target.upstream);
+        let needs_body_transform = router.plugin_manager().is_some()
+            || target
+                .site_config
+                .r#static
+                .enable_minification
+                .unwrap_or(false)
+            || target.site_config.image_poison.enabled.unwrap_or(false)
+            || target
+                .site_config
+                .r#static
+                .enable_compression
+                .unwrap_or(false);
+
+        if can_stream_request && !needs_body_transform {
+            counter!("synvoid.http.request.streaming_path").increment(1);
+            let query_string = parts.uri.query();
+            let user_agent_ref = user_agent.as_deref();
+
+            let waf_decision = waf
+                .check_request_full(
+                    Some(&site_id),
+                    client_ip,
+                    method.as_str(),
+                    &path,
+                    query_string,
+                    &parts.headers,
+                    None,
+                    user_agent_ref,
+                    None,
+                    Some(&target.site_config.bot),
+                    None,
+                )
+                .await;
+
+            match waf_decision {
+                crate::proxy::WafDecision::Pass => {
+                    let upstream_target = PreparedUpstreamTarget::new(
+                        &target.upstream,
+                        &path,
+                        Some(&target.site_config.proxy),
+                    );
+                    let headers_to_filter = crate::proxy::build_headers_to_filter_for_site(
+                        &main_config.security.more_clear_headers,
+                        &target.site_config.security.more_clear_headers,
+                        &target.site_config.security_headers.more_clear_headers,
+                    );
+
+                    let forward_header_map = build_forward_headers(
+                        client_ip,
+                        &parts.headers,
+                        target
+                            .site_config
+                            .proxy
+                            .headers
+                            .as_ref()
+                            .unwrap_or(&ProxyHeadersConfig::default()),
+                        ForwardedProtocol::Http,
+                    );
+
+                    let streaming_waf = waf.streaming().map(Arc::new);
+                    let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
+                    let erased_body = ErasedBodyImpl::new(stream_body);
+
+                    match send_request_erased_streaming(
+                        &erased_http_client,
+                        method,
+                        &upstream_target.url,
+                        erased_body,
+                        forward_header_map,
+                        Some(upstream_target.timeout),
+                    )
+                    .await
+                    {
+                        Ok(upstream_resp) => {
+                            let (resp_parts, upstream_body) = upstream_resp.into_parts();
+                            let status = resp_parts.status.as_u16();
+                            let body_len = resp_parts
+                                .headers
+                                .get("content-length")
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(0);
+
+                            let filtered_headers =
+                                filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
+                            let mut builder = Response::builder().status(status);
+                            for (key, value) in filtered_headers.iter() {
+                                if let Ok(v) = value.to_str() {
+                                    builder = builder.header(key.as_str(), v);
+                                }
+                            }
+                            if let Some(ref alt_svc) = alt_svc {
+                                builder = builder.header("Alt-Svc", alt_svc.as_str());
+                            }
+                            builder = Self::apply_security_headers(builder, &target, &main_config);
+
+                            if let Some(max_size) = upstream_target.max_response_size {
+                                if body_len > 0 && body_len as usize > max_size {
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        502,
+                                        "Bad Gateway".to_string(),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
+
+                            return Ok(builder
+                                .body(
+                                    upstream_body
+                                        .map_err(|e| {
+                                            tracing::warn!("Upstream body stream error: {}", e);
+                                            unreachable!()
+                                        })
+                                        .boxed(),
+                                )
+                                .unwrap_or_else(|_| {
+                                    Self::build_response_with_alt_svc(
+                                        500,
+                                        crate::http::reason_phrase(500).to_string(),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    )
+                                }));
+                        }
+                        Err(e) => {
+                            tracing::error!("Upstream streaming request error: {}", e);
+                            return Ok(Self::build_response_with_alt_svc(
+                                502,
+                                "Bad Gateway".to_string(),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                    }
+                }
+                crate::proxy::WafDecision::Drop => {
+                    counter!("synvoid.http.blackhole_drop").increment(1);
+                    http_conn.request_drop();
+                    let resp = Response::builder()
+                        .status(http::StatusCode::NOT_FOUND)
+                        .body(Full::new(Bytes::from_static(&[])).boxed())
+                        .unwrap_or_else(|_| crate::http::fallback_error_boxed());
+                    return Ok(resp);
+                }
+                crate::proxy::WafDecision::Stall => {
+                    counter!("synvoid.http.stalled").increment(1);
+                    let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
+                    tokio::time::sleep(stall_timeout).await;
+                    return Ok(Self::build_response_with_alt_svc(
+                        408,
+                        "Request timeout".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+                crate::proxy::WafDecision::Block(status, message) => {
+                    let body = waf.error_page_manager.render_page_with_theme(
+                        status,
+                        Some(&message),
+                        target
+                            .site_config
+                            .error_pages
+                            .theme
+                            .as_ref()
+                            .map(|theme_config| {
+                                theme_config.to_theme_config(waf.error_page_manager.theme())
+                            })
+                            .as_ref(),
+                    );
+                    return Ok(Self::build_response_with_alt_svc(
+                        status,
+                        body,
+                        "text/html",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+                crate::proxy::WafDecision::Challenge(html) => {
+                    return Ok(Self::build_response_with_alt_svc(
+                        200,
+                        html,
+                        "text/html",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+                crate::proxy::WafDecision::ChallengeWithCookie {
+                    html,
+                    session_cookie_name,
+                    session_cookie_value,
+                    session_cookie_max_age,
+                } => {
+                    let cookie = format!(
+                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict",
+                        session_cookie_name, session_cookie_value, session_cookie_max_age
+                    );
+                    return Ok(Self::build_response_with_cookie(
+                        200,
+                        html,
+                        "text/html",
+                        &cookie,
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+                crate::proxy::WafDecision::Tarpit(tar_path) => {
+                    let html = waf.generate_tarpit_response(&tar_path);
+                    return Ok(Self::build_response_with_alt_svc(
+                        200,
+                        html,
+                        "text/html",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+            }
+        }
+
         let _is_internal_orig = client_ip.is_loopback();
         // ============================================================================
         // SECTION 10: Body Collection (with chunk-based WAF for large bodies)

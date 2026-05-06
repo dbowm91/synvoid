@@ -144,6 +144,20 @@ pub fn build_headers_to_filter(
     to_filter
 }
 
+pub fn build_headers_to_filter_for_site(
+    global_headers: &[String],
+    site_security_headers: &[String],
+    site_security_headers_legacy: &[String],
+) -> AHashSet<http::header::HeaderName> {
+    let mut to_filter = build_headers_to_filter(global_headers, site_security_headers);
+    for header in site_security_headers_legacy {
+        if let Ok(name) = header.to_lowercase().parse() {
+            to_filter.insert(name);
+        }
+    }
+    to_filter
+}
+
 pub fn sanitize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
     if path.is_empty() {
         return std::borrow::Cow::Owned(String::new());

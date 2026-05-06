@@ -20,10 +20,10 @@ pub use executor::{
 };
 pub use headers::{
     apply_response_header_transforms, build_forward_headers, build_headers_to_filter,
-    filter_response_headers, filter_response_headers_buf, filter_response_headers_buf_with_str_set,
-    is_hop_by_hop_header, is_hop_by_hop_header_name, sanitize_request_path,
-    validate_and_truncate_xff, ForwardedProtocol, HEADERS_TO_STRIP, HOP_BY_HOP_HEADERS,
-    MAX_XFF_CHAIN_LENGTH,
+    build_headers_to_filter_for_site, filter_response_headers, filter_response_headers_buf,
+    filter_response_headers_buf_with_str_set, is_hop_by_hop_header, is_hop_by_hop_header_name,
+    sanitize_request_path, validate_and_truncate_xff, ForwardedProtocol, HEADERS_TO_STRIP,
+    HOP_BY_HOP_HEADERS, MAX_XFF_CHAIN_LENGTH,
 };
 pub use retry::{
     calculate_backoff, is_idempotent_method, is_retryable_status, should_retry_request,
