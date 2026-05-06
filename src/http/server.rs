@@ -114,9 +114,9 @@ use crate::http::internal_handlers;
 use crate::http::response_helpers::{self, build_websocket_response};
 use crate::http::validation_helpers::validate_websocket_upgrade;
 use crate::http_client::{
-    create_http_client_with_config, send_request_erased_streaming, send_request_streaming,
-    send_request_with_body_and_timeout, ErasedBodyImpl, ErasedHttpClient, HttpClient,
-    StreamingWafBody, UpstreamTlsConfig,
+    create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
+    send_request_with_body_and_timeout, ErasedBodyImpl, HttpClient, StreamingWafBody,
+    UpstreamTlsConfig,
 };
 #[cfg(feature = "mesh")]
 use crate::mesh::config::MeshConfig;
@@ -354,7 +354,6 @@ pub struct HttpServer {
     #[cfg(feature = "mesh")]
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
-    erased_http_client: ErasedHttpClient,
 }
 
 impl HttpServer {
@@ -398,7 +397,6 @@ impl HttpServer {
             #[cfg(feature = "mesh")]
             mesh_backend_pool: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
-            erased_http_client: ErasedHttpClient::new(100),
         }
     }
 
@@ -675,7 +673,6 @@ impl HttpServer {
         >,
         #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
-        erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
         // SECTION 1: Connection Management
@@ -1219,12 +1216,23 @@ impl HttpServer {
                         ForwardedProtocol::Http,
                     );
 
+                    let tls_config = target
+                        .site_config
+                        .proxy
+                        .upstream
+                        .as_ref()
+                        .and_then(|u| u.tls.as_ref())
+                        .and_then(UpstreamTlsConfig::from_site_config);
+                    let streaming_client = upstream_client_registry.get_or_create_streaming(
+                        &target.site_id,
+                        tls_config.as_ref(),
+                    );
                     let streaming_waf = waf.streaming().map(Arc::new);
                     let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                     let erased_body = ErasedBodyImpl::new(stream_body);
 
-                    match send_request_erased_streaming(
-                        &erased_http_client,
+                    match send_request_streaming_generic(
+                        streaming_client.as_ref(),
                         method,
                         &upstream_target.url,
                         erased_body,
@@ -1288,6 +1296,31 @@ impl HttpServer {
                                 }));
                         }
                         Err(e) => {
+                            if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                                if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                                    let body = waf.error_page_manager.render_page_with_theme(
+                                        403,
+                                        Some("Forbidden"),
+                                        target
+                                            .site_config
+                                            .error_pages
+                                            .theme
+                                            .as_ref()
+                                            .map(|theme_config| {
+                                                theme_config
+                                                    .to_theme_config(waf.error_page_manager.theme())
+                                            })
+                                            .as_ref(),
+                                    );
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        403,
+                                        body,
+                                        "text/html",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
                             tracing::error!("Upstream streaming request error: {}", e);
                             return Ok(Self::build_response_with_alt_svc(
                                 502,
@@ -3173,12 +3206,23 @@ impl HttpServer {
                             .unwrap_or(&ProxyHeadersConfig::default()),
                         ForwardedProtocol::Http,
                     );
+                    let tls_config = target
+                        .site_config
+                        .proxy
+                        .upstream
+                        .as_ref()
+                        .and_then(|u| u.tls.as_ref())
+                        .and_then(UpstreamTlsConfig::from_site_config);
+                    let streaming_client = upstream_client_registry.get_or_create_streaming(
+                        &target.site_id,
+                        tls_config.as_ref(),
+                    );
 
                     let erased_body = crate::http_client::ErasedBodyImpl::from_full(Full::new(
                         full_body_arc.as_ref().clone(),
                     ));
-                    match send_request_erased_streaming(
-                        &erased_http_client,
+                    match send_request_streaming_generic(
+                        streaming_client.as_ref(),
                         method,
                         &upstream_target.url,
                         erased_body,

@@ -32,6 +32,7 @@ pub use erased_pool::{
 pub use typed_pool::{TypedConnectionPool, TypedHttpClient, TypedPoolKey};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub type StreamingHttpClient = Client<HttpsConnector<HttpConnector>, BoxErasedBody>;
 pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
 pub use erased_pool::BoxErasedBody;
 
@@ -75,6 +76,16 @@ fn upstream_client_cache() -> Cache<UpstreamClientKey, HttpClient> {
 
 static UPSTREAM_CLIENT_CACHE: LazyLock<Cache<UpstreamClientKey, HttpClient>> =
     LazyLock::new(upstream_client_cache);
+
+fn upstream_streaming_client_cache() -> Cache<UpstreamClientKey, StreamingHttpClient> {
+    Cache::builder()
+        .max_capacity(MAX_UPSTREAM_CLIENT_CACHE_SIZE)
+        .time_to_live(Duration::from_secs(UPSTREAM_CLIENT_CACHE_TTL_SECS))
+        .build()
+}
+
+static UPSTREAM_STREAMING_CLIENT_CACHE: LazyLock<Cache<UpstreamClientKey, StreamingHttpClient>> =
+    LazyLock::new(upstream_streaming_client_cache);
 
 pub fn is_unix_socket_url(url: &str) -> Option<PathBuf> {
     let trimmed = url.trim();
@@ -271,25 +282,12 @@ pub fn create_http_client_with_config(
     pool_max_idle_per_host: usize,
     pool_idle_timeout: Duration,
 ) -> HttpClient {
-    let mut http_connector = HttpConnector::new();
-    http_connector.set_connect_timeout(Some(connect_timeout));
-    http_connector.enforce_http(false);
-    http_connector.set_nodelay(true);
-    http_connector.set_keepalive(Some(Duration::from_secs(60)));
-
-    let tls_config = build_tls_config(None, false, None);
-
-    let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(tls_config)
-        .https_or_http()
-        .enable_http2()
-        .wrap_connector(http_connector);
-
-    Client::builder(TokioExecutor::new())
-        .pool_max_idle_per_host(pool_max_idle_per_host)
-        .pool_idle_timeout(pool_idle_timeout)
-        .http2_only(false)
-        .build(https_connector)
+    build_https_client(
+        connect_timeout,
+        pool_max_idle_per_host,
+        pool_idle_timeout,
+        None,
+    )
 }
 
 pub fn create_upstream_client(
@@ -308,17 +306,96 @@ pub fn create_upstream_client(
         return client.clone();
     }
 
+    let client = build_upstream_client::<Full<Bytes>>(
+        connect_timeout,
+        pool_max_idle_per_host,
+        pool_idle_timeout,
+        tls_config,
+    );
+
+    UPSTREAM_CLIENT_CACHE.insert(key, client.clone());
+    client
+}
+
+pub fn create_upstream_streaming_client(
+    connect_timeout: Duration,
+    pool_max_idle_per_host: usize,
+    pool_idle_timeout: Duration,
+    tls_config: &UpstreamTlsConfig,
+) -> StreamingHttpClient {
+    let key = UpstreamClientKey {
+        tls_config: UpstreamTlsConfigHashable::from(tls_config),
+        pool_max_idle: pool_max_idle_per_host,
+        pool_idle_secs: pool_idle_timeout.as_secs(),
+    };
+
+    if let Some(client) = UPSTREAM_STREAMING_CLIENT_CACHE.get(&key) {
+        return client.clone();
+    }
+
+    let client = build_upstream_client::<BoxErasedBody>(
+        connect_timeout,
+        pool_max_idle_per_host,
+        pool_idle_timeout,
+        tls_config,
+    );
+
+    UPSTREAM_STREAMING_CLIENT_CACHE.insert(key, client.clone());
+    client
+}
+
+fn build_https_client<B>(
+    connect_timeout: Duration,
+    pool_max_idle_per_host: usize,
+    pool_idle_timeout: Duration,
+    tls_config: Option<rustls::ClientConfig>,
+) -> Client<HttpsConnector<HttpConnector>, B>
+where
+    B: http_body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+    B::Error: std::fmt::Debug + Send + Sync + std::error::Error,
+{
     let mut http_connector = HttpConnector::new();
     http_connector.set_connect_timeout(Some(connect_timeout));
     http_connector.enforce_http(false);
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
+    let tls_config = tls_config.unwrap_or_else(|| build_tls_config(None, false, None));
+
+    let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls_config)
+        .https_or_http()
+        .enable_http2()
+        .wrap_connector(http_connector);
+
+    Client::builder(TokioExecutor::new())
+        .pool_max_idle_per_host(pool_max_idle_per_host)
+        .pool_idle_timeout(pool_idle_timeout)
+        .http2_only(false)
+        .build(https_connector)
+}
+
+fn build_upstream_client<B>(
+    connect_timeout: Duration,
+    pool_max_idle_per_host: usize,
+    pool_idle_timeout: Duration,
+    tls_config: &UpstreamTlsConfig,
+) -> Client<HttpsConnector<HttpConnector>, B>
+where
+    B: http_body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+    B::Error: std::fmt::Debug + Send + Sync + std::error::Error,
+{
     let rustls_config = build_tls_config(
         tls_config.ca_cert_path.as_deref(),
         tls_config.skip_verify,
         tls_config.skip_verify_reason.as_deref(),
     );
+
+    let mut http_connector = HttpConnector::new();
+    http_connector.set_connect_timeout(Some(connect_timeout));
+    http_connector.enforce_http(false);
+    http_connector.set_nodelay(true);
+    http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
     let builder = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(rustls_config);
 
@@ -337,14 +414,11 @@ pub fn create_upstream_client(
 
     let https_connector = builder.enable_http2().wrap_connector(http_connector);
 
-    let client = Client::builder(TokioExecutor::new())
+    Client::builder(TokioExecutor::new())
         .pool_max_idle_per_host(pool_max_idle_per_host)
         .pool_idle_timeout(pool_idle_timeout)
         .http2_only(false)
-        .build(https_connector);
-
-    UPSTREAM_CLIENT_CACHE.insert(key, client.clone());
-    client
+        .build(https_connector)
 }
 
 fn load_ca_certs_from_path(path: &str) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>> {

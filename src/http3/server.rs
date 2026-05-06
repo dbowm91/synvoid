@@ -17,8 +17,8 @@ use crate::config::{Http3Config, MainConfig};
 use crate::http::headers::generate_stealth_timestamp;
 use crate::http::response_helpers::apply_security_headers;
 use crate::http_client::{
-    create_http_client_with_config, send_request_erased_streaming, send_request_streaming,
-    send_request_streaming_generic, ErasedBodyImpl, ErasedHttpClient, HttpClient,
+    create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
+    ErasedBodyImpl, HttpClient, UpstreamTlsConfig,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -28,6 +28,7 @@ use crate::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers_buf,
     ForwardedProtocol, PreparedUpstreamTarget, WafDecision,
 };
+use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
 use crate::waf::{FloodDecision, FloodProtector, RequestSanitizer, WafCore};
@@ -40,7 +41,7 @@ pub struct Http3Server {
     waf: Arc<WafCore>,
     flood_protector: Option<Arc<FloodProtector>>,
     client: HttpClient,
-    erased_client: ErasedHttpClient,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
     drain_state: Option<Arc<WorkerDrainState>>,
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
@@ -74,7 +75,7 @@ impl Http3Server {
             waf,
             flood_protector: None,
             client,
-            erased_client: ErasedHttpClient::new(100),
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
             drain_state: None,
             metrics: None,
             shutdown_rx,
@@ -636,18 +637,29 @@ impl Http3Server {
                         .unwrap_or(&DEFAULT_HEADERS_CONFIG),
                     ForwardedProtocol::Https,
                 );
+                let tls_config = route_target
+                    .site_config
+                    .proxy
+                    .upstream
+                    .as_ref()
+                    .and_then(|u| u.tls.as_ref())
+                    .and_then(UpstreamTlsConfig::from_site_config);
+                let streaming_client = self.upstream_client_registry.get_or_create_streaming(
+                    &route_target.site_id,
+                    tls_config.as_ref(),
+                );
 
                 let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
                 let streaming_body = H3ChannelBody::new(rx);
                 let erased_body = ErasedBodyImpl::new(streaming_body);
 
                 let upstream_task = tokio::spawn({
-                    let erased_client = self.erased_client.clone();
+                    let streaming_client = streaming_client.clone();
                     let method = method.clone();
                     let url = upstream_target.url.clone();
                     async move {
-                        send_request_erased_streaming(
-                            &erased_client,
+                        send_request_streaming_generic(
+                            streaming_client.as_ref(),
                             method,
                             &url,
                             erased_body,
@@ -663,13 +675,22 @@ impl Http3Server {
                     use bytes::Buf;
                     let chunk_len = chunk.remaining();
                     if streamed_body_len + chunk_len > max_request_size {
-                        let _ = tx
-                            .send(Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Body too large",
-                            )))
-                            .await;
-                        break;
+                        let body = "{\"error\":\"Request body too large\"}";
+                        let response = http::Response::builder()
+                            .status(StatusCode::PAYLOAD_TOO_LARGE)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::DATE, generate_stealth_timestamp(5))
+                            .body(Bytes::from(body))
+                            .map_err(|e| format!("Failed to build response: {}", e))?;
+                        let (parts, body) = response.into_parts();
+                        request_stream
+                            .send_response(http::Response::from_parts(parts, ()))
+                            .await
+                            .map_err(|e| format!("Failed to send response: {}", e))?;
+                        request_stream.send_data(body).await?;
+                        request_stream.finish().await?;
+                        upstream_task.abort();
+                        return Ok(());
                     }
 
                     let mut chunk_to_scan = chunk;

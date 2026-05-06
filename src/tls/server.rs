@@ -29,9 +29,10 @@ use crate::config::site::ProxyHeadersConfig;
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
+use crate::http::response_helpers::apply_security_headers;
 use crate::http::shared_handler::stream_body_with_waf;
 use crate::http_client::{
-    send_request_erased_streaming, send_request_streaming, ErasedBodyImpl, ErasedHttpClient,
+    send_request_streaming, send_request_streaming_generic, ErasedBodyImpl, ErasedHttpClient,
     StreamingWafBody, UpstreamTlsConfig,
 };
 use crate::metrics::bandwidth::{
@@ -860,11 +861,22 @@ impl HttpsServer {
                         .unwrap_or(&ProxyHeadersConfig::default()),
                     ForwardedProtocol::Https,
                 );
+                let tls_config = target
+                    .site_config
+                    .proxy
+                    .upstream
+                    .as_ref()
+                    .and_then(|u| u.tls.as_ref())
+                    .and_then(UpstreamTlsConfig::from_site_config);
+                let streaming_client = upstream_client_registry.get_or_create_streaming(
+                    &target.site_id,
+                    tls_config.as_ref(),
+                );
                 let streaming_waf = waf.streaming().map(Arc::new);
                 let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                 let erased_body = ErasedBodyImpl::new(stream_body);
-                match send_request_erased_streaming(
-                    &erased_http_client,
+                match send_request_streaming_generic(
+                    streaming_client.as_ref(),
                     method.clone(),
                     &upstream_target.url,
                     erased_body,
@@ -899,6 +911,7 @@ impl HttpsServer {
                                 builder = builder.header(key.as_str(), v);
                             }
                         }
+                        builder = apply_security_headers(builder, &target, &main_config);
                         return Ok(builder
                             .body(
                                 upstream_body
@@ -917,6 +930,29 @@ impl HttpsServer {
                             }));
                     }
                     Err(e) => {
+                        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                            if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                                let body = waf.error_page_manager.render_page_with_theme(
+                                    403,
+                                    Some("Forbidden"),
+                                    target
+                                        .site_config
+                                        .error_pages
+                                        .theme
+                                        .as_ref()
+                                        .map(|theme_config| {
+                                            theme_config
+                                                .to_theme_config(waf.error_page_manager.theme())
+                                        })
+                                        .as_ref(),
+                                );
+                                return Ok(Self::build_response(
+                                    403,
+                                    body,
+                                    "text/html",
+                                ));
+                            }
+                        }
                         tracing::error!("Upstream streaming request error: {}", e);
                         return Ok(Self::build_response(
                             502,
