@@ -992,7 +992,7 @@ impl GranianSupervisor {
         let socket_path = self.config.resolve_socket_path();
 
         #[cfg(unix)]
-        let url = { format!("http://unix:{}:{}", socket_path.display(), path) };
+        let url = { format!("http://unix:{}{}", socket_path.display(), path) };
 
         #[cfg(not(unix))]
         let url = {
