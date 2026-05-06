@@ -30,6 +30,7 @@ use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+use crate::http_client::ErasedHttpClient;
 use crate::http::shared_handler::{BodyCollectionProtocol, stream_body_with_waf};
 
 
@@ -354,6 +355,7 @@ pub struct HttpServer {
     #[cfg(feature = "mesh")]
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
+    erased_http_client: ErasedHttpClient,
 }
 
 impl HttpServer {
@@ -397,6 +399,7 @@ impl HttpServer {
             #[cfg(feature = "mesh")]
             mesh_backend_pool: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
+            erased_http_client: ErasedHttpClient::new(100),
         }
     }
 
@@ -673,6 +676,7 @@ impl HttpServer {
         >,
         #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
+        erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
         // SECTION 1: Connection Management

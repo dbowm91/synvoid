@@ -334,6 +334,24 @@ if !self.node_role.is_global()
 }
 ```
 
+### Constant-Time Comparison Verification
+
+**Important**: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison. This is CORRECT for this use case because:
+- The `expected_solution` is publicly known challenge data, not a secret
+- Timing side-channels don't matter when verifying publicly-known values
+- **Only use `ConstantTimeEq` for actual secrets** (keys, MACs, auth tokens, passwords)
+
+When implementing fixes, ensure to use constant-time comparison for security-sensitive comparisons:
+
+```rust
+// CORRECT - for secrets (keys, MACs, auth tokens)
+use subtle::ConstantTimeEq;
+if key.ct_eq(&expected_key).unwrap_u8() == 0 { ... }
+
+// DO NOT USE for non-secrets like puzzle solutions - simple != is fine
+if solution != expected_solution { ... }
+```
+
 ## Wave 15: Distributed Layer Hardening Follow-Up
 
 All Wave 15 priorities have been implemented and committed to their respective branches.
