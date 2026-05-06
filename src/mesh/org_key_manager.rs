@@ -24,6 +24,8 @@ pub enum OrgKeyError {
     NotAuthorized(String),
     #[error("Quorum not met: {0}")]
     QuorumNotMet(String),
+    #[error("Raft operation failed: {0}")]
+    RaftFailed(String),
 }
 
 use crate::mesh::protocol::{ArcStr, MeshMessage};
@@ -262,10 +264,11 @@ impl OrgKeyManager {
                     return Ok(());
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to commit revocation to Raft, falling back to DHT: {}",
+                    tracing::error!(
+                        "Failed to commit revocation to Raft - Global node revocations require Raft success: {}",
                         e
                     );
+                    return Err(OrgKeyError::RaftFailed(e.to_string()));
                 }
             }
         }
