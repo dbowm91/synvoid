@@ -106,7 +106,10 @@ impl OverseerState {
     }
 
     pub fn can_apply(&self) -> bool {
-        matches!(self.state, UpgradeState::Staging)
+        matches!(
+            self.state,
+            UpgradeState::Staging | UpgradeState::RecoveryNeeded
+        )
     }
 
     pub fn can_rollback(&self) -> bool {
