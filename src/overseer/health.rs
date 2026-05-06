@@ -297,14 +297,16 @@ impl HealthChecker {
     }
 
     pub async fn check_workers(&self, ports: &[u16], host: &str) -> Vec<(u16, HealthStatus)> {
-        let mut results = Vec::new();
-
-        for &port in ports {
-            let status = self.check_worker(host, port).await;
-            results.push((port, status));
-        }
-
-        results
+        let futures: Vec<_> = ports
+            .iter()
+            .map(|&port| self.check_worker(host, port))
+            .collect();
+        futures::future::join_all(futures)
+            .await
+            .into_iter()
+            .zip(ports.iter())
+            .map(|(status, &port)| (port, status))
+            .collect()
     }
 
     pub async fn check_all_workers_readiness(

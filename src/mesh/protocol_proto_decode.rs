@@ -69,6 +69,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                                 .into_iter()
                                 .map(|s| crate::mesh::organization::QuorumSignature {
                                     signer_node_id: s.signer_node_id,
+                                    signer_public_key: s.signer_public_key,
                                     signature: s.signature,
                                     timestamp: s.timestamp,
                                 })
@@ -125,6 +126,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             .into_iter()
                             .map(|s| crate::mesh::organization::QuorumSignature {
                                 signer_node_id: s.signer_node_id,
+                                signer_public_key: s.signer_public_key,
                                 signature: s.signature,
                                 timestamp: s.timestamp,
                             })
@@ -1684,6 +1686,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             .into_iter()
                             .map(|s| crate::mesh::organization::QuorumSignature {
                                 signer_node_id: s.signer_node_id,
+                                signer_public_key: s.signer_public_key,
                                 signature: s.signature,
                                 timestamp: s.timestamp,
                             })

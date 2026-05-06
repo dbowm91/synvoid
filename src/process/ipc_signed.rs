@@ -62,40 +62,6 @@ pub fn increment_oversized_rejected() {
     OVERSIZED_REJECTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-struct NonceCache {
-    by_nonce: Vec<([u8; 16], u64)>,
-}
-
-impl NonceCache {
-    fn new() -> Self {
-        Self {
-            by_nonce: Vec::new(),
-        }
-    }
-
-    fn contains(&self, nonce: &[u8; 16]) -> bool {
-        self.by_nonce.iter().any(|(n, _)| *n == *nonce)
-    }
-
-    fn insert(&mut self, nonce: [u8; 16], timestamp: u64) {
-        self.by_nonce.push((nonce, timestamp));
-    }
-
-    fn evict_oldest(&mut self, max_size: usize) {
-        while self.by_nonce.len() > max_size {
-            if let Some(pos) = self
-                .by_nonce
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, &(_, ts))| ts)
-                .map(|(idx, _)| idx)
-            {
-                self.by_nonce.remove(pos);
-            }
-        }
-    }
-}
-
 type CacheKey = (u64, [u8; 16]);
 type ShardedNonceCache = DashMap<CacheKey, u64>;
 
@@ -111,12 +77,19 @@ fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> b
     }
 
     if NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE {
+        let now = timestamp;
         let oldest_key = NONCE_CACHE
             .iter()
+            .filter(|entry| *entry.value() <= now.saturating_sub(REPLAY_WINDOW_SECS))
             .min_by_key(|entry| *entry.value())
             .map(|entry| entry.key().clone());
         if let Some(key_to_remove) = oldest_key {
             NONCE_CACHE.remove(&key_to_remove);
+        } else {
+            let first_key = NONCE_CACHE.iter().next().map(|e| e.key().clone());
+            if let Some(key_to_remove) = first_key {
+                NONCE_CACHE.remove(&key_to_remove);
+            }
         }
     }
 
@@ -203,10 +176,11 @@ impl IpcSigner {
                 std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex)
                     .ok()?;
                 drop(file);
-                let _ = std::fs::remove_file(&key_file);
                 let key_hex = key_hex.trim();
                 let key = parse_hex_key(key_hex).ok()?;
-                return Some(Self::new(&key));
+                let signer = Self::new(&key);
+                let _ = std::fs::remove_file(&key_file);
+                return Some(signer);
             }
         }
         #[cfg(not(unix))]
@@ -642,11 +616,12 @@ fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
     let mut key_hex = String::new();
     std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex).ok()?;
     drop(file);
-    let _ = std::fs::remove_file(path);
 
     let key_hex = key_hex.trim();
     let key = parse_hex_key(key_hex).ok()?;
-    Some(Arc::new(IpcSigner::new(&key)))
+    let signer = Arc::new(IpcSigner::new(&key));
+    let _ = std::fs::remove_file(path);
+    Some(signer)
 }
 
 #[cfg(not(unix))]
@@ -663,9 +638,10 @@ fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
     }
 
     let key_hex = std::fs::read_to_string(path).ok()?;
-    let _ = std::fs::remove_file(path);
     let key = parse_hex_key(key_hex.trim()).ok()?;
-    Some(Arc::new(IpcSigner::new(&key)))
+    let signer = Arc::new(IpcSigner::new(&key));
+    let _ = std::fs::remove_file(path);
+    Some(signer)
 }
 
 pub fn read_ipc_key_file(key_file: &str) -> Option<Arc<IpcSigner>> {

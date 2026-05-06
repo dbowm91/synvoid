@@ -320,6 +320,7 @@ message QuorumSignature {
     string signer_node_id = 1;
     bytes signature = 2;
     uint64 timestamp = 3;
+    string signer_public_key = 4;
 }
 
 message GenesisKeyTransition {

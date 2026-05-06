@@ -49,16 +49,21 @@ impl IpcRateLimiter {
         counts: &mut std::collections::HashMap<u64, WorkerMessageState>,
         now: Instant,
     ) {
-        let mut last_cleanup = self.inner.last_cleanup.lock();
-        if now.duration_since(*last_cleanup) < self.inner.cleanup_interval {
-            return;
-        }
-        *last_cleanup = now;
-        drop(last_cleanup);
+        let should_cleanup = {
+            let mut last_cleanup = self.inner.last_cleanup.lock();
+            if now.duration_since(*last_cleanup) < self.inner.cleanup_interval {
+                false
+            } else {
+                *last_cleanup = now;
+                true
+            }
+        };
 
-        counts.retain(|_, state| {
-            now.duration_since(state.window_start) < self.inner.window_duration * 3
-        });
+        if should_cleanup {
+            counts.retain(|_, state| {
+                now.duration_since(state.window_start) < self.inner.window_duration * 3
+            });
+        }
     }
 
     pub fn check_worker(&self, worker_id: u64) -> Result<(), RateLimitExceeded> {
@@ -127,7 +132,7 @@ impl TokenBucket {
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill);
-        let ticks = ((elapsed.as_millis() as u64) * self.refill_rate) / 1000;
+        let ticks = ((elapsed.as_millis() as u64).saturating_mul(self.refill_rate)) / 1000;
 
         if ticks > 0 {
             self.tokens = (self.tokens + ticks).min(self.max_tokens);

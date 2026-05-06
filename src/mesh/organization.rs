@@ -11,6 +11,7 @@ pub const ADMIN_ORG_ID: &str = "_admin";
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QuorumSignature {
     pub signer_node_id: String,
+    pub signer_public_key: String,
     pub signature: Vec<u8>,
     pub timestamp: u64,
 }
@@ -47,10 +48,16 @@ impl OrgPublicKey {
         )
     }
 
-    pub fn add_signature(&mut self, signer_node_id: String, signature: Vec<u8>) {
+    pub fn add_signature(
+        &mut self,
+        signer_node_id: String,
+        signer_public_key: String,
+        signature: Vec<u8>,
+    ) {
         let timestamp = crate::mesh::safe_unix_timestamp();
         self.quorum_signatures.push(QuorumSignature {
             signer_node_id,
+            signer_public_key,
             signature,
             timestamp,
         });
@@ -78,10 +85,22 @@ impl OrgPublicKey {
                 continue;
             }
 
-            if let Some(pubkey_b64) = authorized_global_keys.get(&sig.signer_node_id) {
+            if let Some(expected_pubkey_b64) = authorized_global_keys.get(&sig.signer_node_id) {
                 if let Some(verifier) =
-                    crate::integrity::protocol::Ed25519Verifier::from_base64(pubkey_b64)
+                    crate::integrity::protocol::Ed25519Verifier::from_base64(expected_pubkey_b64)
                 {
+                    if !sig.signer_public_key.is_empty()
+                        && &sig.signer_public_key != expected_pubkey_b64
+                    {
+                        tracing::debug!(
+                            "signer_public_key mismatch for node {}: expected {}, got {}",
+                            sig.signer_node_id,
+                            expected_pubkey_b64,
+                            sig.signer_public_key
+                        );
+                        continue;
+                    }
+
                     let sig_b64 =
                         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&sig.signature);
                     if verifier.verify_bytes(signable.as_bytes(), &sig_b64) {

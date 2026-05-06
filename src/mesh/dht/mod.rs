@@ -705,6 +705,12 @@ impl DhtAccessControl {
             .map(|g| g.authorized_genesis_keys.clone())
             .unwrap_or_default();
 
+        if authorized_genesis_keys.is_empty() {
+            tracing::warn!(
+                "No authorized genesis keys configured - DHT immutability checks will deny all remote immutable records"
+            );
+        }
+
         Self {
             require_global_for_privileged: true,
             allowed_keys_for_edge,

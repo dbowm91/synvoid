@@ -964,7 +964,7 @@ impl GranianSupervisor {
         let socket_path = self.config.resolve_socket_path();
         #[cfg(unix)]
         {
-            format!("http://unix:{}:", socket_path.display())
+            format!("http://unix:{}", socket_path.display())
         }
         #[cfg(not(unix))]
         {
