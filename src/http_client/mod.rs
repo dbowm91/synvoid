@@ -24,9 +24,13 @@ use moka::sync::Cache;
 use serde::{de::DeserializeOwned, Serialize};
 
 mod erased_pool;
+mod typed_pool;
 
 pub use erased_pool::{
     ErasedBody, ErasedBodyImpl, PoolKey,
+};
+pub use typed_pool::{
+    TypedConnectionPool, TypedHttpClient, TypedPoolKey,
 };
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
