@@ -29,8 +29,12 @@ use crate::config::site::ProxyHeadersConfig;
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
+use crate::http::response_helpers::apply_security_headers;
 use crate::http::shared_handler::stream_body_with_waf;
-use crate::http_client::{send_request_streaming, UpstreamTlsConfig};
+use crate::http_client::{
+    send_request_streaming, send_request_streaming_generic, ErasedBodyImpl, ErasedHttpClient,
+    StreamingWafBody, UpstreamTlsConfig,
+};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
@@ -147,6 +151,7 @@ pub struct HttpsServer {
         >,
     >,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
+    erased_http_client: ErasedHttpClient,
 }
 
 impl HttpsServer {
@@ -183,6 +188,7 @@ impl HttpsServer {
             connection_limit: Arc::new(tokio::sync::Semaphore::new(10000)),
             app_servers: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
+            erased_http_client: ErasedHttpClient::new(100),
         }
     }
 
@@ -306,6 +312,7 @@ impl HttpsServer {
         let serverless_manager = self.serverless_manager.clone();
         let app_servers = self.app_servers.clone();
         let upstream_client_registry = self.upstream_client_registry.clone();
+        let erased_http_client = self.erased_http_client.clone();
 
         let _header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -369,6 +376,7 @@ impl HttpsServer {
                             let app_servers_h2 = app_servers.clone();
                             let app_servers_h1 = app_servers.clone();
                             let upstream_client_registry = upstream_client_registry.clone();
+                            let erased_http_client = erased_http_client.clone();
 
                             if http_config.strict_protocol_validation {
                                 let raw_fd = stream.as_raw_fd();
@@ -430,6 +438,7 @@ impl HttpsServer {
                                                     let serverless_manager = serverless_manager_h2.clone();
                                                     let app_servers = app_servers_h2.clone();
                                                     let upstream_client_registry = upstream_client_registry.clone();
+                                                    let erased_http_client = erased_http_client.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -451,14 +460,15 @@ impl HttpsServer {
                                                         let serverless_manager = serverless_manager.clone();
                                                         let app_servers = app_servers.clone();
                                                         let upstream_client_registry = upstream_client_registry.clone();
+                                                        let erased_http_client = erased_http_client.clone();
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry, erased_http_client).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, serverless_manager, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, serverless_manager, app_servers, upstream_client_registry, erased_http_client).await
                                                             }
                                                         }
                                                     }
@@ -502,6 +512,7 @@ impl HttpsServer {
                                                     let serverless_manager = serverless_manager_h1.clone();
                                                     let app_servers = app_servers_h1.clone();
                                                     let upstream_client_registry = upstream_client_registry.clone();
+                                                    let erased_http_client = erased_http_client.clone();
                                                     move |req| {
                                                         let router = router.clone();
                                                         let waf = waf.clone();
@@ -523,14 +534,15 @@ impl HttpsServer {
                                                         let serverless_manager = serverless_manager.clone();
                                                         let app_servers = app_servers.clone();
                                                         let upstream_client_registry = upstream_client_registry.clone();
+                                                        let erased_http_client = erased_http_client.clone();
                                                         async move {
                                                             #[cfg(feature = "mesh")]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, mesh_config, mesh_transport, ipc, worker_id, serverless_manager, app_servers, upstream_client_registry, erased_http_client).await
                                                             }
                                                             #[cfg(not(feature = "mesh"))]
                                                             {
-                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, serverless_manager, app_servers, upstream_client_registry).await
+                                                                Self::handle_request_with_cache(req, client_addr, router, waf, http_config, main_config, https_conn, ps, metrics, drain_state, serverless_manager, app_servers, upstream_client_registry, erased_http_client).await
                                                             }
                                                         }
                                                     }
@@ -623,6 +635,7 @@ impl HttpsServer {
             >,
         >,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
+        erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req
@@ -757,6 +770,199 @@ impl HttpsServer {
         }
 
         let query_string = parts.uri.query();
+        let route = router.route_with_local_addr(&host, &path, Some(client_addr));
+        let target = match route {
+            crate::router::RouteResult::Found(target) => target,
+            crate::router::RouteResult::NotFound(msg) => {
+                tracing::debug!("Route not found: {} for host: {}", msg, host);
+                return Ok(Self::build_response(
+                    404,
+                    "Not Found".to_string(),
+                    "text/plain",
+                ));
+            }
+            crate::router::RouteResult::Error(msg) => {
+                tracing::error!("Router error: {}", msg);
+                return Ok(Self::build_response(
+                    500,
+                    "Internal Server Error".to_string(),
+                    "text/plain",
+                ));
+            }
+        };
+
+        // Upstream-only request streaming fast path.
+        let content_length_u64: Option<u64> = parts
+            .headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok());
+        let needs_body_transform = target.site_config.r#static.enable_minification.unwrap_or(false)
+            || target.site_config.image_poison.enabled.unwrap_or(false)
+            || target.site_config.r#static.enable_compression.unwrap_or(false);
+        let use_cache = target
+            .site_config
+            .proxy
+            .cache
+            .as_ref()
+            .and_then(|c| c.enable)
+            .unwrap_or(false);
+        let can_stream_request = matches!(target.backend_type, crate::router::BackendType::Upstream)
+            && target
+                .site_config
+                .proxy
+                .body_buffering_policy
+                .should_stream(
+                    content_length_u64,
+                    target.site_config.proxy.streaming_threshold_bytes,
+                )
+            && !needs_body_transform
+            && !use_cache
+            && !crate::http_client::is_quictunnel_url(&target.upstream);
+
+        if can_stream_request {
+            counter!("synvoid.https.request.streaming_path").increment(1);
+            let ja4_hash = http_conn.get_ja4();
+            let waf_decision = waf
+                .check_request_full(
+                    Some(&target.site_id),
+                    client_ip,
+                    method.as_str(),
+                    &path,
+                    query_string,
+                    &parts.headers,
+                    None,
+                    user_agent.as_deref(),
+                    ja4_hash.as_deref(),
+                    Some(&target.site_config.bot),
+                    None,
+                )
+                .await;
+
+            if matches!(waf_decision, crate::proxy::WafDecision::Pass) {
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &target.upstream,
+                    &path,
+                    Some(&target.site_config.proxy),
+                );
+                let headers_to_filter = crate::proxy::build_headers_to_filter_for_site(
+                    &main_config.security.more_clear_headers,
+                    &target.site_config.security.more_clear_headers,
+                    &target.site_config.security_headers.more_clear_headers,
+                );
+                let forward_headers = build_forward_headers(
+                    client_ip,
+                    &parts.headers,
+                    target
+                        .site_config
+                        .proxy
+                        .headers
+                        .as_ref()
+                        .unwrap_or(&ProxyHeadersConfig::default()),
+                    ForwardedProtocol::Https,
+                );
+                let tls_config = target
+                    .site_config
+                    .proxy
+                    .upstream
+                    .as_ref()
+                    .and_then(|u| u.tls.as_ref())
+                    .and_then(UpstreamTlsConfig::from_site_config);
+                let streaming_client = upstream_client_registry.get_or_create_streaming(
+                    &target.site_id,
+                    tls_config.as_ref(),
+                );
+                let streaming_waf = waf.streaming().map(Arc::new);
+                let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
+                let erased_body = ErasedBodyImpl::new(stream_body);
+                match send_request_streaming_generic(
+                    streaming_client.as_ref(),
+                    method.clone(),
+                    &upstream_target.url,
+                    erased_body,
+                    forward_headers,
+                    Some(upstream_target.timeout),
+                )
+                .await
+                {
+                    Ok(upstream_resp) => {
+                        let (resp_parts, upstream_body) = upstream_resp.into_parts();
+                        let status = resp_parts.status.as_u16();
+                        let body_len = resp_parts
+                            .headers
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        if let Some(max_size) = upstream_target.max_response_size {
+                            if body_len > 0 && body_len as usize > max_size {
+                                return Ok(Self::build_response(
+                                    502,
+                                    "Bad Gateway".to_string(),
+                                    "text/plain",
+                                ));
+                            }
+                        }
+                        let filtered_headers =
+                            filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
+                        let mut builder = Response::builder().status(status);
+                        for (key, value) in filtered_headers.iter() {
+                            if let Ok(v) = value.to_str() {
+                                builder = builder.header(key.as_str(), v);
+                            }
+                        }
+                        builder = apply_security_headers(builder, &target, &main_config);
+                        return Ok(builder
+                            .body(
+                                upstream_body
+                                    .map_err(|e| {
+                                        tracing::warn!("Upstream body stream error: {}", e);
+                                        unreachable!()
+                                    })
+                                    .boxed(),
+                            )
+                            .unwrap_or_else(|_| {
+                                Self::build_response(
+                                    500,
+                                    "Internal Server Error".to_string(),
+                                    "text/plain",
+                                )
+                            }));
+                    }
+                    Err(e) => {
+                        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                            if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                                let body = waf.error_page_manager.render_page_with_theme(
+                                    403,
+                                    Some("Forbidden"),
+                                    target
+                                        .site_config
+                                        .error_pages
+                                        .theme
+                                        .as_ref()
+                                        .map(|theme_config| {
+                                            theme_config
+                                                .to_theme_config(waf.error_page_manager.theme())
+                                        })
+                                        .as_ref(),
+                                );
+                                return Ok(Self::build_response(
+                                    403,
+                                    body,
+                                    "text/html",
+                                ));
+                            }
+                        }
+                        tracing::error!("Upstream streaming request error: {}", e);
+                        return Ok(Self::build_response(
+                            502,
+                            "Bad Gateway".to_string(),
+                            "text/plain",
+                        ));
+                    }
+                }
+            }
+        }
 
         let max_body_size = http_config.max_request_size;
         const CHUNK_WAF_THRESHOLD: usize = 256 * 1024; // 256KB
@@ -807,28 +1013,6 @@ impl HttpsServer {
         };
 
         tracing::trace!(client = %client_ip, method = %method, path = %path, body_size = body_bytes.len(), "HTTPS request body read");
-
-        let route = router.route_with_local_addr(&host, &path, Some(client_addr));
-
-        let target = match route {
-            crate::router::RouteResult::Found(target) => target,
-            crate::router::RouteResult::NotFound(msg) => {
-                tracing::debug!("Route not found: {} for host: {}", msg, host);
-                return Ok(Self::build_response(
-                    404,
-                    "Not Found".to_string(),
-                    "text/plain",
-                ));
-            }
-            crate::router::RouteResult::Error(msg) => {
-                tracing::error!("Router error: {}", msg);
-                return Ok(Self::build_response(
-                    500,
-                    "Internal Server Error".to_string(),
-                    "text/plain",
-                ));
-            }
-        };
 
         let method_str = method.to_string();
         let ja4_hash = http_conn.get_ja4();

@@ -1,10 +1,14 @@
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 use bytes::Bytes;
 use http::{header, StatusCode};
+use hyper::body::Frame;
 use http_body_util::{BodyExt, Full};
 use metrics::{counter, gauge, histogram};
 
@@ -14,7 +18,7 @@ use crate::http::headers::generate_stealth_timestamp;
 use crate::http::response_helpers::apply_security_headers;
 use crate::http_client::{
     create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
-    HttpClient,
+    ErasedBodyImpl, HttpClient, UpstreamTlsConfig,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -24,6 +28,7 @@ use crate::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers_buf,
     ForwardedProtocol, PreparedUpstreamTarget, WafDecision,
 };
+use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
 use crate::waf::{FloodDecision, FloodProtector, RequestSanitizer, WafCore};
@@ -36,6 +41,7 @@ pub struct Http3Server {
     waf: Arc<WafCore>,
     flood_protector: Option<Arc<FloodProtector>>,
     client: HttpClient,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
     drain_state: Option<Arc<WorkerDrainState>>,
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
@@ -69,6 +75,7 @@ impl Http3Server {
             waf,
             flood_protector: None,
             client,
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
             drain_state: None,
             metrics: None,
             shutdown_rx,
@@ -287,43 +294,55 @@ impl Http3Server {
             .and_then(|v| v.to_str().ok())
             .map(String::from);
 
+        let route_result = self.router.route(&host, &path);
+        // Route-derived policy hint used to avoid duplicate full-body WAF scan when
+        // streaming scan is already active for upstream-only proxying.
+        let stream_scanned_upstream_mode = match &route_result {
+            RouteResult::Found(route_target) => {
+                let needs_body_transform = route_target
+                    .site_config
+                    .r#static
+                    .enable_minification
+                    .unwrap_or(false)
+                    || route_target.site_config.image_poison.enabled.unwrap_or(false)
+                    || route_target
+                        .site_config
+                        .r#static
+                        .enable_compression
+                        .unwrap_or(false);
+                let content_length_u64: Option<u64> = headers
+                    .get("content-length")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse().ok());
+                matches!(route_target.backend_type, crate::router::BackendType::Upstream)
+                    && route_target
+                        .site_config
+                        .proxy
+                        .body_buffering_policy
+                        .should_stream(
+                            content_length_u64,
+                            route_target.site_config.proxy.streaming_threshold_bytes,
+                        )
+                    && !needs_body_transform
+                    && !crate::http_client::is_quictunnel_url(&route_target.upstream)
+            }
+            _ => false,
+        };
+
         let mut body_bytes = Vec::new();
         let streaming_waf = self.waf.streaming();
 
-        while let Ok(Some(chunk)) = request_stream.recv_data().await {
-            use bytes::Buf;
-            let chunk_len = chunk.remaining();
-            if body_bytes.len() + chunk_len > max_request_size {
-                tracing::warn!(client = %client_ip, size = body_bytes.len(), "HTTP/3 request body exceeds max size");
-                counter!("synvoid.http3.request.body_too_large").increment(1);
+        if !stream_scanned_upstream_mode {
+            while let Ok(Some(chunk)) = request_stream.recv_data().await {
+                use bytes::Buf;
+                let chunk_len = chunk.remaining();
+                if body_bytes.len() + chunk_len > max_request_size {
+                    tracing::warn!(client = %client_ip, size = body_bytes.len(), "HTTP/3 request body exceeds max size");
+                    counter!("synvoid.http3.request.body_too_large").increment(1);
 
-                let body = "{\"error\":\"Request body too large\"}";
-                let response = http::Response::builder()
-                    .status(StatusCode::PAYLOAD_TOO_LARGE)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::DATE, generate_stealth_timestamp(5))
-                    .body(Bytes::from(body))
-                    .map_err(|e| format!("Failed to build response: {}", e))?;
-
-                let (parts, body) = response.into_parts();
-                request_stream
-                    .send_response(http::Response::from_parts(parts, ()))
-                    .await?;
-                request_stream.send_data(body).await?;
-                request_stream.finish().await?;
-                return Ok(());
-            }
-
-            let mut chunk_to_scan = chunk;
-            let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
-
-            // 1. Streaming scan
-            if let Some(sw) = streaming_waf.as_ref() {
-                if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes) {
-                    counter!("synvoid.http3.requests.blocked").increment(1);
-                    let body = format!("{{\"error\":\"{}\"}}", message);
+                    let body = "{\"error\":\"Request body too large\"}";
                     let response = http::Response::builder()
-                        .status(StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN))
+                        .status(StatusCode::PAYLOAD_TOO_LARGE)
                         .header(header::CONTENT_TYPE, "application/json")
                         .header(header::DATE, generate_stealth_timestamp(5))
                         .body(Bytes::from(body))
@@ -332,21 +351,52 @@ impl Http3Server {
                     let (parts, body) = response.into_parts();
                     request_stream
                         .send_response(http::Response::from_parts(parts, ()))
-                        .await
-                        .map_err(|e| format!("Failed to send response: {}", e))?;
+                        .await?;
                     request_stream.send_data(body).await?;
                     request_stream.finish().await?;
                     return Ok(());
                 }
-            }
 
-            body_bytes.extend_from_slice(chunk_bytes.as_ref());
+                let mut chunk_to_scan = chunk;
+                let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
+
+                // 1. Streaming scan
+                if let Some(sw) = streaming_waf.as_ref() {
+                    if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
+                    {
+                        counter!("synvoid.http3.requests.blocked").increment(1);
+                        let body = format!("{{\"error\":\"{}\"}}", message);
+                        let response = http::Response::builder()
+                            .status(StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::DATE, generate_stealth_timestamp(5))
+                            .body(Bytes::from(body))
+                            .map_err(|e| format!("Failed to build response: {}", e))?;
+
+                        let (parts, body) = response.into_parts();
+                        request_stream
+                            .send_response(http::Response::from_parts(parts, ()))
+                            .await
+                            .map_err(|e| format!("Failed to send response: {}", e))?;
+                        request_stream.send_data(body).await?;
+                        request_stream.finish().await?;
+                        return Ok(());
+                    }
+                }
+
+                body_bytes.extend_from_slice(chunk_bytes.as_ref());
+            }
         }
 
         let body_slice: Option<&[u8]> = if body_bytes.is_empty() {
             None
         } else {
             Some(&body_bytes)
+        };
+        let waf_body_slice: Option<&[u8]> = if stream_scanned_upstream_mode {
+            None
+        } else {
+            body_slice
         };
 
         let body_len = body_bytes.len() as u64;
@@ -360,19 +410,26 @@ impl Http3Server {
 
         tracing::trace!(client = %client_ip, method = %method_str, path = %path, body_size = body_bytes.len(), "HTTP/3 request body read");
 
+        let (waf_site_id, waf_bot_config) = match &route_result {
+            RouteResult::Found(route_target) => (
+                Some(route_target.site_id.as_ref()),
+                Some(&route_target.site_config.bot),
+            ),
+            _ => (Some(host.as_str()), None),
+        };
         let waf_decision = self
             .waf
             .check_request_full(
-                Some(host.as_str()),
+                waf_site_id,
                 client_ip,
                 method_str,
                 &path,
                 query_string,
                 &headers,
-                body_slice,
+                waf_body_slice,
                 user_agent.as_deref(),
                 None,
-                None,
+                waf_bot_config,
                 None,
             )
             .await;
@@ -516,7 +573,261 @@ impl Http3Server {
             WafDecision::Pass => {}
         }
 
-        let route_result = self.router.route(&host, &path);
+        if stream_scanned_upstream_mode {
+            if let RouteResult::Found(route_target) = &route_result {
+                let site_id = route_target.site_id.to_string();
+                let site_traffic_config = &route_target.site_config.traffic_shaping.connection;
+                let site_max_connections = site_traffic_config.max_connections;
+                let site_max_per_ip = site_traffic_config.max_connections_per_ip;
+
+                if site_max_connections.is_some() || site_max_per_ip.is_some() {
+                    if let Some(ref conn_limiter) = self.waf.connection_limiter {
+                        if let Some(token) = connection_token.take() {
+                            conn_limiter.release(token);
+                        }
+                        match conn_limiter
+                            .try_acquire_with_limits(
+                                &site_id,
+                                client_ip,
+                                site_max_connections,
+                                site_max_per_ip,
+                            )
+                            .await
+                        {
+                            Ok(new_token) => {
+                                connection_token = Some(new_token);
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "HTTP/3 per-site connection limit exceeded for site {}: {}",
+                                    site_id,
+                                    e
+                                );
+                                counter!("synvoid.http3.connection_limited").increment(1);
+                                request_stream.finish().await?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
+                counter!("synvoid.http3.request.streaming_path").increment(1);
+
+                let upstream_target = PreparedUpstreamTarget::new(
+                    &route_target.upstream,
+                    &path,
+                    Some(&route_target.site_config.proxy),
+                );
+
+                static DEFAULT_HEADERS_CONFIG: ProxyHeadersConfig = ProxyHeadersConfig {
+                    clear: Vec::new(),
+                    set: Vec::new(),
+                    forward: Vec::new(),
+                    hide: Vec::new(),
+                };
+
+                let forward_headers = build_forward_headers(
+                    client_ip,
+                    &headers,
+                    route_target
+                        .site_config
+                        .proxy
+                        .headers
+                        .as_ref()
+                        .unwrap_or(&DEFAULT_HEADERS_CONFIG),
+                    ForwardedProtocol::Https,
+                );
+                let tls_config = route_target
+                    .site_config
+                    .proxy
+                    .upstream
+                    .as_ref()
+                    .and_then(|u| u.tls.as_ref())
+                    .and_then(UpstreamTlsConfig::from_site_config);
+                let streaming_client = self.upstream_client_registry.get_or_create_streaming(
+                    &route_target.site_id,
+                    tls_config.as_ref(),
+                );
+
+                let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
+                let streaming_body = H3ChannelBody::new(rx);
+                let erased_body = ErasedBodyImpl::new(streaming_body);
+
+                let upstream_task = tokio::spawn({
+                    let streaming_client = streaming_client.clone();
+                    let method = method.clone();
+                    let url = upstream_target.url.clone();
+                    async move {
+                        send_request_streaming_generic(
+                            streaming_client.as_ref(),
+                            method,
+                            &url,
+                            erased_body,
+                            forward_headers,
+                            Some(upstream_target.timeout),
+                        )
+                        .await
+                    }
+                });
+
+                let mut streamed_body_len: usize = 0;
+                while let Ok(Some(chunk)) = request_stream.recv_data().await {
+                    use bytes::Buf;
+                    let chunk_len = chunk.remaining();
+                    if streamed_body_len + chunk_len > max_request_size {
+                        let body = "{\"error\":\"Request body too large\"}";
+                        let response = http::Response::builder()
+                            .status(StatusCode::PAYLOAD_TOO_LARGE)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::DATE, generate_stealth_timestamp(5))
+                            .body(Bytes::from(body))
+                            .map_err(|e| format!("Failed to build response: {}", e))?;
+                        let (parts, body) = response.into_parts();
+                        request_stream
+                            .send_response(http::Response::from_parts(parts, ()))
+                            .await
+                            .map_err(|e| format!("Failed to send response: {}", e))?;
+                        request_stream.send_data(body).await?;
+                        request_stream.finish().await?;
+                        upstream_task.abort();
+                        return Ok(());
+                    }
+
+                    let mut chunk_to_scan = chunk;
+                    let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
+
+                    if let Some(sw) = streaming_waf.as_ref() {
+                        if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
+                        {
+                            let _ = tx
+                                .send(Err(std::io::Error::new(
+                                    std::io::ErrorKind::PermissionDenied,
+                                    format!("Blocked by WAF: {}", message),
+                                )))
+                                .await;
+                            let body = format!("{{\"error\":\"{}\"}}", message);
+                            let response = http::Response::builder()
+                                .status(
+                                    StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN),
+                                )
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .header(header::DATE, generate_stealth_timestamp(5))
+                                .body(Bytes::from(body))
+                                .map_err(|e| format!("Failed to build response: {}", e))?;
+                            let (parts, body) = response.into_parts();
+                            request_stream
+                                .send_response(http::Response::from_parts(parts, ()))
+                                .await
+                                .map_err(|e| format!("Failed to send response: {}", e))?;
+                            request_stream.send_data(body).await?;
+                            request_stream.finish().await?;
+                            return Ok(());
+                        }
+                    }
+
+                    streamed_body_len += chunk_bytes.len();
+                    if tx.send(Ok(chunk_bytes)).await.is_err() {
+                        break;
+                    }
+                }
+                drop(tx);
+                if streamed_body_len > 0 {
+                    if let Some(ref bw) = bandwidth {
+                        bw.record_ingress(streamed_body_len as u64, BandwidthProtocol::Http3);
+                        bw.record_site_ingress(&host, streamed_body_len as u64);
+                    }
+                }
+
+                let upstream_result = match upstream_task.await {
+                    Ok(result) => result,
+                    Err(e) => Err(anyhow::anyhow!("upstream task join error: {}", e)),
+                };
+
+                match upstream_result {
+                    Ok(upstream_resp) => {
+                        let (parts, mut upstream_body) = upstream_resp.into_parts();
+                        let body_len = parts
+                            .headers
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+
+                        if upstream_target
+                            .max_response_size
+                            .map(|max| body_len > 0 && body_len as usize > max)
+                            .unwrap_or(false)
+                        {
+                            let body = Bytes::from("Bad Gateway");
+                            let response = http::Response::builder()
+                                .status(StatusCode::BAD_GATEWAY)
+                                .header(header::CONTENT_TYPE, "text/plain")
+                                .body(())
+                                .map_err(|e| format!("Failed to build response: {}", e))?;
+                            request_stream.send_response(response).await?;
+                            request_stream.send_data(body).await?;
+                        } else {
+                            let mut resp_builder = http::Response::builder().status(parts.status);
+                            let headers_to_filter = crate::proxy::build_headers_to_filter_for_site(
+                                &self.main_config.security.more_clear_headers,
+                                &route_target.site_config.security.more_clear_headers,
+                                &route_target.site_config.security_headers.more_clear_headers,
+                            );
+                            let filtered_headers =
+                                filter_response_headers_buf(&parts.headers, &headers_to_filter);
+                            for (name, value) in filtered_headers.iter() {
+                                if let Ok(v) = value.to_str() {
+                                    resp_builder = resp_builder.header(name.as_str(), v);
+                                }
+                            }
+                            resp_builder =
+                                apply_security_headers(resp_builder, route_target, &self.main_config);
+                            let response = resp_builder
+                                .body(())
+                                .map_err(|e| format!("Failed to build response: {}", e))?;
+                            request_stream.send_response(response).await?;
+
+                            while let Some(chunk) = upstream_body.frame().await {
+                                match chunk {
+                                    Ok(frame) => {
+                                        if let Some(data) = frame.data_ref() {
+                                            request_stream.send_data(data.clone()).await?;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Error reading upstream body: {}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Upstream error over HTTP/3 streaming: {}", e);
+                        let body = Bytes::from("Bad Gateway");
+                        let response = http::Response::builder()
+                            .status(StatusCode::BAD_GATEWAY)
+                            .header(header::CONTENT_TYPE, "text/plain")
+                            .body(body)
+                            .unwrap();
+                        let (parts, body) = response.into_parts();
+                        request_stream
+                            .send_response(http::Response::from_parts(parts, ()))
+                            .await?;
+                        request_stream.send_data(body).await?;
+                    }
+                }
+
+                request_stream
+                    .finish()
+                    .await
+                    .map_err(|e| format!("Failed to finish stream: {}", e))?;
+                histogram!("synvoid.http3.request.duration").record(start.elapsed());
+                counter!("synvoid.http3.responses").increment(1);
+                drop(connection_token);
+                return Ok(());
+            }
+        }
 
         match route_result {
             RouteResult::Found(route_target) => {
@@ -629,8 +940,9 @@ impl Http3Server {
                         } else {
                             let mut resp_builder = http::Response::builder().status(parts.status);
 
-                            let headers_to_filter = crate::proxy::build_headers_to_filter(
-                                &[],
+                            let headers_to_filter = crate::proxy::build_headers_to_filter_for_site(
+                                &self.main_config.security.more_clear_headers,
+                                &route_target.site_config.security.more_clear_headers,
                                 &route_target.site_config.security_headers.more_clear_headers,
                             );
 
@@ -787,6 +1099,33 @@ impl Http3Server {
             )
         } else {
             String::new()
+        }
+    }
+}
+
+struct H3ChannelBody {
+    rx: mpsc::Receiver<Result<Bytes, std::io::Error>>,
+}
+
+impl H3ChannelBody {
+    fn new(rx: mpsc::Receiver<Result<Bytes, std::io::Error>>) -> Self {
+        Self { rx }
+    }
+}
+
+impl hyper::body::Body for H3ChannelBody {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.rx.poll_recv(cx) {
+            Poll::Ready(Some(Ok(bytes))) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
