@@ -271,29 +271,7 @@ impl FileManager {
     fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
         #[cfg(feature = "mesh")]
         {
-            if let Some(yara_scanner) = self.malware_scanner.get_yara_scanner() {
-                if let Some(yara_rules) = crate::waf::get_yara_rules() {
-                    let current_version = yara_scanner.get_version();
-                    let new_version = yara_rules.get_current_version();
-
-                    if current_version != new_version {
-                        let _guard = self.reload_lock.write();
-                        let current_version = yara_scanner.get_version();
-                        let new_version = yara_rules.get_current_version();
-
-                        if current_version != new_version {
-                            if let Some(new_rules) = yara_rules.get_current_rules() {
-                                tracing::debug!(
-                                    current_version = ?current_version,
-                                    new_version = ?new_version,
-                                    "Reloading YARA rules in FileManager with new version"
-                                );
-                                yara_scanner.reload_with_rules(&new_rules, new_version)?;
-                            }
-                        }
-                    }
-                }
-            }
+            let _ = self;
         }
         #[cfg(not(feature = "mesh"))]
         {
