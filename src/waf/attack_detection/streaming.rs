@@ -5,6 +5,7 @@ use bytes::Bytes;
 use parking_lot::RwLock;
 
 use crate::waf::attack_detection::{AttackDetectionResult, AttackDetector};
+use crate::buffer::{BufferPool, PooledBuf};
 
 const DEFAULT_CHUNK_SIZE: usize = 4096;
 const DEFAULT_MAX_BUFFERED_CHUNKS: usize = 64;
@@ -23,12 +24,12 @@ pub struct StreamingWafCore {
     state: RwLock<StreamingState>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 enum MultipartState {
     None,
     LookingForBoundary,
-    ReadingHeaders { buffer: String },
-    ReadingField { buffer: String },
+    ReadingHeaders { buffer: PooledBuf },
+    ReadingField { buffer: PooledBuf },
     SkippingFile,
 }
 
@@ -40,7 +41,7 @@ struct StreamingState {
     bytes_seen: usize,
     boundary: Option<String>,
     multipart_state: MultipartState,
-    trailing_window: Vec<u8>,
+    trailing_window: PooledBuf,
 }
 
 const TRAILING_WINDOW_SIZE: usize = 128;
@@ -59,7 +60,7 @@ impl StreamingWafCore {
                 bytes_seen: 0,
                 boundary: None,
                 multipart_state: MultipartState::None,
-                trailing_window: Vec::with_capacity(TRAILING_WINDOW_SIZE),
+                trailing_window: BufferPool::acquire(0),
             }),
         }
     }
@@ -81,7 +82,7 @@ impl StreamingWafCore {
                 bytes_seen: 0,
                 boundary: None,
                 multipart_state: MultipartState::None,
-                trailing_window: Vec::with_capacity(TRAILING_WINDOW_SIZE),
+                trailing_window: BufferPool::acquire(0),
             }),
         }
     }
@@ -118,14 +119,11 @@ impl StreamingWafCore {
         state: &mut StreamingState,
         chunk: &[u8],
     ) -> StreamingWafDecision {
-        // Handle split across chunks by prepending trailing window
-        let mut data_to_scan = Vec::with_capacity(state.trailing_window.len() + chunk.len());
-        data_to_scan.extend_from_slice(&state.trailing_window);
-        data_to_scan.extend_from_slice(chunk);
-
-        let s = String::from_utf8_lossy(&data_to_scan);
-
-        if let Some(result) = self.inner.check_body_only_via_normalized(&s) {
+        // Use fragmented scan to avoid merging buffers
+        if let Some(result) = self.inner.check_body_fragments(&[
+            state.trailing_window.as_slice(),
+            chunk,
+        ]) {
             state.last_result = Some(result.clone());
             return StreamingWafDecision::Block(
                 result.get_block_status().unwrap_or(403),
@@ -135,10 +133,10 @@ impl StreamingWafCore {
 
         // Update trailing window
         state.trailing_window.clear();
-        let window_start = data_to_scan.len().saturating_sub(TRAILING_WINDOW_SIZE);
+        let window_start = chunk.len().saturating_sub(TRAILING_WINDOW_SIZE);
         state
             .trailing_window
-            .extend_from_slice(&data_to_scan[window_start..]);
+            .extend_from_slice(&chunk[window_start..]);
 
         StreamingWafDecision::Continue
     }
@@ -151,10 +149,13 @@ impl StreamingWafCore {
         let boundary = state.boundary.clone().unwrap();
         let mut current_pos = 0;
 
-        // Use a combined buffer of trailing window + current chunk to handle splits
-        let mut combined = Vec::with_capacity(state.trailing_window.len() + chunk.len());
-        combined.extend_from_slice(&state.trailing_window);
-        combined.extend_from_slice(chunk);
+        // Use a thread-local merge buffer instead of Vec::with_capacity
+        // Actually, we can just use a local Vec for now if it's small, 
+        // but the task said "Reduce ... allocation overhead ... to zero".
+        // Let's use a temporary merge buffer from BufferPool.
+        let mut combined = BufferPool::acquire(state.trailing_window.len() + chunk.len());
+        combined.as_mut_slice()[..state.trailing_window.len()].copy_from_slice(state.trailing_window.as_slice());
+        combined.as_mut_slice()[state.trailing_window.len()..].copy_from_slice(chunk);
 
         while current_pos < combined.len() {
             match &mut state.multipart_state {
@@ -162,7 +163,7 @@ impl StreamingWafCore {
                     let remaining = &combined[current_pos..];
                     if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
                         state.multipart_state = MultipartState::ReadingHeaders {
-                            buffer: String::new(),
+                            buffer: BufferPool::acquire(0),
                         };
                         current_pos += pos + boundary.len();
                     } else {
@@ -173,20 +174,21 @@ impl StreamingWafCore {
                     let remaining = &combined[current_pos..];
                     let s = String::from_utf8_lossy(remaining);
                     if let Some(pos) = s.find("\r\n\r\n") {
-                        let header_chunk = &s[..pos + 4];
-                        buffer.push_str(header_chunk);
-                        current_pos += header_chunk.as_bytes().len();
+                        let header_chunk = &remaining[..pos + 4];
+                        buffer.extend_from_slice(header_chunk);
+                        current_pos += header_chunk.len();
 
                         // Parse headers to see if it's a file
-                        if buffer.to_lowercase().contains("filename=") {
+                        let header_str = String::from_utf8_lossy(buffer.as_slice()).to_lowercase();
+                        if header_str.contains("filename=") {
                             state.multipart_state = MultipartState::SkippingFile;
                         } else {
                             state.multipart_state = MultipartState::ReadingField {
-                                buffer: String::new(),
+                                buffer: BufferPool::acquire(0),
                             };
                         }
                     } else {
-                        buffer.push_str(&s);
+                        buffer.extend_from_slice(remaining);
                         current_pos = combined.len();
                     }
                 }
@@ -194,10 +196,11 @@ impl StreamingWafCore {
                     let remaining = &combined[current_pos..];
                     if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
                         let field_data = &remaining[..pos];
-                        buffer.push_str(&String::from_utf8_lossy(field_data));
+                        buffer.extend_from_slice(field_data);
 
                         // Scan the field
-                        if let Some(result) = self.inner.check_body_only_via_normalized(buffer) {
+                        let field_str = String::from_utf8_lossy(buffer.as_slice());
+                        if let Some(result) = self.inner.check_body_only_via_normalized(&field_str) {
                             state.last_result = Some(result.clone());
                             return StreamingWafDecision::Block(
                                 result.get_block_status().unwrap_or(403),
@@ -209,11 +212,11 @@ impl StreamingWafCore {
                         }
 
                         state.multipart_state = MultipartState::ReadingHeaders {
-                            buffer: String::new(),
+                            buffer: BufferPool::acquire(0),
                         };
                         current_pos += pos + boundary.len();
                     } else {
-                        buffer.push_str(&String::from_utf8_lossy(remaining));
+                        buffer.extend_from_slice(remaining);
                         current_pos = combined.len();
                     }
                 }
@@ -221,7 +224,7 @@ impl StreamingWafCore {
                     let remaining = &combined[current_pos..];
                     if let Some(pos) = self.find_bytes(remaining, boundary.as_bytes()) {
                         state.multipart_state = MultipartState::ReadingHeaders {
-                            buffer: String::new(),
+                            buffer: BufferPool::acquire(0),
                         };
                         current_pos += pos + boundary.len();
                     } else {
@@ -267,7 +270,7 @@ impl StreamingWafCore {
         state.bytes_seen = 0;
         state.boundary = None;
         state.multipart_state = MultipartState::None;
-        state.trailing_window.clear();
+        state.trailing_window = BufferPool::acquire(0);
     }
 
     fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {

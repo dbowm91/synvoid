@@ -29,7 +29,7 @@ use crate::config::site::ProxyHeadersConfig;
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
-use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
+use crate::http::shared_handler::stream_body_with_waf;
 use crate::http_client::{send_request_streaming, UpstreamTlsConfig};
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -1490,7 +1490,7 @@ impl HttpsServer {
                                     &host,
                                     &parts.headers,
                                     "https",
-                                    Some(body_bytes.clone()),
+                                    Some(crate::http_client::ErasedBodyImpl::from_full(http_body_util::Full::new(body_bytes.clone()))),
                                     client_ip,
                                 )
                                 .await
@@ -1823,16 +1823,18 @@ impl HttpsServer {
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
     {
-        use crate::http::shared_handler::BodyCollectionProtocol;
-        collect_body_with_chunk_waf_impl(
+        let streaming = crate::http::shared_handler::stream_body_with_waf(
             body,
             waf,
             client_ip,
-            BodyCollectionProtocol::Https,
-            content_length,
+            crate::http::shared_handler::BodyCollectionProtocol::Https,
             max_body_size,
-        )
-        .await
+        );
+        use http_body_util::BodyExt;
+        match streaming.collect().await {
+            Ok(c) => Ok(c.to_bytes()),
+            Err(_) => Err(()),
+        }
         .unwrap_or_else(|_| Bytes::from_static(&[]))
     }
 }

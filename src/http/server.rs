@@ -30,7 +30,9 @@ use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::http::shared_handler::collect_body_with_chunk_waf_impl;
+use crate::http::shared_handler::{BodyCollectionProtocol, stream_body_with_waf};
+
+
 use crate::waf::traffic_shaper::ConnectionLimiter;
 use crate::waf::ConnectionToken;
 use parking_lot::Mutex;
@@ -1018,6 +1020,125 @@ impl HttpServer {
         }
 
         // ============================================================================
+        // SECTION 12: Routing & Site Resolution
+        // ============================================================================
+        let query_string = parts.uri.query();
+
+        let route = router.route_with_local_addr(&host, &path, local_addr);
+
+        let target = match route {
+            crate::router::RouteResult::Found(target) => target,
+            crate::router::RouteResult::NotFound(msg) => {
+                tracing::debug!("Route not found: {} for host: {}", msg, host);
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id;
+                Self::send_request_log_if_enabled(
+                    ipc_clone,
+                    worker_id_clone,
+                    &main_config,
+                    client_ip,
+                    &method.to_string(),
+                    &path,
+                    404,
+                    start.elapsed().as_millis() as u64,
+                    &host,
+                    user_agent.as_deref(),
+                    false,
+                );
+                return Ok(Self::build_response_with_alt_svc(
+                    404,
+                    "Not Found".to_string(),
+                    "text/plain",
+                    &alt_svc,
+                    &main_config,
+                ));
+            }
+            crate::router::RouteResult::Error(msg) => {
+                tracing::error!("Router error: {}", msg);
+                let ipc_clone = ipc.clone();
+                let worker_id_clone = worker_id;
+                Self::send_request_log_if_enabled(
+                    ipc_clone,
+                    worker_id_clone,
+                    &main_config,
+                    client_ip,
+                    &method.to_string(),
+                    &path,
+                    500,
+                    start.elapsed().as_millis() as u64,
+                    &host,
+                    user_agent.as_deref(),
+                    false,
+                );
+                return Ok(Self::build_response_with_alt_svc(
+                    500,
+                    crate::http::reason_phrase(500).to_string(),
+                    "text/plain",
+                    &alt_svc,
+                    &main_config,
+                ));
+            }
+        };
+
+        let site_id = target.site_id.to_string();
+
+        let site_traffic_config = &target.site_config.traffic_shaping.connection;
+        let site_max_connections = site_traffic_config.max_connections;
+        let site_max_per_ip = site_traffic_config.max_connections_per_ip;
+
+        if site_max_connections.is_some() || site_max_per_ip.is_some() {
+            if let Some(ref conn_limiter) = waf.connection_limiter {
+                match conn_limiter
+                    .try_acquire_with_limits(
+                        &site_id,
+                        client_ip,
+                        site_max_connections,
+                        site_max_per_ip,
+                    )
+                    .await
+                {
+                    Ok(new_token) => {
+                        if let Some(ref guard) = _conn_guard {
+                            guard.release_and_acquire(new_token);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Per-site connection limit exceeded for site {}: {}",
+                            site_id,
+                            e
+                        );
+                        counter!("synvoid.traffic.connection_limited").increment(1);
+                        let ipc_clone = ipc.clone();
+                        let worker_id_clone = worker_id;
+                        Self::send_request_log_if_enabled(
+                            ipc_clone,
+                            worker_id_clone,
+                            &main_config,
+                            client_ip,
+                            &method.to_string(),
+                            &path,
+                            503,
+                            start.elapsed().as_millis() as u64,
+                            &site_id,
+                            user_agent.as_deref(),
+                            true,
+                        );
+                        return Ok(Self::build_response_with_alt_svc(
+                            503,
+                            "Too Many Connections".to_string(),
+                            "application/json",
+                            &alt_svc,
+                            &main_config,
+                        ));
+                    }
+                }
+            }
+        }
+
+        
+        let _is_internal_orig = client_ip.is_loopback();
+        // ============================================================================
         // SECTION 10: Body Collection (with chunk-based WAF for large bodies)
         // ============================================================================
         let mut request_body_size: u64 = 0;
@@ -1338,123 +1459,6 @@ impl HttpServer {
         }
 
         let _drain_guard = DrainGuard::new(drain_state.clone());
-
-        // ============================================================================
-        // SECTION 12: Routing & Site Resolution
-        // ============================================================================
-        let query_string = parts.uri.query();
-
-        let route = router.route_with_local_addr(&host, &path, local_addr);
-
-        let target = match route {
-            crate::router::RouteResult::Found(target) => target,
-            crate::router::RouteResult::NotFound(msg) => {
-                tracing::debug!("Route not found: {} for host: {}", msg, host);
-                let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id;
-                Self::send_request_log_if_enabled(
-                    ipc_clone,
-                    worker_id_clone,
-                    &main_config,
-                    client_ip,
-                    &method.to_string(),
-                    &path,
-                    404,
-                    start.elapsed().as_millis() as u64,
-                    &host,
-                    user_agent.as_deref(),
-                    false,
-                );
-                return Ok(Self::build_response_with_alt_svc(
-                    404,
-                    "Not Found".to_string(),
-                    "text/plain",
-                    &alt_svc,
-                    &main_config,
-                ));
-            }
-            crate::router::RouteResult::Error(msg) => {
-                tracing::error!("Router error: {}", msg);
-                let ipc_clone = ipc.clone();
-                let worker_id_clone = worker_id;
-                Self::send_request_log_if_enabled(
-                    ipc_clone,
-                    worker_id_clone,
-                    &main_config,
-                    client_ip,
-                    &method.to_string(),
-                    &path,
-                    500,
-                    start.elapsed().as_millis() as u64,
-                    &host,
-                    user_agent.as_deref(),
-                    false,
-                );
-                return Ok(Self::build_response_with_alt_svc(
-                    500,
-                    crate::http::reason_phrase(500).to_string(),
-                    "text/plain",
-                    &alt_svc,
-                    &main_config,
-                ));
-            }
-        };
-
-        let site_id = target.site_id.to_string();
-
-        let site_traffic_config = &target.site_config.traffic_shaping.connection;
-        let site_max_connections = site_traffic_config.max_connections;
-        let site_max_per_ip = site_traffic_config.max_connections_per_ip;
-
-        if site_max_connections.is_some() || site_max_per_ip.is_some() {
-            if let Some(ref conn_limiter) = waf.connection_limiter {
-                match conn_limiter
-                    .try_acquire_with_limits(
-                        &site_id,
-                        client_ip,
-                        site_max_connections,
-                        site_max_per_ip,
-                    )
-                    .await
-                {
-                    Ok(new_token) => {
-                        if let Some(ref guard) = _conn_guard {
-                            guard.release_and_acquire(new_token);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Per-site connection limit exceeded for site {}: {}",
-                            site_id,
-                            e
-                        );
-                        counter!("synvoid.traffic.connection_limited").increment(1);
-                        let ipc_clone = ipc.clone();
-                        let worker_id_clone = worker_id;
-                        Self::send_request_log_if_enabled(
-                            ipc_clone,
-                            worker_id_clone,
-                            &main_config,
-                            client_ip,
-                            &method.to_string(),
-                            &path,
-                            503,
-                            start.elapsed().as_millis() as u64,
-                            &site_id,
-                            user_agent.as_deref(),
-                            true,
-                        );
-                        return Ok(Self::build_response_with_alt_svc(
-                            503,
-                            "Too Many Connections".to_string(),
-                            "application/json",
-                            &alt_svc,
-                            &main_config,
-                        ));
-                    }
-                }
-            }
-        }
 
         let req_metrics = metrics.as_ref().map(|m| RequestMetrics {
             site_id: site_id.clone(),
@@ -2637,7 +2641,7 @@ impl HttpServer {
                     // Use truncated body for WAF inspection (WASM filters)
                     let body_bytes: Bytes = body_slice
                         .as_ref()
-                        .map(|b| b.to_vec().into())
+                        .map(|b: &std::sync::Arc<bytes::Bytes>| b.to_vec().into())
                         .unwrap_or_default();
 
                     let mut filter_builder = http::Request::builder()
@@ -4243,16 +4247,19 @@ impl HttpServer {
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
     {
-        use crate::http::shared_handler::BodyCollectionProtocol;
-        let result = collect_body_with_chunk_waf_impl(
+        let protocol = crate::http::shared_handler::BodyCollectionProtocol::Http;
+        let streaming = crate::http::shared_handler::stream_body_with_waf(
             body,
             waf,
             client_ip,
-            BodyCollectionProtocol::Http,
-            content_length,
+            protocol,
             max_body_size,
-        )
-        .await;
+        );
+        use http_body_util::BodyExt;
+        let result = match streaming.collect().await {
+            Ok(c) => Ok(c.to_bytes()),
+            Err(_) => Err(()),
+        };
         match &result {
             Ok(body) => {
                 *request_body_size = body.len() as u64;

@@ -635,6 +635,21 @@ impl std::ops::DerefMut for PooledBuf {
     }
 }
 
+impl std::fmt::Debug for PooledBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PooledBuf")
+            .field("len", &self.requested_size)
+            .field("capacity", &self.buf.as_ref().map(|b| b.capacity()).unwrap_or(0))
+            .finish()
+    }
+}
+
+impl PartialEq for PooledBuf {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
 impl AsRef<[u8]> for PooledBuf {
     fn as_ref(&self) -> &[u8] {
         self.as_slice()

@@ -34,6 +34,10 @@ use http::Response;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::task::{Context, Poll};
+use http_body_util::Full;
+use bytes::Bytes;
+
 
 use subtle::ConstantTimeEq;
 
@@ -41,7 +45,7 @@ use crate::config::site::{BufferingConfig, ProxyCacheConfig, RetryConfig};
 use crate::http_client::{
     create_http_client_with_config, create_upstream_client,
     send_request_with_body_and_timeout_with_limit, send_request_with_timeout, HttpClient,
-    UpstreamTlsConfig,
+    UpstreamTlsConfig, BoxErasedBody, ErasedHttpClient, ErasedBodyImpl,
 };
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
 use crate::proxy::cache::{
@@ -64,6 +68,7 @@ use crate::waf::{UpstreamErrorTracker, WafCore};
 pub struct ProxyServer {
     client: HttpClient,
     revalidation_client: HttpClient,
+    erased_client: ErasedHttpClient,
     upstream_url: String,
     waf: Arc<WafCore>,
     max_response_size: usize,
@@ -166,6 +171,7 @@ impl ProxyServer {
         let skip_verify = tls_config.map(|t| t.skip_verify).unwrap_or(false);
 
         ProxyServer {
+            erased_client: crate::http_client::ErasedHttpClient::new(100),
             client,
             revalidation_client,
             upstream_url,
@@ -279,6 +285,7 @@ impl ProxyServer {
         };
 
         ProxyServer {
+            erased_client: crate::http_client::ErasedHttpClient::new(100),
             client,
             revalidation_client,
             upstream_url: String::new(),
@@ -305,7 +312,7 @@ impl ProxyServer {
         method: http::Method,
         path: String,
         user_agent: Option<String>,
-        body: Option<bytes::Bytes>,
+        body: Option<BoxErasedBody>,
         skip_waf_check: bool,
         headers: &http::HeaderMap,
     ) -> Result<Response<bytes::Bytes>, String> {
@@ -327,7 +334,7 @@ impl ProxyServer {
         if !skip_waf_check {
             let drop = self.waf.config.drop_blocked_requests;
 
-            let body_slice: Option<&[u8]> = body.as_deref();
+            let body_slice: Option<&[u8]> = None;
 
             let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
                 (
@@ -496,7 +503,7 @@ impl ProxyServer {
         &self,
         method: http::Method,
         path: &str,
-        body: Option<bytes::Bytes>,
+        mut body: Option<BoxErasedBody>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         if self.skip_verify {
             tracing::warn!(
@@ -520,7 +527,7 @@ impl ProxyServer {
         tunnel_url: &str,
         path: &str,
         headers: Option<&http::HeaderMap>,
-        body: Option<bytes::Bytes>,
+        body: Option<BoxErasedBody>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let full_url = join_upstream_url(tunnel_url, path);
         self.send_single_request(method, &full_url, headers, body)
@@ -534,7 +541,7 @@ impl ProxyServer {
         host: &str,
         headers: &http::HeaderMap,
         scheme: &str,
-        body: Option<bytes::Bytes>,
+        mut body: Option<BoxErasedBody>,
         client_ip: std::net::IpAddr,
     ) -> Result<Response<bytes::Bytes>, String> {
         let purge_token = headers
@@ -633,7 +640,7 @@ impl ProxyServer {
                         record_proxy_cache_miss();
 
                         let result = self
-                            .forward_request(method.clone(), path, body.clone())
+                            .forward_request(method.clone(), path, body)
                             .await;
 
                         match result {
@@ -642,12 +649,12 @@ impl ProxyServer {
 
                                 if self.is_response_cacheable(&response, headers) {
                                     let status = response.status().as_u16();
-                                    let body = response.body().clone();
+                                    let response_body = response.body().clone();
                                     let headers = filter_sensitive_headers_impl(response.headers());
                                     let max_age = self.get_cache_max_age(&headers);
 
                                     if let Err(e) =
-                                        cache.insert(cache_key, body, status, headers, max_age)
+                                        cache.insert(cache_key, response_body, status, headers, max_age)
                                     {
                                         tracing::warn!("Failed to cache response: {}", e);
                                     }
@@ -886,7 +893,7 @@ impl ProxyServer {
         method: http::Method,
         path: &str,
         pool: &UpstreamPool,
-        body: Option<bytes::Bytes>,
+        mut body: Option<BoxErasedBody>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         let retry_config = self.retry_config.as_ref();
         let retry_enabled = retry_config.map(|c| c.enabled).unwrap_or(false);
@@ -934,7 +941,7 @@ impl ProxyServer {
             );
 
             let result = self
-                .send_single_request(method.clone(), &url, None, body.clone())
+                .send_single_request(method.clone(), &url, None, body.take())
                 .await;
 
             backend.decrement_connections();
@@ -1036,18 +1043,34 @@ impl ProxyServer {
         method: http::Method,
         url: &str,
         headers: Option<&http::HeaderMap>,
-        body: Option<bytes::Bytes>,
+        body: Option<BoxErasedBody>,
     ) -> Result<Response<bytes::Bytes>, Box<dyn std::error::Error + Send + Sync>> {
         use crate::proxy::headers::HOP_BY_HOP_HEADERS;
 
         let hop_by_hop_headers = HOP_BY_HOP_HEADERS;
 
         if crate::http_client::is_quictunnel_url(url) {
+            let bytes_body = if let Some(mut b) = body {
+                let mut collected = bytes::BytesMut::new();
+                let waker = futures::task::noop_waker();
+                let mut cx = std::task::Context::from_waker(&waker);
+                while let std::task::Poll::Ready(Some(Ok(frame))) = b.poll_frame(&mut cx) {
+                    if frame.is_data() {
+                        if let Ok(data) = frame.into_data().map(|b| b) {
+                            collected.extend_from_slice(&data);
+                        }
+                    }
+                }
+                Some(collected.freeze())
+            } else {
+                None
+            };
+
             let response = crate::http_client::send_request_via_quic_tunnel(
                 method,
                 url,
                 headers,
-                body,
+                bytes_body,
                 Some(std::time::Duration::from_secs(30)),
             )
             .await?;
@@ -1058,12 +1081,12 @@ impl ProxyServer {
                 .filter(|(k, _)| !hop_by_hop_headers.contains(&k.as_str()))
                 .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
                 .collect();
-            let body = response.body;
+            let response_body = response.body;
 
-            if body.len() > self.max_response_size {
+            if response_body.len() > self.max_response_size {
                 tracing::warn!(
                     "Upstream response body too large: {} bytes (limit: {})",
-                    body.len(),
+                    response_body.len(),
                     self.max_response_size
                 );
                 return Err("Response too large".into());
@@ -1075,36 +1098,41 @@ impl ProxyServer {
                 builder = builder.header(&key, &value);
             }
 
-            return Ok(builder.body(body)?);
+            return Ok(builder.body(response_body)?);
         }
 
-        let response = send_request_with_body_and_timeout_with_limit(
-            &self.client,
+        let forward_headers = headers.cloned().unwrap_or_default();
+
+        let response = crate::http_client::send_request_erased_streaming(
+            &self.erased_client,
             method,
             url,
-            body,
+            body.unwrap_or_else(|| crate::http_client::ErasedBodyImpl::from_full(http_body_util::Full::new(bytes::Bytes::new()))),
+            forward_headers,
             Some(std::time::Duration::from_secs(30)),
-            Some(self.max_response_size),
         )
         .await?;
 
-        let status = response.status_code();
+        let status = response.status();
+        let (parts, incoming_body) = response.into_parts();
 
-        let headers: Vec<(String, String)> = response
-            .headers_iter()
+        let headers_vec: Vec<(String, String)> = parts.headers
+            .iter()
             .filter(|(k, _)| !hop_by_hop_headers.contains(&k.as_str()))
             .filter_map(|(k, v)| v.to_str().ok().map(|vv| (k.to_string(), vv.to_string())))
             .collect();
 
-        let body = response.body;
+        // For now, we still buffer the RESPONSE body. Phase 4 could optimize this too.
+        use http_body_util::BodyExt;
+        let body_bytes = incoming_body.collect().await?.to_bytes();
 
         let mut builder = Response::builder().status(status);
 
-        for (key, value) in headers {
+        for (key, value) in headers_vec {
             builder = builder.header(&key, &value);
         }
 
-        Ok(builder.body(body)?)
+        Ok(builder.body(body_bytes)?)
     }
 }
 

@@ -8,6 +8,7 @@ const MAX_OUTPUT_RATIO: usize = 100;
 thread_local! {
     static NORMALIZE_BUFFER: RefCell<String> = RefCell::new(String::with_capacity(4096));
     static NORMALIZE_CHARS: RefCell<Vec<char>> = RefCell::new(Vec::with_capacity(4096));
+    static FRAGMENT_MERGE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(8192));
 }
 
 #[inline]
@@ -62,47 +63,81 @@ impl InputNormalizer {
             NORMALIZE_CHARS.with(|chars_cell| {
                 let mut buffer = buf_cell.borrow_mut();
                 let mut chars = chars_cell.borrow_mut();
-                buffer.clear();
-                chars.clear();
-
-                let mut passes = 0;
-                let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
-
-                buffer.push_str(input);
-
-                for _ in 0..self.max_decode_passes {
-                    let prev_len = buffer.len();
-                    chars.clear();
-                    chars.extend(buffer.chars());
-                    buffer.clear();
-                    let decoded = self.decode_single_pass_with_chars(&mut buffer, &mut chars);
-                    if decoded == prev_len {
-                        break;
-                    }
-                    if decoded > max_output {
-                        break;
-                    }
-                    passes += 1;
-                }
-
-                chars.clear();
-                chars.extend(buffer.chars());
-                buffer.clear();
-                self.apply_normalizations_with_chars(&mut buffer, &mut chars);
-
-                let normalized = if buffer.as_str() == input {
-                    Cow::Borrowed(input)
-                } else {
-                    Cow::Owned(buffer.clone())
-                };
-
-                NormalizedInput {
-                    normalized,
-                    lowercased: Cow::Owned(buffer.to_lowercase()),
-                    passes,
-                }
+                self.normalize_internal(input, &mut buffer, &mut chars)
             })
         })
+    }
+
+    pub fn normalize_fragments(&self, fragments: &[&[u8]]) -> NormalizedInput<'static> {
+        FRAGMENT_MERGE_BUFFER.with(|merge_cell| {
+            let mut merge_buf = merge_cell.borrow_mut();
+            merge_buf.clear();
+            for frag in fragments {
+                merge_buf.extend_from_slice(frag);
+            }
+
+            let input_str = String::from_utf8_lossy(&merge_buf);
+
+            NORMALIZE_BUFFER.with(|buf_cell| {
+                NORMALIZE_CHARS.with(|chars_cell| {
+                    let mut buffer = buf_cell.borrow_mut();
+                    let mut chars = chars_cell.borrow_mut();
+                    let ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
+                    NormalizedInput {
+                        normalized: Cow::Owned(ni.normalized.into_owned()),
+                        lowercased: ni.lowercased,
+                        passes: ni.passes,
+                    }
+                })
+            })
+        })
+    }
+
+    fn normalize_internal<'a>(
+        &self,
+        input: &'a str,
+        buffer: &mut String,
+        chars: &mut Vec<char>,
+    ) -> NormalizedInput<'a> {
+        buffer.clear();
+        chars.clear();
+
+        let mut passes = 0;
+        let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
+
+        buffer.push_str(input);
+
+        for _ in 0..self.max_decode_passes {
+            let prev_len = buffer.len();
+            chars.clear();
+            chars.extend(buffer.chars());
+            buffer.clear();
+            let decoded = self.decode_single_pass_with_chars(buffer, chars);
+            if decoded == prev_len {
+                break;
+            }
+            if decoded > max_output {
+                break;
+            }
+            passes += 1;
+        }
+
+        chars.clear();
+        chars.extend(buffer.chars());
+        buffer.clear();
+        self.apply_normalizations_with_chars(buffer, chars);
+
+        let normalized = if buffer.as_str() == input {
+            Cow::Borrowed(input)
+        } else {
+            Cow::Owned(buffer.clone())
+        };
+
+        NormalizedInput {
+            normalized,
+            lowercased: Cow::Owned(buffer.to_lowercase()),
+            passes,
+        }
     }
 
     fn decode_single_pass_with_chars(&self, input: &mut String, chars: &mut [char]) -> usize {

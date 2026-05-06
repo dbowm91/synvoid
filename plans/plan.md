@@ -1,161 +1,68 @@
-# Reverse Proxy and WAF Improvement Plan
+# Streaming WAF and HTTP Stack Optimization Plan (1M RPS)
 
-**Status**: ✅ ALL WAVES AND DEFERRED ITEMS COMPLETED (2026-05-06)
-**Last updated**: 2026-05-06
-**Scope**: True streaming via type-erased connection pool, HTTP/TLS/HTTP3 unification, routing benchmarks, and remaining deferred items.
+**Status**: 🏗️ PLANNING (2026-05-06)
+**Target**: Support 1 million RPS with true streaming and optimized memory allocation.
 
-This file contains all open, partially complete, and deferred work. Every item below should be treated as open unless a commit proves otherwise.
-
----
-
-## ✅ Wave 1: True Streaming via Type-Erased Connection Pool
-
-**Status**: ✅ COMPLETED (2026-05-06)
-**Commit**: 04e89618 (Wave 1 Phases 2,4,5: Complete type-erased connection pool implementation)
-
-### Completed Phases
-
-**Phase 1** (Already complete):
-- Core trait definitions (ErasedBody, ErasedBodyImpl, PoolKey, BoxErasedBody)
-
-**Phase 2** ✅:
-- `Http1PooledConnection` now holds `http1_client::SendRequest<BoxErasedBody>` after handshake
-- Async constructor takes TcpStream, wraps in TokioIo, performs http1::handshake
-- `send_request()` takes ownership and returns type-erased response
-- `send_request_and_take_back()` returns connection after request for pool reuse
-- `is_available()` now returns true when connection is active
-
-**Phase 3** (Already complete):
-- `Http2PooledConnection` stub exists
-
-**Phase 4** ✅:
-- `ErasedConnectionPool` with `Mutex<HashMap<PoolKey, VecDeque<Http1PooledConnection>>>`
-- `checkout()` - creates new connection via `Http1PooledConnection::new()`
-- `checkin()` - returns connection to pool for reuse
-- `idle_count()` and `total_idle_count()` for monitoring
-- `connect_timeout` configuration option
-
-**Phase 5** ✅:
-- `ErasedHttpClient` as primary interface for type-erased HTTP requests
-- `send_request()` with pool checkout/checkin
-- `pool()` accessor for monitoring
-- Exports `ErasedConnectionPool`, `ErasedHttpClient` publicly
-
-### Note
-- Phase 9 Integration ✅ (2026-05-06): Wired `ErasedHttpClient` into `http/server.rs` proxy path for `BodyBufferingPolicy::Streaming` requests above streaming threshold
-- Added `send_request_erased_streaming()` function in `http_client/mod.rs`
-- `ErasedHttpClient` added to `HttpServer` struct with cloning support
-- Streaming threshold check uses `site_config.proxy.streaming_threshold_bytes`
+## Goal
+Transform the WAF and HTTP stack from "buffered scanning" to "true streaming". Eliminate body collection in memory, utilize the global `BufferPool` for all IO, and minimize per-chunk allocations in the WAF core to support high-throughput, low-latency traffic.
 
 ---
 
-## ✅ Wave 2: Unify Protocol Behavior via `ProtocolAdapter`
+## Phase 1: WAF Core Allocation Optimization
+**Goal**: Reduce the per-chunk allocation overhead in `StreamingWafCore` to zero (or near-zero).
 
-**Status**: ✅ COMPLETED (2026-05-06)
-**Commit**: ebb8f653 (Wave 2: Add send_waf_response to ProtocolAdapter trait)
+- [ ] **Integrate BufferPool**: Modify `StreamingWafCore` to use `synvoid_utils::buffer::Pool` (BufferPool) for `trailing_window` and internal buffers.
+- [ ] **Thread-Local Normalization Buffer**: Instead of creating a new `String` in `process_regular_chunk`, use the existing thread-local `NORMALIZE_BUFFER` from `src/waf/attack_detection/normalizer.rs`.
+- [ ] **Zero-Copy Boundary Checks**:
+    - Update `AttackDetector` to support a "fragmented scan" API that takes a slice of slices (e.g., `&[&[u8]]`).
+    - Use this to scan the `trailing_window` + `current_chunk` without merging them into a new `Vec`.
+- [ ] **Multipart Buffer Pooling**: Replace `MultipartState`'s `String` buffers with pooled `BytesMut`.
 
-### Phase 4.5: `send_waf_response` Implementation ✅
+## Phase 2: True Streaming HTTP Handlers
+**Goal**: Stop collecting request bodies in the HTTP/1/2/3 handlers and stream chunks to the proxy immediately after WAF scanning.
 
-Added `async fn send_waf_response(&self, intent: WafResponseIntent) -> Result<http::Response<Full<Bytes>>, anyhow::Error>` to the `ProtocolAdapter` trait in `src/server/waf_handler.rs`.
+- [ ] **Refactor `collect_body_with_chunk_waf_impl`**:
+    - Rename to `stream_body_with_waf`.
+    - Change return type from `Result<Bytes, ()>` to a custom `WafStreamedBody` that implements `http_body::Body`.
+    - This new body type should internally hold the `Incoming` body and the `StreamingWafCore` instance.
+- [ ] **Async WAF Scanning in Stream**:
+    - Implement the `poll_frame` method for `WafStreamedBody`.
+    - For every frame received from the underlying body:
+        1. Scan the chunk via `StreamingWafCore::scan_chunk`.
+        2. If `Block`, return an error or a special "Blocked" frame.
+        3. If `Continue`, yield the frame to the caller.
+- [ ] **Update HTTP/1/2 Handler (`src/http/server.rs`)**:
+    - Replace the `collect_body_with_chunk_waf` logic in SECTION 10 with the new streaming implementation.
+    - Pass the resulting stream directly to the `ProxyServer`.
+- [ ] **Update HTTP/3 Handler (`src/http3/server.rs`)**:
+    - Align the HTTP/3 chunk scanning with the new streaming pattern.
 
-Implementation:
-- `HttpProtocolAdapter::send_waf_response` - calls `build_waf_response` and returns the response
-- `HttpsProtocolAdapter::send_waf_response` - same pattern
-- `Http3ProtocolAdapter::send_waf_response` - same pattern
+## Phase 3: Proxy Layer Stream Support
+**Goal**: Update the proxy server to handle streaming request bodies.
 
-Note: The implementation returns the built response (as required by the trait signature), since actually sending it over the wire requires connection access that the stateless adapters don't have. The caller (e.g., HTTP server) would use the returned response with hyper's response handling.
+- [ ] **Modify `ProxyServer::handle_request`**:
+    - Update signature to accept `BoxBody<Bytes, Infallible>` (or a similar streaming body type) instead of `Option<Bytes>`.
+- [ ] **Update Forwarding Logic**:
+    - Ensure `forward_request` and `send_single_request` can pipe the request body stream to the upstream client (`hyper` or `h3`) without buffering.
+- [ ] **Backpressure Handling**:
+    - Ensure that if the upstream is slow, the WAF scanning and client reading throttle appropriately via standard async backpressure.
 
----
+## Phase 4: Validation and Benchmarking
+**Goal**: Verify the 1M RPS target and memory efficiency.
 
-## ✅ Wave 3: Replace Deprecated Global Service Access
-
-**Status**: ✅ COMPLETED (2026-05-06)
-**Commit**: d414430f (Wave 3: Replace deprecated global service access with context-bound RequestServices)
-
-### Steps Completed
-
-**Step 1** ✅:
-- Added `pub services: Arc<RequestServices>` field to `WafContext` struct in `src/server/waf_handler.rs`
-- Updated all three constructors (`new_http`, `new_https`, `new_http3`) to accept `services` parameter
-- Added `#[derive(Clone)]` to `RequestServices` in `src/worker/context.rs`
-- Added `impl Debug for RequestServices` to support `WafContext` derive
-
-**Step 2** ✅:
-- `WafContext` now accepts `services` parameter at construction
-- Infrastructure for passing `RequestServices` through the context is in place
-
-**Step 3** ✅:
-- Added `services: Option<Arc<RequestServices>>` parameter to `WafCore::check_request_full`
-- Changed `check_dht_threat_lookup` call to use passed `services` instead of `self.request_services.load()`
-- Updated `check_request` helper to pass `None` for services
-- Updated all callers (http/server.rs, http3/server.rs, tls/server.rs, proxy/mod.rs) to pass `None` as the services parameter
-
-Note: The infrastructure is now in place for actually threading `RequestServices` through the call chain.
-- Threading RequestServices ✅ (2026-05-06): `WafCore::check_request_full` now falls back to `self.request_services.load()` when no services are explicitly passed, allowing callers to pass `None` and still have services available via the WAF's stored configuration
-
----
-
-## ✅ Wave 4: eBPF SYN-Level Dropping
-
-**Status**: ✅ COMPLETED (2026-05-06)
-**Commit**: 952cdc30 (Wave 4: Add eBPF SYN-level dropping for global blocklist)
-
-### Steps Completed
-
-**Step 1** ✅:
-- Added `IP_BLOCKLIST_V4` (65536 entries) to `ebpf-flood/src/maps.rs`
-- Added `IP_BLOCKLIST_V6` (16384 entries) to `ebpf-flood/src/maps.rs`
-
-**Step 2** ✅:
-- Added blocklist check at the very beginning of `filter_syn()` in `ebpf-flood/src/xdp.rs`
-- If IP is found in blocklist maps after config check, immediately returns `XDP_DROP`
-
-**Step 3** ✅:
-- Added `GlobalBlockHook` type alias in `src/block_store.rs`
-- Added `ebpf_block_hook` field in `BlockStore` struct
-- Added `set_ebpf_block_hook()` method to register a hook
-- Hook invocation in `block_ip()` when scope is "global"
-
-Note: The actual eBPF map insertion requires a separate userspace component that holds the userspace-side map references (via `aya::maps::HashMap`). The hook infrastructure allows that integration to happen - when an eBPF map manager is created, it calls `set_ebpf_block_hook()` to register a callback that inserts blocked IPs into the kernel maps.
+- [ ] **Memory Profiling**: Use `dtrace` or `heaptrack` to confirm that per-request allocations are minimized.
+- [ ] **Throughput Benchmarking**:
+    - Use `wrk2` or a similar tool to simulate 1M RPS against the streaming stack.
+    - Compare performance with the old buffered implementation.
+- [ ] **Split-Chunk Attack Verification**:
+    - Add test cases where an attack payload (e.g., `1' OR '1'='1`) is split across chunk boundaries precisely where `trailing_window` logic applies.
 
 ---
 
-## Summary of All Waves
-
-| Wave | Feature | Commit | Status |
-|------|---------|--------|--------|
-| Wave 1 | True Streaming via Type-Erased Connection Pool | 04e89618 | ✅ Complete |
-| Wave 2 | ProtocolAdapter send_waf_response | ebb8f653 | ✅ Complete |
-| Wave 3 | Replace Deprecated Global Service Access | d414430f | ✅ Complete |
-| Wave 4 | eBPF SYN-Level Dropping | 952cdc30 | ✅ Complete |
-
----
-
-## Verification Commands
-
-```bash
-# Format and check
-cargo fmt
-cargo check --lib
-
-# Profile gates
-cargo check --no-default-features
-cargo check --no-default-features --features mesh
-cargo check --no-default-features --features dns
-cargo check --no-default-features --features mesh,dns
-
-# Tests
-cargo test --lib erased_pool
-cargo test --lib protocol_adapter
-cargo test --lib block_store
-```
-
----
-
-## Remaining Work (Lower Priority)
-
-The following items are documented for future agents but are NOT part of the current plan:
-
-All previously deferred items have been completed:
-- ✅ Phase 9 Integration (Wave 1): ErasedHttpClient wired into HTTP server
-- ✅ Threading RequestServices (Wave 3): Services now fall back to WAF's stored configuration
+## Reference Files
+- `src/waf/attack_detection/streaming.rs`: Core streaming WAF logic.
+- `src/http/shared_handler.rs`: Current body collection implementation.
+- `src/http/server.rs`: Main HTTP/1/2 request handler.
+- `src/http3/server.rs`: Main HTTP/3 request handler.
+- `src/proxy/mod.rs`: Proxy forwarding logic.
+- `crates/synvoid-utils/src/buffer/pool.rs`: The high-performance `BufferPool`.

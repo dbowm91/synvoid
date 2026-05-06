@@ -1,3 +1,6 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use http_body::{Body, Frame};
 use bytes::{Bytes, BytesMut};
 use http::{Response, StatusCode};
 use http_body_util::combinators::BoxBody;
@@ -12,7 +15,7 @@ use crate::config::MainConfig;
 use crate::http::response_builder::{
     build_json_response, build_response_with_alt_svc, build_response_with_cookie,
 };
-use crate::waf::attack_detection::StreamingWafDecision;
+use crate::waf::attack_detection::{StreamingWafDecision, StreamingWafCore};
 
 pub struct SharedRequestHandler;
 
@@ -324,71 +327,107 @@ impl BodyCollectionProtocol {
     }
 }
 
-pub async fn collect_body_with_chunk_waf_impl<B>(
-    mut body: B,
+pub struct WafStreamedBody<B> {
+    inner: B,
+    streaming_waf: Option<StreamingWafCore>,
+    client_ip: IpAddr,
+    protocol: BodyCollectionProtocol,
+    max_body_size: usize,
+    accumulated_len: usize,
+}
+
+impl<B> WafStreamedBody<B> {
+    pub fn new(
+        inner: B,
+        streaming_waf: Option<StreamingWafCore>,
+        client_ip: IpAddr,
+        protocol: BodyCollectionProtocol,
+        max_body_size: usize,
+    ) -> Self {
+        Self {
+            inner,
+            streaming_waf,
+            client_ip,
+            protocol,
+            max_body_size,
+            accumulated_len: 0,
+        }
+    }
+}
+
+impl<B> Body for WafStreamedBody<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Debug,
+{
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.as_mut().get_mut();
+        match Pin::new(&mut this.inner).poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                if frame.is_data() {
+                    let chunk = frame.into_data().unwrap_or_default();
+                    this.accumulated_len += chunk.len();
+
+                    if this.accumulated_len > this.max_body_size {
+                        tracing::warn!(
+                            client_ip = %this.client_ip,
+                            size = this.accumulated_len,
+                            limit = this.max_body_size,
+                            "Request body exceeded max streaming body size limit"
+                        );
+                        metrics::counter!(this.protocol.counter_too_large()).increment(1);
+                        return Poll::Ready(Some(Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Body too large",
+                        ))));
+                    }
+
+                    if let Some(sw) = &this.streaming_waf {
+                        if let StreamingWafDecision::Block(_, _) = sw.scan_chunk(&chunk) {
+                            tracing::warn!(
+                                client_ip = %this.client_ip,
+                                "Request blocked during streaming body WAF check"
+                            );
+                            metrics::counter!(this.protocol.counter_blocked()).increment(1);
+                            return Poll::Ready(Some(Err(std::io::Error::new(
+                                std::io::ErrorKind::PermissionDenied,
+                                "Blocked by WAF",
+                            ))));
+                        }
+                    }
+
+                    Poll::Ready(Some(Ok(Frame::data(chunk))))
+                } else {
+                    Poll::Ready(Some(Ok(frame)))
+                }
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub fn stream_body_with_waf<B>(
+    body: B,
     waf: &Arc<crate::waf::WafCore>,
     client_ip: IpAddr,
     protocol: BodyCollectionProtocol,
-    content_length: Option<usize>,
     max_body_size: usize,
-) -> Result<Bytes, ()>
+) -> WafStreamedBody<B>
 where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: std::fmt::Debug,
 {
-    let mut accumulated = BytesMut::new();
-    if let Some(cl) = content_length {
-        if cl > max_body_size {
-            tracing::warn!(
-                client_ip = %client_ip,
-                content_length = cl,
-                limit = max_body_size,
-                "Content-Length exceeds max streaming body size limit"
-            );
-            metrics::counter!(protocol.counter_too_large()).increment(1);
-            return Err(());
-        }
-        accumulated.reserve(cl);
-    }
-
     let streaming_waf = waf.streaming();
-
-    while let Some(frame_result) = body.frame().await {
-        match frame_result {
-            Ok(frame) => {
-                if let Ok(chunk) = frame.into_data() {
-                    // 1. Streaming scan
-                    if let Some(sw) = streaming_waf.as_ref() {
-                        if let StreamingWafDecision::Block(_, _) = sw.scan_chunk(&chunk) {
-                            tracing::warn!(
-                                client_ip = %client_ip,
-                                "Request blocked during streaming body WAF check"
-                            );
-                            metrics::counter!(protocol.counter_blocked()).increment(1);
-                            return Err(());
-                        }
-                    }
-
-                    accumulated.extend_from_slice(&chunk);
-
-                    if accumulated.len() > max_body_size {
-                        tracing::warn!(
-                            client_ip = %client_ip,
-                            size = accumulated.len(),
-                            limit = max_body_size,
-                            "Request body exceeded max streaming body size limit"
-                        );
-                        metrics::counter!(protocol.counter_too_large()).increment(1);
-                        return Ok(accumulated.freeze());
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::debug!("Error reading body frame: {:?}", e);
-                break;
-            }
-        }
-    }
-
-    Ok(accumulated.freeze())
+    WafStreamedBody::new(body, streaming_waf, client_ip, protocol, max_body_size)
 }

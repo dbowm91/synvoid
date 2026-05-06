@@ -851,68 +851,74 @@ impl AttackDetector {
     }
 
     pub fn check_body_only(&self, body: &[u8]) -> Option<AttackDetectionResult> {
+        self.check_body_fragments(&[body])
+    }
+
+    pub fn check_body_fragments(&self, fragments: &[&[u8]]) -> Option<AttackDetectionResult> {
         if !self.config.enabled {
             return None;
         }
 
+        let total_size: usize = fragments.iter().map(|f| f.len()).sum();
+
         if let Some(max_size) = self.config.max_request_body_size {
-            if body.len() > max_size {
+            if total_size > max_size {
                 return Some(AttackDetectionResult {
                     attack_type: AttackType::Other,
                     input_location: InputLocation::PostBody,
-                    fingerprint: Some(format!("body_size:{}", body.len())),
+                    fingerprint: Some(format!("body_size:{}", total_size)),
                     matched_pattern: Some(format!(
                         "Request body {} bytes exceeds limit {} bytes",
-                        body.len(),
-                        max_size
+                        total_size, max_size
                     )),
                 });
             }
         }
 
+        let normalized = self.normalizer.normalize_fragments(fragments);
+
         if self.config.request_smuggling.enabled {
-            if let Some(result) = self.request_smuggling_detector.check_body(body) {
+            if let Some(result) = self
+                .request_smuggling_detector
+                .check_body(normalized.as_bytes())
+            {
                 return Some(result);
             }
         }
 
         if self.config.jwt.enabled {
+            if let Some(result) = self
+                .jwt_detector
+                .detect(normalized.as_str(), InputLocation::PostBody)
             {
-                let s = String::from_utf8_lossy(body);
-                let s: &str = &s;
-                let normalized = self.normalizer.normalize(s);
-                if let Some(result) = self
-                    .jwt_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
+                return Some(result);
             }
         }
 
         if self.config.sqli.enabled {
-            if let Some(result) = self.sqli_detector.detect(body, InputLocation::PostBody) {
+            if let Some(result) = self.sqli_detector.detect(
+                normalized.as_lowercased().as_bytes(),
+                InputLocation::PostBody,
+            ) {
                 return Some(result);
             }
         }
 
         if self.config.xss.enabled {
-            if let Some(result) = self.xss_detector.detect(body, InputLocation::PostBody) {
+            if let Some(result) = self.xss_detector.detect(
+                normalized.as_lowercased().as_bytes(),
+                InputLocation::PostBody,
+            ) {
                 return Some(result);
             }
         }
 
         if self.config.ssti.enabled {
+            if let Some(result) = self
+                .ssti_detector
+                .detect(normalized.as_str(), InputLocation::PostBody)
             {
-                let s = String::from_utf8_lossy(body);
-                let s: &str = &s;
-                let normalized = self.normalizer.normalize(s);
-                if let Some(result) = self
-                    .ssti_detector
-                    .detect(normalized.as_str(), InputLocation::PostBody)
-                {
-                    return Some(result);
-                }
+                return Some(result);
             }
         }
 
@@ -925,82 +931,77 @@ impl AttackDetector {
             || self.config.xpath_injection.enabled
             || self.config.open_redirect.enabled
         {
-            {
-                let s = String::from_utf8_lossy(body);
-                let s: &str = &s;
-                let normalized = self.normalizer.normalize(s);
-                let body_input = normalized;
+            let body_input = normalized.as_str();
 
-                if self.config.cmd_injection.enabled {
-                    if let Some(result) = self
-                        .cmd_injection_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.cmd_injection.enabled {
+                if let Some(result) = self
+                    .cmd_injection_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.path_traversal.enabled {
-                    if let Some(result) = self
-                        .path_traversal_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.path_traversal.enabled {
+                if let Some(result) = self
+                    .path_traversal_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.rfi.enabled {
-                    if let Some(result) = self
-                        .rfi_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.rfi.enabled {
+                if let Some(result) = self
+                    .rfi_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.ssrf.enabled {
-                    if let Some(result) = self
-                        .ssrf_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.ssrf.enabled {
+                if let Some(result) = self
+                    .ssrf_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.xxe.enabled {
-                    if let Some(result) = self
-                        .xxe_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.xxe.enabled {
+                if let Some(result) = self
+                    .xxe_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.ldap_injection.enabled {
-                    if let Some(result) = self
-                        .ldap_injection_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.ldap_injection.enabled {
+                if let Some(result) = self
+                    .ldap_injection_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.xpath_injection.enabled {
-                    if let Some(result) = self
-                        .xpath_injection_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.xpath_injection.enabled {
+                if let Some(result) = self
+                    .xpath_injection_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
+            }
 
-                if self.config.open_redirect.enabled {
-                    if let Some(result) = self
-                        .open_redirect_detector
-                        .detect(body_input.as_str(), InputLocation::PostBody)
-                    {
-                        return Some(result);
-                    }
+            if self.config.open_redirect.enabled {
+                if let Some(result) = self
+                    .open_redirect_detector
+                    .detect(body_input, InputLocation::PostBody)
+                {
+                    return Some(result);
                 }
             }
         }
