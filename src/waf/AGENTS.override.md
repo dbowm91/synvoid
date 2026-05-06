@@ -50,6 +50,20 @@ let body_str = std::str::from_utf8(body).unwrap_or("");
 let body_str = String::from_utf8_lossy(body);
 ```
 
+### Security Challenge Constant-Time Comparison
+
+When implementing security challenge verification, use constant-time comparison:
+```rust
+// WRONG - timing leak vulnerability
+if solution != expected_solution { ... }
+
+// CORRECT - use subtle::ConstantTimeEq
+use subtle::ConstantTimeEq;
+if solution.ct_eq(&expected_solution).unwrap_u8() == 0 { ... }
+```
+
+Note: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison and should be fixed.
+
 ### Serverless Mode
 
 Use `ServerlessWafMode` enum (`enforce|log|off`) instead of boolean `serverless_only`:

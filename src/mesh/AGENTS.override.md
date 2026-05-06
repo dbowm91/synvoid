@@ -334,6 +334,19 @@ if !self.node_role.is_global()
 }
 ```
 
+### Constant-Time Comparison Verification
+
+**Important**: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison, NOT `subtle::ConstantTimeEq`. When implementing fixes, ensure to use constant-time comparison for security-sensitive comparisons:
+
+```rust
+// WRONG - timing leak
+if solution != expected_solution { ... }
+
+// CORRECT - constant time
+use subtle::ConstantTimeEq;
+if solution.ct_eq(&expected_solution).unwrap_u8() == 0 { ... }
+```
+
 ## Wave 15: Distributed Layer Hardening Follow-Up
 
 All Wave 15 priorities have been implemented and committed to their respective branches.

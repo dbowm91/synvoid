@@ -2,67 +2,7 @@
 
 This is the **repository index** for AI agents working on the SynVoid codebase.
 
-## Modular Agent Guidance
-
-Agent guidance is **modularized** to reduce context pollution. Each module has its own `AGENTS.override.md` that contains specialized handling for that subsystem.
-
-| Module | Override File | Purpose |
-|--------|--------------|---------|
-| Mesh (DHT, Raft, Network) | [`src/mesh/AGENTS.override.md`](src/mesh/AGENTS.override.md) | DHT, Raft, mesh networking patterns |
-| DNS (DNSSEC, TSIG) | [`src/dns/AGENTS.override.md`](src/dns/AGENTS.override.md) | DNS server, DNSSEC, TSIG patterns |
-| WAF (Rule Matching) | [`src/waf/AGENTS.override.md`](src/waf/AGENTS.override.md) | WAF engine, attack detection |
-| HTTP Server | [`src/http/AGENTS.override.md`](src/http/AGENTS.override.md) | HTTP request handling |
-| HTTP Client | [`src/http_client/AGENTS.override.md`](src/http_client/AGENTS.override.md) | Upstream proxy, connection pooling |
-| HTTP/3 Server | [`src/http3/AGENTS.override.md`](src/http3/AGENTS.override.md) | HTTP/3 QUIC handling |
-| Plugin/WASM | [`src/plugin/AGENTS.override.md`](src/plugin/AGENTS.override.md) | WASM plugin runtime |
-| Upstream Proxy | [`src/proxy/AGENTS.override.md`](src/proxy/AGENTS.override.md) | Proxy routing, cache keys |
-| Config | [`src/config/AGENTS.override.md`](src/config/AGENTS.override.md) | Configuration patterns |
-| Admin API | [`src/admin/AGENTS.override.md`](src/admin/AGENTS.override.md) | Admin API patterns |
-| Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
-| Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
-| Deferred Items | [`skills/deferred_items_knowledge.md`](skills/deferred_items_knowledge.md) | Context on incremental deferred item implementation |
-| Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
-
-## Project Overview
-
-SynVoid is a WAF (Web Application Firewall) with a multi-process architecture:
-- **Overseer** (`src/overseer/`): Manages master process lifecycle, upgrades, health monitoring
-- **Master** (`src/master/`): Parent process that spawns/manages workers, handles IPC
-- **Worker** (`src/worker/`): Handles HTTP requests and communicates via IPC
-
-### Architecture Documents
-
-Key reference documents in `architecture/` directory:
-- [`architecture/overview.md`](architecture/overview.md) — Module categorization and layer overview
-- [`architecture/deep_dive_review.md`](architecture/deep_dive_review.md) — Layer 1-3 and 7 deep dive (IPC, WAF, Proxy, Foundation)
-- [`architecture/layer_3_5_deep_dive.md`](architecture/layer_3_5_deep_dive.md) — Layer 3 & 5 deep dive (Proxy & Mesh, PQC, Trust Models)
-
-### Scalability Target
-
-SynVoid is designed for **high scalability** with targets well in excess of **1000K requests/second** (1 million RPS).
-
-This has several implications:
-- **Every allocation matters**: At 1000K rps, even small per-request allocations compound to millions/sec
-- **Avoid O(n) operations in hot paths**: Linear searches, repeated string conversions, unnecessary clones
-- **Prefer O(1) lookups**: HashMap/HashSet over Vec iteration for any frequency
-- **Reuse buffers**: Thread-local buffers, object pools, moka caches instead of per-request allocations
-- **Lazy evaluation**: Only compute what's needed; defer expensive operations until confirmed necessary
-
-### Hot Path Locations
-
-The following code paths execute on every request and must be optimized:
-- `src/waf/attack_detection/` — WAF rule matching (runs per-request on all inputs)
-- `src/mesh/proxy.rs` — Mesh proxy routing, caching, provider selection
-- `src/http/server.rs` — HTTP request handling and dispatch
-- `src/http3/server.rs` — HTTP/3 QUIC request handling and proxying
-- `src/proxy/mod.rs` — Upstream proxy, cookie/cache key construction
-- `src/plugin/wasm_runtime.rs` — WASM plugin filter/transform per request
-- `src/http_client/mod.rs` — StreamingWafBody for streaming upstream WAF scanning
-- `src/metrics/collection.rs` — Stall metrics (hot when stall traffic high)
-
-## General Conventions
-
-### Dependency Policy
+## Serialization and Timestamp Standards
 
 We prefer **pure Rust dependencies** over those with C bindings where possible.
 
@@ -129,8 +69,31 @@ cargo check --no-default-features --features mesh,dns
 | Wrong Path | Correct Path |
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
+| `src/http/shared_handler.rs` | `src/http/server.rs:4532` |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
+| `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs` |
 | `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
+
+## Modular Agent Guidance
+
+Agent guidance is **modularized** to reduce context pollution. Each module has its own `AGENTS.override.md` that contains specialized handling for that subsystem.
+
+| Module | Override File | Purpose |
+|--------|--------------|---------|
+| Mesh (DHT, Raft, Network) | [`src/mesh/AGENTS.override.md`](src/mesh/AGENTS.override.md) | DHT, Raft, mesh networking patterns |
+| DNS (DNSSEC, TSIG) | [`src/dns/AGENTS.override.md`](src/dns/AGENTS.override.md) | DNS server, DNSSEC, TSIG patterns |
+| WAF (Rule Matching) | [`src/waf/AGENTS.override.md`](src/waf/AGENTS.override.md) | WAF engine, attack detection |
+| HTTP Server | [`src/http/AGENTS.override.md`](src/http/AGENTS.override.md) | HTTP request handling |
+| HTTP Client | [`src/http_client/AGENTS.override.md`](src/http_client/AGENTS.override.md) | Upstream proxy, connection pooling |
+| HTTP/3 Server | [`src/http3/AGENTS.override.md`](src/http3/AGENTS.override.md) | HTTP/3 QUIC handling |
+| Plugin/WASM | [`src/plugin/AGENTS.override.md`](src/plugin/AGENTS.override.md) | WASM plugin runtime |
+| Upstream Proxy | [`src/proxy/AGENTS.override.md`](src/proxy/AGENTS.override.md) | Proxy routing, cache keys |
+| Config | [`src/config/AGENTS.override.md`](src/config/AGENTS.override.md) | Configuration patterns |
+| Admin API | [`src/admin/AGENTS.override.md`](src/admin/AGENTS.override.md) | Admin API patterns |
+| Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
+| Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
+| Deferred Items | [`skills/deferred_items_knowledge.md`](skills/deferred_items_knowledge.md) | Context on incremental deferred item implementation |
+| Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
 ## Multi-Process Architecture
 
@@ -169,6 +132,30 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 - [`docs/adr/ADR-003-unified-worker-process.md`](docs/adr/ADR-003-unified-worker-process.md) — ADR for unified worker architecture
 - [`src/worker/unified_server.rs`] — Main unified server implementation
+
+## Lessons Learned (2026-05-06)
+
+### Plan Consolidation
+
+When consolidating architecture review plans:
+- **Batch file reads** with subagents to preserve context window (4-5 files per agent)
+- **Verify file references** before adding to consolidated plan — subagents catch discrepancies
+- **Wave-based organization** enables parallel execution by independent agents
+- **Reference files accurately** — `collect_body_with_chunk_waf` is in `server.rs:4532`, not `shared_handler.rs`
+
+### Key Discrepancies Found
+
+| Planned Reference | Actual Location | Issue |
+|-------------------|-----------------|-------|
+| `src/http/shared_handler.rs` | `src/http/server.rs:4532` | Function is in server.rs, not shared_handler |
+| `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs` | Quorum verification is in signed.rs |
+| `src/mesh/security_challenge.rs:196` | Same location | Simple `!=` comparison, not constant-time |
+
+### Verification Approach
+
+1. Use subagents to batch-verify file references (4-5 per agent)
+2. Consolidate verification results before updating plan
+3. Cross-reference with actual codebase when discrepancies found
 
 ## Skills Reference
 
