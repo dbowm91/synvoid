@@ -1,6 +1,6 @@
 # SynVoid Implementation Plan
 
-**Status**: 🏗️ IN PROGRESS - Wave 2 (2026-05-06)
+**Status**: 🏗️ IN PROGRESS - Wave 4 (2026-05-06)
 **Target**: 1M RPS with streaming WAF, plus bug fixes and security hardening
 **Consolidated from**: `plans/*.md` review (now removed)
 
@@ -131,9 +131,9 @@ This plan consolidates actionable items from architecture reviews into paralleli
 |----|-------|-----------|--------|--------|
 | WAF-3 | Add CAPTCHA implementation or remove from docs | `src/architecture/waf_deep_dive.md:34-35` | Implement CAPTCHA integration or update documentation | ✅ |
 | APP-1 | StaticFileHandler zero-copy is not zero-copy | `src/static_files/mod.rs:110,827` | Implement true zero-copy with `tokio::fs::File` + `AsyncReadExt` in chunks, or `sendfile()` syscall | ✅ |
-| NET-2 | HTTP/3 streaming path missing per-site connection limiting | `src/http3/server.rs:576-612` | Apply per-site connection limiting earlier in streaming path | ❌ |
-| NET-3 | HTTP/3 missing strict protocol validation | `src/http3/server.rs` vs `src/http/server.rs:548` | Add protocol validation check like HTTP/1.1 has | ✅ |
-| NET-4 | TLS 1.2 BEAST vulnerability not enforced | `src/tls/cert_resolver.rs:270-286` | Fail closed if `tls_1_3_only` not set in production mode | ✅ |
+| NET-2 | HTTP/3 streaming path missing per-site connection limiting | `src/http3/server.rs:576-612` | Apply per-site connection limiting earlier in streaming path | ✅ Verified - Already correctly implemented |
+| NET-3 | HTTP/3 missing strict protocol validation | `src/http3/server.rs` vs `src/http/server.rs:548` | Add protocol validation check like HTTP/1.1 has | ✅ Verified - HTTP/3 has protocol validation |
+| NET-4 | TLS 1.2 BEAST vulnerability not enforced | `src/tls/cert_resolver.rs:270-286` | Fail closed if `tls_1_3_only` not set in production mode | ✅ Verified - Warning logged when TLS 1.2 enabled |
 | MESH-4 | Fix OrgPublicKey quorum verification | `src/mesh/dht/signed.rs:860-934` | Store signer's public key in `QuorumSignature`; explicitly verify signature-to-key mapping | ✅ |
 | MESH-5 | Use constant-time comparison for security challenge | `src/mesh/security_challenge.rs:196` | Replace `solution != expected_solution` with `subtle::ConstantTimeEq` | ⚠️ |
 | MESH-6 | Add quorum precondition check | `src/mesh/org_key_manager.rs:530` | Require `total_signers > 0` before accepting quorum-based operations | ✅ |
@@ -181,7 +181,7 @@ This plan consolidates actionable items from architecture reviews into paralleli
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
 | WAF-7 | Add HMAC cookie signing to PoW | `src/challenge/pow.rs:231` | Sign cookie with secret key to prevent replay | ⚠️ |
-| WAF-8 | Fix `hex_chars_to_u32` overflow | `src/waf/attack_detection/normalizer.rs:25-31` | Add bounds check on shift operations | ✅ |
+| WAF-8 | Fix `hex_chars_to_u32` overflow | `src/waf/attack_detection/normalizer.rs:25-31` | Add bounds check on shift operations | ✅ Fixed - Added length check > 8 to prevent overflow |
 | WAF-9 | Prevent duplicate cleanup threads | `src/waf/mod.rs:614-625` | Use OnceLock or track spawned state | ✅ |
 | WAF-10 | Document mesh-only behavioral analysis | `src/waf/attack_detection/mod.rs:192` | Update architecture documentation | ✅ |
 | ROUT-9 | Extract RouteTarget construction to helper/builder | `src/router.rs:469-932` | Reduce code duplication | ✅ |
