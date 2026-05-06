@@ -46,7 +46,7 @@ fn default_anomaly_threshold() -> u32 {
 impl Default for AnomalyScoringConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             threshold: default_anomaly_threshold(),
         }
     }

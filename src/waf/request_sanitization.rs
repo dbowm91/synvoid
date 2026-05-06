@@ -116,8 +116,6 @@ impl RequestSanitizer {
             sanitized.client_ip = Some(client_ip);
         }
 
-        sanitized.client_ip = Some(client_ip);
-
         sanitized
     }
 
