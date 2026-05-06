@@ -110,6 +110,10 @@ pub struct Http1PooledConnection {
     authority: http::uri::Authority,
 }
 
+pub struct Http2PooledConnection {
+    authority: http::uri::Authority,
+}
+
 impl Http1PooledConnection {
     pub fn new(
         io: TokioIo<tokio::net::TcpStream>,
@@ -139,6 +143,30 @@ impl PooledConnection for Http1PooledConnection {
         B::Error: fmt::Debug + Send,
     {
         Box::new(ErasedBodyImpl { inner: body })
+    }
+}
+
+impl PooledConnection for Http2PooledConnection {
+    fn protocol(&self) -> HttpProtocol {
+        HttpProtocol::Http2
+    }
+
+    fn is_available(&self) -> bool {
+        false
+    }
+
+    fn box_body<B>(body: B) -> BoxErasedBody
+    where
+        B: hyper::body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
+        B::Error: fmt::Debug + Send,
+    {
+        Box::new(ErasedBodyImpl { inner: body })
+    }
+}
+
+impl Http2PooledConnection {
+    pub fn new(authority: http::uri::Authority) -> Self {
+        Self { authority }
     }
 }
 
@@ -212,6 +240,14 @@ mod tests {
         let authority: http::uri::Authority = "example.com:80".parse().unwrap();
         let conn = Http1PooledConnection::new_for_test(authority);
         assert_eq!(conn.protocol(), HttpProtocol::Http1);
+        assert!(!conn.is_available());
+    }
+
+    #[test]
+    fn test_http2_pooled_connection_stub() {
+        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
+        let conn = Http2PooledConnection::new(authority);
+        assert_eq!(conn.protocol(), HttpProtocol::Http2);
         assert!(!conn.is_available());
     }
 }
