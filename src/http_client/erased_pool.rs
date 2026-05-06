@@ -10,7 +10,30 @@ use hyper::body::{Frame, SizeHint};
 use std::error::Error;
 use std::fmt;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+
+/// Implement `http_body::Body` for `Box<dyn ErasedBody>` so it can be used
+/// with hyper's client. This is the key bridge between our `ErasedBody` trait
+/// and hyper's body requirements.
+///
+/// Without this, `Box<dyn ErasedBody>` cannot satisfy `http_body::Body` bounds
+/// because traits don't support extension.
+impl http_body::Body for Box<dyn ErasedBody> {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        ErasedBody::poll_frame(self.as_mut().get_mut().as_mut(), cx)
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.as_ref().size_hint()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpProtocol {
