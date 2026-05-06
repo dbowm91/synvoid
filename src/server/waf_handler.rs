@@ -184,6 +184,10 @@ pub trait ProtocolAdapter: Send + Sync {
     fn supports_websocket(&self) -> bool;
     fn forwarded_protocol(&self) -> ForwardedProtocol;
     fn build_waf_response(&self, intent: &WafResponseIntent) -> http::Response<Full<Bytes>>;
+    async fn send_waf_response(
+        &self,
+        intent: WafResponseIntent,
+    ) -> Result<http::Response<Full<Bytes>>, anyhow::Error>;
 }
 
 #[derive(Clone)]
@@ -245,6 +249,14 @@ impl ProtocolAdapter for HttpProtocolAdapter {
                 panic!("build_waf_response called with Pass intent - this should be handled elsewhere")
             }
         }
+    }
+
+    async fn send_waf_response(
+        &self,
+        intent: WafResponseIntent,
+    ) -> Result<http::Response<Full<Bytes>>, anyhow::Error> {
+        let response = self.build_waf_response(&intent);
+        Ok(response)
     }
 }
 
@@ -310,6 +322,14 @@ impl ProtocolAdapter for HttpsProtocolAdapter {
             }
         }
     }
+
+    async fn send_waf_response(
+        &self,
+        intent: WafResponseIntent,
+    ) -> Result<http::Response<Full<Bytes>>, anyhow::Error> {
+        let response = self.build_waf_response(&intent);
+        Ok(response)
+    }
 }
 
 #[derive(Clone)]
@@ -371,5 +391,13 @@ impl ProtocolAdapter for Http3ProtocolAdapter {
                 panic!("build_waf_response called with Pass intent - this should be handled elsewhere")
             }
         }
+    }
+
+    async fn send_waf_response(
+        &self,
+        intent: WafResponseIntent,
+    ) -> Result<http::Response<Full<Bytes>>, anyhow::Error> {
+        let response = self.build_waf_response(&intent);
+        Ok(response)
     }
 }
