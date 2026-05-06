@@ -994,38 +994,64 @@ impl Http3Server {
                                     }
                                 }
                             } else {
-                                let mut streamed_total = 0usize;
+                                let mut body_bytes = Vec::new();
                                 while let Some(chunk) = upstream_body.frame().await {
                                     match chunk {
                                         Ok(frame) => {
                                             if let Some(data) = frame.data_ref() {
-                                                streamed_total = streamed_total.saturating_add(data.len());
+                                                body_bytes.extend_from_slice(data.as_ref());
                                                 if let Some(max_size) = upstream_target.max_response_size {
-                                                    if streamed_total > max_size {
+                                                    if body_bytes.len() > max_size {
                                                         tracing::warn!(
                                                             "Response body exceeds size limit for {}",
                                                             upstream_target.url
                                                         );
-                                                        break;
+                                                        let body = Bytes::from("Bad Gateway");
+                                                        let response = http::Response::builder()
+                                                            .status(StatusCode::BAD_GATEWAY)
+                                                            .header(header::CONTENT_TYPE, "text/plain")
+                                                            .body(())
+                                                            .map_err(|e| format!("Failed to build response: {}", e))?;
+                                                        request_stream.send_response(response).await?;
+                                                        request_stream.send_data(body).await?;
+                                                        request_stream.finish().await?;
+                                                        if let Some(ref metrics) = self.metrics {
+                                                            metrics.record_site_upstream_failure(&site_id);
+                                                        }
+                                                        return Ok(());
                                                     }
-                                                }
-                                                request_stream.send_data(data.clone()).await?;
-                                                let data_len = data.len() as u64;
-                                                if let Some(ref bw) = bandwidth {
-                                                    bw.record_egress(
-                                                        data_len,
-                                                        BandwidthProtocol::Http3,
-                                                        EgressDirection::Proxied,
-                                                    );
-                                                    bw.record_site_egress(&host, data_len);
                                                 }
                                             }
                                         }
                                         Err(e) => {
                                             tracing::error!("Error reading upstream body: {}", e);
-                                            break;
+                                            let body = Bytes::from("Bad Gateway");
+                                            let response = http::Response::builder()
+                                                .status(StatusCode::BAD_GATEWAY)
+                                                .header(header::CONTENT_TYPE, "text/plain")
+                                                .body(())
+                                                .map_err(|e| format!("Failed to build response: {}", e))?;
+                                            request_stream.send_response(response).await?;
+                                            request_stream.send_data(body).await?;
+                                            request_stream.finish().await?;
+                                            if let Some(ref metrics) = self.metrics {
+                                                metrics.record_site_upstream_failure(&site_id);
+                                            }
+                                            return Ok(());
                                         }
                                     }
+                                }
+                                if let Some(ref bw) = bandwidth {
+                                    let body_len = body_bytes.len() as u64;
+                                    bw.record_egress(
+                                        body_len,
+                                        BandwidthProtocol::Http3,
+                                        EgressDirection::Proxied,
+                                    );
+                                    bw.record_site_egress(&host, body_len);
+                                }
+                                if !body_bytes.is_empty() {
+                                    request_stream.send_data(body_bytes.into()).await?;
                                 }
                             }
 
