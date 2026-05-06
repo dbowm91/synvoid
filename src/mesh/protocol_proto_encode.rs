@@ -66,6 +66,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                             .iter()
                             .map(|s| proto::QuorumSignature {
                                 signer_node_id: s.signer_node_id.clone(),
+                                signer_public_key: s.signer_public_key.clone(),
                                 signature: s.signature.clone(),
                                 timestamp: s.timestamp,
                             })
@@ -134,6 +135,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                             .iter()
                             .map(|s| proto::QuorumSignature {
                                 signer_node_id: s.signer_node_id.clone(),
+                                signer_public_key: s.signer_public_key.clone(),
                                 signature: s.signature.clone(),
                                 timestamp: s.timestamp,
                             })
@@ -2570,6 +2572,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                                 .iter()
                                 .map(|s| proto::QuorumSignature {
                                     signer_node_id: s.signer_node_id.clone(),
+                                    signer_public_key: s.signer_public_key.clone(),
                                     signature: s.signature.clone(),
                                     timestamp: s.timestamp,
                                 })
