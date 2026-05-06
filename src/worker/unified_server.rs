@@ -1191,7 +1191,11 @@ pub async fn run_unified_server_worker(
         #[cfg(feature = "mesh")]
         {
             let threat_intel = _threat_intel_manager.clone();
-            let yara_rules = crate::waf::get_yara_rules();
+            let yara_rules = if let Some(yr) = crate::waf::get_yara_rules() {
+                Some(yr)
+            } else {
+                None
+            };
             RequestServices::new(threat_intel, None, yara_rules, None, None)
         }
         #[cfg(not(feature = "mesh"))]
