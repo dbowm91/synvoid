@@ -93,6 +93,15 @@ pub struct PoolKey {
     pub is_http2: bool,
 }
 
+pub trait PooledConnection: Send + Sync + 'static {
+    fn protocol(&self) -> HttpProtocol;
+    fn is_available(&self) -> bool;
+    fn box_body<B>(body: B) -> BoxErasedBody
+    where
+        B: hyper::body::Body<Data = Bytes> + Send + 'static,
+        B::Error: fmt::Debug + Send;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
