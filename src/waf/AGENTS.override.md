@@ -52,17 +52,22 @@ let body_str = String::from_utf8_lossy(body);
 
 ### Security Challenge Constant-Time Comparison
 
-When implementing security challenge verification, use constant-time comparison:
-```rust
-// WRONG - timing leak vulnerability
-if solution != expected_solution { ... }
+**DO NOT use constant-time comparison for puzzle verification** in `src/mesh/security_challenge.rs:196`. This is CORRECT as written:
 
-// CORRECT - use subtle::ConstantTimeEq
+```rust
+// CORRECT for security challenge - expected_solution is NOT a secret
+if solution != expected_solution { ... }
+```
+
+The `expected_solution` is publicly known challenge data, not a secret. Timing side-channels don't matter for puzzle verification. **Only use `ConstantTimeEq` for actual secrets** (keys, MACs, auth tokens, passwords).
+
+```rust
+// WRONG for security challenge - unnecessary overhead
 use subtle::ConstantTimeEq;
 if solution.ct_eq(&expected_solution).unwrap_u8() == 0 { ... }
 ```
 
-Note: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison and should be fixed.
+Note: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison. This is intentional and correct.
 
 ### Serverless Mode
 

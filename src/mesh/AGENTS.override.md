@@ -336,15 +336,20 @@ if !self.node_role.is_global()
 
 ### Constant-Time Comparison Verification
 
-**Important**: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison, NOT `subtle::ConstantTimeEq`. When implementing fixes, ensure to use constant-time comparison for security-sensitive comparisons:
+**Important**: `src/mesh/security_challenge.rs:196` uses simple `!=` comparison. This is CORRECT for this use case because:
+- The `expected_solution` is publicly known challenge data, not a secret
+- Timing side-channels don't matter when verifying publicly-known values
+- **Only use `ConstantTimeEq` for actual secrets** (keys, MACs, auth tokens, passwords)
+
+When implementing fixes, ensure to use constant-time comparison for security-sensitive comparisons:
 
 ```rust
-// WRONG - timing leak
-if solution != expected_solution { ... }
-
-// CORRECT - constant time
+// CORRECT - for secrets (keys, MACs, auth tokens)
 use subtle::ConstantTimeEq;
-if solution.ct_eq(&expected_solution).unwrap_u8() == 0 { ... }
+if key.ct_eq(&expected_key).unwrap_u8() == 0 { ... }
+
+// DO NOT USE for non-secrets like puzzle solutions - simple != is fine
+if solution != expected_solution { ... }
 ```
 
 ## Wave 15: Distributed Layer Hardening Follow-Up

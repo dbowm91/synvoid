@@ -30,6 +30,13 @@ Confirmed pure Rust: `libinjectionrs`, `bcrypt`
 - **Edge Node PoW**: Both `pow_nonce` AND `pow_public_key` required together
 - **File Permissions**: Set `0o600` on private key files
 
+### When NOT to use Constant-Time Comparison
+
+The `security_challenge.rs:196` uses simple `!=` comparison. This is CORRECT for puzzle verification because:
+- The `expected_solution` is publicly known challenge data, not a secret
+- Timing side-channels don't matter when verifying publicly-known values
+- **Only use `ConstantTimeEq` for actual secrets**: keys, MACs, auth tokens, passwords
+
 ### Verification Commands
 
 ```bash
@@ -69,9 +76,9 @@ cargo check --no-default-features --features mesh,dns
 | Wrong Path | Correct Path |
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
-| `src/http/shared_handler.rs` | `src/http/server.rs:4532` |
+| `src/http/shared_handler.rs` | `src/http/server.rs:4532` (contains `collect_body_with_chunk_waf` and `stream_body_with_waf`) |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
-| `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs` |
+| `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
 
 ## Modular Agent Guidance
@@ -133,29 +140,31 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 - [`docs/adr/ADR-003-unified-worker-process.md`](docs/adr/ADR-003-unified-worker-process.md) — ADR for unified worker architecture
 - [`src/worker/unified_server.rs`] — Main unified server implementation
 
-## Lessons Learned (2026-05-06)
+## Implementation Planning
 
-### Plan Consolidation
+When working on large implementation plans:
 
-When consolidating architecture review plans:
-- **Batch file reads** with subagents to preserve context window (4-5 files per agent)
-- **Verify file references** before adding to consolidated plan — subagents catch discrepancies
-- **Wave-based organization** enables parallel execution by independent agents
-- **Reference files accurately** — `collect_body_with_chunk_waf` is in `server.rs:4532`, not `shared_handler.rs`
+### Wave-Based Execution
 
-### Key Discrepancies Found
+Large plans should be organized into **waves** that can execute in parallel:
+- **Wave 1**: Critical items with no dependencies (security fixes, compile blockers)
+- **Wave 2**: Items depending on Wave 1 completion
+- **Wave 3**: Items that can run parallel to other waves (e.g., WAF streaming optimization)
+- **Wave 4+**: Remaining items organized by priority
+
+### Verification Approach
+
+1. **Batch file reads** with subagents to preserve context window (4-5 files per agent)
+2. **Verify file references** before adding to plan — subagents catch discrepancies
+3. **Use explore agents** for codebase verification tasks
+4. **Cross-reference** with actual code when discrepancies found
+
+### Key Discrepancies to Watch For
 
 | Planned Reference | Actual Location | Issue |
 |-------------------|-----------------|-------|
 | `src/http/shared_handler.rs` | `src/http/server.rs:4532` | Function is in server.rs, not shared_handler |
-| `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs` | Quorum verification is in signed.rs |
-| `src/mesh/security_challenge.rs:196` | Same location | Simple `!=` comparison, not constant-time |
-
-### Verification Approach
-
-1. Use subagents to batch-verify file references (4-5 per agent)
-2. Consolidate verification results before updating plan
-3. Cross-reference with actual codebase when discrepancies found
+| `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs:860-934` | Quorum verification is in signed.rs, not state_machine |
 
 ## Skills Reference
 
