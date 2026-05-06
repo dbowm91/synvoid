@@ -1,6 +1,7 @@
 //! Header handling for proxy requests and responses.
 
 use http::header::HeaderName;
+use std::cell::RefCell;
 use std::net::IpAddr;
 use std::sync::LazyLock;
 use unicode_normalization::UnicodeNormalization;
@@ -117,19 +118,6 @@ pub(crate) fn is_private_ip(ip: &IpAddr) -> bool {
 
 fn is_public_ip(s: &str) -> Option<bool> {
     s.parse::<IpAddr>().ok().map(|ip| !is_private_ip(&ip))
-}
-
-pub fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
-    let mut entries: Vec<&str> = existing.split(',').map(|s| s.trim()).collect();
-    entries.retain(|e| !e.is_empty() && is_public_ip(e) == Some(true));
-    if entries.len() >= MAX_XFF_CHAIN_LENGTH {
-        entries = entries.split_off(entries.len() - MAX_XFF_CHAIN_LENGTH + 1);
-    }
-    if entries.is_empty() {
-        client_ip.to_string()
-    } else {
-        format!("{}, {}", entries.join(", "), client_ip)
-    }
 }
 
 pub fn build_headers_to_filter(
@@ -366,6 +354,32 @@ static X_REAL_IP: LazyLock<http::header::HeaderName> =
     LazyLock::new(|| http::header::HeaderName::from_static("x-real-ip"));
 static X_FORWARDED_PROTO: LazyLock<http::header::HeaderName> =
     LazyLock::new(|| http::header::HeaderName::from_static("x-forwarded-proto"));
+
+thread_local! {
+    static XFF_BUFFER: RefCell<String> = RefCell::new(String::with_capacity(256));
+}
+
+pub fn validate_and_truncate_xff(existing: &str, client_ip: &str) -> String {
+    let mut entries: Vec<&str> = existing.split(',').map(|s| s.trim()).collect();
+    entries.retain(|e| !e.is_empty() && is_public_ip(e) == Some(true));
+    if entries.len() >= MAX_XFF_CHAIN_LENGTH {
+        entries = entries.split_off(entries.len() - MAX_XFF_CHAIN_LENGTH + 1);
+    }
+
+    XFF_BUFFER.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.clear();
+        if entries.is_empty() {
+            buf.push_str(client_ip);
+        } else {
+            let joined = entries.join(", ");
+            buf.push_str(&joined);
+            buf.push_str(", ");
+            buf.push_str(client_ip);
+        }
+        buf.to_string()
+    })
+}
 
 pub fn build_forward_headers(
     client_ip: std::net::IpAddr,

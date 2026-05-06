@@ -590,21 +590,24 @@ impl ProxyServer {
                                 );
 
                                 tokio::spawn(async move {
+                                    cache_clone.record_revalidation_queued();
                                     let semaphore = cache_clone.revalidation_semaphore();
                                     let permit = match semaphore.acquire().await {
                                         Ok(p) => p,
                                         Err(_) => {
+                                            cache_clone.record_revalidation_end();
                                             tracing::warn!("Revalidation semaphore closed");
                                             return;
                                         }
                                     };
+                                    cache_clone.record_revalidation_start();
                                     tracing::debug!(
                                         "Triggering background revalidation for {}",
                                         path_owned
                                     );
                                     let _ = Self::revalidate_cache_entry(
                                         &reval_client,
-                                        cache_clone,
+                                        cache_clone.clone(),
                                         key_clone,
                                         method_clone,
                                         path_owned,
@@ -613,6 +616,7 @@ impl ProxyServer {
                                     )
                                     .await;
                                     drop(permit);
+                                    cache_clone.record_revalidation_end();
                                 });
 
                                 counter!("synvoid.proxy.cache.stale_while_revalidate").increment(1);
@@ -869,6 +873,7 @@ impl ProxyServer {
             }
             Err(e) => {
                 tracing::debug!("Background revalidation failed for {}: {}", path, e);
+                cache.record_revalidation_failure();
             }
         }
 

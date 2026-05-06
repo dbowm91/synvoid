@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -153,6 +153,10 @@ pub struct ProxyCache {
     inflight_requests: InflightRequestsMap,
     site_memory_usage: DashMap<String, AtomicU64>,
     revalidation_semaphore: Arc<tokio::sync::Semaphore>,
+    revalidation_active: AtomicU64,
+    revalidation_queued: AtomicU64,
+    revalidation_failures: AtomicU32,
+    circuit_open: AtomicBool,
 }
 
 impl Clone for ProxyCache {
@@ -169,6 +173,10 @@ impl Clone for ProxyCache {
             inflight_requests: self.inflight_requests.clone(),
             site_memory_usage: DashMap::new(),
             revalidation_semaphore: self.revalidation_semaphore.clone(),
+            revalidation_active: AtomicU64::new(self.revalidation_active.load(Ordering::Relaxed)),
+            revalidation_queued: AtomicU64::new(self.revalidation_queued.load(Ordering::Relaxed)),
+            revalidation_failures: AtomicU32::new(self.revalidation_failures.load(Ordering::Relaxed)),
+            circuit_open: AtomicBool::new(self.circuit_open.load(Ordering::Relaxed)),
         }
     }
 }
@@ -210,6 +218,10 @@ impl ProxyCache {
             revalidation_semaphore: Arc::new(tokio::sync::Semaphore::new(
                 settings.max_concurrent_revalidations,
             )),
+            revalidation_active: AtomicU64::new(0),
+            revalidation_queued: AtomicU64::new(0),
+            revalidation_failures: AtomicU32::new(0),
+            circuit_open: AtomicBool::new(false),
         }
     }
 
@@ -223,6 +235,51 @@ impl ProxyCache {
 
     pub fn revalidation_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
         self.revalidation_semaphore.clone()
+    }
+
+    pub fn revalidation_metrics(&self) -> (u64, u64) {
+        (
+            self.revalidation_active.load(Ordering::Relaxed),
+            self.revalidation_queued.load(Ordering::Relaxed),
+        )
+    }
+
+    pub(crate) fn record_revalidation_start(&self) {
+        self.revalidation_active.fetch_add(1, Ordering::Relaxed);
+        self.revalidation_queued.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_revalidation_end(&self) {
+        self.revalidation_active.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_revalidation_queued(&self) {
+        self.revalidation_queued.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_revalidation_failure(&self) {
+        let failures = self.revalidation_failures.fetch_add(1, Ordering::Relaxed);
+        let threshold = self.settings.read().revalidation_failure_threshold;
+        if failures >= threshold {
+            self.circuit_open.store(true, Ordering::Relaxed);
+            tracing::warn!(
+                "Revalidation circuit breaker opened after {} failures (threshold: {})",
+                failures + 1,
+                threshold
+            );
+            let cooldown = self.settings.read().revalidation_circuit_breaker_cooldown_secs;
+            let cache = self.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(cooldown)).await;
+                cache.circuit_open.store(false, Ordering::Relaxed);
+                cache.revalidation_failures.store(0, Ordering::Relaxed);
+                tracing::info!("Revalidation circuit breaker closed after cooldown");
+            });
+        }
+    }
+
+    pub fn is_revalidation_circuit_open(&self) -> bool {
+        self.circuit_open.load(Ordering::Relaxed)
     }
 
     #[cfg(feature = "mesh")]
@@ -831,6 +888,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         }
     }
 
@@ -882,6 +941,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         };
 
         let cache = ProxyCache::new(settings);
@@ -926,6 +987,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         };
 
         let cache = ProxyCache::new(settings);
@@ -1091,6 +1154,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         };
 
         let cache1 = ProxyCache::new(settings);
@@ -1130,6 +1195,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         };
 
         let cache = ProxyCache::new(settings);
@@ -1289,6 +1356,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         };
         let cache = ProxyCache::new(settings);
 
@@ -1350,6 +1419,8 @@ mod tests {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec![],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         };
 
         let cache = ProxyCache::new(settings);

@@ -18,6 +18,8 @@ pub struct ProxyCacheSettings {
     pub key_pattern: String,
     pub vary_by: Vec<String>,
     pub max_concurrent_revalidations: usize,
+    pub revalidation_failure_threshold: u32,
+    pub revalidation_circuit_breaker_cooldown_secs: u64,
 }
 
 impl Default for ProxyCacheSettings {
@@ -46,6 +48,8 @@ impl Default for ProxyCacheSettings {
             key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
             vary_by: vec!["Accept-Encoding".to_string()],
             max_concurrent_revalidations: 100,
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         }
     }
 }
@@ -105,6 +109,8 @@ impl ProxyCacheSettings {
                 .unwrap_or_else(|| "$scheme$request_method$host$request_uri".to_string()),
             vary_by,
             max_concurrent_revalidations: max_concurrent_revalidations.unwrap_or(100),
+            revalidation_failure_threshold: 10,
+            revalidation_circuit_breaker_cooldown_secs: 30,
         }
     }
 
