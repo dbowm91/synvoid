@@ -8,7 +8,7 @@ use network_types::tcp::TcpHdr;
 
 use crate::maps::{
     get_config, get_ipv4_key, get_ipv6_key, update_stats, FloodStats, Ipv4Key, Ipv6Key, SynCounter,
-    CONFIG_KEY, GLOBAL_COUNTER, STATS, SYN_COUNTS_V4, SYN_COUNTS_V6,
+    CONFIG_KEY, GLOBAL_COUNTER, IP_BLOCKLIST_V4, IP_BLOCKLIST_V6, STATS, SYN_COUNTS_V4, SYN_COUNTS_V6,
 };
 
 const TCP_SYN: u8 = 0x02;
@@ -142,6 +142,18 @@ pub fn filter_syn(ctx: XdpContext) -> u32 {
         Some(v) => v,
         None => return xdp_pass(),
     };
+
+    if is_ipv4 {
+        let key = get_ipv4_key(src_ipv4);
+        if IP_BLOCKLIST_V4.get(&key).is_some() {
+            return xdp_drop();
+        }
+    } else {
+        let key = get_ipv6_key(src_ipv6);
+        if IP_BLOCKLIST_V6.get(&key).is_some() {
+            return xdp_drop();
+        }
+    }
 
     update_stats(|s| s.syn_seen += 1);
 

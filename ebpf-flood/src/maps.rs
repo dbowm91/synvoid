@@ -69,6 +69,12 @@ pub static SYN_COUNTS_V4: HashMap<Ipv4Key, SynCounter> = HashMap::with_max_entri
 pub static SYN_COUNTS_V6: HashMap<Ipv6Key, SynCounter> = HashMap::with_max_entries(16384, 0);
 
 #[map]
+pub static IP_BLOCKLIST_V4: HashMap<Ipv4Key, u8> = HashMap::with_max_entries(65536, 0);
+
+#[map]
+pub static IP_BLOCKLIST_V6: HashMap<Ipv6Key, u8> = HashMap::with_max_entries(16384, 0);
+
+#[map]
 pub static STATS: PerCpuArray<FloodStats> = PerCpuArray::with_max_entries(1, 0);
 
 #[inline(always)]
