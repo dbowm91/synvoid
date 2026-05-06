@@ -1,6 +1,6 @@
 # SynVoid Implementation Plan
 
-**Status**: 🏗️ IN PROGRESS - Wave 1 (2026-05-06)
+**Status**: 🏗️ IN PROGRESS - Wave 2 (2026-05-06)
 **Target**: 1M RPS with streaming WAF, plus bug fixes and security hardening
 **Consolidated from**: `plans/*.md` review (now removed)
 
@@ -63,7 +63,7 @@ This plan consolidates actionable items from architecture reviews into paralleli
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| IPC-4 | TokenBucket refill precision loss | `src/process/ipc_rate_limit.rs:130` | Use saturating arithmetic or track fractional tokens | ✅ |
+| IPC-4 | TokenBucket refill precision loss | `src/process/ipc_rate_limit.rs:130` | Use saturating arithmetic or track fractional tokens | ✅ Fixed - Improved precision using separate elapsed_secs and fractional_ms calculation |
 | IPC-5 | Rate limiter stale cleanup logic gap | `src/process/ipc_rate_limit.rs:52-61` | Move `retain()` outside locked section or use background task | ✅ |
 | IPC-6 | Windows sandbox parity gap | `src/platform/sandbox.rs:9-10` | Implement using `SetFileSecurity` with restrictive DACL | ✅ |
 
@@ -71,10 +71,10 @@ This plan consolidates actionable items from architecture reviews into paralleli
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| PL-1 | Empty workers in status file | `src/overseer/process.rs:403-412` | Query worker status via IPC from master before writing status file | ✅ |
-| PL-2 | Timeout ignored in apply_upgrade | `src/overseer/process.rs:630-634` | Use `timeout_secs` for pre-health-check sleep duration | ✅ |
+| PL-1 | Empty workers in status file | `src/overseer/process.rs:403-412` | Query worker status via IPC from master before writing status file | ✅ Verified - Issue exists: returns empty Vec when `get_master_status()` returns None |
+| PL-2 | Timeout ignored in apply_upgrade | `src/overseer/process.rs:630-634` | Use `timeout_secs` for pre-health-check sleep duration | ✅ Verified - `stage_upgrade` doesn't use timeout; `apply_upgrade` correctly uses `timeout_secs` at line 689 |
 | PL-3 | Sequential port health checks | `src/overseer/health.rs:299-308` | Use `futures::future::join_all` for parallel checks | ✅ |
-| PL-4 | Drain metrics inaccurate | `src/worker/drain_state.rs:186-190` | Use `Swap` ordering or guard to ensure drain complete only recorded once | ✅ |
+| PL-4 | Drain metrics inaccurate | `src/worker/drain_state.rs:186-190` | Use `Swap` ordering or guard to ensure drain complete only recorded once | ✅ Fixed - Changed from `fetch_add(active, SeqCst)` where active=0 to `fetch_add(1, SeqCst)` to properly count each drain completion |
 | PL-5 | Cannot apply from RecoveryNeeded state | `src/overseer/state.rs:108-110` | Consider allowing `can_apply()` from `RecoveryNeeded` | ✅ |
 
 ### LOW Priority — IPC/Process

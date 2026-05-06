@@ -185,8 +185,8 @@ impl WorkerDrainState {
     fn mark_drain_complete(&self) {
         let active = self.active_connections.load(Ordering::SeqCst);
         if self.draining.is_draining() && active == 0 {
-            let drained = self.connections_drained.fetch_add(active, Ordering::SeqCst);
-            tracing::info!("Drain complete, total connections drained: {}", drained);
+            self.connections_drained.fetch_add(1, Ordering::SeqCst);
+            tracing::info!("Drain complete for worker");
         }
     }
 
