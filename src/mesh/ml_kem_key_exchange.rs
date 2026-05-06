@@ -129,13 +129,13 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
         );
 
         let origin_signature = if let Some(ref signer_config) = self.config.origin_signing_key {
-            if let Some(ref private_key) = signer_config.private_key {
-                let signing_key = SigningKey::from_bytes(private_key);
-                let signature = signing_key.sign(sign_message.as_bytes());
-                URL_SAFE_NO_PAD.encode(signature.to_bytes())
-            } else {
-                String::new()
-            }
+            let private_key = signer_config.private_key.as_ref().ok_or_else(|| {
+                tracing::error!("ML-KEM exchange requires signing key but none configured");
+                Status::internal("Signing key not configured")
+            })?;
+            let signing_key = SigningKey::from_bytes(private_key);
+            let signature = signing_key.sign(sign_message.as_bytes());
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
         } else {
             String::new()
         };
