@@ -971,11 +971,12 @@ impl OverseerProcess {
         if let Some(gen) = self.upgrade_generation {
             set_master_generation(gen);
             cleanup_old_master_sockets(gen);
-            let _ = std::fs::remove_file(get_master_socket_path());
-            let _ = std::fs::rename(
+            let _ = tokio::fs::remove_file(get_master_socket_path()).await;
+            let _ = tokio::fs::rename(
                 get_versioned_master_socket_path(gen),
                 get_master_socket_path(),
-            );
+            )
+            .await;
             tracing::info!("Promoted socket generation {} to primary", gen);
         }
         self.upgrade_generation = None;

@@ -62,40 +62,6 @@ pub fn increment_oversized_rejected() {
     OVERSIZED_REJECTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-struct NonceCache {
-    by_nonce: Vec<([u8; 16], u64)>,
-}
-
-impl NonceCache {
-    fn new() -> Self {
-        Self {
-            by_nonce: Vec::new(),
-        }
-    }
-
-    fn contains(&self, nonce: &[u8; 16]) -> bool {
-        self.by_nonce.iter().any(|(n, _)| *n == *nonce)
-    }
-
-    fn insert(&mut self, nonce: [u8; 16], timestamp: u64) {
-        self.by_nonce.push((nonce, timestamp));
-    }
-
-    fn evict_oldest(&mut self, max_size: usize) {
-        while self.by_nonce.len() > max_size {
-            if let Some(pos) = self
-                .by_nonce
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, &(_, ts))| ts)
-                .map(|(idx, _)| idx)
-            {
-                self.by_nonce.remove(pos);
-            }
-        }
-    }
-}
-
 type CacheKey = (u64, [u8; 16]);
 type ShardedNonceCache = DashMap<CacheKey, u64>;
 

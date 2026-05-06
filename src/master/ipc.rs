@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId};
@@ -343,6 +344,9 @@ pub async fn handle_worker_connection(
     }
 
     let rate_limiter = process_manager.get_ipc_rate_limiter();
+
+    let worker_pid_bindings: RwLock<HashMap<u64, u32>> = RwLock::new(HashMap::new());
+
     loop {
         match ipc.recv_with_timeout::<Message>(5000).await {
             Ok(Some(message)) => {
@@ -351,44 +355,82 @@ pub async fn handle_worker_connection(
                     continue;
                 }
 
-                // Validate claimed PID matches peer credentials
-                if let Message::WorkerStarted {
-                    id,
-                    pid: claimed_pid,
-                    ..
-                } = &message
-                {
+                let (worker_id, is_startup_message, claimed_pid_for_startup) = match &message {
+                    Message::WorkerStarted { id, pid, .. } => {
+                        (Some(id.as_usize() as u64), true, Some(*pid as u32))
+                    }
+                    Message::StaticWorkerStarted { worker_id, pid } => {
+                        (Some(*worker_id as u64), true, Some(*pid))
+                    }
+                    Message::UnifiedServerWorkerStarted { id, pid, .. } => {
+                        (Some(id.as_usize() as u64), true, Some(*pid))
+                    }
+                    Message::WorkerReady { id } => (Some(id.as_usize() as u64), false, None),
+                    Message::WorkerHeartbeat { id, .. } => {
+                        (Some(id.as_usize() as u64), false, None)
+                    }
+                    Message::WorkerError { id, .. } => (Some(id.as_usize() as u64), false, None),
+                    Message::StaticWorkerReady { worker_id } => {
+                        (Some(*worker_id as u64), false, None)
+                    }
+                    Message::StaticWorkerHeartbeat { worker_id, .. } => {
+                        (Some(*worker_id as u64), false, None)
+                    }
+                    _ => (None, false, None),
+                };
+
+                if is_startup_message {
                     if let Some(actual_pid) = peer_pid {
-                        if *claimed_pid as u32 != actual_pid {
-                            tracing::error!(
-                                "IPC security: FATAL - worker {} claims PID {} but socket peer PID is {}",
-                                id,
-                                claimed_pid,
+                        if let Some(claimed_pid) = claimed_pid_for_startup {
+                            if claimed_pid != actual_pid {
+                                tracing::error!(
+                                    "IPC security: FATAL - worker {} claims PID {} but socket peer PID is {}",
+                                    worker_id.unwrap_or(0),
+                                    claimed_pid,
+                                    actual_pid
+                                );
+                                let _ = ipc
+                                    .send(&Message::WorkerError {
+                                        id: WorkerId(0),
+                                        error: "PID mismatch - possible spoofing attack"
+                                            .to_string(),
+                                        severity: ErrorSeverity::Critical,
+                                        error_code: ErrorCode::AuthenticationFailed,
+                                    })
+                                    .await;
+                                return;
+                            }
+                        }
+                        if let Some(wid) = worker_id {
+                            let mut bindings = worker_pid_bindings
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner());
+                            bindings.insert(wid, actual_pid);
+                            tracing::debug!(
+                                "Worker {} identity bound to socket with peer PID {}",
+                                wid,
                                 actual_pid
                             );
-                            let _ = ipc
-                                .send(&Message::WorkerError {
-                                    id: *id,
-                                    error: "PID mismatch - possible spoofing attack".to_string(),
-                                    severity: ErrorSeverity::Critical,
-                                    error_code: ErrorCode::AuthenticationFailed,
-                                })
-                                .await;
-                            return;
+                        }
+                    }
+                } else if let Some(wid) = worker_id {
+                    if let Some(actual_pid) = peer_pid {
+                        let bindings = worker_pid_bindings
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if let Some(&bound_pid) = bindings.get(&wid) {
+                            if bound_pid != actual_pid {
+                                tracing::error!(
+                                    "IPC security: FATAL - worker {} message from socket with peer PID {} but expected PID {}",
+                                    wid,
+                                    actual_pid,
+                                    bound_pid
+                                );
+                                return;
+                            }
                         }
                     }
                 }
-
-                let worker_id = match &message {
-                    Message::WorkerStarted { id, .. } => Some(id.as_usize() as u64),
-                    Message::WorkerReady { id } => Some(id.as_usize() as u64),
-                    Message::WorkerHeartbeat { id, .. } => Some(id.as_usize() as u64),
-                    Message::WorkerError { id, .. } => Some(id.as_usize() as u64),
-                    Message::StaticWorkerStarted { worker_id, .. } => Some(*worker_id as u64),
-                    Message::StaticWorkerReady { worker_id } => Some(*worker_id as u64),
-                    Message::StaticWorkerHeartbeat { worker_id, .. } => Some(*worker_id as u64),
-                    _ => None,
-                };
 
                 if let Some(wid) = worker_id {
                     if let Err(e) = rate_limiter.check_worker(wid) {
