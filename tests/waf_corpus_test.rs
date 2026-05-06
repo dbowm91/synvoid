@@ -6,8 +6,8 @@ use std::path::PathBuf;
 mod waf_corpus_tests {
     use super::*;
     use http::HeaderMap;
-    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
     use std::net::IpAddr;
+    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
     fn fixtures_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/waf")

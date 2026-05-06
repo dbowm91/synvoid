@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 fn clean_domain(host: &str) -> String {
     let host = host.trim();
-    let host = host.trim_start_matches("https://").trim_start_matches("http://");
+    let host = host
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
     if let Some(stripped) = host.strip_prefix("www.") {
         stripped.to_lowercase()
     } else {

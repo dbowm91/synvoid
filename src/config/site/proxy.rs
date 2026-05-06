@@ -4,7 +4,9 @@ use utoipa::ToSchema;
 
 use super::backend::{BackendConfig, CgiConfig, FastCgiConfig, LocationConfig, PhpConfig};
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BodyBufferingPolicy {
     #[default]
@@ -17,9 +19,7 @@ pub enum BodyBufferingPolicy {
 impl BodyBufferingPolicy {
     pub fn should_stream(&self, content_length: Option<u64>, threshold: u64) -> bool {
         match self {
-            BodyBufferingPolicy::Auto => {
-                content_length.map(|cl| cl > threshold).unwrap_or(true)
-            }
+            BodyBufferingPolicy::Auto => content_length.map(|cl| cl > threshold).unwrap_or(true),
             BodyBufferingPolicy::Streaming | BodyBufferingPolicy::StreamingRequired => true,
             BodyBufferingPolicy::Buffered => false,
         }

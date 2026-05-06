@@ -27,11 +27,9 @@ mod erased_pool;
 mod typed_pool;
 
 pub use erased_pool::{
-    ErasedBody, ErasedBodyImpl, PoolKey,
+    ErasedBody, ErasedBodyImpl, ErasedConnectionPool, ErasedHttpClient, PoolKey,
 };
-pub use typed_pool::{
-    TypedConnectionPool, TypedHttpClient, TypedPoolKey,
-};
+pub use typed_pool::{TypedConnectionPool, TypedHttpClient, TypedPoolKey};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
@@ -136,7 +134,11 @@ where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: std::fmt::Debug,
 {
-    pub fn new(inner: B, streaming_waf: Option<Arc<crate::waf::attack_detection::StreamingWafCore>>, client_ip: IpAddr) -> Self {
+    pub fn new(
+        inner: B,
+        streaming_waf: Option<Arc<crate::waf::attack_detection::StreamingWafCore>>,
+        client_ip: IpAddr,
+    ) -> Self {
         Self {
             inner,
             streaming_waf,
@@ -182,7 +184,8 @@ where
                                     client_ip = %this.client_ip,
                                     "Request blocked by streaming WAF mid-body"
                                 );
-                                metrics::counter!("synvoid.http.streaming_body_blocked").increment(1);
+                                metrics::counter!("synvoid.http.streaming_body_blocked")
+                                    .increment(1);
                                 this.blocked = true;
                                 return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                                     std::io::ErrorKind::PermissionDenied,
@@ -195,12 +198,9 @@ where
                 }
                 std::task::Poll::Ready(Some(Ok(frame)))
             }
-            std::task::Poll::Ready(Some(Err(e))) => {
-                std::task::Poll::Ready(Some(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("body error: {:?}", e),
-                ))))
-            }
+            std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Some(Err(
+                std::io::Error::new(std::io::ErrorKind::Other, format!("body error: {:?}", e)),
+            ))),
             std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
@@ -734,8 +734,7 @@ pub async fn send_request_streaming(
     body: Full<Bytes>,
     headers: http::HeaderMap,
     timeout: Option<Duration>,
-) -> Result<Response<Incoming>>
-{
+) -> Result<Response<Incoming>> {
     let uri: Uri = url.parse()?;
     let mut req_builder = Request::builder()
         .method(method)
@@ -753,6 +752,44 @@ pub async fn send_request_streaming(
         }
     } else {
         client.request(req).await?
+    };
+
+    Ok(response)
+}
+
+pub async fn send_request_erased_streaming(
+    client: &ErasedHttpClient,
+    method: Method,
+    url: &str,
+    body: BoxErasedBody,
+    headers: http::HeaderMap,
+    timeout: Option<Duration>,
+) -> Result<Response<Incoming>> {
+    let uri: Uri = url.parse()?;
+    let mut req_builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(body)
+        .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+    *req_builder.headers_mut() = headers;
+    let req = req_builder;
+
+    let authority = req
+        .uri()
+        .authority()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+    let is_http2 = false;
+
+    let response = if let Some(t) = timeout {
+        match tokio::time::timeout(t, client.send_request(req, authority, is_http2, Some(t))).await
+        {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(anyhow::anyhow!("request timed out")),
+        }
+    } else {
+        client.send_request(req, authority, is_http2, None).await?
     };
 
     Ok(response)

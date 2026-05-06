@@ -335,8 +335,8 @@ mod tests {
 
     #[test]
     fn test_rate_limiter_basic() {
-        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(100, 50);
 

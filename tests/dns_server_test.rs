@@ -258,8 +258,8 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_ip_based() {
-        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(100, 50);
         let ip1: IpAddr = "192.168.1.1".parse().unwrap();
@@ -271,8 +271,8 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_ip_exhaustion() {
-        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(100, 50);
         let ip: IpAddr = "10.0.0.1".parse().unwrap();
@@ -295,8 +295,8 @@ mod rate_limiter_tests {
 
     #[test]
     fn test_rate_limiter_independent_ips() {
-        use synvoid::dns::DnsRateLimiter;
         use std::net::IpAddr;
+        use synvoid::dns::DnsRateLimiter;
 
         let limiter = DnsRateLimiter::new(100, 50);
         let ip_a: IpAddr = "10.0.0.1".parse().unwrap();
@@ -442,8 +442,8 @@ mod cache_tests {
 mod firewall_tests {
     #[test]
     fn test_firewall_action_variants() {
-        use synvoid::dns::DnsFirewallAction;
         use std::time::Duration;
+        use synvoid::dns::DnsFirewallAction;
 
         assert!(matches!(DnsFirewallAction::Allow, DnsFirewallAction::Allow));
         assert!(matches!(DnsFirewallAction::Block, DnsFirewallAction::Block));
@@ -470,8 +470,8 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_default_action() {
-        use synvoid::dns::{DnsFirewall, DnsFirewallAction};
         use std::net::IpAddr;
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction};
 
         let fw = DnsFirewall::new();
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
@@ -513,8 +513,8 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_domain_block() {
-        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
         use std::net::IpAddr;
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
 
         let mut fw = DnsFirewall::new();
         let rule = DnsFirewallRule {
@@ -544,8 +544,8 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_subnet_block() {
-        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
         use std::net::IpAddr;
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
 
         let mut fw = DnsFirewall::new();
         let rule = DnsFirewallRule {
@@ -572,8 +572,8 @@ mod firewall_tests {
 
     #[test]
     fn test_firewall_disabled_rule_skipped() {
-        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
         use std::net::IpAddr;
+        use synvoid::dns::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
 
         let mut fw = DnsFirewall::new();
         let rule = DnsFirewallRule {

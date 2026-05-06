@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use synvoid::vpn_client::{ReconnectConfig, VpnClient, VpnClientConfig};
 use server::start_server;
+use synvoid::vpn_client::{ReconnectConfig, VpnClient, VpnClientConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "synvoid-vpn")]

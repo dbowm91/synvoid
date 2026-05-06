@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use http::HeaderMap;
-use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector, InputNormalizer};
 use std::sync::Arc;
+use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector, InputNormalizer};
 
 fn benchmark_normalize_benign(c: &mut Criterion) {
     let normalizer = InputNormalizer::new();

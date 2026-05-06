@@ -175,7 +175,9 @@ impl Clone for ProxyCache {
             revalidation_semaphore: self.revalidation_semaphore.clone(),
             revalidation_active: AtomicU64::new(self.revalidation_active.load(Ordering::Relaxed)),
             revalidation_queued: AtomicU64::new(self.revalidation_queued.load(Ordering::Relaxed)),
-            revalidation_failures: AtomicU32::new(self.revalidation_failures.load(Ordering::Relaxed)),
+            revalidation_failures: AtomicU32::new(
+                self.revalidation_failures.load(Ordering::Relaxed),
+            ),
             circuit_open: AtomicBool::new(self.circuit_open.load(Ordering::Relaxed)),
         }
     }
@@ -267,7 +269,10 @@ impl ProxyCache {
                 failures + 1,
                 threshold
             );
-            let cooldown = self.settings.read().revalidation_circuit_breaker_cooldown_secs;
+            let cooldown = self
+                .settings
+                .read()
+                .revalidation_circuit_breaker_cooldown_secs;
             let cache = self.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(cooldown)).await;

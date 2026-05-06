@@ -207,10 +207,10 @@ mod waf_anomaly_scoring_tests {
 
 #[cfg(test)]
 mod waf_streaming_tests {
+    use std::sync::Arc;
     use synvoid::waf::attack_detection::{
         AttackDetectionConfig, AttackDetector, StreamingWafDecision,
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_streaming_waf_multiple_chunks_sqli() {
@@ -539,8 +539,8 @@ mod waf_false_positive_tests {
 
 #[cfg(test)]
 mod mesh_proxy_circuit_breaker_tests {
-    use synvoid::mesh::proxy::{CircuitState, ProviderStats, BLOCK_BROADCAST_FAILURE_THRESHOLD};
     use std::time::Instant;
+    use synvoid::mesh::proxy::{CircuitState, ProviderStats, BLOCK_BROADCAST_FAILURE_THRESHOLD};
 
     #[test]
     fn test_provider_stats_initial_state() {
@@ -1489,10 +1489,10 @@ mod entropy_calculation_tests {
 
 #[cfg(test)]
 mod overseer_lifecycle_tests {
-    use synvoid::overseer::drain_manager::DrainManager;
-    use synvoid::process::WorkerId;
     use parking_lot::RwLock;
     use std::sync::Arc;
+    use synvoid::overseer::drain_manager::DrainManager;
+    use synvoid::process::WorkerId;
 
     #[test]
     fn test_drain_manager_start_drain() {

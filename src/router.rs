@@ -405,7 +405,10 @@ impl Router {
 
     #[inline]
     fn is_host_valid_for_site(&self, clean_host: &str, site_config: &Arc<SiteConfig>) -> bool {
-        if let Some(suffixes) = self.cleaned_site_domain_suffixes.get(&site_config.site_id()) {
+        if let Some(suffixes) = self
+            .cleaned_site_domain_suffixes
+            .get(&site_config.site_id())
+        {
             for suffix in suffixes {
                 if clean_host.ends_with(suffix.as_ref()) {
                     return true;
@@ -1142,7 +1145,8 @@ impl Router {
             let config_arc = Arc::new(config);
             let site_id_str = config_arc.site_id();
 
-            self.site_map.insert(site_id_str.clone(), config_arc.clone());
+            self.site_map
+                .insert(site_id_str.clone(), config_arc.clone());
 
             let cleaned: Vec<Arc<str>> = config_arc
                 .site
@@ -1165,7 +1169,8 @@ impl Router {
 
             self.cleaned_site_domains
                 .insert(site_id_str.clone(), cleaned);
-            self.cleaned_site_domain_suffixes.insert(site_id_str.clone(), suffixes);
+            self.cleaned_site_domain_suffixes
+                .insert(site_id_str.clone(), suffixes);
 
             if config_arc.r#static.enabled.unwrap_or(false) {
                 let minifier_cache = if config_arc.r#static.enable_minification.unwrap_or(true) {

@@ -1,5 +1,5 @@
-use synvoid::process::WorkerId;
 use std::path::PathBuf;
+use synvoid::process::WorkerId;
 
 #[cfg(test)]
 mod tests {
@@ -876,8 +876,8 @@ mod tests {
 
     #[test]
     fn test_worker_metrics_recording() {
-        use synvoid::worker::metrics::WorkerMetrics;
         use std::sync::atomic::Ordering;
+        use synvoid::worker::metrics::WorkerMetrics;
 
         let metrics = WorkerMetrics::default();
 
@@ -1390,9 +1390,9 @@ mod tls_config_tests {
 
 #[cfg(test)]
 mod block_store_tests {
+    use std::net::IpAddr;
     use synvoid::block_store::{BlockEntry, BlockStore, BlockStoreStats};
     use synvoid::config::DenyListLimitsConfig;
-    use std::net::IpAddr;
     use tempfile::TempDir;
 
     fn default_config() -> DenyListLimitsConfig {
@@ -2676,12 +2676,12 @@ mod proxy_pipeline_tests {
     use ahash::AHashSet;
     use bytes::Bytes;
     use http_body_util::Full;
+    use std::net::SocketAddr;
     use synvoid::http_client::{get, post_json};
     use synvoid::proxy::{
         filter_response_headers, filter_response_headers_buf, is_hop_by_hop_header,
         sanitize_request_path,
     };
-    use std::net::SocketAddr;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::Duration;
@@ -3610,11 +3610,11 @@ mod http_security_header_tests {
 
 #[cfg(test)]
 mod acme_workflow_tests {
+    use std::sync::Arc;
     use synvoid::config::tls::{AcmeChallengeType, AcmeConfig, TlsConfig};
     use synvoid::tls::acme::AcmeError;
     use synvoid::tls::config::{InternalAcmeChallengeType, InternalAcmeConfig};
     use synvoid::tls::AcmeDnsChallenge;
-    use std::sync::Arc;
     use tempfile::TempDir;
 
     #[test]

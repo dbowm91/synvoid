@@ -40,8 +40,8 @@ mod tests {
 
     #[test]
     fn test_key_file_symlink_rejected() {
-        use synvoid::process::ipc_signed::IpcSigner;
         use std::os::unix::fs::PermissionsExt;
+        use synvoid::process::ipc_signed::IpcSigner;
 
         let temp_dir = TempDir::new().unwrap();
         let key_path = temp_dir.path().join("key.txt");
@@ -64,8 +64,8 @@ mod tests {
 
     #[test]
     fn test_key_file_world_writable_rejected() {
-        use synvoid::process::ipc_signed::IpcSigner;
         use std::os::unix::fs::PermissionsExt;
+        use synvoid::process::ipc_signed::IpcSigner;
 
         let temp_dir = TempDir::new().unwrap();
         let key_path = temp_dir.path().join("key.txt");
@@ -86,8 +86,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_pidfile_lock_prevents_concurrent_access() {
-        use synvoid::process::pidfile::PidFileManager;
         use std::time::Instant;
+        use synvoid::process::pidfile::PidFileManager;
 
         let temp_dir = TempDir::new().unwrap();
         let mut manager1 = PidFileManager::with_custom_dir(temp_dir.path().to_path_buf());
@@ -159,8 +159,8 @@ mod tests {
 
     #[test]
     fn test_ipc_signer_rejects_key_file_with_symlink() {
-        use synvoid::process::ipc_signed::IpcSigner;
         use std::os::unix::fs::PermissionsExt;
+        use synvoid::process::ipc_signed::IpcSigner;
 
         let temp_dir = TempDir::new().unwrap();
 
@@ -184,8 +184,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_read_ipc_key_file_rejects_symlink() {
-        use synvoid::process::ipc_signed::read_ipc_key_file;
         use std::os::unix::fs::PermissionsExt;
+        use synvoid::process::ipc_signed::read_ipc_key_file;
 
         let temp_dir = TempDir::new().unwrap();
 
@@ -207,8 +207,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_read_ipc_key_file_rejects_world_writable() {
-        use synvoid::process::ipc_signed::read_ipc_key_file;
         use std::os::unix::fs::PermissionsExt;
+        use synvoid::process::ipc_signed::read_ipc_key_file;
 
         let temp_dir = TempDir::new().unwrap();
 
@@ -252,8 +252,8 @@ mod tests {
 
     #[test]
     fn test_forwarded_headers_spoofed_by_client_rejected() {
-        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
         use synvoid::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
 
         let client_ip = "192.168.1.100".parse().unwrap();
         let mut original_headers = http::HeaderMap::new();
@@ -264,24 +264,47 @@ mod tests {
         original_headers.insert("x-forwarded-proto", "https".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+        let result = build_forward_headers(
+            client_ip,
+            &original_headers,
+            &config,
+            ForwardedProtocol::Http,
+        );
 
-        let xff = result.get("x-forwarded-for").map(|v| v.to_str().unwrap_or(""));
-        assert!(xff.unwrap().contains("192.168.1.100"), "X-Forwarded-For should contain real client IP, not spoofed values");
+        let xff = result
+            .get("x-forwarded-for")
+            .map(|v| v.to_str().unwrap_or(""));
+        assert!(
+            xff.unwrap().contains("192.168.1.100"),
+            "X-Forwarded-For should contain real client IP, not spoofed values"
+        );
 
         let xrip = result.get("x-real-ip").map(|v| v.to_str().unwrap_or(""));
-        assert_eq!(xrip.unwrap(), "192.168.1.100", "X-Real-IP should contain real client IP");
+        assert_eq!(
+            xrip.unwrap(),
+            "192.168.1.100",
+            "X-Real-IP should contain real client IP"
+        );
 
-        assert!(result.get("forwarded").is_none(), "Original forwarded header should be stripped");
+        assert!(
+            result.get("forwarded").is_none(),
+            "Original forwarded header should be stripped"
+        );
 
-        let xfp = result.get("x-forwarded-proto").map(|v| v.to_str().unwrap_or(""));
-        assert_eq!(xfp.unwrap(), "http", "x-forwarded-proto should be set based on listener, not client spoofed value");
+        let xfp = result
+            .get("x-forwarded-proto")
+            .map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(
+            xfp.unwrap(),
+            "http",
+            "x-forwarded-proto should be set based on listener, not client spoofed value"
+        );
     }
 
     #[test]
     fn test_hop_by_hop_headers_stripped_from_forwarding() {
-        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
         use synvoid::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
 
         let client_ip = "10.0.0.1".parse().unwrap();
         let mut original_headers = http::HeaderMap::new();
@@ -293,19 +316,39 @@ mod tests {
         original_headers.insert("content-type", "application/json".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+        let result = build_forward_headers(
+            client_ip,
+            &original_headers,
+            &config,
+            ForwardedProtocol::Http,
+        );
 
-        assert!(result.get("connection").is_none(), "Connection header should be stripped");
-        assert!(result.get("keep-alive").is_none(), "Keep-Alive header should be stripped");
-        assert!(result.get("transfer-encoding").is_none(), "Transfer-Encoding header should be stripped");
-        assert!(result.get("proxy-authorization").is_none(), "Proxy-Authorization header should be stripped");
-        assert!(result.get("content-type").is_some(), "Content-Type should be preserved");
+        assert!(
+            result.get("connection").is_none(),
+            "Connection header should be stripped"
+        );
+        assert!(
+            result.get("keep-alive").is_none(),
+            "Keep-Alive header should be stripped"
+        );
+        assert!(
+            result.get("transfer-encoding").is_none(),
+            "Transfer-Encoding header should be stripped"
+        );
+        assert!(
+            result.get("proxy-authorization").is_none(),
+            "Proxy-Authorization header should be stripped"
+        );
+        assert!(
+            result.get("content-type").is_some(),
+            "Content-Type should be preserved"
+        );
     }
 
     #[test]
     fn test_build_forward_headers_preserves_non_spoofed_headers() {
-        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
         use synvoid::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
 
         let client_ip = "172.16.0.50".parse().unwrap();
         let mut original_headers = http::HeaderMap::new();
@@ -316,43 +359,85 @@ mod tests {
         original_headers.insert("x-request-id", "abc123".parse().unwrap());
 
         let config = ProxyHeadersConfig::default();
-        let result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
+        let result = build_forward_headers(
+            client_ip,
+            &original_headers,
+            &config,
+            ForwardedProtocol::Http,
+        );
 
-        assert!(result.get("host").is_some(), "Host header should be preserved");
-        assert!(result.get("user-agent").is_some(), "User-Agent should be preserved");
-        assert!(result.get("accept").is_some(), "Accept header should be preserved");
-        assert!(result.get("x-request-id").is_some(), "Custom headers should be preserved");
+        assert!(
+            result.get("host").is_some(),
+            "Host header should be preserved"
+        );
+        assert!(
+            result.get("user-agent").is_some(),
+            "User-Agent should be preserved"
+        );
+        assert!(
+            result.get("accept").is_some(),
+            "Accept header should be preserved"
+        );
+        assert!(
+            result.get("x-request-id").is_some(),
+            "Custom headers should be preserved"
+        );
     }
 
     #[test]
     fn test_forwarded_protocol_header_based_on_listener() {
-        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
         use synvoid::config::site::ProxyHeadersConfig;
+        use synvoid::proxy::headers::{build_forward_headers, ForwardedProtocol};
 
         let client_ip = "127.0.0.1".parse().unwrap();
         let original_headers = http::HeaderMap::new();
 
         let config = ProxyHeadersConfig::default();
 
-        let http_result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Http);
-        let proto_header = http_result.get("x-forwarded-proto").map(|v| v.to_str().unwrap_or(""));
-        assert_eq!(proto_header.unwrap(), "http", "HTTP listener should set x-forwarded-proto to http");
+        let http_result = build_forward_headers(
+            client_ip,
+            &original_headers,
+            &config,
+            ForwardedProtocol::Http,
+        );
+        let proto_header = http_result
+            .get("x-forwarded-proto")
+            .map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(
+            proto_header.unwrap(),
+            "http",
+            "HTTP listener should set x-forwarded-proto to http"
+        );
 
-        let https_result = build_forward_headers(client_ip, &original_headers, &config, ForwardedProtocol::Https);
-        let proto_header = https_result.get("x-forwarded-proto").map(|v| v.to_str().unwrap_or(""));
-        assert_eq!(proto_header.unwrap(), "https", "HTTPS listener should set x-forwarded-proto to https");
+        let https_result = build_forward_headers(
+            client_ip,
+            &original_headers,
+            &config,
+            ForwardedProtocol::Https,
+        );
+        let proto_header = https_result
+            .get("x-forwarded-proto")
+            .map(|v| v.to_str().unwrap_or(""));
+        assert_eq!(
+            proto_header.unwrap(),
+            "https",
+            "HTTPS listener should set x-forwarded-proto to https"
+        );
     }
 
     #[test]
     fn test_cache_key_construction_uses_sanitized_ip() {
-        use synvoid::proxy_cache::CacheKey;
         use std::net::IpAddr;
+        use synvoid::proxy_cache::CacheKey;
 
         let client_ip: IpAddr = "1.2.3.4".parse().unwrap();
 
         let sanitized_ip = format!("{}", client_ip);
 
-        assert_eq!(sanitized_ip, "1.2.3.4", "Cache key should use client IP directly without extra formatting");
+        assert_eq!(
+            sanitized_ip, "1.2.3.4",
+            "Cache key should use client IP directly without extra formatting"
+        );
     }
 
     #[cfg(all(unix, not(target_os = "linux")))]

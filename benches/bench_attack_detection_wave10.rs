@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use http::{HeaderMap, Method};
-use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 use std::sync::Arc;
+use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
 fn benchmark_attack_detection_common(c: &mut Criterion) {
     let config = AttackDetectionConfig::default();

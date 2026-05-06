@@ -85,8 +85,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_upstream_ips_google() {
-        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
         use std::net::IpAddr;
+        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Google;
@@ -113,10 +113,10 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_custom_servers() {
+        use std::net::IpAddr;
         use synvoid::config::dns::{
             RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
         };
-        use std::net::IpAddr;
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Custom;
@@ -169,8 +169,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_key_equality() {
-        use synvoid::dns::recursive_cache::RecursiveCacheKey;
         use std::net::IpAddr;
+        use synvoid::dns::recursive_cache::RecursiveCacheKey;
 
         let key1 = RecursiveCacheKey::new(b"example.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -719,8 +719,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_key_with_subnet() {
-        use synvoid::dns::recursive_cache::RecursiveCacheKey;
         use std::net::IpAddr;
+        use synvoid::dns::recursive_cache::RecursiveCacheKey;
 
         let ip_v4: IpAddr = "192.168.1.100".parse().unwrap();
         let ip_v6: IpAddr = "2001:db8::1".parse().unwrap();

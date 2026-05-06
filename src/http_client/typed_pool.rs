@@ -7,9 +7,9 @@ use bytes::Bytes;
 use http_body::Body as HttpBody;
 use http_body_util::Full;
 use hyper::body::Incoming;
-use hyper_util::client::legacy::Client;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use moka::sync::Cache;
 use std::any::{Any, TypeId};
@@ -63,9 +63,7 @@ pub struct TypedConnectionPool {
 
 impl TypedConnectionPool {
     pub fn new(max_idle_per_host: usize) -> Self {
-        let cache = Cache::builder()
-            .max_capacity(100)
-            .build();
+        let cache = Cache::builder().max_capacity(100).build();
 
         Self {
             inner: cache,
@@ -78,11 +76,7 @@ impl TypedConnectionPool {
         authority: &str,
         is_http2: bool,
     ) -> Arc<TypedClientEntry> {
-        let key = TypedPoolKey::new(
-            authority.to_string(),
-            is_http2,
-            TypeId::of::<Full<Bytes>>(),
-        );
+        let key = TypedPoolKey::new(authority.to_string(), is_http2, TypeId::of::<Full<Bytes>>());
 
         if let Some(entry) = self.inner.get(&key) {
             return entry;
@@ -163,9 +157,7 @@ impl TypedHttpClient {
         let entry = self.pool.get_client_for_authority(authority, is_http2);
 
         match timeout {
-            Some(t) => {
-                tokio::time::timeout(t, entry.client.request(request)).await?
-            }
+            Some(t) => tokio::time::timeout(t, entry.client.request(request)).await?,
             None => entry.client.request(request).await,
         }
         .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)

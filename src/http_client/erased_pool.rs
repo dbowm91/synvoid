@@ -7,7 +7,8 @@
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body as HttpBody;
-use hyper::body::{Frame, SizeHint};
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Frame, Incoming, SizeHint};
 use hyper::client::conn::http1 as http1_client;
 use hyper_util::rt::TokioIo;
 use std::error::Error;
@@ -66,6 +67,12 @@ where
     }
 }
 
+impl ErasedBodyImpl<Full<Bytes>> {
+    pub fn from_full(body: Full<Bytes>) -> Box<dyn ErasedBody> {
+        Box::new(Self { inner: body })
+    }
+}
+
 impl<B> ErasedBody for ErasedBodyImpl<B>
 where
     B: HttpBody<Data = Bytes> + Send + Sync + Unpin + 'static,
@@ -78,7 +85,9 @@ where
         let pin_inner = Pin::new(&mut self.inner);
         pin_inner.poll_frame(cx).map(|opt| {
             opt.map(|result| {
-                result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("body error: {:?}", e)))
+                result.map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("body error: {:?}", e))
+                })
             })
         })
     }
@@ -108,6 +117,7 @@ pub struct PoolKey {
 pub struct Http1PooledConnection {
     io: Option<TokioIo<tokio::net::TcpStream>>,
     authority: http::uri::Authority,
+    sender: Option<http1_client::SendRequest<BoxErasedBody>>,
 }
 
 pub struct Http2PooledConnection {
@@ -115,16 +125,52 @@ pub struct Http2PooledConnection {
 }
 
 impl Http1PooledConnection {
-    pub fn new(
-        io: TokioIo<tokio::net::TcpStream>,
+    pub async fn new(
+        stream: tokio::net::TcpStream,
         authority: http::uri::Authority,
-    ) -> Self {
-        Self { io: Some(io), authority }
+    ) -> Result<Self, std::io::Error> {
+        let io = TokioIo::new(stream);
+        let (sender, _conn) = http1_client::handshake(io).await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("handshake failed: {}", e),
+            )
+        })?;
+        Ok(Self {
+            io: None,
+            authority,
+            sender: Some(sender),
+        })
+    }
+
+    pub async fn send_request(
+        &mut self,
+        request: http::Request<BoxErasedBody>,
+    ) -> Result<http::Response<hyper::body::Incoming>, std::io::Error> {
+        let sender = self.sender.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "connection already used")
+        })?;
+        let mut sender = sender;
+        sender.send_request(request).await.map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::Other, format!("request failed: {}", e))
+        })
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.sender.is_some()
+    }
+
+    pub fn authority(&self) -> &http::uri::Authority {
+        &self.authority
     }
 
     #[cfg(test)]
     pub fn new_for_test(authority: http::uri::Authority) -> Self {
-        Self { io: None, authority }
+        Self {
+            io: None,
+            authority,
+            sender: None,
+        }
     }
 }
 
@@ -134,7 +180,7 @@ impl PooledConnection for Http1PooledConnection {
     }
 
     fn is_available(&self) -> bool {
-        self.io.is_some()
+        self.sender.is_some()
     }
 
     fn box_body<B>(body: B) -> BoxErasedBody
@@ -167,6 +213,158 @@ impl PooledConnection for Http2PooledConnection {
 impl Http2PooledConnection {
     pub fn new(authority: http::uri::Authority) -> Self {
         Self { authority }
+    }
+}
+
+pub struct ErasedConnectionPool {
+    inner: std::sync::Arc<
+        tokio::sync::Mutex<
+            std::collections::HashMap<PoolKey, std::collections::VecDeque<Http1PooledConnection>>,
+        >,
+    >,
+    max_idle_per_host: usize,
+    connect_timeout: std::time::Duration,
+}
+
+impl ErasedConnectionPool {
+    pub fn new(max_idle_per_host: usize) -> Self {
+        Self {
+            inner: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            max_idle_per_host,
+            connect_timeout: std::time::Duration::from_secs(5),
+        }
+    }
+
+    pub fn with_connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
+
+    pub async fn checkout(&self, key: PoolKey) -> Result<Http1PooledConnection, std::io::Error> {
+        let mut pool = self.inner.lock().await;
+        if let Some(conns) = pool.get_mut(&key) {
+            if let Some(conn) = conns.pop_front() {
+                if conn.is_connected() {
+                    return Ok(conn);
+                }
+            }
+        }
+        drop(pool);
+
+        let authority: http::uri::Authority = key.authority.parse().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid authority: {}", e),
+            )
+        })?;
+        let port = authority.port_u16().unwrap_or(80);
+        let connect_addr: std::net::SocketAddr = format!("{}:{}", authority.host(), port)
+            .parse()
+            .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid address: {}", e),
+            )
+        })?;
+        let stream = tokio::net::TcpStream::connect(connect_addr)
+            .await
+            .map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("connect failed: {}", e))
+            })?;
+        let conn = tokio::time::timeout(
+            self.connect_timeout,
+            Http1PooledConnection::new(stream, authority),
+        )
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
+        Ok(conn)
+    }
+
+    pub async fn checkin(&self, key: PoolKey, conn: Http1PooledConnection) {
+        if conn.is_connected() {
+            let mut pool = self.inner.lock().await;
+            let conns = pool
+                .entry(key)
+                .or_insert_with(std::collections::VecDeque::new);
+            if conns.len() < self.max_idle_per_host {
+                conns.push_back(conn);
+            }
+        }
+    }
+
+    pub async fn idle_count(&self, key: &PoolKey) -> usize {
+        let pool = self.inner.lock().await;
+        pool.get(key).map(|v| v.len()).unwrap_or(0)
+    }
+
+    pub async fn total_idle_count(&self) -> usize {
+        let pool = self.inner.lock().await;
+        pool.values().map(|v| v.len()).sum()
+    }
+}
+
+impl Default for ErasedConnectionPool {
+    fn default() -> Self {
+        Self::new(10)
+    }
+}
+
+impl Clone for ErasedConnectionPool {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            max_idle_per_host: self.max_idle_per_host,
+            connect_timeout: self.connect_timeout,
+        }
+    }
+}
+
+pub struct ErasedHttpClient {
+    pool: ErasedConnectionPool,
+}
+
+impl ErasedHttpClient {
+    pub fn new(max_idle_per_host: usize) -> Self {
+        Self {
+            pool: ErasedConnectionPool::new(max_idle_per_host),
+        }
+    }
+
+    pub async fn send_request(
+        &self,
+        request: http::Request<BoxErasedBody>,
+        authority: String,
+        is_http2: bool,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<http::Response<Incoming>, std::io::Error> {
+        let key = PoolKey {
+            authority,
+            is_http2,
+        };
+        let mut conn = match self.pool.checkout(key.clone()).await {
+            Ok(c) => c,
+            Err(e) => return Err(e),
+        };
+
+        let result = if let Some(t) = timeout {
+            tokio::time::timeout(t, conn.send_request(request)).await?
+        } else {
+            conn.send_request(request).await
+        };
+
+        result
+    }
+
+    pub fn pool(&self) -> &ErasedConnectionPool {
+        &self.pool
+    }
+}
+
+impl Clone for ErasedHttpClient {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
     }
 }
 

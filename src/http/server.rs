@@ -112,8 +112,8 @@ use crate::http::internal_handlers;
 use crate::http::response_helpers::{self, build_websocket_response};
 use crate::http::validation_helpers::validate_websocket_upgrade;
 use crate::http_client::{
-    create_http_client_with_config, send_request_streaming, send_request_with_body_and_timeout,
-    HttpClient, UpstreamTlsConfig,
+    create_http_client_with_config, send_request_erased_streaming, send_request_streaming,
+    send_request_with_body_and_timeout, ErasedHttpClient, HttpClient, UpstreamTlsConfig,
 };
 #[cfg(feature = "mesh")]
 use crate::mesh::config::MeshConfig;
@@ -351,6 +351,7 @@ pub struct HttpServer {
     #[cfg(feature = "mesh")]
     mesh_backend_pool: Option<Arc<MeshBackendPool>>,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
+    erased_http_client: ErasedHttpClient,
 }
 
 impl HttpServer {
@@ -394,6 +395,7 @@ impl HttpServer {
             #[cfg(feature = "mesh")]
             mesh_backend_pool: None,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
+            erased_http_client: ErasedHttpClient::new(100),
         }
     }
 
@@ -488,6 +490,7 @@ impl HttpServer {
         #[cfg(feature = "mesh")]
         let mesh_backend_pool = self.mesh_backend_pool.clone();
         let upstream_client_registry = self.upstream_client_registry.clone();
+        let erased_http_client = self.erased_http_client.clone();
 
         let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
         let max_headers = self.http_config.max_headers;
@@ -539,6 +542,7 @@ impl HttpServer {
                             #[cfg(feature = "mesh")]
                             let mesh_backend_pool = mesh_backend_pool.clone();
                             let upstream_client_registry = upstream_client_registry.clone();
+                            let erased_http_client = erased_http_client.clone();
 
                             let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
                                 let mut peek_buf = [0u8; 16];
@@ -612,8 +616,9 @@ impl HttpServer {
                                     #[cfg(feature = "mesh")]
                                     let mesh_backend_pool = mesh_backend_pool.clone();
                                     let upstream_client_registry = upstream_client_registry.clone();
+                                    let erased_http_client = erased_http_client.clone();
                                     async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry).await
+                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry, erased_http_client).await
                                     }
                                 }))
                                 .with_upgrades();
@@ -667,6 +672,7 @@ impl HttpServer {
         >,
         #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
+        erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         // ============================================================================
         // SECTION 1: Connection Management
@@ -2898,8 +2904,14 @@ impl HttpServer {
 
                 const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB - stream above this size
 
-                if !needs_body_transform && !crate::http_client::is_quictunnel_url(&target.upstream)
-                {
+                let streaming_threshold = target.site_config.proxy.streaming_threshold_bytes;
+                let use_erased_client = !needs_body_transform
+                    && !crate::http_client::is_quictunnel_url(&target.upstream)
+                    && target.site_config.proxy.body_buffering_policy
+                        == crate::config::site::BodyBufferingPolicy::Streaming
+                    && request_body_size > streaming_threshold;
+
+                if use_erased_client {
                     let forward_header_map = build_forward_headers(
                         client_ip,
                         &parts.headers,
@@ -2912,11 +2924,14 @@ impl HttpServer {
                         ForwardedProtocol::Http,
                     );
 
-match send_request_streaming(
-                        &forwarding_client,
+                    let erased_body = crate::http_client::ErasedBodyImpl::from_full(Full::new(
+                        full_body_arc.as_ref().clone(),
+                    ));
+                    match send_request_erased_streaming(
+                        &erased_http_client,
                         method,
                         &upstream_target.url,
-                        Full::new(full_body_arc.as_ref().clone()),
+                        erased_body,
                         forward_header_map,
                         Some(upstream_target.timeout),
                     )

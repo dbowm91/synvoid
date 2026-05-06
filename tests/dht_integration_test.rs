@@ -1,5 +1,7 @@
 #![cfg(feature = "mesh")]
 
+use std::collections::HashMap;
+use std::time::Duration;
 use synvoid::mesh::config::MeshNodeRole;
 use synvoid::mesh::dht::keys::DhtKey;
 use synvoid::mesh::dht::merkle::MerkleTree;
@@ -11,8 +13,6 @@ use synvoid::mesh::dht::signed::{RecordSigner, SignedDhtRecord, SignedRecordType
 use synvoid::mesh::dht::stake::{SlashReason, StakeConfig, StakeLevel, StakeManager};
 use synvoid::mesh::dht::store::{DhtRecord, DhtRecordStore, RecordMetadata};
 use synvoid::mesh::dht::DhtRateLimiter;
-use std::collections::HashMap;
-use std::time::Duration;
 
 #[test]
 fn test_node_id_creation() {
@@ -1367,14 +1367,14 @@ fn test_dht_key_privileged_vs_public() {
 // ── ThreatIntelligence Tests ─────────────────────────────────────
 
 mod threat_intel_tests {
+    use std::net::IpAddr;
+    use std::sync::Arc;
     use synvoid::mesh::config::MeshNodeRole;
     use synvoid::mesh::protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
     use synvoid::mesh::threat_intel::{
         ThreatIndicatorEntry, ThreatIntelligenceConfig, ThreatIntelligenceConfigInternal,
         ThreatIntelligenceManager,
     };
-    use std::net::IpAddr;
-    use std::sync::Arc;
 
     fn create_test_manager(role: MeshNodeRole) -> ThreatIntelligenceManager {
         use synvoid::config::DenyListLimitsConfig;

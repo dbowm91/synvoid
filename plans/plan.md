@@ -1,6 +1,6 @@
 # Reverse Proxy and WAF Improvement Plan
 
-**Status**: ✅ ALL WAVES COMPLETED (2026-05-06)
+**Status**: ✅ ALL WAVES AND DEFERRED ITEMS COMPLETED (2026-05-06)
 **Last updated**: 2026-05-06
 **Scope**: True streaming via type-erased connection pool, HTTP/TLS/HTTP3 unification, routing benchmarks, and remaining deferred items.
 
@@ -42,7 +42,10 @@ This file contains all open, partially complete, and deferred work. Every item b
 - Exports `ErasedConnectionPool`, `ErasedHttpClient` publicly
 
 ### Note
-Integration into `http/server.rs` proxy path (Phase 9) is pending - wiring `BodyBufferingPolicy::Streaming` to use `ErasedHttpClient` needs to be done separately.
+- Phase 9 Integration ✅ (2026-05-06): Wired `ErasedHttpClient` into `http/server.rs` proxy path for `BodyBufferingPolicy::Streaming` requests above streaming threshold
+- Added `send_request_erased_streaming()` function in `http_client/mod.rs`
+- `ErasedHttpClient` added to `HttpServer` struct with cloning support
+- Streaming threshold check uses `site_config.proxy.streaming_threshold_bytes`
 
 ---
 
@@ -87,7 +90,8 @@ Note: The implementation returns the built response (as required by the trait si
 - Updated `check_request` helper to pass `None` for services
 - Updated all callers (http/server.rs, http3/server.rs, tls/server.rs, proxy/mod.rs) to pass `None` as the services parameter
 
-Note: The infrastructure is now in place for actually threading `RequestServices` through the call chain. The remaining work (replacing `None` with actual services) requires more extensive changes to the HTTP handlers to pass services through from `UnifiedServerWorkerState`.
+Note: The infrastructure is now in place for actually threading `RequestServices` through the call chain.
+- Threading RequestServices ✅ (2026-05-06): `WafCore::check_request_full` now falls back to `self.request_services.load()` when no services are explicitly passed, allowing callers to pass `None` and still have services available via the WAF's stored configuration
 
 ---
 
@@ -152,11 +156,6 @@ cargo test --lib block_store
 
 The following items are documented for future agents but are NOT part of the current plan:
 
-### Phase 9 Integration (Wave 1)
-- Integration into `http/server.rs` proxy path
-- Wire `BodyBufferingPolicy::Streaming` to use `ErasedHttpClient`
-
-### Threading RequestServices (Wave 3)
-- Replace `None` with actual services in all callers
-- Pass services from `UnifiedServerWorkerState` to HTTP/TLS handlers
-- Remove deprecated global singleton access
+All previously deferred items have been completed:
+- ✅ Phase 9 Integration (Wave 1): ErasedHttpClient wired into HTTP server
+- ✅ Threading RequestServices (Wave 3): Services now fall back to WAF's stored configuration

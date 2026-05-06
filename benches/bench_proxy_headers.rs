@@ -37,7 +37,11 @@ fn build_forward_headers(
             continue;
         }
 
-        if config.clear.iter().any(|h| h.eq_ignore_ascii_case(name_str)) {
+        if config
+            .clear
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(name_str))
+        {
             continue;
         }
 
@@ -182,7 +186,9 @@ fn create_test_headers() -> http::HeaderMap {
         http::HeaderValue::from_static("https://google.com"),
     );
     headers.insert(
-        "X-Custom-Header".parse::<http::header::HeaderName>().unwrap(),
+        "X-Custom-Header"
+            .parse::<http::header::HeaderName>()
+            .unwrap(),
         http::HeaderValue::from_static("custom-value"),
     );
     headers.insert(
@@ -252,7 +258,9 @@ fn benchmark_ip_to_string(c: &mut Criterion) {
 fn benchmark_header_cloning(c: &mut Criterion) {
     let mut headers = create_test_headers();
     headers.insert(
-        "X-Large-Header".parse::<http::header::HeaderName>().unwrap(),
+        "X-Large-Header"
+            .parse::<http::header::HeaderName>()
+            .unwrap(),
         http::HeaderValue::from_str(&"x".repeat(1000)).unwrap(),
     );
 
@@ -289,7 +297,10 @@ fn benchmark_xff_processing(c: &mut Criterion) {
     });
 
     c.bench_function("xff_many", |b| {
-        let xff = (0..20).map(|i| format!("10.0.0.{}", i)).collect::<Vec<_>>().join(", ");
+        let xff = (0..20)
+            .map(|i| format!("10.0.0.{}", i))
+            .collect::<Vec<_>>()
+            .join(", ");
         b.iter(|| {
             criterion::black_box(validate_and_truncate_xff(&xff, "192.168.1.100"));
         });

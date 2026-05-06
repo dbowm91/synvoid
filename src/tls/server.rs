@@ -36,8 +36,8 @@ use crate::metrics::bandwidth::{
 };
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
-    build_forward_headers, build_headers_to_filter, filter_response_headers_buf,
-    ForwardedProtocol, PreparedUpstreamTarget, ProxyServer,
+    build_forward_headers, build_headers_to_filter, filter_response_headers_buf, ForwardedProtocol,
+    PreparedUpstreamTarget, ProxyServer,
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
@@ -862,9 +862,7 @@ impl HttpsServer {
                 let current_stalled = crate::metrics::get_active_stalled_requests();
                 if current_stalled >= http_config.max_stalled_requests as u64 {
                     crate::metrics::record_stall_rejected();
-                    tracing::warn!(
-                        "HTTPS stall rejected due to concurrency cap"
-                    );
+                    tracing::warn!("HTTPS stall rejected due to concurrency cap");
                     return Ok(Self::build_response(
                         429,
                         "Too many requests".to_string(),

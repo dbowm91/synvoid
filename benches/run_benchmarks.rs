@@ -1,6 +1,6 @@
-use std::time::{Duration, SystemTime};
-use std::process::{Command, Stdio};
 use std::io::Write;
+use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime};
 
 fn timestamp() -> String {
     let now = SystemTime::now()
@@ -24,15 +24,15 @@ fn parse_ns_from_line(line: &str) -> Option<u64> {
         let rest = &line[pos + 5..];
         let rest = rest.trim();
         if rest.ends_with("ns") {
-            rest[..rest.len()-2].parse().ok()
+            rest[..rest.len() - 2].parse().ok()
         } else if rest.ends_with("µs") || rest.ends_with("us") {
-            let val: f64 = rest[..rest.len()-2].parse().ok()?;
+            let val: f64 = rest[..rest.len() - 2].parse().ok()?;
             Some((val * 1000.0) as u64)
         } else if rest.ends_with("ms") {
-            let val: f64 = rest[..rest.len()-2].parse().ok()?;
+            let val: f64 = rest[..rest.len() - 2].parse().ok()?;
             Some((val * 1_000_000.0) as u64)
         } else if rest.ends_with("s") {
-            let val: f64 = rest[..rest.len()-1].parse().ok()?;
+            let val: f64 = rest[..rest.len() - 1].parse().ok()?;
             Some((val * 1_000_000_000.0) as u64)
         } else {
             rest.parse().ok()
@@ -55,7 +55,14 @@ fn run_benchmark(name: &str, threshold_ns: u64) -> BenchmarkResult {
     std::io::stdout().flush().ok();
 
     let output = Command::new("cargo")
-        .args(["bench", "--bench", name, "--", "--warm-up-time=0", "--sample-size=10"])
+        .args([
+            "bench",
+            "--bench",
+            name,
+            "--",
+            "--warm-up-time=0",
+            "--sample-size=10",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output();
@@ -77,7 +84,11 @@ fn run_benchmark(name: &str, threshold_ns: u64) -> BenchmarkResult {
 
             if min_ns != u64::MAX {
                 let passed = min_ns <= threshold_ns;
-                println!("{} ns/op [{}]", min_ns, if passed { "PASS" } else { "FAIL" });
+                println!(
+                    "{} ns/op [{}]",
+                    min_ns,
+                    if passed { "PASS" } else { "FAIL" }
+                );
                 return BenchmarkResult {
                     name: name.to_string(),
                     ns_per_op: min_ns,
@@ -148,7 +159,12 @@ fn main() {
         std::io::stdout().flush().ok();
         let result = run_benchmark(name, *threshold);
 
-        if result.error.as_ref().map(|e| e == "not found").unwrap_or(false) {
+        if result
+            .error
+            .as_ref()
+            .map(|e| e == "not found")
+            .unwrap_or(false)
+        {
             skipped += 1;
         } else if result.passed {
             passed += 1;
@@ -158,21 +174,32 @@ fn main() {
     }
 
     println!("\n========================================");
-    println!("Results: {} passed, {} failed, {} skipped", passed, failed, skipped);
+    println!(
+        "Results: {} passed, {} failed, {} skipped",
+        passed, failed, skipped
+    );
     println!("========================================\n");
 
     println!("--- JSON Output ---\n");
     println!("{{");
     println!("  \"timestamp\": \"{}\",", timestamp());
     println!("  \"revision\": \"{}\",", revision);
-    println!("  \"summary\": {{ \"passed\": {}, \"failed\": {}, \"skipped\": {} }},",
-             passed, failed, skipped);
+    println!(
+        "  \"summary\": {{ \"passed\": {}, \"failed\": {}, \"skipped\": {} }},",
+        passed, failed, skipped
+    );
     println!("  \"benchmarks\": [");
     for (i, (name, threshold)) in benchmarks.iter().enumerate() {
         let result = run_benchmark(name, *threshold);
-        let error_str = result.error.as_ref().map(|e| format!("\"{}\"", e)).unwrap_or_else(|| "null".to_string());
-        println!("    {{ \"name\": \"{}\", \"ns_per_op\": {}, \"passed\": {}, \"error\": {} }}",
-                 name, result.ns_per_op, result.passed, error_str);
+        let error_str = result
+            .error
+            .as_ref()
+            .map(|e| format!("\"{}\"", e))
+            .unwrap_or_else(|| "null".to_string());
+        println!(
+            "    {{ \"name\": \"{}\", \"ns_per_op\": {}, \"passed\": {}, \"error\": {} }}",
+            name, result.ns_per_op, result.passed, error_str
+        );
     }
     println!("  ]");
     println!("}}");

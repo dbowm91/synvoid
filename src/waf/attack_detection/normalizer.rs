@@ -156,7 +156,8 @@ impl InputNormalizer {
                             }
                             'u' | 'U' => {
                                 if i + 5 < chars.len() {
-                                    if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6]) {
+                                    if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6])
+                                    {
                                         if code_point != 0 {
                                             if let Some(ch) = char::from_u32(code_point) {
                                                 input.push(ch);

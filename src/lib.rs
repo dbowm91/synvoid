@@ -43,8 +43,8 @@ pub mod app_server;
 pub mod auth;
 pub mod block_store;
 pub mod buffer {
-    pub use synvoid_utils::buffer::pool;
     pub use pool::{BufferPool, PooledBuf};
+    pub use synvoid_utils::buffer::pool;
 }
 pub mod captcha;
 pub mod cgi;

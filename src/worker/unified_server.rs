@@ -1206,7 +1206,9 @@ pub async fn run_unified_server_worker(
 
     let request_services = Arc::new(request_services);
 
-    unified_server.get_waf().set_request_services(request_services.clone());
+    unified_server
+        .get_waf()
+        .set_request_services(request_services.clone());
 
     let state = UnifiedServerWorkerState {
         worker_id,

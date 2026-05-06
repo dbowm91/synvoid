@@ -97,11 +97,11 @@ use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeResult};
 use crate::config::RateLimitMemoryConfig;
 #[cfg(feature = "mesh")]
 use crate::mesh::protocol::{ThreatSeverity, ThreatType};
-use crate::worker::context::RequestServices;
 #[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::theme::ThemeConfig;
 use crate::upload::UploadValidator;
+use crate::worker::context::RequestServices;
 
 use arc_swap::ArcSwapOption;
 use std::net::IpAddr;
@@ -1047,6 +1047,7 @@ impl WafCore {
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
         services: Option<Arc<RequestServices>>,
     ) -> WafDecision {
+        let services = services.or_else(|| (*self.request_services.load()).clone());
         if self.whitelist.contains(&client_ip) {
             return WafDecision::Pass;
         }
@@ -1100,9 +1101,7 @@ impl WafCore {
         #[cfg(feature = "mesh")]
         if let Some(decision) = self.check_dht_threat_lookup(
             client_ip,
-            services
-                .as_ref()
-                .and_then(|rs| rs.threat_intel.as_ref()),
+            services.as_ref().and_then(|rs| rs.threat_intel.as_ref()),
         ) {
             crate::metrics::record_waf_check_timing(
                 "dht_threat",
