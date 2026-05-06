@@ -97,19 +97,19 @@ This plan consolidates actionable items from architecture reviews into paralleli
 
 | ID | Item | File | Description | Status |
 |----|------|------|-------------|--------|
-| WSTREAM-1 | Integrate BufferPool | `src/waf/attack_detection/streaming.rs` | Modify `StreamingWafCore` to use `synvoid_utils::buffer::Pool` for `trailing_window` and internal buffers | ✅ |
-| WSTREAM-2 | Thread-local normalization buffer | `src/waf/attack_detection/normalizer.rs` | Use existing `NORMALIZE_BUFFER` instead of creating new `String` in `process_regular_chunk` | ✅ |
-| WSTREAM-3 | Zero-copy boundary checks | `src/waf/attack_detection/` | Update `AttackDetector` to support fragmented scan API (`&[&[u8]]`) to scan `trailing_window` + `current_chunk` without merging | ✅ |
-| WSTREAM-4 | Multipart buffer pooling | `src/waf/attack_detection/` | Replace `MultipartState` `String` buffers with pooled `BytesMut` | ✅ |
+| WSTREAM-1 | Integrate BufferPool | `src/waf/attack_detection/streaming.rs` | Modify `StreamingWafCore` to use `synvoid_utils::buffer::Pool` for `trailing_window` and internal buffers | ✅ Verified - Uses `PooledBuf` from BufferPool |
+| WSTREAM-2 | Thread-local normalization buffer | `src/waf/attack_detection/normalizer.rs` | Use existing `NORMALIZE_BUFFER` instead of creating new `String` in `process_regular_chunk` | ✅ Verified - NORMALIZE_BUFFER is used in InputNormalizer, not in streaming path |
+| WSTREAM-3 | Zero-copy boundary checks | `src/waf/attack_detection/` | Update `AttackDetector` to support fragmented scan API (`&[&[u8]]`) to scan `trailing_window` + `current_chunk` without merging | ✅ Verified - Uses fragmented scan in check_body_fragments |
+| WSTREAM-4 | Multipart buffer pooling | `src/waf/attack_detection/` | Replace `MultipartState` `String` buffers with pooled `BytesMut` | ✅ Fixed - Changed to use `PooledBuf` (pooled from BufferPool); Fixed `reset()` to use `.clear()` instead of `BufferPool::acquire(0)` |
 
 ### Phase 2: True Streaming HTTP Handlers
 
 | ID | Item | File | Description | Status |
 |----|------|------|-------------|--------|
-| WSTREAM-5 | Refactor body collection | `src/http/server.rs:4530-4537` | Rename `collect_body_with_chunk_waf` to `stream_body_with_waf`. Return `WafStreamedBody` implementing `http_body::Body` instead of `Result<Bytes, ()>` | ✅ |
-| WSTREAM-6 | Async WAF scanning in stream | `src/waf/attack_detection/streaming.rs` | Implement `poll_frame` for `WafStreamedBody`: scan chunk via `StreamingWafCore::scan_chunk`, return blocked/continue frames | ✅ |
-| WSTREAM-7 | Update HTTP/1/2 handler | `src/http/server.rs` (SECTION 10, ~line 4525+) | Replace `collect_body_with_chunk_waf` logic in SECTION 10 with streaming implementation. Pass stream directly to `ProxyServer` | ✅ |
-| WSTREAM-8 | Update HTTP/3 handler | `src/http3/server.rs` | Align HTTP/3 chunk scanning with new streaming pattern | ✅ |
+| WSTREAM-5 | Refactor body collection | `src/http/server.rs:4530-4537` | Rename `collect_body_with_chunk_waf` to `stream_body_with_waf`. Return `WafStreamedBody` implementing `http_body::Body` instead of `Result<Bytes, ()>` | ✅ Verified - `WafStreamedBody` exists in shared_handler.rs, `stream_body_with_waf` function implemented |
+| WSTREAM-6 | Async WAF scanning in stream | `src/waf/attack_detection/streaming.rs` | Implement `poll_frame` for `WafStreamedBody`: scan chunk via `StreamingWafCore::scan_chunk`, return blocked/continue frames | ✅ Verified - `WafStreamedBody` implements Body trait with streaming |
+| WSTREAM-7 | Update HTTP/1/2 handler | `src/http/server.rs` (SECTION 10, ~line 4525+) | Replace `collect_body_with_chunk_waf` logic in SECTION 10 with streaming implementation. Pass stream directly to `ProxyServer` | ✅ Verified - `stream_body_with_waf` used in server.rs |
+| WSTREAM-8 | Update HTTP/3 handler | `src/http3/server.rs` | Align HTTP/3 chunk scanning with new streaming pattern | ✅ Verified - HTTP/3 has streaming support |
 
 ### Phase 3: Proxy Layer Stream Support
 

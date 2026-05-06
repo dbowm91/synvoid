@@ -255,7 +255,7 @@ impl StreamingWafCore {
         state.bytes_seen = 0;
         state.boundary = None;
         state.multipart_state = MultipartState::None;
-        state.trailing_window = BufferPool::acquire(0);
+        state.trailing_window.clear();
     }
 
     fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
