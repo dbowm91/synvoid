@@ -965,8 +965,6 @@ impl Http3Server {
                                 .body(())
                                 .map_err(|e| format!("Failed to build response: {}", e))?;
 
-                            request_stream.send_response(response).await?;
-
                             const ZERO_COPY_THRESHOLD: u64 = 1024 * 1024; // 1MB
 
                             if body_len > ZERO_COPY_THRESHOLD {
@@ -1050,6 +1048,7 @@ impl Http3Server {
                                     );
                                     bw.record_site_egress(&host, body_len);
                                 }
+                                request_stream.send_response(response).await?;
                                 if !body_bytes.is_empty() {
                                     request_stream.send_data(body_bytes.into()).await?;
                                 }
