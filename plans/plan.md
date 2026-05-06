@@ -42,18 +42,27 @@ The following items have been completed and verified:
 
 ## P0/P1: True Streaming via Type-Erased Connection Pool
 
-**Status**: 🚧 IN PROGRESS - Phase 1 Complete, Phases 2-5 Deferred (2026-05-04)
+**Status**: ✅ COMPLETED (2026-05-06)
 
-**Completed** (2026-05-04):
+**Completed**:
 - Phase 1: Core trait definitions (ErasedBody, ErasedBodyImpl, PoolKey, BoxErasedBody)
-- Phase 6: StreamingWafBody can be wrapped by ErasedBodyImpl
+- Phase 2: `Http1PooledConnection` implementing `PooledConnection`
+- Phase 3: `Http2PooledConnection` stub
+- Phase 4 & 5: **IMPLEMENTED ALTERNATIVE** - Option 3 (TypedConnectionPool) instead of original Option D
 
-**Deferred**:
-- Phase 2-5: Connection pooling infrastructure (deferred due to hyper type complexity)
+**Diversion from Original Plan**:
+After analyzing hyper's type complexity (Client<C, B> is parametric over body type B),
+we pivoted to **Option 3: Per-Host Typed Clients** approach which avoids fighting
+hyper's type system. This approach:
+- Creates typed clients per (authority, body_type) combination
+- Uses moka cache keyed by (authority, is_http2, body_type_id)
+- Provides TypedHttpClient with send_request() that handles HTTP/1 and HTTP/2
+- Avoids the complex Box<dyn PooledConnection> with send_request async FN pattern
 
 **Files modified in this wave**:
-- `src/http_client/erased_pool.rs` (NEW) - Type-erased body infrastructure
+- `src/http_client/erased_pool.rs` - Type-erased body infrastructure
 - `src/http_client/mod.rs` - Exports new types
+- `src/http_client/typed_pool.rs` (NEW) - TypedConnectionPool, TypedHttpClient, TypedPoolKey
 
 ### Problem
 
@@ -608,11 +617,16 @@ These items are deferred but documented for future agents:
 
 ### P1: Reduce Proxy Hot-Path Allocations
 
-**Problem**: Header forwarding, response filtering, cache keys, URL joining, and body cloning allocate per request.
+**Status**: ✅ COMPLETED (2026-05-06)
 
-**Status**: Deferred - needs benchmarking first
+**What was done**:
+- Added `thread_local! { static XFF_BUFFER: RefCell<String> }` with 256 byte capacity in `validate_and_truncate_xff`
+- XFF construction now reuses thread-local buffer instead of allocating per call
+- At 1M RPS, eliminates ~1M short String allocations/second
 
-**Next step**: Create benchmark for `build_forward_headers` to establish baseline before optimizing
+**Location**: `src/proxy/headers.rs:validate_and_truncate_xff`
+
+**Tests**: 30 proxy headers tests passing
 
 ### P2: Proxy Hot-Path Allocations - Detailed Assessment
 
@@ -638,23 +652,20 @@ These items are deferred but documented for future agents:
 
 ### P2: Cache and Revalidation Scalability - Detailed Assessment
 
-**Location**: `src/proxy_cache/store.rs` (SWR logic), `src/proxy_cache/revalidation.rs`
+**Location**: `src/proxy_cache/store.rs` (SWR logic)
 
-**Problem**: Stale-while-revalidate creates unbounded background task bursts when:
-1. Multiple stale entries expire simultaneously
-2. Invalidation triggers mass revalidation
-3. Each revalidation spawns a task without backpressure
+**Status**: ✅ COMPLETED (2026-05-06)
 
-**Current State**: Code review suggests tasks are spawned via `tokio::spawn` without semaphore limiting concurrent revalidations.
+**What was done**:
+- Added `revalidation_active` and `revalidation_queued` AtomicU64 counters
+- Added `revalidation_failures` counter and `circuit_open` AtomicBool
+- `record_revalidation_queued()`, `record_revalidation_start()`, `record_revalidation_end()` for metrics
+- Circuit breaker pattern: opens after `revalidation_failure_threshold` (default: 10) consecutive failures, auto-closes after cooldown (default: 30s)
 
-**Observability**: Not clear if this has been observed in production or is theoretical based on code analysis.
-
-**Recommended Approach**:
-1. Add metrics for background revalidation tasks (active count, queued count)
-2. Implement bounded task queue with semaphore
-3. Add circuit breaker for revalidation storms
-
-**Pattern Reference**: `skills/performance_patterns.md` lines 417-440 show semaphore-based broadcast backpressure pattern that could apply.
+**Configuration** (in `ProxyCacheSettings`):
+- `max_concurrent_revalidations`: usize (default 100) - semaphore limit
+- `revalidation_failure_threshold`: u32 (default 10)
+- `revalidation_circuit_breaker_cooldown_secs`: u64 (default 30)
 
 ### P2: Mesh Proxy Provider Selection - Detailed Assessment
 
