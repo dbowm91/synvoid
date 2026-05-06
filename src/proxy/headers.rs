@@ -360,13 +360,21 @@ pub fn apply_response_header_transforms(
     *headers = new_headers;
 }
 
+static X_FORWARDED_FOR: LazyLock<http::header::HeaderName> =
+    LazyLock::new(|| http::header::HeaderName::from_static("x-forwarded-for"));
+static X_REAL_IP: LazyLock<http::header::HeaderName> =
+    LazyLock::new(|| http::header::HeaderName::from_static("x-real-ip"));
+static X_FORWARDED_PROTO: LazyLock<http::header::HeaderName> =
+    LazyLock::new(|| http::header::HeaderName::from_static("x-forwarded-proto"));
+
 pub fn build_forward_headers(
     client_ip: std::net::IpAddr,
     original_headers: &http::HeaderMap,
     config: &ProxyHeadersConfig,
     protocol: ForwardedProtocol,
 ) -> http::HeaderMap {
-    let mut forward_headers = http::HeaderMap::new();
+    let capacity = original_headers.len().min(32).max(8);
+    let mut forward_headers = http::HeaderMap::with_capacity(capacity);
 
     let headers_to_forward: Vec<&str> = if config.forward.is_empty() {
         vec!["*"]
@@ -420,22 +428,16 @@ pub fn build_forward_headers(
         validate_and_truncate_xff(existing, &client_ip.to_string())
     };
     if let Ok(value) = xff_value.parse::<http::HeaderValue>() {
-        forward_headers.insert(
-            http::header::HeaderName::from_static("x-forwarded-for"),
-            value,
-        );
+        forward_headers.insert(X_FORWARDED_FOR.clone(), value);
     }
 
     if let Ok(value) = client_ip.to_string().parse::<http::HeaderValue>() {
-        forward_headers.insert(http::header::HeaderName::from_static("x-real-ip"), value);
+        forward_headers.insert(X_REAL_IP.clone(), value);
     }
 
     let proto = protocol.as_str();
     if let Ok(value) = proto.parse::<http::HeaderValue>() {
-        forward_headers.insert(
-            http::header::HeaderName::from_static("x-forwarded-proto"),
-            value,
-        );
+        forward_headers.insert(X_FORWARDED_PROTO.clone(), value);
     }
 
     for override_hdr in &config.set {
