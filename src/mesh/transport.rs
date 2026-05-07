@@ -1116,6 +1116,8 @@ impl MeshTransport {
                 geo: None,
                 audit_successes: 0,
                 audit_failures: 0,
+                performance_audit_successes: 0,
+                performance_audit_failures: 0,
                 quic_port: None,
                 wireguard_port: None,
                 advertised_port: None,
@@ -3301,6 +3303,42 @@ impl MeshTransport {
             blocked_duration_secs,
             "Fanout broadcast upstream block: {} to {} global nodes ({} failed)",
             upstream_id,
+            success_count,
+            fail_count
+        );
+    }
+
+    pub async fn broadcast_peer_block(
+        &self,
+        node_id: &str,
+        reason: &str,
+        blocked_duration_secs: u64,
+        evidence: Option<crate::mesh::dht::AuditReceipt>,
+    ) {
+        let block_until_unix = crate::utils::safe_unix_timestamp() + blocked_duration_secs;
+
+        let block_message = MeshMessage::PeerBlocked {
+            node_id: node_id.into(),
+            blocked_until: block_until_unix,
+            reason: reason.into(),
+            blocked_by: self.config.node_id().into(),
+            evidence_receipt: evidence,
+        };
+
+        let (success_count, fail_count) = self
+            .broadcast_to_random_peers(
+                block_message,
+                0.5,
+                Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+            )
+            .await;
+
+        tracing::info!(
+            node_id,
+            reason,
+            blocked_duration_secs,
+            "Fanout broadcast peer block: {} to {} global nodes ({} failed)",
+            node_id,
             success_count,
             fail_count
         );

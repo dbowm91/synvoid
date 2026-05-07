@@ -628,6 +628,20 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 reason: r.reason.into(),
                 origin_node_id: r.origin_node_id.into(),
             }),
+            proto::mesh_message::Payload::PeerBlocked(r) => Ok(MeshMessage::PeerBlocked {
+                node_id: r.node_id.into(),
+                blocked_until: r.blocked_until,
+                reason: r.reason.into(),
+                blocked_by: r.blocked_by.into(),
+                evidence_receipt: r.evidence_receipt.map(|er| crate::mesh::dht::AuditReceipt {
+                    reporter_node_id: er.reporter_node_id,
+                    target_node_id: er.target_node_id,
+                    evidence_hash: er.evidence_hash,
+                    evidence_type: er.evidence_type,
+                    reporter_signature: er.reporter_signature,
+                    timestamp: er.timestamp,
+                }),
+            }),
             proto::mesh_message::Payload::BandwidthReport(r) => Ok(MeshMessage::BandwidthReport {
                 upstream_id: r.upstream_id.into(),
                 bytes_sent: r.bytes_sent,
@@ -1253,6 +1267,14 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         blocked_at: b.blocked_at,
                         blocked_by: b.blocked_by,
                         expires_at: b.expires_at,
+                        evidence_receipt: b.evidence_receipt.map(|er| crate::mesh::dht::AuditReceipt {
+                            reporter_node_id: er.reporter_node_id,
+                            target_node_id: er.target_node_id,
+                            evidence_hash: er.evidence_hash,
+                            evidence_type: er.evidence_type,
+                            reporter_signature: er.reporter_signature,
+                            timestamp: er.timestamp,
+                        }),
                     })
                     .collect();
                 let network_policy = crate::mesh::dht::NetworkPolicy {
@@ -1284,6 +1306,14 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         blocked_at: b.blocked_at,
                         blocked_by: b.blocked_by,
                         expires_at: b.expires_at,
+                        evidence_receipt: b.evidence_receipt.map(|er| crate::mesh::dht::AuditReceipt {
+                            reporter_node_id: er.reporter_node_id,
+                            target_node_id: er.target_node_id,
+                            evidence_hash: er.evidence_hash,
+                            evidence_type: er.evidence_type,
+                            reporter_signature: er.reporter_signature,
+                            timestamp: er.timestamp,
+                        }),
                     })
                     .collect();
                 let global_blocklist = crate::mesh::dht::GlobalNodeBlocklist {

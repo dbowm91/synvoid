@@ -27,8 +27,8 @@ pub use edge_attestation::EdgeAttestation;
 pub use keys::*;
 pub use merkle::{MerkleNode, MerkleProof, MerkleProofNode, MerkleTree, ProofPosition};
 pub use network_policy::{
-    AiBotEntry, BlockedNode, BotAction, GlobalAiBotList, GlobalNodeBlocklist, NetworkPolicy,
-    MAX_REPUTATION_THRESHOLD, MIN_REPUTATION_THRESHOLD,
+    AiBotEntry, AuditReceipt, BlockedNode, BotAction, GlobalAiBotList, GlobalNodeBlocklist,
+    NetworkPolicy, MAX_REPUTATION_THRESHOLD, MIN_REPUTATION_THRESHOLD,
 };
 pub use record_store::{
     DhtRecordEntry, RecordStoreConfig, RecordStoreManager, RecordStoreStats,

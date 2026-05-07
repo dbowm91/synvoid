@@ -937,6 +937,31 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::PeerBlocked {
+                node_id,
+                blocked_until,
+                reason,
+                blocked_by,
+                evidence_receipt,
+            } => proto::MeshMessage {
+                message_type: 72,
+                payload: Some(proto::mesh_message::Payload::PeerBlocked(
+                    proto::PeerBlocked {
+                        node_id: node_id.to_string(),
+                        blocked_until: *blocked_until,
+                        reason: reason.to_string(),
+                        blocked_by: blocked_by.to_string(),
+                        evidence_receipt: evidence_receipt.as_ref().map(|er| proto::AuditReceipt {
+                            reporter_node_id: er.reporter_node_id.clone(),
+                            target_node_id: er.target_node_id.clone(),
+                            evidence_hash: er.evidence_hash.clone(),
+                            evidence_type: er.evidence_type.clone(),
+                            reporter_signature: er.reporter_signature.clone(),
+                            timestamp: er.timestamp,
+                        }),
+                    },
+                )),
+            },
             MeshMessage::BandwidthReport {
                 upstream_id,
                 bytes_sent,
@@ -1986,6 +2011,16 @@ impl From<&MeshMessage> for proto::MeshMessage {
                                     blocked_at: b.blocked_at,
                                     blocked_by: b.blocked_by.clone(),
                                     expires_at: b.expires_at,
+                                    evidence_receipt: b.evidence_receipt.as_ref().map(|er| {
+                                        proto::AuditReceipt {
+                                            reporter_node_id: er.reporter_node_id.clone(),
+                                            target_node_id: er.target_node_id.clone(),
+                                            evidence_hash: er.evidence_hash.clone(),
+                                            evidence_type: er.evidence_type.clone(),
+                                            reporter_signature: er.reporter_signature.clone(),
+                                            timestamp: er.timestamp,
+                                        }
+                                    }),
                                 })
                                 .collect(),
                             last_updated: policy.last_updated,
@@ -2020,6 +2055,16 @@ impl From<&MeshMessage> for proto::MeshMessage {
                                     blocked_at: b.blocked_at,
                                     blocked_by: b.blocked_by.clone(),
                                     expires_at: b.expires_at,
+                                    evidence_receipt: b.evidence_receipt.as_ref().map(|er| {
+                                        proto::AuditReceipt {
+                                            reporter_node_id: er.reporter_node_id.clone(),
+                                            target_node_id: er.target_node_id.clone(),
+                                            evidence_hash: er.evidence_hash.clone(),
+                                            evidence_type: er.evidence_type.clone(),
+                                            reporter_signature: er.reporter_signature.clone(),
+                                            timestamp: er.timestamp,
+                                        }
+                                    }),
                                 })
                                 .collect(),
                             last_updated: blocklist.last_updated,

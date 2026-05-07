@@ -616,6 +616,13 @@ pub enum MeshMessage {
         reason: ArcStr,
         origin_node_id: ArcStr,
     },
+    PeerBlocked {
+        node_id: ArcStr,
+        blocked_until: u64,
+        reason: ArcStr,
+        blocked_by: ArcStr,
+        evidence_receipt: Option<crate::mesh::dht::AuditReceipt>,
+    },
     BandwidthReport {
         upstream_id: ArcStr,
         bytes_sent: u64,

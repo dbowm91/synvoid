@@ -441,6 +441,8 @@ pub struct PeerState {
     pub geo: Option<String>,
     pub audit_successes: u64,
     pub audit_failures: u64,
+    pub performance_audit_successes: u64,
+    pub performance_audit_failures: u64,
     pub quic_port: Option<u32>,
     pub wireguard_port: Option<u32>,
     pub advertised_port: Option<u32>,
@@ -457,14 +459,30 @@ impl PeerState {
     }
 
     pub fn audit_reputation(&self) -> f64 {
-        let total = self.audit_successes + self.audit_failures;
-        if total == 0 {
+        let security_total = self.audit_successes + self.audit_failures;
+        let performance_total = self.performance_audit_successes + self.performance_audit_failures;
+
+        if security_total == 0 && performance_total == 0 {
             if let Some(prev) = self.previous_reputation {
                 return prev;
             }
             return 1.0;
         }
-        let current = self.audit_successes as f64 / total as f64;
+
+        let security_score = if security_total > 0 {
+            self.audit_successes as f64 / security_total as f64
+        } else {
+            1.0
+        };
+
+        let performance_score = if performance_total > 0 {
+            self.performance_audit_successes as f64 / performance_total as f64
+        } else {
+            1.0
+        };
+
+        // Security is weighted 70%, Performance 30%
+        let current = (security_score * 0.7) + (performance_score * 0.3);
 
         if let Some(prev) = self.previous_reputation {
             let rebuilding_boost = 0.1;
@@ -480,6 +498,14 @@ impl PeerState {
 
     pub fn record_audit_failure(&mut self) {
         self.audit_failures = self.audit_failures.saturating_add(1);
+    }
+
+    pub fn record_performance_audit_success(&mut self) {
+        self.performance_audit_successes = self.performance_audit_successes.saturating_add(1);
+    }
+
+    pub fn record_performance_audit_failure(&mut self) {
+        self.performance_audit_failures = self.performance_audit_failures.saturating_add(1);
     }
 
     pub fn save_reputation_before_disconnect(&mut self) {

@@ -194,6 +194,7 @@ message MeshMessage {
         PeerLoadUpdate peer_load_update = 38;
         RouteUsageReport route_usage_report = 39;
         UpstreamBlocked upstream_blocked = 70;
+        PeerBlocked peer_blocked = 72;
         BandwidthReport bandwidth_report = 71;
         MeshAck mesh_ack = 41;
         AuthChallenge auth_challenge = 42;
@@ -599,6 +600,23 @@ message UpstreamBlocked {
     uint64 blocked_until = 3;
     string reason = 4;
     string origin_node_id = 5;
+}
+
+message AuditReceipt {
+    string reporter_node_id = 1;
+    string target_node_id = 2;
+    string evidence_hash = 3;
+    string evidence_type = 4;
+    bytes reporter_signature = 5;
+    uint64 timestamp = 6;
+}
+
+message PeerBlocked {
+    string node_id = 1;
+    uint64 blocked_until = 2;
+    string reason = 3;
+    string blocked_by = 4;
+    optional AuditReceipt evidence_receipt = 5;
 }
 
 message BandwidthReport {
@@ -1230,6 +1248,7 @@ message BlockedNode {
     uint64 blocked_at = 5;
     string blocked_by = 6;
     optional uint64 expires_at = 7;
+    optional AuditReceipt evidence_receipt = 8;
 }
 
 message NetworkPolicy {

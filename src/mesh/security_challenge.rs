@@ -287,7 +287,6 @@ impl MeshSecurityChallengeManager {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct MeshAttackDetector {
     // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
@@ -295,6 +294,31 @@ pub struct MeshAttackDetector {
     suspicious_patterns: Arc<RwLock<Vec<SuspiciousPattern>>>,
     blocked_nodes: Arc<RwLock<std::collections::HashSet<String>>>,
     attack_history: Arc<RwLock<Vec<AttackEvent>>>,
+    transport: Arc<RwLock<Option<Arc<crate::mesh::transport::MeshTransport>>>>,
+}
+
+impl std::fmt::Debug for MeshAttackDetector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeshAttackDetector")
+            .field("config", &self.config)
+            .field("suspicious_patterns", &self.suspicious_patterns)
+            .field("blocked_nodes", &self.blocked_nodes)
+            .field("attack_history", &self.attack_history)
+            .field("transport", &"<omitted>")
+            .finish()
+    }
+}
+
+impl Clone for MeshAttackDetector {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            suspicious_patterns: self.suspicious_patterns.clone(),
+            blocked_nodes: self.blocked_nodes.clone(),
+            attack_history: self.attack_history.clone(),
+            transport: self.transport.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +377,7 @@ pub struct AttackEvent {
     pub attack_type: String,
     pub severity: AttackSeverity,
     pub details: String,
+    pub signed_evidence: Option<crate::mesh::dht::AuditReceipt>,
 }
 
 impl MeshAttackDetector {
@@ -362,10 +387,16 @@ impl MeshAttackDetector {
             suspicious_patterns: Arc::new(RwLock::new(Vec::new())),
             blocked_nodes: Arc::new(RwLock::new(std::collections::HashSet::new())),
             attack_history: Arc::new(RwLock::new(Vec::new())),
+            transport: Arc::new(RwLock::new(None)),
         };
 
         detector.init_default_patterns();
         detector
+    }
+
+    pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
+        let mut t = self.transport.write();
+        *t = Some(transport);
     }
 
     fn init_default_patterns(&mut self) {
@@ -433,6 +464,7 @@ impl MeshAttackDetector {
                     attack_type: pattern.description.clone(),
                     severity: pattern.severity,
                     details: format!("Matched pattern: {}", pattern.pattern),
+                    signed_evidence: None,
                 };
 
                 self.record_attack(event.clone());
@@ -471,6 +503,16 @@ impl MeshAttackDetector {
         let mut blocked = self.blocked_nodes.write();
         blocked.insert(node_id.to_string());
         tracing::info!("Node {} blocked due to attack detection", node_id);
+
+        if let Some(transport) = self.transport.read().as_ref() {
+            let transport = transport.clone();
+            let node_id = node_id.to_string();
+            tokio::spawn(async move {
+                transport
+                    .broadcast_peer_block(&node_id, "attack_detected", 3600, None)
+                    .await;
+            });
+        }
     }
 
     pub fn unblock_node(&self, node_id: &str) {

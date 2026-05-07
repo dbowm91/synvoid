@@ -62,6 +62,16 @@ impl NetworkPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct AuditReceipt {
+    pub reporter_node_id: String,
+    pub target_node_id: String,
+    pub evidence_hash: String,
+    pub evidence_type: String,
+    pub reporter_signature: Vec<u8>,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct BlockedNode {
     pub node_id: String,
     pub blocked_ip: Option<String>,
@@ -70,6 +80,7 @@ pub struct BlockedNode {
     pub blocked_at: u64,
     pub blocked_by: String,
     pub expires_at: Option<u64>,
+    pub evidence_receipt: Option<AuditReceipt>,
 }
 
 impl BlockedNode {
@@ -90,7 +101,13 @@ impl BlockedNode {
             blocked_at: now,
             blocked_by,
             expires_at: None,
+            evidence_receipt: None,
         }
+    }
+
+    pub fn with_evidence(mut self, receipt: AuditReceipt) -> Self {
+        self.evidence_receipt = Some(receipt);
+        self
     }
 
     pub fn with_expiry(mut self, duration_secs: u64) -> Self {

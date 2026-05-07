@@ -554,6 +554,14 @@ impl MeshTopology {
         let existing_trusted = existing.as_ref().map(|p| p.is_trusted).unwrap_or(false);
         let existing_audit_successes = existing.as_ref().map(|p| p.audit_successes).unwrap_or(0);
         let existing_audit_failures = existing.as_ref().map(|p| p.audit_failures).unwrap_or(0);
+        let existing_perf_successes = existing
+            .as_ref()
+            .map(|p| p.performance_audit_successes)
+            .unwrap_or(0);
+        let existing_perf_failures = existing
+            .as_ref()
+            .map(|p| p.performance_audit_failures)
+            .unwrap_or(0);
 
         let node_id = peer_info.node_id.clone();
         let peer_state = PeerState {
@@ -572,6 +580,8 @@ impl MeshTopology {
             geo: existing_geo,
             audit_successes: existing_audit_successes,
             audit_failures: existing_audit_failures,
+            performance_audit_successes: existing_perf_successes,
+            performance_audit_failures: existing_perf_failures,
             quic_port: peer_info.quic_port,
             wireguard_port: peer_info.wireguard_port,
             advertised_port: peer_info.advertised_port,
@@ -626,6 +636,26 @@ impl MeshTopology {
         self.peer_store.update_peer(node_id, |peer| {
             peer.audit_successes = peer.audit_successes.saturating_add(successes);
             peer.audit_failures = peer.audit_failures.saturating_add(failures);
+        });
+    }
+
+    pub async fn update_peer_audit_stats_weighted(
+        &self,
+        node_id: &str,
+        security_success: u64,
+        security_failure: u64,
+        performance_success: u64,
+        performance_failure: u64,
+    ) {
+        self.peer_store.update_peer(node_id, |peer| {
+            peer.audit_successes = peer.audit_successes.saturating_add(security_success);
+            peer.audit_failures = peer.audit_failures.saturating_add(security_failure);
+            peer.performance_audit_successes = peer
+                .performance_audit_successes
+                .saturating_add(performance_success);
+            peer.performance_audit_failures = peer
+                .performance_audit_failures
+                .saturating_add(performance_failure);
         });
     }
 

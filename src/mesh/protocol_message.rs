@@ -26,6 +26,7 @@ impl MeshMessage {
             | Self::UpstreamAnnounce { .. }
             | Self::UpstreamUpdate { .. }
             | Self::UpstreamBlocked { .. }
+            | Self::PeerBlocked { .. }
             | Self::BandwidthReport { .. }
             | Self::RouteUsageReport { .. }
             | Self::UpstreamVerificationQuery { .. }

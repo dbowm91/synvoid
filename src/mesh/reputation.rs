@@ -50,6 +50,7 @@ pub enum ReputationEventType {
     RoleUpgrade,
     RoleDowngrade,
     PeriodicDecay,
+    PerformanceDegradation,
 }
 
 pub struct ReputationManager {
@@ -80,6 +81,8 @@ pub struct ReputationConfig {
     pub threat_rejected_penalty: i64,
     #[serde(default = "default_fp_penalty")]
     pub false_positive_penalty: i64,
+    #[serde(default = "default_perf_penalty")]
+    pub performance_penalty: i64,
     #[serde(default = "default_hub_only")]
     pub hub_only_mode: bool,
 }
@@ -108,6 +111,9 @@ fn default_threat_penalty() -> i64 {
 fn default_fp_penalty() -> i64 {
     5
 }
+fn default_perf_penalty() -> i64 {
+    1
+}
 fn default_hub_only() -> bool {
     false
 }
@@ -123,6 +129,7 @@ impl Default for ReputationConfig {
             threat_accepted_bonus: THREAT_ACCEPTED_BONUS,
             threat_rejected_penalty: THREAT_REJECTED_PENALTY,
             false_positive_penalty: FALSE_POSITIVE_PENALTY,
+            performance_penalty: 1,
             hub_only_mode: false,
         }
     }
@@ -183,6 +190,11 @@ impl PeerReputation {
     pub fn record_false_positive(&mut self) {
         self.score = (self.score - FALSE_POSITIVE_PENALTY).clamp(MIN_REPUTATION, MAX_REPUTATION);
         self.false_positive_reports += 1;
+        self.last_updated = Instant::now();
+    }
+
+    pub fn record_performance_degradation(&mut self, penalty: i64) {
+        self.score = (self.score - penalty).clamp(MIN_REPUTATION, MAX_REPUTATION);
         self.last_updated = Instant::now();
     }
 
@@ -371,6 +383,14 @@ impl ReputationManager {
         let mut peers = self.peers.write();
         if let Some(peer) = peers.get_mut(node_id) {
             peer.reputation.record_false_positive();
+        }
+    }
+
+    pub fn record_performance_degradation(&self, node_id: &str) {
+        let mut peers = self.peers.write();
+        if let Some(peer) = peers.get_mut(node_id) {
+            peer.reputation
+                .record_performance_degradation(self.config.performance_penalty);
         }
     }
 

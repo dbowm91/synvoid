@@ -722,6 +722,15 @@ impl MeshProxy {
                 e.insert(new_stats);
             }
         }
+
+        // Tier 2: Behavioral - Record performance success in topology audit
+        let topology = self.topology.clone();
+        let node_id = provider_node_id.to_string();
+        tokio::spawn(async move {
+            topology
+                .update_peer_audit_stats_weighted(&node_id, 0, 0, 1, 0)
+                .await;
+        });
     }
 
     fn record_provider_failure(&self, provider_node_id: &str) -> u32 {
@@ -754,6 +763,16 @@ impl MeshProxy {
             }
         };
         self.mark_provider_failed(provider_node_id);
+
+        // Tier 2: Behavioral - Record performance failure in topology audit
+        let topology = self.topology.clone();
+        let node_id = provider_node_id.to_string();
+        tokio::spawn(async move {
+            topology
+                .update_peer_audit_stats_weighted(&node_id, 0, 0, 0, 1)
+                .await;
+        });
+
         failure_count
     }
 
