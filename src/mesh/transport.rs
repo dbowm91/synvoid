@@ -187,7 +187,7 @@ impl InProgressSnapshot {
         Self {
             request_id,
             total_size,
-            data: Vec::with_capacity(total_size as usize),
+            data: Vec::new(),
             vote,
             meta,
             offset: 0,
@@ -206,7 +206,7 @@ impl InProgressSnapshot {
         Self {
             request_id,
             total_size,
-            data: Vec::with_capacity(total_size as usize),
+            data: Vec::new(),
             vote,
             meta,
             offset: 0,

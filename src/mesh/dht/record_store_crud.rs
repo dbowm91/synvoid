@@ -33,13 +33,11 @@ impl RecordStoreManager {
         let is_global = self.is_global_node();
 
         if record.signature.is_empty() {
-            if !is_global {
-                tracing::warn!(
-                    "Record store: edge node record for key {} must be signed",
-                    record.key
-                );
-                return false;
-            }
+            tracing::warn!(
+                "Record store: record for key {} must be signed",
+                record.key
+            );
+            return false;
         } else {
             let signer_key_valid = record
                 .signer_public_key

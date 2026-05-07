@@ -195,11 +195,14 @@ impl VerificationTaskManager {
                 let now = safe_unix_timestamp();
                 let recovery_intervals =
                     (now - penalty.last_updated) / self.config.penalty_recovery_interval_secs;
-                let recovery =
-                    (recovery_intervals as i32 * self.config.penalty_recovery_rate).min(0);
-
-                let new_penalty = (penalty.penalty_score + recovery)
-                    .max(penalty.penalty_score + self.config.penalty_initial);
+                
+                // Exponential backoff: penalty halves every interval
+                let mut new_score = penalty.penalty_score as f32;
+                for _ in 0..recovery_intervals {
+                    new_score *= 0.5;
+                }
+                
+                let new_penalty = (new_score.round() as i32).min(0);
                 Some((penalty, new_penalty, now))
             } else {
                 None
