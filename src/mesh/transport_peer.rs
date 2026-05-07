@@ -1088,6 +1088,17 @@ impl MeshTransport {
                     }
                 }
             }
+            MeshMessage::ReplicaSyncRequest {
+                request_id,
+                last_sync_index,
+                node_id: _,
+            } => {
+                self.handle_replica_sync_request(peer_id, &request_id, last_sync_index)
+                    .await;
+            }
+            MeshMessage::ReplicaSyncResponse { .. } => {
+                // Handled by pending responses in RaftAwareClient or transport
+            }
             MeshMessage::QuorumSignatureResponse {
                 request_id,
                 key: _,

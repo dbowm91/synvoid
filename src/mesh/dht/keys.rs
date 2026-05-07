@@ -53,12 +53,22 @@ pub enum DhtKey {
     YaraRuleContent {
         content_hash: String,
     },
+    YaraCompiledRuleContent {
+        compiled_hash: String,
+    },
     YaraRulesManifest {
         node_id: String,
     },
     YaraChunk {
         content_hash: String,
         index: u32,
+    },
+    YaraCompiledChunk {
+        compiled_hash: String,
+        index: u32,
+    },
+    GlobalNodeProof {
+        node_id: String,
     },
     NodeCapability {
         node_id: String,
@@ -383,6 +393,9 @@ impl DhtKey {
             DhtKey::YaraRuleContent { content_hash } => {
                 format!("yara_rule:{}", content_hash)
             }
+            DhtKey::YaraCompiledRuleContent { compiled_hash } => {
+                format!("yara_compiled_rule:{}", compiled_hash)
+            }
             DhtKey::YaraRulesManifest { node_id } => {
                 format!("yara_rules_manifest:{}", node_id)
             }
@@ -391,6 +404,15 @@ impl DhtKey {
                 index,
             } => {
                 format!("yara_chunk:{}:{}", content_hash, index)
+            }
+            DhtKey::YaraCompiledChunk {
+                compiled_hash,
+                index,
+            } => {
+                format!("yara_compiled_chunk:{}:{}", compiled_hash, index)
+            }
+            DhtKey::GlobalNodeProof { node_id } => {
+                format!("global_node_proof:{}", node_id)
             }
             DhtKey::NodeCapability {
                 node_id,
@@ -529,12 +551,22 @@ impl DhtKey {
             "yara_rule" if parts.len() >= 2 => DhtKey::YaraRuleContent {
                 content_hash: parts[1].to_string(),
             },
+            "yara_compiled_rule" if parts.len() >= 2 => DhtKey::YaraCompiledRuleContent {
+                compiled_hash: parts[1].to_string(),
+            },
             "yara_rules_manifest" if parts.len() >= 2 => DhtKey::YaraRulesManifest {
                 node_id: parts[1].to_string(),
             },
             "yara_chunk" if parts.len() >= 3 => DhtKey::YaraChunk {
                 content_hash: parts[1].to_string(),
                 index: parts[2].parse().unwrap_or(0),
+            },
+            "yara_compiled_chunk" if parts.len() >= 3 => DhtKey::YaraCompiledChunk {
+                compiled_hash: parts[1].to_string(),
+                index: parts[2].parse().unwrap_or(0),
+            },
+            "global_node_proof" if parts.len() >= 2 => DhtKey::GlobalNodeProof {
+                node_id: parts[1].to_string(),
             },
             "node_capability" if parts.len() >= 3 => DhtKey::NodeCapability {
                 node_id: parts[1].to_string(),
@@ -758,8 +790,11 @@ impl DhtKey {
             DhtKey::TransformedContent { .. } => None,
             DhtKey::PoisonedImage { .. } => None,
             DhtKey::YaraRuleContent { .. } => Some(SignedRecordType::YaraRuleContent),
+            DhtKey::YaraCompiledRuleContent { .. } => Some(SignedRecordType::YaraCompiledRuleContent),
             DhtKey::YaraRulesManifest { .. } => Some(SignedRecordType::YaraRulesManifest),
             DhtKey::YaraChunk { .. } => None,
+            DhtKey::YaraCompiledChunk { .. } => None,
+            DhtKey::GlobalNodeProof { .. } => Some(SignedRecordType::GlobalNodeProof),
             DhtKey::NodeCapability { .. } => None,
             DhtKey::CapabilityAttestation { .. } => None,
             DhtKey::EdgeAttestation { .. } => None,

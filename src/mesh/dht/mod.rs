@@ -577,6 +577,7 @@ pub struct OriginPenalty {
 pub struct YaraRulesManifest {
     pub version: String,
     pub content_hash: String,
+    pub compiled_hash: Option<String>,
     pub node_id: String,
     pub timestamp: u64,
     pub signature: Vec<u8>,
@@ -586,6 +587,7 @@ pub struct YaraRulesManifest {
     pub uncompressed_size: usize,
     pub compressed_size: usize,
     pub chunk_hashes: Vec<String>,
+    pub compiled_chunk_hashes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
@@ -597,6 +599,18 @@ pub struct YaraRuleChunkRecord {
     pub timestamp: u64,
     pub compressed_data: Vec<u8>,
     pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct YaraCompiledRuleContentRecord {
+    pub version: String,
+    pub compiled_rules: Vec<u8>,
+    pub compiled_hash: String,
+    pub node_id: String,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: Option<String>,
+    pub is_chunked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]

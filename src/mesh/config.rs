@@ -1163,6 +1163,35 @@ impl Default for MeshMlKemConfig {
     }
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    Archive,
+    RkyvSerialize,
+    RkyvDeserialize,
+)]
+pub struct GenesisMintingProof {
+    pub node_id: String,
+    pub node_public_key: Vec<u8>,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+}
+
+impl GenesisMintingProof {
+    pub fn verify(&self, genesis_public_key: &[u8]) -> bool {
+        let signable = format!(
+            "{}:{}:{}",
+            self.node_id,
+            hex::encode(&self.node_public_key),
+            self.timestamp
+        );
+        crate::mesh::cert::verify_ed25519(&signable, &self.signature, genesis_public_key)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct NodeIdentityConfig {
     #[serde(default)]
@@ -1183,6 +1212,8 @@ pub struct NodeIdentityConfig {
     pub genesis_org_id: Option<String>,
     #[serde(default)]
     pub genesis_key_base64: Option<String>,
+    #[serde(default)]
+    pub minting_proof: Option<GenesisMintingProof>,
 }
 
 fn derive_node_id_hash(private_key: &[u8]) -> Vec<u8> {

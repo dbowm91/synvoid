@@ -361,6 +361,7 @@ pub fn create_mesh_backend_from_config(
 pub async fn initialize_mesh_transports(
     config: &MeshConfig,
     transport_manager: Arc<MeshTransportManager>,
+    backend_pool: Arc<MeshBackendPool>,
     threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
     mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
     #[cfg(feature = "dns")] dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
@@ -455,6 +456,7 @@ pub async fn initialize_mesh_transports(
         threat_intel,
         mesh_signer,
         stake_manager,
+        Some(backend_pool),
         #[cfg(feature = "dns")]
         dns_resolver,
         #[cfg(feature = "dns")]

@@ -22,6 +22,7 @@ impl QuicMeshTransport {
         threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
         mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
+        backend_pool: Option<Arc<crate::mesh::backend::MeshBackendPool>>,
         #[cfg(feature = "dns")] dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
         #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     ) -> Self {
@@ -39,6 +40,7 @@ impl QuicMeshTransport {
             threat_intel,
             mesh_signer,
             stake_manager,
+            backend_pool,
             #[cfg(feature = "dns")]
             dns_resolver,
             #[cfg(feature = "dns")]

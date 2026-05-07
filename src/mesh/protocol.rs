@@ -498,7 +498,18 @@ pub enum MeshMessage {
         reason: ArcStr,
         evidence: Option<Vec<u8>>,
     },
-    DhtRecordCommit {
+    ReplicaSyncRequest {
+        request_id: ArcStr,
+        last_sync_index: u64,
+        node_id: ArcStr,
+    },
+    ReplicaSyncResponse {
+        request_id: ArcStr,
+        current_index: u64,
+        snapshot_required: bool,
+        entries: Vec<crate::mesh::raft::RaftCommitNotification>,
+    },
+    MeshLoadUpdate {
         request_id: ArcStr,
         record: DhtRecord,
         quorum_signatures: Vec<QuorumSignatureProto>,

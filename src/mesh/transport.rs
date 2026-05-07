@@ -130,6 +130,7 @@ pub struct MeshTransport {
     pub(crate) seen_messages: Arc<RwLock<lru_time_cache::LruCache<String, Instant>>>,
     pub(crate) stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
     pub(crate) mlkem_session_manager: Option<Arc<SessionManager<MlKem768>>>,
+    pub(crate) backend_pool: Option<Arc<crate::mesh::backend::MeshBackendPool>>,
     #[cfg(feature = "dns")]
     pub(crate) dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
     #[cfg(feature = "dns")]
@@ -491,6 +492,7 @@ impl MeshTransport {
         threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
         mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
         stake_manager: Option<Arc<crate::mesh::dht::StakeManager>>,
+        backend_pool: Option<Arc<crate::mesh::backend::MeshBackendPool>>,
         #[cfg(feature = "dns")] dns_resolver: Option<Arc<dyn crate::dns::resolver::DnsResolver>>,
         #[cfg(feature = "dns")] dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>>,
     ) -> Self {
@@ -616,6 +618,7 @@ impl MeshTransport {
             seen_messages: Arc::new(RwLock::new(seen_messages)),
             stake_manager,
             mlkem_session_manager,
+            backend_pool,
             #[cfg(feature = "dns")]
             dns_resolver,
             #[cfg(feature = "dns")]
@@ -1361,6 +1364,29 @@ impl MeshTransport {
         transport_arc
             .org_key_manager
             .set_transport(transport_arc.clone());
+
+        if let Some(ref bp) = transport_arc.backend_pool {
+            let raft_client = Arc::new(crate::mesh::raft::RaftAwareClient::new(
+                bp.clone(),
+                transport_arc.clone(),
+                transport_arc.config.clone(),
+                transport_arc.record_store.clone(),
+            ));
+
+            if let Some(ref manager) = *transport_arc.edge_replica_manager.read() {
+                let rc = raft_client.clone();
+                let m = manager.clone();
+                tokio::spawn(async move {
+                    rc.set_edge_replica_manager(m).await;
+                });
+            }
+
+            transport_arc
+                .org_key_manager
+                .set_raft_client(raft_client.clone());
+
+            raft_client.start_reconciliation_loop();
+        }
 
         let wasm_dist_manager = Arc::new(crate::mesh::wasm_dist::WasmDistManager::new());
         crate::mesh::wasm_dist::set_global_wasm_dist_manager(wasm_dist_manager);

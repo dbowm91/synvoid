@@ -407,7 +407,9 @@ pub enum SignedRecordType {
     UpstreamProxyCachePreferences,
     SiteImagePoisonConfig,
     YaraRuleContent,
+    YaraCompiledRuleContent,
     YaraRulesManifest,
+    GlobalNodeProof,
     GenesisKeyTransition,
     RevokedGlobalNode,
 }
@@ -449,6 +451,10 @@ impl SignedRecordType {
                 | SignedRecordType::UpstreamProxyCachePreferences
                 | SignedRecordType::SiteImagePoisonConfig
                 | SignedRecordType::OrgPublicKey
+                | SignedRecordType::YaraRuleContent
+                | SignedRecordType::YaraCompiledRuleContent
+                | SignedRecordType::YaraRulesManifest
+                | SignedRecordType::GlobalNodeProof
         )
     }
 
@@ -491,7 +497,9 @@ impl SignedRecordType {
             SignedRecordType::UpstreamProxyCachePreferences => Some(Duration::from_secs(3600)),
             SignedRecordType::SiteImagePoisonConfig => Some(Duration::from_secs(3600)),
             SignedRecordType::YaraRuleContent => Some(Duration::from_secs(3600)),
+            SignedRecordType::YaraCompiledRuleContent => Some(Duration::from_secs(3600)),
             SignedRecordType::YaraRulesManifest => Some(Duration::from_secs(3600)),
+            SignedRecordType::GlobalNodeProof => Some(Duration::from_secs(86400 * 30)),
             SignedRecordType::GenesisKeyTransition => Some(Duration::from_secs(86400)),
             SignedRecordType::RevokedGlobalNode => Some(Duration::from_secs(86400 * 7)),
         }
@@ -500,7 +508,9 @@ impl SignedRecordType {
     pub fn requires_announce_refresh(&self) -> bool {
         matches!(
             self,
-            SignedRecordType::Upstream | SignedRecordType::YaraRuleContent
+            SignedRecordType::Upstream
+                | SignedRecordType::YaraRuleContent
+                | SignedRecordType::YaraCompiledRuleContent
         )
     }
 
@@ -524,6 +534,8 @@ impl SignedRecordType {
                 | SignedRecordType::RevokedGlobalNode
                 | SignedRecordType::YaraRulesManifest
                 | SignedRecordType::YaraRuleContent
+                | SignedRecordType::YaraCompiledRuleContent
+                | SignedRecordType::GlobalNodeProof
         )
     }
 

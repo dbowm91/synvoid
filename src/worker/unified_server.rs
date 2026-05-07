@@ -637,6 +637,17 @@ pub async fn run_unified_server_worker(
                 record_store.clone(),
             ));
 
+            // Create backend pool and proxy for RaftAwareClient
+            let proxy = Arc::new(crate::mesh::proxy::MeshProxy::new(
+                mesh_config_arc.clone(),
+                topology.clone(),
+                None,
+            ));
+            let backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
+                proxy.clone(),
+                topology.clone(),
+            ));
+
             // Create signer for threat messages (HMAC)
             // Use global_node_key if available, otherwise generate from node_id
             let signer_key = if let Some(ref key) = mesh_config.global_node_key {
@@ -807,6 +818,7 @@ pub async fn run_unified_server_worker(
                 if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                     mesh_config,
                     transport_manager.clone(),
+                    backend_pool.clone(),
                     Some(threat_intel.clone()),
                     Some(Arc::new(signer_for_mesh)),
                     None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
@@ -828,6 +840,7 @@ pub async fn run_unified_server_worker(
                 if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                     &mesh_config,
                     transport_manager.clone(),
+                    backend_pool,
                     Some(threat_intel.clone()),
                     Some(Arc::new(signer_for_mesh)),
                 )

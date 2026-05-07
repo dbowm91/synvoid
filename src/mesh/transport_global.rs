@@ -8,6 +8,55 @@ use ed25519_dalek::Verifier;
 use crate::mesh::protocol::MeshMessage;
 
 impl MeshTransport {
+    pub(crate) async fn handle_replica_sync_request(
+        &self,
+        peer_id: &str,
+        request_id: &str,
+        last_sync_index: u64,
+    ) {
+        let raft_guard = self.raft_instance.read().await;
+        let Some(ref raft) = *raft_guard else {
+            return;
+        };
+
+        // Get current commit index from Raft
+        let current_index = raft.get_last_log_index().await;
+
+        if last_sync_index >= current_index {
+            // Peer is already up to date
+            let response = MeshMessage::ReplicaSyncResponse {
+                request_id: ArcStr::from(request_id.to_string()),
+                current_index,
+                snapshot_required: false,
+                entries: Vec::new(),
+            };
+            let _ = self.send_datagram_to_peer(peer_id, &response).await;
+            return;
+        }
+
+        // If the gap is too large, suggest a snapshot
+        if current_index - last_sync_index > 5000 {
+            let response = MeshMessage::ReplicaSyncResponse {
+                request_id: ArcStr::from(request_id.to_string()),
+                current_index,
+                snapshot_required: true,
+                entries: Vec::new(),
+            };
+            let _ = self.send_datagram_to_peer(peer_id, &response).await;
+            return;
+        }
+
+        // TODO: Implement log entry fetching from RaftInstance
+        // For now, return what we have (even if empty) to let the peer know current index
+        let response = MeshMessage::ReplicaSyncResponse {
+            request_id: ArcStr::from(request_id.to_string()),
+            current_index,
+            snapshot_required: false,
+            entries: Vec::new(),
+        };
+        let _ = self.send_datagram_to_peer(peer_id, &response).await;
+    }
+
     pub(crate) async fn handle_global_node_announce(
         &self,
         from_peer: &str,

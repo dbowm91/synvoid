@@ -6,6 +6,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::dht::RecordStoreManager;
 use crate::mesh::protocol::{ArcStr, MeshMessage};
+use crate::mesh::raft::edge_replica::EdgeReplicaManager;
 use crate::mesh::raft::instance::RaftInstance;
 use crate::mesh::raft::state_machine::{
     ClientProposalPayload, CommandKind, Namespace, RaftCommand,
@@ -81,6 +82,7 @@ pub struct RaftAwareClient {
     config: Arc<MeshConfig>,
     record_store: Option<Arc<RecordStoreManager>>,
     raft_instance: Arc<RwLock<Option<Arc<RaftInstance>>>>,
+    edge_replica_manager: Arc<RwLock<Option<Arc<EdgeReplicaManager>>>>,
     leader_cache: Arc<Mutex<LeaderCache>>,
 }
 
@@ -97,12 +99,88 @@ impl RaftAwareClient {
             config,
             record_store,
             raft_instance: Arc::new(RwLock::new(None)),
+            edge_replica_manager: Arc::new(RwLock::new(None)),
             leader_cache: Arc::new(Mutex::new(LeaderCache::new(Duration::from_secs(5)))),
         }
     }
 
+    pub async fn set_edge_replica_manager(&self, manager: Arc<EdgeReplicaManager>) {
+        *self.edge_replica_manager.write().await = Some(manager);
+    }
+
     pub async fn set_raft_instance(&mut self, instance: Arc<RaftInstance>) {
         *self.raft_instance.write().await = Some(instance);
+    }
+
+    pub fn start_reconciliation_loop(self: Arc<Self>) {
+        if self.config.role.is_global() {
+            return;
+        }
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Err(e) = self.reconcile_with_leader().await {
+                    tracing::debug!("Raft reconciliation skipped or failed: {:?}", e);
+                }
+            }
+        });
+    }
+
+    async fn reconcile_with_leader(&self) -> Result<(), RaftAwareClientError> {
+        let manager_guard = self.edge_replica_manager.read().await;
+        let Some(ref manager) = *manager_guard else {
+            return Ok(());
+        };
+
+        let last_sync_index = manager.get_last_sync_index().unwrap_or(0);
+        let leader_node_id = self
+            .find_leader_node_id()
+            .await
+            .ok_or(RaftAwareClientError::RaftUnreachable)?;
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let request = MeshMessage::ReplicaSyncRequest {
+            request_id: ArcStr::from(request_id.clone()),
+            last_sync_index,
+            node_id: ArcStr::from(self.config.node_id()),
+        };
+
+        match self
+            .send_message_and_wait_for_response(&leader_node_id, request, Duration::from_secs(10))
+            .await
+        {
+            Ok(MeshMessage::ReplicaSyncResponse {
+                current_index,
+                snapshot_required,
+                ..
+            }) => {
+                if snapshot_required {
+                    tracing::info!(
+                        "Raft reconciliation: snapshot required (last={}, current={})",
+                        last_sync_index,
+                        current_index
+                    );
+                    // In a future wave, trigger full snapshot transfer
+                } else if current_index > last_sync_index {
+                    tracing::info!(
+                        "Raft reconciliation: catching up from {} to {}",
+                        last_sync_index,
+                        current_index
+                    );
+                    // For now, update local index to indicate we are converged at this point
+                    manager.set_last_sync_index(current_index).ok();
+                }
+            }
+            _ => {
+                return Err(RaftAwareClientError::InvalidResponse(
+                    "Failed to get sync response".to_string(),
+                ))
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn raft_write(

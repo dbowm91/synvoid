@@ -512,6 +512,21 @@ impl MeshCertManager {
             .any(|pk| pk.as_slice() == signer_public_key.as_bytes())
     }
 
+    pub fn verify_global_node_proof(
+        &self,
+        proof: &crate::mesh::config::GenesisMintingProof,
+        genesis_public_key: &[u8],
+    ) -> bool {
+        if proof.verify(genesis_public_key) {
+            tracing::info!("Verified global node proof for {}", proof.node_id);
+            self.register_global_node(&proof.node_id, proof.node_public_key.clone());
+            true
+        } else {
+            tracing::warn!("Failed to verify global node proof for {}", proof.node_id);
+            false
+        }
+    }
+
     pub fn add_seed_public_key(&self, node_id: &str, public_key: Option<String>) {
         if let Some(key) = public_key {
             if let Ok(key_bytes) = base64::engine::general_purpose::STANDARD.decode(&key) {

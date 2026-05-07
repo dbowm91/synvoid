@@ -315,6 +315,11 @@ impl NodeIdentityConfig {
         &mut self,
         passphrase: Option<&str>,
     ) -> Result<(), String> {
+        if let Some(ref proof) = self.minting_proof {
+            self.node_id = Some(proof.node_id.clone());
+            self.public_key = Some(proof.node_public_key.clone());
+        }
+
         if let Some(ref path) = self.private_key_path {
             if std::path::Path::new(path).exists() {
                 let key_data = std::fs::read(path)
@@ -324,19 +329,39 @@ impl NodeIdentityConfig {
                     let decrypted = self.decrypt_key(&key_data, passphrase)?;
                     let pubkey = derive_node_id_hash(&decrypted);
                     let node_id = derive_node_id(&decrypted);
+
+                    if let Some(ref proof) = self.minting_proof {
+                        if pubkey != proof.node_public_key {
+                            return Err("Private key mismatch with minting proof public key".to_string());
+                        }
+                    }
+
                     self.private_key = Some(decrypted);
                     self.public_key = Some(pubkey);
                     self.node_id = Some(node_id);
                     return Ok(());
                 } else if key_data.len() == 32 {
+                    let pubkey = derive_node_id_hash(&key_data);
+                    let node_id = derive_node_id(&key_data);
+
+                    if let Some(ref proof) = self.minting_proof {
+                        if pubkey != proof.node_public_key {
+                            return Err("Private key mismatch with minting proof public key".to_string());
+                        }
+                    }
+
                     self.private_key = Some(key_data.clone());
-                    self.public_key = Some(derive_node_id_hash(&key_data));
-                    self.node_id = Some(derive_node_id(&key_data));
+                    self.public_key = Some(pubkey);
+                    self.node_id = Some(node_id);
                     return Ok(());
                 } else {
                     return Err("Invalid signing key file format".to_string());
                 }
             }
+        }
+
+        if self.minting_proof.is_some() {
+            return Err("Pre-minted identity configured but private key file not found".to_string());
         }
 
         let mut key = [0u8; 32];

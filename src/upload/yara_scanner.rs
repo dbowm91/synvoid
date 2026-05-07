@@ -332,6 +332,22 @@ impl YaraScanner {
         Ok(())
     }
 
+    pub fn reload_with_compiled_rules(
+        &self,
+        compiled_rules: &[u8],
+        version: Option<String>,
+    ) -> Result<(), YaraError> {
+        let new_rules = yara_x::Rules::deserialize(compiled_rules)
+            .map_err(|e| YaraError::CompilationError(format!("Failed to deserialize: {}", e)))?;
+
+        let mut rules = self.rules.write();
+        *rules = new_rules;
+        *self.current_version.write() = version;
+
+        tracing::info!("YARA-X rules reloaded from compiled binary source");
+        Ok(())
+    }
+
     pub fn get_version(&self) -> Option<String> {
         self.current_version.read().clone()
     }
