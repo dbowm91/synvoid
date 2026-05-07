@@ -30,7 +30,7 @@ use crate::config::HttpConfig;
 use crate::config::MainConfig;
 use crate::http::headers::{generate_stealth_timestamp, inject_security_headers};
 use crate::http::response_helpers::apply_security_headers;
-use crate::http::shared_handler::stream_body_with_waf;
+
 use crate::http_client::{
     send_request_streaming, send_request_streaming_generic, ErasedBodyImpl, ErasedHttpClient,
     StreamingWafBody, UpstreamTlsConfig,
@@ -1737,7 +1737,15 @@ impl HttpsServer {
                                     }
 
                                     return Ok(builder
-                                        .body(Full::new(body).boxed())
+                                        .body(
+                                            body.map_err(|e| {
+                                                tracing::warn!("Proxy body error: {}", e);
+                                                // Infallible means we don't expect errors here, 
+                                                // but hyper will handle the underlying IO error
+                                                unreachable!()
+                                            })
+                                            .boxed(),
+                                        )
                                         .unwrap_or_else(|_| {
                                             Self::build_response(
                                                 500,

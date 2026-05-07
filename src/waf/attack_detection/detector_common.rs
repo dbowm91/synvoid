@@ -146,12 +146,11 @@ macro_rules! url_decode_detector {
 
             fn detect_with_url_decode(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
                 use $crate::utils::url_decode_all;
-                let input_lower = input.to_lowercase();
 
-                let decoded = if input_lower.contains('%') || input_lower.contains('+') {
-                    url_decode_all(&input_lower)
+                let decoded = if input.contains('%') || input.contains('+') {
+                    url_decode_all(input)
                 } else {
-                    input_lower.clone()
+                    input.to_string()
                 };
 
                 if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
@@ -170,9 +169,9 @@ macro_rules! url_decode_detector {
                     });
                 }
 
-                if decoded != input_lower {
-                    if let Some(mat) = self.inner.patterns_ref().find(&input_lower) {
-                        let matched = input_lower[mat.start()..mat.end()].to_string();
+                if decoded != input {
+                    if let Some(mat) = self.inner.patterns_ref().find(input) {
+                        let matched = input[mat.start()..mat.end()].to_string();
                         tracing::warn!(
                             attack_type = $attack_name,
                             matched_pattern = %matched,
@@ -440,22 +439,42 @@ impl BasePatternDetector {
         input: &str,
         location: InputLocation,
     ) -> Option<AttackDetectionResult> {
-        self.detect_internal_normalized(input, location, |s| s.to_lowercase())
+        if let Some(mat) = self.patterns.find(input) {
+            let matched = input[mat.start()..mat.end()].to_string();
+
+            tracing::warn!(
+                attack_type = self.attack_name,
+                matched_pattern = %matched,
+                location = %location,
+                "{} detected", self.attack_name
+            );
+
+            return Some(AttackDetectionResult {
+                attack_type: self.attack_type,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
+        }
+
+        None
     }
 
-    pub fn detect_internal_normalized<F>(
+    pub fn detect_internal_normalized<F, S>(
         &self,
         input: &str,
         location: InputLocation,
         normalizer: F,
     ) -> Option<AttackDetectionResult>
     where
-        F: Fn(&str) -> String,
+        F: Fn(&str) -> S,
+        S: AsRef<str>,
     {
         let normalized = normalizer(input);
+        let normalized_ref = normalized.as_ref();
 
-        if let Some(mat) = self.patterns.find(&normalized) {
-            let matched = normalized[mat.start()..mat.end()].to_string();
+        if let Some(mat) = self.patterns.find(normalized_ref) {
+            let matched = normalized_ref[mat.start()..mat.end()].to_string();
 
             tracing::warn!(
                 attack_type = self.attack_name,
@@ -496,22 +515,26 @@ pub fn build_pattern_automaton(
     custom_patterns: &[String],
     paranoia_level: u8,
 ) -> Arc<AhoCorasick> {
-    let mut patterns: Vec<String> = base_patterns.iter().map(|s| s.to_lowercase()).collect();
+    let mut patterns: Vec<String> = base_patterns.iter().map(|s| s.to_string()).collect();
 
     if paranoia_level >= 3 {
-        patterns.extend(high_patterns.iter().map(|s| s.to_lowercase()));
+        patterns.extend(high_patterns.iter().map(|s| s.to_string()));
     }
 
     let mut seen: std::collections::HashSet<String> = patterns.iter().cloned().collect();
     for pattern in custom_patterns {
-        let pattern_lower = pattern.to_lowercase();
-        if seen.insert(pattern_lower.clone()) {
-            patterns.push(pattern_lower);
+        if seen.insert(pattern.clone()) {
+            patterns.push(pattern.clone());
         }
     }
 
     let patterns_str: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
-    Arc::new(AhoCorasick::new(&patterns_str).unwrap())
+    Arc::new(
+        AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .build(&patterns_str)
+            .unwrap(),
+    )
 }
 
 pub fn check_inputs<D>(
@@ -528,7 +551,7 @@ where
     if let Some(p) = path {
         let normalized = normalizer.normalize(p);
         if let Some(result) =
-            detect_with_pre_normalized(detector, normalized.as_lowercased(), InputLocation::Path)
+            detect_with_pre_normalized(detector, normalized.as_str(), InputLocation::Path)
         {
             return Some(result);
         }
@@ -536,11 +559,9 @@ where
 
     if let Some(qs) = query_string {
         let normalized = normalizer.normalize(qs);
-        if let Some(result) = detect_with_pre_normalized(
-            detector,
-            normalized.as_lowercased(),
-            InputLocation::QueryString,
-        ) {
+        if let Some(result) =
+            detect_with_pre_normalized(detector, normalized.as_str(), InputLocation::QueryString)
+        {
             return Some(result);
         }
     }
@@ -553,11 +574,9 @@ where
         let s = String::from_utf8_lossy(body_bytes);
         let s: &str = &s;
         let normalized = normalizer.normalize(s);
-        if let Some(result) = detect_with_pre_normalized(
-            detector,
-            normalized.as_lowercased(),
-            InputLocation::PostBody,
-        ) {
+        if let Some(result) =
+            detect_with_pre_normalized(detector, normalized.as_str(), InputLocation::PostBody)
+        {
             return Some(result);
         }
     }
@@ -567,14 +586,14 @@ where
 
 fn detect_with_pre_normalized<D>(
     detector: &D,
-    lowercased: &str,
+    normalized: &str,
     location: InputLocation,
 ) -> Option<AttackDetectionResult>
 where
     D: PatternDetector,
 {
-    if let Some(mat) = detector.patterns().find(lowercased) {
-        let matched = lowercased[mat.start()..mat.end()].to_string();
+    if let Some(mat) = detector.patterns().find(normalized) {
+        let matched = normalized[mat.start()..mat.end()].to_string();
         return Some(AttackDetectionResult {
             attack_type: AttackType::Other,
             fingerprint: None,

@@ -88,7 +88,6 @@ impl InputNormalizer {
                     let ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
                     NormalizedInput {
                         normalized: Cow::Owned(ni.normalized.into_owned()),
-                        lowercased: ni.lowercased,
                         passes: ni.passes,
                     }
                 })
@@ -136,11 +135,7 @@ impl InputNormalizer {
             Cow::Owned(buffer.clone())
         };
 
-        NormalizedInput {
-            normalized,
-            lowercased: Cow::Owned(buffer.to_lowercase()),
-            passes,
-        }
+        NormalizedInput { normalized, passes }
     }
 
     fn decode_single_pass_with_chars(&self, input: &mut String, chars: &mut [char]) -> usize {
@@ -476,7 +471,6 @@ impl InputNormalizer {
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedInput<'a> {
     pub normalized: Cow<'a, str>,
-    pub lowercased: Cow<'static, str>,
     pub passes: usize,
 }
 
@@ -495,10 +489,6 @@ impl<'a> AsRef<str> for NormalizedInput<'a> {
 impl<'a> NormalizedInput<'a> {
     pub fn as_str(&self) -> &str {
         &self.normalized
-    }
-
-    pub fn as_lowercased(&self) -> &str {
-        &self.lowercased
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -536,9 +526,9 @@ impl<'a> NormalizedInputs<'a> {
             let ni = normalizer.normalize(&s);
             NormalizedInput {
                 normalized: Cow::Owned(ni.normalized.into_owned()),
-                lowercased: ni.lowercased,
                 passes: ni.passes,
             }
+
         });
 
         Self {

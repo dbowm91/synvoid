@@ -30,8 +30,8 @@ impl SqliDetector {
         let input_str = String::from_utf8_lossy(input);
         let normalized = self.normalizer.normalize(&input_str);
 
-        // 1. Try pattern-based detection - search lowercase to match lowercase patterns
-        let search_target: &str = &normalized.lowercased;
+        // 1. Try pattern-based detection
+        let search_target: &str = normalized.as_str();
         if let Some(mat) = self.inner.patterns_ref().find(search_target) {
             let matched = search_target[mat.start()..mat.end()].to_string();
             tracing::warn!(
@@ -185,10 +185,10 @@ mod tests {
         assert!(result.is_some(), "Expected detection result but got None");
         let result = result.unwrap();
 
-        // Pattern matching now uses lowercase, so expect lowercase pattern
+        // Pattern matching now preserves casing in result
         assert_eq!(
             result.matched_pattern,
-            Some("custom_sqli_pattern".to_string())
+            Some("CUSTOM_SQLI_PATTERN".to_string())
         );
     }
 }

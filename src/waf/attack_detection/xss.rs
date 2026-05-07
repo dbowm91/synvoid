@@ -30,8 +30,8 @@ impl XssDetector {
         let input_str = String::from_utf8_lossy(input);
         let normalized = self.normalizer.normalize(&input_str);
 
-        // 1. Try pattern-based detection - search lowercase to match lowercase patterns
-        let search_target: &str = &normalized.lowercased;
+        // 1. Try pattern-based detection
+        let search_target: &str = normalized.as_str();
         if let Some(mat) = self.inner.patterns_ref().find(search_target) {
             let matched = search_target[mat.start()..mat.end()].to_string();
             tracing::warn!(
@@ -179,7 +179,7 @@ mod tests {
         let result = detector.detect(input, InputLocation::QueryString).unwrap();
         assert_eq!(
             result.matched_pattern,
-            Some("custom_xss_pattern".to_string())
+            Some("CUSTOM_XSS_PATTERN".to_string())
         );
     }
 }

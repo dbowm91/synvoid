@@ -33,7 +33,7 @@ impl SstiDetector {
     ) -> Option<crate::waf::attack_detection::config::AttackDetectionResult> {
         let normalized = self.normalizer.normalize(input);
 
-        let search_target: &str = &normalized.lowercased;
+        let search_target: &str = normalized.as_str();
         if let Some(mat) = self.inner.patterns_ref().find(search_target) {
             let matched = search_target[mat.start()..mat.end()].to_string();
             tracing::warn!(

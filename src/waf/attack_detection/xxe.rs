@@ -33,9 +33,8 @@ impl XxeDetector {
             input.to_string()
         };
         let normalized = normalize_xml(&decoded);
-        let normalized_lower = normalized.to_lowercase();
 
-        if let Some(mat) = self.inner.patterns_ref().find(&normalized_lower) {
+        if let Some(mat) = self.inner.patterns_ref().find(&normalized) {
             let matched = normalized[mat.start()..mat.end()].to_string();
 
             tracing::warn!(

@@ -31,7 +31,7 @@ use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::http_client::ErasedHttpClient;
-use crate::http::shared_handler::{BodyCollectionProtocol, stream_body_with_waf};
+use crate::http::shared_handler::SharedRequestHandler;
 
 
 use crate::waf::traffic_shaper::ConnectionLimiter;

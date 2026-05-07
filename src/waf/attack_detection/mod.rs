@@ -897,7 +897,7 @@ impl AttackDetector {
 
         if self.config.sqli.enabled {
             if let Some(result) = self.sqli_detector.detect(
-                normalized.as_lowercased().as_bytes(),
+                normalized.as_bytes(),
                 InputLocation::PostBody,
             ) {
                 return Some(result);
@@ -906,7 +906,7 @@ impl AttackDetector {
 
         if self.config.xss.enabled {
             if let Some(result) = self.xss_detector.detect(
-                normalized.as_lowercased().as_bytes(),
+                normalized.as_bytes(),
                 InputLocation::PostBody,
             ) {
                 return Some(result);
@@ -1051,7 +1051,7 @@ impl AttackDetector {
 
         if self.config.sqli.enabled {
             if let Some(result) = self.sqli_detector.detect(
-                normalized.as_lowercased().as_bytes(),
+                normalized.as_bytes(),
                 InputLocation::PostBody,
             ) {
                 return Some(result);
@@ -1060,7 +1060,7 @@ impl AttackDetector {
 
         if self.config.xss.enabled {
             if let Some(result) = self.xss_detector.detect(
-                normalized.as_lowercased().as_bytes(),
+                normalized.as_bytes(),
                 InputLocation::PostBody,
             ) {
                 return Some(result);
