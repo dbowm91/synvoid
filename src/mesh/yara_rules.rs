@@ -2433,6 +2433,7 @@ impl Clone for YaraRulesManager {
             signer: self.signer.clone(),
             current_version: Arc::clone(&self.current_version),
             local_rules: Arc::clone(&self.local_rules),
+            local_compiled_rules: Arc::clone(&self.local_compiled_rules),
             submissions: Arc::clone(&self.submissions),
             submission_hashes: Arc::clone(&self.submission_hashes),
             last_sync: RwLock::new(*self.last_sync.read()),

@@ -6,6 +6,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::Verifier;
 
 use crate::mesh::protocol::MeshMessage;
+use crate::utils::ArcStr;
 
 impl MeshTransport {
     pub(crate) async fn handle_replica_sync_request(
@@ -14,8 +15,12 @@ impl MeshTransport {
         request_id: &str,
         last_sync_index: u64,
     ) {
-        let raft_guard = self.raft_instance.read().await;
-        let Some(ref raft) = *raft_guard else {
+        let raft = {
+            let raft_guard = self.raft_instance.read();
+            raft_guard.clone()
+        };
+
+        let Some(ref raft) = raft else {
             return;
         };
 

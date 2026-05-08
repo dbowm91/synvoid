@@ -117,9 +117,15 @@ pub struct GlobalNodeConfig {
     pub ed25519_private_key: Option<[u8; 32]>,
     #[serde(skip)]
     pub ed25519_public_key_base64: Option<String>,
+    #[serde(default)]
+    pub invite_tokens: Vec<String>,
 }
 
 impl GlobalNodeConfig {
+    pub fn is_invite_token_valid(&self, token: &str) -> bool {
+        self.invite_tokens.iter().any(|t| t == token)
+    }
+
     pub fn load_keys(&mut self) -> Result<(), String> {
         // Load X25519 key
         if let Some(ref b64) = self.x25519_private_key_base64 {
@@ -579,6 +585,10 @@ impl Default for MeshConfig {
 impl MeshConfig {
     pub fn load_node_identity(&mut self) -> Result<(), String> {
         if let Some(ref genesis_b64) = self.node_identity.genesis_key_base64 {
+            tracing::warn!(
+                "DEPRECATION: Using genesis_key_base64 for identity derivation is deprecated and will be removed in a future version. \
+                 Please migrate to Decentralized Admission (JoinRequest)."
+            );
             let genesis_bytes = URL_SAFE_NO_PAD
                 .decode(genesis_b64)
                 .map_err(|e| format!("Invalid genesis key base64: {}", e))?;

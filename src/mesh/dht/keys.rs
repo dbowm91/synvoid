@@ -149,6 +149,25 @@ impl DhtKey {
         DhtKey::OrgNameReservation(org_name.to_lowercase())
     }
 
+    pub fn yara_compiled_rule_content(compiled_hash: &str) -> Self {
+        DhtKey::YaraCompiledRuleContent {
+            compiled_hash: compiled_hash.to_string(),
+        }
+    }
+
+    pub fn yara_compiled_chunk(compiled_hash: &str, index: u32) -> Self {
+        DhtKey::YaraCompiledChunk {
+            compiled_hash: compiled_hash.to_string(),
+            index,
+        }
+    }
+
+    pub fn global_node_proof(node_id: &str) -> Self {
+        DhtKey::GlobalNodeProof {
+            node_id: node_id.to_string(),
+        }
+    }
+
     pub fn global_node_public_key(node_id: &str) -> Self {
         DhtKey::GlobalNodePublicKey(node_id.to_string())
     }
@@ -751,6 +770,9 @@ impl DhtKey {
             DhtKey::RevokedGlobalNode { .. } => "revoked_global_node",
             DhtKey::ServerlessFunction { .. } => "serverless_function",
             DhtKey::BehavioralFingerprint { .. } => "behavioral_fingerprint",
+            DhtKey::YaraCompiledRuleContent { .. } => "yara_compiled_rule_content",
+            DhtKey::YaraCompiledChunk { .. } => "yara_compiled_chunk",
+            DhtKey::GlobalNodeProof { .. } => "global_node_proof",
         }
     }
 

@@ -18,6 +18,7 @@ use crate::mesh::topology::{MeshTopology, PeerStatus};
 impl MeshTransport {
     pub(crate) fn clone_for_maintenance(&self) -> MeshTransport {
         MeshTransport {
+            backend_pool: None,
             config: self.config.clone(),
             topology: self.topology.clone(),
             cert_manager: self.cert_manager.clone(),

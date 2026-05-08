@@ -150,7 +150,12 @@ impl MeshMessage {
             Self::ConsistentReadRequest { .. }
             | Self::ConsistentReadResponse { .. }
             | Self::NotLeader { .. }
-            | Self::RaftCommitNotification { .. } => MessageCategory::System,
+            | Self::RaftCommitNotification { .. }
+            | Self::ReplicaSyncRequest { .. }
+            | Self::ReplicaSyncResponse { .. }
+            | Self::MeshLoadUpdate { .. }
+            | Self::JoinRequest { .. }
+            | Self::JoinResponse { .. } => MessageCategory::System,
         }
     }
 

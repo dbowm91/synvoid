@@ -783,6 +783,8 @@ pub struct GlobalNodeConfig {
     pub ml_dsa_private_key_base64: Option<String>,
     #[serde(skip)]
     pub ml_dsa_public_key_base64: Option<String>,
+    #[serde(default)]
+    pub invite_tokens: Vec<String>,
 }
 
 fn default_key_exchange_enabled() -> bool {

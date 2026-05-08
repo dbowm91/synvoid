@@ -28,6 +28,7 @@ pub enum Namespace {
     Org,
     Intel,
     Revocation,
+    AuthorizedGlobalNodes,
 }
 
 impl Namespace {
@@ -36,6 +37,7 @@ impl Namespace {
             Namespace::Org => "org",
             Namespace::Intel => "intel",
             Namespace::Revocation => "revocation",
+            Namespace::AuthorizedGlobalNodes => "authorized_global_nodes",
         }
     }
 
@@ -45,6 +47,7 @@ impl Namespace {
             "org" => Some(Namespace::Org),
             "intel" => Some(Namespace::Intel),
             "revocation" => Some(Namespace::Revocation),
+            "authorized_global_nodes" => Some(Namespace::AuthorizedGlobalNodes),
             _ => None,
         }
     }
@@ -58,6 +61,7 @@ impl Namespace {
             Namespace::Org => "global",
             Namespace::Intel => "global",
             Namespace::Revocation => "global",
+            Namespace::AuthorizedGlobalNodes => "global",
         }
     }
 }
@@ -190,11 +194,19 @@ pub struct GlobalNodeRevocationList {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AuthorizedGlobalNode {
+    pub public_key: String,
+    pub trust_level: u8,
+    pub attestation_report: Option<String>,
+    pub authorized_at: u64,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type")]
 pub enum StateMachineValue {
     Org(OrgPublicKey),
     Intel(ThreatIntel),
     Revocation(GlobalNodeRevocationList),
+    AuthorizedGlobalNode(AuthorizedGlobalNode),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

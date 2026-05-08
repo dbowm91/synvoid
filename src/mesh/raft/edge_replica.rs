@@ -6,7 +6,9 @@ use moka::sync::Cache;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 
-use crate::mesh::raft::state_machine::{Namespace, OrgPublicKey, ThreatIntel};
+use crate::mesh::raft::state_machine::{
+    AuthorizedGlobalNode, Namespace, OrgPublicKey, ThreatIntel,
+};
 
 const EDGE_REPLICA_CACHE_MAX_ITEMS: u64 = 10000;
 const EDGE_REPLICA_CACHE_TTL_SECS: u64 = 300;
@@ -101,6 +103,87 @@ impl EdgeReplicaManager {
             [],
         )?;
 
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS authorized_global_nodes (
+                public_key TEXT PRIMARY KEY,
+                trust_level INTEGER NOT NULL,
+                attestation_report TEXT,
+                authorized_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn get_authorized_global_node(&self, public_key: &str) -> Option<AuthorizedGlobalNode> {
+        if let Some(cached) = self.cache.get(&format!("auth_node:{}", public_key)) {
+            return postcard::from_bytes(&cached.value).ok();
+        }
+
+        let db = self.db.lock();
+        let result = db.query_row(
+            "SELECT public_key, trust_level, attestation_report, authorized_at FROM authorized_global_nodes WHERE public_key = ?1",
+            params![public_key],
+            |row| {
+                Ok(AuthorizedGlobalNode {
+                    public_key: row.get(0)?,
+                    trust_level: row.get(1)?,
+                    attestation_report: row.get(2)?,
+                    authorized_at: row.get(3)?,
+                })
+            },
+        );
+
+        match result {
+            Ok(node) => {
+                let value = postcard::to_stdvec(&node).ok()?;
+                self.cache.insert(
+                    format!("auth_node:{}", public_key),
+                    CachedRecord {
+                        value: value.clone(),
+                        timestamp: crate::mesh::safe_unix_timestamp(),
+                    },
+                );
+                Some(node)
+            }
+            Err(_) => None,
+        }
+    }
+
+    pub fn update_authorized_global_node(&self, public_key: &str, value: &[u8]) -> Result<(), rusqlite::Error> {
+        let node: AuthorizedGlobalNode = postcard::from_bytes(value)
+            .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+
+        let timestamp = crate::mesh::safe_unix_timestamp();
+
+        let db = self.db.lock();
+        db.execute(
+            "INSERT OR REPLACE INTO authorized_global_nodes (public_key, trust_level, attestation_report, authorized_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![public_key, node.trust_level, node.attestation_report, node.authorized_at, timestamp],
+        )?;
+
+        drop(db);
+
+        self.cache.insert(
+            format!("auth_node:{}", public_key),
+            CachedRecord {
+                value: value.to_vec(),
+                timestamp,
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn delete_authorized_global_node(&self, public_key: &str) -> Result<(), rusqlite::Error> {
+        let db = self.db.lock();
+        db.execute(
+            "DELETE FROM authorized_global_nodes WHERE public_key = ?1",
+            params![public_key],
+        )?;
+        self.cache.remove(&format!("auth_node:{}", public_key));
         Ok(())
     }
 
@@ -270,6 +353,7 @@ impl EdgeReplicaManager {
             Namespace::Org => self.update_org_key(key_id, value),
             Namespace::Intel => self.update_threat_intel(key_id, value),
             Namespace::Revocation => self.update_revocation(key_id, value),
+            Namespace::AuthorizedGlobalNodes => self.update_authorized_global_node(key_id, value),
         }
     }
 
@@ -308,6 +392,7 @@ impl EdgeReplicaManager {
             Namespace::Org => self.delete_org_key(key_id),
             Namespace::Intel => self.delete_threat_intel(key_id),
             Namespace::Revocation => self.delete_revocation(key_id),
+            Namespace::AuthorizedGlobalNodes => self.delete_authorized_global_node(key_id),
         }
     }
 
@@ -367,6 +452,7 @@ impl EdgeReplicaManager {
             Namespace::Org => format!("org:{}", key_id),
             Namespace::Intel => format!("intel:{}", key_id),
             Namespace::Revocation => format!("revocation:{}", key_id),
+            Namespace::AuthorizedGlobalNodes => format!("auth_node:{}", key_id),
         };
 
         self.cache.insert(

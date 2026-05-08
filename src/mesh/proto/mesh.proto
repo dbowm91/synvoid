@@ -289,7 +289,61 @@ message MeshMessage {
         RaftCommitNotification raft_commit_notification = 169;
         YaraCompiledRuleAnnounce yara_compiled_rule_announce = 170;
         DhtRecordCommit dht_record_commit = 171;
+        JoinRequest join_request = 172;
+        JoinResponse join_response = 173;
+        ReplicaSyncRequest replica_sync_request = 174;
+        ReplicaSyncResponse replica_sync_response = 175;
+        MeshLoadUpdate mesh_load_update = 176;
     }
+}
+
+message JoinRequest {
+    string request_id = 1;
+    string public_key = 2;
+    string invite_token = 3;
+    optional string attestation_report = 4;
+    uint64 timestamp = 5;
+    bytes signature = 6;
+}
+
+message JoinResponse {
+    string request_id = 1;
+    bool approved = 2;
+    uint32 trust_level = 3;
+    optional string reason = 4;
+    uint64 timestamp = 5;
+    bytes signature = 6;
+}
+
+message ReplicaSyncRequest {
+    string request_id = 1;
+    uint64 last_sync_index = 2;
+    string node_id = 3;
+}
+
+message ReplicaSyncResponse {
+    string request_id = 1;
+    uint64 current_index = 2;
+    bool snapshot_required = 3;
+    repeated RaftCommitNotification entries = 4;
+}
+
+message MeshLoadUpdate {
+    string request_id = 1;
+    DhtRecord record = 2;
+    repeated QuorumSignatureEntry quorum_signatures = 3;
+    uint64 timestamp = 4;
+    string source_node_id = 5;
+    bytes signature = 6;
+    string signer_public_key = 7;
+}
+
+message RaftCommitNotification {
+    string leader_id = 1;
+    uint64 commit_index = 2;
+    string namespace = 3;
+    string key_id = 4;
+    uint64 timestamp = 5;
 }
 
 message OrgKeySignRequest {
@@ -1649,13 +1703,6 @@ message NotLeader {
     uint64 current_term = 3;
 }
 
-message RaftCommitNotification {
-    string leader_id = 1;
-    uint64 commit_index = 2;
-    string namespace = 3;
-    string key_id = 4;
-    uint64 timestamp = 5;
-}
 
 message YaraCompiledRuleAnnounce {
     string request_id = 1;

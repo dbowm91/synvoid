@@ -2737,9 +2737,117 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 signature,
                 signer_public_key,
             } => proto::MeshMessage {
-                message_type: 170,
+                message_type: 171,
                 payload: Some(proto::mesh_message::Payload::DhtRecordCommit(
                     proto::DhtRecordCommit {
+                        request_id: request_id.to_string(),
+                        record: Some(record.clone().into()),
+                        quorum_signatures: quorum_signatures
+                            .iter()
+                            .map(|s| proto::QuorumSignatureEntry {
+                                node_id: s.node_id.clone(),
+                                signature: s.signature.clone(),
+                                timestamp: s.timestamp,
+                            })
+                            .collect(),
+                        timestamp: *timestamp,
+                        source_node_id: source_node_id.to_string(),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.clone().unwrap_or_default(),
+                    },
+                )),
+            },
+            MeshMessage::JoinRequest {
+                request_id,
+                public_key,
+                invite_token,
+                attestation_report,
+                timestamp,
+                signature,
+            } => proto::MeshMessage {
+                message_type: 172,
+                payload: Some(proto::mesh_message::Payload::JoinRequest(
+                    proto::JoinRequest {
+                        request_id: request_id.to_string(),
+                        public_key: public_key.to_string(),
+                        invite_token: invite_token.to_string(),
+                        attestation_report: attestation_report.as_ref().map(|s| s.to_string()),
+                        timestamp: *timestamp,
+                        signature: signature.clone(),
+                    },
+                )),
+            },
+            MeshMessage::JoinResponse {
+                request_id,
+                approved,
+                trust_level,
+                reason,
+                timestamp,
+                signature,
+            } => proto::MeshMessage {
+                message_type: 173,
+                payload: Some(proto::mesh_message::Payload::JoinResponse(
+                    proto::JoinResponse {
+                        request_id: request_id.to_string(),
+                        approved: *approved,
+                        trust_level: *trust_level as u32,
+                        reason: reason.as_ref().map(|s| s.to_string()),
+                        timestamp: *timestamp,
+                        signature: signature.clone(),
+                    },
+                )),
+            },
+            MeshMessage::ReplicaSyncRequest {
+                request_id,
+                last_sync_index,
+                node_id,
+            } => proto::MeshMessage {
+                message_type: 174,
+                payload: Some(proto::mesh_message::Payload::ReplicaSyncRequest(
+                    proto::ReplicaSyncRequest {
+                        request_id: request_id.to_string(),
+                        last_sync_index: *last_sync_index,
+                        node_id: node_id.to_string(),
+                    },
+                )),
+            },
+            MeshMessage::ReplicaSyncResponse {
+                request_id,
+                current_index,
+                snapshot_required,
+                entries,
+            } => proto::MeshMessage {
+                message_type: 175,
+                payload: Some(proto::mesh_message::Payload::ReplicaSyncResponse(
+                    proto::ReplicaSyncResponse {
+                        request_id: request_id.to_string(),
+                        current_index: *current_index,
+                        snapshot_required: *snapshot_required,
+                        entries: entries
+                            .iter()
+                            .map(|e| proto::RaftCommitNotification {
+                                leader_id: e.leader_id.to_string(),
+                                commit_index: e.commit_index,
+                                namespace: e.namespace.as_str().to_string(),
+                                key_id: e.key_id.to_string(),
+                                timestamp: e.timestamp,
+                            })
+                            .collect(),
+                    },
+                )),
+            },
+            MeshMessage::MeshLoadUpdate {
+                request_id,
+                record,
+                quorum_signatures,
+                timestamp,
+                source_node_id,
+                signature,
+                signer_public_key,
+            } => proto::MeshMessage {
+                message_type: 176,
+                payload: Some(proto::mesh_message::Payload::MeshLoadUpdate(
+                    proto::MeshLoadUpdate {
                         request_id: request_id.to_string(),
                         record: Some(record.clone().into()),
                         quorum_signatures: quorum_signatures

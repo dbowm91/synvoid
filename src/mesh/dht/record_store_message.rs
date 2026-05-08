@@ -1066,7 +1066,7 @@ impl RecordStoreManager {
             timestamp,
             source_node_id: self.node_id.clone().into(),
             signature,
-            signer_public_key,
+            signer_public_key: Some(signer_public_key),
         };
 
         let peers = transport.get_connected_peers();

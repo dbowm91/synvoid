@@ -1188,6 +1188,31 @@ pub enum MeshMessage {
         key_id: ArcStr,
         timestamp: u64,
     },
+    DhtRecordCommit {
+        request_id: ArcStr,
+        record: DhtRecord,
+        quorum_signatures: Vec<QuorumSignatureProto>,
+        timestamp: u64,
+        source_node_id: ArcStr,
+        signature: Vec<u8>,
+        signer_public_key: Option<String>,
+    },
+    JoinRequest {
+        request_id: ArcStr,
+        public_key: ArcStr,
+        invite_token: ArcStr,
+        attestation_report: Option<ArcStr>,
+        timestamp: u64,
+        signature: Vec<u8>,
+    },
+    JoinResponse {
+        request_id: ArcStr,
+        approved: bool,
+        trust_level: u8,
+        reason: Option<ArcStr>,
+        timestamp: u64,
+        signature: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

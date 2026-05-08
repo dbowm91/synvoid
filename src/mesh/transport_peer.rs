@@ -2545,6 +2545,28 @@ impl MeshTransport {
                     }
                 }
             }
+            MeshMessage::JoinRequest {
+                request_id,
+                public_key,
+                invite_token,
+                attestation_report,
+                timestamp,
+                signature,
+            } => {
+                self.handle_join_request(
+                    &peer_node_id,
+                    &request_id,
+                    &public_key,
+                    &invite_token,
+                    attestation_report.as_deref(),
+                    timestamp,
+                    &signature,
+                )
+                .await;
+            }
+            MeshMessage::JoinResponse { .. } => {
+                // Handled by pending responses
+            }
             MeshMessage::Raft {
                 target_node_id,
                 payload,
@@ -3905,5 +3927,88 @@ impl MeshTransport {
             }
             _ => true,
         }
+    }
+
+    pub(crate) async fn handle_join_request(
+        &self,
+        peer_id: &str,
+        request_id: &str,
+        public_key: &str,
+        invite_token: &str,
+        attestation_report: Option<&str>,
+        _timestamp: u64,
+        _signature: &[u8],
+    ) {
+        tracing::info!(
+            "Received JoinRequest from peer {} (pk: {}, token: {})",
+            peer_id,
+            public_key,
+            invite_token
+        );
+
+        let valid_token = self.config.global_node.is_invite_token_valid(invite_token);
+        if !valid_token {
+            tracing::warn!("Invalid invite token '{}' from {}", invite_token, peer_id);
+            let response = crate::mesh::protocol::MeshMessage::JoinResponse {
+                request_id: request_id.into(),
+                approved: false,
+                trust_level: 0,
+                reason: Some("Invalid invite token".into()),
+                timestamp: crate::mesh::safe_unix_timestamp(),
+                signature: Vec::new(),
+            };
+            let _ = self.send_datagram_to_peer(peer_id, &response).await;
+            return;
+        }
+
+        let mut trust_level = 1;
+        if attestation_report.is_some() {
+            trust_level = 2; 
+        }
+
+        let new_node = crate::mesh::raft::state_machine::AuthorizedGlobalNode {
+            public_key: public_key.to_string(),
+            trust_level,
+            attestation_report: attestation_report.map(|s| s.to_string()),
+            authorized_at: crate::mesh::safe_unix_timestamp(),
+        };
+
+        let value = postcard::to_stdvec(&crate::mesh::raft::state_machine::StateMachineValue::AuthorizedGlobalNode(new_node))
+            .unwrap_or_default();
+        let cmd = crate::mesh::raft::state_machine::RaftCommand::Set {
+            namespace: crate::mesh::raft::state_machine::Namespace::AuthorizedGlobalNodes,
+            key: public_key.to_string(),
+            value,
+            source_node_id: Some(self.config.node_id().to_string()),
+            signature: Some(Vec::new()),
+        };
+
+        let raft = {
+            let guard = self.raft_instance.read();
+            guard.clone()
+        };
+
+        let approved = if let Some(ref raft_arc) = raft {
+            match raft_arc.client_write(cmd).await {
+                Ok(_) => true,
+                Err(e) => {
+                    tracing::error!("Raft write failed for JoinRequest: {}", e);
+                    false
+                }
+            }
+        } else {
+            tracing::warn!("Raft instance not available, cannot process JoinRequest");
+            false
+        };
+
+        let response = crate::mesh::protocol::MeshMessage::JoinResponse {
+            request_id: request_id.into(),
+            approved,
+            trust_level: if approved { trust_level } else { 0 },
+            reason: if approved { None } else { Some("Internal error proposing to Raft".into()) },
+            timestamp: crate::mesh::safe_unix_timestamp(),
+            signature: Vec::new(),
+        };
+        let _ = self.send_datagram_to_peer(peer_id, &response).await;
     }
 }

@@ -350,6 +350,7 @@ impl Default for OwnershipChallengeStore {
 impl Clone for MeshTransport {
     fn clone(&self) -> Self {
         Self {
+            backend_pool: self.backend_pool.clone(),
             config: self.config.clone(),
             topology: self.topology.clone(),
             cert_manager: self.cert_manager.clone(),
@@ -563,6 +564,7 @@ impl MeshTransport {
         };
 
         Self {
+            backend_pool,
             config: config.clone(),
             topology,
             cert_manager: cert_manager.clone(),
@@ -618,7 +620,6 @@ impl MeshTransport {
             seen_messages: Arc::new(RwLock::new(seen_messages)),
             stake_manager,
             mlkem_session_manager,
-            backend_pool,
             #[cfg(feature = "dns")]
             dns_resolver,
             #[cfg(feature = "dns")]

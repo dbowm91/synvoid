@@ -1,6 +1,10 @@
 use super::*;
 
 impl GlobalNodeConfig {
+    pub fn is_invite_token_valid(&self, token: &str) -> bool {
+        self.invite_tokens.iter().any(|t| t == token)
+    }
+
     pub fn load_keys(&mut self) -> Result<(), String> {
         use base64::Engine;
 

@@ -442,6 +442,8 @@ pub struct GlobalNodeEntry {
     pub port: u16,
     pub public_key: String,
     pub timestamp: u64,
+    pub trust_level: u8,
+    pub attestation_report: Option<String>,
 }
 
 impl GlobalNodeEntry {
@@ -452,6 +454,8 @@ impl GlobalNodeEntry {
             port,
             public_key,
             timestamp: crate::mesh::safe_unix_timestamp(),
+            trust_level: 1,
+            attestation_report: None,
         }
     }
 }

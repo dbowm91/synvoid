@@ -697,6 +697,8 @@ impl SignedDhtRecord {
             SignedRecordType::YaraRulesManifest => "YaraRulesManifest",
             SignedRecordType::GenesisKeyTransition => "GenesisKeyTransition",
             SignedRecordType::RevokedGlobalNode => "RevokedGlobalNode",
+            SignedRecordType::YaraCompiledRuleContent => "YaraCompiledRuleContent",
+            SignedRecordType::GlobalNodeProof => "GlobalNodeProof",
         };
 
         let content = DhtRecordSignable {
@@ -1215,6 +1217,8 @@ impl TtlManager {
             SignedRecordType::YaraRulesManifest => self.yara_rules_manifest_ttl,
             SignedRecordType::GenesisKeyTransition => self.genesis_key_transition_ttl,
             SignedRecordType::RevokedGlobalNode => self.revoked_global_node_ttl,
+            SignedRecordType::YaraCompiledRuleContent => self.yara_rule_content_ttl,
+            SignedRecordType::GlobalNodeProof => Duration::from_secs(3600),
         }
     }
 

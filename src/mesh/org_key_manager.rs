@@ -313,6 +313,7 @@ impl OrgKeyManager {
                 Namespace::Org => "org",
                 Namespace::Intel => "intel",
                 Namespace::Revocation => "revocation",
+                Namespace::AuthorizedGlobalNodes => "authorized_global_nodes",
             },
             notification.key_id
         );

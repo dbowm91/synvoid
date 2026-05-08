@@ -12,6 +12,8 @@ pub enum ProtocolError {
     InvalidValue(&'static str),
     #[error("Invalid field: {0}")]
     InvalidField(&'static str),
+    #[error("Decode error: {0}")]
+    DecodeError(String),
 }
 
 impl TryFrom<proto::MeshMessage> for MeshMessage {
@@ -1836,9 +1838,80 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                     source_node_id: r.source_node_id.into(),
                     signature: r.signature,
-                    signer_public_key: r.signer_public_key,
+                    signer_public_key: if r.signer_public_key.is_empty() { None } else { Some(r.signer_public_key) },
                 })
             }
+            proto::mesh_message::Payload::JoinRequest(r) => Ok(MeshMessage::JoinRequest {
+                request_id: r.request_id.into(),
+                public_key: r.public_key.into(),
+                invite_token: r.invite_token.into(),
+                attestation_report: r.attestation_report.map(|s| s.into()),
+                timestamp: r.timestamp,
+                signature: r.signature,
+            }),
+            proto::mesh_message::Payload::JoinResponse(r) => Ok(MeshMessage::JoinResponse {
+                request_id: r.request_id.into(),
+                approved: r.approved,
+                trust_level: r.trust_level as u8,
+                reason: r.reason.map(|s| s.into()),
+                timestamp: r.timestamp,
+                signature: r.signature,
+            }),
+            proto::mesh_message::Payload::ReplicaSyncRequest(r) => {
+                Ok(MeshMessage::ReplicaSyncRequest {
+                    request_id: r.request_id.into(),
+                    last_sync_index: r.last_sync_index,
+                    node_id: r.node_id.into(),
+                })
+            }
+            proto::mesh_message::Payload::ReplicaSyncResponse(r) => {
+                Ok(MeshMessage::ReplicaSyncResponse {
+                    request_id: r.request_id.into(),
+                    current_index: r.current_index,
+                    snapshot_required: r.snapshot_required,
+                    entries: r
+                        .entries
+                        .iter()
+                        .map(|e| crate::mesh::raft::RaftCommitNotification {
+                            leader_id: e.leader_id.clone().into(),
+                            commit_index: e.commit_index,
+                            namespace: crate::mesh::raft::state_machine::Namespace::try_from_str(
+                                &e.namespace,
+                            )
+                            .unwrap_or(crate::mesh::raft::state_machine::Namespace::Org),
+                            key_id: e.key_id.clone().into(),
+                            timestamp: e.timestamp,
+                        })
+                        .collect(),
+                })
+            }
+            proto::mesh_message::Payload::MeshLoadUpdate(r) => Ok(MeshMessage::MeshLoadUpdate {
+                request_id: r.request_id.into(),
+                record: match r.record {
+                    Some(rec) => rec.try_into().map_err(|e| {
+                        ProtocolError::DecodeError(format!("Invalid DhtRecord: {}", e))
+                    })?,
+                    None => {
+                        return Err(ProtocolError::DecodeError(
+                            "Missing DhtRecord in MeshLoadUpdate".to_string(),
+                        ))
+                    }
+                },
+                quorum_signatures: r
+                    .quorum_signatures
+                    .iter()
+                    .map(|s| QuorumSignatureProto {
+                        node_id: s.node_id.clone(),
+                        signature: s.signature.clone(),
+                        timestamp: s.timestamp,
+                        signer_public_key: None,
+                    })
+                    .collect(),
+                timestamp: r.timestamp,
+                source_node_id: r.source_node_id.into(),
+                signature: r.signature,
+                signer_public_key: r.signer_public_key,
+            }),
         }
     }
 }

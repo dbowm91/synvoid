@@ -602,6 +602,7 @@ impl RaftAwareClient {
             Namespace::Org => format!("org:{}", key),
             Namespace::Intel => format!("intel:{}", key),
             Namespace::Revocation => format!("revocation:{}", key),
+            Namespace::AuthorizedGlobalNodes => format!("auth_node:{}", key),
         }
     }
 
