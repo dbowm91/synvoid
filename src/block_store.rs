@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::waf::mitigation::MitigationProvider;
+
 pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
 
 const DEFAULT_MAX_ENTRIES: usize = 500_000;
@@ -80,7 +82,7 @@ pub struct BlockStore {
     total_entries: AtomicUsize,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    ebpf_block_hook: Arc<std::sync::Mutex<Option<GlobalBlockHook>>>,
+    mitigation_provider: arc_swap::ArcSwapOption<dyn MitigationProvider>,
 }
 
 impl BlockStore {
@@ -216,8 +218,13 @@ impl BlockStore {
             total_entries: AtomicUsize::new(initial_count),
             persist_tx,
             shutdown_tx,
-            ebpf_block_hook: Arc::new(std::sync::Mutex::new(None)),
+            mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
         }
+    }
+
+    /// Set the mitigation provider for kernel-level blocking.
+    pub fn set_mitigation_provider(&self, provider: Option<Arc<dyn MitigationProvider>>) {
+        self.mitigation_provider.store(provider);
     }
 
     /// Gracefully shutdown the block store, persisting any pending data.
@@ -324,19 +331,6 @@ impl BlockStore {
         self.enabled
     }
 
-    /// Set a hook to be called when an IP is blocked with "global" scope.
-    ///
-    /// This hook is used to同步 blocked IPs to eBPF blocklist maps for
-    /// kernel-level SYN-level dropping.
-    ///
-    /// # Arguments
-    /// * `hook` - A closure that will be called with the blocked IP
-    pub fn set_ebpf_block_hook(&self, hook: Option<GlobalBlockHook>) {
-        if let Ok(mut guard) = self.ebpf_block_hook.lock() {
-            *guard = hook;
-        }
-    }
-
     /// Evict the least recently accessed entry from the store.
     ///
     /// Called when the store reaches capacity to make room for new entries.
@@ -426,9 +420,14 @@ impl BlockStore {
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
 
         if site_scope == "global" {
-            if let Ok(hook_guard) = self.ebpf_block_hook.lock() {
-                if let Some(hook) = hook_guard.as_ref() {
-                    hook(ip);
+            if let Some(provider) = self.mitigation_provider.load().as_ref() {
+                let duration = if ban_expire_seconds == 0 {
+                    Duration::from_secs(365 * 24 * 3600) // 1 year for permanent
+                } else {
+                    Duration::from_secs(ban_expire_seconds)
+                };
+                if let Err(e) = provider.block_ip(ip, reason, duration) {
+                    tracing::error!(%ip, %e, "Failed to block IP via mitigation provider");
                 }
             }
         }

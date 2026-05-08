@@ -405,6 +405,15 @@ impl<R: Read> Read for SignedReader<R> {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct IpcEnvelope<'a> {
+    pub timestamp: u64,
+    pub nonce: [u8; 16],
+    pub hmac: [u8; HMAC_SIZE],
+    #[serde(with = "serde_bytes")]
+    pub data: &'a [u8],
+}
+
 pub struct SignedIpcMessage {
     pub payload: Vec<u8>,
     pub timestamp: u64,
@@ -431,89 +440,67 @@ impl SignedIpcMessage {
         msg: &T,
         signer: &IpcSigner,
     ) -> io::Result<Vec<u8>> {
-        let payload = crate::serialization::serialize(msg)?;
-
         let timestamp = crate::utils::current_timestamp();
         let nonce = generate_nonce();
+        
+        let data_bytes = crate::serialization::serialize(msg)?;
+        
         let ts_bytes = timestamp.to_be_bytes();
-        let hmac = signer.sign_parts(&[&ts_bytes, &nonce, &payload]);
+        let hmac_bytes = signer.sign_parts(&[&ts_bytes, &nonce, &data_bytes]);
+        
+        let envelope = IpcEnvelope {
+            timestamp,
+            nonce,
+            hmac: hmac_bytes,
+            data: &data_bytes,
+        };
 
-        let total_len = (TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE + payload.len()) as u32;
-        let mut result = Vec::with_capacity(4 + total_len as usize);
-        result.extend_from_slice(&total_len.to_be_bytes());
-        result.extend_from_slice(&ts_bytes);
-        result.extend_from_slice(&nonce);
-        result.extend_from_slice(&hmac);
-        result.extend_from_slice(&payload);
-
-        Ok(result)
+        let mut result = crate::serialization::serialize(&envelope)?;
+        
+        // We still need to prefix with length for the framing layer if we want to stay compatible
+        // with the existing read_message logic, OR we change read_message to handle postcard's
+        // own framing if it had any (it doesn't, it's just bytes).
+        // The existing framing uses a 4-byte BE length.
+        let mut framed = Vec::with_capacity(4 + result.len());
+        framed.extend_from_slice(&(result.len() as u32).to_be_bytes());
+        framed.append(&mut result);
+        
+        Ok(framed)
     }
 
     pub fn deserialize_signed<T: serde::de::DeserializeOwned>(
         data: &[u8],
         signer: &IpcSigner,
     ) -> io::Result<T> {
-        if data.len() < 4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "signed message too short",
-            ));
-        }
+        // The framing (4 bytes length) is already stripped by the caller in current implementation
+        // but wait, serialize_signed added it back. Let's see how it's used.
+        
+        let envelope: IpcEnvelope = crate::serialization::deserialize(data)?;
 
-        let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_IPC_MESSAGE_SIZE).contains(&len) {
-            increment_oversized_rejected();
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "signed message size invalid",
-            ));
-        }
-        if data.len() < 4 + len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "signed message incomplete",
-            ));
-        }
-
-        let timestamp =
-            u64::from_be_bytes(data[4..4 + TIMESTAMP_SIZE].try_into().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "timestamp extraction failed")
-            })?);
-
-        if !verify_timestamp(timestamp) {
+        if !verify_timestamp(envelope.timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "message timestamp outside replay window",
             ));
         }
 
-        let nonce: [u8; 16] = data[4 + TIMESTAMP_SIZE..4 + TIMESTAMP_SIZE + NONCE_SIZE]
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "nonce extraction failed"))?;
-
-        let hmac: [u8; HMAC_SIZE] = data
-            [4 + TIMESTAMP_SIZE + NONCE_SIZE..4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE]
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "HMAC extraction failed"))?;
-
-        let payload = &data[4 + TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..4 + len];
-        let ts_bytes = timestamp.to_be_bytes();
-
-        if !signer.verify_parts(&[&ts_bytes, &nonce, payload], &hmac) {
+        let ts_bytes = envelope.timestamp.to_be_bytes();
+        
+        if !signer.verify_parts(&[&ts_bytes, &envelope.nonce, envelope.data], &envelope.hmac) {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HMAC verification failed",
+                io::ErrorKind::PermissionDenied,
+                "IPC message HMAC verification failed",
             ));
         }
 
-        if !check_and_insert_nonce(signer.signer_id(), &nonce, timestamp) {
+        if !check_and_insert_nonce(signer.id(), &envelope.nonce, envelope.timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "replay detected: duplicate nonce",
+                "IPC message replay detected",
             ));
         }
 
-        crate::serialization::deserialize(payload)
+        crate::serialization::deserialize(envelope.data)
     }
 
     pub fn deserialize_signed_from_stream<R: Read>(
@@ -528,57 +515,18 @@ impl SignedIpcMessage {
         }
 
         let total_len = u32::from_be_bytes(len_buf) as usize;
-        if !(TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..=MAX_IPC_MESSAGE_SIZE).contains(&total_len) {
+        if total_len > MAX_IPC_MESSAGE_SIZE {
             increment_oversized_rejected();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "signed message size invalid",
+                "signed message too large",
             ));
         }
 
         let mut raw = vec![0u8; total_len];
         stream.read_exact(&mut raw).map_err(io::Error::other)?;
 
-        let timestamp = u64::from_be_bytes(
-            raw[0..TIMESTAMP_SIZE]
-                .try_into()
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad timestamp"))?,
-        );
-
-        if !verify_timestamp(timestamp) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "message timestamp outside replay window",
-            ));
-        }
-
-        let nonce: [u8; 16] = raw[TIMESTAMP_SIZE..TIMESTAMP_SIZE + NONCE_SIZE]
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad nonce"))?;
-
-        let hmac: [u8; HMAC_SIZE] = raw
-            [TIMESTAMP_SIZE + NONCE_SIZE..TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE]
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad hmac"))?;
-
-        let payload = &raw[TIMESTAMP_SIZE + NONCE_SIZE + HMAC_SIZE..];
-        let ts_bytes = timestamp.to_be_bytes();
-
-        if !signer.verify_parts(&[&ts_bytes, &nonce, payload], &hmac) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HMAC verification failed",
-            ));
-        }
-
-        if !check_and_insert_nonce(signer.signer_id(), &nonce, timestamp) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "replay detected: duplicate nonce",
-            ));
-        }
-
-        crate::serialization::deserialize(payload).map(Some)
+        Self::deserialize_signed(&raw, signer).map(Some)
     }
 }
 

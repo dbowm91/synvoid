@@ -17,11 +17,72 @@ use super::ipc_framing::{
 };
 use super::ipc_signed::IpcSigner;
 
-pub struct IpcStream {
+pub trait AsyncIpcTransport: AsyncRead + AsyncWrite + Unpin + Send + Sync {
+    fn peer_pid(&self) -> Option<u32>;
     #[cfg(unix)]
-    inner: UnixStream,
-    #[cfg(windows)]
-    inner: NamedPipeClient,
+    fn as_raw_fd(&self) -> io::Result<std::os::unix::io::RawFd>;
+}
+
+#[cfg(unix)]
+impl AsyncIpcTransport for UnixStream {
+    fn peer_pid(&self) -> Option<u32> {
+        // ... (existing logic)
+        use socket2::SockRef;
+        use std::mem::size_of;
+        use std::os::unix::io::AsRawFd;
+
+        let sock_ref = SockRef::from(self);
+        let raw_fd = sock_ref.as_raw_fd();
+
+        #[repr(C)]
+        struct UCred {
+            pid: libc::pid_t,
+            uid: libc::uid_t,
+            gid: libc::gid_t,
+        }
+
+        let mut cred: UCred = unsafe { std::mem::zeroed() };
+        let mut cred_len = size_of::<UCred>() as libc::socklen_t;
+
+        let result = unsafe {
+            libc::getsockopt(
+                raw_fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut cred as *mut _ as *mut libc::c_void,
+                &mut cred_len,
+            )
+        };
+
+        if result == 0 && cred.pid > 0 {
+            Some(cred.pid as u32)
+        } else {
+            None
+        }
+    }
+
+    fn as_raw_fd(&self) -> io::Result<std::os::unix::io::RawFd> {
+        use std::os::unix::io::AsRawFd;
+        Ok(self.as_raw_fd())
+    }
+}
+
+#[cfg(windows)]
+impl AsyncIpcTransport for NamedPipeClient {
+    fn peer_pid(&self) -> Option<u32> {
+        None
+    }
+}
+
+#[cfg(windows)]
+impl AsyncIpcTransport for NamedPipeServer {
+    fn peer_pid(&self) -> Option<u32> {
+        None
+    }
+}
+
+pub struct IpcStream {
+    inner: Box<dyn AsyncIpcTransport>,
     read_buffer: Vec<u8>,
     signer: Option<Arc<IpcSigner>>,
     enforce_signing: bool,
@@ -170,7 +231,7 @@ impl IpcStream {
     #[cfg(unix)]
     pub fn from_unix_stream(stream: UnixStream) -> Self {
         Self {
-            inner: stream,
+            inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: None,
             enforce_signing: false,
@@ -180,7 +241,7 @@ impl IpcStream {
     #[cfg(unix)]
     pub fn from_unix_stream_with_signer(stream: UnixStream, signer: Arc<IpcSigner>) -> Self {
         Self {
-            inner: stream,
+            inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: Some(signer),
             enforce_signing: true,
@@ -197,7 +258,7 @@ impl IpcStream {
             tracing::warn!("IPC signing enforced but no signer provided - connection may fail");
         }
         Self {
-            inner: stream,
+            inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer,
             enforce_signing,
@@ -207,7 +268,7 @@ impl IpcStream {
     #[cfg(windows)]
     pub fn from_named_pipe(pipe: NamedPipeServer) -> Self {
         Self {
-            inner: pipe.into(),
+            inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: None,
             enforce_signing: false,
@@ -217,7 +278,7 @@ impl IpcStream {
     #[cfg(windows)]
     pub fn from_named_pipe_with_signer(pipe: NamedPipeServer, signer: Arc<IpcSigner>) -> Self {
         Self {
-            inner: pipe.into(),
+            inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: Some(signer),
             enforce_signing: true,
@@ -234,7 +295,7 @@ impl IpcStream {
             tracing::warn!("IPC signing enforced but no signer provided - connection may fail");
         }
         Self {
-            inner: pipe.into(),
+            inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer,
             enforce_signing,
@@ -268,7 +329,7 @@ impl IpcStream {
             match NamedPipeClient::connect(pipe_name) {
                 Ok(client) => {
                     return Ok(Self {
-                        inner: client,
+                        inner: Box::new(client),
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
                         signer: None,
                         enforce_signing: false,
@@ -298,7 +359,7 @@ impl IpcStream {
             match NamedPipeClient::connect(pipe_name) {
                 Ok(client) => {
                     return Ok(Self {
-                        inner: client,
+                        inner: Box::new(client),
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
                         signer: Some(signer),
                         enforce_signing: true,
@@ -393,67 +454,17 @@ impl IpcStream {
         }
     }
 
-    pub fn into_inner(self) -> IpcStreamInner {
-        IpcStreamInner {
-            #[cfg(unix)]
-            unix: self.inner,
-            #[cfg(windows)]
-            windows: self.inner,
-        }
+    pub fn into_inner(self) -> Box<dyn AsyncIpcTransport> {
+        self.inner
     }
 
     pub fn is_signed(&self) -> bool {
         self.signer.is_some()
     }
 
-    #[cfg(unix)]
-    #[cfg(target_os = "linux")]
     pub fn peer_pid(&self) -> Option<u32> {
-        use socket2::SockRef;
-        use std::mem::size_of;
-        use std::os::unix::io::AsRawFd;
-
-        let sock_ref = SockRef::from(&self.inner);
-        let raw_fd = sock_ref.as_raw_fd();
-
-        #[repr(C)]
-        struct UCred {
-            pid: libc::pid_t,
-            uid: libc::uid_t,
-            gid: libc::gid_t,
-        }
-
-        let mut cred: UCred = unsafe { std::mem::zeroed() };
-        let mut cred_len = size_of::<UCred>() as libc::socklen_t;
-
-        let result = unsafe {
-            libc::getsockopt(
-                raw_fd,
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                &mut cred as *mut _ as *mut libc::c_void,
-                &mut cred_len,
-            )
-        };
-
-        if result == 0 && cred.pid > 0 {
-            Some(cred.pid as u32)
-        } else {
-            None
-        }
+        self.inner.peer_pid()
     }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn peer_pid(&self) -> Option<u32> {
-        None
-    }
-}
-
-pub struct IpcStreamInner {
-    #[cfg(unix)]
-    pub unix: UnixStream,
-    #[cfg(windows)]
-    pub windows: NamedPipeClient,
 }
 
 impl AsyncRead for IpcStream {
@@ -462,7 +473,7 @@ impl AsyncRead for IpcStream {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+        std::pin::Pin::new(&mut *self.inner).poll_read(cx, buf)
     }
 }
 
@@ -471,14 +482,14 @@ impl AsyncWrite for IpcStream {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+        std::pin::Pin::new(&mut *self.inner).poll_flush(cx)
     }
 
     fn poll_shutdown(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+        std::pin::Pin::new(&mut *self.inner).poll_shutdown(cx)
     }
 
     fn poll_write(
@@ -486,7 +497,7 @@ impl AsyncWrite for IpcStream {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+        std::pin::Pin::new(&mut *self.inner).poll_write(cx, buf)
     }
 }
 
