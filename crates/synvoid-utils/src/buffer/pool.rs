@@ -16,7 +16,10 @@ const JUMBO_POOL_CAP: usize = 32;
 const NUM_SHARDS: usize = 8;
 const TLS_CACHE_SIZE: usize = 16;
 
-#[derive(Clone, Copy, Debug)]
+static GLOBAL_ALLOCATED_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GLOBAL_MEMORY_LIMIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BufferTier {
     Small,
     Medium,
@@ -277,6 +280,10 @@ impl BufferPool {
         }
     }
 
+    pub fn set_global_limit(limit_bytes: u64) {
+        GLOBAL_MEMORY_LIMIT.store(limit_bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn acquire(size: usize) -> PooledBuf {
         POOL.with(|pool| pool.acquire_inner(size))
     }
@@ -301,6 +308,21 @@ impl BufferPool {
         GLOBAL_POOL.acquire_inner(MEDIUM_BUF_SIZE)
     }
 
+    pub fn try_acquire(size: usize) -> Option<PooledBuf> {
+        let limit = GLOBAL_MEMORY_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        if limit > 0 {
+            let current = GLOBAL_ALLOCATED_BYTES.load(std::sync::atomic::Ordering::Relaxed);
+            if current + size as u64 > limit {
+                return None;
+            }
+        }
+        Some(Self::acquire(size))
+    }
+
+    pub fn try_acquire_global_medium() -> Option<PooledBuf> {
+        Self::try_acquire(MEDIUM_BUF_SIZE)
+    }
+
     pub fn acquire_large() -> PooledBuf {
         Self::acquire(LARGE_BUF_SIZE)
     }
@@ -316,6 +338,15 @@ impl BufferPool {
             BufferTier::Jumbo
         };
 
+        let allocated_size = match tier {
+            BufferTier::Small => self.config.small_buf_size,
+            BufferTier::Medium => self.config.medium_buf_size,
+            BufferTier::Large => self.config.large_buf_size,
+            BufferTier::Jumbo => size, // Jumbo buffers are sized exactly
+        };
+
+        GLOBAL_ALLOCATED_BYTES.fetch_add(allocated_size as u64, std::sync::atomic::Ordering::Relaxed);
+
         let tls_result = TLS_CACHE.with(|cache| {
             if let Some(buf) = cache.pop(tier) {
                 let mut buf = buf;
@@ -325,6 +356,7 @@ impl BufferPool {
                     buf: Some(buf),
                     tier,
                     requested_size: size,
+                    allocated_size,
                 });
             }
             None
@@ -350,6 +382,7 @@ impl BufferPool {
             buf: Some(buf),
             tier: actual_tier,
             requested_size: size,
+            allocated_size,
         }
     }
 
@@ -495,6 +528,7 @@ pub struct PooledBuf {
     buf: Option<BytesMut>,
     tier: BufferTier,
     requested_size: usize,
+    allocated_size: usize,
 }
 
 impl PooledBuf {
@@ -610,6 +644,7 @@ impl std::io::Write for PooledBuf {
 impl Drop for PooledBuf {
     fn drop(&mut self) {
         if let Some(buf) = self.buf.take() {
+            GLOBAL_ALLOCATED_BYTES.fetch_sub(self.allocated_size as u64, std::sync::atomic::Ordering::Relaxed);
             TLS_CACHE.with(|cache| {
                 if cache.len(self.tier) < TLS_CACHE_SIZE {
                     cache.push(buf, self.tier);

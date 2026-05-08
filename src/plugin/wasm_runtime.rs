@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response, StatusCode};
+use http_body_util::BodyExt;
+use crate::http_client::ErasedBody;
 use parking_lot::RwLock;
 use wasmtime::component::{Component, Linker as ComponentLinker};
 use wasmtime::{
@@ -223,6 +225,7 @@ impl WasmPluginManager {
                 allowed_dht_prefixes: limits.allowed_dht_prefixes.clone(),
                 max_memory,
                 max_table_elements,
+                body_receiver: None,
             },
         );
         store.limiter(|state| state);
@@ -532,6 +535,7 @@ pub(crate) struct RequestContext {
     pub(crate) allowed_dht_prefixes: Vec<String>,
     pub(crate) max_memory: usize,
     pub(crate) max_table_elements: usize,
+    pub(crate) body_receiver: Option<tokio::sync::mpsc::Receiver<Result<Bytes, std::io::Error>>>,
 }
 
 impl ResourceLimiter for RequestContext {
@@ -790,6 +794,47 @@ impl WasmRuntime {
         linker
             .func_wrap(
                 "env",
+                "synvoid_read_body_chunk",
+                |mut caller: wasmtime::Caller<'_, RequestContext>,
+                 out_ptr: i32,
+                 out_max: i32|
+                 -> i32 {
+                    let mut rx = match caller.data_mut().body_receiver.take() {
+                        Some(rx) => rx,
+                        None => return -1, // Already consumed or not available
+                    };
+
+                    // Blocking receive since this is called from within a sync WASM execution
+                    // which is typically run in a spawn_blocking thread.
+                    let result = rx.blocking_recv();
+
+                    // Put the receiver back for future calls
+                    caller.data_mut().body_receiver = Some(rx);
+
+                    match result {
+                        Some(Ok(chunk)) => {
+                            let len = chunk.len().min(out_max as usize);
+                            let mem = match caller.get_export("memory") {
+                                Some(wasmtime::Extern::Memory(m)) => m,
+                                _ => return -3, // No memory export
+                            };
+                            if let Err(_) = mem.write(&mut caller, out_ptr as usize, &chunk[..len]) {
+                                return -4; // Memory write error
+                            }
+                            len as i32
+                        }
+                        Some(Err(_)) => -2, // Error reading chunk
+                        None => 0, // EOF
+                    }
+                },
+            )
+            .map_err(|e| {
+                WasmPluginError::LoadFailed(format!("failed to link synvoid_read_body_chunk: {}", e))
+            })?;
+
+        linker
+            .func_wrap(
+                "env",
                 "mesh_query_dht",
                 |mut caller: wasmtime::Caller<'_, RequestContext>,
                  key_ptr: i32,
@@ -995,6 +1040,7 @@ impl WasmRuntime {
                 allowed_dht_prefixes: self.limits.allowed_dht_prefixes.clone(),
                 max_memory,
                 max_table_elements,
+                body_receiver: None,
             },
         );
 
@@ -1495,6 +1541,163 @@ impl WasmRuntime {
         self.free_guest_memory(&mut *store, &exports, out_ptr, out_max);
 
         Ok(Response::from_parts(parts, result_body))
+    }
+
+    pub fn invoke_handler_streaming(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &str,
+        mut body: ErasedBody,
+        env: std::collections::HashMap<String, String>,
+    ) -> Result<Response<Bytes>, WasmPluginError> {
+        let start = Instant::now();
+        let plugin_name = &self.name;
+
+        record_wasm_invocation(plugin_name);
+
+        tracing::debug!(
+            "WASM serverless function '{}' handling {} {} (streaming)",
+            self.name,
+            method,
+            uri
+        );
+
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+
+        // Feed the body chunks into the receiver
+        tokio::spawn(async move {
+            while let Some(chunk) = body.frame().await {
+                match chunk {
+                    Ok(frame) => {
+                        if let Some(data) = frame.data_ref() {
+                            if tx.send(Ok(data.clone())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut store = self.create_store(env);
+        store.data_mut().body_receiver = Some(rx);
+
+        let exports = self.instantiate(&mut store)?;
+
+        let handle_fn = match exports.handle_request.as_ref() {
+            Some(f) => f,
+            None => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                record_wasm_duration(plugin_name, duration_ms);
+                record_wasm_error(plugin_name);
+                return Err(WasmPluginError::ExecutionFailed(
+                    "handle_request function not exported".into(),
+                ));
+            }
+        };
+
+        Self::check_timeout(&store)?;
+
+        let method_bytes = method.as_bytes();
+        let uri_bytes = uri.as_bytes();
+        let headers_bytes = headers.as_bytes();
+
+        let (method_ptr, method_len) =
+            self.write_to_guest_memory(&mut store, &exports, method_bytes)?;
+        let (uri_ptr, uri_len) = self.write_to_guest_memory(&mut store, &exports, uri_bytes)?;
+        let (hdr_ptr, hdr_len) = self.write_to_guest_memory(&mut store, &exports, headers_bytes)?;
+
+        // Pass 0, 0 for body to indicate streaming via synvoid_read_body_chunk
+        let body_ptr = 0i32;
+        let body_len = 0i32;
+
+        const OUT_BODY_MAX: usize = 65536;
+        let (out_status_ptr, _) = self.write_to_guest_memory(&mut store, &exports, &[0u8; 4])?;
+        let (out_body_ptr, _) =
+            self.write_to_guest_memory(&mut store, &exports, &[0u8; OUT_BODY_MAX])?;
+
+        let result = handle_fn.call(
+            &mut store,
+            (
+                method_ptr,
+                method_len,
+                uri_ptr,
+                uri_len,
+                hdr_ptr,
+                hdr_len,
+                body_ptr,
+                body_len,
+                out_status_ptr,
+                out_body_ptr,
+                OUT_BODY_MAX as i32,
+            ),
+        );
+
+        self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
+        self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
+        self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
+
+        if self.limits.max_cpu_fuel > 0 {
+            if let Ok(remaining) = store.get_fuel() {
+                let consumed = self.limits.max_cpu_fuel.saturating_sub(remaining);
+                record_wasm_fuel_consumed(plugin_name, consumed);
+            }
+        }
+
+        let code = result.map_err(|e| {
+            record_wasm_error(plugin_name);
+            WasmPluginError::ExecutionFailed(format!(
+                "handle_request failed in '{}': {}",
+                self.name, e
+            ))
+        })?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        record_wasm_duration(plugin_name, duration_ms);
+
+        if code != 0 {
+            record_wasm_error(plugin_name);
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "handle_request in '{}' returned error code {}",
+                self.name, code
+            )));
+        }
+
+        let status_raw = self.read_from_guest_memory(&mut store, &exports, out_status_ptr, 4)?;
+        let status_code = u32::from_le_bytes(status_raw.try_into().unwrap_or([0u8; 4])) as u16;
+
+        let out_body_raw =
+            self.read_from_guest_memory(&mut store, &exports, out_body_ptr, OUT_BODY_MAX as i32)?;
+
+        // For now, we assume handle_request returns the body in the out_body_ptr.
+        // In a future update, we could also support streaming responses.
+        let mut actual_body_len = 0;
+        for (i, &b) in out_body_raw.iter().enumerate() {
+            if b == 0 && i > 0 && out_body_raw[i - 1] != 0 {
+                actual_body_len = i;
+                break;
+            }
+        }
+        if actual_body_len == 0 && !out_body_raw.is_empty() && out_body_raw[0] != 0 {
+            actual_body_len = out_body_raw.len();
+        }
+
+        let body_bytes = Bytes::copy_from_slice(&out_body_raw[..actual_body_len]);
+
+        self.free_guest_memory(&mut store, &exports, out_status_ptr, 4);
+        self.free_guest_memory(&mut store, &exports, out_body_ptr, OUT_BODY_MAX as i32);
+
+        record_wasm_decision_pass(plugin_name);
+
+        Ok(Response::builder()
+            .status(status_code)
+            .body(body_bytes)
+            .unwrap_or_else(|_| Response::new(Bytes::new())))
     }
 
     pub fn name(&self) -> &str {

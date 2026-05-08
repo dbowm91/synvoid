@@ -348,6 +348,11 @@ pub enum Message {
         worker_threads: u32,
     },
     MasterCertReload,
+    StreamChunk {
+        stream_id: u64,
+        chunk: Vec<u8>,
+        is_eof: bool,
+    },
     HealthCheckAck {
         timestamp: u64,
     },

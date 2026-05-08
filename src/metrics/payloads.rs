@@ -48,6 +48,7 @@ pub struct SiteMetricsPayload {
     pub metrics_timestamp_ms: u64,
 }
 
+#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestLogPayload {
     pub timestamp: u64,
@@ -62,6 +63,7 @@ pub struct RequestLogPayload {
     pub bytes_received: u64,
 }
 
+#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkerMetricsPayload {
     pub total_requests: u64,

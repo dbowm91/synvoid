@@ -7,4 +7,5 @@ edition = "2021"
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
+rkyv = { version = "0.8", features = ["std", "alloc", "bytecheck"] }
 parking_lot = "0.12"

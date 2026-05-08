@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 use thiserror::Error;
 
 use crate::config::serverless::{FunctionDefinition, ServerlessConfig};
+use crate::http_client::ErasedBody;
 #[cfg(feature = "mesh")]
 use crate::mesh::config::MeshNodeRole;
 use crate::plugin::{WasmPluginManager, WasmResourceLimits};
@@ -1188,6 +1189,55 @@ pub async fn handle_serverless_function(
     let env = function.definition.env.clone();
     runtime
         .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
+        .map_err(|e| {
+            get_global_serverless_registry().record_error(&function_name);
+            ServerlessError::ExecutionError(e.to_string())
+        })
+}
+
+pub async fn handle_serverless_function_streaming(
+    manager: &ServerlessManager,
+    method: &Method,
+    path: &str,
+    headers: &HeaderMap,
+    body: ErasedBody,
+    _context: CallerContext,
+) -> Result<Response<Bytes>, ServerlessError> {
+    let routes = manager.routes.read();
+    let Some(route) = routes.iter().find(|r| r.matches(method, path)) else {
+        return Err(ServerlessError::RouteNotFound(path.to_string()));
+    };
+
+    let function_name = route.function_name.clone();
+    let functions = manager.functions.read();
+    let Some(function) = functions.get(&function_name).cloned() else {
+        return Err(ServerlessError::FunctionNotFound(function_name));
+    };
+    drop(functions);
+    drop(routes);
+
+    let Some(runtime) = function.runtime else {
+        return Err(ServerlessError::WasmError(
+            "No WASM runtime available for streaming".to_string(),
+        ));
+    };
+
+    let uri = path.to_string();
+    let method_str = method.to_string();
+
+    let headers_map: std::collections::HashMap<String, String> = headers
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    let headers_json = serde_json::to_string(&headers_map).map_err(|e| {
+        get_global_serverless_registry().record_error(&function_name);
+        ServerlessError::ExecutionError(e.to_string())
+    })?;
+
+    let env = function.definition.env.clone();
+    runtime
+        .invoke_handler_streaming(&method_str, &uri, &headers_json, body, env)
         .map_err(|e| {
             get_global_serverless_registry().record_error(&function_name);
             ServerlessError::ExecutionError(e.to_string())

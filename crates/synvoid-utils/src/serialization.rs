@@ -33,7 +33,18 @@ pub fn serialize<T: serde::Serialize>(value: &T) -> io::Result<Vec<u8>> {
 
 /// Deserialize bytes to a value using postcard
 pub fn deserialize<T: serde::de::DeserializeOwned>(data: &[u8]) -> io::Result<T> {
-    postcard::from_bytes(data).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+    postcard::from_bytes(data).map_err(|e| io::Error::new(ErrorKind::InvalidData, e.to_string()))
+}
+
+/// Zero-copy deserialization using rkyv.
+/// Returns a reference to the archived data, avoiding allocation and copying.
+pub fn deserialize_rkyv<'a, T>(data: &'a [u8]) -> io::Result<&'a rkyv::Archived<T>>
+where
+    T: rkyv::Archive,
+    T::Archived: rkyv::bytecheck::CheckBytes<rkyv::validation::validators::DefaultValidator<'a>>,
+{
+    rkyv::check_archived_root::<T>(data)
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("rkyv check failed: {}", e)))
 }
 
 /// Serialize for untrusted data (external sources like QUIC mesh)

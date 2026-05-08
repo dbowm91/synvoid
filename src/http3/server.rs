@@ -18,7 +18,7 @@ use crate::http::headers::generate_stealth_timestamp;
 use crate::http::response_helpers::apply_security_headers;
 use crate::http_client::{
     create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
-    ErasedBodyImpl, HttpClient, UpstreamTlsConfig,
+    ErasedBodyImpl, HttpClient, StreamingWafBody, UpstreamTlsConfig,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -651,7 +651,11 @@ impl Http3Server {
 
                 let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
                 let streaming_body = H3ChannelBody::new(rx);
-                let erased_body = ErasedBodyImpl::new(streaming_body);
+                // INTEGRATION: Use the unified StreamingWafBody for H3 as well.
+                // This eliminates the manual scan loop below and consolidates logic.
+                let streaming_waf = self.waf.streaming();
+                let waf_body = StreamingWafBody::new(streaming_body, streaming_waf, client_ip);
+                let erased_body = ErasedBodyImpl::new(waf_body);
 
                 let upstream_task = tokio::spawn({
                     let streaming_client = streaming_client.clone();
@@ -693,40 +697,11 @@ impl Http3Server {
                         return Ok(());
                     }
 
-                    let mut chunk_to_scan = chunk;
-                    let chunk_bytes = chunk_to_scan.copy_to_bytes(chunk_len);
-
-                    if let Some(sw) = streaming_waf.as_mut() {
-                        if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
-                        {
-                            let _ = tx
-                                .send(Err(std::io::Error::new(
-                                    std::io::ErrorKind::PermissionDenied,
-                                    format!("Blocked by WAF: {}", message),
-                                )))
-                                .await;
-                            let body = format!("{{\"error\":\"{}\"}}", message);
-                            let response = http::Response::builder()
-                                .status(
-                                    StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN),
-                                )
-                                .header(header::CONTENT_TYPE, "application/json")
-                                .header(header::DATE, generate_stealth_timestamp(5))
-                                .body(Bytes::from(body))
-                                .map_err(|e| format!("Failed to build response: {}", e))?;
-                            let (parts, body) = response.into_parts();
-                            request_stream
-                                .send_response(http::Response::from_parts(parts, ()))
-                                .await
-                                .map_err(|e| format!("Failed to send response: {}", e))?;
-                            request_stream.send_data(body).await?;
-                            request_stream.finish().await?;
-                            return Ok(());
-                        }
-                    }
+                    let mut chunk_bytes = chunk.copy_to_bytes(chunk_len);
 
                     streamed_body_len += chunk_bytes.len();
                     if tx.send(Ok(chunk_bytes)).await.is_err() {
+                        // If tx is closed, it means the upstream task failed (likely blocked by WAF)
                         break;
                     }
                 }
@@ -803,6 +778,25 @@ impl Http3Server {
                         }
                     }
                     Err(e) => {
+                        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                            if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                                counter!("synvoid.http3.requests.blocked").increment(1);
+                                let body = "{\"error\":\"Request blocked by WAF during streaming\"}";
+                                let response = http::Response::builder()
+                                    .status(StatusCode::FORBIDDEN)
+                                    .header(header::CONTENT_TYPE, "application/json")
+                                    .header(header::DATE, generate_stealth_timestamp(5))
+                                    .body(Bytes::from(body))
+                                    .unwrap();
+                                let (parts, body) = response.into_parts();
+                                request_stream
+                                    .send_response(http::Response::from_parts(parts, ()))
+                                    .await?;
+                                request_stream.send_data(body).await?;
+                                request_stream.finish().await?;
+                                return Ok(());
+                            }
+                        }
                         tracing::error!("Upstream error over HTTP/3 streaming: {}", e);
                         let body = Bytes::from("Bad Gateway");
                         let response = http::Response::builder()

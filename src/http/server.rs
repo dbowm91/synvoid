@@ -1151,7 +1151,8 @@ impl HttpServer {
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse().ok());
-        let can_stream_request = matches!(target.backend_type, crate::router::BackendType::Upstream)
+        let can_stream_request = (matches!(target.backend_type, crate::router::BackendType::Upstream)
+            || matches!(target.backend_type, crate::router::BackendType::Serverless))
             && target
                 .site_config
                 .proxy
@@ -1197,6 +1198,58 @@ impl HttpServer {
 
             match waf_decision {
                 crate::proxy::WafDecision::Pass => {
+                    // INTEGRATION: Handle Serverless streaming dispatch
+                    if matches!(target.backend_type, crate::router::BackendType::Serverless) {
+                        #[cfg(feature = "mesh")]
+                        if let Some(ref sm) = serverless_manager {
+                            let streaming_waf = waf.streaming();
+                            let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
+                            let erased_body = ErasedBodyImpl::new(stream_body);
+
+                            match crate::serverless::manager::handle_serverless_function_streaming(
+                                sm,
+                                &method,
+                                &path,
+                                &parts.headers,
+                                erased_body,
+                                crate::serverless::manager::CallerContext::local(),
+                            )
+                            .await
+                            {
+                                Ok(response) => {
+                                    let status = response.status();
+                                    Self::send_request_log_if_enabled(
+                                        ipc.clone(),
+                                        worker_id,
+                                        &main_config,
+                                        client_ip,
+                                        &method_str,
+                                        &path,
+                                        status.as_u16(),
+                                        start.elapsed().as_millis() as u64,
+                                        &site_id,
+                                        user_agent.as_deref(),
+                                        false,
+                                    );
+                                    return Ok(Response::builder()
+                                        .status(status)
+                                        .body(Full::new(response.into_body()).boxed())
+                                        .unwrap_or_else(|_| crate::http::fallback_error_boxed()));
+                                }
+                                Err(e) => {
+                                    tracing::error!("Streaming serverless error: {}", e);
+                                    return Ok(Self::build_response_with_alt_svc(
+                                        500,
+                                        "Internal Server Error".to_string(),
+                                        "text/plain",
+                                        &alt_svc,
+                                        &main_config,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     let upstream_target = PreparedUpstreamTarget::new(
                         &target.upstream,
                         &path,
