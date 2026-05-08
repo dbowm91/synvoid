@@ -318,51 +318,53 @@ When enabled, the WAF will still apply layer 7 attack detection rules to passthr
 
 ### Authentication
 
-Control which nodes can join using genesis keys:
+SynVoid has transitioned from a shared-secret model to **Decentralized Admission (Consensus-Gated PKI)**. Nodes no longer derive their identity from a shared genesis key; instead, they generate unique local keys and request admission to the mesh.
 
 ```toml
 [mesh.node_identity]
-# Genesis key for identity derivation (32 bytes, base64 encoded)
-genesis_key_base64 = "your-genesis-key-here"
+# Optional: Legacy genesis key (deprecated)
+# genesis_key_base64 = "your-genesis-key-here"
 
-# Authorized genesis keys (empty = any genesis key allowed)
-authorized_genesis_keys = []
+# Authorized public keys of global nodes (seeds)
+authorized_global_pubkeys = ["base64-encoded-public-key-..."]
+
+# Invite tokens for new global nodes (used during JoinRequest)
+invite_tokens = ["secure-one-time-token-1", "secure-one-time-token-2"]
 ```
 
-### Key Derivation from Genesis Key
+### Decentralized Admission Workflow
 
-SynVoid uses a hierarchical key derivation scheme from the genesis key:
+1.  **Key Generation**: A candidate node generates a local Ed25519 keypair.
+2.  **Join Request**: The node sends a `JoinRequest` to an existing Global node, including its public key and an `invite_token`.
+3.  **Consensus**: The receiving Global node proposes the admission to the Raft cluster.
+4.  **Authorization**: Once committed, the new node's public key is added to the `AuthorizedGlobalNodes` registry and synced across the mesh.
+
+### Graduated Trust Levels
+
+Trust is no longer binary. Nodes are assigned a `trust_level` based on their hardware and attestation:
+
+| Level | Type | Description |
+|-------|------|-------------|
+| **1** | Software | Standard OS security. Default for all nodes. |
+| **2** | TPM/HSM | Keys are bound to hardware (TPM 2.0). |
+| **3** | TEE | Execution within a Secure Enclave (SGX, Nitro, SEV). |
+
+Sensitive operations (e.g., signing Organization Tier Keys) can be gated to require a specific minimum trust level.
+
+### Key Hierarchy (Updated)
 
 ```
-Genesis Key
+Node Public Key (Ed25519)
     │
-    ├──► Signing Key (Ed25519)
+    ├──► Raft Admission (Authorized via Consensus)
     │        │
-    │        └──► Tier Key Master
-    │                   │
-    │                   ├──► Tier 1 Key (per-node)
-    │                   ├──► Tier 2 Key (per-site)
-    │                   └──► Tier 3 Key (per-backend)
+    │        └──► Global Node Status
     │
-    └──► TLS Certificate (X.509)
+    └──► Capability Gating (based on Trust Level)
 ```
 
-This hierarchy enables:
-- **Signing key**: Signs mesh messages, DHT records, and threat intelligence
-- **Tier keys**: Encrypt sensitive data at different privilege levels
-- **TLS certificates**: Secures mesh QUIC connections
+> **Note:** The legacy `genesis_key_base64` derivation is **deprecated** and will be removed in a future version. Operators are encouraged to migrate to the `JoinRequest` protocol.
 
-### Tier Key Encryption Scope
-
-Tier keys control access to sensitive mesh records:
-
-| Tier | Key Pattern | Encrypted Records |
-|------|-------------|-------------------|
-| **Tier 1** | Node-specific | Node metadata, peer reputation |
-| **Tier 2** | Site-specific | Upstream configurations, site routes |
-| **Tier 3** | Backend-specific | Backend credentials, internal services |
-
-Higher tiers provide more granular access control. A compromised key only affects records at its level.
 
 ### 0-RTT Configuration
 

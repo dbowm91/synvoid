@@ -4,21 +4,26 @@
 
 Global nodes are the root of trust for the entire SynVoid mesh network. They function as a Certificate Authority (CA) and directory authority — analogous to Tor directory authorities but for service exposure rather than anonymity.
 
-**Global nodes are explicitly configured, never elected.** This is a deliberate security design: trust must be bootstrapped from known-good nodes, not derived from peer consensus.
+**Admission to the Global tier is consensus-gated.** Instead of a shared secret, new nodes must request admission via the `JoinRequest` protocol and be authorized by the existing Raft cluster.
 
 ## Responsibilities
 
 | Function | Description |
 |----------|-------------|
+| **Admission** | Proposes and votes on new global node candidates |
 | **CA** | Signs all node certificates (origin and edge) |
 | **Directory** | Maintains the authoritative node registry |
 | **Config authority** | Distributes network-wide configuration |
 | **Domain verifier** | Validates zone ownership (TXT/NS challenges) |
 
+## Graduated Trust
+
+Trust is based on hardware attestation. Nodes are assigned a **Trust Level** (1-3) based on their environment (Software, TPM, or TEE). Sensitive operations like signing Organizational Tier Keys require a minimum trust level of 2 or 3.
+
 ## Certificate Distribution
 
 Node certificates are issued during registration and distributed via the mesh:
-
+...
 ```
 Node                          Global Node
   │                                │

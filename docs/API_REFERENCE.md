@@ -348,7 +348,7 @@ curl -X POST \
 | `/api/mesh/ban/ip` | POST | Ban an IP address |
 | `/api/mesh/ban/mesh-id` | POST | Ban a mesh node ID |
 | `/api/mesh/ban` | DELETE | Unban an IP or mesh ID |
-| `/api/mesh/derive-signing-key` | POST | Derive signing key from genesis key |
+| `/api/mesh/derive-signing-key` | POST | **DEPRECATED**: Derive signing key from genesis key |
 | `/api/mesh/audit/report` | POST | Submit client audit report |
 | `/api/mesh/report/signature-failure` | POST | Report signature failure |
 
@@ -381,7 +381,9 @@ curl -X POST \
   http://127.0.0.1:8081/api/mesh/ban/ip
 ```
 
-### Derive Signing Key
+### Derive Signing Key (DEPRECATED)
+
+> **Warning:** This endpoint is deprecated. Use the decentralized `JoinRequest` protocol instead.
 
 ```bash
 curl -X POST \
