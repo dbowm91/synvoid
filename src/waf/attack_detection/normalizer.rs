@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
+use crate::buffer::{BufferPool, PooledBuf};
 
 const MAX_OUTPUT_RATIO: usize = 100;
 
@@ -86,8 +87,17 @@ impl InputNormalizer {
                     let mut buffer = buf_cell.borrow_mut();
                     let mut chars = chars_cell.borrow_mut();
                     let ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
+                    let normalized_data = match ni.normalized {
+                        NormalizedData::Borrowed(s) => {
+                            let mut pooled = BufferPool::acquire(s.len());
+                            pooled.extend_from_slice(s.as_bytes());
+                            NormalizedData::Pooled(pooled)
+                        },
+                        NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+                        NormalizedData::Owned(o) => NormalizedData::Owned(o),
+                    };
                     NormalizedInput {
-                        normalized: Cow::Owned(ni.normalized.into_owned()),
+                        normalized: normalized_data,
                         passes: ni.passes,
                     }
                 })
@@ -130,9 +140,11 @@ impl InputNormalizer {
         self.apply_normalizations_with_chars(buffer, chars);
 
         let normalized = if buffer.as_str() == input {
-            Cow::Borrowed(input)
+            NormalizedData::Borrowed(input)
         } else {
-            Cow::Owned(buffer.clone())
+            let mut pooled = BufferPool::acquire(buffer.len());
+            pooled.as_mut_slice().copy_from_slice(buffer.as_bytes());
+            NormalizedData::Pooled(pooled)
         };
 
         NormalizedInput { normalized, passes }
@@ -468,9 +480,52 @@ impl InputNormalizer {
     }
 }
 
+#[derive(Debug)]
+pub enum NormalizedData<'a> {
+    Borrowed(&'a str),
+    Owned(String),
+    Pooled(PooledBuf),
+}
+
+impl<'a> Clone for NormalizedData<'a> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Borrowed(s) => Self::Borrowed(*s),
+            Self::Owned(s) => Self::Owned(s.clone()),
+            Self::Pooled(p) => {
+                let mut new_buf = BufferPool::acquire(p.len());
+                new_buf.extend_from_slice(p.as_slice());
+                Self::Pooled(new_buf)
+            }
+        }
+    }
+}
+
+impl<'a> Default for NormalizedData<'a> {
+    fn default() -> Self {
+        Self::Borrowed("")
+    }
+}
+
+impl<'a> NormalizedData<'a> {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(s) => s,
+            Self::Owned(ref s) => s.as_str(),
+            Self::Pooled(ref p) => unsafe { std::str::from_utf8_unchecked(p.as_slice()) },
+        }
+    }
+}
+
+impl<'a> std::fmt::Display for NormalizedData<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NormalizedInput<'a> {
-    pub normalized: Cow<'a, str>,
+    pub normalized: NormalizedData<'a>,
     pub passes: usize,
 }
 
@@ -482,17 +537,17 @@ impl<'a> std::fmt::Display for NormalizedInput<'a> {
 
 impl<'a> AsRef<str> for NormalizedInput<'a> {
     fn as_ref(&self) -> &str {
-        &self.normalized
+        self.normalized.as_str()
     }
 }
 
 impl<'a> NormalizedInput<'a> {
     pub fn as_str(&self) -> &str {
-        &self.normalized
+        self.normalized.as_str()
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        self.normalized.as_bytes()
+        self.normalized.as_str().as_bytes()
     }
 }
 
@@ -524,8 +579,18 @@ impl<'a> NormalizedInputs<'a> {
         let body = body.map(|b| {
             let s = String::from_utf8_lossy(b);
             let ni = normalizer.normalize(&s);
+            let normalized_data = match ni.normalized {
+                NormalizedData::Borrowed(s) => {
+                    let mut pooled = BufferPool::acquire(s.len());
+                    pooled.clear();
+                    pooled.extend_from_slice(s.as_bytes());
+                    NormalizedData::Pooled(pooled)
+                },
+                NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+                NormalizedData::Owned(o) => NormalizedData::Owned(o),
+            };
             NormalizedInput {
-                normalized: Cow::Owned(ni.normalized.into_owned()),
+                normalized: normalized_data,
                 passes: ni.passes,
             }
 
@@ -548,98 +613,98 @@ mod tests {
     fn test_url_decode() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("%3Cscript%3E");
-        assert_eq!(result.normalized, "<script>");
+        assert_eq!(result.as_str(), "<script>");
     }
 
     #[test]
     fn test_double_url_decode() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("%253Cscript%253E");
-        assert_eq!(result.normalized, "<script>");
+        assert_eq!(result.as_str(), "<script>");
     }
 
     #[test]
     fn test_unicode_decode() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("\\u003Cscript\\u003E");
-        assert_eq!(result.normalized, "<script>");
+        assert_eq!(result.as_str(), "<script>");
     }
 
     #[test]
     fn test_zero_width_removal() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("hel\u{200B}lo");
-        assert_eq!(result.normalized, "hello");
+        assert_eq!(result.as_str(), "hello");
     }
 
     #[test]
     fn test_homoglyph_normalize() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("\u{0430}dmin");
-        assert_eq!(result.normalized, "admin");
+        assert_eq!(result.as_str(), "admin");
     }
 
     #[test]
     fn test_html_entity_decode() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("&#60;script&#62;");
-        assert_eq!(result.normalized, "<script>");
+        assert_eq!(result.as_str(), "<script>");
     }
 
     #[test]
     fn test_null_byte_removal() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("hel\u{0000}lo");
-        assert_eq!(result.normalized, "hello");
+        assert_eq!(result.as_str(), "hello");
     }
 
     #[test]
     fn test_fullwidth_normalize() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("\u{FF01}\u{FF02}");
-        assert_eq!(result.normalized, "!\"");
+        assert_eq!(result.as_str(), "!\"");
     }
 
     #[test]
     fn test_url_encoded_null_byte() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("../../../etc/passwd%00.jpg");
-        assert_eq!(result.normalized, "../../../etc/passwd.jpg");
+        assert_eq!(result.as_str(), "../../../etc/passwd.jpg");
     }
 
     #[test]
     fn test_hex_encoded_null_byte() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("../../../etc/passwd\\x00.jpg");
-        assert_eq!(result.normalized, "../../../etc/passwd.jpg");
+        assert_eq!(result.as_str(), "../../../etc/passwd.jpg");
     }
 
     #[test]
     fn test_unicode_encoded_null_byte() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("../../../etc/passwd\\u0000.jpg");
-        assert_eq!(result.normalized, "../../../etc/passwd.jpg");
+        assert_eq!(result.as_str(), "../../../etc/passwd.jpg");
     }
 
     #[test]
     fn test_html_entity_null_byte() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("test&#0;value");
-        assert_eq!(result.normalized, "testvalue");
+        assert_eq!(result.as_str(), "testvalue");
     }
 
     #[test]
     fn test_html_entity_hex_null_byte() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("test&#x00;value");
-        assert_eq!(result.normalized, "testvalue");
+        assert_eq!(result.as_str(), "testvalue");
     }
 
     #[test]
     fn test_multiple_null_bytes() {
         let normalizer = InputNormalizer::new();
         let result = normalizer.normalize("a\\x00b%00c\\u0000d&#0;e");
-        assert_eq!(result.normalized, "abcde");
+        assert_eq!(result.as_str(), "abcde");
     }
 
     #[test]
@@ -648,8 +713,8 @@ mod tests {
         let input = "/api/users/123";
         let result = normalizer.normalize(input);
         match result.normalized {
-            Cow::Borrowed(s) => assert_eq!(s, input),
-            Cow::Owned(_) => panic!("Expected Cow::Borrowed for benign input"),
+            NormalizedData::Borrowed(s) => assert_eq!(s, input),
+            _ => panic!("Expected NormalizedData::Borrowed for benign input"),
         }
     }
 
@@ -659,8 +724,9 @@ mod tests {
         let input = "%3Cscript%3E";
         let result = normalizer.normalize(input);
         match result.normalized {
-            Cow::Borrowed(_) => panic!("Expected Cow::Owned for modified input"),
-            Cow::Owned(s) => assert_eq!(s, "<script>"),
+            NormalizedData::Borrowed(_) => panic!("Expected NormalizedData::Pooled or Owned for modified input"),
+            NormalizedData::Owned(s) => assert_eq!(s, "<script>"),
+            NormalizedData::Pooled(p) => assert_eq!(unsafe { std::str::from_utf8_unchecked(p.as_slice()) }, "<script>"),
         }
     }
 

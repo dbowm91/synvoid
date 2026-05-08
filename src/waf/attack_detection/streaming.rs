@@ -26,8 +26,8 @@ pub struct StreamingWafCore {
 enum MultipartState {
     None,
     LookingForBoundary,
-    ReadingHeaders { buffer: PooledBuf },
-    ReadingField { buffer: PooledBuf },
+    ReadingHeaders,
+    ReadingField,
     SkippingFile,
 }
 
@@ -38,6 +38,8 @@ struct StreamingState {
     boundary: Option<String>,
     multipart_state: MultipartState,
     trailing_window: PooledBuf,
+    multipart_header_buffer: PooledBuf,
+    multipart_field_buffer: PooledBuf,
 }
 
 const TRAILING_WINDOW_SIZE: usize = 128;
@@ -55,6 +57,8 @@ impl StreamingWafCore {
                 boundary: None,
                 multipart_state: MultipartState::None,
                 trailing_window: BufferPool::acquire(0),
+                multipart_header_buffer: BufferPool::acquire(0),
+                multipart_field_buffer: BufferPool::acquire(0),
             },
         }
     }
@@ -75,6 +79,8 @@ impl StreamingWafCore {
                 boundary: None,
                 multipart_state: MultipartState::None,
                 trailing_window: BufferPool::acquire(0),
+                multipart_header_buffer: BufferPool::acquire(0),
+                multipart_field_buffer: BufferPool::acquire(0),
             },
         }
     }
@@ -128,50 +134,50 @@ impl StreamingWafCore {
     }
 
     fn process_multipart_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
-        let boundary = self.state.boundary.as_ref().unwrap().as_bytes();
-        let mut combined_view = [self.state.trailing_window.as_slice(), chunk];
-        let mut total_len = combined_view[0].len() + combined_view[1].len();
+        let boundary_str = self.state.boundary.as_ref().unwrap().clone();
+        let boundary = boundary_str.as_bytes();
+        let trailing_slice = self.state.trailing_window.as_slice();
+        let combined_view = [trailing_slice, chunk];
+        let total_len = combined_view[0].len() + combined_view[1].len();
         let mut current_pos = 0;
 
         while current_pos < total_len {
-            match &mut self.state.multipart_state {
+            match self.state.multipart_state {
                 MultipartState::LookingForBoundary => {
                     if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary) {
-                        self.state.multipart_state = MultipartState::ReadingHeaders {
-                            buffer: BufferPool::acquire(0),
-                        };
+                        self.state.multipart_state = MultipartState::ReadingHeaders;
+                        self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
                     } else {
                         current_pos = total_len;
                     }
                 }
-                MultipartState::ReadingHeaders { buffer } => {
+                MultipartState::ReadingHeaders => {
                     if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, b"\r\n\r\n") {
                         let header_len = (pos + 4) - current_pos;
-                        Self::copy_from_fragments(buffer, &combined_view, current_pos, header_len);
+                        Self::copy_from_fragments(&mut self.state.multipart_header_buffer, &combined_view, current_pos, header_len);
                         current_pos = pos + 4;
 
                         // Parse headers to see if it's a file
-                        let header_str = String::from_utf8_lossy(buffer.as_slice()).to_lowercase();
+                        let header_str = String::from_utf8_lossy(self.state.multipart_header_buffer.as_slice()).to_lowercase();
                         if header_str.contains("filename=") {
                             self.state.multipart_state = MultipartState::SkippingFile;
                         } else {
-                            self.state.multipart_state = MultipartState::ReadingField {
-                                buffer: BufferPool::acquire(0),
-                            };
+                            self.state.multipart_state = MultipartState::ReadingField;
+                            self.state.multipart_field_buffer.clear();
                         }
                     } else {
-                        Self::copy_from_fragments(buffer, &combined_view, current_pos, total_len - current_pos);
+                        Self::copy_from_fragments(&mut self.state.multipart_header_buffer, &combined_view, current_pos, total_len - current_pos);
                         current_pos = total_len;
                     }
                 }
-                MultipartState::ReadingField { buffer } => {
+                MultipartState::ReadingField => {
                     if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary) {
                         let field_len = pos - current_pos;
-                        Self::copy_from_fragments(buffer, &combined_view, current_pos, field_len);
+                        Self::copy_from_fragments(&mut self.state.multipart_field_buffer, &combined_view, current_pos, field_len);
 
                         // Scan the field
-                        let field_str = String::from_utf8_lossy(buffer.as_slice());
+                        let field_str = String::from_utf8_lossy(self.state.multipart_field_buffer.as_slice());
                         if let Some(result) = self.inner.check_body_only_via_normalized(&field_str) {
                             self.state.last_result = Some(result.clone());
                             return StreamingWafDecision::Block(
@@ -183,20 +189,18 @@ impl StreamingWafCore {
                             );
                         }
 
-                        self.state.multipart_state = MultipartState::ReadingHeaders {
-                            buffer: BufferPool::acquire(0),
-                        };
+                        self.state.multipart_state = MultipartState::ReadingHeaders;
+                        self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
                     } else {
-                        Self::copy_from_fragments(buffer, &combined_view, current_pos, total_len - current_pos);
+                        Self::copy_from_fragments(&mut self.state.multipart_field_buffer, &combined_view, current_pos, total_len - current_pos);
                         current_pos = total_len;
                     }
                 }
                 MultipartState::SkippingFile => {
                     if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary) {
-                        self.state.multipart_state = MultipartState::ReadingHeaders {
-                            buffer: BufferPool::acquire(0),
-                        };
+                        self.state.multipart_state = MultipartState::ReadingHeaders;
+                        self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
                     } else {
                         current_pos = total_len;
@@ -285,6 +289,8 @@ impl StreamingWafCore {
         state.boundary = None;
         state.multipart_state = MultipartState::None;
         state.trailing_window.clear();
+        state.multipart_header_buffer.clear();
+        state.multipart_field_buffer.clear();
     }
 }
 

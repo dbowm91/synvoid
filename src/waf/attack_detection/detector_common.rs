@@ -246,7 +246,7 @@ where
 
                 if let Some(norm) = normalizer {
                     let normalized = norm.normalize(value_str);
-                    if normalized.normalized != value_str {
+                    if normalized.as_str() != value_str {
                         if let Some(result) = detect(normalized.as_bytes(), location) {
                             return Some(result);
                         }
@@ -310,9 +310,9 @@ pub trait PatternDetector: Send + Sync {
                     }
                     if let Some(norm) = normalizer {
                         let normalized = norm.normalize(value_str);
-                        if normalized.normalized != value_str {
-                            if let Some(r) = self.detect(&normalized.normalized, location) {
-                                return Some(r);
+                        if normalized.as_str() != value_str {
+                            if let Some(result) = self.detect(normalized.as_str(), location.clone()) {
+                                return Some(result);
                             }
                         }
                     } else if let Ok(decoded) = urlencoding_decode_result(value_str) {
@@ -350,9 +350,9 @@ pub trait PatternDetector: Send + Sync {
                     }
                     if let Some(norm) = normalizer {
                         let normalized = norm.normalize(value_str);
-                        if normalized.normalized != value_str {
-                            if let Some(r) = self.detect(&normalized.normalized, location) {
-                                return Some(r);
+                        if normalized.as_str() != value_str {
+                            if let Some(result) = self.detect(normalized.as_str(), location.clone()) {
+                                return Some(result);
                             }
                         }
                     } else if let Ok(decoded) = urlencoding_decode_result(value_str) {
@@ -382,8 +382,8 @@ pub trait PatternDetector: Send + Sync {
                 }
                 if let Some(norm) = normalizer {
                     let normalized = norm.normalize(value);
-                    if normalized.normalized != value {
-                        if let Some(r) = self.detect(&normalized.normalized, location) {
+                    if normalized.as_str() != value {
+                        if let Some(r) = self.detect(normalized.as_str(), location) {
                             return Some(r);
                         }
                     }
