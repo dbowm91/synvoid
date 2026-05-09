@@ -89,6 +89,7 @@ impl WasmInstancePool {
                     allowed_dht_prefixes: Vec::new(),
                     max_memory: 64 * 1024 * 1024,
                     max_table_elements: 1024 * 1024,
+                    body_receiver: None,
                 },
             );
 

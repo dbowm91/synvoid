@@ -122,10 +122,16 @@ impl Http3Server {
             .expect("Failed to create idle timeout");
         transport_config.max_idle_timeout(Some(idle_timeout));
 
-        let endpoint = quinn::Endpoint::server(server_config, self.addr)
-            .map_err(|e| format!("Failed to create QUIC endpoint: {}", e))?;
+        let std_socket = crate::platform::socket::bind_udp_reuse(self.addr)?;
+        let endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            std_socket,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .map_err(|e| format!("Failed to create QUIC endpoint: {}", e))?;
 
-        tracing::info!("HTTP/3 server listening on {}", self.addr);
+        tracing::info!("HTTP/3 server listening on {} [SO_REUSEPORT]", self.addr);
 
         let self_arc = Arc::new(self);
         let mut shutdown_rx = self_arc.shutdown_rx.resubscribe();
@@ -469,7 +475,7 @@ impl Http3Server {
                 request_stream.finish().await?;
                 return Ok(());
             }
-            WafDecision::Challenge(html) => {
+            WafDecision::Challenge(_type, html) => {
                 counter!("synvoid.http3.requests.challenged").increment(1);
                 let body_len = html.len() as u64;
                 if let Some(ref bw) = bandwidth {
@@ -500,6 +506,7 @@ impl Http3Server {
                 return Ok(());
             }
             WafDecision::ChallengeWithCookie {
+                challenge_type: _,
                 html,
                 session_cookie_name,
                 session_cookie_value,
@@ -675,7 +682,7 @@ impl Http3Server {
                 });
 
                 let mut streamed_body_len: usize = 0;
-                while let Ok(Some(chunk)) = request_stream.recv_data().await {
+                while let Ok(Some(mut chunk)) = request_stream.recv_data().await {
                     use bytes::Buf;
                     let chunk_len = chunk.remaining();
                     if streamed_body_len + chunk_len > max_request_size {

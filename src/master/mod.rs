@@ -20,4 +20,4 @@ pub use commands::{
     handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
     handle_stop,
 };
-pub use ipc::handle_worker_connection;
+pub use ipc::{handle_worker_connection, handle_worker_connection_single};

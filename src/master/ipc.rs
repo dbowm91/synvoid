@@ -311,8 +311,24 @@ mod tests {
 }
 
 pub async fn handle_worker_connection(
+    ipc: AsyncIpcStream,
+    process_manager: Arc<ProcessManager>,
+) {
+    handle_worker_connection_internal(ipc, process_manager, None).await;
+}
+
+pub async fn handle_worker_connection_single(
+    ipc: AsyncIpcStream,
+    process_manager: Arc<ProcessManager>,
+    initial_message: Message,
+) {
+    handle_worker_connection_internal(ipc, process_manager, Some(initial_message)).await;
+}
+
+async fn handle_worker_connection_internal(
     mut ipc: AsyncIpcStream,
     process_manager: Arc<ProcessManager>,
+    initial_message: Option<Message>,
 ) {
     let enforce_signing = process_manager.get_ipc_enforce_signing();
     let session_key = process_manager.get_ipc_session_key();
@@ -344,11 +360,18 @@ pub async fn handle_worker_connection(
     }
 
     let rate_limiter = process_manager.get_ipc_rate_limiter();
-
     let worker_pid_bindings: RwLock<HashMap<u64, u32>> = RwLock::new(HashMap::new());
 
+    let mut first_message = initial_message;
+
     loop {
-        match ipc.recv_with_timeout::<Message>(5000).await {
+        let message_result = if let Some(msg) = first_message.take() {
+            Ok(Some(msg))
+        } else {
+            ipc.recv_with_timeout::<Message>(5000).await
+        };
+
+        match message_result {
             Ok(Some(message)) => {
                 if let Err(e) = message.validate() {
                     tracing::warn!("Invalid IPC message received: {}", e);

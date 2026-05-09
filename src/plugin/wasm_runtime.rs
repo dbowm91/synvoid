@@ -1548,7 +1548,7 @@ impl WasmRuntime {
         method: &str,
         uri: &str,
         headers: &str,
-        mut body: ErasedBody,
+        mut body: Box<dyn ErasedBody>,
         env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let start = Instant::now();

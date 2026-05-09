@@ -277,9 +277,10 @@ impl HttpsServer {
         let server_config = self.cert_resolver.build_server_config()?;
         let acceptor = TlsAcceptor::from(server_config);
 
-        let listener = TcpListener::bind(self.addr).await?;
+        let std_listener = crate::platform::socket::bind_tcp_reuse(self.addr)?;
+        let listener = TcpListener::from_std(std_listener)?;
         tracing::info!(
-            "HTTPS server listening on {} (TLS 1.3 {} PQC) (HTTP/1.1 + HTTP/2)",
+            "HTTPS server listening on {} (TLS 1.3 {} PQC) (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
             self.addr,
             if self.config.prefer_post_quantum {
                 "with"
@@ -691,6 +692,7 @@ impl HttpsServer {
                 return Ok(resp);
             }
             crate::proxy::WafDecision::ChallengeWithCookie {
+                challenge_type: _,
                 html,
                 session_cookie_name,
                 session_cookie_value,
@@ -707,7 +709,7 @@ impl HttpsServer {
                     &cookie,
                 ));
             }
-            crate::proxy::WafDecision::Challenge(html) => {
+            crate::proxy::WafDecision::Challenge(_type, html) => {
                 return Ok(Self::build_response(200, html, "text/html"));
             }
             crate::proxy::WafDecision::Block(status, message) => {
@@ -1084,7 +1086,7 @@ impl HttpsServer {
                 }
                 Ok(Self::build_response(status, body, "text/html"))
             }
-            crate::proxy::WafDecision::Challenge(html) => {
+            crate::proxy::WafDecision::Challenge(_type, html) => {
                 let body_len = html.len() as u64;
                 if let Some(ref bw) = bandwidth {
                     bw.record_egress(
@@ -1097,6 +1099,7 @@ impl HttpsServer {
                 Ok(Self::build_response(200, html, "text/html"))
             }
             crate::proxy::WafDecision::ChallengeWithCookie {
+                challenge_type: _,
                 html,
                 session_cookie_name,
                 session_cookie_value,

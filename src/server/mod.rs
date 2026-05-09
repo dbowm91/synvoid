@@ -98,6 +98,7 @@ impl UnifiedServer {
         >,
         #[cfg(not(feature = "mesh"))] _mesh_transport: Option<std::marker::PhantomData<fn()>>,
         _app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+        worker_count: usize,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (
             http_addr,
@@ -169,7 +170,7 @@ impl UnifiedServer {
                 (None, None)
             };
 
-            let waf = Arc::new(Self::create_waf(main_config));
+            let waf = Arc::new(Self::create_waf(main_config, worker_count));
 
             let (tcp_pool, flood_protector) = if main_config.tcp.enabled {
                 let (pool, fp) = Self::create_tcp_pool(main_config, waf.clone())?;
@@ -593,74 +594,42 @@ impl UnifiedServer {
         self.app_servers.clone()
     }
 
-    fn create_waf(main_config: &crate::config::MainConfig) -> WafCore {
+    fn create_waf(main_config: &crate::config::MainConfig, worker_count: usize) -> WafCore {
         let data_dir = main_config
             .persistence
             .data_dir
             .as_ref()
             .map(std::path::PathBuf::from);
 
+        // Scale rate limits by worker count to maintain global semantics
+        // (Approximation: total_limit / worker_count)
+        let worker_count = worker_count.max(1);
+        let mut ip_limit = main_config.defaults.ratelimit.ip.clone();
+        let mut global_limit = main_config.defaults.ratelimit.global.clone();
+
+        if worker_count > 1 {
+            ip_limit.per_second = (ip_limit.per_second as f64 / worker_count as f64).ceil() as u32;
+            ip_limit.per_minute = (ip_limit.per_minute as f64 / worker_count as f64).ceil() as u32;
+            global_limit.per_second =
+                (global_limit.per_second as f64 / worker_count as f64).ceil() as u32;
+            global_limit.per_minute =
+                (global_limit.per_minute as f64 / worker_count as f64).ceil() as u32;
+            
+            tracing::info!(
+                "Scaling worker rate limits by 1/{} (IP: {} RPS, Global: {} RPS)",
+                worker_count, ip_limit.per_second, global_limit.per_second
+            );
+        }
+
         WafCore::new(crate::waf::WafCoreConfig {
             rate_config: RateLimitConfigStore {
-                ip: main_config.defaults.ratelimit.ip.clone(),
-                global: main_config.defaults.ratelimit.global.clone(),
+                ip: ip_limit,
+                global: global_limit,
                 cleanup_interval_secs: main_config.rate_limit_memory.cleanup_interval_secs,
             },
             memory_config: main_config.rate_limit_memory.clone(),
-            bot_config: crate::waf::BotProtectionConfig {
-                block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
-                enable_css_honeypot: main_config.defaults.bot.enable_css_honeypot,
-                enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
-                known_bots_allow: main_config.defaults.bot.known_bots_allow.clone(),
-                ai_crawlers_block: main_config.defaults.bot.ai_crawlers_block.clone(),
-                scraper_patterns: main_config.defaults.bot.scraper_patterns.clone(),
-                challenge_cookie_name: main_config.defaults.bot.challenge_cookie_name.clone(),
-                challenge_window_secs: main_config.defaults.bot.challenge_window_secs,
-                pow_difficulty: main_config.defaults.pow_challenge.difficulty,
-                pow_timeout_secs: main_config.defaults.pow_challenge.timeout_secs,
-                pow_window_secs: main_config.defaults.pow_challenge.window_secs,
-                css_enabled: main_config.defaults.css_challenge.enabled,
-                css_invalid_min: main_config.defaults.css_challenge.invalid_count_min,
-                css_invalid_max: main_config.defaults.css_challenge.invalid_count_max,
-                css_valid_count: main_config.defaults.css_challenge.valid_count,
-                css_asset_path: main_config.defaults.css_challenge.asset_path.clone(),
-                css_window_secs: main_config.defaults.css_challenge.challenge_window_secs,
-                css_verification_window_secs: main_config
-                    .defaults
-                    .css_challenge
-                    .verification_window_secs,
-                challenge_priority: parse_challenge_priority(
-                    &main_config.defaults.challenge.priority,
-                ),
-                challenge_max_attempts: main_config.defaults.bot.challenge_max_attempts,
-                challenge_rate_limit_window_secs: main_config
-                    .defaults
-                    .bot
-                    .challenge_rate_limit_window_secs,
-                honeypot_endpoints_file: main_config.defaults.honeypot.endpoints_file.clone(),
-                honeypot_enabled: true,
-                honeypot_paths_per_ip: main_config.defaults.honeypot.paths_per_ip,
-                honeypot_ttl_secs: main_config.defaults.honeypot.ttl_secs,
-                honeypot_ban_duration: main_config.defaults.honeypot.block.ban_duration.clone(),
-                error_pages_enabled: main_config.defaults.error_pages.enabled,
-                error_pages_mode: main_config.defaults.error_pages.mode.clone(),
-                error_pages_directory: main_config.defaults.error_pages.directory.clone(),
-                error_pages_custom_directory: None,
-                theme: crate::theme::ThemeConfig::from(main_config.defaults.theme.clone()),
-                mesh_pow_enabled: false,
-                mesh_pow_key_exchange_enabled: false,
-                mesh_pow_auditing_enabled: false,
-                mesh_id: None,
-                mesh_global_node_url: None,
-                mesh_audit_urls: vec![],
-            },
-            endpoint_config: crate::waf::EndpointBlockerConfig {
-                paths: main_config.defaults.blocked.paths.clone(),
-                use_regex: main_config.defaults.blocked.use_regex,
-                block_methods: main_config.defaults.blocked.block_methods.clone(),
-                block_response_code: main_config.defaults.blocked.block_response_code,
-                block_page_html: None,
-            },
+            bot_config: main_config.defaults.bot.clone(),
+            endpoint_config: main_config.defaults.blocked.clone(),
             waf_config: crate::waf::WafConfig {
                 enable_css_honeypot: main_config.defaults.css_challenge.enabled,
                 enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
@@ -682,6 +651,7 @@ impl UnifiedServer {
             suspicious_words_config: Some(main_config.defaults.suspicious_words.clone()),
             upstream_errors_config: Some(main_config.defaults.upstream_errors.clone()),
             traffic_shaping_config: Some(main_config.traffic_shaping.clone()),
+            bandwidth_config: main_config.traffic_shaping.bandwidth.clone(),
             asn_scraping_config: Some(main_config.defaults.asn_scraping.clone()),
             geoip: None,
             data_dir,

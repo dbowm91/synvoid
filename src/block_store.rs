@@ -17,9 +17,10 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::waf::mitigation::MitigationProvider;
+use crate::waf::mitigation::{MitigationProvider, SizedMitigationProvider};
 
 pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
 
@@ -82,7 +83,7 @@ pub struct BlockStore {
     total_entries: AtomicUsize,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    mitigation_provider: arc_swap::ArcSwapOption<dyn MitigationProvider>,
+    mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
 }
 
 impl BlockStore {
@@ -224,7 +225,8 @@ impl BlockStore {
 
     /// Set the mitigation provider for kernel-level blocking.
     pub fn set_mitigation_provider(&self, provider: Option<Arc<dyn MitigationProvider>>) {
-        self.mitigation_provider.store(provider);
+        self.mitigation_provider
+            .store(provider.map(|p| Arc::new(SizedMitigationProvider(p))));
     }
 
     /// Gracefully shutdown the block store, persisting any pending data.
@@ -420,13 +422,13 @@ impl BlockStore {
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
 
         if site_scope == "global" {
-            if let Some(provider) = self.mitigation_provider.load().as_ref() {
+            if let Some(wrapper) = self.mitigation_provider.load().as_ref() {
                 let duration = if ban_expire_seconds == 0 {
                     Duration::from_secs(365 * 24 * 3600) // 1 year for permanent
                 } else {
                     Duration::from_secs(ban_expire_seconds)
                 };
-                if let Err(e) = provider.block_ip(ip, reason, duration) {
+                if let Err(e) = wrapper.0.block_ip(ip, reason, duration) {
                     tracing::error!(%ip, %e, "Failed to block IP via mitigation provider");
                 }
             }

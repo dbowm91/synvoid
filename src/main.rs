@@ -15,8 +15,8 @@ use synvoid::worker::{
 
 use synvoid::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use synvoid::startup::daemon::acquire_pid_file;
-use synvoid::startup::master::{run_master_mode, run_overseer_mode};
 use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
+use synvoid::supervisor::run_supervisor_mode;
 
 #[derive(Parser, Debug)]
 #[command(name = "synvoid")]
@@ -64,10 +64,19 @@ struct Args {
     )]
     worker_threads: Option<usize>,
 
-    // Internal: Used by Overseer to spawn Master process. Not for direct user invocation.
-    // The default behavior (no flags) runs the Overseer which spawns Master.
-    #[arg(long, hide = true)]
-    master: bool,
+    #[arg(
+        long,
+        value_name = "CORE",
+        help = "CPU core to pin this worker to"
+    )]
+    cpu_affinity: Option<usize>,
+
+    #[arg(
+        long,
+        value_name = "COUNT",
+        help = "Total number of workers in the pool"
+    )]
+    total_workers: Option<usize>,
 
     #[arg(short, long, help = "Run in foreground (don't daemonize)")]
     foreground: bool,
@@ -428,14 +437,13 @@ fn main() {
         args.worker,
         args.static_worker,
         args.unified_server_worker,
-        args.master,
     ]
     .into_iter()
     .filter(|&b| b)
     .count();
 
     if worker_mode_count > 1 {
-        eprintln!("Error: Only one worker mode (--worker, --static-worker, --unified-server-worker, --master) can be specified");
+        eprintln!("Error: Only one worker mode (--worker, --static-worker, --unified-server-worker) can be specified");
         std::process::exit(1);
     }
 
@@ -462,17 +470,6 @@ fn main() {
             tracing::error!("Static worker error: {}", e);
             std::process::exit(1);
         }
-    // ============================================================================================
-    // IMPORTANT: UnifiedServerWorker MUST run as a separate process from the master.
-    //
-    // Architectural requirements for running as separate process:
-    // - Improved robustness: Isolates master from crashes/vulnerabilities in the worker
-    // - Rolling updates: Allows graceful draining and restart without affecting master
-    // - Process isolation: Prevents worker issues from bringing down the entire system
-    //
-    // DO NOT run UnifiedServer in-process within the master - this violates the
-    // overseer -> master -> worker separation model required for production deployments.
-    // ============================================================================================
     } else if args.unified_server_worker {
         setup_unified_server_panic_handler();
         init_logging_simple();
@@ -485,6 +482,8 @@ fn main() {
             args.master_socket,
             args.log_level,
             worker_threads,
+            args.cpu_affinity,
+            args.total_workers.unwrap_or(1),
         );
 
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -497,19 +496,10 @@ fn main() {
             tracing::error!("Unified server worker error: {}", e);
             std::process::exit(1);
         }
-    // ============================================================================================
-    // INTERNAL: Master mode is invoked by the Overseer process.
-    // This is NOT for direct user invocation - use the default mode instead.
-    // ============================================================================================
-    } else if args.master {
-        run_master_mode(args.config_path, args.log_level);
     } else {
-        // Default: Run as Overseer (parent of Master and Workers)
-        // This is the only supported mode for production deployments.
-        //
-        // Process hierarchy:
-        //   Overseer (this process) -> Master -> Workers
-        run_overseer_mode(
+        // Default: Run as Supervisor (manager of Workers)
+        // This replaces the legacy Overseer -> Master hierarchy.
+        run_supervisor_mode(
             args.config_path,
             args.foreground,
             args.test.as_deref(),

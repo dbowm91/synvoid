@@ -55,12 +55,14 @@ impl MitigationProvider for LoggingMitigationProvider {
 }
 
 /// Global registry for the active mitigation provider.
-static MITIGATION_PROVIDER: arc_swap::ArcSwapOption<dyn MitigationProvider> = arc_swap::ArcSwapOption::const_empty();
+pub struct SizedMitigationProvider(pub Arc<dyn MitigationProvider>);
+
+static MITIGATION_PROVIDER: arc_swap::ArcSwapOption<SizedMitigationProvider> = arc_swap::ArcSwapOption::const_empty();
 
 pub fn set_mitigation_provider(provider: Arc<dyn MitigationProvider>) {
-    MITIGATION_PROVIDER.store(Some(provider));
+    MITIGATION_PROVIDER.store(Some(Arc::new(SizedMitigationProvider(provider))));
 }
 
 pub fn get_mitigation_provider() -> Option<Arc<dyn MitigationProvider>> {
-    MITIGATION_PROVIDER.load_full()
+    MITIGATION_PROVIDER.load_full().map(|p| p.0.clone())
 }

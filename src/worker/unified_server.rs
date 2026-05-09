@@ -42,6 +42,8 @@ pub struct UnifiedServerWorkerArgs {
     pub upgrade_mode: bool,
     pub reuse_port: bool,
     pub worker_threads: usize,
+    pub cpu_affinity: Option<usize>,
+    pub total_workers: usize,
 }
 
 pub fn setup_unified_server_panic_handler() {
@@ -170,6 +172,35 @@ pub async fn run_unified_server_worker(
     args: UnifiedServerWorkerArgs,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let worker_id = WorkerId(args.worker_id);
+
+    // Apply CPU affinity if specified
+    if let Some(core) = args.cpu_affinity {
+        #[cfg(target_os = "linux")]
+        {
+            use nix::sched::{sched_setaffinity, CpuSet};
+            use nix::unistd::Pid;
+
+            let mut cpuset = CpuSet::new();
+            if let Err(e) = cpuset.set(core) {
+                tracing::warn!("Failed to set CPU core {} in CpuSet: {}", core, e);
+            } else {
+                let pid = Pid::from_raw(0); // Current process
+                if let Err(e) = sched_setaffinity(pid, &cpuset) {
+                    tracing::warn!("Failed to set CPU affinity to core {}: {}", core, e);
+                } else {
+                    tracing::info!("Unified Server Worker {} pinned to CPU core {}", worker_id, core);
+                }
+            }
+        }
+        #[cfg(all(unix, not(target_os = "linux")))]
+        {
+            tracing::info!("CPU affinity pinning requested for core {}, but not supported on this Unix platform", core);
+        }
+        #[cfg(not(unix))]
+        {
+            tracing::warn!("CPU affinity pinning is not supported on this platform");
+        }
+    }
 
     if let Some(ref level) = args.log_level {
         crate::log_controller::init_logging_with_dynamic_level(level);
@@ -362,9 +393,14 @@ pub async fn run_unified_server_worker(
         }
     };
 
-    let unified_server = UnifiedServer::new(shared_config.clone(), None, app_servers.clone())
-        .await?
-        .with_drain_state(drain_state.clone())
+    let unified_server = UnifiedServer::new(
+        shared_config.clone(),
+        None,
+        app_servers.clone(),
+        args.total_workers,
+    )
+    .await?
+    .with_drain_state(drain_state.clone())
         .with_metrics(metrics.clone())
         .with_ipc(ipc_for_server, worker_id_for_server)
         .with_serverless_manager(serverless_manager.unwrap_or_else(|| {
@@ -548,8 +584,10 @@ pub async fn run_unified_server_worker(
         ref mesh_config,
     ) = mesh_config
     {
-        if !mesh_config.enabled {
-            tracing::info!("Mesh is disabled in configuration");
+        // Phase 3: Mesh Control Plane is relegated to the Supervisor process.
+        // Workers act as dumb data-planes and receive intelligence via IPC.
+        if true {
+            tracing::info!("Mesh control plane is disabled in worker process");
             let threat_persistence_path = args
                 .config_path
                 .parent()

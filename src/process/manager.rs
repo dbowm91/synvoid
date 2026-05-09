@@ -106,6 +106,7 @@ pub struct ProcessManager {
     request_logs: Arc<PLRwLock<VecDeque<RequestLogPayload>>>,
     started_at: Instant,
     health_monitor_handle: Arc<TokioMutex<Option<JoinHandle<()>>>>,
+    cpu_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +172,10 @@ impl ProcessManager {
             health_check_interval_secs: config.health_check_interval_secs,
         };
 
+        let mut sys = sysinfo::System::new();
+        sys.refresh_cpu_usage();
+        let cpu_count = sys.cpus().len().max(1);
+
         (
             Self {
                 config,
@@ -193,6 +198,7 @@ impl ProcessManager {
                 request_logs: Arc::new(PLRwLock::new(VecDeque::with_capacity(10000))),
                 started_at: Instant::now(),
                 health_monitor_handle: Arc::new(TokioMutex::new(None)),
+                cpu_count,
             },
             event_rx,
         )
@@ -652,6 +658,13 @@ impl ProcessManager {
             .arg(id.as_usize().to_string())
             .arg("--worker-threads")
             .arg(worker_threads.to_string());
+
+        // Assign CPU affinity based on worker ID
+        let core = id.as_usize() % self.cpu_count;
+        cmd.arg("--cpu-affinity").arg(core.to_string());
+
+        let total_workers = self.config.unified_server_workers;
+        cmd.arg("--total-workers").arg(total_workers.to_string());
 
         let child = cmd.spawn().map_err(|e| {
             tracing::error!("Failed to spawn unified server worker: {}", e);

@@ -162,8 +162,9 @@ pub fn interpret_waf_decision(decision: &WafDecision, _ctx: &WafContext) -> WafR
             body: body.clone(),
             content_type: "text/html",
         },
-        WafDecision::Challenge(html) => WafResponseIntent::Challenge { body: html.clone() },
+        WafDecision::Challenge(_type, html) => WafResponseIntent::Challenge { body: html.clone() },
         WafDecision::ChallengeWithCookie {
+            challenge_type: _,
             html,
             session_cookie_name,
             session_cookie_value,

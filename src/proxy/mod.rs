@@ -392,7 +392,7 @@ impl ProxyServer {
                         .body(Full::new(Bytes::from(message)).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
                         .unwrap());
                 }
-                WafDecision::Challenge(html) => {
+                WafDecision::Challenge(_type, html) => {
                     counter!("synvoid.requests.challenged").increment(1);
                     histogram!("synvoid.request.duration").record(start.elapsed());
                     return Ok(Response::builder()
@@ -403,6 +403,7 @@ impl ProxyServer {
                         .unwrap());
                 }
                 WafDecision::ChallengeWithCookie {
+                    challenge_type: _,
                     html,
                     session_cookie_name,
                     session_cookie_value,

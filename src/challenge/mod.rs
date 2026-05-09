@@ -26,7 +26,7 @@ pub enum ChallengeResult {
     RateLimited,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChallengeType {
     #[default]
     None,
@@ -35,7 +35,7 @@ pub enum ChallengeType {
     CssChallenge,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ChallengePriority {
     #[default]
     PowThenCss,

@@ -471,8 +471,9 @@ impl HttpServer {
 
     #[cfg(feature = "mesh")]
     pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let listener = TcpListener::bind(self.addr).await?;
-        tracing::info!("HTTP server listening on {} (HTTP/1.1 + HTTP/2)", self.addr);
+        let std_listener = crate::platform::socket::bind_tcp_reuse(self.addr)?;
+        let listener = TcpListener::from_std(std_listener)?;
+        tracing::info!("HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]", self.addr);
 
         let router = self.router.clone();
         let waf = self.waf.clone();
@@ -930,6 +931,7 @@ impl HttpServer {
                 return Ok(resp);
             }
             crate::proxy::WafDecision::ChallengeWithCookie {
+                challenge_type: _,
                 html,
                 session_cookie_name,
                 session_cookie_value,
@@ -963,7 +965,7 @@ impl HttpServer {
                     &main_config,
                 ));
             }
-            crate::proxy::WafDecision::Challenge(html) => {
+            crate::proxy::WafDecision::Challenge(_type, html) => {
                 let ipc_clone = ipc.clone();
                 let worker_id_clone = worker_id;
                 Self::send_request_log_if_enabled(
@@ -1179,12 +1181,13 @@ impl HttpServer {
             counter!("synvoid.http.request.streaming_path").increment(1);
             let query_string = parts.uri.query();
             let user_agent_ref = user_agent.as_deref();
+            let method_str = method.to_string();
 
             let waf_decision = waf
                 .check_request_full(
                     Some(&site_id),
                     client_ip,
-                    method.as_str(),
+                    &method_str,
                     &path,
                     query_string,
                     &parts.headers,
@@ -1432,7 +1435,7 @@ impl HttpServer {
                         &main_config,
                     ));
                 }
-                crate::proxy::WafDecision::Challenge(html) => {
+                crate::proxy::WafDecision::Challenge(_type, html) => {
                     return Ok(Self::build_response_with_alt_svc(
                         200,
                         html,
@@ -1442,12 +1445,12 @@ impl HttpServer {
                     ));
                 }
                 crate::proxy::WafDecision::ChallengeWithCookie {
+                    challenge_type: _,
                     html,
                     session_cookie_name,
                     session_cookie_value,
                     session_cookie_max_age,
-                } => {
-                    let cookie = format!(
+                } => {                    let cookie = format!(
                         "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                         session_cookie_name, session_cookie_value, session_cookie_max_age
                     );
@@ -1556,25 +1559,28 @@ impl HttpServer {
             for offset in (0..body_len).step_by(CHUNK_WAF_SCAN_SIZE) {
                 let end = std::cmp::min(offset + CHUNK_WAF_SCAN_SIZE, body_len);
                 let chunk = &full_body_arc[offset..end];
-                if let Some(
-                    crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _),
-                ) = waf.check_request_body(chunk)
-                {
-                    tracing::warn!(
-                        client_ip = %client_ip,
-                        offset = offset,
-                        size = body_len,
-                        "Large request body blocked by WAF at offset {}",
-                        offset
-                    );
-                    counter!("synvoid.http.large_body_blocked").increment(1);
-                    return Ok(Self::build_response_with_alt_svc(
-                        403,
-                        "Request blocked by WAF".to_string(),
-                        "text/plain",
-                        &alt_svc,
-                        &main_config,
-                    ));
+                let (_, body_decision) = waf.check_request_body(chunk);
+                if let Some(decision) = body_decision {
+                    match decision {
+                        crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _) => {
+                            tracing::warn!(
+                                client_ip = %client_ip,
+                                offset = offset,
+                                size = body_len,
+                                "Large request body blocked by WAF at offset {}",
+                                offset
+                            );
+                            counter!("synvoid.http.large_body_blocked").increment(1);
+                            return Ok(Self::build_response_with_alt_svc(
+                                403,
+                                "Request blocked by WAF".to_string(),
+                                "text/plain",
+                                &alt_svc,
+                                &main_config,
+                            ));
+                        }
+                        _ => {}
+                    }
                 }
             }
             tracing::debug!(
@@ -1953,7 +1959,7 @@ impl HttpServer {
                     &main_config,
                 ))
             }
-            crate::proxy::WafDecision::Challenge(html) => {
+            crate::proxy::WafDecision::Challenge(_type, html) => {
                 if let Some(ref rm) = req_metrics {
                     rm.record_challenged();
                 }
@@ -1985,6 +1991,7 @@ impl HttpServer {
                 ))
             }
             crate::proxy::WafDecision::ChallengeWithCookie {
+                challenge_type: _,
                 html,
                 session_cookie_name,
                 session_cookie_value,

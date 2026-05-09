@@ -29,6 +29,8 @@ pub fn build_unified_server_worker_args(
     master_socket: Option<PathBuf>,
     log_level: Option<String>,
     worker_threads: usize,
+    cpu_affinity: Option<usize>,
+    total_workers: usize,
 ) -> UnifiedServerWorkerArgs {
     let paths = PlatformPaths::new();
     UnifiedServerWorkerArgs {
@@ -39,5 +41,7 @@ pub fn build_unified_server_worker_args(
         upgrade_mode: false,
         reuse_port: false,
         worker_threads,
+        cpu_affinity,
+        total_workers,
     }
 }

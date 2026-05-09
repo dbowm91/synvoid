@@ -406,12 +406,12 @@ impl<R: Read> Read for SignedReader<R> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct IpcEnvelope<'a> {
+pub struct IpcEnvelope {
     pub timestamp: u64,
     pub nonce: [u8; 16],
     pub hmac: [u8; HMAC_SIZE],
     #[serde(with = "serde_bytes")]
-    pub data: &'a [u8],
+    pub data: Vec<u8>,
 }
 
 pub struct SignedIpcMessage {
@@ -452,7 +452,7 @@ impl SignedIpcMessage {
             timestamp,
             nonce,
             hmac: hmac_bytes,
-            data: &data_bytes,
+            data: data_bytes,
         };
 
         let mut result = crate::serialization::serialize(&envelope)?;
@@ -486,21 +486,21 @@ impl SignedIpcMessage {
 
         let ts_bytes = envelope.timestamp.to_be_bytes();
         
-        if !signer.verify_parts(&[&ts_bytes, &envelope.nonce, envelope.data], &envelope.hmac) {
+        if !signer.verify_parts(&[&ts_bytes, &envelope.nonce, &envelope.data], &envelope.hmac) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "IPC message HMAC verification failed",
             ));
         }
 
-        if !check_and_insert_nonce(signer.id(), &envelope.nonce, envelope.timestamp) {
+        if !check_and_insert_nonce(signer.signer_id(), &envelope.nonce, envelope.timestamp) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "IPC message replay detected",
             ));
         }
 
-        crate::serialization::deserialize(envelope.data)
+        crate::serialization::deserialize(&envelope.data)
     }
 
     pub fn deserialize_signed_from_stream<R: Read>(

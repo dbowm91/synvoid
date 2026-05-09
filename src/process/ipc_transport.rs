@@ -44,26 +44,29 @@ impl AsyncIpcTransport for UnixStream {
         let mut cred: UCred = unsafe { std::mem::zeroed() };
         let mut cred_len = size_of::<UCred>() as libc::socklen_t;
 
-        let result = unsafe {
-            libc::getsockopt(
-                raw_fd,
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                &mut cred as *mut _ as *mut libc::c_void,
-                &mut cred_len,
-            )
-        };
+        #[cfg(target_os = "linux")]
+        {
+            let result = unsafe {
+                libc::getsockopt(
+                    raw_fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_PEERCRED,
+                    &mut cred as *mut _ as *mut libc::c_void,
+                    &mut cred_len,
+                )
+            };
 
-        if result == 0 && cred.pid > 0 {
-            Some(cred.pid as u32)
-        } else {
-            None
+            if result == 0 && cred.pid > 0 {
+                return Some(cred.pid as u32);
+            }
         }
+
+        None
     }
 
     fn as_raw_fd(&self) -> io::Result<std::os::unix::io::RawFd> {
         use std::os::unix::io::AsRawFd;
-        Ok(self.as_raw_fd())
+        Ok(AsRawFd::as_raw_fd(self))
     }
 }
 

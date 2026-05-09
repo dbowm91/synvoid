@@ -770,6 +770,10 @@ pub enum Message {
         worker_id: usize,
         notification: MeshUpdateNotification,
     },
+    CommandResponse {
+        id: WorkerId,
+        response: String,
+    },
 }
 
 const MAX_STRING_LENGTH: usize = 64 * 1024;
@@ -938,7 +942,8 @@ impl Message {
             | Message::WorkerReadyForTraffic { .. }
             | Message::MasterDrainStatus { .. }
             | Message::RestartWorkerRequest { .. }
-            | Message::RestartWorkerResponse { .. } => Ok(()),
+            | Message::RestartWorkerResponse { .. }
+            | Message::CommandResponse { .. } => Ok(()),
 
             // Variants with string fields that need validation
             Message::WorkerError { error, .. } => {
@@ -1243,6 +1248,9 @@ impl Message {
                     MAX_STRING_LENGTH,
                 )
             }
+            Message::StreamChunk { chunk, .. } => {
+                check_str("StreamChunk.chunk", &format!("{}", chunk.len()), MAX_STRING_LENGTH)
+            }
             Message::MeshControlRequest { request, .. } => match request {
                 MeshControlRequest::DhtLookup { key } => {
                     check_str("MeshControlRequest.DhtLookup.key", key, MAX_STRING_LENGTH)
@@ -1427,6 +1435,9 @@ impl Message {
             Message::RestartWorkerRequest { .. } | Message::RestartWorkerResponse { .. } => {
                 MessageCategory::WorkerRestart
             }
+
+            Message::StreamChunk { .. } => MessageCategory::UnifiedServer,
+            Message::CommandResponse { .. } => MessageCategory::MasterCommand,
 
             Message::PluginStateSync { .. }
             | Message::PluginExecuteRequest(_)

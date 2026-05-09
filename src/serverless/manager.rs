@@ -1200,12 +1200,12 @@ pub async fn handle_serverless_function_streaming(
     method: &Method,
     path: &str,
     headers: &HeaderMap,
-    body: ErasedBody,
+    body: Box<dyn ErasedBody>,
     _context: CallerContext,
 ) -> Result<Response<Bytes>, ServerlessError> {
     let routes = manager.routes.read();
-    let Some(route) = routes.iter().find(|r| r.matches(method, path)) else {
-        return Err(ServerlessError::RouteNotFound(path.to_string()));
+    let Some(route) = routes.iter().find(|r| r.matches(path, method)) else {
+        return Err(ServerlessError::NoMatchingRoute(path.to_string()));
     };
 
     let function_name = route.function_name.clone();
