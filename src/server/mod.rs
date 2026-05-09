@@ -1149,8 +1149,11 @@ impl UnifiedServer {
         }
 
         #[cfg(feature = "mesh")]
-        if let Some(mesh_cfg) = mesh_config {
-            server = server.with_mesh_config(Some(Arc::new(mesh_cfg)));
+        if let Some(mesh_cfg_external) = mesh_config {
+            let mesh_cfg_internal: crate::mesh::config::MeshConfig =
+                serde_json::from_str(&serde_json::to_string(&mesh_cfg_external).unwrap())
+                    .unwrap();
+            server = server.with_mesh_config(Some(Arc::new(mesh_cfg_internal)));
         }
 
         #[cfg(feature = "mesh")]
@@ -1222,8 +1225,11 @@ impl UnifiedServer {
         #[cfg(feature = "mesh")]
         if let Some(mt) = state.mesh_transport.clone() {
             let config_guard = state.config.read().await;
-            if let Some(mesh_cfg) = config_guard.main.mesh.clone() {
-                server = server.with_mesh_config(Arc::new(mesh_cfg));
+            if let Some(mesh_cfg_external) = config_guard.main.mesh.clone() {
+                let mesh_cfg_internal: crate::mesh::config::MeshConfig =
+                    serde_json::from_str(&serde_json::to_string(&mesh_cfg_external).unwrap())
+                        .unwrap();
+                server = server.with_mesh_config(Arc::new(mesh_cfg_internal));
             }
             drop(config_guard);
             server = server.with_mesh_transport(mt);

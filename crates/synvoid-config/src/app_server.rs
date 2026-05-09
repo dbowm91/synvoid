@@ -31,6 +31,12 @@ pub struct AppServerConfig {
     pub log_verbose: bool,
 }
 
+impl AppServerConfig {
+    pub fn is_valid(&self) -> bool {
+        !self.app_path.is_empty()
+    }
+}
+
 impl Default for AppServerConfig {
     fn default() -> Self {
         Self {

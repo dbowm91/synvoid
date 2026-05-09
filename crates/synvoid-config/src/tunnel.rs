@@ -12,12 +12,22 @@ pub struct TunnelConfig {
     pub vpn: TunnelVpnConfig,
     #[serde(default)]
     pub quic: TunnelQuicConfig,
-    #[cfg(feature = "mesh")]
     #[serde(default)]
     pub mesh: Option<crate::mesh::MeshConfig>,
 }
 
 impl TunnelConfig {
+    pub fn has_mesh(&self) -> bool {
+        self.mesh.as_ref().map(|m| m.enabled).unwrap_or(false)
+    }
+
+    pub fn is_global_node(&self) -> bool {
+        self.mesh
+            .as_ref()
+            .map(|m| m.role.is_global())
+            .unwrap_or(false)
+    }
+
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.vpn.enabled {
             self.vpn.validate()?;

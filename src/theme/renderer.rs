@@ -1,4 +1,4 @@
-use super::config::{ThemeConfig, ThemeRestriction};
+use crate::theme::{ThemeColors, ThemeConfig, ThemeRestriction};
 
 pub struct ThemeRenderer {
     config: ThemeConfig,
@@ -417,7 +417,7 @@ body {{
     }
 
     fn generate_light_only_css(&self) -> String {
-        let c: &super::config::ThemeColors = &self.config.colors;
+        let c: &ThemeColors = &self.config.colors;
 
         format!(
             r#":root {{

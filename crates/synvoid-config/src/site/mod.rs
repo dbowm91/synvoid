@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::validation::ConfigValidationError;
 
@@ -20,7 +21,7 @@ mod listen;
 mod misc;
 mod network;
 mod protocol_features;
-mod proxy;
+pub mod proxy;
 mod ratelimit;
 mod security;
 mod static_files;
@@ -127,6 +128,48 @@ pub struct SiteConfig {
 }
 
 impl SiteConfig {
+    pub fn default_fallback_site(upstream: String) -> Self {
+        SiteConfig {
+            site: crate::site::SiteInfo {
+                domains: vec!["_fallback_".to_string()],
+                listen: Vec::new(),
+                upstream: crate::site::UpstreamConfig {
+                    default: upstream,
+                    routes: HashMap::new(),
+                    tunnel_mappings: HashMap::new(),
+                },
+            },
+            ratelimit: Default::default(),
+            blocked: Default::default(),
+            bot: Default::default(),
+            honeypot_probe: Default::default(),
+            error_pages: Default::default(),
+            css_challenge: Default::default(),
+            whitelist: Default::default(),
+            worker_pool: Default::default(),
+            logging: Default::default(),
+            proxy: Default::default(),
+            tcp: Default::default(),
+            udp: Default::default(),
+            tarpit: Default::default(),
+            attack_detection: Default::default(),
+            upload: Default::default(),
+            auth: Default::default(),
+            r#static: Default::default(),
+            security: Default::default(),
+            security_headers: Default::default(),
+            traffic_shaping: Default::default(),
+            grpc: Default::default(),
+            websocket: Default::default(),
+            tunnel: Default::default(),
+            app_server: Default::default(),
+            serverless: Default::default(),
+            serverless_only: Default::default(),
+            image_poison: Default::default(),
+            file_manager: Default::default(),
+        }
+    }
+
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(&path).with_context(|| {
             format!(

@@ -16,6 +16,7 @@ pub enum CommandMethod {
     UnixSocket,
     NamedPipe,
     Signal,
+    GRpc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +48,7 @@ pub struct WorkerStatusInfo {
     pub blocked: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StatusStats {
     pub total_requests: u64,
     pub blocked_last_hour: u64,
@@ -57,7 +58,7 @@ pub struct StatusStats {
     pub active_violations: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreatSummary {
     pub critical_ips: usize,
     pub elevated_ips: usize,

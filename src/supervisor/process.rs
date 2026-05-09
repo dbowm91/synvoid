@@ -76,6 +76,20 @@ impl SupervisorProcess {
             });
         }
 
+        // Start gRPC control server
+        let grpc_addr = self.state.config.read().await.main.supervisor.control_api_addr.parse();
+        if let Ok(addr) = grpc_addr {
+            let pm = self.process_manager.clone();
+            let state = self.state.clone();
+            tokio::spawn(async move {
+                if let Err(e) = super::api::start_grpc_server(addr, pm, state).await {
+                    tracing::error!("Failed to start gRPC control server: {}", e);
+                }
+            });
+        } else {
+            tracing::error!("Invalid gRPC control API address configured");
+        }
+
         let mut shutdown_rx = self.state.subscribe_shutdown();
 
         // Main event loop
@@ -239,6 +253,7 @@ pub fn run_supervisor_mode(
         config_path: config_dir.clone(),
         unified_server_workers: main_config.defaults.worker_pool.workers.max(1),
         master_socket_path: pid_manager.socket_file_path(),
+        control_api_addr: main_config.supervisor.control_api_addr.clone(),
         ..ProcessManagerConfig::default()
     };
 

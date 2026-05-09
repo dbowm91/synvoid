@@ -1158,7 +1158,6 @@ impl HttpServer {
             && target
                 .site_config
                 .proxy
-                .body_buffering_policy
                 .should_stream(
                     content_length_u64,
                     target.site_config.proxy.streaming_threshold_bytes,
@@ -3259,8 +3258,8 @@ impl HttpServer {
                     && !needs_body_transform
                     && !crate::http_client::is_quictunnel_url(&target.upstream)
                     && target.site_config.proxy.body_buffering_policy
-                        == crate::config::site::BodyBufferingPolicy::Streaming
-                    && request_body_size > streaming_threshold;
+                        == Some(crate::config::site::BodyBufferingPolicy::Streaming)
+                    && request_body_size > streaming_threshold.unwrap_or(0) as u64;
 
                 if use_erased_client {
                     let forward_header_map = build_forward_headers(

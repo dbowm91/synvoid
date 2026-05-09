@@ -388,3 +388,79 @@ fn default_yara_feed_allow_downgrade() -> bool {
 fn default_yara_feed_max_rules_size() -> u32 {
     1024
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct ThreatIntelligenceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub push_enabled: bool,
+    #[serde(default)]
+    pub sync_enabled: bool,
+    #[serde(default)]
+    pub sync_interval_secs: u64,
+    #[serde(default)]
+    pub threat_sync_interval_secs: u64,
+    #[serde(default)]
+    pub push_severity_threshold: String,
+    #[serde(default)]
+    pub min_ttl_seconds: u64,
+    #[serde(default)]
+    pub max_indicators_per_message: usize,
+    #[serde(default)]
+    pub hub_only_mode: bool,
+}
+
+impl Default for ThreatIntelligenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            push_enabled: false,
+            sync_enabled: false,
+            sync_interval_secs: 300,
+            threat_sync_interval_secs: 3600,
+            push_severity_threshold: "high".to_string(),
+            min_ttl_seconds: 60,
+            max_indicators_per_message: 100,
+            hub_only_mode: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct YaraRulesMeshConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub sync_interval_secs: u64,
+    #[serde(default)]
+    pub re_announce_interval_secs: u64,
+    #[serde(default)]
+    pub allow_edge_submissions: bool,
+    #[serde(default)]
+    pub require_global_approval: bool,
+    #[serde(default)]
+    pub require_signature: bool,
+    #[serde(default)]
+    pub trusted_signers: Vec<String>,
+    #[serde(default)]
+    pub max_rules_size_kb: u32,
+    #[serde(default)]
+    pub hub_only_mode: bool,
+}
+
+impl Default for YaraRulesMeshConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sync_interval_secs: 300,
+            re_announce_interval_secs: 3600,
+            allow_edge_submissions: false,
+            require_global_approval: true,
+            require_signature: true,
+            trusted_signers: Vec::new(),
+            max_rules_size_kb: 1024,
+            hub_only_mode: false,
+        }
+    }
+}

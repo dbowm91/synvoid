@@ -168,6 +168,12 @@ pub struct ProcessManagerConfig {
     pub warm_workers_target: usize,
     #[serde(default = "default_health_check_interval")]
     pub health_check_interval_secs: u64,
+    #[serde(default = "default_control_api_addr")]
+    pub control_api_addr: String,
+}
+
+fn default_control_api_addr() -> String {
+    "127.0.0.1:50051".to_string()
 }
 
 impl Default for ProcessManagerConfig {
@@ -185,6 +191,7 @@ impl Default for ProcessManagerConfig {
             pre_spawn_workers: 0,
             warm_workers_target: 2,
             health_check_interval_secs: 5,
+            control_api_addr: default_control_api_addr(),
         }
     }
 }
@@ -211,6 +218,8 @@ pub struct SupervisorConfig {
     pub health_check_interval_secs: u64,
     #[serde(default = "default_graceful_shutdown_timeout")]
     pub graceful_shutdown_timeout_secs: u64,
+    #[serde(default = "default_control_api_addr")]
+    pub control_api_addr: String,
 }
 
 impl Default for SupervisorConfig {
@@ -226,6 +235,7 @@ impl Default for SupervisorConfig {
             restart_cooldown_secs: 300,
             health_check_interval_secs: 5,
             graceful_shutdown_timeout_secs: 30,
+            control_api_addr: default_control_api_addr(),
         }
     }
 }

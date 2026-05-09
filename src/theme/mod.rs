@@ -1,9 +1,8 @@
-mod config;
 mod dir_listing;
 mod renderer;
 mod template;
 
-pub use config::{
+pub use synvoid_config::{
     ThemeBranding, ThemeColors, ThemeConfig, ThemeDefaults, ThemeEffects, ThemeMode, ThemePreset,
     ThemeRestriction, ThemeSpacing,
 };

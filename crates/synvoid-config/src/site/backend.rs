@@ -140,6 +140,9 @@ pub enum BackendConfig {
         enabled: Option<bool>,
     },
 
+    #[serde(rename = "mesh")]
+    Mesh { upstream: String },
+
     #[serde(rename = "spin")]
     Spin {
         #[serde(default)]

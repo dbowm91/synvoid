@@ -138,7 +138,7 @@ impl ThreatIntelligenceConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatIntelligenceConfigInternal {
     pub enabled: bool,
     pub push_enabled: bool,

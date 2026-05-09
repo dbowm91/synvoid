@@ -212,6 +212,15 @@ impl TsigAlgorithm {
             TsigAlgorithm::HmacSha512 => 64,
         }
     }
+
+    pub fn dns_algorithm_name(&self) -> &'static str {
+        match self {
+            TsigAlgorithm::HmacSha256 => "hmac-sha256",
+            TsigAlgorithm::HmacSha1 => "hmac-sha1",
+            TsigAlgorithm::HmacSha384 => "hmac-sha384",
+            TsigAlgorithm::HmacSha512 => "hmac-sha512",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, ToSchema)]

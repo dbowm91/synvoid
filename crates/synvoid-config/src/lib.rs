@@ -49,7 +49,8 @@ pub use dns::{
     QnameLogLevel, QnamePrivacyConfig, QnamePrivacyMode,
 };
 pub use theme::{
-    ThemeColors, ThemeConfig, ThemeDefaults, ThemeMode, ThemePreset, ThemeRestriction,
+    ThemeBranding, ThemeColors, ThemeConfig, ThemeDefaults, ThemeEffects, ThemeMode, ThemePreset,
+    ThemeRestriction, ThemeSpacing,
 };
 
 pub use defaults::{
@@ -72,8 +73,9 @@ pub use process::{
     OverseerConfig, ProcessManagerConfig, SupervisorConfig, SupervisorConfigBuilder,
 };
 pub use protection::{
-    IpFeedConfig, MimesConfig, RuleFeedConfig, ThreatLevelBanDurations, ThreatLevelConfig,
-    ThreatLevelEscalation, ThreatLevelGlobalLimits, YaraRuleFeedConfig,
+    IpFeedConfig, MimesConfig, RuleFeedConfig, ThreatIntelligenceConfig, ThreatLevelBanDurations,
+    ThreatLevelConfig, ThreatLevelEscalation, ThreatLevelGlobalLimits, YaraRuleFeedConfig,
+    YaraRulesMeshConfig,
 };
 pub use security::{MainSecurityConfig, MainStaticConfig};
 pub use server::{FallbackConfig, ServerConfig};

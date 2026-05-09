@@ -12,10 +12,33 @@ pub enum WasmOnError {
     FailClosed,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BodyBufferingPolicy {
+    #[default]
+    Buffered,
+    Streaming,
+}
+
+impl BodyBufferingPolicy {
+    pub fn should_stream(&self, _body_size: u64, _threshold: Option<usize>) -> bool {
+        match self {
+            BodyBufferingPolicy::Streaming => true,
+            BodyBufferingPolicy::Buffered => false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
 pub struct SiteProxyConfig {
     #[serde(default)]
     pub max_response_size: Option<usize>,
+
+    #[serde(default)]
+    pub body_buffering_policy: Option<BodyBufferingPolicy>,
+
+    #[serde(default)]
+    pub streaming_threshold_bytes: Option<usize>,
 
     #[serde(default)]
     pub headers: Option<ProxyHeadersConfig>,
@@ -55,6 +78,21 @@ pub struct SiteProxyConfig {
 
     #[serde(default = "default_wasm_on_error")]
     pub wasm_on_error: WasmOnError,
+}
+
+impl SiteProxyConfig {
+    pub fn get_body_buffering_policy(&self) -> BodyBufferingPolicy {
+        self.body_buffering_policy.unwrap_or_default()
+    }
+
+    pub fn should_stream(&self, body_size: Option<u64>, threshold: Option<usize>) -> bool {
+        self.get_body_buffering_policy()
+            .should_stream(body_size.unwrap_or(0), threshold)
+    }
+
+    pub fn validate(&self) -> Result<(), crate::validation::ConfigValidationError> {
+        Ok(())
+    }
 }
 
 fn default_wasm_on_error() -> WasmOnError {

@@ -2,19 +2,19 @@ use std::path::PathBuf;
 #[cfg(feature = "mesh")]
 use std::sync::Arc;
 
-use crate::config::main::MainConfig;
+use crate::config::MainConfig;
 #[cfg(feature = "mesh")]
 use crate::mesh::protocol::MeshMessageSigner;
 #[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::process::{CommandClient, MasterCommand, PidFileManager};
 
-pub fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_status(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(content) = pid_manager.read_pid() {
         if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()));
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
 
             match client.get_status() {
                 Ok(status) => {
@@ -84,12 +84,12 @@ pub fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn handle_stop() -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_stop(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(_content) = pid_manager.read_pid() {
         if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()));
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
 
             match client.send_command(MasterCommand::Stop { graceful: true }) {
                 Ok(msg) => {
@@ -122,12 +122,12 @@ pub fn handle_stop() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn handle_rehash() -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_rehash(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(_content) = pid_manager.read_pid() {
         if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()));
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
 
             match client.send_command(MasterCommand::ReloadConfig) {
                 Ok(msg) => {
@@ -422,13 +422,19 @@ pub fn handle_export_threat_feed(
         None,
         Default::default(),
     ));
-    let internal_config = threat_intel_config.to_internal();
+    let internal_config: crate::mesh::threat_intel::ThreatIntelligenceConfigInternal =
+        serde_json::from_str(&serde_json::to_string(&threat_intel_config).unwrap())
+            .unwrap();
+
+    let node_role_internal: crate::mesh::config::MeshNodeRole =
+        serde_json::from_str(&serde_json::to_string(&node_role).unwrap())
+            .unwrap();
 
     let threat_manager = ThreatIntelligenceManager::new(
         internal_config,
         block_store,
         node_id.clone(),
-        node_role,
+        node_role_internal,
         signer.as_ref().map(|s| Arc::new(s.clone())),
     );
 

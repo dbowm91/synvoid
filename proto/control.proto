@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package synvoid.control;
+
+service ControlPlane {
+  // Get the current status of the supervisor and workers
+  rpc GetStatus (StatusRequest) returns (StatusResponse);
+  
+  // Reload the configuration and propagate to workers
+  rpc ReloadConfig (ReloadRequest) returns (ReloadResponse);
+  
+  // Gracefully stop the supervisor and all workers
+  rpc Stop (StopRequest) returns (StopResponse);
+  
+  // Manually block an IP address
+  rpc BlockIp (BlockRequest) returns (BlockResponse);
+  
+  // Manually unblock an IP address
+  rpc UnblockIp (UnblockRequest) returns (UnblockResponse);
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  uint32 pid = 1;
+  uint64 uptime_secs = 2;
+  string version = 3;
+  repeated WorkerInfo workers = 4;
+  Stats stats = 5;
+}
+
+message WorkerInfo {
+  uint32 id = 1;
+  uint32 pid = 2;
+  uint32 port = 3;
+  string status = 4;
+  uint64 requests = 5;
+  uint64 blocked = 6;
+}
+
+message Stats {
+  uint64 total_requests = 1;
+  uint64 blocked_last_hour = 2;
+  uint64 challenged_last_hour = 3;
+  uint64 active_blocks = 4;
+}
+
+message ReloadRequest {}
+message ReloadResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message StopRequest {
+  bool graceful = 1;
+}
+message StopResponse {
+  bool success = 1;
+}
+
+message BlockRequest {
+  string ip = 1;
+  string reason = 2;
+  uint64 duration_secs = 3;
+  string scope = 4;
+}
+message BlockResponse {
+  bool success = 1;
+}
+
+message UnblockRequest {
+  string ip = 1;
+  string scope = 2;
+}
+message UnblockResponse {
+  bool success = 1;
+}

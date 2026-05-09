@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::config::ThemeConfig;
+use crate::theme::ThemeConfig;
 use super::renderer::ThemeRenderer;
 
 fn percent_encode(s: &str) -> String {

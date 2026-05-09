@@ -241,6 +241,46 @@ fn default_qname_log_level() -> QnameLogLevel {
     QnameLogLevel::Zone
 }
 
+impl QnamePrivacyConfig {
+    pub fn sanitize_qname(&self, qname: &str, zone_origin: &str) -> String {
+        if !self.enabled {
+            return qname.to_string();
+        }
+
+        match self.mode {
+            QnamePrivacyMode::Full => qname.to_string(),
+            QnamePrivacyMode::ZoneOnly => {
+                let zone = zone_origin.trim_end_matches('.');
+                if qname.to_lowercase().ends_with(&format!(".{}", zone)) {
+                    let suffix = format!(".{}", zone);
+                    qname
+                        .strip_suffix(&suffix)
+                        .map(|s| {
+                            if s.is_empty() {
+                                "*".to_string()
+                            } else {
+                                s.to_string() + &suffix
+                            }
+                        })
+                        .unwrap_or_else(|| qname.to_string())
+                } else {
+                    "[external]".to_string()
+                }
+            }
+            QnamePrivacyMode::Truncate => {
+                let parts: Vec<&str> = qname.split('.').collect();
+                if parts.len() <= 2 {
+                    qname.to_string()
+                } else {
+                    let keep = parts.len().min(2);
+                    let suffix = parts[parts.len() - keep..].join(".");
+                    format!("[redacted].{}", suffix)
+                }
+            }
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
 )]

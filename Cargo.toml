@@ -108,6 +108,7 @@ unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 bloomfilter = "2"
 serde_bytes = "0.11"
+synvoid-config = { path = "crates/synvoid-config", features = ["mesh", "dns"] }
 
 # DNS support
 hickory-proto = { version = "0.26", features = ["dnssec-ring"], optional = true }

@@ -119,6 +119,10 @@ pub struct GlobalNodeConfig {
     pub ed25519_public_key_base64: Option<String>,
     #[serde(default)]
     pub invite_tokens: Vec<String>,
+    #[serde(default)]
+    pub key_exchange_enabled: bool,
+    #[serde(default)]
+    pub key_exchange_require_edge_auth: bool,
 }
 
 impl GlobalNodeConfig {
@@ -195,6 +199,10 @@ impl GenesisKeyConfig {
         self.authorized_genesis_keys
             .iter()
             .any(|k| k == genesis_public_key)
+    }
+
+    pub fn get_public_key(&self) -> Option<String> {
+        self.public_key.clone()
     }
 }
 
@@ -542,6 +550,12 @@ pub struct MeshConfig {
     pub global_node: GlobalNodeConfig,
     #[serde(default)]
     pub genesis_key: Option<GenesisKeyConfig>,
+    #[serde(default)]
+    pub threat_intel: super::protection::ThreatIntelligenceConfig,
+    #[serde(default)]
+    pub yara_rules: super::protection::YaraRulesMeshConfig,
+    #[serde(default)]
+    pub origin_signing_key: Option<String>,
     #[serde(skip)]
     pub cached_pow: Arc<RwLock<Option<(u64, std::time::Instant)>>>,
 }
@@ -577,12 +591,41 @@ impl Default for MeshConfig {
             node_identity: NodeIdentityConfig::default(),
             global_node: GlobalNodeConfig::default(),
             genesis_key: None,
+            threat_intel: super::protection::ThreatIntelligenceConfig::default(),
+            yara_rules: super::protection::YaraRulesMeshConfig::default(),
+            origin_signing_key: None,
             cached_pow: Arc::new(RwLock::new(None)),
         }
     }
 }
 
 impl MeshConfig {
+    pub fn node_id(&self) -> String {
+        self.node_id
+            .clone()
+            .or_else(|| self.node_identity.node_id.clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    pub fn router_id(&self) -> String {
+        self.node_identity
+            .router_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    pub fn signing_key(&self) -> Option<&[u8]> {
+        self.node_identity.private_key.as_deref()
+    }
+
+    pub fn has_signing_key(&self) -> bool {
+        self.node_identity.private_key.is_some()
+    }
+
+    pub fn signing_public_key(&self) -> Option<Vec<u8>> {
+        self.node_identity.public_key.clone()
+    }
+
     pub fn load_node_identity(&mut self) -> Result<(), String> {
         if let Some(ref genesis_b64) = self.node_identity.genesis_key_base64 {
             tracing::warn!(

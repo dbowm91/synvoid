@@ -322,13 +322,12 @@ impl Http3Server {
                     .and_then(|s| s.parse().ok());
                 matches!(route_target.backend_type, crate::router::BackendType::Upstream)
                     && route_target
-                        .site_config
-                        .proxy
-                        .body_buffering_policy
-                        .should_stream(
-                            content_length_u64,
-                            route_target.site_config.proxy.streaming_threshold_bytes,
-                        )
+                      .site_config
+                      .proxy
+                      .should_stream(
+                          content_length_u64,
+                          route_target.site_config.proxy.streaming_threshold_bytes,
+                      )
                     && !needs_body_transform
                     && !crate::http_client::is_quictunnel_url(&route_target.upstream)
             }

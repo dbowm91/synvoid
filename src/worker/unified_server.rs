@@ -141,11 +141,15 @@ async fn extract_bandwidth_config(
 ) {
     let config_guard = config.read().await;
     let bandwidth = &config_guard.main.traffic_shaping.bandwidth;
+    let reset_cfg_external = bandwidth.monthly_reset.clone();
+    let reset_cfg_internal: crate::metrics::bandwidth::MonthlyResetConfig =
+        serde_json::from_str(&serde_json::to_string(&reset_cfg_external).unwrap())
+            .unwrap();
     (
         bandwidth.data_dir.clone(),
         bandwidth.retention_days,
         bandwidth.mesh_excluded_from_total,
-        bandwidth.monthly_reset.clone(),
+        reset_cfg_internal,
     )
 }
 
@@ -442,7 +446,10 @@ pub async fn run_unified_server_worker(
                 continue;
             }
 
-            let mut granian_config = GranianConfig::from(&app_config);
+            let app_config_internal: crate::app_server::AppServerConfig =
+                serde_json::from_str(&serde_json::to_string(&app_config).unwrap())
+                    .unwrap();
+            let mut granian_config = GranianConfig::from(&app_config_internal);
             granian_config = granian_config.with_site_info(site_id, worker_id_for_app.as_usize());
 
             tracing::info!(
@@ -574,10 +581,15 @@ pub async fn run_unified_server_worker(
     // - Single mesh identity per WAF deployment (shared across Workers via Master config)
     // ============================================================================================
     #[cfg(feature = "mesh")]
-    let mesh_config = {
+    let mesh_config_external = {
         let config = shared_config.read().await;
         config.main.tunnel.mesh.clone()
     };
+    
+    #[cfg(feature = "mesh")]
+    let mesh_config: Option<crate::mesh::config::MeshConfig> = mesh_config_external.map(|c| {
+        serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap()
+    });
 
     #[cfg(feature = "mesh")]
     let (_mesh_transport_manager, _threat_intel_manager, _mesh_signer) = if let Some(

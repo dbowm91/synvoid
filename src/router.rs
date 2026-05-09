@@ -612,7 +612,7 @@ impl Router {
                     }
                     #[cfg(feature = "mesh")]
                     BackendConfig::Mesh { upstream } => {
-                        let upstream_id = upstream.clone().unwrap_or_default();
+                        let upstream_id = upstream.clone();
                         RouteResult::Found(RouteTarget {
                             site_id: Arc::from(site_id.as_str()),
                             upstream: Arc::from(upstream_id.as_str()),
@@ -910,7 +910,7 @@ impl Router {
                 }
                 #[cfg(feature = "mesh")]
                 BackendConfig::Mesh { upstream } => {
-                    let upstream_id = upstream.clone().unwrap_or_default();
+                    let upstream_id = upstream.clone();
                     return RouteResult::Found(RouteTarget {
                         site_id: Arc::from(site_id.as_str()),
                         upstream: Arc::from(upstream_id.as_str()),
@@ -1278,50 +1278,6 @@ impl Default for Router {
             cleaned_site_domain_suffixes: HashMap::new(),
             location_matchers: HashMap::new(),
             site_map: HashMap::new(),
-        }
-    }
-}
-
-impl SiteConfig {
-    pub fn default_fallback_site(upstream: String) -> Self {
-        SiteConfig {
-            site: crate::config::SiteInfo {
-                domains: vec!["_fallback_".to_string()],
-                listen: Vec::new(),
-                upstream: crate::config::UpstreamConfig {
-                    default: upstream,
-                    routes: HashMap::new(),
-                    tunnel_mappings: HashMap::new(),
-                },
-            },
-            ratelimit: Default::default(),
-            blocked: Default::default(),
-            bot: Default::default(),
-            honeypot_probe: Default::default(),
-            error_pages: Default::default(),
-            css_challenge: Default::default(),
-            whitelist: Default::default(),
-            worker_pool: Default::default(),
-            logging: Default::default(),
-            proxy: Default::default(),
-            tcp: Default::default(),
-            udp: Default::default(),
-            tarpit: Default::default(),
-            attack_detection: Default::default(),
-            upload: Default::default(),
-            auth: Default::default(),
-            r#static: Default::default(),
-            security: Default::default(),
-            security_headers: Default::default(),
-            traffic_shaping: Default::default(),
-            grpc: Default::default(),
-            websocket: Default::default(),
-            tunnel: Default::default(),
-            app_server: Default::default(),
-            serverless: Default::default(),
-            serverless_only: Default::default(),
-            image_poison: Default::default(),
-            file_manager: Default::default(),
         }
     }
 }

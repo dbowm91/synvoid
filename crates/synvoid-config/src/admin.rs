@@ -50,6 +50,8 @@ pub struct AdminConfig {
     pub cors: AdminCorsConfig,
     #[serde(default)]
     pub rate_limit: AdminRateLimitConfig,
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]

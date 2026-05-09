@@ -508,6 +508,7 @@ async fn run_master(
         worker_port_base: main_config.defaults.worker_pool.worker_port_base,
         config_path: config_path_for_process,
         master_socket_path: master_socket_path.clone(),
+        control_api_addr: main_config.supervisor.control_api_addr.clone(),
         log_level: log_level_for_process,
         pre_spawn_workers: main_config.defaults.worker_pool.workers,
         warm_workers_target: main_config.defaults.worker_pool.workers,

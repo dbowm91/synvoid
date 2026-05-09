@@ -4,6 +4,7 @@
 //! unified supervisor process. The supervisor handles zero-downtime upgrades,
 //! IPC communications, and uses `ProcessManager` to orchestrate worker processes.
 
+pub mod api;
 pub mod commands;
 pub mod mesh;
 pub mod process;

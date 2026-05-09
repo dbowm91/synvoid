@@ -1,4 +1,4 @@
-use super::config::ThemeConfig;
+use crate::theme::ThemeConfig;
 use super::renderer::ThemeRenderer;
 use crate::http::headers::generate_stealth_timestamp;
 

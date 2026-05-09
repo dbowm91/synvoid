@@ -813,7 +813,6 @@ impl HttpsServer {
             && target
                 .site_config
                 .proxy
-                .body_buffering_policy
                 .should_stream(
                     content_length_u64,
                     target.site_config.proxy.streaming_threshold_bytes,

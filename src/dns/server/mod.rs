@@ -89,46 +89,6 @@ impl RecordTypeExt for RecordType {
     const UNKNOWN: Self = RecordType::NULL;
 }
 
-impl crate::config::dns::QnamePrivacyConfig {
-    pub fn sanitize_qname(&self, qname: &str, zone_origin: &str) -> String {
-        if !self.enabled {
-            return qname.to_string();
-        }
-
-        match self.mode {
-            crate::config::dns::QnamePrivacyMode::Full => qname.to_string(),
-            crate::config::dns::QnamePrivacyMode::ZoneOnly => {
-                let zone = zone_origin.trim_end_matches('.');
-                if qname.to_lowercase().ends_with(&format!(".{}", zone)) {
-                    let suffix = format!(".{}", zone);
-                    qname
-                        .strip_suffix(&suffix)
-                        .map(|s| {
-                            if s.is_empty() {
-                                "*".to_string()
-                            } else {
-                                s.to_string() + &suffix
-                            }
-                        })
-                        .unwrap_or_else(|| qname.to_string())
-                } else {
-                    "[external]".to_string()
-                }
-            }
-            crate::config::dns::QnamePrivacyMode::Truncate => {
-                let parts: Vec<&str> = qname.split('.').collect();
-                if parts.len() <= 2 {
-                    qname.to_string()
-                } else {
-                    let keep = parts.len().min(2);
-                    let suffix = parts[parts.len() - keep..].join(".");
-                    format!("[redacted].{}", suffix)
-                }
-            }
-        }
-    }
-}
-
 impl DnsServer {
     fn generate_random_salt() -> Result<Vec<u8>, super::crypto_rng::CryptoRngError> {
         super::crypto_rng::random_bytes(16)

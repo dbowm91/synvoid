@@ -7839,6 +7839,7 @@ dependencies = [
  "socket2 0.6.3",
  "subtle",
  "synvoid",
+ "synvoid-config",
  "synvoid-utils",
  "sysinfo",
  "syslog",
