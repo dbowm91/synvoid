@@ -47,7 +47,7 @@ Native support for various application types.
 
 | Component | Documentation | Primary Source Path |
 |-----------|---------------|---------------------|
-| Process Lifecycle | [Overseer & Master Deep Dive](process_lifecycle.md) | `src/overseer/`, `src/master/` |
+| Process Lifecycle | [Supervisor & Worker Deep Dive](process_lifecycle.md) | `src/supervisor/`, `src/process/` |
 | Unified Worker | [Worker Architecture](worker_architecture.md) | `src/worker/`, `src/server/` |
 | Networking | [Transport & Protocols](networking_deep_dive.md) | `src/listener/`, `src/http/`, `src/http3/` |
 | Security | [WAF Security Pipeline](waf_deep_dive.md) | `src/waf/`, `src/filter/`, `src/challenge/` |

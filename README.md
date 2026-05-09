@@ -4,12 +4,11 @@ A high-performance Web Application Firewall (WAF) and reverse proxy written in R
 
 ## Worker Architecture
 
-SynVoid uses an overseer → master → worker model:
-- **Overseer**: Monitors master process health and handles zero-downtime updates
-- **Master**: Spawns and manages the worker, handles IPC
-- **Worker**: Single `UnifiedServer` with one Tokio runtime handles all request processing
+SynVoid uses a high-performance shared-nothing supervisor → worker model:
+- **Supervisor**: Orchestrates workers, handles zero-downtime updates, and manages the Control Plane (Raft, DHT, Mesh Transport).
+- **Worker**: Independent, completely isolated data planes utilizing `SO_REUSEPORT` and kernel-level load balancing.
 
-The unified worker uses a single Tokio async event loop which is far more efficient than spawning multiple worker processes. A single event loop handles thousands of sites concurrently via cooperative scheduling. Internal parallelism is achieved using `tokio::spawn()` and async concurrency primitives (semaphores, channels) within the worker.
+The unified worker uses a single Tokio async event loop which is far more efficient than spawning multiple threads. A single event loop handles thousands of sites concurrently via cooperative scheduling. Internal parallelism is achieved using `tokio::spawn()` and async concurrency primitives (semaphores, channels) within the worker.
 
 The worker uses a `TcpListenerPool` for accepting connections, auto-tuned via `std::thread::available_parallelism()` (default: CPU cores, fallback: 4). For scaling, tune `tcp.worker_pool_size` or use async primitives within the existing event loop. **Do NOT increase `unified_server_workers` for scaling purposes** — this only affects how many Tokio runtime threads are used at startup, not request throughput.
 

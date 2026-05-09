@@ -1,70 +1,67 @@
 # Process Lifecycle & Execution Model
 
-SynVoid uses a hierarchical multi-process architecture to achieve high availability, zero-downtime updates, and security isolation. The model follows an **Overseer → Master → Worker** pattern.
+SynVoid uses a "Shared-Nothing Architecture" to achieve maximum performance, linear scalability, and robust security isolation. The model follows a two-tier **Supervisor → Worker** pattern, managed via a gRPC-based Control Plane.
 
 ## The Hierarchy
 
-### 1. Overseer (The Supervisor)
-The Overseer is the long-lived entry point process. Its primary responsibility is to ensure the Master process is running and healthy.
+### 1. Supervisor (The Control Plane)
+The Supervisor is the long-lived entry point process. It merges the responsibilities of the legacy Overseer and Master processes into a single, high-performance orchestration engine.
 
 - **Responsibilities:**
-  - Spawning and monitoring the Master process.
-  - Handling zero-downtime upgrades via a "Dual Master" handoff mechanism.
-  - Managing drain cycles for old processes during upgrades.
-  - Performing health checks on the Master (both process-level and IPC-level).
-  - Executing rollbacks if an upgrade fails.
-- **Key Logic:** `src/overseer/process.rs`, `src/overseer/upgrade.rs`.
-- **IPC Role:** Communicates with the Master to monitor its health and coordination.
+  - **Process Management:** Spawning and monitoring Worker processes.
+  - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads of the Supervisor itself.
+  - **Control Plane Relegation:** Handles heavy coordination protocols, including Raft consensus, DHT routing, and Mesh transport.
+  - **Configuration:** Loads and validates configuration using the `synvoid-config` crate. Distributes config to workers via high-speed IPC.
+  - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management and CLI interactions.
+- **Key Logic:** `src/supervisor/`, `src/control_plane/`.
+- **IPC Role:** Acts as the central hub for worker coordination.
 
-### 2. Master (The Coordinator)
-The Master process acts as the control plane for a single instance. It orchestrates all the heavy lifting that doesn't involve direct request handling.
+### 2. Worker (The Data Plane)
+Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment.
 
-- **Responsibilities:**
-  - **Process Management:** Spawns and monitors Worker processes (Unified Server, Static Workers) using the `ProcessManager`.
-  - **Configuration:** Loads, validates, and reloads configuration files (`main.toml`, `sites/*.toml`).
-  - **Orchestration:** Aggregates threat intelligence, manages global blocklists (`BlockStore`), and coordinates rule feed updates.
-  - **Admin Interface:** Runs the Admin API server and handles management commands (rehash, status, stop).
-  - **IPC Hub:** Listens on a Unix domain socket (or Windows named pipe) to communicate with its Workers.
-- **Security Isolation:** The Master NEVER handles external client traffic directly. This protects the control plane from vulnerabilities in the request-handling stack.
-- **Key Logic:** `src/master/mod.rs`, `src/startup/master.rs`, `src/process/mod.rs`.
-
-### 3. Worker (The Data Plane)
-Workers are the actual request-handling engines.
-
-- **Unified Server Worker:** Runs a single, highly-optimized Tokio event loop that handles HTTP/1, HTTP/2, HTTP/3 (QUIC), TCP, and UDP traffic for all configured sites.
-- **Static Worker:** Specialized worker for high-performance static file serving.
-- **Key Logic:** `src/worker/`, `src/server/`.
+- **Isolation:** Each worker process is completely independent.
+- **Kernel Load Balancing:** Uses `SO_REUSEPORT` to allow the kernel to distribute incoming connections across workers with zero coordination overhead.
+- **CPU Pinning:** On Linux, workers are automatically pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing.
+- **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
+- **Key Logic:** `src/worker/`.
 
 ---
 
-## Communication Flow (IPC)
+## Communication Flow (gRPC & IPC)
 
-SynVoid uses a custom binary IPC protocol over Unix domain sockets (standard) or Windows named pipes.
+SynVoid utilizes a tiered communication strategy:
 
-1.  **Overseer ↔ Master:** Health checks, upgrade coordination, and handoff signals.
-2.  **Master ↔ Worker:** Configuration distribution, threat feed updates, rule updates, and heartbeat/status reporting.
-3.  **Worker ↔ Worker:** In the Mesh network, workers communicate directly via QUIC streams for threat intelligence sharing and P2P proxying.
+1.  **External Management (gRPC):** The CLI (`CommandClient`) and remote managers communicate with the Supervisor via gRPC over TLS.
+2.  **Internal Coordination (IPC):** The Supervisor communicates with Workers using a high-speed, binary IPC protocol over Unix domain sockets or Windows named pipes.
+3.  **Mesh Network:** Supervisors communicate with other Supervisors via the Mesh transport (QUIC) to maintain global state (Raft/DHT).
+
+---
+
+## Shared-Nothing Data Plane
+
+The transition to a shared-nothing model ensures that the data plane can scale linearly with the number of CPU cores:
+
+- **No Shared State:** Workers do not share memory or mutexes for request handling.
+- **Independent Listeners:** Each worker opens its own set of listeners using `SO_REUSEPORT`.
+- **Async Efficiency:** Each worker runs a dedicated Tokio runtime optimized for its assigned core.
 
 ---
 
 ## Zero-Downtime Upgrades
 
-Upgrades are coordinated by the Overseer using a "Dual Master" approach:
+Upgrades are coordinated by the Supervisor:
 
-1.  Overseer spawns a **New Master** (Generation N+1) while the **Old Master** (Generation N) is still running.
-2.  The New Master spawns its own set of workers.
-3.  Overseer performs a **Preflight** check on the New Master.
-4.  If healthy, the Overseer signals the Old Master to enter **Drain Mode**.
-5.  The Old Master signals its workers to finish existing connections and then exit.
-6.  The Overseer monitors the drain progress and eventually shuts down the Old Master.
-7.  If the New Master fails health checks, the Overseer performs an **Auto-Rollback**, keeping the Old Master alive.
+1.  A new Supervisor process can be started to replace the old one.
+2.  The new Supervisor takes over the gRPC management interface.
+3.  Workers are rotated: new workers are spawned by the new Supervisor, and old workers are signaled to drain.
+4.  `SO_REUSEPORT` allows both old and new workers to coexist during the transition without dropping connections.
 
 ---
 
 ## Process State & Health Monitoring
 
-The Overseer maintains a status file (`overseer_status.json`) in the runtime directory, providing a real-time view of the entire process tree.
+The Supervisor provides a unified view of the system health:
 
-- **Process Health:** Monitored via `try_wait()` and SIGCHLD.
-- **IPC Health:** Monitored via periodic `MasterHealthCheck` messages. If the Master is unresponsive, the Overseer may attempt a restart.
-- **Worker Health:** The Master monitors its workers via heartbeats. If a worker fails, the Master attempts to restart it with backoff logic.
+- **Worker Monitoring:** The Supervisor monitors worker process exits and heartbeats.
+- **Self-Healing:** If a worker fails, the Supervisor immediately spawns a replacement and pins it to the correct core.
+- **gRPC Status:** The `CommandClient` queries the Supervisor via gRPC to retrieve detailed health and performance metrics.

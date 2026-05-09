@@ -1,32 +1,26 @@
-# Overseer Process Management
+# Supervisor Process Management
 
-SynVoid uses a three-tier process architecture (Overseer → Master → Worker) for maximum reliability and upgrade flexibility. This document covers how to manage the overseer process using systemd or cron.
+SynVoid uses a two-tier "Shared-Nothing Architecture" (Supervisor → Worker) for maximum performance, linear scalability, and robust security isolation. This document covers how to manage the supervisor process and its workers.
 
 ## Process Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         OVERSEER PROCESS                         │
-│  - Top-level supervisor (PID 1 or systemd managed)              │
-│  - Monitors master process health                                │
-│  - Handles upgrades and rollbacks                                │
-│  - Persists state to disk                                        │
+│                        SUPERVISOR PROCESS                        │
+│  - Entry point and Control Plane hub                            │
+│  - Monitors worker process health                               │
+│  - Hosts gRPC Management API (proto/control.proto)              │
+│  - Handles Raft consensus, DHT, and Mesh transport               │
+│  - Manages zero-downtime worker rotations                       │
 └───────────────────────────┬─────────────────────────────────────┘
                             │ spawns and monitors
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                          MASTER PROCESS                          │
-│  - Spawns and manages workers                                    │
-│  - Handles IPC from workers and overseer                         │
-│  - Coordinates graceful shutdown                                 │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │ spawns and monitors
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                          WORKER PROCESSES                        │
-│  - Unified Server Worker (HTTP/HTTPS/HTTP3)                     │
-│  - Static File Worker (minification, compression)               │
-│  - Handle actual traffic                                         │
+│                         WORKER PROCESSES                         │
+│  - Isolated Data Plane engines                                  │
+│  - Shared-Nothing: independent listeners (SO_REUSEPORT)          │
+│  - Core-pinned for maximum performance (sched_setaffinity)      │
+│  - Lightweight: focus strictly on request handling              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,77 +59,27 @@ sudo systemctl restart synvoid
 # Stop service
 sudo systemctl stop synvoid
 
-# Reload configuration (sends SIGHUP)
+# Reload configuration (triggers worker rotation)
 sudo systemctl reload synvoid
 ```
 
 ### systemd Watchdog
 
-The service file includes watchdog support. The overseer will automatically restart if it becomes unresponsive for 30 seconds. To enable watchdog notifications from SynVoid, set:
+The service file includes watchdog support. The supervisor will automatically restart if it becomes unresponsive. To enable watchdog notifications from SynVoid, set:
 
 ```bash
 # In your environment or service file
 NOTIFY_SOCKET=/run/systemd/notify
 ```
 
-### Resource Limits
-
-The default service file sets:
-- `LimitNOFILE=65535` - Maximum open files
-- `LimitNPROC=65535` - Maximum processes
-
-Adjust these based on your expected traffic load.
-
-## Option 2: cron (Non-systemd Systems)
-
-For systems without systemd (Alpine Linux, older distributions, containers), use the built-in watchdog mode.
-
-### Watchdog Mode
-
-The `--watchdog` flag checks if an overseer is running and starts one if not:
-
-```bash
-synvoid --watchdog
-```
-
-This is idempotent - safe to run multiple times.
-
-### cron Configuration
-
-Add to crontab (`crontab -e`):
-
-```cron
-# Check every minute
-* * * * * /usr/local/bin/synvoid --watchdog >> /var/log/synvoid/watchdog.log 2>&1
-
-# Or every 5 minutes
-*/5 * * * * /usr/local/bin/synvoid --watchdog >> /var/log/synvoid/watchdog.log 2>&1
-```
-
-### cron with Log Rotation
-
-Create `/etc/logrotate.d/synvoid`:
-
-```
-/var/log/synvoid/*.log {
-    daily
-    rotate 7
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 0640 root root
-}
-```
-
-## Option 3: Docker/Kubernetes
+## Option 2: Docker/Kubernetes
 
 ### Docker
 
 ```dockerfile
 FROM alpine:latest
 COPY synvoid /usr/local/bin/
-CMD ["synvoid", "--overseer", "--foreground"]
+CMD ["synvoid", "--foreground"]
 ```
 
 ### Kubernetes
@@ -158,266 +102,94 @@ spec:
       containers:
       - name: synvoid
         image: synvoid:latest
-        command: ["synvoid", "--overseer", "--foreground"]
+        command: ["synvoid", "--foreground"]
         livenessProbe:
           exec:
-            command: ["synvoid", "--status"]
+            command: ["synvoid", "status"]
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           exec:
-            command: ["synvoid", "--status"]
+            command: ["synvoid", "status"]
           initialDelaySeconds: 5
           periodSeconds: 10
 ```
 
-## Option 4: supervisord
+## gRPC Control Plane
 
-For systems using supervisord:
+SynVoid exposes a formal gRPC API for remote management and CLI interaction. This API is the primary way to interact with the Supervisor.
 
-```ini
-[program:synvoid]
-command=/usr/local/bin/synvoid --overseer --foreground
-directory=/opt/synvoid
-user=root
-autostart=true
-autorestart=true
-startsecs=5
-startretries=3
-stdout_logfile=/var/log/synvoid/stdout.log
-stderr_logfile=/var/log/synvoid/stderr.log
-environment=RUST_LOG="info"
-```
+- **API Definition:** `proto/control.proto`
+- **Default Port:** 50051 (configurable)
+- **Security:** Protected by TLS and mutual authentication (mTLS).
 
-## Lock File
+The CLI `CommandClient` automatically uses gRPC to communicate with the local or remote Supervisor.
 
-The overseer creates a lock file at `~/.synvoid/overseer.lock` containing its PID. This prevents multiple overseer instances and allows the watchdog to detect running instances.
+## Shared-Nothing Data Plane
+
+Workers operate in a shared-nothing environment to eliminate coordination overhead:
+
+- **SO_REUSEPORT:** Each worker binds to the same listening ports. The kernel handles load balancing across workers.
+- **CPU Pinning:** Workers are automatically pinned to specific CPU cores.
+- **IPC Coordination:** The Supervisor pushes configuration and threat intelligence to workers via a high-speed binary IPC protocol.
 
 ## IPC Session Key Architecture
 
-The IPC session key secures communication between the master and worker processes. It is passed via a temporary file rather than an environment variable for security.
+The IPC session key secures communication between the Supervisor and worker processes.
 
 ### Key Transfer Flow
 
 ```
-1. Overseer spawns Master process
+1. Supervisor initializes
    └── Creates temp file with session key (mode 0600)
 
-2. Master reads IPC key from temp file
+2. Supervisor spawns Worker processes
+   └── Passes IPC key via temp file
+
+3. Worker reads IPC key from temp file
    └── Deletes temp file immediately after reading
-
-3. Master spawns Worker processes
-   └── Passes IPC key via temp file (same pattern)
-
-4. Worker reads IPC key from temp file
-   └── Deletes temp file immediately after reading
-```
-
-### Security Properties
-
-- **File permissions 0600**: Only the owner can read/write the key file
-- **Immediate deletion**: Temp file is deleted after reading, leaving no trace
-- **No env var exposure**: Keys don't appear in process environment (viewable via `/proc/PID/environ`)
-- **Fallback**: Falls back to `SYNVOID_IPC_KEY` env var only if `allow_insecure_ipc_key = true` (default: fail-hard)
-
-### Configuration
-
-```toml
-[process]
-allow_insecure_ipc_key = false  # Default: false (fail if temp file unavailable)
-```
-
-### Troubleshooting
-
-```bash
-# Check if temp file exists during startup (race condition indicator)
-ls -la /tmp/synvoid-ipc-key-* 2>/dev/null || echo "Temp file cleaned up (good)"
-
-# Verify key file permissions if startup fails
-strace -e trace=file synvoid 2>&1 | grep SYNVOID_IPC_KEY
 ```
 
 ## State Machine
 
-The overseer maintains a state machine to coordinate upgrades, handle failures, and ensure reliability.
-
-### State Diagram
-
-```
-                         ┌──────────────────┐
-                         │     STARTING     │
-                         │  (Initial state) │
-                         └────────┬─────────┘
-                                  │
-                                  ▼
-                    ┌─────────────────────────┐
-                    │   SINGLE_MASTER_ACTIVE  │
-                    │  (Normal operation)     │
-                    └────────┬────────────────┘
-                             │
-          ┌──────────────────┼──────────────────┐
-          │                  │                  │
-          ▼                  ▼                  ▼
-┌─────────────────┐ ┌──────────────────┐ ┌─────────────────┐
-│ UPGRADE_STAGING │ │ DUAL_MASTER_ACTIVE│ │   RECOVERING   │
-│ (Binary staged) │ │ (New master up)  │ │ (From crash)   │
-└────────┬────────┘ └────────┬─────────┘ └─────────────────┘
-         │                   │                     │
-         │                   │                     ▼
-         │                   │           ┌─────────────────┐
-         │                   │           │ SINGLE_MASTER_  │
-         │                   │           │ ACTIVE          │
-         │                   │           └─────────────────┘
-         │                   │
-         │                   ▼
-         │         ┌──────────────────┐
-         │         │ DRAINING_OLD_MASTER│
-         │         │ (Graceful shutdown)│
-         │         └────────┬───────────┘
-         │                  │
-         │                  ▼
-         │        ┌─────────────────┐
-         │        │ PROMOTING_NEW_MASTER│
-         └───────►│ (Switchover)     │
-                  └─────────────────┘
-```
+The supervisor maintains a state machine to coordinate worker rotations and upgrades.
 
 ### State Descriptions
 
 | State | Description |
 |-------|-------------|
-| `STARTING` | Overseer initializing, spawning initial master |
-| `SINGLE_MASTER_ACTIVE` | Normal operation with one master process |
-| `UPGRADE_STAGING` | New binary staged, awaiting activation |
-| `DUAL_MASTER_ACTIVE` | Both old and new masters running during upgrade |
-| `DRAINING_OLD_MASTER` | Old master gracefully shutting down connections |
-| `PROMOTING_NEW_MASTER` | Switching control to new master |
-| `RECOVERING` | Attempting to restore from partial failure state |
-
-### Upgrade Flow (Normal)
-
-1. **STAGING**: New binary placed, overseer validates it starts
-2. **DUAL_MASTER_ACTIVE**: Old master continues serving, new master starts
-3. **DRAINING_OLD_MASTER**: Old master stops accepting new connections
-4. **PROMOTING_NEW_MASTER**: New master takes over
-5. **SINGLE_MASTER_ACTIVE**: Old master exits, normal operation resumes
-
-### Recovery Flow (From Failure)
-
-1. Overseer reads `overseer-state.json` on startup
-2. If state indicates incomplete upgrade:
-   - Checks if new master is alive → promotes it
-   - Checks if old master is alive → restores it
-   - If neither alive → starts fresh
-3. State is persisted every 15 seconds during normal operation
-
-### State Persistence
-
-The overseer persists state to `~/.synvoid/overseer-state.json`:
-
-```json
-{
-  "state": "SINGLE_MASTER_ACTIVE",
-  "master_pid": 12345,
-  "upgraded_from": "1.2.3",
-  "upgraded_to": "1.2.4",
-  "last_update": "2024-01-15T10:30:00Z"
-}
-```
-
-This enables recovery after crashes or power failures.
+| `STARTING` | Supervisor initializing, loading configuration |
+| `ACTIVE` | Normal operation with workers handling traffic |
+| `ROTATING` | Spawning new workers and draining old ones |
+| `UPGRADING` | Supervisor itself is being replaced |
+| `RECOVERING` | Attempting to restore from failure |
 
 ## Health Checks
 
-### Command Line
+### CLI
 
 ```bash
-# Quick status check
-synvoid --status
-
-# Returns exit code 0 if running, 1 if not
-synvoid --status && echo "Running" || echo "Not running"
+# Check status via gRPC
+synvoid status
 ```
 
 ### HTTP Health Endpoint
 
-The unified server worker exposes:
-
+Workers expose:
 - `GET /__internal__/health` - Basic health check
 - `GET /__internal__/ready` - Readiness probe
 
 ## Upgrades
 
-When using systemd or cron, upgrades are handled automatically:
+Upgrades are coordinated by the Supervisor to ensure zero downtime:
 
-1. Stage the new binary: `synvoid upgrade stage /path/to/new/binary`
-2. Apply the upgrade: `synvoid upgrade apply`
-
-The overseer coordinates zero-downtime upgrades by:
-1. Spawning a new master with the upgraded binary
-2. Validating the new master is healthy
-3. Draining connections from the old master
-4. Promoting the new master
-
-## Troubleshooting
-
-### Overseer won't start
-
-1. Check if already running:
-```bash
-cat ~/.synvoid/overseer.lock
-ps aux | grep synvoid
-```
-
-2. Remove stale lock file:
-```bash
-rm ~/.synvoid/overseer.lock
-```
-
-3. Check logs:
-```bash
-# systemd
-journalctl -u synvoid -n 100
-
-# cron
-tail -f /var/log/synvoid/watchdog.log
-```
-
-### Master keeps restarting
-
-1. Check master crash logs:
-```bash
-cat /tmp/synvoid-panic.log
-```
-
-2. Check configuration:
-```bash
-synvoid --configtest
-```
-
-3. Increase restart limits in overseer state:
-```bash
-cat ~/.synvoid/overseer-state.json
-```
-
-### Recovery from failed upgrade
-
-The overseer automatically detects incomplete upgrades and attempts recovery:
-
-1. On startup, it checks `~/.synvoid/overseer-state.json`
-2. If state is `DualMasterActive`, `DrainingOldMaster`, etc., it:
-   - Checks if new master is alive → promotes it
-   - Checks if old master is alive → restores it
-   - If neither alive → starts fresh
-
-Manual recovery:
-```bash
-synvoid upgrade recover
-```
+1. **New Supervisor Start:** A new Supervisor process is started.
+2. **Worker Rotation:** The new Supervisor spawns a new generation of workers.
+3. **Old Worker Drain:** Old workers are signaled to finish existing connections and exit.
+4. **Handoff:** The old Supervisor exits once all its workers have drained.
 
 ## See Also
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System architecture overview
 - [DEPLOYMENT.md](./DEPLOYMENT.md) - Production deployment
-- [UPGRADE.md](./UPGRADE.md) - Upgrade procedures
 - [PERFORMANCE.md](./PERFORMANCE.md) - Performance tuning

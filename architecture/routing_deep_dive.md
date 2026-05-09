@@ -41,7 +41,7 @@ SynVoid supports multiple load balancing algorithms to distribute traffic across
 
 ### Health Monitoring & Resilience
 
-- **Passive Health Checks:** The Master and Workers monitor backend responses. Consecutive failures trigger a "down" state, while consecutive successes trigger a "healthy" state.
+- **Passive Health Checks:** The Supervisor and Workers monitor backend responses. Consecutive failures trigger a "down" state, while consecutive successes trigger a "healthy" state.
 - **Active Health Checks:** Periodic out-of-band requests (HTTP GET, TCP connect) to verify backend availability.
 - **Connection Limits:** Prevents overwhelming backends by enforcing maximum concurrent connection limits.
 - **Backup Servers:** Configurable backends that only receive traffic if all primary servers in a pool are down.

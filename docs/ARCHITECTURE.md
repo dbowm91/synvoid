@@ -4,7 +4,7 @@ A production-ready WAF and reverse proxy built for high-performance, high-availa
 
 ## Overview
 
-SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. It's designed for ease of deployment while providing enterprise-grade protection and performance.
+SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. It utilizes a **Shared-Nothing Architecture** to achieve linear scalability and zero-jitter performance.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -15,21 +15,22 @@ SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophist
                                          │
                                          ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Overseer Node                                   │
+│                            Supervisor Node                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  • Global health monitoring                                         │   │
-│  │  • Traffic distribution orchestration                                │   │
-│  │  • Configuration synchronization                                     │   │
-│  │  • Worker lifecycle management                                       │   │
+│  │  • gRPC Control Plane (proto/control.proto)                         │   │
+│  │  • Mesh Transport & Global State (Raft/DHT)                          │   │
+│  │  • Worker Lifecycle & Rotation Management                            │   │
+│  │  • Unified Configuration (synvoid-config)                           │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
             │                           │                           │
             ▼                           ▼                           ▼
     ┌───────────────┐           ┌───────────────┐           ┌───────────────┐
-    │ Master Node 1 │           │ Master Node 2 │           │ Master Node 3 │
+    │  Worker 1     │           │  Worker 2     │           │  Worker 3     │
+    │ (Core Pinned) │           │ (Core Pinned) │           │ (Core Pinned) │
     │ ┌───────────┐ │           │ ┌───────────┐ │           │ ┌───────────┐ │
-    │ │ Unified   │ │           │ │ Unified   │ │           │ │ Unified   │ │
-    │ │ Server    │ │           │ │ Server    │ │           │ │ Server    │ │
+    │ │ SO_REUSE- │ │           │ │ SO_REUSE- │ │           │ │ SO_REUSE- │ │
+    │ │ PORT      │ │           │ │ PORT      │ │           │ │ PORT      │ │
     │ └───────────┘ │           │ └───────────┘ │           │ └───────────┘ │
     └───────────────┘           └───────────────┘           └───────────────┘
             │                           │                           │
@@ -64,10 +65,10 @@ This combination provides:
 
 ### Request Flow Through Components
 
-When a request arrives, it passes through these components in sequence:
+When a request arrives, it passes through these components in sequence within a Worker:
 
 ```
-1. Listener (TCP/UDP/QUIC)
+1. Listener (TCP/UDP/QUIC + SO_REUSEPORT)
       │
       ▼
 2. Connection Handler (TLS termination, HTTP parsing)
@@ -91,21 +92,9 @@ When a request arrives, it passes through these components in sequence:
 8. Client Response
 ```
 
-**Component Responsibilities:**
-
-| Component | Responsibility | Key Types |
-|-----------|----------------|-----------|
-| Listener | Accept connections, TLS handshake | `TcpListener`, `QuicListener` |
-| Connection Handler | Protocol negotiation, keep-alive | `Http1Connection`, `Http2Connection` |
-| Router | Match host/path to site config | `Router`, `SiteConfig` |
-| WAF Pipeline | Security inspection, decisions | `WafCore`, `AttackDetector` |
-| Request Handler | Serve content, proxy requests | `StaticHandler`, `ProxyHandler` |
-| Upstream Pool | Backend management, health | `UpstreamPool`, `Backend` |
-| Response Handler | Transform responses | `Cache`, `Compress` |
-
 ### 2. WAF Protection Layers
 
-The WAF implements multiple protection layers:
+The WAF implements multiple protection layers, executed independently by each worker:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -161,326 +150,120 @@ The WAF implements multiple protection layers:
     Allow / Stall / Block / Tarpit / Challenge
 ```
 
-### 3. Overseer > Master-Worker Model
+### 3. Supervisor -> Worker Model (Shared-Nothing)
 
-For high availability, SynVoid uses a hierarchical node model:
+SynVoid uses a hierarchical two-tier model to separate the control plane from the data plane.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Overseer-Master-Worker Model                       │
+│                        Supervisor-Worker Hierarchy                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                               Overseer Cluster                               │
+│                               Supervisor Cluster                             │
 │                                                                             │
 │    ┌──────────┐      ┌──────────┐      ┌──────────┐                      │
-│    │ Overseer │◄────►│ Overseer │◄────►│ Overseer │                      │
+│    │Supervisor│◄────►│Supervisor│◄────►│Supervisor│                      │
 │    │  Leader  │      │ Follower │      │ Follower │                      │
 │    └──────────┘      └──────────┘      └──────────┘                      │
 │         │                                                        (Raft)     │
 └─────────┼───────────────────────────────────────────────────────────────────┘
           │
-          │ Orchestrates
+          │ Spawns & Monitors
           ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Master Nodes                                   │
+│                                 Workers                                     │
 │                                                                             │
 │  ┌────────────┐    ┌────────────┐    ┌────────────┐                      │
-│  │  Master 1  │    │  Master 2  │    │  Master 3  │                      │
+│  │  Worker 1  │    │  Worker 2  │    │  Worker 3  │                      │
 │  │ ┌────────┐ │    │ ┌────────┐ │    │ ┌────────┐ │                      │
-│  │ │Unified │ │    │ │Unified │ │    │ │Unified │ │                      │
-│  │ │Server  │ │    │ │Server  │ │    │ │Server  │ │                      │
+│  │ │Data    │ │    │ │Data    │ │    │ │Data    │ │                      │
+│  │ │Plane   │ │    │ │Plane   │ │    │ │Plane   │ │                      │
 │  │ └────────┘ │    │ └────────┘ │    │ └────────┘ │                      │
 │  └────────────┘    └────────────┘    └────────────┘                      │
 │                                                                             │
-│  Each Master:                                                              │
-│  • Manages unified server lifecycle                                         │
-│  • Handles site-specific configuration                                     │
-│  • Reports health to Overseer                                              │
+│  Shared-Nothing Architecture:                                               │
+│  • Kernel-level LB via SO_REUSEPORT                                         │
+│  • CPU core affinity for zero-jitter                                        │
+│  • Independent request handling loops                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
-
-**Note:** The unified server runs a single Tokio async event loop which handles thousands of concurrent requests. This is more efficient than spawning multiple worker processes.
 
 #### Process Communication
 
 ```
-┌─────────────────┐     IPC      ┌─────────────────┐
-│     Overseer    │◄────────────►│     Master      │
-│   (Supervisor)  │              │  (Coordinator)  │
+┌─────────────────┐    gRPC      ┌─────────────────┐
+│      CLI        │◄────────────►│   Supervisor    │
+│ (CommandClient) │              │ (Control Plane) │
 └─────────────────┘              └────────┬────────┘
-                                           │ Spawn
+                                           │ IPC
                                            ▼
                                   ┌─────────────────┐
-                                  │    Worker       │
-                                  │  (Request IO)    │
+                                  │    Workers      │
+                                  │  (Data Plane)   │
                                   └─────────────────┘
 ```
 
-**IPC Mechanisms:**
-- **Unix Sockets**: Fast local communication between master and workers
-- **Shared Memory**: Rate limiting counters, blocklists
-- **QUIC Streams**: Cluster communication between overseers
-
-#### Overseer Responsibilities
-
-| Function | Description |
-|----------|-------------|
-| **Health Monitoring** | Continuous health checks of all master nodes |
-| **Config Sync** | Distributed configuration propagation |
-| **Traffic Routing** | Global load balancing decisions |
-| **Failover** | Automatic redirection on node failure |
+**Communication Mechanisms:**
+- **gRPC (TLS)**: Robust, typed API for remote management and CLI control.
+- **Local IPC**: High-speed binary protocol for configuration and threat feed distribution.
+- **QUIC Streams**: Mesh communication between Supervisors for global state.
 
 ### 4. WAF-WAF Mesh Networking
 
-SynVoid supports QUIC-based peer-to-peer mesh networking for distributed protection:
+Supervisors communicate via QUIC to maintain a globally distributed protection mesh:
+
+- **Distributed DDoS Mitigation** - Coordinated rate limiting.
+- **Threat Intelligence** - P2P attack pattern sharing via DHT.
+- **YARA Rules** - Global distribution of security signatures.
+
+### 5. Deployment Modes
+
+#### 1. Standalone / Supervisor Mode
+
+The default execution mode (`synvoid`) runs a Supervisor and its managed workers.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        WAF-WAF QUIC Mesh Network                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-                     ┌─────────────────┐
-                     │   Global Node   │
-                     │   (Directory)   │
-                     │    10.0.0.1     │
-                     └────────┬────────┘
-                              │
-                QUIC Streams  │  │
-                      ┌───────┼───────┐
-                      │       │       │
-                      ▼       ▼       ▼
-              ┌───────────┐   │   ┌───────────┐
-              │ Edge Node │   │   │Origin Node│
-              │  (WAF)    │   │   │ (Backend) │
-              └───────────┘   │   └───────────┘
-                              │
-                     ┌────────┴────────┐
-                     │                 │
-                     ▼                 ▼
-              ┌──────────┐       ┌──────────┐
-              │   Edge   │       │   Edge   │
-              │   Node   │       │   Node   │
-              └──────────┘       └──────────┘
+Internet ──► [SO_REUSEPORT Workers] ──► Upstreams
 ```
 
-#### Mesh Node Types
+#### 2. High Availability Cluster
 
-| Role | Description |
-|------|-------------|
-| **Global** | Directory server, CA, network authority (configured explicitly) |
-| **Edge** | Typical WAF instance, connects to global for discovery |
-| **Origin** | WAF with direct upstream connections, announces routes |
-
-#### Mesh Capabilities
-
-1. **Distributed DDoS Mitigation** - Shared IP reputation, coordinated rate limiting
-2. **Threat Intelligence Sharing** - Real-time attack pattern sharing via DHT
-3. **Certificate Distribution** - Origin → Edge TLS cert distribution via mesh
-4. **Route Aggregation** - Upstream discovery across mesh nodes
-5. **YARA Rule Distribution** - Global → Edge rule synchronization
-
-### 5. Metrics Collection
-
-SynVoid collects comprehensive metrics across all components, with per-site attribution for billing, quota management, and traffic analysis.
-
-#### Per-Site Bandwidth Tracking
-
-SynVoid tracks bandwidth at multiple levels for comprehensive traffic accounting:
-
-| Category | Direction | Description |
-|----------|-----------|-------------|
-| **Client Ingress** | → WAF | Raw requests from end users |
-| **Response Egress** | WAF → | Block pages, challenges, errors |
-| **Direct Proxy** | WAF ↔ Origin | When connecting directly to origin |
-| **Mesh Proxy** | WAF ↔ Peer | When routing through WAF mesh |
-
-## Built-in Application Support
-
-SynVoid handles common web serving scenarios without external dependencies:
+Multiple Supervisor nodes participating in a Raft consensus cluster.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Integrated Application Support                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  Static Files   │  │    PHP-FPM      │  │    FastCGI      │
-│                 │  │                 │  │                 │
-│ • Directory     │  │ • Socket/TCP    │  │ • PHP-FPM       │
-│   Listing       │  │ • Process Mgmt  │  │ • Python        │
-│ • MIME Types    │  │ • Pool Config   │  │ • Custom        │
-│ • Caching       │  │ • Security      │  │   Protocols     │
-│ • Themes       │  │   Settings     │  │                 │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│    Granian      │  │   WASM          │  │   QUIC/HTTP3   │
-│    (Python)     │  │  (Serverless)   │  │                 │
-│                 │  │                 │  │ • HTTP/3       │
-│ • ASGI/WSGI     │  │ • wasmtime      │  │ • 0-RTT        │
-│ • Django        │  │ • Instance Pool │  │ • Connection   │
-│ • Flask         │  │ • Resource      │  │   Migration    │
-│ • FastAPI       │  │   Limits        │  │                 │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-```
-
-### How Application Handlers Work
-
-**Static Files Handler:**
-```
-Request ──► Path Normalization ──► Security Check ──► File Lookup
-                                                      │
-                                                      ▼
-                                             Range Request Support
-                                                      │
-                                                      ▼
-                                             MIME Type Mapping
-                                                      │
-                                                      ▼
-                                             gzip/brotli Compression
-                                                      │
-                                                      ▼
-                                             Response to Client
-```
-
-**Granian Handler (Python):**
-```
-Request ──► Unix Socket Connect ──► HTTP/1.1 to Granian ──► ASGI/WSGI Call
-                                                                  │
-                                                                  ▼
-                                                         Application Response
-                                                                  │
-                                                                  ▼
-                                                         Response to Client
-```
-
-## Deployment Modes
-
-### 1. Standalone Mode
-
-Simple deployment for small to medium websites:
-
-```
-┌─────────────────────────────────────────┐
-│           Standalone Setup               │
-└─────────────────────────────────────────┘
-
-Internet ──► SynVoid ──► PHP-FPM / Granian
-               │
-               └──► Static Files
-```
-
-### 2. High Availability Cluster
-
-Production-grade deployment with failover:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   High Availability Setup                    │
-└─────────────────────────────────────────────────────────────┘
-
            ┌─────────────────┐
-           │   Load Balancer │ (cloud provider or HAProxy)
+           │   Load Balancer │
            └────────┬────────┘
                     │
        ┌────────────┼────────────┐
        │            │            │
        ▼            ▼            ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│ SynVoid │ │ SynVoid │ │ SynVoid │
-│ Overseer│ │ Overseer│ │ Overseer│
-└────┬────┘ └────┬────┘ └────┬────┘
-     │           │           │
-     ▼           ▼           ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│ Master  │ │ Master  │ │ Master  │
-└────┬────┘ └────┬────┘ └────┬────┘
-     │           │           │
-     ▼           ▼           ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│ App 1   │ │ App 2   │ │ App 3   │
-│ (PHP)   │ │(Granian)│ │(Static) │
-└─────────┘ └─────────┘ └─────────┘
-```
-
-### 3. WAF Mesh DDoS Protection
-
-Distributed WAF mesh for large-scale attacks:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              WAF Mesh DDoS Mitigation                       │
-└─────────────────────────────────────────────────────────────┘
-
-                     ┌─────────────────┐
-         ┌───────────►│  Scrubbing DC  │◄───────────┐
-         │           │ (Mesh Cluster)  │             │
-         │           └────────┬────────┘             │
-         │                    │                      │
-         │      ┌─────────────┼─────────────┐       │
-         │      │             │             │       │
-         │      ▼             ▼             ▼       │
-         │  ┌──────┐     ┌──────┐     ┌──────┐      │
-         │  │ Edge │◄───►│ Edge │◄───►│ Edge │      │
-         │  │  1   │     │  2   │     │  3   │      │
-         │  └──────┘     └──────┘     └──────┘      │
-         │      │             │             │        │
-         └──────┼─────────────┼─────────────┼────────┘
-                │             │             │
-                ▼             ▼             ▼
-           ┌─────────┐  ┌─────────┐  ┌─────────┐
-           │  Origin │  │  Origin │  │  Origin │
-           │ Server  │  │ Server  │  │ Server  │
-           └─────────┘  └─────────┘  └─────────┘
-```
-
-## Configuration Data Flow
-
-```
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   main.toml  │      │  sites/*.toml│      │   Runtime   │
-│  (Global)    │      │  (Per-site)  │      │   (API)     │
-└──────┬───────┘      └──────┬───────┘      └──────┬───────┘
-       │                     │                     │
-       │  ┌──────────────────┼─────────────────────┘
-       ▼  ▼
-┌─────────────────────────────────────┐
-│        ConfigManager                 │
-│  • Loads and validates configs      │
-│  • Handles hot reload               │
-│  • Notifies components of changes   │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│     Runtime Configuration           │
-│  • SiteConfig (per-site routing)    │
-│  • MainConfig (global settings)    │
-│  • Applied to all components        │
-└─────────────────────────────────────┘
+┌───────────┐ ┌───────────┐ ┌───────────┐
+│Supervisor │ │Supervisor │ │Supervisor │
+└─────┬─────┘ └─────┬─────┘ └─────┬─────┘
+      │             │             │
+      ▼             ▼             ▼
+   Workers       Workers       Workers
 ```
 
 ## Quick Start
 
 ```bash
-# Start SynVoid with default configuration
+# Start SynVoid (Supervisor + Workers)
 ./synvoid
 
-# Enable HTTP/3 (QUIC)
-./synvoid --config http3-enabled.toml
-
-# Start in HA cluster mode
-./synvoid --overseer --master --workers 4
+# Reload configuration via gRPC
+./synvoid reload
 
 # Connect to WAF mesh
-./synvoid --mesh --role edge --seeds global-node:5001
+./synvoid --mesh --seeds global-node:5001
 ```
 
 ## Next Steps
 
 - [Getting Started](./GETTING_STARTED.md) - Get started with SynVoid
+- [Process Management](./PROCESS_MANAGEMENT.md) - Supervisor & Worker details
 - [Configuration Reference](./CONFIGURATION.md) - Full configuration options
 - [Attack Detection](./ATTACK_DETECTION.md) - WAF detection rules
 - [WAF Mesh](./WAF_MESH.md) - Mesh networking
-- [Deployment Examples](./DEPLOYMENT.md) - Production setups

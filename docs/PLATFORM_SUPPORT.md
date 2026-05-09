@@ -1,252 +1,90 @@
 # Platform Support
 
-SynVoid is designed to run on multiple platforms with consistent functionality where possible. This document outlines the support matrix and platform-specific considerations.
+SynVoid is designed for consistent performance across modern operating systems, leveraging platform-specific primitives for its Shared-Nothing Architecture.
 
 ## Support Matrix
 
 | Platform | Support Level | CI Tested | Notes |
 |----------|--------------|-----------|-------|
-| Linux (glibc) | Production | Yes | Primary target, full feature support |
-| Alpine Linux (musl) | Production | Yes | Uses musl libc, all features supported |
-| macOS (Intel & Apple Silicon) | Production | Yes | Full feature support |
+| Linux (glibc) | Production | Yes | Primary target, full `SO_REUSEPORT` & core pinning |
+| Alpine Linux (musl) | Production | Yes | Full feature support |
+| macOS | Production | Yes | Full `SO_REUSEPORT` support |
+| Windows (10+) | Production | Yes | `SO_REUSEPORT` support via modern Windows API |
 | FreeBSD | Production | Yes | Full feature support |
-| OpenBSD | Best Effort | No | Compiles, community testing needed |
-| NetBSD | Best Effort | No | Compiles, community testing needed |
-| Windows | Production* | Yes | Named pipes for IPC, port-swap for upgrades |
-| Windows Server | Production* | Yes | Windows Service support recommended |
-
-*Windows has feature limitations due to platform differences (see below).
 
 ## Feature Availability by Platform
 
-### Core Features
+### Shared-Nothing Architecture
 
 | Feature | Linux | macOS | FreeBSD | Windows |
 |---------|-------|-------|---------|---------|
-| HTTP/HTTPS Proxy | ✅ | ✅ | ✅ | ✅ |
-| WAF Engine | ✅ | ✅ | ✅ | ✅ |
-| Rate Limiting | ✅ | ✅ | ✅ | ✅ |
-| Bot Detection | ✅ | ✅ | ✅ | ✅ |
-| GeoIP | ✅ | ✅ | ✅ | ✅ |
-| TLS Termination | ✅ | ✅ | ✅ | ✅ |
-| HTTP/3 (QUIC) | ✅ | ✅ | ✅ | ✅ |
-| WebSocket Proxy | ✅ | ✅ | ✅ | ✅ |
-| FastCGI | ✅ | ✅ | ✅ | ✅ |
+| `SO_REUSEPORT` | ✅ | ✅ | ✅ | ✅ |
+| CPU Core Pinning | ✅ (native) | ❌ | ✅ | ❌ |
+| Shared-Nothing Mode| ✅ | ✅ | ✅ | ✅ |
 
-### Process Management
+### Control Plane (gRPC)
 
 | Feature | Linux | macOS | FreeBSD | Windows |
 |---------|-------|-------|---------|---------|
-| Multi-worker | ✅ | ✅ | ✅ | ✅ |
-| Hot Reload | ✅ | ✅ | ✅ | ✅ |
-| Graceful Shutdown | ✅ | ✅ | ✅ | ✅ |
-| Daemonization | ✅ | ✅ | ✅ | ❌ (use Service) |
-| Unix Signals | ✅ | ✅ | ✅ | ❌ (use IPC) |
-
-### Zero-Downtime Upgrades
-
-| Mode | Linux | macOS | FreeBSD | Windows |
-|------|-------|-------|---------|---------|
-| Socket FD Passing | ✅ | ✅ | ✅ | ❌ |
-| SO_REUSEPORT | ✅ | ✅ | ✅ | ❌ |
-| Port Swap | ✅ | ✅ | ✅ | ✅ |
-| Load Balancer | ✅ | ✅ | ✅ | ✅ |
+| gRPC API (TLS) | ✅ | ✅ | ✅ | ✅ |
+| Raft Consensus | ✅ | ✅ | ✅ | ✅ |
+| Mesh (QUIC) | ✅ | ✅ | ✅ | ✅ |
 
 ## Platform-Specific Details
 
-### Linux (glibc)
+### Linux (glibc/musl)
 
-Standard Linux distributions (Ubuntu, Debian, CentOS, RHEL, Fedora) using glibc.
-
-**Default paths:**
-- Data: `/var/lib/synvoid`
-- Config: `/etc/synvoid`
-- Logs: `/var/log/synvoid`
-- Runtime: `/run/synvoid`
+Linux is the premier platform for SynVoid, offering the most granular performance controls.
 
 **Features:**
-- Full `SO_REUSEPORT` support for zero-downtime upgrades
-- Socket FD passing via SCM_RIGHTS
-- All signal handling (SIGTERM, SIGHUP, SIGUSR1, SIGUSR2)
-- TCP_QUICKACK for improved latency
+- **Deterministic Core Pinning:** Uses `sched_setaffinity` to bind workers to physical CPU cores, eliminating jitter.
+- **Advanced Sandboxing:** Workers are strictly confined using Landlock or Seccomp.
+- **Efficient I/O:** Leverages `io_uring` (via Tokio) for high-throughput packet processing.
 
-### Alpine Linux (musl)
+### Windows (10, 11, Server 2019+)
 
-Alpine Linux uses musl libc instead of glibc. All features are supported.
+Modern Windows versions support `SO_REUSEPORT` semantics (via `SO_REUSEADDR` behavior changes and specific socket flags), enabling SynVoid's shared-nothing model.
 
-**Build:**
-```bash
-# Native build on Alpine
-apk add cargo
-cargo build --release
+**Differences:**
+- **IPC:** Uses Named Pipes (`\\.\pipe\synvoid-*`) instead of Unix Domain Sockets.
+- **Service Management:** Recommended to run as a Windows Service (`sc.exe`).
+- **CPU Pinning:** Currently uses the OS scheduler for worker distribution rather than strict affinity.
 
-# Cross-compile from other Linux
-rustup target add x86_64-unknown-linux-musl
-cargo build --target x86_64-unknown-linux-musl --release
-```
+### macOS & BSD
 
-**Docker:**
-```dockerfile
-FROM alpine:latest
-RUN apk add --no-cache synvoid
-# or build from source
-```
-
-### macOS
-
-Full support on both Intel (x86_64) and Apple Silicon (aarch64).
-
-**Default paths:**
-- Data: `~/.local/share/synvoid`
-- Config: `~/.config/synvoid`
-- Logs: `~/.local/log/synvoid`
-- Runtime: `$TMPDIR/synvoid-runtime`
+Full shared-nothing support using `kqueue` and `SO_REUSEPORT`.
 
 **Notes:**
-- Uses launchd for service management instead of systemd
-- File descriptors limits may need adjustment (`ulimit -n`)
+- **macOS:** `SO_REUSEPORT` is fully supported, allowing multiple workers to bind to the same port.
+- **FreeBSD:** Leverages native `SO_REUSEPORT_LB` for kernel-level distribution.
 
-### FreeBSD
+## Zero-Downtime Upgrades
 
-Full support with native FreeBSD paths.
-
-**Default paths:**
-- Data: `/var/db/synvoid`
-- Config: `/usr/local/etc/synvoid`
-- Logs: `/var/log/synvoid`
-- Runtime: `/var/run/synvoid`
-
-**Installation:**
-```bash
-pkg install rust
-cargo build --release
-```
-
-**Service management:**
-Create `/usr/local/etc/rc.d/synvoid` for rc.d integration.
-
-### Windows
-
-Windows support uses named pipes instead of Unix sockets for IPC.
-
-**Default paths:**
-- Data: `%PROGRAMDATA%\synvoid`
-- Config: `%PROGRAMDATA%\synvoid\config`
-- Logs: `%PROGRAMDATA%\synvoid\logs`
-- Named Pipes: `\\.\pipe\synvoid-*`
-
-**IPC Differences:**
-- Master IPC: `\\.\pipe\synvoid-master`
-- Worker IPC: `\\.\pipe\synvoid-worker-*`
-- Commands: `\\.\pipe\synvoid-commands`
-
-**Upgrade Mode:**
-Windows uses "port swap" mode for upgrades:
-1. New master starts on temporary port (base_port + offset)
-2. Old master drains connections
-3. External load balancer switches to new port
-4. Old master exits
-
-For true zero-downtime without a load balancer, Windows socket duplication (WSADuplicateSocket) is available but requires parent-child process relationship.
-
-**Windows Service:**
-```powershell
-# Register as Windows Service (recommended for production)
-sc.exe create SynVoid binPath="C:\Program Files\SynVoid\synvoid.exe --service"
-sc.exe start SynVoid
-```
+Across all platforms, SynVoid achieves zero-downtime upgrades via:
+1. **New Supervisor Start:** The new Supervisor takes over the gRPC management port.
+2. **Worker Rotation:** The new Supervisor spawns new workers that bind to the service ports via `SO_REUSEPORT`.
+3. **Graceful Drain:** Old workers are signaled via IPC to finish processing and exit.
 
 ## Feature Flags
 
-Control compile-time features via Cargo features:
-
-```toml
-[dependencies]
-synvoid = { version = "0.1", features = ["socket-handoff", "daemonize"] }
-```
-
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `socket-handoff` | Yes | Socket FD passing for zero-downtime upgrades (Unix only) |
-| `daemonize` | No | Unix daemonization support |
-
-## Building for Specific Platforms
-
-### Cross-Compilation
-
-```bash
-# Linux musl (Alpine)
-rustup target add x86_64-unknown-linux-musl
-cargo build --target x86_64-unknown-linux-musl --release
-
-# Windows from Linux
-rustup target add x86_64-pc-windows-gnu
-cargo build --target x86_64-pc-windows-gnu --release
-
-# FreeBSD from Linux (requires cross toolchain)
-cargo install cross
-cross build --target x86_64-unknown-freebsd --release
-```
-
-### Docker Multi-Platform
-
-```dockerfile
-# Build for multiple platforms
-FROM --platform=$TARGETPLATFORM rust:latest AS builder
-RUN cargo build --release
-
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim
-COPY --from=builder /app/target/release/synvoid /usr/local/bin/
-```
+| `landlock` | Yes | Linux-specific sandboxing |
+| `grpc-tls` | Yes | Mandatory TLS for the gRPC control plane |
 
 ## Performance Considerations
 
 ### Linux
-- Use `SO_REUSEPORT` for best multi-core performance
-- Enable `TCP_QUICKACK` (automatic on Linux)
-- Consider increasing file descriptor limits
-
-### macOS
-- Lower default file descriptor limits
-- Consider `kqueue` vs `epoll` differences (handled by tokio)
+- Ensure `worker_processes` matches physical cores.
+- Check `dmesg` to verify Landlock and Core Pinning are active.
 
 ### Windows
-- Named pipes have higher overhead than Unix sockets
-- Consider increasing named pipe buffer sizes
-- Use I/O completion ports (handled by tokio)
-
-### BSD
-- Similar performance to Linux
-- `kqueue` provides excellent scalability
+- Use Windows Server 2019 or later for optimal socket performance.
+- Named pipe latency is slightly higher than Unix sockets; adjust IPC timeouts if needed.
 
 ## Testing
 
-Each platform is tested in CI:
-
-| Platform | Test Type |
-|----------|-----------|
-| Linux (glibc) | Full test suite |
-| Linux (musl) | Build + basic tests |
-| macOS | Full test suite |
-| Windows | Full test suite |
-| FreeBSD | Build + basic tests (via VM) |
-
-## Reporting Issues
-
-When reporting platform-specific issues, please include:
-
-1. Platform and version (e.g., `Ubuntu 22.04`, `Alpine 3.19`, `FreeBSD 14.0`)
-2. Rust version (`rustc --version`)
-3. Target triple (`rustup show`)
-4. Build output with `RUST_LOG=debug`
-5. Any relevant system logs
-
-## Contributing Platform Support
-
-To add support for a new platform:
-
-1. Add target to `Cargo.toml` if needed
-2. Create platform-specific module in `src/platform/`
-3. Add CI job in `.github/workflows/ci.yml`
-4. Update this documentation
-5. Test thoroughly on actual hardware or VM
+Each platform is verified in CI:
+- **Unit Tests:** All core logic.
+- **Integration Tests:** Supervisor-Worker IPC and gRPC command handling.
+- **Load Tests:** Verified shared-nothing throughput on Linux and macOS.

@@ -6,197 +6,87 @@ Technical deep-dive into SynVoid's design decisions, deployment patterns, and in
 
 ### Design Philosophy
 
-1. **Simplicity First** - Handle common web serving scenarios without extra infrastructure
-2. **Defense in Depth** - Multiple WAF layers working together
-3. **Operational Ease** - Single binary deployment, minimal dependencies
-4. **Performance** - Async core with nginx-inspired concurrency
+1. **Shared-Nothing Performance** - Eliminate coordination bottlenecks in the data plane.
+2. **Supervisor-Worker Isolation** - Centralize the control plane while keeping the data plane lightweight.
+3. **gRPC Control Plane** - Robust, typed management API for automation and remote control.
+4. **Core Affinity** - Maximize cache efficiency via deterministic CPU pinning.
 
 ## Concurrency Model
 
-### Tokio + Hyper Foundation
+### Shared-Nothing Data Plane
 
-SynVoid's reverse proxy uses Rust's async ecosystem for maximum performance:
+SynVoid utilizes a shared-nothing concurrency model where each worker process operates independently:
 
 ```rust
-// Simplified connection handling
-async fn handle_connection(conn: TcpStream) {
-    let mut conn = Http::new().serve_connection(conn, service);
+// Shared-nothing worker initialization
+fn spawn_worker(core_id: usize) {
+    // Pin to CPU core
+    sched_setaffinity(0, core_id);
     
-    // HTTP/1.1 keep-alive handled automatically
-    while let Some(request) = conn.next_request().await {
-        let response = process_waf_pipeline(request).await;
-        conn.send_response(response).await;
-    }
+    // Bind with SO_REUSEPORT
+    let listener = TcpListener::bind_with_reuse_port(addr);
+    
+    // Independent event loop
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move {
+            loop {
+                let (stream, _) = listener.accept().await?;
+                tokio::spawn(handle_connection(stream));
+            }
+        });
 }
 ```
 
 **Benefits:**
-- Single thread can handle thousands of concurrent connections
-- No thread-per-connection overhead
-- Efficient memory usage
+- **Zero Lock Contention:** Workers don't share mutexes or state for request handling.
+- **Linear Scalability:** Throughput scales predictably with the number of CPU cores.
+- **Kernel Load Balancing:** `SO_REUSEPORT` allows the OS kernel to distribute traffic with minimal overhead.
 
 ### Worker Pool
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    SynVoid Worker Pool                      │
+│                    SynVoid Shared-Nothing Pool              │
 └─────────────────────────────────────────────────────────────┘
 
-                    ┌──────────────┐
-                    │   Main Task  │
-                    │ (Event Loop) │
-                    └──────┬───────┘
-                           │
-           ┌───────────────┼───────────────┐
-           │               │               │
-           ▼               ▼               ▼
-     ┌──────────┐   ┌──────────┐   ┌──────────┐
-     │ Worker 1 │   │ Worker 2 │   │ Worker N │
-     │──────────│   │──────────│   │──────────│
-     │ Connection│   │ Connection│   │ Connection│
-     │ Handler   │   │ Handler   │   │ Handler   │
-     └──────────┘   └──────────┘   └──────────┘
-           │               │               │
-           └───────────────┼───────────────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │  Upstream    │
-                    │  Connection  │
-                    │    Pool      │
-                    └──────────────┘
+                    ┌─────────────────┐
+                    │    Supervisor   │
+                    │ (Control Plane) │
+                    └───────┬─────────┘
+                            │ IPC (Config/Threats)
+           ┌────────────────┼───────────────┐
+           │                │               │
+           ▼                ▼               ▼
+     ┌───────────┐    ┌───────────┐    ┌───────────┐
+     │ Worker 1  │    │ Worker 2  │    │ Worker N  │
+     │ (Core 0)  │    │ (Core 1)  │    │ (Core N)  │
+     │───────────│    │───────────│    │───────────│
+     │SO_REUSE-  │    │SO_REUSE-  │    │SO_REUSE-  │
+     │PORT       │    │PORT       │    │PORT       │
+     └───────────┘    └───────────┘    └───────────┘
 ```
 
-## WAF Pipeline Deep Dive
+## Control Plane Architecture
 
-### Layer 1: Connection Handling
+### gRPC API
 
-```rust
-// SYN Flood Protection
-struct SynFloodGuard {
-    per_ip: HashMap<IpAddr, AtomicU32>,
-    global: AtomicU32,
-}
+SynVoid's management interface is a formal gRPC service defined in `proto/control.proto`. This provides:
+- **Type Safety:** Typed request/response structures.
+- **Performance:** Efficient binary serialization via Protobuf.
+- **Extensibility:** Easy integration with external monitoring and orchestration tools.
 
-// Connection Rate Limiting
-struct ConnectionRateLimiter {
-    tokens: TokenBucket,
-    max_connections_per_ip: u32,
-}
-```
+### Configuration Unification
 
-### Layer 2: Protocol Validation
-
-- HTTP method whitelist/blacklist
-- Header length limits
-- Content-Type validation
-- Protocol anomaly detection
-
-### Layer 3: Request Inspection
-
-| Attack Type | Detection Method | Library |
-|-------------|------------------|---------|
-| SQL Injection | Pattern matching | libinjection |
-| XSS | Pattern matching | libinjection |
-| Path Traversal | Path normalization + patterns | Aho-Corasick |
-| RFI | URL validation + patterns | Aho-Corasick |
-| SSRF | Domain allowlist | Custom |
-
-### Layer 4: Bot Mitigation
-
-```toml
-[bot_detection]
-# Block AI training crawlers
-block_ai_crawlers = true
-
-# CSS honeypot (invisible link trap)
-enable_css_honeypot = true
-
-# JavaScript challenge for suspicious clients
-enable_js_challenge = true
-js_difficulty = 3  # 1-5
-
-# Known bots allowlist
-known_bots_allow = [
-    "Googlebot",
-    "Bingbot",
-    "Slackbot",
-]
-
-# Block known AI scrapers
-ai_crawlers_block = [
-    "GPTBot",
-    "ClaudeBot",
-    "PerplexityBot",
-]
-```
-
-### Layer 5: Response Filtering
-
-- Sensitive data redaction
-- Server header sanitization
-- Error page templating
-
-## Application Server Integration
-
-### PHP-FPM
-
-```toml
-[site.fastcgi]
-enabled = true
-socket = "/var/run/php/php-fpm.sock"
-
-[site.fastcgi.params]
-SCRIPT_FILENAME = "$document_root$fastcgi_script_name"
-```
-
-Or TCP:
-
-```toml
-[site.fastcgi]
-enabled = true
-socket = "127.0.0.1:9000"
-```
-
-### Granian (Python WSGI/ASGI/RSGI)
-
-Granian runs as a child process supervised by SynVoid:
-
-```toml
-[site.granian]
-enabled = true
-interface = "asgi"  # or "wsgi", "rsgi"
-bind = "127.0.0.1:5000"
-workers = 4
-
-[site.granian.app]
-module = "myapp:app"
-python_path = "/opt/myapp"
-```
-
-**Advantages:**
-- No separate process supervisor needed
-- Automatic restart on crash
-- Minimal memory (shares worker memory space)
-- Request/response through SynVoid directly
-
-### CGI (Legacy)
-
-```toml
-[site.cgi]
-enabled = true
-root = "/var/cgi"
- interpreters = {
-     ".pl" = "/usr/bin/perl",
-     ".sh" = "/bin/bash",
- }
-```
+Configuration management has been moved to the `synvoid-config` crate, providing a single source of truth for both Supervisor and Workers.
 
 ## High Availability Design
 
-### Overseer Election
+### Supervisor Election
 
-Uses Raft consensus algorithm:
+Uses Raft consensus algorithm among Supervisor nodes:
 
 ```mermaid
 stateDiagram-v2
@@ -209,11 +99,10 @@ stateDiagram-v2
 
 ### Failover Process
 
-1. Overseer detects master node failure
-2. Traffic redirected to healthy masters
-3. Workers reconnected to surviving masters
-4. Failed master removed from mesh
-5. Automatic rejoin when recovered
+1. Supervisor cluster detects leader failure.
+2. New leader elected via Raft.
+3. Mesh routes updated to reflect the new control plane hub.
+4. Workers continue handling traffic uninterrupted thanks to their isolated nature.
 
 ### Configuration Sync
 
@@ -222,25 +111,20 @@ stateDiagram-v2
 │                  Configuration Distribution                 │
 └─────────────────────────────────────────────────────────────┘
 
-   Admin changes config
+   Admin changes config (gRPC)
           │
           ▼
    ┌──────────────┐
-   │   Overseer  │
-   │   (Leader)  │
+   │  Supervisor  │
+   │   (Leader)   │
    └──────┬───────┘
           │
-          │ Atomic broadcast
+          │ 1. Raft Broadcast to Peers
+          │ 2. Local IPC to Workers
           ▼
    ┌──────────────┐     ┌──────────────┐
-   │   Master    │     │   Master     │
-   │     A       │     │     B        │
-   └──────────────┘     └──────────────┘
-          │                    │
-          ▼                    ▼
-   ┌──────────────┐     ┌──────────────┐
-   │   Workers    │     │   Workers    │
-   │   apply      │     │   apply      │
+   │    Worker    │     │    Worker    │
+   │      A       │     │      B       │
    └──────────────┘     └──────────────┘
 ```
 
@@ -261,87 +145,36 @@ net.ipv4.tcp_fin_timeout = 15
 
 ```toml
 [server]
-worker_processes = "auto"  # Match CPU cores
+worker_processes = "auto"  # Pins workers to available cores
 worker_connections = 10240
-multi_accept = true
-```
-
-### Connection Pooling
-
-```toml
-[upstream]
-keepalive = 100
-keepalive_timeout = 60
 ```
 
 ## Monitoring
 
 ### Prometheus Metrics
 
+Metrics are aggregated by the Supervisor from all workers:
+
 ```bash
 # WAF metrics
 synvoid_waf_blocked_total
-synvoid_waf_allowed_total
 synvoid_attack_sqli_total
-synvoid_attack_xss_total
 
-# Connection metrics  
-synvoid_connections_active
-synvoid_connections_accepted
-synvoid_connections_closed
-
-# Upstream metrics
-synvoid_upstream_response_time
-synvoid_upstream_errors
-```
-
-### Health Checks
-
-```toml
-[health_check]
-enabled = true
-path = "/health"
-interval = "10s"
-unhealthy_threshold = 3
+# Shared-Nothing Worker Metrics
+synvoid_worker_cpu_usage{core="0"}
+synvoid_worker_connections_active{core="0"}
 ```
 
 ## Security Best Practices
 
 ### Production Checklist
 
-- [ ] Generate secure admin token
-- [ ] Enable TLS/HTTP3
-- [ ] Configure rate limiting
-- [ ] Set appropriate paranoia level
-- [ ] Enable bot detection
-- [ ] Configure log rotation
-- [ ] Set up Prometheus monitoring
-- [ ] Restrict admin API access
-- [ ] Use firewall rules
-- [ ] Regular rule updates
-
-### Paranoia Levels
-
-| Level | Use Case | Detection |
-|-------|----------|-----------|
-| 1 | Development | Basic patterns only |
-| 2 | General Production | Balanced (recommended) |
-| 3 | High Security | Aggressive, may cause false positives |
+- [ ] Enable TLS for gRPC control plane.
+- [ ] Configure mTLS for Supervisor-to-Supervisor communication.
+- [ ] Use `SO_REUSEPORT` for kernel-level load balancing.
+- [ ] Enable Landlock sandboxing on Linux for workers.
 
 ## Troubleshooting
-
-### Connection Issues
-
-```bash
-# Check connection states
-ss -s
-
-# Check SYN backlog
-netstat -s | grep SYN
-
-# Check file descriptors
-lsof -p $(pgrep synvoid) | wc -l
-```
 
 ### Debug Mode
 
@@ -353,50 +186,6 @@ RUST_LOG=debug ./synvoid
 
 | Problem | Solution |
 |---------|----------|
-| High memory usage | Reduce `max_ips` in rate limiting config |
-| Slow responses | Check upstream health, increase workers |
-| Connection drops | Increase `worker_connections` |
-| Blocks legitimate traffic | Lower paranoia level, check custom rules |
-
-## Integration Examples
-
-### Docker
-
-```yaml
-version: '3.8'
-services:
-  synvoid:
-    image: synvoid:latest
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"  # HTTP/3
-    volumes:
-      - ./config:/etc/synvoid
-      - ./sites:/etc/synvoid/sites
-    environment:
-      - RUST_LOG=info
-```
-
-### Kubernetes
-
-```yaml
-apiDeployment:
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: synvoid
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: synvoid
-        image: synvoid:latest
-        ports:
-        - containerPort: 80
-        - containerPort: 443
-        env:
-        - name: RUST_LOG
-          value: "info"
-```
+| Unbalanced worker load | Check `SO_REUSEPORT` kernel support and scheduler policy. |
+| gRPC connection refused | Verify TLS certificates and control plane port. |
+| High jitter | Ensure `worker_processes` matches physical cores and pinning is active. |

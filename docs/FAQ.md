@@ -101,7 +101,7 @@ port = 443
 
 ### When should I use WAF Mesh vs clustering?
 
-- **Master-Worker Clustering**: Use when you need to scale horizontally within one location
+- **Supervisor-Worker Clustering**: Use when you need to scale horizontally within one location
 - **WAF Mesh**: Use for geographic distribution, threat intelligence sharing, or building a private CDN
 
 See [WAF_MESH.md](./WAF_MESH.md#when-to-use-mesh-vs-clustering) for detailed guidance.

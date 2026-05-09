@@ -1,136 +1,74 @@
 # Performance & Latency Guide
 
-This guide covers performance tuning and latency optimization for SynVoid deployments.
+This guide covers performance tuning and latency optimization for SynVoid's Shared-Nothing Architecture.
 
 ## Architecture Overview
 
-SynVoid uses a multi-process architecture:
-- **Overseer**: Optional parent process for orchestration
-- **Master**: Administrative API, process management, IPC hub
-- **Workers**: Handle HTTP requests, apply WAF rules
+SynVoid uses a two-tier **Shared-Nothing Architecture** to eliminate coordination overhead and achieve linear scalability:
+- **Supervisor**: Centralized Control Plane. Handles heavy coordination (Raft, Mesh, gRPC) away from the data plane.
+- **Workers**: Lightweight Data Plane engines. Each worker is isolated, core-pinned, and handles requests independently.
 
-## Latency Considerations
+## Zero-Jitter Shared-Nothing Data Plane
 
-### IPC Communication
+The transition to a shared-nothing model is the cornerstone of SynVoid's performance:
 
-The master communicates with workers via Unix domain sockets (Unix) or named pipes (Windows). By default, SynVoid uses exponential backoff for IPC polling:
+### 1. Kernel-Level Load Balancing (SO_REUSEPORT)
+Workers use `SO_REUSEPORT` to allow the OS kernel to distribute incoming connections. This eliminates the "thundering herd" problem and removes the need for a user-space master to distribute file descriptors.
 
-- Initial poll interval: 1ms
-- Maximum poll interval: 50ms
-- This approach balances responsiveness with CPU efficiency
+### 2. CPU Core Affinity
+On Linux, workers are automatically pinned to specific CPU cores via `sched_setaffinity`. This ensures:
+- **Cache Locality:** The worker's memory and CPU caches stay hot.
+- **Zero Context Switching:** Eliminates jitter caused by the OS scheduler moving processes between cores.
 
-### Worker Configuration
-
-```toml
-[defaults.worker_pool]
-workers = 4           # Number of worker processes
-worker_port_base = 9000
-auto_scale = true     # Automatically adjust workers based on load
-```
-
-### HTTP Settings
-
-```toml
-[http]
-header_read_timeout_secs = 10
-keep_alive_timeout_secs = 60
-max_headers = 128
-max_request_size = 1048576  # 1MB - adjust based on use case
-```
-
-### Connection Handling
-
-- **Keep-alive**: Enabled by default (60s). Adjust based on client behavior
-- **Pipeline limit**: Default 32 concurrent requests per connection
+### 3. Independent Event Loops
+Each worker runs a dedicated, single-threaded Tokio runtime. Since there is no shared state between workers, there is zero lock contention in the request-handling hot path.
 
 ## Performance Tuning
 
-### 1. Worker Count
+### 1. Worker Configuration
 
-Rule of thumb: 2-4 workers per CPU core for I/O-bound workloads.
-
-```toml
-[defaults.worker_pool]
-workers = 8  # For 4-core machine with I/O workload
-```
-
-### 2. Rate Limiting Mode
+Match the number of workers to your physical CPU cores for optimal performance.
 
 ```toml
-[defaults.ratelimit]
-mode = "shared"  # "shared" or "isolated"
+[server]
+worker_processes = "auto" # Automatically pins one worker per core
 ```
 
-- **shared**: Global rate limit state across all workers (more accurate, slight overhead)
-- **isolated**: Per-worker rate limits (lower overhead, slightly less accurate)
+### 2. gRPC Control Plane Efficiency
+The Supervisor handles all administrative tasks (status, reloads, mesh sync) via gRPC. By relegating these tasks to a separate process, the Workers can dedicate 100% of their CPU time to request inspection and proxying.
 
-### 3. Threat Level Scaling
+### 3. IPC Communication
+The Supervisor pushes configuration updates and threat intelligence to workers via a high-speed binary IPC protocol. Updates are applied by workers using lock-free `arc-swap` mechanisms, ensuring that configuration reloads do not stall traffic.
 
-Enable auto-scaling for threat levels to reduce load during attacks:
+### 4. Rate Limiting Efficiency
+In shared-nothing mode, rate limiting can be configured for maximum performance:
 
 ```toml
-[threat_level]
-auto_scale = true
-scale_up_attacks_per_min = 50
-scale_down_attacks_per_min = 10
+[ratelimit]
+mode = "isolated" # Per-worker limits (zero IPC overhead)
+# OR
+mode = "distributed" # Supervisor-coordinated (consistent across nodes)
 ```
 
-### 4. Blocking Optimization
-
-For high-throughput deployments, consider:
-
-- **Enable IP feeds sparingly**: Each feed adds lookup overhead
-- **Tune block duration**: Longer bans reduce repeated lookups
-- **Use regex carefully**: Complex regex patterns in blocking rules increase latency
-
-### 5. Challenge Settings
-
-PoW challenges are CPU-intensive. Adjust difficulty:
-
-```toml
-[defaults.pow_challenge]
-difficulty = 6    # Lower = easier, Higher = more CPU work
-timeout_secs = 60
-prefer_wasm = true  # Use WebAssembly for PoW (faster)
-```
-
-## Monitoring
+## Monitoring for Performance
 
 Key metrics to watch:
 
-- **Request latency**: `p95`, `p99` response times
-- **Worker CPU**: Should stay below 70% under normal load
-- **IPC queue depth**: High values indicate worker starvation
-- **Block rate**: Sudden spikes may indicate attack
-
-Access metrics at `/api/v1/metrics` on the admin port (default 8081).
-
-## Known Latency Pitfalls
-
-1. **Synchronous file I/O**: Static file serving uses async I/O; ensure disks are fast
-2. **Large request bodies**: Increase `max_request_size` only if needed
-3. **Complex WAF rules**: Each rule adds inspection overhead
-4. **Mesh networking**: Threat intel sharing adds network latency; tune sync intervals
+- **Worker Core Utilization:** Ensure even distribution across cores.
+- **p99 Latency:** Monitor for jitter that might indicate core contention.
+- **SO_REUSEPORT Distribution:** Verify the kernel is balancing connections fairly.
 
 ## Benchmarking
 
-Use tools like `wrk` or `oha` to benchmark:
+Use tools like `wrk` or `oha` to benchmark. Because of the shared-nothing design, you should see near-linear throughput increases as you add CPU cores.
 
 ```bash
-# Basic throughput test
-wrk -t4 -c100 -d30s http://localhost:8080/
-
-# With keep-alive
-wrk -t4 -c100 -d30s -H "Connection: keep-alive" http://localhost:8080/
+# Benchmark with 100 concurrent connections
+wrk -t4 -c100 -d30s http://localhost:80/
 ```
-
-Target latency should be <10ms for simple proxied requests under normal load.
-
 
 ## See Also
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System architecture overview
-- [PROCESS_MANAGEMENT.md](./PROCESS_MANAGEMENT.md) - Process and worker management
-- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) - Performance issues troubleshooting
-- [CONFIGURATION.md](./CONFIGURATION.md) - Configuration options for tuning
-
+- [PROCESS_MANAGEMENT.md](./PROCESS_MANAGEMENT.md) - Supervisor & Worker details
+- [DEVELOPER.md](./DEVELOPER.md) - Technical deep-dive

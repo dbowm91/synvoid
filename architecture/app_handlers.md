@@ -24,7 +24,7 @@ SynVoid handles dynamic PHP applications by interfacing directly with PHP-FPM (o
 
 SynVoid includes built-in support for Python ASGI/WSGI applications using the **Granian** application server.
 
-- **Process Management:** The Master process can spawn and manage Granian instances as child processes.
+- **Process Management:** The Supervisor process can spawn and manage Granian instances as child processes.
 - **Unix Socket IPC:** Communication between the Worker and Granian happens over local Unix sockets, bypassing the overhead of the network stack.
 - **Simplified Deployment:** Allows deploying Django, Flask, or FastAPI applications with a single configuration file.
 
