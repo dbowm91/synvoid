@@ -698,6 +698,23 @@ pub enum Message {
     SocketHandoffFailed {
         error: String,
     },
+    SocketHandoffActiveConnection {
+        connection_id: u64,
+        protocol: String,
+        client_addr: String,
+    },
+    WorkerConnectionHandoff {
+        id: WorkerId,
+        connection_id: u64,
+        protocol: String,
+        client_addr: String,
+        metadata: HashMap<String, String>,
+    },
+    WorkerConnectionAdopted {
+        id: WorkerId,
+        connection_id: u64,
+        success: bool,
+    },
     WindowsSocketInfo {
         protocol_info: Vec<u8>,
         port: u16,
@@ -1181,6 +1198,15 @@ impl Message {
                 check_path_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
+            Message::SocketHandoffActiveConnection { protocol, client_addr, .. } => {
+                check_str("protocol", protocol, MAX_STRING_LENGTH)?;
+                check_str("client_addr", client_addr, MAX_STRING_LENGTH)
+            }
+            Message::WorkerConnectionHandoff { protocol, client_addr, .. } => {
+                check_str("protocol", protocol, MAX_STRING_LENGTH)?;
+                check_str("client_addr", client_addr, MAX_STRING_LENGTH)
+            }
+            Message::WorkerConnectionAdopted { .. } => Ok(()),
             Message::PluginStateSync { plugin_name, .. } => check_str(
                 "PluginStateSync.plugin_name",
                 plugin_name,
@@ -1431,6 +1457,9 @@ impl Message {
             | Message::SocketHandoffReady { .. }
             | Message::SocketHandoffComplete { .. }
             | Message::SocketHandoffFailed { .. }
+            | Message::SocketHandoffActiveConnection { .. }
+            | Message::WorkerConnectionHandoff { .. }
+            | Message::WorkerConnectionAdopted { .. }
             | Message::WindowsSocketInfo { .. } => MessageCategory::SocketHandoff,
 
             Message::RestartWorkerRequest { .. } | Message::RestartWorkerResponse { .. } => {

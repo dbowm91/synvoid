@@ -51,6 +51,7 @@ pub struct WorkerStatusInfo {
 pub struct OverseerProcess {
     master_child: Option<Child>,
     upgraded_master_child: Option<Child>,
+    mesh_agent_child: Option<Child>,
     config_path: PathBuf,
     runtime_dir: PathBuf,
     running: RunningFlag,
@@ -86,6 +87,7 @@ impl OverseerProcess {
         Ok(Self {
             master_child: None,
             upgraded_master_child: None,
+            mesh_agent_child: None,
             config_path: config_path.clone(),
             runtime_dir,
             running: RunningFlag::new(),
@@ -240,6 +242,8 @@ impl OverseerProcess {
         self.config.ipc_read_timeout_ms = new_overseer_config.ipc_read_timeout_ms;
         self.config.ipc_write_timeout_ms = new_overseer_config.ipc_write_timeout_ms;
         self.config.master_startup_timeout_secs = new_overseer_config.master_startup_timeout_secs;
+        self.config.process_stop_timeout_secs = new_overseer_config.process_stop_timeout_secs;
+        self.config.restart_backoff_max_secs = new_overseer_config.restart_backoff_max_secs;
 
         tracing::info!("Overseer config reloaded successfully");
         Ok(())
@@ -272,6 +276,7 @@ impl OverseerProcess {
         child_opt: &mut Option<Child>,
         process_name: &str,
         graceful: bool,
+        timeout: Duration,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref mut child) = child_opt {
             let pid = child.id();
@@ -286,7 +291,7 @@ impl OverseerProcess {
                 }
 
                 let start = Instant::now();
-                while start.elapsed() < Duration::from_secs(10) {
+                while start.elapsed() < timeout {
                     match child.try_wait() {
                         Ok(Some(_)) => {
                             tracing::info!("{} process stopped gracefully", process_name);
@@ -312,13 +317,33 @@ impl OverseerProcess {
         &mut self,
         graceful: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Self::stop_child_process(&mut self.master_child, "master", graceful)
+        let timeout = Duration::from_secs(self.config.process_stop_timeout_secs);
+        Self::stop_child_process(&mut self.master_child, "master", graceful, timeout)
+    }
+
+    pub fn spawn_mesh_agent(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::MeshAgent);
+
+        let child = spawn_and_log(&config, "mesh-agent")?;
+        let pid = child.id();
+
+        self.mesh_agent_child = Some(child);
+        Ok(pid)
+    }
+
+    pub fn stop_mesh_agent(
+        &mut self,
+        graceful: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let timeout = Duration::from_secs(self.config.process_stop_timeout_secs);
+        Self::stop_child_process(&mut self.mesh_agent_child, "mesh-agent", graceful, timeout)
     }
 
     pub fn stop_all_isolated_processes(
         &mut self,
         graceful: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.stop_mesh_agent(graceful)?;
         self.stop_master(graceful)?;
         Ok(())
     }
@@ -337,6 +362,7 @@ impl OverseerProcess {
         }
 
         self.spawn_master()?;
+        self.spawn_mesh_agent()?;
 
         // Signal readiness to systemd if running under it
         if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
@@ -364,6 +390,22 @@ impl OverseerProcess {
                 }
             } else if !health.ipc_responsive {
                 tracing::warn!("Master process is alive but not responding to IPC");
+            }
+
+            // Monitor Mesh Agent
+            if let Some(ref mut child) = self.mesh_agent_child {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        tracing::warn!("Mesh Agent process exited with status: {}. Restarting...", status);
+                        let _ = self.spawn_mesh_agent();
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::error!("Failed to check mesh agent: {}", e);
+                    }
+                }
+            } else {
+                let _ = self.spawn_mesh_agent();
             }
 
             // Periodically write status file
@@ -510,7 +552,10 @@ impl OverseerProcess {
     fn calculate_restart_delay(&self) -> u64 {
         let base_delay = self.config.restart_delay_secs;
         let backoff_multiplier = 2_u64.pow(self.restart_count.min(6));
-        std::cmp::min(base_delay * backoff_multiplier, 300)
+        std::cmp::min(
+            base_delay * backoff_multiplier,
+            self.config.restart_backoff_max_secs,
+        )
     }
 
     #[cfg(unix)]
@@ -918,7 +963,7 @@ impl OverseerProcess {
         tracing::info!("New master spawned, validating health");
 
         let validation_start = Instant::now();
-        let validation_timeout = Duration::from_secs(10);
+        let validation_timeout = Duration::from_secs(self.config.process_stop_timeout_secs);
 
         loop {
             if let Some(ref mut child) = self.upgraded_master_child {
@@ -1097,7 +1142,8 @@ impl OverseerProcess {
 
         tracing::info!("New master spawned with socket handoff, validating health");
 
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        let wait_secs = (self.config.process_stop_timeout_secs / 3).max(1);
+        tokio::time::sleep(Duration::from_secs(wait_secs)).await;
 
         let new_master_healthy = self.validate_upgraded_master_health().await;
 
@@ -1722,6 +1768,8 @@ mod tests {
         assert_eq!(config.ipc_read_timeout_ms, 5000);
         assert_eq!(config.ipc_write_timeout_ms, 5000);
         assert_eq!(config.master_startup_timeout_secs, 30);
+        assert_eq!(config.process_stop_timeout_secs, 10);
+        assert_eq!(config.restart_backoff_max_secs, 300);
     }
 
     #[test]
@@ -1730,6 +1778,7 @@ mod tests {
             config_path: Some(PathBuf::from("/custom/config")),
             auto_restart: false,
             restart_delay_secs: 10,
+            restart_backoff_max_secs: 300,
             max_restart_attempts: 3,
             health_check_interval_secs: 10,
             stable_uptime_secs: 120,
@@ -1740,6 +1789,7 @@ mod tests {
             ipc_read_timeout_ms: 10000,
             ipc_write_timeout_ms: 10000,
             master_startup_timeout_secs: 60,
+            process_stop_timeout_secs: 10,
             drain_check_interval_ms: 100,
         };
 
@@ -1818,18 +1868,19 @@ mod tests {
     fn test_restart_delay_exponential_backoff() {
         let config = OverseerConfig::default();
         let base = config.restart_delay_secs;
+        let max_backoff = config.restart_backoff_max_secs;
 
         // Simulate calculate_restart_delay at various restart_counts
         for count in 0..=8u32 {
             let backoff_multiplier = 2_u64.pow(count.min(6));
-            let delay = std::cmp::min(base * backoff_multiplier, 300);
+            let delay = std::cmp::min(base * backoff_multiplier, max_backoff);
 
             // Verify backoff doubles each time up to cap
             if count < 6 {
-                assert_eq!(delay, base * 2_u64.pow(count));
+                assert_eq!(delay, std::cmp::min(base * 2_u64.pow(count), max_backoff));
             } else {
-                // Capped at 300
-                assert_eq!(delay, 300);
+                // Capped at max_backoff
+                assert_eq!(delay, max_backoff);
             }
         }
     }

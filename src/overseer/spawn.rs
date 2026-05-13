@@ -4,6 +4,9 @@ use std::process::{Child, Command, Stdio};
 #[derive(Debug, Clone)]
 pub enum ProcessMode {
     Master,
+    MeshAgent,
+    WasmJail,
+    YaraJail,
     Worker { worker_id: usize, port: u16 },
     UnifiedServerWorker { worker_id: usize },
     StaticWorker { worker_id: usize },
@@ -76,6 +79,15 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Command {
     match &config.mode {
         ProcessMode::Master => {
             cmd.arg("--master");
+        }
+        ProcessMode::MeshAgent => {
+            cmd.arg("--mesh-agent");
+        }
+        ProcessMode::WasmJail => {
+            cmd.arg("--wasm-jail");
+        }
+        ProcessMode::YaraJail => {
+            cmd.arg("--yara-jail");
         }
         ProcessMode::Worker { worker_id, port } => {
             cmd.arg("--worker")

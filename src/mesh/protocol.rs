@@ -77,12 +77,16 @@ impl MeshMessageSigner {
     }
 
     pub fn sign(&self, content: &[u8]) -> Vec<u8> {
-        let signature = self.signing_key.sign(content);
-        signature.to_bytes().to_vec()
+        if self.ml_dsa_signer.is_some() {
+            self.sign_hybrid(content).to_bytes()
+        } else {
+            let signature = self.signing_key.sign(content);
+            signature.to_bytes().to_vec()
+        }
     }
 
     pub fn sign_hybrid(&self, content: &[u8]) -> HybridSignature {
-        let ed25519_sig = self.sign(content);
+        let ed25519_sig = self.signing_key.sign(content).to_bytes().to_vec();
         let ml_dsa_sig = self
             .ml_dsa_signer
             .as_ref()
@@ -96,6 +100,12 @@ impl MeshMessageSigner {
     }
 
     pub fn verify(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        // Try parsing as HybridSignature first (multi-part format)
+        if let Ok(hybrid) = HybridSignature::from_bytes(signature) {
+            return self.verify_hybrid(content, &hybrid);
+        }
+
+        // Fallback to legacy Ed25519
         if signature.len() != 64 || public_key.len() != 32 {
             return false;
         }
@@ -122,9 +132,8 @@ impl MeshMessageSigner {
             Err(_) => return false,
         };
 
-        let ed25519_valid = self.verify(content, &hybrid.ed25519_signature, &pk_bytes);
-
-        if !ed25519_valid {
+        // Call the internal verify for the Ed25519 part (non-recursive)
+        if !self.verify_ed25519_internal(content, &hybrid.ed25519_signature, &pk_bytes) {
             return false;
         }
 
@@ -142,6 +151,42 @@ impl MeshMessageSigner {
         } else {
             true
         }
+    }
+
+    fn verify_ed25519_internal(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if signature.len() != 64 || public_key.len() != 32 {
+            return false;
+        }
+        let mut sig_array = [0u8; 64];
+        sig_array.copy_from_slice(signature);
+        let mut pk_array = [0u8; 32];
+        pk_array.copy_from_slice(public_key);
+        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+            Ok(pk) => pk
+                .verify(content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+                .is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    pub fn sign_smart(&self, content: &[u8], force_hybrid: bool) -> Vec<u8> {
+        if force_hybrid || self.ml_dsa_signer.is_some() {
+            self.sign_hybrid(content).to_bytes()
+        } else {
+            let signature = self.signing_key.sign(content);
+            signature.to_bytes().to_vec()
+        }
+    }
+
+    pub fn verify_any(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        self.verify(content, signature, public_key)
+    }
+
+    pub async fn verify_any_async(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+        if let Ok(hybrid) = HybridSignature::from_bytes(signature) {
+            return self.verify_hybrid_async(content, &hybrid).await;
+        }
+        self.verify(content, signature, public_key)
     }
 
     pub async fn verify_hybrid_async(&self, content: &[u8], hybrid: &HybridSignature) -> bool {

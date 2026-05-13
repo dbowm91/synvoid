@@ -415,9 +415,9 @@ impl WafCore {
         ip: IpAddr,
         method: &str,
         path: &str,
-        _query: Option<&str>,
-        _headers: &http::HeaderMap,
-        _body: Option<&[u8]>,
+        query: Option<&str>,
+        headers: &http::HeaderMap,
+        body: Option<&[u8]>,
         ua: Option<&str>,
         ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
@@ -443,7 +443,66 @@ impl WafCore {
             return decision;
         }
 
+        // Parallel Attack Detection
+        if let Some(ad) = self.attack_detector.load().as_ref() {
+            let http_method = http::Method::from_bytes(method.as_bytes())
+                .unwrap_or(http::Method::GET);
+            
+            let (result, score) = ad.check_request(
+                ip,
+                &http_method,
+                path,
+                query,
+                headers,
+                body,
+            ).await;
+
+            if let Some(res) = result {
+                tracing::info!(
+                    "Attack detected from {}: {:?} (score: {}) at {}",
+                    ip,
+                    res.attack_type,
+                    score,
+                    res.input_location
+                );
+
+                if let Some(ref tl) = self.threat_level {
+                    tl.record_attack();
+                }
+
+                if let Some(ref violation_tracker) = self.violation_tracker {
+                    violation_tracker.record_violation(ip, "attack_detected", 3);
+                }
+
+                return WafDecision::Block(403, "Attack Detected".to_string());
+            }
+        }
+
         WafDecision::Pass
+    }
+
+    pub async fn check_request(
+        &self,
+        site_id: Option<&str>,
+        ip: IpAddr,
+        method: &str,
+        path: &str,
+        ua: Option<&str>,
+    ) -> WafDecision {
+        let headers = http::HeaderMap::new();
+        self.check_request_full(
+            site_id,
+            ip,
+            method,
+            path,
+            None,
+            &headers,
+            None,
+            ua,
+            None,
+            None,
+            None,
+        ).await
     }
 
     fn check_rate_limits(&self, ip: IpAddr, site_id: Option<&str>) -> Option<WafDecision> {

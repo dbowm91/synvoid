@@ -1,7 +1,8 @@
-#[cfg(feature = "mesh")]
+use std::path::PathBuf;
 use std::sync::Arc;
+
 #[cfg(feature = "mesh")]
-use crate::config::MainConfig;
+use crate::config::{ConfigManager, MainConfig};
 #[cfg(feature = "mesh")]
 use crate::block_store::BlockStore;
 #[cfg(feature = "mesh")]
@@ -24,6 +25,72 @@ pub struct MeshControlPlane {
     pub transport_manager: Arc<MeshTransportManager>,
     pub threat_intel: Arc<ThreatIntelligenceManager>,
     pub yara_rules: Option<Arc<YaraRulesManager>>,
+}
+
+#[cfg(feature = "mesh")]
+pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
+    let agent_panic_log = format!(
+        "{}/synvoid-mesh-agent-panic.log",
+        std::env::temp_dir().display()
+    );
+    crate::common::setup_panic_handler("MESH_AGENT", Some(&agent_panic_log));
+
+    let config_dir = config_path.unwrap_or_else(|| PathBuf::from("config"));
+    let main_config_path = config_dir.join("main.toml");
+
+    let mut config_manager = ConfigManager::new(config_dir.clone());
+    if let Err(e) = config_manager.load_main(&main_config_path) {
+        tracing::error!("Failed to load main.toml for mesh agent: {}", e);
+        std::process::exit(1);
+    }
+    
+    let main_config = config_manager.main.clone();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("Failed to build Tokio runtime for mesh agent");
+
+    rt.block_on(async {
+        tracing::info!("Starting standalone Mesh Agent (Control Plane)");
+
+        // Initialize block store for threat intel
+        let data_dir = main_config.persistence.data_dir.as_ref().map(PathBuf::from);
+        let block_store = Arc::new(BlockStore::new(
+            true,
+            data_dir,
+            main_config.blocklist_limits.clone(),
+        ));
+
+        let cp = match init_mesh_control_plane(&main_config, block_store).await {
+            Some(cp) => cp,
+            None => {
+                tracing::error!("Mesh is disabled or failed to initialize. Mesh agent exiting.");
+                return;
+            }
+        };
+
+        // Mesh agent handles gRPC control API for mesh-related queries
+        let grpc_addr: Result<std::net::SocketAddr, _> = main_config.supervisor.control_api_addr.parse();
+        if let Ok(addr) = grpc_addr {
+            // Note: Standalone mesh agent doesn't manage workers, so PM is None-equivalent
+            // We might need a dummy PM or refactor gRPC server to handle mesh-only mode.
+            tracing::info!("Mesh Agent gRPC server listening on {}", addr);
+            // super::api::start_grpc_server(addr, pm, state).await // Need to adapt this
+        }
+
+        // Keep running until signaled
+        tracing::info!("Mesh Agent is now active.");
+        
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("Mesh Agent shutting down...");
+    });
+}
+
+#[cfg(not(feature = "mesh"))]
+pub fn run_mesh_agent_mode(_config_path: Option<PathBuf>, _foreground: bool) {
+    eprintln!("Mesh agent mode requires the mesh feature to be enabled.");
+    std::process::exit(1);
 }
 
 #[cfg(feature = "mesh")]

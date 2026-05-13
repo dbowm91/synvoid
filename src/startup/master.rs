@@ -153,6 +153,8 @@ pub fn run_overseer_mode(
         ipc_read_timeout_ms: main_config.overseer.ipc_read_timeout_ms,
         ipc_write_timeout_ms: main_config.overseer.ipc_write_timeout_ms,
         master_startup_timeout_secs: main_config.overseer.master_startup_timeout_secs,
+        process_stop_timeout_secs: main_config.overseer.process_stop_timeout_secs,
+        restart_backoff_max_secs: main_config.overseer.restart_backoff_max_secs,
         drain_check_interval_ms: main_config.overseer.drain_check_interval_ms,
     };
 

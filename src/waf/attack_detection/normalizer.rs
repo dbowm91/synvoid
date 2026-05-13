@@ -549,6 +549,29 @@ impl<'a> NormalizedInput<'a> {
     pub fn as_bytes(&self) -> &[u8] {
         self.normalized.as_str().as_bytes()
     }
+
+    pub fn into_owned(self) -> NormalizedInput<'static> {
+        let normalized = match self.normalized {
+            NormalizedData::Borrowed(s) => NormalizedData::Owned(s.to_string()),
+            NormalizedData::Owned(s) => NormalizedData::Owned(s),
+            NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+        };
+        NormalizedInput {
+            normalized,
+            passes: self.passes,
+        }
+    }
+}
+
+impl<'a> NormalizedInputs<'a> {
+    pub fn into_owned(self) -> NormalizedInputs<'static> {
+        NormalizedInputs {
+            path: self.path.map(|p| p.into_owned()),
+            query_string: self.query_string.map(|qs| qs.into_owned()),
+            headers: self.headers.into_iter().map(|(k, v)| (k, v.into_owned())).collect(),
+            body: self.body, // body is already static
+        }
+    }
 }
 
 pub struct NormalizedInputs<'a> {

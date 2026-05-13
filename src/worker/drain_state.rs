@@ -1,12 +1,18 @@
+use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+
+#[cfg(unix)]
+use std::os::unix::io::RawFd;
+#[cfg(windows)]
+use std::os::windows::io::RawSocket as RawFd;
 
 use tokio::sync::Mutex;
 
 use crate::DrainFlag;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RequestType {
     Short,
     Long,
@@ -24,6 +30,7 @@ pub struct WorkerDrainState {
     short_requests: Arc<AtomicU64>,
     long_requests: Arc<AtomicU64>,
     streaming_requests: Arc<AtomicU64>,
+    active_fds: Arc<DashMap<u64, (RawFd, RequestType, String)>>,
 }
 
 impl Default for WorkerDrainState {
@@ -45,6 +52,7 @@ impl WorkerDrainState {
             short_requests: Arc::new(AtomicU64::new(0)),
             long_requests: Arc::new(AtomicU64::new(0)),
             streaming_requests: Arc::new(AtomicU64::new(0)),
+            active_fds: Arc::new(DashMap::new()),
         }
     }
 
@@ -87,6 +95,27 @@ impl WorkerDrainState {
 
     pub fn get_drain_id(&self) -> u64 {
         self.drain_id.load(Ordering::SeqCst)
+    }
+
+    pub fn register_connection(&self, id: u64, fd: RawFd, request_type: RequestType, addr: String) {
+        self.active_fds.insert(id, (fd, request_type, addr));
+        self.increment_active_typed(request_type);
+    }
+
+    pub fn unregister_connection(&self, id: u64) {
+        if let Some((_, (_, request_type, _))) = self.active_fds.remove(&id) {
+            self.decrement_active_typed(request_type);
+        }
+    }
+
+    pub fn get_active_fds(&self) -> Vec<(u64, RawFd, RequestType, String)> {
+        self.active_fds
+            .iter()
+            .map(|entry| {
+                let (id, (fd, req_type, addr)) = entry.pair();
+                (*id, *fd, *req_type, addr.clone())
+            })
+            .collect()
     }
 
     pub fn increment_active(&self) {

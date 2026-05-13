@@ -23,6 +23,15 @@ use synvoid::supervisor::run_supervisor_mode;
 #[command(about = "Multi-Process Web Application Firewall")]
 #[command(version)]
 struct Args {
+    #[arg(long, help = "Run as mesh agent process (control plane)")]
+    mesh_agent: bool,
+
+    #[arg(long, help = "Run as WASM plugin execution jail")]
+    wasm_jail: bool,
+
+    #[arg(long, help = "Run as YARA rule evaluation jail")]
+    yara_jail: bool,
+
     #[arg(long, help = "Run as worker process")]
     worker: bool,
 
@@ -444,13 +453,16 @@ fn main() {
         args.worker,
         args.static_worker,
         args.unified_server_worker,
+        args.mesh_agent,
+        args.wasm_jail,
+        args.yara_jail,
     ]
     .into_iter()
     .filter(|&b| b)
     .count();
 
     if worker_mode_count > 1 {
-        eprintln!("Error: Only one worker mode (--worker, --static-worker, --unified-server-worker) can be specified");
+        eprintln!("Error: Only one mode (--worker, --static-worker, --unified-server-worker, --mesh-agent, --wasm-jail, --yara-jail) can be specified");
         std::process::exit(1);
     }
 
@@ -503,6 +515,16 @@ fn main() {
             tracing::error!("Unified server worker error: {}", e);
             std::process::exit(1);
         }
+    } else if args.mesh_agent {
+        init_logging_simple();
+        let config_path = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
+        synvoid::supervisor::run_mesh_agent_mode(Some(config_path), args.foreground);
+    } else if args.wasm_jail {
+        init_logging_simple();
+        synvoid::sandbox::run_wasm_jail_mode();
+    } else if args.yara_jail {
+        init_logging_simple();
+        synvoid::sandbox::run_yara_jail_mode();
     } else {
         // Default: Run as Supervisor (manager of Workers)
         // This replaces the legacy Overseer -> Master hierarchy.

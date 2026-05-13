@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+use sha2::Digest;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -201,6 +202,7 @@ pub struct ThreatIntelligenceManager {
     last_sync: RwLock<Instant>,
     global_node_ips: RwLock<HashMap<String, IpAddr>>,
     persistence_path: Option<std::path::PathBuf>,
+    seen_announces: moka::sync::Cache<String, bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -270,6 +272,10 @@ impl ThreatIntelligenceManager {
             last_sync: RwLock::new(Instant::now()),
             global_node_ips: RwLock::new(HashMap::new()),
             persistence_path,
+            seen_announces: moka::sync::Cache::builder()
+                .max_capacity(1000)
+                .time_to_idle(Duration::from_secs(3600))
+                .build(),
         };
 
         if let Some(ref path) = manager.persistence_path {
@@ -1532,15 +1538,27 @@ impl ThreatIntelligenceManager {
         if let Some(ref signer) = self.signer {
             let request_id = uuid::Uuid::new_v4().to_string();
             let timestamp = MeshMessage::generate_timestamp();
+
+            // Compute a Merkle root of all indicators for payload integrity (Phase 3.1)
+            let mut records = HashMap::new();
+            for indicator in &indicators {
+                let key = format!("{}:{}", indicator.indicator_value, indicator.threat_type as u8);
+                let value = format!("{}:{}", indicator.reason, indicator.timestamp).into_bytes();
+                records.insert(key, value);
+            }
+            let tree = crate::mesh::dht::merkle::MerkleTree::from_records(&records);
+            let merkle_root = tree.root_hash().unwrap_or_else(|| vec![0u8; 32]);
+
             let content = format!(
-                "{},{},{:?},{},{}",
+                "{},{},{:?},{},{},{}",
                 request_id,
                 self.node_id,
                 highest_severity,
                 self.node_role.bits(),
-                timestamp
+                timestamp,
+                hex::encode(merkle_root)
             );
-            signature = signer.sign(content.as_bytes());
+            signature = signer.sign_smart(content.as_bytes(), true);
             signer_public_key = signer.get_public_key();
         }
 
@@ -1718,13 +1736,31 @@ impl ThreatIntelligenceManager {
 
                 if let Some(signer) = signer {
                     if !signature.is_empty() {
+                        // Compute a Merkle root of all indicators for payload integrity check (Phase 3.1)
+                        let mut records = HashMap::new();
+                        for indicator in indicators {
+                            let key = format!("{}:{}", indicator.indicator_value, indicator.threat_type as u8);
+                            let value = format!("{}:{}", indicator.reason, indicator.timestamp).into_bytes();
+                            records.insert(key, value);
+                        }
+                        let tree = crate::mesh::dht::merkle::MerkleTree::from_records(&records);
+                        let merkle_root = tree.root_hash().unwrap_or_else(|| vec![0u8; 32]);
+
+                        // The highest_severity was dropped in destructuring, but we need it for verification if it was signed.
+                        let highest_sev = indicators
+                            .iter()
+                            .map(|i| i.severity)
+                            .max_by_key(|s| *s as u32)
+                            .unwrap_or(ThreatSeverity::Unspecified);
+
                         let content = format!(
-                            "{},{},{},{},{}",
+                            "{},{},{:?},{},{},{}",
                             request_id,
                             source_node_id,
+                            highest_sev,
                             source_role.bits(),
-                            indicators.len(),
-                            timestamp
+                            timestamp,
+                            hex::encode(merkle_root)
                         );
                         let pk_bytes = if signer_public_key.is_empty() {
                             Vec::new()
@@ -1733,16 +1769,16 @@ impl ThreatIntelligenceManager {
                                 .decode(signer_public_key)
                                 .unwrap_or_default()
                         };
-                        if !signer.verify(content.as_bytes(), signature, &pk_bytes) {
+                        if !signer.verify_any(content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(
-                                "ThreatAnnounce signature verification failed from {}",
+                                "ThreatAnnounce signature verification failed from {} (Merkle root mismatch or metadata error)",
                                 from_node
                             );
                             return Some(MeshMessage::ThreatAcknowledgement {
                                 original_request_id: request_id.clone(),
                                 node_id: self.node_id.clone().into(),
                                 accepted: false,
-                                reason: "Invalid signature".into(),
+                                reason: "Invalid signature or Merkle root".into(),
                                 timestamp: MeshMessage::generate_timestamp(),
                             });
                         }
@@ -1775,6 +1811,23 @@ impl ThreatIntelligenceManager {
                                 });
                             }
                         }
+                    }
+                }
+
+                // Phase 3.1: Gossip Relaying
+                let request_id_str = request_id.to_string();
+                if self.seen_announces.get(&request_id_str).is_none() {
+                    self.seen_announces.insert(request_id_str, true);
+
+                    if let Some(transport) = self.transport.read().as_ref() {
+                        let fanout_factor = self.config.fanout_factor;
+                        let relay_msg = message.clone();
+                        let transport_clone = transport.clone();
+                        tokio::spawn(async move {
+                            let _ = transport_clone
+                                .broadcast_to_random_peers(relay_msg, fanout_factor, None)
+                                .await;
+                        });
                     }
                 }
 
@@ -2046,6 +2099,7 @@ impl ThreatIntelligenceManager {
             last_sync: RwLock::new(*self.last_sync.read()),
             global_node_ips: RwLock::new(self.global_node_ips.read().clone()),
             persistence_path: self.persistence_path.clone(),
+            seen_announces: self.seen_announces.clone(),
         }
     }
 }

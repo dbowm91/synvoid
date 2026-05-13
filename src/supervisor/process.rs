@@ -210,23 +210,8 @@ pub fn run_supervisor_mode(
         .build()
         .expect("Failed to build Tokio runtime");
 
-    #[cfg(feature = "mesh")]
-    let mesh_cp = {
-        let block_store_clone = block_store.clone();
-        let main_config_clone = main_config.clone();
-        rt.block_on(async move {
-            crate::supervisor::mesh::init_mesh_control_plane(&main_config_clone, block_store_clone).await
-        })
-    };
-
     let trackers = SupervisorStateTrackers {
         rule_feed_manager,
-        #[cfg(feature = "mesh")]
-        threat_intel_manager: mesh_cp.as_ref().map(|cp| cp.threat_intel.clone()),
-        #[cfg(feature = "mesh")]
-        yara_rules: mesh_cp.as_ref().and_then(|cp| cp.yara_rules.clone()),
-        #[cfg(feature = "mesh")]
-        mesh_transport_manager: mesh_cp.as_ref().map(|cp| cp.transport_manager.clone()),
         ..SupervisorStateTrackers::default()
     };
 

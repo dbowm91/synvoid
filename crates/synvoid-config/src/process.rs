@@ -42,6 +42,9 @@ impl Defaults {
     pub const fn master_startup_timeout() -> u64 {
         30
     }
+    pub const fn process_stop_timeout() -> u64 {
+        10
+    }
     pub const fn drain_poll_interval() -> u64 {
         100
     }
@@ -97,6 +100,8 @@ pub struct OverseerConfig {
     pub auto_restart: bool,
     #[serde(default = "default_restart_delay")]
     pub restart_delay_secs: u64,
+    #[serde(default = "default_restart_backoff_max")]
+    pub restart_backoff_max_secs: u64,
     #[serde(default = "default_max_restart_attempts")]
     pub max_restart_attempts: u32,
     #[serde(default = "default_health_check_interval")]
@@ -117,6 +122,8 @@ pub struct OverseerConfig {
     pub ipc_write_timeout_ms: u64,
     #[serde(default = "default_master_startup_timeout")]
     pub master_startup_timeout_secs: u64,
+    #[serde(default = "default_process_stop_timeout")]
+    pub process_stop_timeout_secs: u64,
     #[serde(default = "default_drain_poll_interval")]
     pub drain_check_interval_ms: u64,
 }
@@ -127,6 +134,7 @@ impl Default for OverseerConfig {
             config_path: None,
             auto_restart: true,
             restart_delay_secs: 5,
+            restart_backoff_max_secs: 300,
             max_restart_attempts: 5,
             health_check_interval_secs: 5,
             stable_uptime_secs: 60,
@@ -137,6 +145,7 @@ impl Default for OverseerConfig {
             ipc_read_timeout_ms: 5000,
             ipc_write_timeout_ms: 5000,
             master_startup_timeout_secs: 30,
+            process_stop_timeout_secs: 10,
             drain_check_interval_ms: 100,
         }
     }
@@ -345,6 +354,9 @@ fn default_ipc_write_timeout() -> u64 {
 }
 fn default_master_startup_timeout() -> u64 {
     Defaults::master_startup_timeout()
+}
+fn default_process_stop_timeout() -> u64 {
+    Defaults::process_stop_timeout()
 }
 fn default_drain_poll_interval() -> u64 {
     Defaults::drain_poll_interval()
