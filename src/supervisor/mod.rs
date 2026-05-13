@@ -12,3 +12,4 @@ pub mod state;
 
 pub use process::{run_supervisor_mode, SupervisorProcess};
 pub use state::{SupervisorState, SupervisorStateTrackers};
+pub use mesh::run_mesh_agent_mode;

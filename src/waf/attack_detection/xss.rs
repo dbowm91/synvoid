@@ -1,6 +1,6 @@
 use crate::waf::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
 use crate::waf::attack_detection::detector_common::{BasePatternDetector, PatternDetector};
-use crate::waf::attack_detection::normalizer::InputNormalizer;
+use crate::waf::attack_detection::normalizer::{InputNormalizer, NormalizedInput};
 use crate::waf::attack_detection::patterns::DefaultPatterns;
 use aho_corasick::AhoCorasick;
 use std::sync::Arc;
@@ -29,7 +29,14 @@ impl XssDetector {
     pub fn detect(&self, input: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
         let input_str = String::from_utf8_lossy(input);
         let normalized = self.normalizer.normalize(&input_str);
+        self.detect_normalized(&normalized, location)
+    }
 
+    pub fn detect_normalized(
+        &self,
+        normalized: &NormalizedInput,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
         // 1. Try pattern-based detection
         let search_target: &str = normalized.as_str();
         if let Some(mat) = self.inner.patterns_ref().find(search_target) {

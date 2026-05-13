@@ -6,10 +6,26 @@ use crate::buffer::{BufferPool, PooledBuf};
 
 const MAX_OUTPUT_RATIO: usize = 100;
 
+use bitflags::bitflags;
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct NormalizationFlags: u32 {
+        const NONE = 0;
+        const NULL_BYTE = 1 << 0;
+        const ZERO_WIDTH = 1 << 1;
+        const HOMOGLYPH = 1 << 2;
+        const DOUBLE_ENCODING = 1 << 3;
+        const INVALID_UTF8 = 1 << 4;
+        const UNICODE_NORMALIZED = 1 << 5;
+    }
+}
+
 thread_local! {
     static NORMALIZE_BUFFER: RefCell<String> = RefCell::new(String::with_capacity(4096));
     static NORMALIZE_CHARS: RefCell<Vec<char>> = RefCell::new(Vec::with_capacity(4096));
     static FRAGMENT_MERGE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(8192));
+    static NORMALIZATION_FLAGS: RefCell<NormalizationFlags> = RefCell::new(NormalizationFlags::NONE);
 }
 
 #[inline]
@@ -65,9 +81,14 @@ impl InputNormalizer {
     pub fn normalize<'a>(&self, input: &'a str) -> NormalizedInput<'a> {
         NORMALIZE_BUFFER.with(|buf_cell| {
             NORMALIZE_CHARS.with(|chars_cell| {
-                let mut buffer = buf_cell.borrow_mut();
-                let mut chars = chars_cell.borrow_mut();
-                self.normalize_internal(input, &mut buffer, &mut chars)
+                NORMALIZATION_FLAGS.with(|flags_cell| {
+                    *flags_cell.borrow_mut() = NormalizationFlags::NONE;
+                    let mut buffer = buf_cell.borrow_mut();
+                    let mut chars = chars_cell.borrow_mut();
+                    let mut ni = self.normalize_internal(input, &mut buffer, &mut chars);
+                    ni.flags = *flags_cell.borrow();
+                    ni
+                })
             })
         })
     }
@@ -81,25 +102,34 @@ impl InputNormalizer {
             }
 
             let input_str = String::from_utf8_lossy(&merge_buf);
+            let has_invalid_utf8 = matches!(input_str, Cow::Owned(_));
 
             NORMALIZE_BUFFER.with(|buf_cell| {
                 NORMALIZE_CHARS.with(|chars_cell| {
-                    let mut buffer = buf_cell.borrow_mut();
-                    let mut chars = chars_cell.borrow_mut();
-                    let ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
-                    let normalized_data = match ni.normalized {
-                        NormalizedData::Borrowed(s) => {
-                            let mut pooled = BufferPool::acquire(s.len());
-                            pooled.extend_from_slice(s.as_bytes());
-                            NormalizedData::Pooled(pooled)
-                        },
-                        NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
-                        NormalizedData::Owned(o) => NormalizedData::Owned(o),
-                    };
-                    NormalizedInput {
-                        normalized: normalized_data,
-                        passes: ni.passes,
-                    }
+                    NORMALIZATION_FLAGS.with(|flags_cell| {
+                        *flags_cell.borrow_mut() = if has_invalid_utf8 {
+                            NormalizationFlags::INVALID_UTF8
+                        } else {
+                            NormalizationFlags::NONE
+                        };
+                        let mut buffer = buf_cell.borrow_mut();
+                        let mut chars = chars_cell.borrow_mut();
+                        let mut ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
+                        let normalized_data = match ni.normalized {
+                            NormalizedData::Borrowed(s) => {
+                                let mut pooled = BufferPool::acquire(s.len());
+                                pooled.extend_from_slice(s.as_bytes());
+                                NormalizedData::Pooled(pooled)
+                            },
+                            NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
+                            NormalizedData::Owned(o) => NormalizedData::Owned(o),
+                        };
+                        NormalizedInput {
+                            normalized: normalized_data,
+                            passes: ni.passes,
+                            flags: *flags_cell.borrow(),
+                        }
+                    })
                 })
             })
         })
@@ -134,6 +164,10 @@ impl InputNormalizer {
             passes += 1;
         }
 
+        if passes > 1 {
+            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::DOUBLE_ENCODING));
+        }
+
         chars.clear();
         chars.extend(buffer.chars());
         buffer.clear();
@@ -147,7 +181,11 @@ impl InputNormalizer {
             NormalizedData::Pooled(pooled)
         };
 
-        NormalizedInput { normalized, passes }
+        NormalizedInput { 
+            normalized, 
+            passes,
+            flags: NormalizationFlags::NONE, // Will be set by caller
+        }
     }
 
     fn decode_single_pass_with_chars(&self, input: &mut String, chars: &mut [char]) -> usize {
@@ -157,7 +195,9 @@ impl InputNormalizer {
                 '%' => {
                     if i + 5 < chars.len() && chars[i + 1] == 'u' {
                         if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6]) {
-                            if code_point != 0 {
+                            if code_point == 0 {
+                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                            } else {
                                 if let Some(ch) = char::from_u32(code_point) {
                                     input.push(ch);
                                 }
@@ -168,7 +208,9 @@ impl InputNormalizer {
                     }
                     if i + 2 < chars.len() {
                         if let Some(byte) = hex_chars_to_u8(&chars[i + 1..i + 3]) {
-                            if byte != 0 {
+                            if byte == 0 {
+                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                            } else {
                                 input.push(byte as char);
                             }
                             i += 3;
@@ -188,7 +230,9 @@ impl InputNormalizer {
                             'x' | 'X' => {
                                 if i + 3 < chars.len() {
                                     if let Some(byte) = hex_chars_to_u8(&chars[i + 2..i + 4]) {
-                                        if byte != 0 {
+                                        if byte == 0 {
+                                            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                        } else {
                                             input.push(byte as char);
                                         }
                                         i += 4;
@@ -203,7 +247,9 @@ impl InputNormalizer {
                                 if i + 5 < chars.len() {
                                     if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6])
                                     {
-                                        if code_point != 0 {
+                                        if code_point == 0 {
+                                            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                        } else {
                                             if let Some(ch) = char::from_u32(code_point) {
                                                 input.push(ch);
                                             }
@@ -232,6 +278,7 @@ impl InputNormalizer {
                                 continue;
                             }
                             '0' => {
+                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                                 i += 2;
                                 continue;
                             }
@@ -242,7 +289,9 @@ impl InputNormalizer {
                                 {
                                     let octal: String = chars[i + 1..=i + 3].iter().collect();
                                     if let Ok(byte) = u8::from_str_radix(&octal, 8) {
-                                        if byte != 0 {
+                                        if byte == 0 {
+                                            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                        } else {
                                             input.push(byte as char);
                                         }
                                         i += 4;
@@ -276,7 +325,9 @@ impl InputNormalizer {
 
                     if found_semicolon {
                         if let Some(ch) = self.decode_html_entity_simple(&entity_chars) {
-                            if ch != '\0' {
+                            if ch == '\0' {
+                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                            } else {
                                 input.push(ch);
                             }
                             i = j;
@@ -292,6 +343,7 @@ impl InputNormalizer {
                     i = j;
                 }
                 '\0' => {
+                    NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                     i += 1;
                 }
                 c => {
@@ -366,8 +418,14 @@ impl InputNormalizer {
                 '\u{FEFF}' | '\u{2060}' | '\u{2061}' | '\u{2062}' | '\u{2063}' |
                 '\u{2064}' | '\u{206A}' | '\u{206B}' | '\u{206C}' | '\u{206D}' |
                 '\u{206E}' | '\u{206F}' | '\u{034F}' | '\u{180E}' |
-                '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}' | '\0'
+                '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}'
             ) {
+                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::ZERO_WIDTH));
+                continue;
+            }
+
+            if *c == '\0' {
+                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                 continue;
             }
 
@@ -467,11 +525,15 @@ impl InputNormalizer {
             };
 
             if let Some(n) = normalized {
+                if n != *c {
+                    NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::HOMOGLYPH));
+                }
                 if n.is_whitespace() {
                     input.push(' ');
                 } else if n.is_ascii() {
                     input.push(n);
                 } else {
+                    NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::UNICODE_NORMALIZED));
                     let nfkc: Cow<'_, str> = n.nfkc().collect();
                     input.push_str(&nfkc);
                 }
@@ -527,6 +589,7 @@ impl<'a> std::fmt::Display for NormalizedData<'a> {
 pub struct NormalizedInput<'a> {
     pub normalized: NormalizedData<'a>,
     pub passes: usize,
+    pub flags: NormalizationFlags,
 }
 
 impl<'a> std::fmt::Display for NormalizedInput<'a> {
@@ -559,6 +622,7 @@ impl<'a> NormalizedInput<'a> {
         NormalizedInput {
             normalized,
             passes: self.passes,
+            flags: self.flags,
         }
     }
 }
@@ -615,6 +679,7 @@ impl<'a> NormalizedInputs<'a> {
             NormalizedInput {
                 normalized: normalized_data,
                 passes: ni.passes,
+                flags: ni.flags,
             }
 
         });

@@ -1,3 +1,4 @@
+pub mod behavioral;
 pub mod cmd_injection;
 pub mod config;
 pub mod detector_common;
@@ -27,8 +28,9 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwapOption;
 use parking_lot::RwLock;
 
+use crate::waf::attack_detection::behavioral::{BehavioralEngine, StandaloneRequestFeatures};
 use crate::waf::attack_detection::normalizer::{
-    InputNormalizer, NormalizedData, NormalizedInput, NormalizedInputs,
+    InputNormalizer, NormalizationFlags, NormalizedData, NormalizedInput, NormalizedInputs,
 };
 
 pub use cmd_injection::CmdInjectionDetector;
@@ -73,59 +75,7 @@ pub struct AttackDetector {
     open_redirect_detector: Arc<OpenRedirectDetector>,
     #[cfg(feature = "mesh")]
     behavioral_intel: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
-    ip_stats_cache: moka::sync::Cache<IpAddr, Arc<RwLock<IpBehavioralStats>>>,
-}
-
-#[derive(Debug, Clone)]
-struct IpBehavioralStats {
-    last_request_at: Instant,
-    inter_request_intervals_ms: VecDeque<u32>,
-    request_count: u64,
-}
-
-impl IpBehavioralStats {
-    fn new() -> Self {
-        Self {
-            last_request_at: Instant::now(),
-            inter_request_intervals_ms: VecDeque::with_capacity(10),
-            request_count: 1,
-        }
-    }
-
-    fn record_request(&mut self) -> u32 {
-        let now = Instant::now();
-        let interval = now.duration_since(self.last_request_at).as_millis() as u32;
-        self.last_request_at = now;
-        self.request_count += 1;
-
-        if self.inter_request_intervals_ms.len() >= 10 {
-            self.inter_request_intervals_ms.pop_front();
-        }
-        self.inter_request_intervals_ms.push_back(interval);
-        interval
-    }
-
-    fn get_avg_interval(&self) -> u32 {
-        if self.inter_request_intervals_ms.is_empty() {
-            return 0;
-        }
-        let sum: u32 = self.inter_request_intervals_ms.iter().sum();
-        sum / self.inter_request_intervals_ms.len() as u32
-    }
-
-    fn get_timing_variance(&self) -> u32 {
-        let avg = self.get_avg_interval() as f32;
-        if self.inter_request_intervals_ms.len() < 2 {
-            return 0;
-        }
-        let variance = self.inter_request_intervals_ms.iter()
-            .map(|&i| {
-                let diff = i as f32 - avg;
-                diff * diff
-            })
-            .sum::<f32>() / self.inter_request_intervals_ms.len() as f32;
-        variance.sqrt() as u32
-    }
+    behavioral_engine: Arc<BehavioralEngine>,
 }
 
 impl AttackDetector {
@@ -202,11 +152,6 @@ impl AttackDetector {
             &config.open_redirect.custom_patterns,
         ));
 
-        let ip_stats_cache = moka::sync::Cache::builder()
-            .max_capacity(10000)
-            .time_to_idle(Duration::from_secs(300))
-            .build();
-
         Self {
             config,
             normalizer,
@@ -226,7 +171,7 @@ impl AttackDetector {
             open_redirect_detector,
             #[cfg(feature = "mesh")]
             behavioral_intel: None,
-            ip_stats_cache,
+            behavioral_engine: Arc::new(BehavioralEngine::new()),
         }
     }
 
@@ -235,9 +180,11 @@ impl AttackDetector {
         config: AttackDetectionConfig,
         behavioral_intel: Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>,
     ) -> Self {
-        let mut detector = Self::new(config);
-        detector.behavioral_intel = Some(behavioral_intel);
-        detector
+        let detector = Self::new(config);
+        Self {
+            behavioral_intel: Some(behavioral_intel),
+            ..detector
+        }
     }
 
     pub async fn check_request(
@@ -257,45 +204,75 @@ impl AttackDetector {
         let mut total_score = 0;
         let anomaly_enabled = self.config.anomaly_scoring.enabled;
 
+        // Standalone Behavioral Check
+        let standalone_features = self.behavioral_engine.extract_features(
+            client_ip,
+            path,
+            query_string,
+            headers,
+            body,
+        );
+
+        if standalone_features.url_entropy > 5.0 || standalone_features.timing_variance_ms < 5 {
+            total_score += 20;
+            tracing::debug!(
+                "Standalone behavioral anomaly detected for {}: entropy={}, variance={}ms",
+                client_ip,
+                standalone_features.url_entropy,
+                standalone_features.timing_variance_ms
+            );
+        }
+
         #[cfg(feature = "mesh")]
         if let Some(ref behavioral_intel) = self.behavioral_intel {
-            if let Some(features) =
-                self.extract_behavioral_features(client_ip, method, path, query_string, headers, body)
-            {
-                if let Some(fingerprint) = behavioral_intel.analyze_request(&features) {
-                    if fingerprint.severity_score >= 70 {
-                        let result = AttackDetectionResult {
-                            attack_type: AttackType::Other,
-                            input_location: InputLocation::Path,
-                            fingerprint: Some(format!(
-                                "behavioral_fingerprint:{}",
-                                fingerprint.fingerprint_id
-                            )),
-                            matched_pattern: Some(format!(
-                                "Behavioral fingerprint match (severity: {}, confidence: {})",
-                                fingerprint.severity_score, fingerprint.confidence
-                            )),
-                        };
+            let mesh_features = crate::mesh::behavioral_intel::RequestFeatures {
+                header_timing_variance_ms: standalone_features.timing_variance_ms,
+                request_sequence_entropy: 0.5,
+                byte_length_distribution: vec![
+                    standalone_features.body_len / 1000,
+                    (standalone_features.body_len % 1000) / 100,
+                    (standalone_features.body_len % 100) / 10,
+                    standalone_features.body_len % 10,
+                ],
+                inter_request_timing_ms: standalone_features.inter_request_timing_ms,
+                suspicious_header_count: standalone_features.suspicious_header_count,
+                url_entropy: standalone_features.url_entropy,
+                body_to_header_ratio: standalone_features.body_to_header_ratio,
+            };
+            
+            if let Some(fingerprint) = behavioral_intel.analyze_request(&mesh_features) {
+                if fingerprint.severity_score >= 70 {
+                    let result = AttackDetectionResult {
+                        attack_type: AttackType::Other,
+                        input_location: InputLocation::Path,
+                        fingerprint: Some(format!(
+                            "behavioral_fingerprint:{}",
+                            fingerprint.fingerprint_id
+                        )),
+                        matched_pattern: Some(format!(
+                            "Behavioral fingerprint match (severity: {}, confidence: {})",
+                            fingerprint.severity_score, fingerprint.confidence
+                        )),
+                    };
 
-                        if !anomaly_enabled {
-                            return (Some(result), 0);
-                        }
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
 
-                        if first_result.is_none() {
-                            first_result = Some(result);
-                        }
+                    if first_result.is_none() {
+                        first_result = Some(result);
                     }
                 }
+            }
 
-                let adjusted_paranoia =
-                    behavioral_intel.adjust_paranoia_level(&features, self.config.paranoia_level);
-                if adjusted_paranoia > self.config.paranoia_level {
-                    tracing::debug!(
-                        "Behavioral intelligence elevated paranoia from {} to {}",
-                        self.config.paranoia_level,
-                        adjusted_paranoia
-                    );
-                }
+            let adjusted_paranoia =
+                behavioral_intel.adjust_paranoia_level(&mesh_features, self.config.paranoia_level);
+            if adjusted_paranoia > self.config.paranoia_level {
+                tracing::debug!(
+                    "Behavioral intelligence elevated paranoia from {} to {}",
+                    self.config.paranoia_level,
+                    adjusted_paranoia
+                );
             }
         }
 
@@ -404,6 +381,19 @@ impl AttackDetector {
                 headers,
                 body,
             ).into_owned());
+
+            if self.config.strict_normalization {
+                if let Some(result) = self.check_strict_normalization(&inputs) {
+                    if !anomaly_enabled {
+                        return (Some(result), 0);
+                    }
+
+                    if first_result.is_none() {
+                        first_result = Some(result);
+                    }
+                    total_score += 100;
+                }
+            }
 
             if self.config.sqli.enabled {
                 let detector = self.sqli_detector.clone();
@@ -527,25 +517,25 @@ impl AttackDetector {
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_bytes(), InputLocation::Path) {
+            if let Some(result) = detector.detect_normalized(path, InputLocation::Path) {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_bytes(), InputLocation::QueryString) {
+            if let Some(result) = detector.detect_normalized(qs, InputLocation::QueryString) {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_bytes(), InputLocation::header(name)) {
+            if let Some(result) = detector.detect_normalized(value, InputLocation::header(name)) {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_bytes(), InputLocation::PostBody) {
+            if let Some(result) = detector.detect_normalized(body, InputLocation::PostBody) {
                 return Some(result);
             }
         }
@@ -558,25 +548,25 @@ impl AttackDetector {
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
         if let Some(ref path) = inputs.path {
-            if let Some(result) = detector.detect(path.as_bytes(), InputLocation::Path) {
+            if let Some(result) = detector.detect_normalized(path, InputLocation::Path) {
                 return Some(result);
             }
         }
 
         if let Some(ref qs) = inputs.query_string {
-            if let Some(result) = detector.detect(qs.as_bytes(), InputLocation::QueryString) {
+            if let Some(result) = detector.detect_normalized(qs, InputLocation::QueryString) {
                 return Some(result);
             }
         }
 
         for (name, value) in &inputs.headers {
-            if let Some(result) = detector.detect(value.as_bytes(), InputLocation::header(name)) {
+            if let Some(result) = detector.detect_normalized(value, InputLocation::header(name)) {
                 return Some(result);
             }
         }
 
         if let Some(ref body) = inputs.body {
-            if let Some(result) = detector.detect(body.as_bytes(), InputLocation::PostBody) {
+            if let Some(result) = detector.detect_normalized(body, InputLocation::PostBody) {
                 return Some(result);
             }
         }
@@ -843,100 +833,6 @@ impl AttackDetector {
         }
 
         None
-    }
-
-    #[cfg(feature = "mesh")]
-    fn extract_behavioral_features(
-        &self,
-        ip: IpAddr,
-        method: &http::Method,
-        path: &str,
-        query_string: Option<&str>,
-        headers: &http::HeaderMap,
-        body: Option<&[u8]>,
-    ) -> Option<crate::mesh::behavioral_intel::RequestFeatures> {
-        let _behavioral_intel = self.behavioral_intel.as_ref()?;
-
-        // Update IP stats
-        let stats_lock = self.ip_stats_cache.get_with(ip, || {
-            Arc::new(RwLock::new(IpBehavioralStats::new()))
-        });
-        
-        let (inter_request_timing_ms, avg_interval_ms, timing_variance_ms) = {
-            let mut stats = stats_lock.write();
-            let interval = stats.record_request();
-            (interval, stats.get_avg_interval(), stats.get_timing_variance())
-        };
-
-        let url = if let Some(qs) = query_string {
-            format!("{}?{}", path, qs)
-        } else {
-            path.to_string()
-        };
-
-        let url_entropy = Self::calculate_string_entropy(&url);
-
-        let mut suspicious_header_count: u8 = 0;
-
-        for (name, _) in headers {
-            let name_lower = name.as_str().to_lowercase();
-            if name_lower.contains("x-forwarded")
-                || name_lower.contains("x-real-ip")
-                || name_lower.contains("x-proxyuser-ip")
-                || name_lower.contains("via")
-            {
-                suspicious_header_count += 1;
-            }
-        }
-
-        let body_len = body.map(|b| b.len()).unwrap_or(0);
-        let header_len: usize = headers
-            .iter()
-            .map(|(k, v)| k.as_str().len() + v.len())
-            .sum();
-        let body_to_header_ratio = if header_len > 0 {
-            body_len as f32 / header_len as f32
-        } else {
-            0.0
-        };
-
-        Some(crate::mesh::behavioral_intel::RequestFeatures {
-            header_timing_variance_ms: timing_variance_ms,
-            request_sequence_entropy: 0.5, // TODO: Implement sequence entropy
-            byte_length_distribution: vec![
-                body_len as u32 / 1000,
-                (body_len % 1000) as u32 / 100,
-                (body_len % 100) as u32 / 10,
-                body_len as u32 % 10,
-            ],
-            inter_request_timing_ms,
-            suspicious_header_count,
-            url_entropy,
-            body_to_header_ratio,
-        })
-    }
-
-    fn calculate_string_entropy(s: &str) -> f32 {
-        if s.is_empty() {
-            return 0.0;
-        }
-
-        let mut freq = [0usize; 256];
-        for byte in s.bytes() {
-            freq[byte as usize] += 1;
-        }
-
-        let len = s.len() as f32;
-        let entropy: f32 = freq
-            .iter()
-            .filter(|&&count| count > 0)
-            .map(|&count| {
-                let p = count as f32 / len;
-                -p * p.log2()
-            })
-            .sum();
-
-        entropy
     }
 
     pub fn check_body_only(&self, body: &[u8]) -> Option<AttackDetectionResult> {
@@ -1254,6 +1150,56 @@ impl AttackDetector {
 
     pub fn streaming(self: Arc<Self>) -> StreamingWafCore {
         StreamingWafCore::new(self)
+    }
+
+    fn check_strict_normalization(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
+        let risky_flags = NormalizationFlags::NULL_BYTE | NormalizationFlags::ZERO_WIDTH;
+
+        if let Some(ref path) = inputs.path {
+            if path.flags.intersects(risky_flags) {
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Other,
+                    input_location: InputLocation::Path,
+                    fingerprint: Some("strict_normalization_violation".to_string()),
+                    matched_pattern: Some(format!("Risky characters detected in path: {:?}", path.flags)),
+                });
+            }
+        }
+
+        if let Some(ref qs) = inputs.query_string {
+            if qs.flags.intersects(risky_flags) {
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Other,
+                    input_location: InputLocation::QueryString,
+                    fingerprint: Some("strict_normalization_violation".to_string()),
+                    matched_pattern: Some(format!("Risky characters detected in query string: {:?}", qs.flags)),
+                });
+            }
+        }
+
+        for (name, value) in &inputs.headers {
+            if value.flags.intersects(risky_flags) {
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Other,
+                    input_location: InputLocation::header(name),
+                    fingerprint: Some("strict_normalization_violation".to_string()),
+                    matched_pattern: Some(format!("Risky characters detected in header {}: {:?}", name, value.flags)),
+                });
+            }
+        }
+
+        if let Some(ref body) = inputs.body {
+            if body.flags.intersects(risky_flags) {
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::Other,
+                    input_location: InputLocation::PostBody,
+                    fingerprint: Some("strict_normalization_violation".to_string()),
+                    matched_pattern: Some(format!("Risky characters detected in body: {:?}", body.flags)),
+                });
+            }
+        }
+
+        None
     }
 }
 #[cfg(test)]

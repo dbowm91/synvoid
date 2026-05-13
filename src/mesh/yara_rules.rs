@@ -576,14 +576,19 @@ impl YaraRulesManager {
             compiled_hash: compiled_hash.clone(),
             node_id: self.node_id.clone(),
             timestamp,
-            signature: manifest_signature,
-            signer_public_key: manifest_signer_pk,
+            signature: manifest_signature.clone(),
+            signer_public_key: manifest_signer_pk.clone(),
             is_chunked,
             chunk_count,
             uncompressed_size,
             compressed_size,
             chunk_hashes,
-            compiled_chunk_hashes: None, // Will add if needed
+            compiled_chunk_hashes: None,
+            multi_signatures: Some(vec![crate::mesh::dht::YaraRuleSignature {
+                signer_id: self.node_id.clone(),
+                public_key: manifest_signer_pk.unwrap_or_default(),
+                signature: manifest_signature,
+            }]),
         };
 
         let manifest_key = DhtKey::yara_rules_manifest(&self.node_id);
@@ -895,8 +900,8 @@ impl YaraRulesManager {
                 let manifest_opt: Option<crate::mesh::dht::YaraRulesManifest> = 
                     crate::serialization::deserialize(&record.value).ok();
 
-                let (manifest_node_id, peer_hash, manifest_version, manifest_timestamp, is_chunked, chunk_count, manifest_signature, manifest_signer_pk, compiled_hash) = if let Some(m) = manifest_opt {
-                    (m.node_id, m.content_hash, m.version, m.timestamp, m.is_chunked, m.chunk_count, URL_SAFE_NO_PAD.encode(&m.signature), m.signer_public_key.unwrap_or_default(), m.compiled_hash)
+                let (manifest_node_id, peer_hash, manifest_version, manifest_timestamp, is_chunked, chunk_count, manifest_signature, manifest_signer_pk, compiled_hash) = if let Some(ref m) = manifest_opt {
+                    (m.node_id.clone(), m.content_hash.clone(), m.version.clone(), m.timestamp, m.is_chunked, m.chunk_count, URL_SAFE_NO_PAD.encode(&m.signature), m.signer_public_key.clone().unwrap_or_default(), m.compiled_hash.clone())
                 } else if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
                     let node_id = value.get("node_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let hash = value.get("content_hash").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -971,7 +976,30 @@ impl YaraRulesManager {
                         continue;
                     }
 
-                    if !self.node_role.is_global() {
+                    // Multi-Signature Quorum Verification
+                    if let Some(ref m_sigs) = manifest_opt.and_then(|m| m.multi_signatures) {
+                        let mut valid_count = 0;
+                        for sig_record in m_sigs {
+                            if let Ok(pk) = URL_SAFE_NO_PAD.decode(&sig_record.public_key) {
+                                if let Ok(pk_arr) = pk.try_into() {
+                                    let m_signer = crate::mesh::protocol::MeshMessageSigner::new(pk_arr);
+                                    if m_signer.verify(signature_content.as_bytes(), &sig_record.signature, &pk_arr) {
+                                        if self.config.trusted_signers.contains(&sig_record.public_key) {
+                                            valid_count += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Threshold: 2/3 of global nodes (simplified to 2 for now, or use trusted_signers.len())
+                        let threshold = (self.config.trusted_signers.len() * 2 / 3).max(1);
+                        if valid_count < threshold {
+                            tracing::warn!("YARA sync: manifest has insufficient signatures ({} < {})", valid_count, threshold);
+                            continue;
+                        }
+                    } else if !self.node_role.is_global() {
+                        // Fallback for single signature if multi-sig is not yet used
                         if !self.config.trusted_signers.contains(&manifest_signer_pk.to_string()) {
                             continue;
                         }

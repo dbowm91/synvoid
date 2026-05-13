@@ -7750,6 +7750,7 @@ dependencies = [
  "base32",
  "base64",
  "bcrypt",
+ "bitflags 2.11.1",
  "bloomfilter",
  "brotli",
  "bytes",

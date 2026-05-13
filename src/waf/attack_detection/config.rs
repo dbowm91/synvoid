@@ -58,6 +58,8 @@ pub struct AttackDetectionConfig {
     pub enabled: bool,
     #[serde(default = "default_paranoia_level")]
     pub paranoia_level: u8,
+    #[serde(default = "default_true")]
+    pub strict_normalization: bool,
     #[serde(default = "default_action")]
     pub action: String,
     #[serde(default = "default_max_header_size")]
@@ -121,6 +123,7 @@ impl Default for AttackDetectionConfig {
         Self {
             enabled: true,
             paranoia_level: default_paranoia_level(),
+            strict_normalization: true,
             action: default_action(),
             max_header_size: default_max_header_size(),
             max_headers: default_max_headers(),

@@ -578,6 +578,13 @@ pub struct OriginPenalty {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct YaraRuleSignature {
+    pub signer_id: String,
+    pub public_key: String,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct YaraRulesManifest {
     pub version: String,
     pub content_hash: String,
@@ -592,6 +599,7 @@ pub struct YaraRulesManifest {
     pub compressed_size: usize,
     pub chunk_hashes: Vec<String>,
     pub compiled_chunk_hashes: Option<Vec<String>>,
+    pub multi_signatures: Option<Vec<YaraRuleSignature>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
