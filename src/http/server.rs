@@ -900,11 +900,36 @@ impl HttpServer {
         let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok());
 
         // ============================================================================
+        // SECTION 8.5: Trust Token Verification (Fast Path)
+        // ============================================================================
+        let mut skip_waf = false;
+        if let Some(cookies_str) = cookies {
+            if let Some(token) = cookies_str.split(';').find_map(|s| {
+                let s = s.trim();
+                if s.starts_with("sv_trust=") {
+                    Some(&s["sv_trust=".len()..])
+                } else {
+                    None
+                }
+            }) {
+                if waf.verify_trust_token(client_ip, token) {
+                    skip_waf = true;
+                    tracing::debug!("Bypassing WAF check due to valid trust token for {}", client_ip);
+                }
+            }
+        }
+
+        // ============================================================================
         // SECTION 9: WAF Early Decision Checks
         // ============================================================================
         // Note: Site config not available yet at this point (routing happens later).
         // Site-specific bot config (enable_css_honeypot, etc.) will be used in check_challenge.
-        let early_decision = waf.check_early(client_ip, &path, cookies, None);
+        let early_decision = if skip_waf {
+            crate::proxy::WafDecision::Pass
+        } else {
+            waf.check_early(client_ip, &path, cookies, None)
+        };
+
         match early_decision {
             crate::proxy::WafDecision::Drop => {
                 counter!("synvoid.http.early_drop").increment(1);
@@ -1182,8 +1207,10 @@ impl HttpServer {
             let user_agent_ref = user_agent.as_deref();
             let method_str = method.to_string();
 
-            let waf_decision = waf
-                .check_request_full(
+            let waf_decision = if skip_waf {
+                crate::proxy::WafDecision::Pass
+            } else {
+                waf.check_request_full(
                     Some(&site_id),
                     client_ip,
                     &method_str,
@@ -1196,7 +1223,8 @@ impl HttpServer {
                     Some(&target.site_config.bot),
                     None,
                 )
-                .await;
+                .await
+            };
 
             match waf_decision {
                 crate::proxy::WafDecision::Pass => {
@@ -1814,34 +1842,35 @@ impl HttpServer {
         // ============================================================================
         // SECTION 13: WAF Full Request Check
         // ============================================================================
-        let waf_decision =
-            if matches!(target.backend_type, crate::router::BackendType::Serverless)
-                && target.site_config.serverless.as_ref().is_some_and(|s| {
-                    s.waf_mode == crate::config::serverless::ServerlessWafMode::Off
-                })
-            {
-                tracing::debug!(
-                    "serverless route with waf_mode=off - skipping WAF check for {} {}",
-                    method_str,
-                    path
-                );
-                crate::proxy::WafDecision::Pass
-            } else {
-                waf.check_request_full(
-                    Some(&site_id),
-                    client_ip,
-                    method_str.as_str(),
-                    &path,
-                    query_string,
-                    &parts.headers,
-                    body_slice_ref,
-                    user_agent.as_deref(),
-                    None,
-                    Some(&target.site_config.bot),
-                    None,
-                )
-                .await
-            };
+        let waf_decision = if skip_waf {
+            crate::proxy::WafDecision::Pass
+        } else if matches!(target.backend_type, crate::router::BackendType::Serverless)
+            && target.site_config.serverless.as_ref().is_some_and(|s| {
+                s.waf_mode == crate::config::serverless::ServerlessWafMode::Off
+            })
+        {
+            tracing::debug!(
+                "serverless route with waf_mode=off - skipping WAF check for {} {}",
+                method_str,
+                path
+            );
+            crate::proxy::WafDecision::Pass
+        } else {
+            waf.check_request_full(
+                Some(&site_id),
+                client_ip,
+                method_str.as_str(),
+                &path,
+                query_string,
+                &parts.headers,
+                body_slice_ref,
+                user_agent.as_deref(),
+                None,
+                Some(&target.site_config.bot),
+                None,
+            )
+            .await
+        };
 
         let response = match waf_decision {
             // ============================================================================

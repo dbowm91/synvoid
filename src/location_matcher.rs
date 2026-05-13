@@ -1,10 +1,11 @@
 // SAFETY_REASON: Location-based routing - reserved for geographic load balancing
 
 use crate::utils::check_regex_complexity;
+use matchit::Router as MatchRouter;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocationMatchType {
     Exact,
     PreferentialPrefix,
@@ -103,103 +104,107 @@ impl LocationMatch {
             }
         }
     }
-
-    pub fn prefix_length(&self) -> usize {
-        match self.match_type {
-            LocationMatchType::Exact => self.pattern.len(),
-            LocationMatchType::PreferentialPrefix | LocationMatchType::Prefix => self.pattern.len(),
-            LocationMatchType::Regex => 0,
-        }
-    }
 }
 
 #[derive(Clone)]
 pub struct LocationMatcher {
-    locations: Vec<LocationMatch>,
+    static_router: MatchRouter<(usize, LocationMatchType)>,
+    regex_locations: Vec<LocationMatch>,
+    has_static: bool,
 }
 
 impl LocationMatcher {
     pub fn new(patterns: Vec<String>) -> Self {
-        let locations: Vec<LocationMatch> = patterns
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, pattern)| LocationMatch::new(pattern, idx))
-            .collect();
+        let mut static_router = MatchRouter::new();
+        let mut regex_locations = Vec::new();
+        let mut has_static = false;
 
-        LocationMatcher { locations }
-    }
-
-    pub fn match_uri(&self, uri: &str) -> Option<(usize, LocationMatchType)> {
-        let mut best_exact: Option<&LocationMatch> = None;
-        let mut best_pref_prefix: Option<&LocationMatch> = None;
-        let mut first_regex: Option<&LocationMatch> = None;
-        let mut best_prefix: Option<&LocationMatch> = None;
-
-        for loc in &self.locations {
-            if loc.matches(uri) {
+        for (idx, pattern_str) in patterns.into_iter().enumerate() {
+            if let Some(loc) = LocationMatch::new(pattern_str, idx) {
                 match loc.match_type {
-                    LocationMatchType::Exact => {
-                        best_exact = Some(loc);
-                    }
-                    LocationMatchType::PreferentialPrefix => match &best_pref_prefix {
-                        None => best_pref_prefix = Some(loc),
-                        Some(current) => {
-                            if loc.prefix_length() > current.prefix_length() {
-                                best_pref_prefix = Some(loc);
-                            }
-                        }
-                    },
                     LocationMatchType::Regex => {
-                        if first_regex.is_none() {
-                            first_regex = Some(loc);
-                        }
+                        regex_locations.push(loc);
                     }
-                    LocationMatchType::Prefix => match &best_prefix {
-                        None => best_prefix = Some(loc),
-                        Some(current) => {
-                            if loc.prefix_length() > current.prefix_length() {
-                                best_prefix = Some(loc);
-                            }
-                        }
-                    },
+                    LocationMatchType::Exact => {
+                        let _ = static_router.insert(loc.pattern.clone(), (idx, loc.match_type));
+                        has_static = true;
+                    }
+                    LocationMatchType::PreferentialPrefix | LocationMatchType::Prefix => {
+                        // For prefix matching, we insert both the exact path and a catch-all
+                        // matchit doesn't support "starts_with" directly without a wildcard
+                        // so we handle both cases.
+                        let _ =
+                            static_router.insert(loc.pattern.clone(), (idx, loc.match_type));
+                        
+                        let catch_all = if loc.pattern.ends_with('/') {
+                            format!("{}*path", loc.pattern)
+                        } else {
+                            format!("{}/*path", loc.pattern)
+                        };
+                        
+                        let _ = static_router.insert(catch_all, (idx, loc.match_type));
+                        has_static = true;
+                    }
                 }
             }
         }
 
-        if let Some(loc) = best_exact {
-            return Some((loc.original_order, LocationMatchType::Exact));
+        LocationMatcher {
+            static_router,
+            regex_locations,
+            has_static,
+        }
+    }
+
+    pub fn match_uri(&self, uri: &str) -> Option<(usize, LocationMatchType)> {
+        let static_match = if self.has_static {
+            self.static_router.at(uri).ok()
+        } else {
+            None
+        };
+
+        if let Some(ref m) = static_match {
+            let (idx, match_type) = *m.value;
+            if match_type == LocationMatchType::Exact
+                || match_type == LocationMatchType::PreferentialPrefix
+            {
+                return Some((idx, match_type));
+            }
         }
 
-        if let Some(longest) = best_pref_prefix {
-            return Some((
-                longest.original_order,
-                LocationMatchType::PreferentialPrefix,
-            ));
+        // Check regexes in order
+        for regex_loc in &self.regex_locations {
+            if regex_loc.matches(uri) {
+                return Some((regex_loc.original_order, LocationMatchType::Regex));
+            }
         }
 
-        if let Some(first) = first_regex {
-            return Some((first.original_order, LocationMatchType::Regex));
-        }
-
-        if let Some(longest) = best_prefix {
-            return Some((longest.original_order, LocationMatchType::Prefix));
+        // Fallback to the best prefix match found earlier
+        if let Some(m) = static_match {
+            let (idx, match_type) = *m.value;
+            return Some((idx, match_type));
         }
 
         None
     }
 
     pub fn is_empty(&self) -> bool {
-        self.locations.is_empty()
+        !self.has_static && self.regex_locations.is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.locations.len()
+        // This is a bit approximate now, but used mainly for debugging
+        self.regex_locations.len() + if self.has_static { 1 } else { 0 }
     }
 }
 
 impl Default for LocationMatcher {
     fn default() -> Self {
-        Self::new(Vec::new())
+        Self {
+            static_router: MatchRouter::new(),
+            regex_locations: Vec::new(),
+            has_static: false,
+        }
     }
 }
 

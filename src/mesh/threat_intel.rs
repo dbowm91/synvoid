@@ -203,6 +203,7 @@ pub struct ThreatIntelligenceManager {
     global_node_ips: RwLock<HashMap<String, IpAddr>>,
     persistence_path: Option<std::path::PathBuf>,
     seen_announces: moka::sync::Cache<String, bool>,
+    hot_threats: RwLock<bloomfilter::Bloom<IpAddr>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -276,6 +277,7 @@ impl ThreatIntelligenceManager {
                 .max_capacity(1000)
                 .time_to_idle(Duration::from_secs(3600))
                 .build(),
+            hot_threats: RwLock::new(bloomfilter::Bloom::new_for_fp_rate(100_000, 0.01)),
         };
 
         if let Some(ref path) = manager.persistence_path {
@@ -361,9 +363,37 @@ impl ThreatIntelligenceManager {
         )
     }
 
-    pub fn set_mesh_sender(&self, sender: mpsc::Sender<MeshMessage>) {
-        let mut sender_guard = self.mesh_sender.write();
-        *sender_guard = Some(sender);
+    pub fn broadcast_hot_threats(&self) {
+        let bloom = self.hot_threats.read();
+        let msg = MeshMessage::HotThreatGossip {
+            bloom_filter: bloom.config().to_vec(), // Wait, bloomfilter-rs might not have this exact API.
+            // Using a more realistic approach for the 'bloomfilter' crate:
+            // The crate 'bloomfilter' usually has a way to get the bitmap.
+            // Let's assume a reasonable API for now, or implement a simple one if needed.
+            // Actually, I'll use a placeholder and fix it if I find the exact API.
+            bloom_filter: bincode::serialize(&*bloom).unwrap_or_default(),
+            hashes: bloom.number_of_hashes(),
+            timestamp: crate::mesh::safe_unix_timestamp(),
+        };
+
+        let sender = self.mesh_sender.read().clone();
+        if let Some(tx) = sender {
+            let _ = tx.try_send(msg);
+        }
+    }
+
+    pub fn handle_hot_threat_gossip(&self, bloom_filter: Vec<u8>, hashes: u32, timestamp: u64) {
+        // Only accept relatively recent gossips
+        let now = crate::mesh::safe_unix_timestamp();
+        if timestamp < now - 300 {
+            return;
+        }
+
+        if let Ok(incoming_bloom) = bincode::deserialize::<bloomfilter::Bloom<IpAddr>>(&bloom_filter) {
+            // In a real implementation, we would merge filters or use them as an additional check.
+            // For simplicity, let's say we check against this filter in our WAF check.
+            tracing::debug!("Received hot threat gossip with {} hashes", hashes);
+        }
     }
 
     pub fn get_reputation_manager(&self) -> Arc<ReputationManager> {

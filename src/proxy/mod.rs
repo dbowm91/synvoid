@@ -957,10 +957,12 @@ impl ProxyServer {
                 max_retries + 1
             );
 
+            let start_time = std::time::Instant::now();
             let result = self
                 .send_single_request(method.clone(), &url, None, body.take())
                 .await;
 
+            backend.record_latency(start_time.elapsed());
             backend.decrement_connections();
 
             match result {

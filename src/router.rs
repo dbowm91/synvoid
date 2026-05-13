@@ -22,6 +22,7 @@ use crate::static_files::{
     StaticFileHandler,
 };
 use crate::theme::ThemeConfig;
+use matchit::Router as MatchRouter;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -30,7 +31,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Router {
     domain_map: HashMap<Arc<str>, Arc<SiteConfig>>,
-    suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)>,
+    wildcard_domain_router: MatchRouter<Arc<SiteConfig>>,
     fallback_mode: String,
     fallback_upstream: Option<String>,
     static_handlers: HashMap<String, Arc<StaticFileHandler>>,
@@ -47,7 +48,7 @@ pub struct Router {
 
 type SiteMaps = (
     HashMap<Arc<str>, Arc<SiteConfig>>,
-    Vec<(Arc<str>, Arc<SiteConfig>)>,
+    MatchRouter<Arc<SiteConfig>>,
     HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Arc<StaticFileHandler>>,
@@ -107,7 +108,7 @@ impl Router {
 
         let (
             domain_map,
-            suffix_domain_map,
+            wildcard_domain_router,
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
             static_handlers,
@@ -124,7 +125,7 @@ impl Router {
 
         let router = Router {
             domain_map,
-            suffix_domain_map,
+            wildcard_domain_router,
             fallback_mode: main_config.fallback.mode.clone(),
             fallback_upstream: main_config.fallback.upstream.clone(),
             static_handlers,
@@ -165,7 +166,7 @@ impl Router {
         default_theme_config: &ThemeConfig,
     ) -> SiteMaps {
         let mut domain_map = HashMap::new();
-        let mut suffix_domain_map: Vec<(Arc<str>, Arc<SiteConfig>)> = Vec::new();
+        let mut wildcard_domain_router = MatchRouter::new();
         let mut static_handlers = HashMap::new();
         let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
@@ -182,7 +183,7 @@ impl Router {
             Self::build_domain_map_entry(
                 &config_arc,
                 &mut domain_map,
-                &mut suffix_domain_map,
+                &mut wildcard_domain_router,
                 &mut cleaned_site_domains,
                 &mut cleaned_site_domain_suffixes,
             );
@@ -207,11 +208,9 @@ impl Router {
             }
         }
 
-        suffix_domain_map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-
         (
             domain_map,
-            suffix_domain_map,
+            wildcard_domain_router,
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
             static_handlers,
@@ -224,7 +223,7 @@ impl Router {
     fn build_domain_map_entry(
         config_arc: &Arc<SiteConfig>,
         domain_map: &mut HashMap<Arc<str>, Arc<SiteConfig>>,
-        suffix_domain_map: &mut Vec<(Arc<str>, Arc<SiteConfig>)>,
+        wildcard_domain_router: &mut MatchRouter<Arc<SiteConfig>>,
         cleaned_site_domains: &mut HashMap<String, Vec<Arc<str>>>,
         cleaned_site_domain_suffixes: &mut HashMap<String, Vec<Arc<str>>>,
     ) {
@@ -239,7 +238,19 @@ impl Router {
         let mut suffixes: Vec<Arc<str>> = Vec::new();
         for clean_domain in &cleaned {
             if clean_domain.starts_with('.') || clean_domain.contains('*') {
-                suffix_domain_map.push((clean_domain.clone(), config_arc.clone()));
+                let mut pattern = clean_domain.trim_start_matches('.').to_string();
+                if let Some(stripped) = pattern.strip_prefix("*.") {
+                    pattern = stripped.to_string();
+                }
+
+                let reversed = Self::reverse_domain_for_router(&pattern);
+                // Match both the domain itself and subdomains
+                let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
+                let _ = wildcard_domain_router.insert(
+                    format!("{}/{{*sub}}", reversed),
+                    config_arc.clone(),
+                );
+
                 suffixes.push(clean_domain.clone());
             } else {
                 domain_map.insert(clean_domain.clone(), config_arc.clone());
@@ -1062,13 +1073,6 @@ impl Router {
                         {
                             return self.route_to_target(site_config, path, &clean_host);
                         }
-                        if let Some(suffixes) = self.cleaned_site_domain_suffixes.get(site_id) {
-                            for suffix in suffixes {
-                                if clean_host.ends_with(suffix.as_ref()) {
-                                    return self.route_to_target(site_config, path, &clean_host);
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -1078,10 +1082,10 @@ impl Router {
             return self.route_to_target(site_config, path, &clean_host);
         }
 
-        for (domain, site_config) in &self.suffix_domain_map {
-            if clean_host.ends_with(domain.as_ref()) {
-                return self.route_to_target(site_config, path, &clean_host);
-            }
+        // Wildcard/Suffix matching using reversed domain Radix tree
+        let reversed = Self::reverse_domain_for_router(&clean_host);
+        if let Ok(m) = self.wildcard_domain_router.at(&reversed) {
+            return self.route_to_target(m.value, path, &clean_host);
         }
 
         if clean_host.is_empty() || clean_host == "*" {
@@ -1133,7 +1137,7 @@ impl Router {
 
     pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>) {
         self.domain_map.clear();
-        self.suffix_domain_map.clear();
+        self.wildcard_domain_router = MatchRouter::new();
         self.static_handlers.clear();
         self.listen_map.clear();
         self.default_servers.clear();
@@ -1158,8 +1162,19 @@ impl Router {
             let mut suffixes: Vec<Arc<str>> = Vec::new();
             for clean_domain in &cleaned {
                 if clean_domain.starts_with('.') || clean_domain.contains('*') {
-                    self.suffix_domain_map
-                        .push((clean_domain.clone(), config_arc.clone()));
+                    let mut pattern = clean_domain.trim_start_matches('.').to_string();
+                    if let Some(stripped) = pattern.strip_prefix("*.") {
+                        pattern = stripped.to_string();
+                    }
+
+                    let reversed = Self::reverse_domain_for_router(&pattern);
+                    // Match both the domain itself and subdomains
+                    let _ = self.wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
+                    let _ = self.wildcard_domain_router.insert(
+                        format!("{}/{{*sub}}", reversed),
+                        config_arc.clone(),
+                    );
+                    
                     suffixes.push(clean_domain.clone());
                 } else {
                     self.domain_map
@@ -1238,9 +1253,12 @@ impl Router {
                 }
             }
         }
+    }
 
-        self.suffix_domain_map
-            .sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    fn reverse_domain_for_router(domain: &str) -> String {
+        let mut parts: Vec<_> = domain.split('.').filter(|s| !s.is_empty()).collect();
+        parts.reverse();
+        format!("/{}", parts.join("/"))
     }
 
     #[cfg(feature = "mesh")]
@@ -1265,7 +1283,7 @@ impl Default for Router {
     fn default() -> Self {
         Router {
             domain_map: HashMap::new(),
-            suffix_domain_map: Vec::new(),
+            wildcard_domain_router: MatchRouter::new(),
             fallback_mode: "return_404".to_string(),
             fallback_upstream: None,
             static_handlers: HashMap::new(),

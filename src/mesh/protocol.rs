@@ -583,6 +583,11 @@ pub enum MeshMessage {
         nonce: ArcStr,
         timestamp: u64,
     },
+    HotThreatGossip {
+        bloom_filter: Vec<u8>,
+        hashes: u32,
+        timestamp: u64,
+    },
     KeepAlive,
     KeepAliveAck,
     LookupRequest {

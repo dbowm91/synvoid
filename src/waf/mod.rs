@@ -190,11 +190,31 @@ pub struct WafCore {
     pub honeypot_ban_duration_secs: u64,
     pub request_services: ArcSwapOption<RequestServices>,
     pub flood_protector: Option<Arc<FloodProtector>>,
+    pub trust_token_key: [u8; 32],
 }
 
 pub use crate::worker::context::RequestServices;
 
 impl WafCore {
+    pub fn generate_trust_token(&self, client_ip: IpAddr) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut mac = HmacSha256::new_from_slice(&self.trust_token_key)
+            .expect("HMAC can take key of any size");
+        mac.update(client_ip.to_string().as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    pub fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool {
+        let expected = self.generate_trust_token(client_ip);
+        if expected.len() != token.len() {
+            return false;
+        }
+        subtle::ConstantTimeEq::ct_eq(expected.as_bytes(), token.as_bytes()).unwrap_u8() == 1
+    }
+
     pub fn new(config: WafCoreConfig) -> Self {
         let WafCoreConfig {
             rate_config,
@@ -378,6 +398,9 @@ impl WafCore {
             ))
         });
 
+        let mut trust_token_key = [0u8; 32];
+        rand::fill(&mut trust_token_key);
+
         Self {
             rate_limiter,
             bot_detector,
@@ -406,6 +429,7 @@ impl WafCore {
             honeypot_ban_duration_secs: 86400,
             request_services: ArcSwapOption::new(None),
             flood_protector: None, // Initialized separately usually
+            trust_token_key,
         }
     }
 

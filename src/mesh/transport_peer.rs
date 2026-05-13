@@ -202,9 +202,19 @@ impl MeshTransport {
                 key,
                 lookup_type,
             } => {
-                self.handle_lookup_request(peer_id, &request_id, &key, lookup_type)
+                self.handle_lookup_request_datagram(peer_id, &request_id, &key, lookup_type)
                     .await;
             }
+            MeshMessage::HotThreatGossip {
+                bloom_filter,
+                hashes,
+                timestamp,
+            } => {
+                if let Some(ref threat_intel) = self.threat_intel {
+                    threat_intel.handle_hot_threat_gossip(bloom_filter, hashes, timestamp);
+                }
+            }
+
             MeshMessage::LookupBatchRequest { request_id, keys } => {
                 self.handle_lookup_batch_request(peer_id, &request_id, &keys)
                     .await;

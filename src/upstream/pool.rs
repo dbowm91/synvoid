@@ -50,6 +50,7 @@ pub enum LoadBalanceAlgorithm {
     RoundRobin,
     Random,
     LeastConnections,
+    PeakEwma,
     WeightedRoundRobin,
     IpHash,
 }
@@ -80,12 +81,66 @@ fn protocol_name(protocol: BackendProtocol) -> &'static str {
     }
 }
 
+use crate::upstream::shared_state::SharedConnectionTable;
+
+#[derive(Clone)]
+pub enum ConnectionCounter {
+    Local(Arc<AtomicUsize>),
+    Shared {
+        table: SharedConnectionTable,
+        index: usize,
+    },
+}
+
+impl ConnectionCounter {
+    pub fn load(&self, order: Ordering) -> usize {
+        match self {
+            Self::Local(c) => c.load(order),
+            Self::Shared { table, index } => table
+                .get_counter(*index)
+                .map(|c| c.load(order))
+                .unwrap_or(0),
+        }
+    }
+
+    pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
+        match self {
+            Self::Local(c) => c.fetch_add(val, order),
+            Self::Shared { table, index } => table
+                .get_counter(*index)
+                .map(|c| c.fetch_add(val, order))
+                .unwrap_or(0),
+        }
+    }
+
+    pub fn fetch_update<F>(
+        &self,
+        set_order: Ordering,
+        fetch_order: Ordering,
+        f: F,
+    ) -> Result<usize, usize>
+    where
+        F: FnMut(usize) -> Option<usize>,
+    {
+        match self {
+            Self::Local(c) => c.fetch_update(set_order, fetch_order, f),
+            Self::Shared { table, index } => {
+                if let Some(c) = table.get_counter(*index) {
+                    c.fetch_update(set_order, fetch_order, f)
+                } else {
+                    Err(0)
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Backend {
     pub url: Arc<String>,
     pub weight: u32,
     pub max_connections: usize,
-    pub current_connections: Arc<AtomicUsize>,
+    pub current_connections: ConnectionCounter,
     pub is_healthy: RunningFlag,
     pub consecutive_failures: Arc<AtomicU32>,
     pub consecutive_successes: Arc<AtomicU32>,
@@ -93,6 +148,7 @@ pub struct Backend {
     pub is_backup: bool,
     pub cpu_percent: Arc<AtomicU32>,
     pub memory_percent: Arc<AtomicU32>,
+    pub latency_ewma: Arc<AtomicUsize>, // For Phase 4
 }
 
 pub struct ConnectionGuard<'a> {
@@ -111,11 +167,22 @@ impl Backend {
             tracing::error!("Invalid upstream URL '{}': {}", url, e);
             url
         });
+
+        let current_connections = if let Some(table) = SharedConnectionTable::get_global() {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            use std::hash::{Hash, Hasher};
+            validated_url.hash(&mut hasher);
+            let index = (hasher.finish() as usize) % table.size();
+            ConnectionCounter::Shared { table, index }
+        } else {
+            ConnectionCounter::Local(Arc::new(AtomicUsize::new(0)))
+        };
+
         Self {
             url: Arc::new(validated_url),
             weight: 1,
             max_connections: 100,
-            current_connections: Arc::new(AtomicUsize::new(0)),
+            current_connections,
             is_healthy: RunningFlag::new(),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             consecutive_successes: Arc::new(AtomicU32::new(0)),
@@ -123,7 +190,19 @@ impl Backend {
             is_backup,
             cpu_percent: Arc::new(AtomicU32::new(0)),
             memory_percent: Arc::new(AtomicU32::new(0)),
+            latency_ewma: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    pub fn new_shared(
+        url: String,
+        table: SharedConnectionTable,
+        index: usize,
+        is_backup: bool,
+    ) -> Self {
+        let mut backend = Self::new_internal(url, is_backup);
+        backend.current_connections = ConnectionCounter::Shared { table, index };
+        backend
     }
 
     pub fn new(url: String) -> Self {
@@ -198,6 +277,23 @@ impl Backend {
     pub fn connection_scope(&self) -> ConnectionGuard {
         self.increment_connections();
         ConnectionGuard { backend: self }
+    }
+
+    pub fn record_latency(&self, duration: std::time::Duration) {
+        let latency_ms = duration.as_millis() as usize;
+        let old_ewma = self.latency_ewma.load(Ordering::Relaxed);
+
+        let new_ewma = if old_ewma == 0 {
+            latency_ms
+        } else {
+            (old_ewma * 9 + latency_ms) / 10
+        };
+
+        self.latency_ewma.store(new_ewma, Ordering::Relaxed);
+    }
+
+    pub fn get_latency_ewma(&self) -> usize {
+        self.latency_ewma.load(Ordering::Relaxed)
     }
 
     pub fn record_success(&self) {
@@ -372,8 +468,25 @@ impl UpstreamPool {
             LoadBalanceAlgorithm::RoundRobin => self.apply_round_robin(candidates),
             LoadBalanceAlgorithm::Random => self.apply_random(candidates),
             LoadBalanceAlgorithm::LeastConnections => self.apply_least_connections(candidates),
-            LoadBalanceAlgorithm::WeightedRoundRobin => self
-                .weighted_round_robin(&candidates.iter().map(|b| (*b).clone()).collect::<Vec<_>>()),
+            LoadBalanceAlgorithm::PeakEwma => {
+                let mut best_backend: Option<Backend> = None;
+                let mut min_cost = f64::MAX;
+
+                for backend in candidates {
+                    let conn = backend.current_connections.load(Ordering::Relaxed) as f64;
+                    let latency = backend.get_latency_ewma() as f64;
+                    // Use (connections + 1) * latency as the cost
+                    let cost = (conn + 1.0) * (latency + 1.0);
+                    if cost < min_cost {
+                        min_cost = cost;
+                        best_backend = Some((*backend).clone());
+                    }
+                }
+                best_backend
+            }
+            LoadBalanceAlgorithm::WeightedRoundRobin => {
+                self.weighted_round_robin(&candidates.iter().map(|b| (*b).clone()).collect::<Vec<_>>())
+            }
             LoadBalanceAlgorithm::IpHash => self.apply_ip_hash(candidates, None),
         }
     }
