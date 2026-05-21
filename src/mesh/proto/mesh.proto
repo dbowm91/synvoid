@@ -294,6 +294,7 @@ message MeshMessage {
         ReplicaSyncRequest replica_sync_request = 174;
         ReplicaSyncResponse replica_sync_response = 175;
         MeshLoadUpdate mesh_load_update = 176;
+        HotThreatGossip hot_threat_gossip = 177;
     }
 }
 
@@ -770,6 +771,12 @@ message ThreatAcknowledgement {
     bool accepted = 3;
     string reason = 4;
     uint64 timestamp = 5;
+}
+
+message HotThreatGossip {
+    bytes bloom_filter = 1;
+    uint32 hashes = 2;
+    uint64 timestamp = 3;
 }
 
 message YaraRuleAnnounce {

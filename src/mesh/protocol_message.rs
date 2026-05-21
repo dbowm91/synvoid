@@ -147,15 +147,17 @@ impl MeshMessage {
             | Self::AuthChallenge { .. }
             | Self::AuthResponse { .. } => MessageCategory::System,
             Self::Raft { .. } => MessageCategory::System,
-            Self::ConsistentReadRequest { .. }
-            | Self::ConsistentReadResponse { .. }
-            | Self::NotLeader { .. }
-            | Self::RaftCommitNotification { .. }
             | Self::ReplicaSyncRequest { .. }
             | Self::ReplicaSyncResponse { .. }
+            | Self::ConsistentReadRequest { .. }
+            | Self::ConsistentReadResponse { .. }
+
+            | Self::NotLeader { .. }
+            | Self::RaftCommitNotification { .. }
             | Self::MeshLoadUpdate { .. }
             | Self::JoinRequest { .. }
             | Self::JoinResponse { .. } => MessageCategory::System,
+            Self::HotThreatGossip { .. } => MessageCategory::ThreatIntel,
         }
     }
 

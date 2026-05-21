@@ -76,8 +76,39 @@ impl RequestSmugglingDetector {
     }
 
     pub fn check_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
-        let has_cl = headers.contains_key("content-length");
-        let has_te = headers.contains_key("transfer-encoding");
+        let cl_values = headers.get_all("content-length");
+        let te_values = headers.get_all("transfer-encoding");
+
+        if cl_values.iter().count() > 1 {
+            tracing::warn!(
+                attack_type = "request_smuggling",
+                "HTTP Request Smuggling: Duplicate Content-Length headers"
+            );
+
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::RequestSmuggling,
+                fingerprint: Some("duplicate_cl".to_string()),
+                matched_pattern: Some("Multiple Content-Length headers".to_string()),
+                input_location: InputLocation::Header("content-length".into()),
+            });
+        }
+
+        if te_values.iter().count() > 1 {
+            tracing::warn!(
+                attack_type = "request_smuggling",
+                "HTTP Request Smuggling: Duplicate Transfer-Encoding headers"
+            );
+
+            return Some(AttackDetectionResult {
+                attack_type: AttackType::RequestSmuggling,
+                fingerprint: Some("duplicate_te".to_string()),
+                matched_pattern: Some("Multiple Transfer-Encoding headers".to_string()),
+                input_location: InputLocation::Header("transfer-encoding".into()),
+            });
+        }
+
+        let has_cl = cl_values.iter().next().is_some();
+        let has_te = te_values.iter().next().is_some();
 
         if has_cl && has_te {
             if let Some(te_value) = headers.get("transfer-encoding") {

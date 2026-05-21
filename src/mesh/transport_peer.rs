@@ -202,7 +202,7 @@ impl MeshTransport {
                 key,
                 lookup_type,
             } => {
-                self.handle_lookup_request_datagram(peer_id, &request_id, &key, lookup_type)
+                self.handle_lookup_request(peer_id, &request_id, &key, lookup_type)
                     .await;
             }
             MeshMessage::HotThreatGossip {

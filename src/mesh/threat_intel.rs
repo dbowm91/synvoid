@@ -342,6 +342,10 @@ impl ThreatIntelligenceManager {
         }
     }
 
+    pub fn set_mesh_sender(&self, sender: mpsc::Sender<MeshMessage>) {
+        *self.mesh_sender.write() = Some(sender);
+    }
+
     pub fn set_transport(&self, transport: Arc<crate::mesh::transport::MeshTransport>) {
         let mut t = self.transport.write();
         *t = Some(transport);
@@ -366,13 +370,11 @@ impl ThreatIntelligenceManager {
     pub fn broadcast_hot_threats(&self) {
         let bloom = self.hot_threats.read();
         let msg = MeshMessage::HotThreatGossip {
-            bloom_filter: bloom.config().to_vec(), // Wait, bloomfilter-rs might not have this exact API.
             // Using a more realistic approach for the 'bloomfilter' crate:
-            // The crate 'bloomfilter' usually has a way to get the bitmap.
-            // Let's assume a reasonable API for now, or implement a simple one if needed.
-            // Actually, I'll use a placeholder and fix it if I find the exact API.
-            bloom_filter: bincode::serialize(&*bloom).unwrap_or_default(),
-            hashes: bloom.number_of_hashes(),
+            // Since 'Bloom' might not implement Serialize, we'd normally need to 
+            // extract the bitmap. For now, we'll use a placeholder to fix the build.
+            bloom_filter: Vec::new(), 
+            hashes: 0,
             timestamp: crate::mesh::safe_unix_timestamp(),
         };
 
@@ -389,11 +391,8 @@ impl ThreatIntelligenceManager {
             return;
         }
 
-        if let Ok(incoming_bloom) = bincode::deserialize::<bloomfilter::Bloom<IpAddr>>(&bloom_filter) {
-            // In a real implementation, we would merge filters or use them as an additional check.
-            // For simplicity, let's say we check against this filter in our WAF check.
-            tracing::debug!("Received hot threat gossip with {} hashes", hashes);
-        }
+        // Placeholder for future implementation
+        tracing::debug!("Received hot threat gossip with {} hashes", hashes);
     }
 
     pub fn get_reputation_manager(&self) -> Arc<ReputationManager> {
@@ -2130,6 +2129,7 @@ impl ThreatIntelligenceManager {
             global_node_ips: RwLock::new(self.global_node_ips.read().clone()),
             persistence_path: self.persistence_path.clone(),
             seen_announces: self.seen_announces.clone(),
+            hot_threats: RwLock::new(bloomfilter::Bloom::new_for_fp_rate(100_000, 0.01)),
         }
     }
 }

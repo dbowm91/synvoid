@@ -1491,7 +1491,7 @@ impl HttpServer {
                     ));
                 }
                 crate::proxy::WafDecision::Tarpit(tar_path) => {
-                    let stream = waf.stream_tarpit(&tar_path, ua.as_deref());
+                    let stream = waf.stream_tarpit(&tar_path, user_agent.as_deref());
                     return Ok(Self::build_streaming_response_with_alt_svc(
                         200,
                         stream,
@@ -1793,9 +1793,19 @@ impl HttpServer {
                 }
             };
 
-            let (_, action) = waf
+            let (res, action) = waf
                 .challenge_manager
                 .record_css_asset_request(&session_id, asset_name);
+
+            if res == crate::challenge::AssetRequestResult::InvalidAsset {
+                tracing::warn!("Bot detected via CSS aspect-ratio trap: IP {}", client_ip);
+                waf.block_ip_for_honeypot(
+                    client_ip,
+                    "css_trap_hit",
+                    waf.config.honeypot_ban_duration_secs,
+                    "global",
+                );
+            }
 
             match action {
                 crate::challenge::CssAssetAction::RedirectWithCookie => {
@@ -3921,7 +3931,7 @@ impl HttpServer {
         _main_config: &Arc<MainConfig>,
     ) -> Response<BoxBody<Bytes, Infallible>>
     where
-        S: futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static,
+        S: futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Sync + 'static,
     {
         let mut builder = Response::builder()
             .status(status)
@@ -3934,7 +3944,7 @@ impl HttpServer {
         builder
             .body(BodyExt::boxed(http_body_util::StreamBody::new(
                 stream.map(|res| {
-                    Ok::<_, Infallible>(http_body_util::Frame::data(res.unwrap_or_default()))
+                    Ok::<_, Infallible>(http_body::Frame::data(res.unwrap_or_default()))
                 }),
             )))
             .unwrap()

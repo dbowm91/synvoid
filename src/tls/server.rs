@@ -764,11 +764,86 @@ impl HttpsServer {
         }
 
         if path.starts_with("/_waf_assets") {
-            return Ok(Self::build_response(
-                404,
-                "Not Found".to_string(),
-                "text/plain",
-            ));
+            let asset_name = match path.strip_prefix("/_waf_assets/rnd-") {
+                Some(name) => name.strip_suffix(".png").unwrap_or(name),
+                None => {
+                    return Ok(Self::build_response(
+                        204,
+                        "".to_string(),
+                        "text/plain",
+                    ));
+                }
+            };
+
+            if !waf.challenge_manager.css_enabled() {
+                return Ok(Self::build_response(
+                    404,
+                    "Not Found".to_string(),
+                    "text/plain",
+                ));
+            }
+
+            let cookie_name = waf.challenge_manager.css_session_cookie_name();
+            let session_id = parts
+                .headers
+                .get("cookie")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|cookie_str| {
+                    cookie_str
+                        .split(';')
+                        .find(|c| c.trim().starts_with(&format!("{}=", cookie_name)))
+                        .map(|c| c.trim()[cookie_name.len() + 1..].to_string())
+                });
+
+            let session_id = match session_id {
+                Some(sid) => sid,
+                None => {
+                    return Ok(Self::build_response(
+                        204,
+                        "".to_string(),
+                        "text/plain",
+                    ));
+                }
+            };
+
+            let (res, action) = waf
+                .challenge_manager
+                .record_css_asset_request(&session_id, asset_name);
+
+            if res == crate::challenge::AssetRequestResult::InvalidAsset {
+                tracing::warn!("Bot detected via CSS aspect-ratio trap (TLS): IP {}", client_ip);
+                waf.block_ip_for_honeypot(
+                    client_ip,
+                    "css_trap_hit",
+                    waf.config.honeypot_ban_duration_secs,
+                    "global",
+                );
+            }
+
+            match action {
+                crate::challenge::CssAssetAction::RedirectWithCookie => {
+                    let verified_cookie_name = waf.challenge_manager.css_verified_cookie_name();
+                    let window_secs = waf.challenge_manager.css_window_secs();
+                    let cookie = format!(
+                        "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
+                        verified_cookie_name, "verified", window_secs
+                    );
+                    let mut resp = Response::builder()
+                        .status(http::StatusCode::FOUND)
+                        .header(http::header::LOCATION, "/")
+                        .header(http::header::SET_COOKIE, cookie)
+                        .body(Full::new(Bytes::from_static(&[])).boxed())
+                        .unwrap_or_else(|_| crate::http::fallback_error_boxed());
+                    return Ok(resp);
+                }
+                crate::challenge::CssAssetAction::DropConnection => {
+                    return Ok(Self::build_response(
+                        204,
+                        "".to_string(),
+                        "text/plain",
+                    ));
+                }
+            }
         }
 
         let query_string = parts.uri.query();

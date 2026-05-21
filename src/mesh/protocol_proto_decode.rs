@@ -1912,6 +1912,11 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 signature: r.signature,
                 signer_public_key: r.signer_public_key,
             }),
+            proto::mesh_message::Payload::HotThreatGossip(g) => Ok(MeshMessage::HotThreatGossip {
+                bloom_filter: g.bloom_filter,
+                hashes: g.hashes,
+                timestamp: g.timestamp,
+            }),
         }
     }
 }

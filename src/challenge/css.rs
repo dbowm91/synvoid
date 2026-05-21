@@ -123,17 +123,28 @@ impl CssManager {
         let mut css_rules = String::new();
 
         for name in &valid_names {
-            let num = rng.random_range(50..2000);
-            let den = rng.random_range(50..2000);
+            // Use ranges to ensure real browsers match something
+            let (min_num, min_den, max_num, max_den) = match rng.random_range(0..4) {
+                0 => (1, 10, 1, 1),    // Tall portrait
+                1 => (1, 1, 10, 1),    // Wide landscape
+                2 => (1, 2, 2, 1),     // Normal range
+                _ => (1, 5, 5, 1),     // Broad range
+            };
+
             css_rules.push_str(&format!(
-                "@media (aspect-ratio: {}/{}) {{ .waf-rnd-{} {{ background-image: url('{}/rnd-{}.png'); }} }}\n",
-                num, den, name, self.asset_path, name
+                "@media (min-aspect-ratio: {}/{}) and (max-aspect-ratio: {}/{}) {{ .waf-rnd-{} {{ background-image: url('{}/rnd-{}.png'); }} }}\n",
+                min_num, min_den, max_num, max_den, name, self.asset_path, name
             ));
         }
 
         for name in &invalid_names {
-            let num = -(rng.random_range(50..2000) as i32);
-            let den = rng.random_range(50..2000);
+            // Impossible aspect ratios (negative or zero)
+            let (num, den) = if rng.random_bool(0.5) {
+                (-(rng.random_range(1..1000) as i32), rng.random_range(1..1000))
+            } else {
+                (rng.random_range(1..1000) as i32, -(rng.random_range(1..1000) as i32))
+            };
+
             css_rules.push_str(&format!(
                 "@media (aspect-ratio: {}/{}) {{ .waf-rnd-{} {{ background-image: url('{}/rnd-{}.png'); }} }}\n",
                 num, den, name, self.asset_path, name

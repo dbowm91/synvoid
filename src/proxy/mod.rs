@@ -47,7 +47,7 @@ use subtle::ConstantTimeEq;
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, RetryConfig};
 use crate::http_client::{
     create_http_client_with_config, create_upstream_client, HttpClient,
-    UpstreamTlsConfig, BoxErasedBody, ErasedHttpClient,
+    UpstreamTlsConfig, BoxErasedBody, ErasedHttpClient, ErasedBody,
 };
 
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
@@ -340,6 +340,24 @@ impl ProxyServer {
             }
         }
 
+        let (full_body_bytes, body): (Option<bytes::Bytes>, Option<BoxErasedBody>) = if !skip_waf_check {
+            const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
+            if let Some(b) = body {
+                let collected = b.collect().await.map_err(|e| format!("Body collection error: {}", e))?;
+                let bytes = collected.to_bytes();
+                let boxed_body: Option<BoxErasedBody> = Some(crate::http_client::ErasedBodyImpl::new(Full::new(bytes.clone())));
+                if bytes.len() <= MAX_WAF_BODY_SIZE {
+                    (Some(bytes), boxed_body)
+                } else {
+                    (None, boxed_body)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, body)
+        };
+
         if !skip_waf_check {
             let drop = self.waf.config.drop_blocked_requests;
 
@@ -350,20 +368,6 @@ impl ProxyServer {
                 )
             } else {
                 (path.clone(), None)
-            };
-
-            // Collect body for WAF inspection if present and within limits
-            const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
-            let (full_body_bytes, body) = if let Some(b) = body {
-                let collected = b.collect().await.map_err(|e| format!("Body collection error: {}", e))?;
-                let bytes = collected.to_bytes();
-                if bytes.len() <= MAX_WAF_BODY_SIZE {
-                    (Some(bytes.clone()), Some(BodyExt::boxed(Full::new(bytes))))
-                } else {
-                    (None, Some(BodyExt::boxed(Full::new(bytes))))
-                }
-            } else {
-                (None, None)
             };
 
             let waf_decision = self
@@ -446,15 +450,15 @@ impl ProxyServer {
                         .header("Content-Type", "text/html")
                         .header("Cache-Control", "no-store, no-cache, must-revalidate")
                         .body(BodyExt::boxed(http_body_util::StreamBody::new(
-                            stream.map(|res| res.map(http_body_util::Frame::data))
+                            futures::StreamExt::map(stream, |res| res.map(http_body::Frame::data))
                         )))
                         .unwrap());
                 }
                 WafDecision::Pass => {}
             }
+        }
 
-            let forward_result = self.forward_request(method, &path, body).await;
-            // ... (rest of method)
+        let forward_result = self.forward_request(method, &path, body).await;
 
         match forward_result {
             Ok(response) => {

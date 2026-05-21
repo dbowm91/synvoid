@@ -1394,7 +1394,7 @@ impl Message {
             | Message::StaticWorkerShutdownComplete { .. }
             | Message::StaticWorkerBackgroundTasksDone { .. }
             | Message::StaticWorkerResizeAck { .. }
-            Message::StaticWorkerScan { .. }
+            | Message::StaticWorkerScan { .. }
             | Message::StaticWorkerCacheUpdate { .. }
             | Message::StaticWorkerDrain { .. }
             | Message::StaticWorkerDrained { .. }

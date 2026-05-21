@@ -2865,6 +2865,20 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::HotThreatGossip {
+                bloom_filter,
+                hashes,
+                timestamp,
+            } => proto::MeshMessage {
+                message_type: 177,
+                payload: Some(proto::mesh_message::Payload::HotThreatGossip(
+                    proto::HotThreatGossip {
+                        bloom_filter: bloom_filter.clone(),
+                        hashes: *hashes,
+                        timestamp: *timestamp,
+                    },
+                )),
+            },
         }
     }
 }

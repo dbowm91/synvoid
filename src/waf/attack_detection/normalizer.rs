@@ -144,28 +144,35 @@ impl InputNormalizer {
         buffer.clear();
         chars.clear();
 
-        let mut passes = 0;
+        let mut total_passes = 0;
         let max_output = input.len().saturating_mul(MAX_OUTPUT_RATIO);
 
         buffer.push_str(input);
 
         for _ in 0..self.max_decode_passes {
             let prev_len = buffer.len();
+            let prev_content = buffer.clone();
             chars.clear();
             chars.extend(buffer.chars());
             buffer.clear();
-            let decoded = self.decode_single_pass_with_chars(buffer, chars);
-            if decoded == prev_len {
+            let decoded_len = self.decode_single_pass_with_chars(buffer, chars);
+
+            if decoded_len == prev_len && buffer.as_str() == prev_content {
                 break;
             }
-            if decoded > max_output {
+            
+            total_passes += 1;
+            
+            if decoded_len > max_output {
                 break;
             }
-            passes += 1;
         }
 
-        if passes > 1 {
-            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::DOUBLE_ENCODING));
+        if total_passes > 1 {
+            NORMALIZATION_FLAGS.with(|f| {
+                let mut flags = f.borrow_mut();
+                *flags |= NormalizationFlags::DOUBLE_ENCODING;
+            });
         }
 
         chars.clear();
@@ -181,9 +188,9 @@ impl InputNormalizer {
             NormalizedData::Pooled(pooled)
         };
 
-        NormalizedInput { 
-            normalized, 
-            passes,
+        NormalizedInput {
+            normalized,
+            passes: total_passes,
             flags: NormalizationFlags::NONE, // Will be set by caller
         }
     }

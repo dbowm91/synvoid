@@ -634,32 +634,63 @@ impl WafCore {
         client_ip: IpAddr,
         path: &str,
         user_agent: Option<&str>,
-        _ja4_hash: Option<&str>,
+        ja4_hash: Option<&str>,
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
     ) -> Option<WafDecision> {
         let block_ai = site_bot_config.and_then(|c| c.block_ai_crawlers);
-        let bot_result = self.bot_detector.check_with_override(user_agent, block_ai);
+        
+        // Use full fingerprinting check (JA3 is None here, JA4 is passed)
+        let bot_result = self.bot_detector.check_with_fingerprints(user_agent, block_ai, None, ja4_hash);
+        
         match bot_result {
             BotDetectionResult::Blocked { reason, .. } => {
                 tracing::info!(
-                    "Blocking bot from {}: {} - UA: {:?}",
+                    "Blocking bot from {}: {} - UA: {:?}, JA4: {:?}",
                     client_ip,
                     reason,
-                    user_agent
+                    user_agent,
+                    ja4_hash
                 );
                 crate::metrics::record_attack_type("Bots");
                 Some(WafDecision::Block(403, "Forbidden".to_string()))
             }
             BotDetectionResult::Tarpit { reason, .. } => {
                 tracing::info!(
-                    "Tarpitting scraper from {}: {} - UA: {:?}",
+                    "Tarpitting scraper from {}: {} - UA: {:?}, JA4: {:?}",
                     client_ip,
                     reason,
-                    user_agent
+                    user_agent,
+                    ja4_hash
                 );
                 Some(WafDecision::Tarpit(path.to_string()))
             }
-            BotDetectionResult::Allowed { .. } => None,
+            BotDetectionResult::Allowed { .. } => {
+                // Suspicious if it's a known automated tool but not explicitly blocked
+                let is_automated = user_agent.is_some_and(|ua| {
+                    let ua_lower = ua.to_lowercase();
+                    ua_lower.contains("curl") || 
+                    ua_lower.contains("postman") || 
+                    ua_lower.contains("python-requests") ||
+                    ua_lower.contains("go-http-client")
+                });
+
+                if is_automated {
+                    let (html, session_id) = self.challenge_manager.generate_challenge_page(&client_ip, Some(path));
+                    if let Some(sid) = session_id {
+                        return Some(WafDecision::ChallengeWithCookie {
+                            challenge_type: self.challenge_manager.get_challenge_type(),
+                            html,
+                            session_cookie_name: self.challenge_manager.css_session_cookie_name(),
+                            session_cookie_value: sid,
+                            session_cookie_max_age: self.challenge_manager.css_window_secs(),
+                        });
+                    } else {
+                        return Some(WafDecision::Challenge(self.challenge_manager.get_challenge_type(), html));
+                    }
+                }
+
+                None
+            }
         }
     }
 
@@ -778,7 +809,14 @@ impl WafCore {
         path: &str,
         user_agent: Option<&str>,
     ) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> {
-        let handler = crate::tarpit::TarpitHandler::new(self.tarpit_defaults.clone());
+        let tarpit_config = crate::tarpit::TarpitConfig {
+            enabled: self.tarpit_defaults.enabled,
+            max_depth: self.tarpit_defaults.max_depth,
+            links_per_page: self.tarpit_defaults.links_per_page,
+            response_delay_ms: self.tarpit_defaults.response_delay_ms,
+            scraper_patterns: self.tarpit_defaults.scraper_user_agents.clone(),
+        };
+        let handler = crate::tarpit::TarpitHandler::new(tarpit_config);
         handler.stream_request(path, user_agent)
     }
 
