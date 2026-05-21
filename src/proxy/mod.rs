@@ -343,8 +343,6 @@ impl ProxyServer {
         if !skip_waf_check {
             let drop = self.waf.config.drop_blocked_requests;
 
-            let body_slice: Option<&[u8]> = None;
-
             let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
                 (
                     path[..q_pos].to_string(),
@@ -352,6 +350,20 @@ impl ProxyServer {
                 )
             } else {
                 (path.clone(), None)
+            };
+
+            // Collect body for WAF inspection if present and within limits
+            const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
+            let (full_body_bytes, body) = if let Some(b) = body {
+                let collected = b.collect().await.map_err(|e| format!("Body collection error: {}", e))?;
+                let bytes = collected.to_bytes();
+                if bytes.len() <= MAX_WAF_BODY_SIZE {
+                    (Some(bytes.clone()), Some(BodyExt::boxed(Full::new(bytes))))
+                } else {
+                    (None, Some(BodyExt::boxed(Full::new(bytes))))
+                }
+            } else {
+                (None, None)
             };
 
             let waf_decision = self
@@ -363,7 +375,7 @@ impl ProxyServer {
                     &path_for_waf,
                     query_string.as_deref(),
                     headers,
-                    body_slice,
+                    full_body_bytes.as_deref(),
                     user_agent.as_deref(),
                     None,
                     None,
@@ -425,15 +437,24 @@ impl ProxyServer {
                         .body(Full::new(bytes::Bytes::from(html)).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
                         .unwrap());
                 }
-                WafDecision::Tarpit(_) => {
+                WafDecision::Tarpit(tar_path) => {
                     counter!("synvoid.requests.tarpitted").increment(1);
                     histogram!("synvoid.request.duration").record(start.elapsed());
+                    let stream = self.waf.stream_tarpit(&tar_path, user_agent.as_deref());
+                    return Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/html")
+                        .header("Cache-Control", "no-store, no-cache, must-revalidate")
+                        .body(BodyExt::boxed(http_body_util::StreamBody::new(
+                            stream.map(|res| res.map(http_body_util::Frame::data))
+                        )))
+                        .unwrap());
                 }
                 WafDecision::Pass => {}
             }
-        }
 
-        let forward_result = self.forward_request(method, &path, body).await;
+            let forward_result = self.forward_request(method, &path, body).await;
+            // ... (rest of method)
 
         match forward_result {
             Ok(response) => {

@@ -451,7 +451,7 @@ impl WafCore {
             return decision;
         }
 
-        if let Some(decision) = self.check_rate_limits(ip, site_id) {
+        if let Some(decision) = self.check_rate_limits(ip, site_id).await {
             return decision;
         }
 
@@ -529,8 +529,8 @@ impl WafCore {
         ).await
     }
 
-    fn check_rate_limits(&self, ip: IpAddr, site_id: Option<&str>) -> Option<WafDecision> {
-        let result = futures::executor::block_on(self.rate_limiter.check_rate_limit(site_id, ip));
+    async fn check_rate_limits(&self, ip: IpAddr, site_id: Option<&str>) -> Option<WafDecision> {
+        let result = self.rate_limiter.check_rate_limit(site_id, ip).await;
         match result {
             RateLimitResult::Allowed => None,
             RateLimitResult::Limited {
@@ -771,6 +771,15 @@ impl WafCore {
 
     pub fn generate_tarpit_response(&self, _path: &str) -> String {
         "Tarpit active".to_string()
+    }
+
+    pub fn stream_tarpit(
+        &self,
+        path: &str,
+        user_agent: Option<&str>,
+    ) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> {
+        let handler = crate::tarpit::TarpitHandler::new(self.tarpit_defaults.clone());
+        handler.stream_request(path, user_agent)
     }
 
     pub fn check_request_body(&self, _chunk: &[u8]) -> (bool, Option<WafDecision>) {

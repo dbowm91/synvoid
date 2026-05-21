@@ -400,6 +400,13 @@ pub enum Message {
         path: String,
         minified_path: String,
     },
+    UpstreamGlobalStats {
+        worker_id: usize,
+        backend_stats: HashMap<String, u64>,
+    },
+    GlobalUpstreamStatsBroadcast {
+        aggregated_stats: HashMap<String, u64>,
+    },
     StaticWorkerDrain {
         timeout_secs: u64,
         drain_id: u64,
@@ -992,6 +999,25 @@ impl Message {
                     MAX_PATH_LENGTH,
                 )
             }
+            Message::UpstreamGlobalStats {
+                worker_id: _,
+                backend_stats,
+            } => {
+                for url in backend_stats.keys() {
+                    check_str("UpstreamGlobalStats.backend_stats.url", url, MAX_PATH_LENGTH)?;
+                }
+                Ok(())
+            }
+            Message::GlobalUpstreamStatsBroadcast { aggregated_stats } => {
+                for url in aggregated_stats.keys() {
+                    check_str(
+                        "GlobalUpstreamStatsBroadcast.aggregated_stats.url",
+                        url,
+                        MAX_PATH_LENGTH,
+                    )?;
+                }
+                Ok(())
+            }
             Message::ThreatIndicatorAnnounce {
                 indicator_value,
                 reason,
@@ -1368,13 +1394,18 @@ impl Message {
             | Message::StaticWorkerShutdownComplete { .. }
             | Message::StaticWorkerBackgroundTasksDone { .. }
             | Message::StaticWorkerResizeAck { .. }
-            | Message::StaticWorkerScan { .. }
+            Message::StaticWorkerScan { .. }
             | Message::StaticWorkerCacheUpdate { .. }
             | Message::StaticWorkerDrain { .. }
             | Message::StaticWorkerDrained { .. }
             | Message::StaticWorkerDrainStatus { .. } => MessageCategory::StaticWorker,
 
+            Message::UpstreamGlobalStats { .. } | Message::GlobalUpstreamStatsBroadcast { .. } => {
+                MessageCategory::Upstream
+            }
+
             Message::ThreatIndicatorAnnounce { .. }
+
             | Message::ThreatIndicatorFromMesh { .. }
             | Message::ThreatSyncRequest { .. }
             | Message::ThreatSyncResponse { .. }
@@ -1523,6 +1554,7 @@ pub enum MessageCategory {
     WorkerRestart,
     Plugin,
     MeshControl,
+    Upstream,
 }
 
 impl std::fmt::Display for MessageCategory {
@@ -1545,6 +1577,7 @@ impl std::fmt::Display for MessageCategory {
             MessageCategory::WorkerRestart => write!(f, "WorkerRestart"),
             MessageCategory::Plugin => write!(f, "Plugin"),
             MessageCategory::MeshControl => write!(f, "MeshControl"),
+            MessageCategory::Upstream => write!(f, "Upstream"),
         }
     }
 }

@@ -1491,10 +1491,10 @@ impl HttpServer {
                     ));
                 }
                 crate::proxy::WafDecision::Tarpit(tar_path) => {
-                    let html = waf.generate_tarpit_response(&tar_path);
-                    return Ok(Self::build_response_with_alt_svc(
+                    let stream = waf.stream_tarpit(&tar_path, ua.as_deref());
+                    return Ok(Self::build_streaming_response_with_alt_svc(
                         200,
-                        html,
+                        stream,
                         "text/html",
                         &alt_svc,
                         &main_config,
@@ -3911,6 +3911,33 @@ impl HttpServer {
             alt_svc,
             main_config,
         )
+    }
+
+    fn build_streaming_response_with_alt_svc<S>(
+        status: u16,
+        stream: S,
+        content_type: &str,
+        alt_svc: &Option<String>,
+        _main_config: &Arc<MainConfig>,
+    ) -> Response<BoxBody<Bytes, Infallible>>
+    where
+        S: futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static,
+    {
+        let mut builder = Response::builder()
+            .status(status)
+            .header("Content-Type", content_type);
+
+        if let Some(alt_svc) = alt_svc {
+            builder = builder.header("Alt-Svc", alt_svc.as_str());
+        }
+
+        builder
+            .body(BodyExt::boxed(http_body_util::StreamBody::new(
+                stream.map(|res| {
+                    Ok::<_, Infallible>(http_body_util::Frame::data(res.unwrap_or_default()))
+                }),
+            )))
+            .unwrap()
     }
 
     fn build_response_with_cookie(

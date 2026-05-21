@@ -48,6 +48,49 @@ impl TarpitHandler {
         content
     }
 
+    pub fn stream_request(
+        &self,
+        path: &str,
+        _user_agent: Option<&str>,
+    ) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> {
+        let depth = self.extract_depth_from_path(path);
+        let path_seed = self.generate_path_seed(path);
+        let chain = self.chain.clone();
+        let max_depth = self.config.max_depth;
+        let links_per_page = self.config.links_per_page;
+
+        async_stream::try_stream! {
+            // Initial HTML headers
+            let title = chain.generate_sentence(3, 6);
+            yield bytes::Bytes::from(format!(
+                "<!DOCTYPE html><html><head><title>{}</title></head><body>\n",
+                title
+            ));
+
+            // Drip feed sentences
+            for _ in 0..100 {
+                let sentence = chain.generate_sentence(5, 12);
+                yield bytes::Bytes::from(format!("<p>{}</p>\n", sentence));
+                
+                // Add some links to keep them busy
+                for i in 0..5 {
+                    let random_path = format!("{}-{}", path_seed, i);
+                    let link_text = chain.generate_sentence(2, 4);
+                    yield bytes::Bytes::from(format!(
+                        "<a href=\"/{}/{}\">{}</a>\n",
+                        (depth + 1).min(max_depth),
+                        random_path,
+                        link_text
+                    ));
+                }
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            }
+
+            yield bytes::Bytes::from("</body></html>");
+        }
+    }
+
     fn extract_depth_from_path(&self, path: &str) -> u32 {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
