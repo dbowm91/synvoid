@@ -1,5 +1,6 @@
 pub mod bandwidth;
 pub mod collection;
+pub mod health;
 pub mod payloads;
 pub mod types;
 

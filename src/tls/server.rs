@@ -1642,6 +1642,7 @@ impl HttpsServer {
                                 cache_cfg.stale_while_revalidate,
                                 cache_cfg.stale_if_error,
                                 None,
+                                None,
                             );
 
                             let cache = Arc::new(ProxyCache::new(settings));

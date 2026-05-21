@@ -1,10 +1,12 @@
+use super::governor::GlobalCacheGovernor;
+use crate::buffer::PooledBuf;
+use crate::metrics::health::{HealthState, SystemHealthMonitor};
+use crate::proxy_cache::{CacheKey, ProxyCache};
 use bytes::Bytes;
 use http_body::{Body, Frame};
 use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::sync::Arc;
-use crate::proxy_cache::{ProxyCache, CacheKey};
-use crate::buffer::PooledBuf;
+use std::task::{Context, Poll};
 
 /// A body wrapper that tees the stream into a buffer for caching.
 pub struct TeeBody<B> {
@@ -16,6 +18,7 @@ pub struct TeeBody<B> {
     max_age: Option<std::time::Duration>,
     buffer: Option<PooledBuf>,
     max_size: usize,
+    reserved_bytes: usize,
 }
 
 impl<B> TeeBody<B>
@@ -31,8 +34,25 @@ where
         max_age: Option<std::time::Duration>,
         max_size: usize,
     ) -> Self {
+        let size_hint = inner.size_hint().upper().unwrap_or(0) as usize;
+        let mut reserved_bytes = 0;
+
         let buffer = if cache.is_some() && cache_key.is_some() {
-            Some(crate::buffer::BufferPool::acquire(0))
+            // Bypass caching if system health is degraded (Warning or Critical)
+            let health = SystemHealthMonitor::get_state();
+
+            // Only attempt to cache if we have a size hint and can reserve the memory.
+            // For chunked encoding (size_hint == 0), we bypass caching to avoid unbounded memory usage.
+            if health == HealthState::Normal
+                && size_hint > 0
+                && size_hint <= max_size
+                && GlobalCacheGovernor::try_reserve(size_hint)
+            {
+                reserved_bytes = size_hint;
+                Some(crate::buffer::BufferPool::acquire(0))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -46,6 +66,16 @@ where
             max_age,
             buffer,
             max_size,
+            reserved_bytes,
+        }
+    }
+}
+
+impl<B> Drop for TeeBody<B> {
+    fn drop(&mut self) {
+        if self.reserved_bytes > 0 {
+            GlobalCacheGovernor::release(self.reserved_bytes);
+            self.reserved_bytes = 0;
         }
     }
 }

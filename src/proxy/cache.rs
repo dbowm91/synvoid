@@ -89,22 +89,51 @@ pub(super) fn build_cached_response(entry: &ProxyCacheEntry) -> http::Response<b
         .unwrap_or_else(|_| crate::http::fallback_error_bytes())
 }
 
-pub(super) fn filter_sensitive_headers(headers: &http::HeaderMap) -> http::HeaderMap {
-    const SENSITIVE_HEADERS: &[&str] = &[
-        "set-cookie",
-        "authorization",
-        "www-authenticate",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "cookie",
-        "x-api-key",
-        "x-auth-token",
+pub(super) fn filter_cacheable_headers(
+    headers: &http::HeaderMap,
+    allowed_custom_headers: &[String],
+) -> http::HeaderMap {
+    // Strict whitelist of safe headers that are generally okay to cache
+    const SAFE_HEADERS: &[&str] = &[
+        "cache-control",
+        "content-type",
+        "content-language",
+        "content-encoding",
+        "content-length",
+        "content-location",
+        "content-range",
+        "etag",
+        "last-modified",
+        "vary",
+        "expires",
+        "age",
+        "x-cache",
+        "x-cache-hit",
+        "x-frame-options",
+        "x-content-type-options",
+        "x-xss-protection",
+        "strict-transport-security",
+        "content-security-policy",
+        "content-security-policy-report-only",
+        "access-control-allow-origin",
+        "access-control-allow-methods",
+        "access-control-allow-headers",
+        "access-control-expose-headers",
+        "access-control-max-age",
+        "access-control-allow-credentials",
+        "timing-allow-origin",
+        "link",
     ];
 
     let mut filtered = http::HeaderMap::new();
     for (name, value) in headers.iter() {
         let name_str = name.as_str();
-        if !SENSITIVE_HEADERS.contains(&name_str) {
+        let is_safe = SAFE_HEADERS.iter().any(|&h| h.eq_ignore_ascii_case(name_str));
+        let is_custom_allowed = allowed_custom_headers
+            .iter()
+            .any(|h| h.eq_ignore_ascii_case(name_str));
+
+        if is_safe || is_custom_allowed {
             filtered.insert(name, value.clone());
         }
     }

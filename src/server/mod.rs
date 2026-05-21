@@ -674,6 +674,7 @@ impl UnifiedServer {
             send_buffer_size: main_config.tcp.socket.send_buffer_size,
             recv_buffer_size: main_config.tcp.socket.recv_buffer_size,
             reuse_port: true,
+            reuse_port_ebpf: false,
             quickack: true,
             keepalive_secs: Some(60),
             keepalive_interval_secs: Some(10),

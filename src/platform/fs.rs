@@ -178,6 +178,10 @@ impl PlatformPaths {
         &self.runtime_dir
     }
 
+    pub fn connections_shm_path(&self) -> PathBuf {
+        self.runtime_dir.join("connections.shm")
+    }
+
     pub fn ensure_all(&self) -> io::Result<()> {
         for dir in &[
             &self.data_dir,

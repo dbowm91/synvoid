@@ -10,6 +10,7 @@ pub mod cache;
 pub mod client_registry;
 pub mod dispatch;
 pub mod executor;
+pub mod governor;
 pub mod headers;
 pub mod retry;
 pub mod streaming;
@@ -52,7 +53,7 @@ use crate::http_client::{
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
 use crate::proxy::cache::{
     build_cached_response as build_cached_response_impl,
-    filter_sensitive_headers as filter_sensitive_headers_impl,
+    filter_cacheable_headers as filter_cacheable_headers_impl,
     get_cache_max_age_static as get_cache_max_age_static_impl,
 };
 use crate::proxy::retry::{
@@ -276,6 +277,7 @@ impl ProxyServer {
                 cc.stale_while_revalidate,
                 cc.stale_if_error,
                 None,
+                cc.allowed_headers.clone(),
             );
 
             let cache = Arc::new(ProxyCache::new(settings));
@@ -609,35 +611,39 @@ impl ProxyServer {
                                     ForwardedProtocol::Https,
                                 );
 
-                                tokio::spawn(async move {
-                                    cache_clone.record_revalidation_queued();
-                                    let semaphore = cache_clone.revalidation_semaphore();
-                                    let permit = match semaphore.acquire().await {
-                                        Ok(p) => p,
-                                        Err(_) => {
-                                            cache_clone.record_revalidation_end();
-                                            tracing::warn!("Revalidation semaphore closed");
-                                            return;
-                                        }
-                                    };
-                                    cache_clone.record_revalidation_start();
-                                    tracing::debug!(
-                                        "Triggering background revalidation for {}",
-                                        path_owned
-                                    );
-                                    let _ = Self::revalidate_cache_entry(
-                                        &reval_client,
-                                        cache_clone.clone(),
-                                        key_clone,
-                                        method_clone,
-                                        path_owned,
-                                        upstream_url_clone,
-                                        reval_headers,
-                                    )
-                                    .await;
-                                    drop(permit);
-                                    cache_clone.record_revalidation_end();
-                                });
+                                if cache_clone.try_acquire_revalidation(&key_clone) {
+                                    tokio::spawn(async move {
+                                        cache_clone.record_revalidation_queued();
+                                        let semaphore = cache_clone.revalidation_semaphore();
+                                        let permit = match semaphore.acquire().await {
+                                            Ok(p) => p,
+                                            Err(_) => {
+                                                cache_clone.record_revalidation_end();
+                                                cache_clone.release_revalidation(&key_clone);
+                                                tracing::warn!("Revalidation semaphore closed");
+                                                return;
+                                            }
+                                        };
+                                        cache_clone.record_revalidation_start();
+                                        tracing::debug!(
+                                            "Triggering background revalidation for {}",
+                                            path_owned
+                                        );
+                                        let _ = Self::revalidate_cache_entry(
+                                            &reval_client,
+                                            cache_clone.clone(),
+                                            key_clone.clone(),
+                                            method_clone,
+                                            path_owned,
+                                            upstream_url_clone,
+                                            reval_headers,
+                                        )
+                                        .await;
+                                        drop(permit);
+                                        cache_clone.record_revalidation_end();
+                                        cache_clone.release_revalidation(&key_clone);
+                                    });
+                                }
 
                                 counter!("synvoid.proxy.cache.stale_while_revalidate").increment(1);
                             }
@@ -661,7 +667,8 @@ impl ProxyServer {
 
                                 if self.is_response_cacheable_headers(response.status(), response.headers()) {
                                     let status = response.status().as_u16();
-                                    let headers_to_cache = filter_sensitive_headers_impl(response.headers());
+                                    let allowed_headers = cache.settings().allowed_headers.clone();
+                                    let headers_to_cache = filter_cacheable_headers_impl(response.headers(), &allowed_headers);
                                     let max_age = self.get_cache_max_age(&headers_to_cache);
 
                                     let (parts, body) = response.into_parts();
@@ -888,8 +895,10 @@ impl ProxyServer {
                 let body = response.body.clone();
 
                 if cache.is_status_cacheable(status) {
-                    let max_age = get_cache_max_age_static_impl(&headers);
-                    if let Err(e) = cache.insert(key, body, status, headers, max_age) {
+                    let allowed_headers = cache.settings().allowed_headers.clone();
+                    let filtered_headers = filter_cacheable_headers_impl(&headers, &allowed_headers);
+                    let max_age = get_cache_max_age_static_impl(&filtered_headers);
+                    if let Err(e) = cache.insert(key, body, status, filtered_headers, max_age) {
                         tracing::warn!("Failed to update cached response: {}", e);
                     } else {
                         tracing::debug!("Successfully revalidated cache for {}", path);

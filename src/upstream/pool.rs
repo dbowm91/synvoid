@@ -88,7 +88,8 @@ pub enum ConnectionCounter {
     Local(Arc<AtomicUsize>),
     Shared {
         table: SharedConnectionTable,
-        index: usize,
+        backend_index: usize,
+        worker_id: usize,
     },
 }
 
@@ -96,18 +97,19 @@ impl ConnectionCounter {
     pub fn load(&self, order: Ordering) -> usize {
         match self {
             Self::Local(c) => c.load(order),
-            Self::Shared { table, index } => table
-                .get_counter(*index)
-                .map(|c| c.load(order))
-                .unwrap_or(0),
+            Self::Shared { table, backend_index, .. } => {
+                // Sum active connections across all live workers. 
+                // Heartbeat timeout is 10 seconds.
+                table.sum_active_connections(*backend_index, 10)
+            }
         }
     }
 
     pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
         match self {
             Self::Local(c) => c.fetch_add(val, order),
-            Self::Shared { table, index } => table
-                .get_counter(*index)
+            Self::Shared { table, backend_index, worker_id } => table
+                .get_counter_atomic(*worker_id, *backend_index)
                 .map(|c| c.fetch_add(val, order))
                 .unwrap_or(0),
         }
@@ -124,8 +126,8 @@ impl ConnectionCounter {
     {
         match self {
             Self::Local(c) => c.fetch_update(set_order, fetch_order, f),
-            Self::Shared { table, index } => {
-                if let Some(c) = table.get_counter(*index) {
+            Self::Shared { table, backend_index, worker_id } => {
+                if let Some(c) = table.get_counter_atomic(*worker_id, *backend_index) {
                     c.fetch_update(set_order, fetch_order, f)
                 } else {
                     Err(0)
@@ -172,8 +174,13 @@ impl Backend {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             use std::hash::{Hash, Hasher};
             validated_url.hash(&mut hasher);
-            let index = (hasher.finish() as usize) % table.size();
-            ConnectionCounter::Shared { table, index }
+            let backend_index = (hasher.finish() as usize) % table.max_backends();
+            let worker_id = crate::process::get_current_worker_id();
+            ConnectionCounter::Shared {
+                table,
+                backend_index,
+                worker_id,
+            }
         } else {
             ConnectionCounter::Local(Arc::new(AtomicUsize::new(0)))
         };
@@ -197,11 +204,16 @@ impl Backend {
     pub fn new_shared(
         url: String,
         table: SharedConnectionTable,
-        index: usize,
+        backend_index: usize,
+        worker_id: usize,
         is_backup: bool,
     ) -> Self {
         let mut backend = Self::new_internal(url, is_backup);
-        backend.current_connections = ConnectionCounter::Shared { table, index };
+        backend.current_connections = ConnectionCounter::Shared {
+            table,
+            backend_index,
+            worker_id,
+        };
         backend
     }
 

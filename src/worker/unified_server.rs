@@ -175,7 +175,10 @@ struct UnifiedServerWorkerState {
 pub async fn run_unified_server_worker(
     args: UnifiedServerWorkerArgs,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let worker_id = WorkerId(args.worker_id);
+    let worker_id_raw = args.worker_id;
+    crate::process::set_current_worker_id(worker_id_raw);
+
+    let worker_id = WorkerId(worker_id_raw);
 
     // Apply CPU affinity if specified
     if let Some(core) = args.cpu_affinity {
@@ -192,7 +195,11 @@ pub async fn run_unified_server_worker(
                 if let Err(e) = sched_setaffinity(pid, &cpuset) {
                     tracing::warn!("Failed to set CPU affinity to core {}: {}", core, e);
                 } else {
-                    tracing::info!("Unified Server Worker {} pinned to CPU core {}", worker_id, core);
+                    tracing::info!(
+                        "Unified Server Worker {} pinned to CPU core {}",
+                        worker_id,
+                        core
+                    );
                 }
             }
         }
@@ -209,6 +216,23 @@ pub async fn run_unified_server_worker(
     if let Some(ref level) = args.log_level {
         crate::log_controller::init_logging_with_dynamic_level(level);
     }
+
+    // Start background heartbeat task for shared connection table
+    if let Some(table) = crate::upstream::shared_state::SharedConnectionTable::get_global() {
+        tokio::spawn(async move {
+            loop {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                table.record_heartbeat(worker_id_raw, now);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    }
+
+    // Start system health monitor
+    crate::metrics::health::SystemHealthMonitor::start();
 
     tracing::info!(
         "Unified Server Worker {} starting, config: {:?}, master socket: {:?}",

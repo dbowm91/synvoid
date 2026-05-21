@@ -31,7 +31,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Router {
     domain_map: HashMap<Arc<str>, Arc<SiteConfig>>,
-    wildcard_domain_router: MatchRouter<Arc<SiteConfig>>,
+    wildcard_domain_router: Arc<MatchRouter<Arc<SiteConfig>>>,
     fallback_mode: String,
     fallback_upstream: Option<String>,
     static_handlers: HashMap<String, Arc<StaticFileHandler>>,
@@ -39,6 +39,8 @@ pub struct Router {
     async_minifier_client: Option<AsyncMinifierClient>,
     listen_map: HashMap<SocketAddr, Vec<String>>,
     default_servers: HashMap<SocketAddr, String>,
+    ip_domain_map: HashMap<(SocketAddr, Arc<str>), Arc<SiteConfig>>,
+    ip_wildcard_routers: HashMap<SocketAddr, Arc<MatchRouter<Arc<SiteConfig>>>>,
     plugin_manager: Option<Arc<PluginManager>>,
     cleaned_site_domains: HashMap<String, Vec<Arc<str>>>,
     cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>>,
@@ -48,12 +50,14 @@ pub struct Router {
 
 type SiteMaps = (
     HashMap<Arc<str>, Arc<SiteConfig>>,
-    MatchRouter<Arc<SiteConfig>>,
+    Arc<MatchRouter<Arc<SiteConfig>>>,
     HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Vec<Arc<str>>>,
     HashMap<String, Arc<StaticFileHandler>>,
     HashMap<SocketAddr, Vec<String>>,
     HashMap<SocketAddr, String>,
+    HashMap<(SocketAddr, Arc<str>), Arc<SiteConfig>>,
+    HashMap<SocketAddr, Arc<MatchRouter<Arc<SiteConfig>>>>,
     HashMap<String, Arc<SiteConfig>>,
 );
 
@@ -114,6 +118,8 @@ impl Router {
             static_handlers,
             listen_map,
             default_servers,
+            ip_domain_map,
+            ip_wildcard_routers,
             site_map,
         ) = Self::build_all_maps(
             main_config,
@@ -133,6 +139,8 @@ impl Router {
             async_minifier_client: Some(async_minifier_client),
             listen_map: listen_map.clone(),
             default_servers,
+            ip_domain_map,
+            ip_wildcard_routers,
             plugin_manager: None,
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
@@ -170,6 +178,8 @@ impl Router {
         let mut static_handlers = HashMap::new();
         let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
+        let mut ip_domain_map = HashMap::new();
+        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> = HashMap::new();
         let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
         let mut cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>> = HashMap::new();
         let mut site_map: HashMap<String, Arc<SiteConfig>> = HashMap::new();
@@ -205,17 +215,31 @@ impl Router {
                     &mut listen_map,
                     &mut default_servers,
                 );
+
+                Self::build_ip_domain_maps(
+                    &config_arc,
+                    main_config,
+                    &mut ip_domain_map,
+                    &mut ip_wildcard_routers_raw,
+                );
             }
         }
 
+        let ip_wildcard_routers = ip_wildcard_routers_raw
+            .into_iter()
+            .map(|(addr, router)| (addr, Arc::new(router)))
+            .collect();
+
         (
             domain_map,
-            wildcard_domain_router,
+            Arc::new(wildcard_domain_router),
             cleaned_site_domains,
             cleaned_site_domain_suffixes,
             static_handlers,
             listen_map,
             default_servers,
+            ip_domain_map,
+            ip_wildcard_routers,
             site_map,
         )
     }
@@ -317,6 +341,53 @@ impl Router {
                     site_id,
                     e
                 );
+            }
+        }
+    }
+
+    fn build_ip_domain_maps(
+        config_arc: &Arc<SiteConfig>,
+        main_config: &MainConfig,
+        ip_domain_map: &mut HashMap<(SocketAddr, Arc<str>), Arc<SiteConfig>>,
+        ip_wildcard_routers: &mut HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>>,
+    ) {
+        let cleaned: Vec<Arc<str>> = config_arc
+            .site
+            .domains
+            .iter()
+            .map(|d| Arc::from(Self::clean_domain(d).as_str()))
+            .collect();
+
+        for listen_config in &config_arc.site.listen {
+            if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
+                let _http_port = if listen_config.is_ssl() {
+                    main_config.tls.port
+                } else {
+                    main_config.server.port
+                };
+                let bind_addr = if let Some(p) = listen_config.port {
+                    SocketAddr::new(addr.ip(), p)
+                } else {
+                    addr
+                };
+
+                for clean_domain in &cleaned {
+                    if clean_domain.starts_with('.') || clean_domain.contains('*') {
+                        let mut pattern = clean_domain.trim_start_matches('.').to_string();
+                        if let Some(stripped) = pattern.strip_prefix("*.") {
+                            pattern = stripped.to_string();
+                        }
+
+                        let reversed = Self::reverse_domain_for_router(&pattern);
+                        let router = ip_wildcard_routers
+                            .entry(bind_addr)
+                            .or_insert_with(MatchRouter::new);
+                        let _ = router.insert(reversed.clone(), config_arc.clone());
+                        let _ = router.insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+                    } else {
+                        ip_domain_map.insert((bind_addr, clean_domain.clone()), config_arc.clone());
+                    }
+                }
             }
         }
     }
@@ -1065,12 +1136,24 @@ impl Router {
         let clean_host_arc: Arc<str> = Arc::from(clean_host.as_str());
 
         if let Some(addr) = local_addr {
+            // First check for exact domain match on this IP
+            if let Some(site_config) = self.ip_domain_map.get(&(addr, clean_host_arc.clone())) {
+                return self.route_to_target(site_config, path, &clean_host);
+            }
+
+            // Then check for wildcard match on this IP
+            if let Some(router) = self.ip_wildcard_routers.get(&addr) {
+                let reversed = Self::reverse_domain_for_router(&clean_host);
+                if let Ok(m) = router.at(&reversed) {
+                    return self.route_to_target(m.value, path, &clean_host);
+                }
+            }
+
+            // Finally check if there is a site bound to this IP with NO domains (catches all on IP)
             if let Some(site_ids) = self.listen_map.get(&addr) {
                 for site_id in site_ids {
                     if let Some(site_config) = self.site_map.get(site_id) {
-                        if self.is_host_valid_for_site(&clean_host, site_config)
-                            || site_config.site.domains.is_empty()
-                        {
+                        if site_config.site.domains.is_empty() {
                             return self.route_to_target(site_config, path, &clean_host);
                         }
                     }
@@ -1078,6 +1161,7 @@ impl Router {
             }
         }
 
+        // Global (non-IP specific) domain map
         if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
             return self.route_to_target(site_config, path, &clean_host);
         }
@@ -1137,10 +1221,12 @@ impl Router {
 
     pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>) {
         self.domain_map.clear();
-        self.wildcard_domain_router = MatchRouter::new();
+        let mut wildcard_domain_router = MatchRouter::new();
         self.static_handlers.clear();
         self.listen_map.clear();
         self.default_servers.clear();
+        self.ip_domain_map.clear();
+        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> = HashMap::new();
         self.cleaned_site_domains.clear();
         self.cleaned_site_domain_suffixes.clear();
         self.site_map.clear();
@@ -1169,8 +1255,8 @@ impl Router {
 
                     let reversed = Self::reverse_domain_for_router(&pattern);
                     // Match both the domain itself and subdomains
-                    let _ = self.wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
-                    let _ = self.wildcard_domain_router.insert(
+                    let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
+                    let _ = wildcard_domain_router.insert(
                         format!("{}/{{*sub}}", reversed),
                         config_arc.clone(),
                     );
@@ -1183,7 +1269,7 @@ impl Router {
             }
 
             self.cleaned_site_domains
-                .insert(site_id_str.clone(), cleaned);
+                .insert(site_id_str.clone(), cleaned.clone());
             self.cleaned_site_domain_suffixes
                 .insert(site_id_str.clone(), suffixes);
 
@@ -1232,27 +1318,58 @@ impl Router {
             if !config_arc.site.listen.is_empty() {
                 for listen_config in &config_arc.site.listen {
                     if let Some(addr) = listen_config.to_socket_addr(80) {
+                        let bind_addr = if let Some(p) = listen_config.port {
+                            SocketAddr::new(addr.ip(), p)
+                        } else {
+                            addr
+                        };
+
                         self.listen_map
-                            .entry(addr)
+                            .entry(bind_addr)
                             .or_default()
                             .push(site_id_str.clone());
 
                         if listen_config.is_default_server() {
-                            if let Some(existing) = self.default_servers.get(&addr) {
+                            if let Some(existing) = self.default_servers.get(&bind_addr) {
                                 tracing::error!(
                                     "Multiple default servers configured for {}: {} and {}",
-                                    addr,
+                                    bind_addr,
                                     existing,
                                     site_id_str
                                 );
                             } else {
-                                self.default_servers.insert(addr, site_id_str.clone());
+                                self.default_servers.insert(bind_addr, site_id_str.clone());
+                            }
+                        }
+
+                        // Populate IP-specific domain maps
+                        for clean_domain in &cleaned {
+                            if clean_domain.starts_with('.') || clean_domain.contains('*') {
+                                let mut pattern = clean_domain.trim_start_matches('.').to_string();
+                                if let Some(stripped) = pattern.strip_prefix("*.") {
+                                    pattern = stripped.to_string();
+                                }
+
+                                let reversed = Self::reverse_domain_for_router(&pattern);
+                                let router = ip_wildcard_routers_raw
+                                    .entry(bind_addr)
+                                    .or_insert_with(MatchRouter::new);
+                                let _ = router.insert(reversed.clone(), config_arc.clone());
+                                let _ = router.insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+                            } else {
+                                self.ip_domain_map.insert((bind_addr, clean_domain.clone()), config_arc.clone());
                             }
                         }
                     }
                 }
             }
         }
+
+        self.wildcard_domain_router = Arc::new(wildcard_domain_router);
+        self.ip_wildcard_routers = ip_wildcard_routers_raw
+            .into_iter()
+            .map(|(addr, router)| (addr, Arc::new(router)))
+            .collect();
     }
 
     fn reverse_domain_for_router(domain: &str) -> String {
@@ -1283,7 +1400,7 @@ impl Default for Router {
     fn default() -> Self {
         Router {
             domain_map: HashMap::new(),
-            wildcard_domain_router: MatchRouter::new(),
+            wildcard_domain_router: Arc::new(MatchRouter::new()),
             fallback_mode: "return_404".to_string(),
             fallback_upstream: None,
             static_handlers: HashMap::new(),
@@ -1291,6 +1408,8 @@ impl Default for Router {
             async_minifier_client: None,
             listen_map: HashMap::new(),
             default_servers: HashMap::new(),
+            ip_domain_map: HashMap::new(),
+            ip_wildcard_routers: HashMap::new(),
             plugin_manager: None,
             cleaned_site_domains: HashMap::new(),
             cleaned_site_domain_suffixes: HashMap::new(),

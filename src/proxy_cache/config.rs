@@ -20,6 +20,7 @@ pub struct ProxyCacheSettings {
     pub max_concurrent_revalidations: usize,
     pub revalidation_failure_threshold: u32,
     pub revalidation_circuit_breaker_cooldown_secs: u64,
+    pub allowed_headers: Vec<String>,
 }
 
 impl Default for ProxyCacheSettings {
@@ -50,6 +51,7 @@ impl Default for ProxyCacheSettings {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: vec![],
         }
     }
 }
@@ -72,6 +74,7 @@ impl ProxyCacheSettings {
         stale_while_revalidate: Option<u64>,
         stale_if_error: Option<u64>,
         max_concurrent_revalidations: Option<usize>,
+        allowed_headers: Option<Vec<String>>,
     ) -> Self {
         let enabled = enable.unwrap_or(false);
 
@@ -111,6 +114,7 @@ impl ProxyCacheSettings {
             max_concurrent_revalidations: max_concurrent_revalidations.unwrap_or(100),
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: allowed_headers.unwrap_or_default(),
         }
     }
 

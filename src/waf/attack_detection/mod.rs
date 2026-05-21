@@ -73,6 +73,7 @@ pub struct AttackDetector {
     ldap_injection_detector: Arc<LdapInjectionDetector>,
     xpath_injection_detector: Arc<XPathInjectionDetector>,
     open_redirect_detector: Arc<OpenRedirectDetector>,
+    fast_path_detector: Option<regex::RegexSet>,
     #[cfg(feature = "mesh")]
     behavioral_intel: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
     behavioral_engine: Arc<BehavioralEngine>,
@@ -152,6 +153,23 @@ impl AttackDetector {
             &config.open_redirect.custom_patterns,
         ));
 
+        let fast_path_patterns = vec![
+            r#"['";]--"#,          // SQL comment/injection
+            r#"(?i)union\s+select"#, // SQL union
+            r#"(?i)select\s+.*\s+from"#,
+            r#"<script"#,          // XSS
+            r#"javascript:"#,
+            r#"onload="#,
+            r#"onerror="#,
+            r#"\.\./\.\./"#,       // Path traversal
+            r#"/etc/passwd"#,
+            r#"/windows/system32"#,
+            r#"<\?php"#,           // PHP tags
+            r#"\$\{"#,             // Expression injection
+            r#"\{\{"#,             // Template injection
+        ];
+        let fast_path_detector = regex::RegexSet::new(fast_path_patterns).ok();
+
         Self {
             config,
             normalizer,
@@ -169,6 +187,7 @@ impl AttackDetector {
             ldap_injection_detector,
             xpath_injection_detector,
             open_redirect_detector,
+            fast_path_detector,
             #[cfg(feature = "mesh")]
             behavioral_intel: None,
             behavioral_engine: Arc::new(BehavioralEngine::new()),
@@ -185,6 +204,17 @@ impl AttackDetector {
             behavioral_intel: Some(behavioral_intel),
             ..detector
         }
+    }
+
+    pub fn is_fast_path_safe(&self, inputs: &NormalizedInputs) -> bool {
+        if let Some(ref detector) = self.fast_path_detector {
+            for value in inputs.all_values() {
+                if detector.is_match(value) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     pub async fn check_request(
@@ -374,13 +404,28 @@ impl AttackDetector {
             || self.config.open_redirect.enabled;
 
         if needs_normalized_inputs {
-            let inputs = Arc::new(NormalizedInputs::normalize_all(
-                &self.normalizer,
-                Some(path),
-                query_string,
-                headers,
-                body,
-            ).into_owned());
+            let inputs = Arc::new(
+                NormalizedInputs::normalize_all(
+                    &self.normalizer,
+                    Some(path),
+                    query_string,
+                    headers,
+                    body,
+                )
+                .into_owned(),
+            );
+
+            // Fast-Path Pre-Screening: Skip heavy detectors if no risky signatures are found
+            // Or if system health is Critical (graceful degradation)
+            let health = crate::metrics::health::SystemHealthMonitor::get_state();
+            if self.is_fast_path_safe(&inputs) || health == crate::metrics::health::HealthState::Critical {
+                if health == crate::metrics::health::HealthState::Critical {
+                    tracing::debug!("Critical health state: skipping heavy WAF checks for request from {}", client_ip);
+                } else {
+                    tracing::debug!("Fast-path safe for request from {}", client_ip);
+                }
+                return (first_result, total_score);
+            }
 
             if self.config.strict_normalization {
                 if let Some(result) = self.check_strict_normalization(&inputs) {

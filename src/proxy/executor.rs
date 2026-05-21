@@ -12,7 +12,7 @@ use crate::http_client::{HttpClient, HttpResponse};
 use crate::proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry};
 use crate::utils;
 
-use super::cache::{build_cached_response, filter_sensitive_headers, get_cache_max_age_static};
+use super::cache::{build_cached_response, filter_cacheable_headers, get_cache_max_age_static};
 use super::headers::{build_forward_headers, ForwardedProtocol};
 use super::join_upstream_url;
 
@@ -160,8 +160,9 @@ impl ProxyExecutor {
                                 if self.is_response_cacheable(&response) {
                                     let status = response.status().as_u16();
                                     let body = response.body().clone();
+                                    let allowed_headers = cache.settings().allowed_headers.clone();
                                     let filtered_headers =
-                                        filter_sensitive_headers(response.headers());
+                                        filter_cacheable_headers(response.headers(), &allowed_headers);
                                     let max_age = get_cache_max_age_static(&filtered_headers);
 
                                     if let Err(e) = cache.insert(
@@ -280,6 +281,10 @@ impl ProxyExecutor {
         client_ip: std::net::IpAddr,
         original_headers: &HeaderMap,
     ) {
+        if !cache.try_acquire_revalidation(&key) {
+            return;
+        }
+
         let reval_client = self.revalidation_client.clone();
         let upstream_url = self.upstream_url.clone();
         let reval_headers = build_forward_headers(
@@ -288,6 +293,9 @@ impl ProxyExecutor {
             &crate::config::site::ProxyHeadersConfig::default(),
             ForwardedProtocol::Https,
         );
+
+        let key_clone = key.clone();
+        let cache_clone = cache.clone();
 
         tokio::spawn(async move {
             tracing::debug!("Triggering background revalidation for {}", path);
@@ -304,11 +312,13 @@ impl ProxyExecutor {
             .await
             {
                 Ok(resp) => {
-                    if cache.is_status_cacheable(resp.status.as_u16()) {
-                        let filtered_headers = filter_sensitive_headers(&resp.headers);
+                    if cache_clone.is_status_cacheable(resp.status.as_u16()) {
+                        let allowed_headers = cache_clone.settings().allowed_headers.clone();
+                        let filtered_headers =
+                            filter_cacheable_headers(&resp.headers, &allowed_headers);
                         let max_age = get_cache_max_age_static(&filtered_headers);
-                        if let Err(e) = cache.insert(
-                            key,
+                        if let Err(e) = cache_clone.insert(
+                            key_clone.clone(),
                             resp.body,
                             resp.status.as_u16(),
                             filtered_headers,
@@ -322,6 +332,8 @@ impl ProxyExecutor {
                     tracing::debug!("Background revalidation failed for {}: {}", path, e);
                 }
             }
+
+            cache_clone.release_revalidation(&key_clone);
         });
     }
 }

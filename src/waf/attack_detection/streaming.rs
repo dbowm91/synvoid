@@ -40,9 +40,10 @@ struct StreamingState {
     trailing_window: PooledBuf,
     multipart_header_buffer: PooledBuf,
     multipart_field_buffer: PooledBuf,
+    field_trailing_window: PooledBuf,
 }
 
-const TRAILING_WINDOW_SIZE: usize = 128;
+const TRAILING_WINDOW_SIZE: usize = 512;
 
 impl StreamingWafCore {
     pub fn new(inner: Arc<AttackDetector>) -> Self {
@@ -59,6 +60,7 @@ impl StreamingWafCore {
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
+                field_trailing_window: BufferPool::acquire(0),
             },
         }
     }
@@ -81,6 +83,7 @@ impl StreamingWafCore {
                 trailing_window: BufferPool::acquire(0),
                 multipart_header_buffer: BufferPool::acquire(0),
                 multipart_field_buffer: BufferPool::acquire(0),
+                field_trailing_window: BufferPool::acquire(0),
             },
         }
     }
@@ -153,32 +156,56 @@ impl StreamingWafCore {
                     }
                 }
                 MultipartState::ReadingHeaders => {
-                    if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, b"\r\n\r\n") {
+                    if let Some(pos) =
+                        Self::find_in_fragments(&combined_view, current_pos, b"\r\n\r\n")
+                    {
                         let header_len = (pos + 4) - current_pos;
-                        Self::copy_from_fragments(&mut self.state.multipart_header_buffer, &combined_view, current_pos, header_len);
+                        Self::copy_from_fragments(
+                            &mut self.state.multipart_header_buffer,
+                            &combined_view,
+                            current_pos,
+                            header_len,
+                        );
                         current_pos = pos + 4;
 
                         // Parse headers to see if it's a file
-                        let header_str = String::from_utf8_lossy(self.state.multipart_header_buffer.as_slice()).to_lowercase();
+                        let header_str =
+                            String::from_utf8_lossy(self.state.multipart_header_buffer.as_slice())
+                                .to_lowercase();
                         if header_str.contains("filename=") {
                             self.state.multipart_state = MultipartState::SkippingFile;
                         } else {
                             self.state.multipart_state = MultipartState::ReadingField;
                             self.state.multipart_field_buffer.clear();
+                            self.state.field_trailing_window.clear();
                         }
                     } else {
-                        Self::copy_from_fragments(&mut self.state.multipart_header_buffer, &combined_view, current_pos, total_len - current_pos);
+                        Self::copy_from_fragments(
+                            &mut self.state.multipart_header_buffer,
+                            &combined_view,
+                            current_pos,
+                            total_len - current_pos,
+                        );
                         current_pos = total_len;
                     }
                 }
                 MultipartState::ReadingField => {
-                    if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary) {
+                    if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary)
+                    {
                         let field_len = pos - current_pos;
-                        Self::copy_from_fragments(&mut self.state.multipart_field_buffer, &combined_view, current_pos, field_len);
+                        let mut field_fragment = BufferPool::acquire(field_len);
+                        Self::copy_from_fragments(
+                            &mut field_fragment,
+                            &combined_view,
+                            current_pos,
+                            field_len,
+                        );
 
-                        // Scan the field
-                        let field_str = String::from_utf8_lossy(self.state.multipart_field_buffer.as_slice());
-                        if let Some(result) = self.inner.check_body_only_via_normalized(&field_str) {
+                        // Scan combined fragments: [trailing, current_fragment]
+                        if let Some(result) = self.inner.check_body_fragments(&[
+                            self.state.field_trailing_window.as_slice(),
+                            field_fragment.as_slice(),
+                        ]) {
                             self.state.last_result = Some(result.clone());
                             return StreamingWafDecision::Block(
                                 result.get_block_status().unwrap_or(403),
@@ -191,9 +218,40 @@ impl StreamingWafCore {
 
                         self.state.multipart_state = MultipartState::ReadingHeaders;
                         self.state.multipart_header_buffer.clear();
+                        self.state.field_trailing_window.clear();
                         current_pos = pos + boundary.len();
                     } else {
-                        Self::copy_from_fragments(&mut self.state.multipart_field_buffer, &combined_view, current_pos, total_len - current_pos);
+                        // Boundary not found, scan what we have and keep trailing window
+                        let fragment_len = total_len - current_pos;
+                        let mut field_fragment = BufferPool::acquire(fragment_len);
+                        Self::copy_from_fragments(
+                            &mut field_fragment,
+                            &combined_view,
+                            current_pos,
+                            fragment_len,
+                        );
+
+                        if let Some(result) = self.inner.check_body_fragments(&[
+                            self.state.field_trailing_window.as_slice(),
+                            field_fragment.as_slice(),
+                        ]) {
+                            self.state.last_result = Some(result.clone());
+                            return StreamingWafDecision::Block(
+                                result.get_block_status().unwrap_or(403),
+                                format!(
+                                    "Attack detected in multipart field fragment: {:?}",
+                                    result.attack_type
+                                ),
+                            );
+                        }
+
+                        // Update field trailing window
+                        self.state.field_trailing_window.clear();
+                        let window_start = field_fragment.len().saturating_sub(TRAILING_WINDOW_SIZE);
+                        self.state
+                            .field_trailing_window
+                            .extend_from_slice(&field_fragment[window_start..]);
+
                         current_pos = total_len;
                     }
                 }
@@ -291,6 +349,7 @@ impl StreamingWafCore {
         state.trailing_window.clear();
         state.multipart_header_buffer.clear();
         state.multipart_field_buffer.clear();
+        state.field_trailing_window.clear();
     }
 }
 

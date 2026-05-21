@@ -331,6 +331,9 @@ pub struct ProxyCacheConfig {
 
     #[serde(default)]
     pub stale_if_error: Option<u64>,
+
+    #[serde(default)]
+    pub allowed_headers: Option<Vec<String>>,
 }
 
 fn default_cache_inactive() -> u64 {

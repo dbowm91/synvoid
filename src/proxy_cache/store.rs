@@ -151,6 +151,7 @@ pub struct ProxyCache {
     cleanup_shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
     host_index: DashMap<String, Vec<CacheKey>>,
     inflight_requests: InflightRequestsMap,
+    inflight_revalidations: Arc<DashMap<CacheKey, ()>>,
     site_memory_usage: DashMap<String, AtomicU64>,
     revalidation_semaphore: Arc<tokio::sync::Semaphore>,
     revalidation_active: AtomicU64,
@@ -171,6 +172,7 @@ impl Clone for ProxyCache {
             cleanup_shutdown_tx: self.cleanup_shutdown_tx.clone(),
             host_index: DashMap::new(),
             inflight_requests: self.inflight_requests.clone(),
+            inflight_revalidations: self.inflight_revalidations.clone(),
             site_memory_usage: DashMap::new(),
             revalidation_semaphore: self.revalidation_semaphore.clone(),
             revalidation_active: AtomicU64::new(self.revalidation_active.load(Ordering::Relaxed)),
@@ -216,6 +218,7 @@ impl ProxyCache {
             cleanup_shutdown_tx: Arc::new(shutdown_tx),
             host_index: DashMap::new(),
             inflight_requests: Arc::new(DashMap::new()),
+            inflight_revalidations: Arc::new(DashMap::new()),
             site_memory_usage: DashMap::new(),
             revalidation_semaphore: Arc::new(tokio::sync::Semaphore::new(
                 settings.max_concurrent_revalidations,
@@ -285,6 +288,17 @@ impl ProxyCache {
 
     pub fn is_revalidation_circuit_open(&self) -> bool {
         self.circuit_open.load(Ordering::Relaxed)
+    }
+
+    pub fn try_acquire_revalidation(&self, key: &CacheKey) -> bool {
+        if self.inflight_revalidations.contains_key(key) {
+            return false;
+        }
+        self.inflight_revalidations.insert(key.clone(), ()).is_none()
+    }
+
+    pub fn release_revalidation(&self, key: &CacheKey) {
+        self.inflight_revalidations.remove(key);
     }
 
     #[cfg(feature = "mesh")]

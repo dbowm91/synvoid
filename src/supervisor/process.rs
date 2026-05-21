@@ -6,6 +6,7 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::block_store::BlockStore;
 use crate::config::{ConfigManager, MainConfig};
+use crate::platform::fs::PlatformPaths;
 use crate::process::{
     IpcEndpoint, IpcListener, IpcStream, Message, MasterCommand,
     PidFileManager, ProcessManager, ProcessManagerConfig, ProcessEvent
@@ -46,8 +47,26 @@ impl SupervisorProcess {
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!("Supervisor process started");
 
-        // Spawn initial unified workers (data plane)
+        let paths = PlatformPaths::new();
+        let _ = paths.ensure_all();
+
+        // Initialize Shared Connection Table for distributed load balancing
         let config = self.process_manager.get_config();
+        let shm_path = paths.connections_shm_path();
+        
+        // Max workers + some headroom, and 2048 possible backend slots
+        let max_workers = config.unified_server_workers + 10;
+        let max_backends = 2048;
+
+        if let Err(e) = crate::upstream::shared_state::SharedConnectionTable::init_global(
+            shm_path,
+            max_workers,
+            max_backends,
+        ) {
+            tracing::warn!("Failed to initialize shared connection table: {}", e);
+        }
+
+        // Spawn initial unified workers (data plane)
         tracing::info!("Spawning {} unified server workers", config.unified_server_workers);
         if let Err(e) = self.process_manager.spawn_unified_server_workers(config.unified_server_workers) {
             tracing::error!("Failed to spawn unified server workers: {}", e);

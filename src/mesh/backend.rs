@@ -337,6 +337,7 @@ pub fn create_mesh_backend_from_config(
             cc.stale_while_revalidate,
             cc.stale_if_error,
             None,
+            None,
         )
     });
 

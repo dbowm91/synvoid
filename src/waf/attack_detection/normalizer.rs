@@ -632,9 +632,30 @@ impl<'a> NormalizedInputs<'a> {
         NormalizedInputs {
             path: self.path.map(|p| p.into_owned()),
             query_string: self.query_string.map(|qs| qs.into_owned()),
-            headers: self.headers.into_iter().map(|(k, v)| (k, v.into_owned())).collect(),
+            headers: self
+                .headers
+                .into_iter()
+                .map(|(k, v)| (k, v.into_owned()))
+                .collect(),
             body: self.body, // body is already static
         }
+    }
+
+    pub fn all_values(&self) -> impl Iterator<Item = &str> {
+        let mut values = Vec::new();
+        if let Some(ref p) = self.path {
+            values.push(p.as_str());
+        }
+        if let Some(ref qs) = self.query_string {
+            values.push(qs.as_str());
+        }
+        for (_, v) in &self.headers {
+            values.push(v.as_str());
+        }
+        if let Some(ref b) = self.body {
+            values.push(b.as_str());
+        }
+        values.into_iter()
     }
 }
 
