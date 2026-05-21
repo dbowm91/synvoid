@@ -826,6 +826,10 @@ pub struct PowChallengeDefaults {
     pub enabled: bool,
     #[serde(default = "default_pow_difficulty")]
     pub difficulty: u8,
+    #[serde(default)]
+    pub adaptive_difficulty: bool,
+    #[serde(default = "default_pow_max_difficulty")]
+    pub max_difficulty: u8,
     #[serde(default = "default_pow_timeout")]
     pub timeout_secs: u64,
     #[serde(default = "default_pow_window")]
@@ -840,6 +844,8 @@ impl Default for PowChallengeDefaults {
         Self {
             enabled: true,
             difficulty: 6,
+            adaptive_difficulty: true,
+            max_difficulty: 12,
             timeout_secs: 60,
             window_secs: 300,
             prefer_wasm: true,
@@ -867,6 +873,9 @@ impl Default for PowBlockDefaults {
 
 fn default_pow_difficulty() -> u8 {
     6
+}
+fn default_pow_max_difficulty() -> u8 {
+    12
 }
 fn default_pow_timeout() -> u64 {
     60

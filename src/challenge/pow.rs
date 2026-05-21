@@ -20,6 +20,9 @@ pub struct PowChallenge {
 pub struct PowManager {
     secret_key: [u8; 32],
     difficulty: u8,
+    adaptive_difficulty: bool,
+    max_difficulty: u8,
+    active_challenges: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     window_secs: u64,
     timeout_secs: u64,
     cookie_name: String,
@@ -34,12 +37,41 @@ impl PowManager {
 
         Self {
             secret_key,
-            difficulty: difficulty.clamp(1, 20),
+            difficulty: difficulty.clamp(1, 32),
+            adaptive_difficulty: false,
+            max_difficulty: 16,
+            active_challenges: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             window_secs,
             timeout_secs,
             cookie_name,
             theme: ThemeConfig::default(),
             css_fallback_enabled: true,
+        }
+    }
+
+    pub fn with_adaptive_difficulty(mut self, enabled: bool, max_difficulty: u8) -> Self {
+        self.adaptive_difficulty = enabled;
+        self.max_difficulty = max_difficulty.clamp(self.difficulty, 32);
+        self
+    }
+
+    pub fn set_difficulty(&mut self, difficulty: u8) {
+        self.difficulty = difficulty.clamp(1, 32);
+    }
+
+    pub fn get_computed_difficulty(&self) -> u8 {
+        if !self.adaptive_difficulty {
+            return self.difficulty;
+        }
+
+        let active = self.active_challenges.load(std::sync::atomic::Ordering::Relaxed);
+        if active < 100 {
+            self.difficulty
+        } else {
+            // Logarithmic scaling: increase difficulty based on active challenges
+            // Every doubling of active challenges above 100 adds 1 bit of difficulty
+            let extra_bits = (active as f32 / 100.0).log2() as u8;
+            (self.difficulty + extra_bits).min(self.max_difficulty)
         }
     }
 
@@ -63,26 +95,31 @@ impl PowManager {
 
     pub fn generate_challenge(&self) -> PowChallenge {
         let now = current_timestamp();
-        let mut rng = rand::rng();
-        let server_nonce: u64 = rng.random();
+        let difficulty = self.get_computed_difficulty();
+
+        // Increment active challenges counter
+        self.active_challenges.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let mut challenge_data = Vec::new();
         challenge_data.extend_from_slice(&self.secret_key);
         challenge_data.extend_from_slice(&now.to_le_bytes());
-        challenge_data.extend_from_slice(&server_nonce.to_le_bytes());
 
         let hash = Sha256::digest(&challenge_data);
-        let payload = format!("{}:{}", now, hex::encode(hash));
+        // Include difficulty in the payload to ensure verification uses the same difficulty
+        let payload = format!("{}:{}:{}", now, hex::encode(hash), difficulty);
         let challenge = BASE64.encode(payload.as_bytes());
 
         PowChallenge {
             challenge,
-            difficulty: self.difficulty,
+            difficulty,
             expires_at: now + self.timeout_secs,
         }
     }
 
     pub fn verify_solution(&self, challenge: &str, client_nonce: &str) -> bool {
+        // Decrement active challenges counter on verification attempt (best effort)
+        self.active_challenges.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+
         let now = current_timestamp();
 
         let decoded = match BASE64.decode(challenge.as_bytes()) {
@@ -96,7 +133,7 @@ impl PowManager {
         };
 
         let parts: Vec<&str> = payload.split(':').collect();
-        if parts.len() != 2 {
+        if parts.len() < 2 {
             return false;
         }
 
@@ -114,10 +151,17 @@ impl PowManager {
             return false;
         }
 
+        // Difficulty might be stored in the payload (for adaptive support)
+        let difficulty = if parts.len() >= 3 {
+            parts[2].parse().unwrap_or(self.difficulty)
+        } else {
+            self.difficulty
+        };
+
         let input = format!("{}{}", challenge, client_nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        has_leading_zeros_ct(&hash, self.difficulty as usize).into()
+        has_leading_zeros_ct(&hash, difficulty as usize).into()
     }
 
     pub fn generate_challenge_page(&self, honeypot_html: &str) -> String {

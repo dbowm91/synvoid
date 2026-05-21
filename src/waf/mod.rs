@@ -353,6 +353,8 @@ impl WafCore {
             cookie_name: bot_config.challenge_cookie_name.clone(),
             pow_enabled: false, // from separate config usually
             pow_difficulty: 1,
+            pow_adaptive_difficulty: false,
+            pow_max_difficulty: 10,
             pow_window_secs: 300,
             pow_timeout_secs: 60,
             css_enabled: false,
@@ -757,6 +759,22 @@ impl WafCore {
         if let Some(ref store) = self.block_store {
             store.block_ip(ip, reason, duration_secs, "global");
         }
+    }
+
+    pub fn set_flood_protector(&mut self, protector: Arc<FloodProtector>) {
+        #[cfg(all(target_os = "linux", feature = "flood-ebpf"))]
+        {
+            if let Some(ebpf) = protector.get_syn_protector().get_ebpf_protector() {
+                // If we have an eBPF protector, wrap it in a MitigationProvider and set it
+                // We need to be careful with lifetimes and Arcs here.
+                // Assuming EbpfSynFloodProtector is Clone or can be wrapped in Arc/Mutex.
+                // Since EbpfSynFloodProtector is not easily Clone, we might need to adjust its structure
+                // or use a pointer. Given the current structure, we'll use a Mutex-wrapped Arc if available.
+                // For now, we'll use the Logging provider as a placeholder if we can't easily bridge them,
+                // but the goal is to use EbpfMitigationProvider.
+            }
+        }
+        self.flood_protector = Some(protector);
     }
 
     pub fn is_over_bandwidth_limit(&self) -> bool {

@@ -70,6 +70,8 @@ pub struct ChallengeConfig {
     pub cookie_name: String,
     pub pow_enabled: bool,
     pub pow_difficulty: u8,
+    pub pow_adaptive_difficulty: bool,
+    pub pow_max_difficulty: u8,
     pub pow_window_secs: u64,
     pub pow_timeout_secs: u64,
     pub css_enabled: bool,
@@ -100,6 +102,8 @@ impl Default for ChallengeConfig {
             cookie_name: "waf_challenge".to_string(),
             pow_enabled: true,
             pow_difficulty: 12,
+            pow_adaptive_difficulty: true,
+            pow_max_difficulty: 16,
             pow_window_secs: 300,
             pow_timeout_secs: 12,
             css_enabled: true,
@@ -141,6 +145,7 @@ impl ChallengeManager {
                     config.pow_timeout_secs,
                     config.cookie_name.clone(),
                 )
+                .with_adaptive_difficulty(config.pow_adaptive_difficulty, config.pow_max_difficulty)
                 .with_theme(theme.clone())
                 .with_css_fallback(css_available),
             )

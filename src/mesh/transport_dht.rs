@@ -265,20 +265,21 @@ impl MeshTransport {
         version: u64,
         timestamp: u64,
         signature: &[u8],
-        signer_public_key: &str,
+        signer_public_key: Option<&str>,
     ) {
         tracing::debug!(
-            "Received DHT sync response from {} ({} records)",
+            "Received DHT sync response from {} ({} records, signer: {:?})",
             from_peer,
-            records.len()
+            records.len(),
+            signer_public_key
         );
 
-        if signature.is_empty() || signer_public_key.is_empty() {
+        if signature.is_empty() || signer_public_key.map_or(true, |s| s.is_empty()) {
             tracing::warn!(
                 "DHT sync response from {} rejected: missing signature ({}) or public key ({})",
                 from_peer,
                 signature.is_empty(),
-                signer_public_key.is_empty()
+                signer_public_key.map_or(true, |s| s.is_empty())
             );
             return;
         }
@@ -306,7 +307,7 @@ impl MeshTransport {
             if content.is_empty() {
                 false
             } else {
-                match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+                match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key.unwrap_or_default()) {
                     Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
                         let mut pk_array = [0u8; 32];
                         pk_array.copy_from_slice(&pk_bytes);

@@ -1022,7 +1022,7 @@ impl RecordStoreManager {
         let records: Vec<DhtRecord> = rs.pending_announces.iter().cloned().collect();
 
         let mut signature = Vec::new();
-        let mut signer_public_key = String::new();
+        let mut signer_public_key = None;
 
         if let Some(ref signer) = rs.mesh_signer {
             let timestamp = MeshMessage::generate_timestamp();
@@ -1034,7 +1034,7 @@ impl RecordStoreManager {
                 timestamp
             );
             signature = signer.sign(content.as_bytes());
-            signer_public_key = signer.get_public_key();
+            signer_public_key = Some(signer.get_public_key());
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();

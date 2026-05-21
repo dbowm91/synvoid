@@ -336,7 +336,7 @@ message MeshLoadUpdate {
     uint64 timestamp = 4;
     string source_node_id = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
 }
 
 message RaftCommitNotification {
@@ -376,7 +376,7 @@ message QuorumSignature {
     string signer_node_id = 1;
     bytes signature = 2;
     uint64 timestamp = 3;
-    string signer_public_key = 4;
+    optional string signer_public_key = 4;
 }
 
 message GenesisKeyTransition {
@@ -540,7 +540,7 @@ message QuorumSignatureResponse {
     string request_id = 1;
     string key = 2;
     bytes signature = 3;
-    string signer_public_key = 4;
+    optional string signer_public_key = 4;
 }
 
 message QuorumRejectionResponse {
@@ -733,7 +733,7 @@ message ThreatIndicator {
     optional uint64 rate_limit_window_secs = 10;
     optional string suspicious_pattern = 11;
     bytes signature = 12;
-    string signer_public_key = 13;
+    optional string signer_public_key = 13;
 }
 
 message ThreatAnnounce {
@@ -745,7 +745,7 @@ message ThreatAnnounce {
     uint32 source_role = 6;
     uint64 source_reputation = 7;
     bytes signature = 8;
-    string signer_public_key = 9;
+    optional string signer_public_key = 9;
 }
 
 message ThreatSyncRequest {
@@ -762,7 +762,7 @@ message ThreatSyncResponse {
     bool is_delta = 4;
     repeated string removed_indicators = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
 }
 
 message ThreatAcknowledgement {
@@ -777,6 +777,7 @@ message HotThreatGossip {
     bytes bloom_filter = 1;
     uint32 hashes = 2;
     uint64 timestamp = 3;
+    optional ThreatIndicator immediate_indicator = 4;
 }
 
 message YaraRuleAnnounce {
@@ -787,7 +788,7 @@ message YaraRuleAnnounce {
     string source_node_id = 5;
     uint32 source_role = 6;
     bytes signature = 7;
-    string signer_public_key = 8;
+    optional string signer_public_key = 8;
 }
 
 message YaraRuleSyncRequest {
@@ -803,7 +804,7 @@ message YaraRuleSyncResponse {
     bool is_full = 4;
     uint64 timestamp = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
 }
 
 message YaraRuleAcknowledgement {
@@ -822,7 +823,7 @@ message YaraRuleSubmission {
     bytes signature = 5;
     string rules = 6;
     string description = 7;
-    string signer_public_key = 8;
+    optional string signer_public_key = 8;
 }
 
 message YaraRuleSubmissionResponse {
@@ -839,7 +840,7 @@ message BehavioralFingerprintAnnounce {
     uint64 timestamp = 3;
     string source_node_id = 4;
     bytes signature = 5;
-    string signer_public_key = 6;
+    optional string signer_public_key = 6;
 }
 
 message BehavioralFingerprintSyncRequest {
@@ -856,7 +857,7 @@ message BehavioralFingerprintSyncResponse {
     bool is_delta = 4;
     repeated string removed_fingerprint_ids = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
 }
 
 message BehavioralFingerprint {
@@ -889,7 +890,7 @@ message DhtRecord {
     uint64 ttl_seconds = 4;
     string source_node_id = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
     bytes content_hash = 8;
 }
 
@@ -900,7 +901,7 @@ message DhtRecordAnnounce {
     uint64 timestamp = 4;
     string source_node_id = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
 }
 
 message DhtRecordQuery {
@@ -918,7 +919,7 @@ message DhtRecordResponse {
     uint64 timestamp = 5;
     string source_node_id = 6;
     bytes signature = 7;
-    string signer_public_key = 8;
+    optional string signer_public_key = 8;
 }
 
 message DhtSyncRequest {
@@ -933,7 +934,7 @@ message DhtSyncResponse {
     uint64 version = 3;
     uint64 timestamp = 4;
     bytes signature = 5;
-    string signer_public_key = 6;
+    optional string signer_public_key = 6;
 }
 
 message DhtSnapshotRequest {
@@ -941,7 +942,7 @@ message DhtSnapshotRequest {
     string node_id = 2;
     uint64 from_version = 3;
     bytes signature = 4;
-    string signer_public_key = 5;
+    optional string signer_public_key = 5;
 }
 
 message DhtSnapshotResponse {
@@ -950,7 +951,7 @@ message DhtSnapshotResponse {
     uint64 version = 3;
     uint64 timestamp = 4;
     bytes signature = 5;
-    string signer_public_key = 6;
+    optional string signer_public_key = 6;
 }
 
 message MerkleProof {
@@ -966,7 +967,7 @@ message DhtAntiEntropyRequest {
     bytes local_root_hash = 3;
     repeated string interested_keys = 4;
     uint64 timestamp = 5;
-    string signer_public_key = 6;
+    optional string signer_public_key = 6;
 }
 
 message DhtAntiEntropyResponse {
@@ -977,7 +978,7 @@ message DhtAntiEntropyResponse {
     repeated DhtRecord missing_records = 5;
     uint64 timestamp = 6;
     bytes signature = 7;
-    string signer_public_key = 8;
+    optional string signer_public_key = 8;
 }
 
 message DhtRecordPush {
@@ -986,7 +987,7 @@ message DhtRecordPush {
     uint32 hop_count = 3;
     repeated string seen_node_ids = 4;
     uint64 timestamp = 5;
-    string signer_public_key = 6;
+    optional string signer_public_key = 6;
 }
 
 message DhtRecordPushAck {
@@ -1011,7 +1012,7 @@ message DhtRecordCommit {
     uint64 timestamp = 4;
     string source_node_id = 5;
     bytes signature = 6;
-    string signer_public_key = 7;
+    optional string signer_public_key = 7;
 }
 
 message UpstreamVerificationQuery {
@@ -1720,6 +1721,6 @@ message YaraCompiledRuleAnnounce {
     string source_node_id = 6;
     uint32 source_role = 7;
     bytes signature = 8;
-    string signer_public_key = 9;
+    optional string signer_public_key = 9;
     string source_rules = 10;
 }

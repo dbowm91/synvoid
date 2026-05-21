@@ -525,7 +525,7 @@ impl From<&ThreatIndicator> for proto::ThreatIndicator {
             rate_limit_window_secs: i.rate_limit_window_secs,
             suspicious_pattern: i.suspicious_pattern.clone(),
             signature: i.signature.clone(),
-            signer_public_key: i.signer_public_key.clone().unwrap_or_default(),
+            signer_public_key: i.signer_public_key.clone(),
         }
     }
 }
@@ -561,11 +561,13 @@ impl From<proto::ThreatIndicator> for ThreatIndicator {
             rate_limit_window_secs: pb.rate_limit_window_secs,
             suspicious_pattern: pb.suspicious_pattern,
             signature: pb.signature,
-            signer_public_key: if pb.signer_public_key.is_empty() {
-                None
-            } else {
-                Some(pb.signer_public_key)
-            },
+            signer_public_key: pb.signer_public_key.as_ref().and_then(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.clone())
+                }
+            }),
         }
     }
 }
@@ -580,11 +582,13 @@ impl From<proto::DhtRecord> for DhtRecord {
             ttl_seconds: pb.ttl_seconds,
             source_node_id: pb.source_node_id,
             signature: pb.signature,
-            signer_public_key: if pb.signer_public_key.is_empty() {
-                None
-            } else {
-                Some(pb.signer_public_key)
-            },
+            signer_public_key: pb.signer_public_key.as_ref().and_then(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.clone())
+                }
+            }),
             content_hash: pb.content_hash,
             quorum_proof: Vec::new(),
             request_id: None,
@@ -601,7 +605,7 @@ impl From<DhtRecord> for proto::DhtRecord {
             ttl_seconds: r.ttl_seconds,
             source_node_id: r.source_node_id,
             signature: r.signature,
-            signer_public_key: r.signer_public_key.unwrap_or_default(),
+            signer_public_key: r.signer_public_key,
             content_hash: r.content_hash,
         }
     }

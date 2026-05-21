@@ -1186,9 +1186,17 @@ impl YaraRulesManager {
         *self.transport.write() = Some(transport);
     }
 
-    fn check_trusted_signer(&self, source_node_id: &str, signer_pk: &str) -> bool {
+    fn check_trusted_signer(&self, source_node_id: &str, signer_pk: Option<&str>) -> bool {
         if self.node_role.is_global() {
             return true;
+        }
+
+        let Some(signer_pk) = signer_pk else {
+            return false;
+        };
+
+        if signer_pk.is_empty() {
+            return false;
         }
 
         if self.config.trusted_signers.is_empty() {
@@ -1396,8 +1404,7 @@ impl YaraRulesManager {
             let signer_public_key = self
                 .signer
                 .as_ref()
-                .map(|s| s.get_public_key())
-                .unwrap_or_default();
+                .map(|s| s.get_public_key());
 
             let message = MeshMessage::YaraRuleSubmission {
                 request_id: submission.submission_id.clone().into(),
@@ -1631,8 +1638,7 @@ impl YaraRulesManager {
             let signer_public_key = self
                 .signer
                 .as_ref()
-                .map(|s| s.get_public_key())
-                .unwrap_or_default();
+                .map(|s| s.get_public_key());
 
             let compiled_rules = match yara_x::compile(rules.as_str()) {
                 Ok(compiled) => match compiled.serialize() {
@@ -1925,11 +1931,11 @@ impl YaraRulesManager {
                 );
 
                 // Verify signature if the sender provided one and we have a signer
-                if !signature.is_empty() && !signer_public_key.is_empty() {
+                if !signature.is_empty() && signer_public_key.as_ref().map_or(false, |s| !s.is_empty()) {
                     if let Some(ref signer) = self.signer {
                         let sign_content = format!("{}:{}", version, rules);
                         let pk_bytes = URL_SAFE_NO_PAD
-                            .decode(signer_public_key)
+                            .decode(signer_public_key.as_deref().unwrap_or(""))
                             .unwrap_or_default();
                         if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(
@@ -1953,14 +1959,14 @@ impl YaraRulesManager {
                                     original_request_id: request_id.clone(),
                                     node_id: self.node_id.clone().into(),
                                     accepted: false,
-                                    reason: "No trusted signers configured".into(),
+                                    reason: "No trusted_signers configured".into(),
                                     timestamp:
                                         crate::mesh::protocol::MeshMessage::generate_timestamp(),
                                 });
                             }
-                            if !self.check_trusted_signer(from_node, signer_public_key) {
+                            if !self.check_trusted_signer(from_node, signer_public_key.as_deref()) {
                                 tracing::warn!(
-                                    "YARA rule announce rejected: signer {} not in trusted_signers list",
+                                    "YARA rule announce rejected: signer {:?} not in trusted_signers list",
                                     signer_public_key
                                 );
                                 return Some(MeshMessage::YaraRuleAcknowledgement {
@@ -2063,7 +2069,7 @@ impl YaraRulesManager {
                     );
                 }
 
-                if !signature.is_empty() && !signer_public_key.is_empty() {
+                if !signature.is_empty() && signer_public_key.as_ref().map_or(false, |s| !s.is_empty()) {
                     if let Some(ref signer) = self.signer {
                         let sign_content = if !compiled_rules.is_empty() {
                             format!("{}:{}:{}", version, checksum, source_rules.len())
@@ -2071,7 +2077,7 @@ impl YaraRulesManager {
                             format!("{}:{}", version, source_rules)
                         };
                         let pk_bytes = URL_SAFE_NO_PAD
-                            .decode(signer_public_key)
+                            .decode(signer_public_key.as_deref().unwrap_or(""))
                             .unwrap_or_default();
                         if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                             tracing::warn!(
@@ -2100,9 +2106,9 @@ impl YaraRulesManager {
                                         crate::mesh::protocol::MeshMessage::generate_timestamp(),
                                 });
                             }
-                            if !self.check_trusted_signer(from_node, signer_public_key) {
+                            if !self.check_trusted_signer(from_node, signer_public_key.as_deref()) {
                                 tracing::warn!(
-                                    "YARA compiled rule announce rejected: signer {} not in trusted_signers list",
+                                    "YARA compiled rule announce rejected: signer {:?} not in trusted_signers list",
                                     signer_public_key
                                 );
                                 return Some(MeshMessage::YaraRuleAcknowledgement {
@@ -2194,8 +2200,7 @@ impl YaraRulesManager {
                     let signer_public_key = self
                         .signer
                         .as_ref()
-                        .map(|s| s.get_public_key())
-                        .unwrap_or_default();
+                        .map(|s| s.get_public_key());
 
                     let is_full = version
                         .as_ref()
@@ -2241,11 +2246,11 @@ impl YaraRulesManager {
                 );
 
                 if self.config.require_signature {
-                    if !signature.is_empty() && !signer_public_key.is_empty() {
+                    if !signature.is_empty() && signer_public_key.as_ref().map_or(false, |s| !s.is_empty()) {
                         if let Some(ref signer) = self.signer {
                             let sign_content = format!("{}:{}", version, rules);
                             let pk_bytes = base64::engine::general_purpose::STANDARD
-                                .decode(signer_public_key)
+                                .decode(signer_public_key.as_deref().unwrap_or(""))
                                 .unwrap_or_default();
                             if !signer.verify(sign_content.as_bytes(), signature, &pk_bytes) {
                                 tracing::warn!(

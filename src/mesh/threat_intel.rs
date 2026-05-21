@@ -371,11 +371,12 @@ impl ThreatIntelligenceManager {
         let bloom = self.hot_threats.read();
         let msg = MeshMessage::HotThreatGossip {
             // Using a more realistic approach for the 'bloomfilter' crate:
-            // Since 'Bloom' might not implement Serialize, we'd normally need to 
+            // Since 'Bloom' might not implement Serialize, we'd normally need to
             // extract the bitmap. For now, we'll use a placeholder to fix the build.
-            bloom_filter: Vec::new(), 
+            bloom_filter: Vec::new(),
             hashes: 0,
             timestamp: crate::mesh::safe_unix_timestamp(),
+            immediate_indicator: None,
         };
 
         let sender = self.mesh_sender.read().clone();
@@ -383,15 +384,38 @@ impl ThreatIntelligenceManager {
             let _ = tx.try_send(msg);
         }
     }
-
-    pub fn handle_hot_threat_gossip(&self, bloom_filter: Vec<u8>, hashes: u32, timestamp: u64) {
+    pub fn handle_hot_threat_gossip(
+        &self,
+        _bloom_filter: Vec<u8>,
+        hashes: u32,
+        timestamp: u64,
+        immediate_indicator: Option<ThreatIndicator>,
+    ) {
         // Only accept relatively recent gossips
         let now = crate::mesh::safe_unix_timestamp();
         if timestamp < now - 300 {
             return;
         }
 
-        // Placeholder for future implementation
+        if let Some(indicator) = immediate_indicator {
+            // Immediately process high-priority threat indicator from gossip
+            tracing::debug!(
+                "Processing immediate threat indicator from gossip: {} ({})",
+                indicator.indicator_value,
+                indicator.reason
+            );
+
+            // Use handle_incoming_threat to leverage existing verification,
+            // reputation, and application logic.
+            self.handle_incoming_threat(
+                indicator,
+                "gossip",
+                MeshNodeRole::EDGE, // Assume Edge if role not in gossip
+                self.signer.as_ref(),
+            );
+        }
+
+        // TODO: Full Bloom filter reconciliation for non-immediate threats
         tracing::debug!("Received hot threat gossip with {} hashes", hashes);
     }
 
@@ -484,7 +508,19 @@ impl ThreatIntelligenceManager {
             let threshold = self.config.push_severity_threshold as u32;
             if ThreatSeverity::High as u32 >= threshold {
                 self.publish_indicator_to_dht(&indicator);
-                self.queue_for_push(indicator);
+                self.queue_for_push(indicator.clone());
+
+                // Immediate Gossip for high-priority threats
+                let gossip_msg = MeshMessage::HotThreatGossip {
+                    bloom_filter: Vec::new(),
+                    hashes: 0,
+                    timestamp: now,
+                    immediate_indicator: Some(indicator),
+                };
+                let sender = self.mesh_sender.read().clone();
+                if let Some(tx) = sender {
+                    let _ = tx.try_send(gossip_msg);
+                }
             }
         } else {
             self.publish_indicator_to_dht(&indicator);
@@ -1452,7 +1488,7 @@ impl ThreatIntelligenceManager {
 
                     if !self.is_global_node() {
                         let trusted =
-                            self.check_trusted_signer(&indicator.source_node_id, signer_pk);
+                            self.check_trusted_signer(&indicator.source_node_id, Some(signer_pk));
                         if !trusted {
                             tracing::warn!(
                                 "Threat intel DHT sync: indicator from untrusted node {} rejected",
@@ -1509,9 +1545,17 @@ impl ThreatIntelligenceManager {
         Ok(())
     }
 
-    fn check_trusted_signer(&self, source_node_id: &str, signer_pk: &str) -> bool {
+    fn check_trusted_signer(&self, source_node_id: &str, signer_pk: Option<&str>) -> bool {
         if self.node_role.is_global() {
             return true;
+        }
+
+        let Some(signer_pk) = signer_pk else {
+            return false;
+        };
+
+        if signer_pk.is_empty() {
+            return false;
         }
 
         if self.config.trusted_signers.is_empty() {
@@ -1562,7 +1606,7 @@ impl ThreatIntelligenceManager {
             .map(|p| p.score)
             .unwrap_or(50);
 
-        let mut signer_public_key = String::new();
+        let mut signer_public_key = None;
 
         if let Some(ref signer) = self.signer {
             let request_id = uuid::Uuid::new_v4().to_string();
@@ -1588,7 +1632,7 @@ impl ThreatIntelligenceManager {
                 hex::encode(merkle_root)
             );
             signature = signer.sign_smart(content.as_bytes(), true);
-            signer_public_key = signer.get_public_key();
+            signer_public_key = Some(signer.get_public_key());
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -1621,7 +1665,7 @@ impl ThreatIntelligenceManager {
         let indicators = self.get_indicators_for_sync(from_version);
 
         let mut signature = Vec::new();
-        let mut signer_public_key = String::new();
+        let mut signer_public_key = None;
         if let Some(ref signer) = self.signer {
             let timestamp = MeshMessage::generate_timestamp();
             let content = format!(
@@ -1632,7 +1676,7 @@ impl ThreatIntelligenceManager {
                 timestamp
             );
             signature = signer.sign(content.as_bytes());
-            signer_public_key = signer.get_public_key();
+            signer_public_key = Some(signer.get_public_key());
         }
 
         MeshMessage::ThreatSyncResponse {
@@ -1791,11 +1835,11 @@ impl ThreatIntelligenceManager {
                             timestamp,
                             hex::encode(merkle_root)
                         );
-                        let pk_bytes = if signer_public_key.is_empty() {
+                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty()) {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .decode(signer_public_key)
+                                .decode(signer_public_key.as_deref().unwrap_or(""))
                                 .unwrap_or_default()
                         };
                         if !signer.verify_any(content.as_bytes(), signature, &pk_bytes) {
@@ -1826,9 +1870,9 @@ impl ThreatIntelligenceManager {
                                     timestamp: MeshMessage::generate_timestamp(),
                                 });
                             }
-                            if !self.check_trusted_signer(source_node_id, signer_public_key) {
+                            if !self.check_trusted_signer(source_node_id, signer_public_key.as_deref()) {
                                 tracing::warn!(
-                                    "ThreatAnnounce rejected: signer {} not in trusted_signers list",
+                                    "ThreatAnnounce rejected: signer {:?} not in trusted_signers list",
                                     signer_public_key
                                 );
                                 return Some(MeshMessage::ThreatAcknowledgement {
@@ -2092,9 +2136,9 @@ impl ThreatIntelligenceManager {
         let (signature, signer_public_key) = if let Some(ref signer) = self.signer {
             let sig = signer.sign(signable_content.as_bytes());
             let pk = signer.get_public_key();
-            (sig, pk)
+            (sig, Some(pk))
         } else {
-            (Vec::new(), String::new())
+            (Vec::new(), None)
         };
 
         let signature_b64 = if !signature.is_empty() {

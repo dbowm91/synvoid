@@ -638,13 +638,21 @@ impl<'a> NormalizedInputs<'a> {
     pub fn into_owned(self) -> NormalizedInputs<'static> {
         NormalizedInputs {
             path: self.path.map(|p| p.into_owned()),
+            path_raw: self.path_raw.map(|p| Cow::Owned(p.into_owned())),
             query_string: self.query_string.map(|qs| qs.into_owned()),
+            query_string_raw: self.query_string_raw.map(|qs| Cow::Owned(qs.into_owned())),
             headers: self
                 .headers
                 .into_iter()
                 .map(|(k, v)| (k, v.into_owned()))
                 .collect(),
+            headers_raw: self
+                .headers_raw
+                .into_iter()
+                .map(|(k, v)| (k, Cow::Owned(v.into_owned())))
+                .collect(),
             body: self.body, // body is already static
+            body_raw: self.body_raw,
         }
     }
 
@@ -664,13 +672,34 @@ impl<'a> NormalizedInputs<'a> {
         }
         values.into_iter()
     }
+
+    pub fn all_raw_values(&self) -> impl Iterator<Item = &str> {
+        let mut values = Vec::new();
+        if let Some(ref p) = self.path_raw {
+            values.push(p.as_ref());
+        }
+        if let Some(ref qs) = self.query_string_raw {
+            values.push(qs.as_ref());
+        }
+        for (_, v) in &self.headers_raw {
+            values.push(v.as_ref());
+        }
+        if let Some(ref b) = self.body_raw {
+            values.push(b.as_ref());
+        }
+        values.into_iter()
+    }
 }
 
 pub struct NormalizedInputs<'a> {
     pub path: Option<NormalizedInput<'a>>,
+    pub path_raw: Option<Cow<'a, str>>,
     pub query_string: Option<NormalizedInput<'a>>,
+    pub query_string_raw: Option<Cow<'a, str>>,
     pub headers: Vec<(Arc<str>, NormalizedInput<'a>)>,
+    pub headers_raw: Vec<(Arc<str>, Cow<'a, str>)>,
     pub body: Option<NormalizedInput<'static>>,
+    pub body_raw: Option<Cow<'static, str>>,
 }
 
 impl<'a> NormalizedInputs<'a> {
@@ -681,19 +710,25 @@ impl<'a> NormalizedInputs<'a> {
         headers: &'a http::HeaderMap,
         body: Option<&'a [u8]>,
     ) -> Self {
-        let path = path.map(|p| normalizer.normalize(p));
-        let query_string = query_string.map(|qs| normalizer.normalize(qs));
+        let path_norm = path.map(|p| normalizer.normalize(p));
+        let path_raw = path.map(Cow::Borrowed);
+        
+        let query_string_norm = query_string.map(|qs| normalizer.normalize(qs));
+        let query_string_raw = query_string.map(Cow::Borrowed);
 
         let mut normalized_headers = Vec::new();
+        let mut raw_headers = Vec::new();
         for (name, value) in headers.iter() {
             if let Ok(value_str) = value.to_str() {
-                normalized_headers.push((name.as_str().into(), normalizer.normalize(value_str)));
+                let name_arc: Arc<str> = name.as_str().into();
+                normalized_headers.push((name_arc.clone(), normalizer.normalize(value_str)));
+                raw_headers.push((name_arc, Cow::Borrowed(value_str)));
             }
         }
 
-        let body = body.map(|b| {
-            let s = String::from_utf8_lossy(b);
-            let ni = normalizer.normalize(&s);
+        let body_raw = body.map(|b| String::from_utf8_lossy(b).into_owned().into());
+        let body_norm = body_raw.as_ref().map(|s: &Cow<'static, str>| {
+            let ni = normalizer.normalize(s.as_ref());
             let normalized_data = match ni.normalized {
                 NormalizedData::Borrowed(s) => {
                     let mut pooled = BufferPool::acquire(s.len());
@@ -709,14 +744,17 @@ impl<'a> NormalizedInputs<'a> {
                 passes: ni.passes,
                 flags: ni.flags,
             }
-
         });
 
         Self {
-            path,
-            query_string,
+            path: path_norm,
+            path_raw,
+            query_string: query_string_norm,
+            query_string_raw,
             headers: normalized_headers,
-            body,
+            headers_raw: raw_headers,
+            body: body_norm,
+            body_raw,
         }
     }
 }

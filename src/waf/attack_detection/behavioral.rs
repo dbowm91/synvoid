@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,7 +7,8 @@ use moka::sync::Cache;
 #[derive(Debug, Clone)]
 pub struct IpBehavioralStats {
     pub last_request_at: Instant,
-    pub inter_request_intervals_ms: VecDeque<u32>,
+    pub avg_interval_ms: f32,
+    pub timing_variance_ms: f32,
     pub request_count: u64,
 }
 
@@ -16,44 +16,40 @@ impl IpBehavioralStats {
     pub fn new() -> Self {
         Self {
             last_request_at: Instant::now(),
-            inter_request_intervals_ms: VecDeque::with_capacity(10),
+            avg_interval_ms: 0.0,
+            timing_variance_ms: 0.0,
             request_count: 1,
         }
     }
 
     pub fn record_request(&mut self) -> u32 {
         let now = Instant::now();
-        let interval = now.duration_since(self.last_request_at).as_millis() as u32;
+        let interval = now.duration_since(self.last_request_at).as_millis() as f32;
         self.last_request_at = now;
         self.request_count += 1;
 
-        if self.inter_request_intervals_ms.len() >= 10 {
-            self.inter_request_intervals_ms.pop_front();
+        // EWMA alpha - weight for the new observation (e.g., 0.2 for ~5 samples window effect)
+        let alpha = 0.2f32;
+
+        if self.request_count == 2 {
+            self.avg_interval_ms = interval;
+            self.timing_variance_ms = 0.0;
+        } else {
+            let delta = interval - self.avg_interval_ms;
+            self.avg_interval_ms += alpha * delta;
+            // Online variance estimation (Welford-like with EWMA)
+            self.timing_variance_ms = (1.0 - alpha) * (self.timing_variance_ms + alpha * delta * delta);
         }
-        self.inter_request_intervals_ms.push_back(interval);
-        interval
+
+        interval as u32
     }
 
     pub fn get_avg_interval(&self) -> u32 {
-        if self.inter_request_intervals_ms.is_empty() {
-            return 0;
-        }
-        let sum: u32 = self.inter_request_intervals_ms.iter().sum();
-        sum / self.inter_request_intervals_ms.len() as u32
+        self.avg_interval_ms as u32
     }
 
     pub fn get_timing_variance(&self) -> u32 {
-        let avg = self.get_avg_interval() as f32;
-        if self.inter_request_intervals_ms.len() < 2 {
-            return 0;
-        }
-        let variance = self.inter_request_intervals_ms.iter()
-            .map(|&i| {
-                let diff = i as f32 - avg;
-                diff * diff
-            })
-            .sum::<f32>() / self.inter_request_intervals_ms.len() as f32;
-        variance.sqrt() as u32
+        self.timing_variance_ms.sqrt() as u32
     }
 }
 

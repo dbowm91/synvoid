@@ -505,7 +505,7 @@ impl OrgKeyManager {
                 if stored_org_id == org_id.as_str() {
                     signatures.push(QuorumSignature {
                         signer_node_id: signer_node_id.to_string(),
-                        signer_public_key: String::new(),
+                        signer_public_key: None,
                         signature,
                         timestamp,
                     });

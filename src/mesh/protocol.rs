@@ -561,7 +561,7 @@ pub enum MeshMessage {
         timestamp: u64,
         source_node_id: ArcStr,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     KeyForward {
         session_id: ArcStr,
@@ -587,6 +587,7 @@ pub enum MeshMessage {
         bloom_filter: Vec<u8>,
         hashes: u32,
         timestamp: u64,
+        immediate_indicator: Option<ThreatIndicator>,
     },
     KeepAlive,
     KeepAliveAck,
@@ -719,7 +720,7 @@ pub enum MeshMessage {
         source_role: MeshNodeRole,
         source_reputation: u64,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     ThreatSyncRequest {
         request_id: ArcStr,
@@ -734,7 +735,7 @@ pub enum MeshMessage {
         is_delta: bool,
         removed_indicators: Vec<ArcStr>,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     ThreatAcknowledgement {
         original_request_id: ArcStr,
@@ -751,7 +752,7 @@ pub enum MeshMessage {
         source_node_id: ArcStr,
         source_role: MeshNodeRole,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     YaraRuleSyncRequest {
         request_id: ArcStr,
@@ -765,7 +766,7 @@ pub enum MeshMessage {
         is_full: bool,
         timestamp: u64,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     YaraRuleAcknowledgement {
         original_request_id: ArcStr,
@@ -782,7 +783,7 @@ pub enum MeshMessage {
         signature: Vec<u8>,
         rules: String,
         description: String,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     YaraRuleSubmissionResponse {
         original_request_id: ArcStr,
@@ -800,7 +801,7 @@ pub enum MeshMessage {
         source_node_id: ArcStr,
         source_role: MeshNodeRole,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
         source_rules: String,
     },
     BehavioralFingerprintAnnounce {
@@ -809,7 +810,7 @@ pub enum MeshMessage {
         timestamp: u64,
         source_node_id: ArcStr,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     BehavioralFingerprintSyncRequest {
         request_id: ArcStr,
@@ -824,7 +825,7 @@ pub enum MeshMessage {
         is_delta: bool,
         removed_fingerprint_ids: Vec<ArcStr>,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     ReputationUpdate {
         node_id: ArcStr,
@@ -842,7 +843,7 @@ pub enum MeshMessage {
         timestamp: u64,
         source_node_id: ArcStr,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtRecordQuery {
         request_id: ArcStr,
@@ -858,7 +859,7 @@ pub enum MeshMessage {
         timestamp: u64,
         source_node_id: ArcStr,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtSyncRequest {
         request_id: ArcStr,
@@ -871,14 +872,14 @@ pub enum MeshMessage {
         version: u64,
         timestamp: u64,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtSnapshotRequest {
         request_id: ArcStr,
         node_id: ArcStr,
         from_version: u64,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtSnapshotResponse {
         request_id: ArcStr,
@@ -886,7 +887,7 @@ pub enum MeshMessage {
         version: u64,
         timestamp: u64,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtAntiEntropyRequest {
         request_id: ArcStr,
@@ -894,7 +895,7 @@ pub enum MeshMessage {
         local_root_hash: Vec<u8>,
         interested_keys: Vec<String>,
         timestamp: u64,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtAntiEntropyResponse {
         request_id: ArcStr,
@@ -904,7 +905,7 @@ pub enum MeshMessage {
         missing_records: Vec<DhtRecord>,
         timestamp: u64,
         signature: Vec<u8>,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtRecordPush {
         request_id: ArcStr,
@@ -912,7 +913,7 @@ pub enum MeshMessage {
         hop_count: u32,
         seen_node_ids: Vec<String>,
         timestamp: u64,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
     },
     DhtRecordPushAck {
         request_id: ArcStr,
@@ -968,7 +969,7 @@ pub enum MeshMessage {
         timestamp: u64,
         source_node_id: ArcStr,
         signature: Vec<u8>,
-        signer_public_key: Option<ArcStr>,
+        signer_public_key: Option<String>,
         proxy_cache_preferences: Option<ProxyCachePreferences>,
     },
     #[cfg(feature = "dns")]
@@ -1148,7 +1149,7 @@ pub enum MeshMessage {
         timestamp: u64,
         source_node_id: ArcStr,
         signature: Vec<u8>,
-        signer_public_key: Option<ArcStr>,
+        signer_public_key: Option<String>,
     },
     WasmModuleSyncRequest {
         request_id: ArcStr,

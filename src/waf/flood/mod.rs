@@ -87,6 +87,11 @@ pub struct SynFloodBackendWrapper {
 }
 
 impl SynFloodBackendWrapper {
+    #[cfg(all(target_os = "linux", feature = "flood-ebpf"))]
+    pub fn get_ebpf_protector(&self) -> Option<&ebpf_flood::EbpfSynFloodProtector> {
+        self.ebpf_backend.as_ref()
+    }
+
     pub fn new(config: &FloodConfig, preferred_backend: FloodBackend) -> Self {
         let actual_backend = Self::select_backend(config, preferred_backend);
 
@@ -226,6 +231,10 @@ pub struct FloodProtector {
 }
 
 impl FloodProtector {
+    pub fn get_syn_protector(&self) -> &SynFloodBackendWrapper {
+        &self.syn_protector
+    }
+
     pub fn new(config: FloodConfig) -> Self {
         let flood_backend = config.backend;
         let syn_protector = SynFloodBackendWrapper::new(&config, flood_backend);

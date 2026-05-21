@@ -366,12 +366,12 @@ impl BehavioralIntelligenceManager {
         }
 
         let mut signature = Vec::new();
-        let mut signer_public_key = String::new();
+        let mut signer_public_key = None;
 
         if let Some(ref signer) = self.signer {
             let content = serde_json::to_vec(&fingerprints).unwrap_or_default();
             signature = signer.sign(&content);
-            signer_public_key = signer.get_public_key();
+            signer_public_key = Some(signer.get_public_key());
         }
 
         Some(MeshMessage::BehavioralFingerprintAnnounce {
@@ -536,7 +536,7 @@ impl BehavioralIntelligenceManager {
         }
 
         let mut signature = Vec::new();
-        let mut signer_public_key = String::new();
+        let mut signer_public_key = None;
 
         if let Some(ref signer) = self.signer {
             let content = format!(
@@ -547,7 +547,7 @@ impl BehavioralIntelligenceManager {
                 crate::mesh::safe_unix_timestamp()
             );
             signature = signer.sign(content.as_bytes());
-            signer_public_key = signer.get_public_key();
+            signer_public_key = Some(signer.get_public_key());
         }
 
         Some(MeshMessage::BehavioralFingerprintSyncResponse {

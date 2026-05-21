@@ -475,11 +475,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     request_id: q.request_id.into(),
                     key: q.key.into(),
                     signature: q.signature.clone(),
-                    signer_public_key: if q.signer_public_key.is_empty() {
-                        None
-                    } else {
-                        Some(q.signer_public_key.clone())
-                    },
+                    signer_public_key: q.signer_public_key.clone(),
                 })
             }
             proto::mesh_message::Payload::QuorumRejectionResponse(q) => {
@@ -1423,7 +1419,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 timestamp: r.timestamp,
                 source_node_id: r.source_node_id.into(),
                 signature: r.signature,
-                signer_public_key: r.signer_public_key.map(|s| s.into()),
+                signer_public_key: r.signer_public_key.clone(),
                 proxy_cache_preferences: r.proxy_cache_preferences.as_ref().map(|p| {
                     crate::mesh::protocol::ProxyCachePreferences {
                         enable: p.enable,
@@ -1452,7 +1448,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                     source_node_id: r.source_node_id.into(),
                     signature: r.signature,
-                    signer_public_key: r.signer_public_key.map(|s| s.into()),
+                    signer_public_key: r.signer_public_key.clone(),
                 })
             }
             proto::mesh_message::Payload::WasmModuleSyncRequest(r) => {
@@ -1838,7 +1834,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                     source_node_id: r.source_node_id.into(),
                     signature: r.signature,
-                    signer_public_key: if r.signer_public_key.is_empty() { None } else { Some(r.signer_public_key) },
+                    signer_public_key: r.signer_public_key,
                 })
             }
             proto::mesh_message::Payload::JoinRequest(r) => Ok(MeshMessage::JoinRequest {
@@ -1916,6 +1912,39 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 bloom_filter: g.bloom_filter,
                 hashes: g.hashes,
                 timestamp: g.timestamp,
+                immediate_indicator: g.immediate_indicator.map(|i| ThreatIndicator {
+                    threat_type: match i.threat_type {
+                        0 => ThreatType::Unspecified,
+                        1 => ThreatType::IpBlock,
+                        2 => ThreatType::IpThrottle,
+                        3 => ThreatType::RateLimitViolation,
+                        4 => ThreatType::SuspiciousActivity,
+                        5 => ThreatType::AsnBlock,
+                        6 => ThreatType::DomainBlock,
+                        7 => ThreatType::UrlBlock,
+                        8 => ThreatType::CertBlock,
+                        _ => ThreatType::Unspecified,
+                    },
+                    indicator_value: i.indicator_value,
+                    severity: match i.severity {
+                        0 => ThreatSeverity::Unspecified,
+                        1 => ThreatSeverity::Low,
+                        2 => ThreatSeverity::Medium,
+                        3 => ThreatSeverity::High,
+                        4 => ThreatSeverity::Critical,
+                        _ => ThreatSeverity::Unspecified,
+                    },
+                    reason: i.reason,
+                    ttl_seconds: i.ttl_seconds,
+                    source_node_id: i.source_node_id,
+                    timestamp: i.timestamp,
+                    site_scope: i.site_scope,
+                    rate_limit_requests: i.rate_limit_requests,
+                    rate_limit_window_secs: i.rate_limit_window_secs,
+                    suspicious_pattern: i.suspicious_pattern,
+                    signature: i.signature,
+                    signer_public_key: i.signer_public_key,
+                }),
             }),
         }
     }

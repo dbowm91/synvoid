@@ -101,11 +101,11 @@ impl RecordStoreManager {
                             self.node_role.bits(),
                             timestamp
                         );
-                        let pk_bytes = if signer_public_key.is_empty() {
+                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty()) {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .decode(signer_public_key)
+                                .decode(signer_public_key.as_ref().unwrap())
                                 .unwrap_or_default()
                         };
                         if !signer
@@ -382,7 +382,7 @@ impl RecordStoreManager {
                 missing_records: Vec::new(),
                 timestamp: MeshMessage::generate_timestamp(),
                 signature: Vec::new(),
-                signer_public_key: String::new(),
+                signer_public_key: None,
             });
         }
 
@@ -406,7 +406,7 @@ impl RecordStoreManager {
             .unwrap_or_default();
 
         let mut signature = Vec::new();
-        let mut signer_public_key = String::new();
+        let mut signer_public_key = None;
         let timestamp = MeshMessage::generate_timestamp();
         let root_hash_value = my_root_hash.unwrap_or_default();
 
@@ -424,7 +424,7 @@ impl RecordStoreManager {
                     &record_set_digest,
                 );
                 signature = signer.sign(&content);
-                signer_public_key = signer.get_public_key();
+                signer_public_key = Some(signer.get_public_key());
             }
         }
 
@@ -1387,10 +1387,7 @@ impl RecordStoreManager {
 
         let signer_public_key = {
             let rs = self.record_state.read();
-            rs.mesh_signer
-                .as_ref()
-                .map(|s| s.get_public_key())
-                .unwrap_or_default()
+            rs.mesh_signer.as_ref().map(|s| s.get_public_key())
         };
 
         for (key, record) in records_to_rebalance {
@@ -1472,10 +1469,7 @@ impl RecordStoreManager {
 
         let signer_public_key = {
             let rs = record_store.record_state.read();
-            rs.mesh_signer
-                .as_ref()
-                .map(|s| s.get_public_key())
-                .unwrap_or_default()
+            rs.mesh_signer.as_ref().map(|s| s.get_public_key())
         };
 
         let transport_clone = transport.clone();

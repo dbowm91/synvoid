@@ -209,9 +209,15 @@ impl MeshTransport {
                 bloom_filter,
                 hashes,
                 timestamp,
+                immediate_indicator,
             } => {
                 if let Some(ref threat_intel) = self.threat_intel {
-                    threat_intel.handle_hot_threat_gossip(bloom_filter, hashes, timestamp);
+                    threat_intel.handle_hot_threat_gossip(
+                        bloom_filter,
+                        hashes,
+                        timestamp,
+                        immediate_indicator,
+                    );
                 }
             }
 
@@ -586,7 +592,7 @@ impl MeshTransport {
                     &node_id,
                     from_version,
                     &signature,
-                    &signer_public_key,
+                    signer_public_key.as_deref().unwrap_or(""),
                 )
                 .await;
             }
@@ -605,7 +611,7 @@ impl MeshTransport {
                     version,
                     timestamp,
                     &signature,
-                    &signer_public_key,
+                    signer_public_key.as_deref().unwrap_or(""),
                 )
                 .await;
             }
@@ -654,7 +660,7 @@ impl MeshTransport {
                         ttl_seconds: 0,
                         source_node_id: source_node_id.to_string(),
                         signature,
-                        signer_public_key: Some(signer_public_key),
+                        signer_public_key,
                         content_hash: {
                             use sha2::{Digest, Sha256};
                             let mut hasher = Sha256::new();
@@ -690,7 +696,7 @@ impl MeshTransport {
                     version,
                     timestamp,
                     &signature,
-                    &signer_public_key,
+                    signer_public_key.as_deref(),
                 )
                 .await;
             }

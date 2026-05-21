@@ -668,7 +668,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         request_id: request_id.to_string(),
                         key: key.to_string(),
                         signature: signature.clone(),
-                        signer_public_key: signer_public_key.clone().unwrap_or_default(),
+                        signer_public_key: signer_public_key.clone(),
                     },
                 )),
             },
@@ -2243,7 +2243,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         timestamp: *timestamp,
                         source_node_id: source_node_id.to_string(),
                         signature: signature.clone(),
-                        signer_public_key: signer_public_key.as_ref().map(|s| s.to_string()),
+                        signer_public_key: signer_public_key.clone(),
                         proxy_cache_preferences: proxy_cache_preferences.as_ref().map(|p| {
                             proto::ProxyCachePreferences {
                                 enable: p.enable,
@@ -2283,7 +2283,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         timestamp: *timestamp,
                         source_node_id: source_node_id.to_string(),
                         signature: signature.clone(),
-                        signer_public_key: signer_public_key.as_ref().map(|s| s.to_string()),
+                        signer_public_key: signer_public_key.clone(),
                     },
                 )),
             },
@@ -2753,7 +2753,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         timestamp: *timestamp,
                         source_node_id: source_node_id.to_string(),
                         signature: signature.clone(),
-                        signer_public_key: signer_public_key.clone().unwrap_or_default(),
+                        signer_public_key: signer_public_key.clone(),
                     },
                 )),
             },
@@ -2869,6 +2869,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 bloom_filter,
                 hashes,
                 timestamp,
+                immediate_indicator,
             } => proto::MeshMessage {
                 message_type: 177,
                 payload: Some(proto::mesh_message::Payload::HotThreatGossip(
@@ -2876,6 +2877,23 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         bloom_filter: bloom_filter.clone(),
                         hashes: *hashes,
                         timestamp: *timestamp,
+                        immediate_indicator: immediate_indicator.as_ref().map(|i| {
+                            proto::ThreatIndicator {
+                                threat_type: i.threat_type as i32,
+                                indicator_value: i.indicator_value.clone(),
+                                severity: i.severity as i32,
+                                reason: i.reason.clone(),
+                                ttl_seconds: i.ttl_seconds,
+                                source_node_id: i.source_node_id.clone(),
+                                timestamp: i.timestamp,
+                                site_scope: i.site_scope.clone(),
+                                rate_limit_requests: i.rate_limit_requests,
+                                rate_limit_window_secs: i.rate_limit_window_secs,
+                                suspicious_pattern: i.suspicious_pattern.clone(),
+                                signature: i.signature.clone(),
+                                signer_public_key: i.signer_public_key.clone(),
+                            }
+                        }),
                     },
                 )),
             },

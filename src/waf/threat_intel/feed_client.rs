@@ -63,7 +63,7 @@ pub struct ThreatFeedPayload {
     #[serde(default)]
     pub signature: String,
     #[serde(default)]
-    pub signer_public_key: String,
+    pub signer_public_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,15 +174,16 @@ impl ThreatFeedClient {
     }
 
     fn verify_feed_signature(&self, payload: &ThreatFeedPayload) -> bool {
-        if payload.signature.is_empty() || payload.signer_public_key.is_empty() {
+        if payload.signature.is_empty() || payload.signer_public_key.as_ref().map_or(true, |s| s.is_empty()) {
             tracing::warn!("Feed payload missing signature or public key");
             return false;
         }
 
-        if !self.is_trusted_signer(&payload.signer_public_key) {
+        if !self.is_trusted_signer(payload.signer_public_key.as_deref()) {
+            let pk = payload.signer_public_key.as_deref().unwrap_or("");
             tracing::warn!(
                 "Feed signed by untrusted public key: {}",
-                &payload.signer_public_key[..8.min(payload.signer_public_key.len())]
+                &pk[..8.min(pk.len())]
             );
             return false;
         }
@@ -199,7 +200,7 @@ impl ThreatFeedClient {
         }
 
         let signer_pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(&payload.signer_public_key)
+            .decode(payload.signer_public_key.as_deref().unwrap_or(""))
         {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -264,9 +265,12 @@ impl ThreatFeedClient {
         )
     }
 
-    fn is_trusted_signer(&self, signer_public_key: &str) -> bool {
+    fn is_trusted_signer(&self, signer_public_key: Option<&str>) -> bool {
+        let Some(signer_pk) = signer_public_key else {
+            return false;
+        };
         self.config.trusted_signers.iter().any(|pk| {
-            let result = pk.as_bytes().ct_eq(signer_public_key.as_bytes());
+            let result = pk.as_bytes().ct_eq(signer_pk.as_bytes());
             bool::from(result)
         })
     }

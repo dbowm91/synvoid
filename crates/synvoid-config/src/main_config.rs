@@ -128,6 +128,7 @@ pub struct MainConfig {
     #[serde(default)]
     pub mimes: MimesConfig,
     #[serde(default)]
+    #[cfg(feature = "dns")]
     pub dns: DnsConfig,
     #[serde(default)]
     pub mesh: Option<super::MeshConfig>,

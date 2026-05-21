@@ -11,7 +11,7 @@ pub const ADMIN_ORG_ID: &str = "_admin";
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QuorumSignature {
     pub signer_node_id: String,
-    pub signer_public_key: String,
+    pub signer_public_key: Option<String>,
     pub signature: Vec<u8>,
     pub timestamp: u64,
 }
@@ -51,7 +51,7 @@ impl OrgPublicKey {
     pub fn add_signature(
         &mut self,
         signer_node_id: String,
-        signer_public_key: String,
+        signer_public_key: Option<String>,
         signature: Vec<u8>,
     ) {
         let timestamp = crate::mesh::safe_unix_timestamp();
@@ -89,11 +89,11 @@ impl OrgPublicKey {
                 if let Some(verifier) =
                     crate::integrity::protocol::Ed25519Verifier::from_base64(expected_pubkey_b64)
                 {
-                    if !sig.signer_public_key.is_empty()
-                        && &sig.signer_public_key != expected_pubkey_b64
+                    if sig.signer_public_key.is_some()
+                        && sig.signer_public_key.as_deref() != Some(expected_pubkey_b64.as_str())
                     {
                         tracing::debug!(
-                            "signer_public_key mismatch for node {}: expected {}, got {}",
+                            "signer_public_key mismatch for node {}: expected {:?}, got {:?}",
                             sig.signer_node_id,
                             expected_pubkey_b64,
                             sig.signer_public_key

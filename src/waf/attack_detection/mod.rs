@@ -213,6 +213,13 @@ impl AttackDetector {
                     return false;
                 }
             }
+            // Dual-view check: also check raw values to detect payloads hidden in characters
+            // that might be removed by aggressive normalization (null bytes, zero-width, etc.)
+            for value in inputs.all_raw_values() {
+                if detector.is_match(value) {
+                    return false;
+                }
+            }
         }
         true
     }
@@ -1200,46 +1207,69 @@ impl AttackDetector {
     fn check_strict_normalization(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
         let risky_flags = NormalizationFlags::NULL_BYTE | NormalizationFlags::ZERO_WIDTH;
 
-        if let Some(ref path) = inputs.path {
-            if path.flags.intersects(risky_flags) {
+        // Check path
+        if let (Some(norm), Some(raw)) = (&inputs.path, &inputs.path_raw) {
+            if norm.flags.intersects(risky_flags) {
                 return Some(AttackDetectionResult {
                     attack_type: AttackType::Other,
                     input_location: InputLocation::Path,
                     fingerprint: Some("strict_normalization_violation".to_string()),
-                    matched_pattern: Some(format!("Risky characters detected in path: {:?}", path.flags)),
+                    matched_pattern: Some(format!(
+                        "Risky normalization in path: {:?} (normalized delta: {})",
+                        norm.flags,
+                        raw.len().saturating_sub(norm.as_str().len())
+                    )),
                 });
             }
         }
 
-        if let Some(ref qs) = inputs.query_string {
-            if qs.flags.intersects(risky_flags) {
+        // Check query string
+        if let (Some(norm), Some(raw)) = (&inputs.query_string, &inputs.query_string_raw) {
+            if norm.flags.intersects(risky_flags) {
                 return Some(AttackDetectionResult {
                     attack_type: AttackType::Other,
                     input_location: InputLocation::QueryString,
                     fingerprint: Some("strict_normalization_violation".to_string()),
-                    matched_pattern: Some(format!("Risky characters detected in query string: {:?}", qs.flags)),
+                    matched_pattern: Some(format!(
+                        "Risky normalization in query string: {:?} (normalized delta: {})",
+                        norm.flags,
+                        raw.len().saturating_sub(norm.as_str().len())
+                    )),
                 });
             }
         }
 
-        for (name, value) in &inputs.headers {
-            if value.flags.intersects(risky_flags) {
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::Other,
-                    input_location: InputLocation::header(name),
-                    fingerprint: Some("strict_normalization_violation".to_string()),
-                    matched_pattern: Some(format!("Risky characters detected in header {}: {:?}", name, value.flags)),
-                });
+        // Check headers
+        for (i, (name, norm)) in inputs.headers.iter().enumerate() {
+            if let Some((_, raw)) = inputs.headers_raw.get(i) {
+                if norm.flags.intersects(risky_flags) {
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::Other,
+                        input_location: InputLocation::header(name),
+                        fingerprint: Some("strict_normalization_violation".to_string()),
+                        matched_pattern: Some(format!(
+                            "Risky normalization in header {}: {:?} (normalized delta: {})",
+                            name,
+                            norm.flags,
+                            raw.len().saturating_sub(norm.as_str().len())
+                        )),
+                    });
+                }
             }
         }
 
-        if let Some(ref body) = inputs.body {
-            if body.flags.intersects(risky_flags) {
+        // Check body
+        if let (Some(norm), Some(raw)) = (&inputs.body, &inputs.body_raw) {
+            if norm.flags.intersects(risky_flags) {
                 return Some(AttackDetectionResult {
                     attack_type: AttackType::Other,
                     input_location: InputLocation::PostBody,
                     fingerprint: Some("strict_normalization_violation".to_string()),
-                    matched_pattern: Some(format!("Risky characters detected in body: {:?}", body.flags)),
+                    matched_pattern: Some(format!(
+                        "Risky normalization in body: {:?} (normalized delta: {})",
+                        norm.flags,
+                        raw.len().saturating_sub(norm.as_str().len())
+                    )),
                 });
             }
         }
