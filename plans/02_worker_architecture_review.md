@@ -1,8 +1,8 @@
 # Worker Architecture Review
 
 **Document Under Review**: `architecture/worker_architecture.md`
-**Review Date**: 2026-05-06
-**Reviewer**: Claude Code
+**Review Date**: 2026-05-22
+**Reviewer**: Claude Code (explore agent)
 
 ---
 
@@ -12,51 +12,51 @@
 
 | Document Claim | Code Verification | Status |
 |---------------|-------------------|--------|
-| **Single Tokio async runtime** manages all protocols | Confirmed in `src/server/mod.rs:774-1132` - `UnifiedServer::run()` uses `tokio::select!` across HTTP, HTTPS, HTTP3, TCP, UDP, DNS listeners | VERIFIED |
-| **HTTP/1.1 & HTTP/2** via Hyper | Confirmed in `src/server/mod.rs:911-949` - `run_http_server_inner()` and `run_https_server_inner()` use hyper | VERIFIED |
-| **HTTP/3 (QUIC)** via Quinn | Confirmed in `src/server/mod.rs:982-1005` - `run_http3_server_inner()` uses `Http3Server` (QUIC) | VERIFIED |
-| **TCP & UDP Proxying** with WAF | Confirmed in `src/tcp/listener.rs:300-341` - `TcpListenerPool::start()` spawns listener tasks; UDP in `src/server/mod.rs:1017-1025` | VERIFIED |
-| **Dynamic Site Configuration** with per-site WAF rules | Confirmed via `Router` struct (`src/router.rs:31`) and `SiteConfig` access throughout | VERIFIED |
-| **Unified event loop** with `tokio::select!` | Confirmed in `src/server/mod.rs:1079-1128` | VERIFIED |
+| **Single Tokio async runtime** manages all protocols | Confirmed in `src/server/mod.rs:1050-1099` - `UnifiedServer::run()` uses `tokio::select!` across HTTP, HTTPS, HTTP3, TCP, UDP, DNS listeners | VERIFIED |
+| **HTTP/1.1 & HTTP/2** via Hyper | Confirmed in `src/server/mod.rs:882-951` - `run_http_server_inner()` and `run_https_server_inner()` use hyper | VERIFIED |
+| **HTTP/3 (QUIC)** via Quinn | Confirmed in `src/server/mod.rs:953-976` - `run_http3_server_inner()` uses `Http3Server` (QUIC) | VERIFIED |
+| **TCP & UDP Proxying** with WAF | Confirmed in `src/tcp/listener.rs:315-356` - `TcpListenerPool::start()` spawns listener tasks; UDP in `src/server/mod.rs:988-996` | VERIFIED |
+| **Dynamic Site Configuration** with per-site WAF rules | Confirmed via `Router` struct (`src/router.rs:37`) and `SiteConfig` access throughout | VERIFIED |
+| **Unified event loop** with `tokio::select!` | Confirmed in `src/server/mod.rs:1050` | VERIFIED |
 
 ### 2. Listener Pools
 
 | Document Claim | Code Verification | Status |
 |---------------|-------------------|--------|
-| **TcpListenerPool** manages TCP listeners | Confirmed in `src/tcp/listener.rs:171-243` - `TcpListenerPool` struct with auto-tuning via `worker_pool_size` | VERIFIED |
-| **TLS termination** | Confirmed via `cert_resolver` in `src/server/mod.rs:239-253` | VERIFIED |
-| **UdpListenerPool** with reflection/amplification protection | Confirmed in `src/server/mod.rs:181-237` - includes `FloodProtector` for rate limiting | VERIFIED |
+| **TcpListenerPool** manages TCP listeners | Confirmed in `src/tcp/listener.rs:186-259` - `TcpListenerPool` struct with `worker_pool_size` config | VERIFIED |
+| **TLS termination** | Confirmed via `cert_resolver` in `src/server/mod.rs:240-254` | VERIFIED |
+| **UdpListenerPool** with reflection/amplification protection | Confirmed in `src/server/mod.rs:182-238` - includes `FloodProtector` for rate limiting | VERIFIED |
 
 ### 3. WAF Pipeline
 
 | Document Claim | Code Verification | Status |
 |---------------|-------------------|--------|
-| **Connection Phase** - IP rate limiting, CIDR filtering | Confirmed in `src/waf/mod.rs:1221-1294` - `check_rate_limit()` and flood protection via `src/waf/flood/` | VERIFIED |
-| **Protocol Phase** - HTTP method/header validation | Confirmed via `AttackDetector` and `libinjection` in `src/waf/attack_detection/libinjection.rs` | VERIFIED |
-| **Request Phase** - Deep packet inspection (SQLi, XSS) | Confirmed via `AttackDetector` modules in `src/waf/attack_detection/` | VERIFIED |
-| **Bot Detection** - JS/CAPTCHA, behavioral analysis | Confirmed via `BotDetector` in `src/waf/bot.rs` and `ChallengeManager` | VERIFIED |
-| **WafCore** coordinates all WAF checks | Confirmed in `src/waf/mod.rs:202-229` - `WafCore` struct with rate_limiter, bot_detector, attack_detector, etc. | VERIFIED |
+| **Connection Phase** - IP rate limiting, CIDR filtering | Confirmed in `src/waf/mod.rs:534-572` - `check_rate_limits()` with flood protection via `src/waf/flood/` | VERIFIED |
+| **Protocol Phase** - HTTP method/header validation | Confirmed via `AttackDetector` and `libinjection` in `src/waf/attack_detection/` | VERIFIED |
+| **Request Phase** - Deep packet inspection (SQLi, XSS) | Confirmed via `AttackDetector::check_request()` in `src/waf/mod.rs:473-505` | VERIFIED |
+| **Bot Detection** - JS/CAPTCHA, behavioral analysis | Confirmed via `BotDetector` in `src/waf/bot.rs` and `check_bot_protection()` in `src/waf/mod.rs:634-649` | VERIFIED |
+| **WafCore** coordinates all WAF checks | Confirmed in `src/waf/mod.rs:438-508` - `WafCore::check_request_full()` struct with rate_limiter, bot_detector, attack_detector | VERIFIED |
 
 ### 4. Request Flow
 
 | Document Claim | Code Verification | Status |
 |---------------|-------------------|--------|
-| **Accept** by ListenerPool | Confirmed in `src/http/server.rs:506-643` - listener accept loop | VERIFIED |
-| **TLS handshake** + ALPN negotiation | Confirmed via `cert_resolver.build_server_config()` in `src/server/mod.rs:1304` | VERIFIED |
-| **Route** via Router | Confirmed via `Router::new()` in `src/router.rs:31` | VERIFIED |
-| **Protect** via WafCore pipeline | Confirmed via `waf.check_request_full()` in `src/waf/mod.rs:1036-1164` | VERIFIED |
-| **StaticHandler** for static files | Confirmed via `StaticWorker` in `src/worker/mod.rs:96-521` | VERIFIED |
-| **Proxy to upstream** (FastCGI, HTTP) | Confirmed via `HttpClient` in `src/http_client/` and proxy handling | VERIFIED |
-| **WasmRuntime** for serverless | Confirmed via `ServerlessManager` in `src/serverless/` | VERIFIED |
-| **Response sanitization/compression** | Confirmed via `ResponseBuilder` and `headers` module | VERIFIED |
+| **Accept** by ListenerPool | Confirmed in `src/http/server.rs:505-643` - listener accept loop | VERIFIED |
+| **TLS handshake** + ALPN negotiation | Confirmed via `cert_resolver.build_server_config()` in `src/server/mod.rs:1281` | VERIFIED |
+| **Route** via Router | Confirmed via `Router::new()` in `src/router.rs:37-178` | VERIFIED |
+| **Protect** via WafCore pipeline | Confirmed via `waf.check_request_full()` in `src/waf/mod.rs:438-508` | VERIFIED |
+| **StaticHandler** for static files | Confirmed via `StaticFileHandler` in `src/http/server.rs:2205` and `src/router.rs:288-340` | VERIFIED |
+| **Proxy to upstream** (FastCGI, HTTP) | Confirmed via `HttpClient` in `src/http_client/` and proxy handling in `src/http/server.rs` | VERIFIED |
+| **WasmRuntime** for serverless | Confirmed via `ServerlessManager` in `src/serverless/manager.rs` and wired in `src/worker/unified_server.rs:401-422` | VERIFIED |
+| **Response sanitization/compression** | Confirmed via `filter_response_headers_buf()` in `src/http/server.rs` | VERIFIED |
 
 ### 5. Resource Management
 
 | Document Claim | Code Verification | Status |
 |---------------|-------------------|--------|
-| **Buffer Pooling** via BufferPool | Confirmed via `BufferPool` in `src/buffer/` and usage in `src/tcp/listener.rs:723` | VERIFIED |
-| **Concurrency Control** via semaphores | Confirmed via `Semaphore` in `src/http/server.rs:352` and `connection_limit` | VERIFIED |
-| **Zero-copy** techniques | Confirmed via `TunnelMessage::write_data_chunk_zero_copy()` in `src/tcp/listener.rs:728-756` | VERIFIED |
+| **Buffer Pooling** via BufferPool | Confirmed via `BufferPool` in `src/buffer/` and usage in `src/tcp/listener.rs:738-777` | VERIFIED |
+| **Concurrency Control** via semaphores | Confirmed via `Semaphore` in `src/tcp/listener.rs:475-485` and `max_connections` limit | VERIFIED |
+| **Zero-copy** techniques | Confirmed via `TunnelMessage::write_data_chunk_zero_copy()` in `src/tcp/listener.rs:743-762` and `copy_bidirectional_native` at line 605, 632 | VERIFIED |
 
 ---
 
@@ -64,94 +64,99 @@
 
 | Claim | Uncertainty |
 |-------|-------------|
-| **"Dynamic Site Configuration: handles thousands of domains concurrently"** | The code supports multi-site via `ConfigManager::sites` HashMap, but no stress testing or limits documented. The claim cannot be confirmed or denied without load testing. |
-| **"Auto-tuning based on available parallelism"** | `TcpListenerPoolConfig::default()` uses `std::thread::available_parallelism()` (`src/tcp/listener.rs:198`), but actual auto-tuning at runtime (dynamic adjustment) is not implemented - only uses system parallelism at startup. |
+| **"Dynamic Site Configuration: handles thousands of domains concurrently"** | The code supports multi-site via `ConfigManager::sites` HashMap, but no stress testing or limits documented. |
+| **"Auto-tuning based on available parallelism"** | `TcpListenerPoolConfig::default()` uses `std::thread::available_parallelism()` (`src/tcp/listener.rs:213`), but no dynamic runtime auto-tuning observed. |
 
 ---
 
 ## Implementation Gaps
 
-### 1. Missing StaticHandler in Unified Server
+### 1. WAF Pipeline Order Different from Documentation
 
-**Gap**: The architecture document mentions `StaticHandler` in the request flow, but the `UnifiedServer` does not serve static files directly. Instead, static file serving is delegated to a separate **StaticWorker** process (`src/worker/mod.rs:96-521`).
-
-**Impact**: The request flow diagram showing `StaticHandler` serving static files is misleading for the unified worker. Static files are served via IPC to a separate worker process.
-
-### 2. Connection Pooling for Upstreams Not Explicitly Documented
-
-**Gap**: The architecture mentions "Connection Pooling: maintains persistent connections to backend servers (PHP-FPM, Granian, etc.)" but the actual implementation via `UpstreamClientRegistry` and `HttpClient` connection pooling is not detailed.
-
-**Location**: `src/http_client/mod.rs` and `src/proxy/client_registry.rs`
-
-### 3. WAF Pipeline Stages Are Approximate
-
-**Gap**: The document lists WAF pipeline stages as:
+**Gap**: The architecture lists WAF pipeline stages as:
 1. Connection Phase
 2. Protocol Phase
 3. Request Phase
 4. Bot Detection
 
-But the actual `WafCore::check_request_full()` executes in this order:
-1. ASN check
-2. Rate limit check
-3. IP feed check
-4. DHT threat lookup (mesh only)
-5. Endpoint block check
-6. Suspicious words check
-7. Honeypot check
-8. Bot protection check
-9. Attack pattern check
-10. Challenge check
+But actual `WafCore::check_request_full()` (`src/waf/mod.rs:450-508`) executes in this order:
+1. Block store check (line 452)
+2. Rate limits (line 456)
+3. Endpoint block (line 460)
+4. Honeypot (line 464)
+5. Bot protection (line 468)
+6. Attack detection (line 473)
 
-**Impact**: The documented stages do not accurately reflect the implementation order.
+**Impact**: Documentation doesn't accurately reflect implementation order.
 
 ---
 
 ## Code Improvements
 
-### 1. Inconsistent Error Handling in Mesh Initialization
+### 1. Heartbeat Holds IPC Lock Too Long
 
-**Location**: `src/worker/unified_server.rs:547-838`
+**Location**: `src/worker/unified_server.rs:1332-1376`
 
 ```rust
-#[cfg(feature = "mesh")]
-if let Err(e) = crate::mesh::backend::initialize_mesh_transports(...).await {
-    tracing::warn!("Mesh transport initialization failed: {}", e);
+let mut ipc = heartbeat_state.ipc.lock().await;
+let _ = ipc.send(&Message::UnifiedServerWorkerHeartbeat { ... }).await;
+for (site_id, healthy) in app_health {
+    let _ = ipc.send(&Message::AppServerHealth { ... }).await;
 }
 ```
 
-**Issue**: Mesh transport initialization failure is only logged as a warning, but the worker continues to operate. This could lead to a false sense of security if mesh features are expected but unavailable.
+**Issue**: The heartbeat loop holds the IPC lock for the entire iteration including the inner loop. This could cause message queuing backpressure.
 
-**Recommendation**: Add a configuration option to control whether mesh transport failure should be fatal or warnings-only.
+**Recommendation**: Release IPC lock between messages or batch messages.
 
-### 2. Hardcoded Timeouts and Magic Numbers
+### 2. Hardcoded Drain Timeout in Resize Path
 
-**Location**: `src/worker/unified_server.rs:433`
+**Location**: `src/worker/unified_server.rs:1737`
+
+```rust
+let _remaining = wait_for_drain(
+    &ipc_state.drain_state,
+    30,  // Hardcoded 30 second timeout
+    ...
+);
+```
+
+**Issue**: Standard drain message uses configurable `timeout_secs`, but resize path hardcodes 30 seconds.
+
+**Recommendation**: Use configurable timeout consistent with drain logic.
+
+### 3. Config Reload Silently Ignored for Mesh
+
+**Location**: `src/worker/unified_server.rs:1462-1468`
+
+```rust
+if cfg!(feature = "mesh") {
+    tracing::error!("Config hot-reload is not supported when mesh...");
+    continue;  // Silently ignores reload - Master not notified
+}
+```
+
+**Issue**: Master receives no indication that reload was rejected.
+
+**Recommendation**: Send explicit rejection message to Master.
+
+### 4. Magic Number Sleep for App Server Initialization
+
+**Location**: `src/worker/unified_server.rs:500`
 
 ```rust
 tokio::time::sleep(Duration::from_millis(500)).await;
 ```
 
-**Issue**: This 500ms sleep is a magic number that waits for Granian app servers to initialize. No comments explaining why 500ms is sufficient or what guarantees this provides.
+**Issue**: 500ms sleep waits for Granian app servers. No explanation why this is sufficient.
 
-**Recommendation**: Add a proper synchronization mechanism (e.g., a oneshot channel) to wait for app server initialization instead of arbitrary sleep.
+**Recommendation**: Add comments or use proper synchronization.
 
-### 3. Static Worker IPC Leaks Memory
+---
 
-**Location**: `src/worker/mod.rs:881-886`
+## Bug Reports
 
-```rust
-if let Err(e) = lifecycle.enable_hot_reload(plugin_dir) {
-    tracing::debug!("Hot-reload not enabled: {}", e);
-}
-std::mem::forget(lifecycle);
-```
-
-**Issue**: `std::mem::forget(lifecycle)` intentionally leaks the lifecycle object to keep the file watcher alive. This is documented but could cause memory to grow unbounded over time if plugins are loaded/unloaded frequently.
-
-**Recommendation**: Document this as a known memory growth vector and provide a mechanism to limit the number of leaked lifecycle objects.
-
-### 4. Missing Request Type Tracking in HTTP Server
+### 1. Drain State Not Tracking Request Types
 
 **Location**: `src/http/server.rs:260-279`
 
@@ -161,198 +166,98 @@ struct DrainGuard {
 }
 ```
 
-**Issue**: `DrainGuard` always calls `increment_active()`/`decrement_active()` but never uses the typed variants (`increment_active_typed`/`decrement_active_typed`) to track whether requests are Short, Long, or Streaming.
+**Bug**: `DrainGuard` always calls `increment_active()`/`decrement_active()` but never uses typed variants to track Short/Long/Streaming request distribution.
 
-**Recommendation**: Pass request type information to `DrainGuard` so it can track request type distribution during drain.
+**Impact**: Cannot make informed decisions about drain timing without request type data.
 
-### 5. TLS Passthrough Warning Logic
+### 2. TLS Passthrough Sites Logged as Error but Allow Worker Start
 
-**Location**: `src/worker/unified_server.rs:275-309`
-
-The code logs errors when TLS passthrough sites lack rate limiting, but the error handling doesn't prevent the worker from starting.
-
-**Issue**: The worker starts successfully even with these configuration issues. The errors are logged but the system proceeds with potentially insecure defaults.
-
----
-
-## Bug Reports
-
-### 1. Race Condition in Worker Heartbeat
-
-**Location**: `src/worker/unified_server.rs:1245-1288`
+**Location**: `src/worker/unified_server.rs:341-367`
 
 ```rust
-let heartbeat_handle = tokio::spawn(async move {
-    let mut interval = tokio::time::interval(Duration::from_secs(5));
-    loop {
-        interval.tick().await;
-        // ...
-        let mut ipc = heartbeat_state.ipc.lock().await;
-        let _ = ipc.send(&Message::UnifiedServerWorkerHeartbeat { ... }).await;
-        for (site_id, healthy) in app_health {
-            let _ = ipc.send(&Message::AppServerHealth { ... }).await;
-        }
-    }
-});
-```
-
-**Bug**: The heartbeat loop holds the IPC lock for the entire iteration, including the inner loop that sends multiple `AppServerHealth` messages. This could cause message queuing backpressure and missed heartbeats if the inner loop is slow.
-
-**Impact**: Master may miss AppServerHealth updates if network is slow.
-
-### 2. Drain Timeout Ignored in Resize Path
-
-**Location**: `src/worker/unified_server.rs:1630-1675`
-
-```rust
-Some(Message::UnifiedServerWorkerResize { worker_threads }) => {
-    // ...
-    let _remaining = wait_for_drain(
-        &ipc_state.drain_state,
-        30,  // Hardcoded 30 second timeout
-        &ipc_state.worker_id,
-        "resize request",
-    )
-    .await;
-    // ...
+if !bypass_sites.is_empty() {
+    tracing::error!(
+        "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED...",
+        bypass_sites
+    );
+    // Worker still starts!
 }
 ```
 
-**Bug**: The resize handler ignores the worker's configuration and hardcodes a 30-second drain timeout, while the standard drain message carries a configurable `timeout_secs`.
+**Bug**: Sites without rate limiting are logged as errors but don't prevent worker startup.
 
-**Impact**: Inconsistent drain behavior between resize and standard drain operations.
-
-### 3. Config Reload Silently Fails for Mesh
-
-**Location**: `src/worker/unified_server.rs:1368-1401`
-
-```rust
-Some(Message::MasterConfigReload { config_path }) => {
-    if cfg!(feature = "mesh") {
-        tracing::error!(
-            "Config hot-reload is not supported when mesh feature is enabled. \
-            Mesh, YARA rules, threat intel, and honeypot changes require full worker restart. \
-            Please restart the worker to apply mesh-related configuration changes."
-        );
-        continue;  // Silently ignores reload request
-    }
-    // ... reload logic
-}
-```
-
-**Bug**: When mesh is enabled, the reload request is silently ignored via `continue`. The caller (Master) has no indication that the reload was rejected.
-
-**Impact**: Master may believe config was reloaded when it wasn't.
+**Impact**: Worker runs with potentially insecure configuration.
 
 ---
 
 ## Security Concerns
 
-### 1. Missing Constant-Time Comparison for JA4 Hash Comparison
+### 1. TLS Passthrough BYPASSES WAF for L7 Attacks
 
-**Location**: `src/server/request_handler.rs:96-98`
+**Location**: `src/worker/unified_server.rs:341-352`
+
+**Security Issue**: Sites with `tls_passthrough = true` (without `tls_passthrough_enforce_waf = true`) completely bypass all L7 WAF inspection.
+
+**Mitigation**: Code does log errors about this. Users must explicitly set `tls_passthrough_enforce_waf = true` if they want WAF inspection on passthrough traffic.
+
+### 2. Missing Constant-Time Comparison for Trust Token
+
+**Location**: `src/waf/mod.rs:210-216`
 
 ```rust
-impl ConnectionMeta for crate::tls::server::HttpsConnection {
-    fn get_ja4(&self) -> Option<String> {
-        crate::tls::server::HttpsConnection::get_ja4(self)
+pub fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool {
+    let expected = self.generate_trust_token(client_ip);
+    if expected.len() != token.len() {
+        return false;
     }
+    subtle::ConstantTimeEq::ct_eq(expected.as_bytes(), token.as_bytes()).unwrap_u8() == 1
 }
 ```
 
-**Concern**: If JA4 hash comparison is used for any security decisions, it should use `subtle::ConstantTimeEq` per the security standards. However, based on the code, JA4 appears to be used for logging/fingerprinting only.
+**Status**: CORRECT - Uses `ConstantTimeEq` properly for trust token verification.
 
-**Status**: No immediate vulnerability identified, but verify JA4 is not used for access control decisions.
+### 3. JA4 Hash Used for Fingerprinting Only
 
-### 2. TLS Passthrough BYPASSES WAF for L7 Attacks
+**Location**: Throughout HTTP server and WAF
 
-**Location**: `src/worker/unified_server.rs:282-293`
-
-```rust
-if !bypass_sites.is_empty() {
-    tracing::error!(
-        "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked.",
-        bypass_sites
-    );
-    // ...
-}
-```
-
-**Security Issue**: Sites configured with `tls_passthrough = true` (without `tls_passthrough_enforce_waf = true`) completely bypass all L7 WAF inspection. An attacker aware of this configuration could direct attack traffic to these sites to evade detection.
-
-**Mitigation**: The code does log errors about this configuration. The concern is whether users are aware of this security implication.
-
-### 3. Port Honeypot Threat Publishing Without Signature Verification
-
-**Location**: `src/worker/unified_server.rs:1112-1125`
-
-```rust
-if let Some(ref runner) = port_honeypot_runner {
-    #[cfg(feature = "mesh")]
-    if let Some(ref threat_intel) = _threat_intel_manager {
-        runner.start_mesh_threat_publishing(threat_intel.clone(), 30);
-        // ...
-    }
-}
-```
-
-**Concern**: When port honeypot detects a threat and publishes it to the mesh network, the code should verify that the recipient is a trusted peer before acting on the threat data. Need to verify that `threat_intel.announce_honeypot_indicator()` includes proper signature verification.
+**Status**: JA4 appears to be used for logging/metrics only, not access control decisions. No security concern identified.
 
 ---
 
 ## Missing Documentation
 
-### 1. UnifiedServer Lifecycle Management
+### 1. WAF Pipeline Execution Order
 
-**Not Documented**: The interaction between `UnifiedServer::run()`, worker shutdown signals, and drain state is not well documented.
+**Not Documented**: The architecture lists conceptual phases but not actual execution order in `check_request_full()`.
 
-Key missing details:
-- How `shutdown_tx` and `stop_accepting_tx` interact
-- The exact order of shutdown operations
-- How ongoing requests are handled during drain
+### 2. StaticHandler Location
 
-### 2. RequestServices Context Transition
+**Not Documented**: Static file serving happens in UnifiedServer, not a separate process. The StaticWorker only handles minification/compression.
 
-**Not Documented**: The architecture uses a mix of global singletons (`THREAT_INTEL`, `YARA_RULES`) and `RequestServices` context. The deprecation comments in `src/waf/mod.rs:119-168` indicate this is transitional, but no migration plan is documented.
+### 3. RequestServices vs Global Singletons
 
-### 3. Mesh Transport Initialization Sequence
+**Not Documented**: Transition from global singletons (`THREAT_INTEL`, `YARA_RULES`) to `RequestServices` context is not documented.
 
-**Not Documented**: The complex mesh initialization in `src/worker/unified_server.rs:547-1046` has no accompanying documentation explaining:
-- Why certain components must be initialized in a specific order
-- What happens if DHT routing manager fails to initialize
-- How threat intelligence is shared between workers
+### 4. Buffer Pool Tier Sizes
 
-### 4. Buffer Pool Sizing
-
-**Not Documented**: The buffer sizes used throughout the codebase are hardcoded:
-- `TcpListenerPoolConfig::buffer_size = 64 * 1024` (64KB)
-- `UdpListenerPoolConfig::buffer_size = 8192` (8KB)
-- `BufferPool::acquire_medium()` and `acquire_small()` - sizes not documented
-
-### 5. Static Worker Process Isolation
-
-**Not Documented**: The architecture says the StaticWorker handles "CSS/JS minification, compression" but doesn't explain:
-- Why this requires process isolation
-- How the IPC protocol works between UnifiedServer and StaticWorker
-- What happens if StaticWorker becomes unavailable
+**Not Documented**: Buffer sizes like `acquire_small()`, `acquire_medium()` have undocumented sizes.
 
 ---
 
 ## Summary
 
-The SynVoid worker architecture document is **mostly accurate** and the implementation closely follows the documented design. The core components (UnifiedServer, WafCore, ListenerPools, request flow) are correctly implemented and well-structured.
+The SynVoid worker architecture document is **mostly accurate** and the implementation closely follows the documented design. The core components (UnifiedServer, WafCore, ListenerPools, request flow) are correctly implemented.
 
 **Key Strengths**:
 - Comprehensive multi-protocol support (HTTP/1.1, HTTP/2, HTTP/3, TCP, UDP)
-- Proper separation of concerns via WAF pipeline stages
+- Proper WAF pipeline with rate limiting, bot detection, and attack pattern matching
 - Good resource management with buffer pooling and concurrency control
 - Well-implemented drain state management for graceful shutdown
+- Correct use of constant-time comparison for trust token verification
 
 **Key Issues to Address**:
-1. Document StaticWorker as a separate process serving static files via IPC (not in UnifiedServer)
-2. Update WAF pipeline stage documentation to match actual execution order
-3. Add proper synchronization for app server initialization instead of arbitrary sleep
-4. Track request types (Short/Long/Streaming) in drain state
-5. Make config reload rejection explicit to Master
-6. Document the RequestServices transition plan from global singletons
-7. Add mesh transport initialization sequence documentation
+1. Update WAF pipeline stage documentation to match actual execution order
+2. Document that StaticHandler lives in UnifiedServer (not separate process)
+3. Track request types (Short/Long/Streaming) in drain state
+4. Make config reload rejection explicit to Master
+5. Consider making TLS passthrough warnings fatal or adding startup checks

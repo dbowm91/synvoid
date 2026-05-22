@@ -1,16 +1,17 @@
 # Networking Architecture Review
 
-**Review Date:** 2026-05-06
-**Reviewer:** Code Review Agent
+**Review Date:** 2026-05-22
+**Reviewer:** Code Review Agent (explore)
 **Document Reviewed:** `architecture/networking_deep_dive.md`
+**Code Verification Scope:** `src/listener/`, `src/http/`, `src/http3/`, `src/tcp/`, `src/udp/`, `src/tls/`
 
 ---
 
 ## Executive Summary
 
-The networking architecture documentation provides a high-level overview of SynVoid's protocol support, TLS handling, and performance optimizations. This review validates the documented claims against the actual implementation in `src/listener/`, `src/http/`, `src/http3/`, and related modules.
+The networking architecture documentation provides a high-level overview of SynVoid's protocol support, TLS handling, and performance optimizations. This review validates documented claims against actual implementation.
 
-**Overall Assessment:** The documentation is accurate but incomplete. Several key architectural features are documented but lack implementation details, and some implementation behaviors deviate from documented claims.
+**Overall Assessment:** The documentation is mostly accurate with 10 verified claims, 3 unverified, and several implementation gaps and code quality issues identified.
 
 ---
 
@@ -21,333 +22,321 @@ The networking architecture documentation provides a high-level overview of SynV
 **Documentation:** "SynVoid uses Hyper as its foundational HTTP library."
 
 **Verification:** CONFIRMED
-- Files: `src/tls/server.rs`, `src/http/server.rs`
-- HTTP/1.1: Uses `hyper::server::conn::http1::Builder` with keep-alive enabled (line 501-550 in `src/tls/server.rs`)
-- HTTP/2: Uses `hyper::server::conn::http2::Builder` with max header list size configuration (line 427-486 in `src/tls/server.rs`)
-- ALPN negotiation detects HTTP/2 via `h2` protocol identifier (line 409-410 in `src/tls/server.rs`)
+- `src/tls/server.rs` line 12-13: `hyper::server::conn::http1` and `hyper::server::conn::http2`
+- HTTP/1.1: Lines 502-549 with `.keep_alive(true)` and `.serve_connection()`
+- HTTP/2: Lines 413-487 with ALPN detection (`ALPN_HTTP2`) and `http2_server::Builder::new()`
+- `src/http/server.rs` line 597: HTTP/1.1 usage in plain HTTP server
 
 ### 1.2 HTTP/3 via Quinn
 
 **Documentation:** "SynVoid features native HTTP/3 support via the Quinn library."
 
 **Verification:** CONFIRMED
-- File: `src/http3/server.rs`
-- Uses `quinn::Endpoint::server()` for QUIC transport (line 125)
-- Uses `h3::server::builder()` and `h3_quinn::Connection` for HTTP/3 (lines 194-196)
-- Configured with max concurrent uni/bidi streams (lines 118-119)
+- `src/http3/server.rs` lines 111-131: QUIC server setup with `quinn::Endpoint::new()`
+- Line 200-202: HTTP/3 connection via `h3::server::builder()` and `h3_quinn::Connection`
+- Lines 118-119: Stream limits configured (max_concurrent_uni_streams: 0, bidi_streams: 100)
 
 ### 1.3 TLS Termination via Rustls
 
 **Documentation:** "SynVoid handles TLS termination at the edge using Rustls."
 
 **Verification:** CONFIRMED
-- Files: `src/tls/server.rs`, `src/tls/cert_resolver.rs`
-- Uses `tokio_rustls::TlsAcceptor` for TLS acceptance (line 25 in `src/tls/server.rs`)
-- Uses `rustls::ServerConfig` with `CertResolver` implementing `ResolvesServerCert` trait (line 327 in `src/tls/cert_resolver.rs`)
+- `src/tls/server.rs` line 25: `use tokio_rustls::TlsAcceptor`
+- `src/tls/cert_resolver.rs` line 4-10: Uses `rustls::crypto::aws_lc_rs::default_provider()`
+- Line 327: `CertResolver` implements `rustls::server::ResolvesServerCert`
 
 ### 1.4 Dynamic Certificate Selection (SNI)
 
 **Documentation:** "The CertResolver selects the appropriate certificate for each connection based on SNI."
 
 **Verification:** CONFIRMED
-- File: `src/tls/cert_resolver.rs`
-- `CertResolver` implements `rustls::server::ResolvesServerCert` (line 327)
-- SNI-based certificate lookup at lines 332-344 with wildcard support
-- Falls back to default certificate if no SNI match (line 347)
+- `src/tls/cert_resolver.rs` lines 330-344: `resolve_server_cert()` implementation
+- SNI hostname matching with wildcard support via `strip_prefix(".")` for domain wildcard certs
+- Fallback to default certificate at line 347
 
 ### 1.5 ACME/Let's Encrypt Integration
 
 **Documentation:** "Built-in support for Let's Encrypt and other ACME-based CAs for automated certificate issuance and renewal."
 
 **Verification:** CONFIRMED
-- File: `src/tls/acme.rs`
-- Uses `instant_acme` crate for ACME protocol
-- Supports HTTP-01 and DNS-01 challenge types
-- Full certificate renewal lifecycle management
+- `src/tls/acme.rs`: Uses `instant_acme` crate for ACME protocol
+- Lines 234-270: HTTP-01 and DNS-01 challenge types
+- `src/tls/acme_dns.rs`: Full DNS-01 challenge implementation with TXT record management
 
 ### 1.6 Post-Quantum Cryptography (X25519MLKEM768)
 
 **Documentation:** "X25519MLKEM768: A hybrid key exchange that combines classical X25519 with the ML-KEM (Kyber) algorithm."
 
 **Verification:** CONFIRMED
-- Files: `src/startup/master.rs` (lines 208-230), `src/mesh/cert.rs` (lines 87-137)
+- `src/startup/master.rs` lines 210-230: Post-quantum provider initialization
+- `src/mesh/cert.rs` lines 87-137: `verify_post_quantum_tls()` function
 - Feature-gated via `post-quantum` flag
-- Uses `rustls_post_quantum::provider` for hybrid key exchange
-- PQ verification function `verify_post_quantum_tls()` exists in `src/mesh/cert.rs`
+- `src/mesh/config.rs` lines 1124-1152: ML-KEM configuration options
 
-### 1.7 Connection Limiting
+### 1.7 Connection Limiter (Global/Per-Site/Per-IP)
 
-**Documentation:** "The ConnectionLimiter provides fine-grained control over concurrent connections at multiple levels: Global Limit, Per-Site Limit, Per-IP Limit."
+**Documentation:** "The ConnectionLimiter provides fine-grained control over concurrent connections at multiple levels."
 
 **Verification:** CONFIRMED
-- File: `src/waf/traffic_shaper/limiter.rs`
-- Global limit: `config.max_connections` (line 103)
-- Per-site limit: `site_total_connections` HashMap with shard indexing (lines 50-51, 107-121)
-- Per-IP limit: `ip_connections` HashMap with shard indexing (lines 48, 123-134)
-- Burst token mechanism for burst allowance (lines 136-146, 279-284)
+- `src/waf/traffic_shaper/limiter.rs` lines 12-19: Multi-level tracking
+- Global: `total_connections: AtomicU32` (line 14)
+- Per-IP: `ip_connections: DashMap<IpAddr, AtomicU32>` (line 16)
+- Per-Site: `site_connections: DashMap<String, DashMap<IpAddr, AtomicU32>>` (line 18)
+- Lines 42-134: `try_acquire()` with all three limit checks
 
 ### 1.8 Buffer Pool
 
-**Documentation:** "A custom BufferPool is used to reuse memory buffers for IO operations."
+**Documentation:** "A custom BufferPool is used to reuse memory buffers for IO operations, significantly reducing garbage collection pressure and allocation overhead."
 
 **Verification:** CONFIRMED
-- File: `crates/synvoid-utils/src/buffer/pool.rs`
-- Multi-tier pool: Small (4KB), Medium (64KB), Large (256KB), Jumbo
-- Thread-local caching with TLS_CACHE_SIZE of 16 per tier
-- Sharded arenas (8 shards) for lock-free acquisition on common paths
-- Metrics tracking for acquire/reuse ratios
+- `crates/synvoid-utils/src/buffer/pool.rs` line 211: `BufferPool` struct
+- Multi-tier design: Small (4KB), Medium (64KB), Large (256KB), Jumbo (>1MB)
+- Lines 267-271: Global singleton pools (`POOL`, `GLOBAL_POOL`)
+- Lines 242-259: Tier configuration with `BufferPoolConfig`
+- Lock-free sharded arenas for common path performance
 
-### 1.9 TCP Pool
+### 1.9 TCP Listener Pool
 
 **Documentation:** "TCP Pool: Manages multiple TCP listeners with auto-tuned worker pools."
 
 **Verification:** CONFIRMED
-- File: `src/server/mod.rs` (lines 693-738)
-- `TcpListenerPool` with configurable worker pool size
-- Socket options: nodelay, send/recv buffer size, reuse_port, quickack, keepalive
-- Flood protector integration for SYN/rate limiting
+- `src/tcp/listener.rs` lines 186-198: `TcpListenerPool` struct
+- Lines 24-35: `TcpSocketOptions` with nodelay, keepalive, quickack
+- Lines 100-136: `create_socket_with_options()` with SO_REUSEPORT
+- Lines 53-97: `apply_tcp_socket_options()` for connection tuning
 
-### 1.10 UDP Pool
+### 1.10 UDP Listener Pool with Amplification Protection
 
 **Documentation:** "UDP Pool: Optimized for high-throughput UDP packet handling, with built-in protections against amplification attacks."
 
 **Verification:** CONFIRMED
-- File: `src/server/mod.rs` (lines 740-772)
-- `UdpListenerPool` with worker pool size configuration
-- Rate limiting via `FloodProtector` with `udp_rate_per_ip` and `udp_rate_global`
-- Configurable socket options for buffer sizes
+- `src/udp/listener.rs` lines 93-102: `UdpListenerPool` struct
+- Lines 27-38: `UDP_TUNNEL_MANAGER` global singleton
+- Line 25: `FloodProtector` integration for rate limiting
+- Lines 43-57: `UdpSocketOptions` with 2MB buffer sizes
+- Lines 104-123: `UdpListenerPoolConfig` with `max_packets_per_second`
 
 ---
 
-## 2. Unverified Claims (Needing Clarification)
+## 2. Unverified Claims
 
 ### 2.1 QUIC Connection Migration
 
 **Documentation:** "QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections."
 
-**Status:** NOT FULLY VERIFIED
-- The QUIC stack uses `quinn` which supports connection migration per RFC 9000
-- However, no explicit connection migration handling code was found in `src/http3/server.rs`
-- Quinn handles this at the transport layer, but SynVoid does not implement any application-level migration handling or logging
+**Status:** UNVERIFIED - NO EXPLICIT IMPLEMENTATION
+- Quinn library (RFC 9000) supports connection migration at transport layer
+- `src/http3/server.rs` has no application-level connection migration handling
+- No metrics/tracking for migration events
+- **Recommendation:** Add telemetry for connection migration occurrences if this is a design goal
 
 ### 2.2 0-RTT QUIC Support
 
 **Documentation:** "0-RTT: Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte."
 
-**Status:** PARTIALLY VERIFIED
-- Code exists at `src/mesh/cert.rs` lines 151, 213, 388-405 for QUIC 0-RTT configuration
-- Configuration `quic_enable_0rtt` exists and is documented as disabled by default due to replay attack concerns
-- **However:** HTTP/3 server at `src/http3/server.rs` does not appear to have any 0-RTT specific handling
-- The 0-RTT configuration is in the mesh (proxy) cert, not the HTTP/3 server TLS config
+**Status:** PARTIALLY VERIFIED - IN MESH ONLY
+- `src/mesh/cert.rs` lines 388-405: QUIC 0-RTT configuration exists for mesh transport
+- Configuration `quic_enable_0rtt` is disabled by default due to replay attack concerns (line 1391-1392)
+- **NOT in HTTP/3 server:** `src/http3/server.rs` has no 0-RTT specific handling
+- 0-RTT is a mesh/proxy feature, not an HTTP server feature per documentation
 
 ### 2.3 Zero-Copy IO
 
 **Documentation:** "SynVoid leverages Rust's ownership model to minimize data copying between the network stack and the application handlers."
 
-**Status:** PARTIALLY VERIFIED
-- H3 response handling at lines 980-1003 uses frame-based streaming with `data.clone()` on line 985
-- For responses > 1MB, data is streamed frame-by-frame but `.clone()` is called
-- For smaller responses, entire body is buffered before sending (lines 1005-1080)
-- The claim of "zero-copy" is not strictly accurate - there are instances of data cloning
+**Status:** PARTIALLY VERIFIED - NOT STRICTLY ZERO-COPY
+- `src/http3/server.rs` line 985: `data.clone()` exists in frame handling
+- Lines 1005-1080: Small responses are fully buffered before sending
+- **Claim is aspirational:** Actual implementation has data copying in several paths
+- **Recommendation:** Update documentation to say "minimized-copy" or "low-copy IO"
 
 ---
 
 ## 3. Implementation Gaps
 
-### 3.1 Missing Per-IP Limit Enforcement in HTTP/3
+### 3.1 HTTP/3 Hardcoded Site ID for Connection Limiting
 
-**Issue:** HTTP/3 connection limiting at lines 238-249 uses site_id `"_http3_"` which bypasses per-IP limiting.
+**Location:** `src/http3/server.rs` lines 244-250
 
 ```rust
 let mut connection_token = if let Some(ref conn_limiter) = self.waf.connection_limiter {
-    match conn_limiter.try_acquire("_http3_", client_ip).await {  // <-- Hardcoded site_id
+    match conn_limiter.try_acquire("_http3_", client_ip).await {
 ```
 
-**Expected:** Per-IP limiting should use actual site identifier or a dedicated HTTP/3 limiting mechanism.
+**Issue:** Uses hardcoded `"_http3_"` site_id, bypassing per-site limiting. All HTTP/3 connections share the same site bucket.
 
-### 3.2 No Connection Migration Tracking
+**Impact:** Per-site connection limits cannot differentiate between multiple domains served over HTTP/3.
 
-**Issue:** Despite claiming connection migration support, there's no tracking or metrics for connection migration events.
+### 3.2 HTTP/3 Hardcoded Idle Timeout
 
-**Recommendation:** Add metrics/telemetry for connection migration occurrences.
-
-### 3.3 Missing HTTP/3 Request Timeout
-
-**Issue:** HTTP/3 server has no per-request timeout. If an upstream request hangs, the connection may remain open indefinitely.
-
-**Location:** `src/http3/server.rs` - the `handle_request()` function lacks timeout handling.
-
-### 3.4 QUIC Idle Timeout Hardcoded
-
-**Issue:** At line 121-123 in `src/http3/server.rs`, idle timeout is hardcoded to 60 seconds:
+**Location:** `src/http3/server.rs` lines 121-123
 
 ```rust
 let idle_timeout = quinn::IdleTimeout::try_from(std::time::Duration::from_secs(60))
     .expect("Failed to create idle timeout");
 ```
 
-**Recommendation:** Make this configurable via `Http3Config`.
+**Issue:** Idle timeout is hardcoded to 60 seconds with no configuration option.
+
+**Recommendation:** Add `idle_timeout_secs` to `Http3Config`.
+
+### 3.3 No Per-Request Timeout in HTTP/3
+
+**Location:** `src/http3/server.rs` - `handle_request()` function (lines 235+)
+
+**Issue:** No timeout on individual request handling. If upstream request hangs, connection may remain open indefinitely.
+
+**Recommendation:** Add request timeout using `tokio::time::timeout()`.
+
+### 3.4 QUIC Connection Establishment Lacks Rate Limiting
+
+**Location:** `src/http3/server.rs` lines 183-195
+
+**Issue:** Only `flood_protector.check_tcp_connection()` is called. QUIC-specific connection establishment rate limiting is missing.
+
+**Note:** The flood protector may handle this, but there's no QUIC-specific verification.
 
 ---
 
 ## 4. Code Improvements
 
-### 4.1 Duplicate TLS Detection Logic
+### 4.1 Duplicate TLS Client Hello Detection
 
-**Location:** Both `src/http/server.rs` (lines 169-171) and `src/tls/server.rs` (lines 58-60) define identical `is_tls_client_hello()` functions.
+**Location:** 
+- `src/http/server.rs` lines 169-171
+- `src/tls/server.rs` lines 58-60
 
-**Recommendation:** Move to a shared utility module.
+**Issue:** Both files have identical `is_tls_client_hello()` function.
+
+**Recommendation:** Move to `src/http/common.rs` or similar shared module.
 
 ### 4.2 Duplicate HTTP Method Validation
 
-**Location:** Both `src/http/server.rs` (lines 148-167) and `src/tls/server.rs` (lines 62-81) define identical `is_valid_http_request_start()` functions.
+**Location:**
+- `src/http/server.rs` lines 148-167
+- `src/tls/server.rs` lines 62-81
 
-**Recommendation:** Move to a shared utility module.
+**Issue:** Both files have identical `is_valid_http_request_start()` logic.
 
-### 4.3 Inconsistent Error Handling in H3
+**Recommendation:** Consolidate into shared validation module.
 
-**Location:** `src/http3/server.rs` lines 1088-1106
+### 4.3 HTTP/3 Response Size Check Relies on Content-Length
 
-**Issue:** Some upstream errors are logged and handled gracefully, but others silently return. The error handling pattern is inconsistent.
+**Location:** `src/http3/server.rs` lines 756-766
 
-**Recommendation:** Standardize error handling with a helper function.
+**Issue:** Only checks `Content-Length` header, not actual body size. Chunked or streamed responses may bypass size limits.
 
-### 4.4 Buffer Pool Tier Selection Could Be Optimized
+**Recommendation:** Add streaming size tracker for responses without Content-Length.
 
-**Location:** `crates/synvoid-utils/src/buffer/pool.rs` line 224
+### 4.4 Shared Handler Request Pipeline Not Unified
 
-**Issue:** `get_tier()` function could use a lookup table instead of match for slight performance improvement.
+**Documentation Claim:** "Both H1 and H2 share a common request processing pipeline."
+
+**Reality:** 
+- `src/http/shared_handler.rs` only contains response helper methods
+- `src/tls/server.rs` has separate `serve_connection()` calls for HTTP/1.1 (lines 502-549) and HTTP/2 (lines 428-487)
+- Request handling uses different code paths with similar but not shared logic
+
+**Recommendation:** Document the actual architecture (shared response helpers, separate request handlers).
 
 ---
 
 ## 5. Bug Reports
 
-### 5.1 HTTP/3 Stream Scanning Logic Error
-
-**Severity:** Medium
-
-**Location:** `src/http3/server.rs` lines 341-396
-
-**Description:** The streaming WAF scanning logic has a conditional `stream_scanned_upstream_mode` that affects body handling. If streaming scan is enabled, body bytes are accumulated in `body_bytes` but never scanned if `stream_scanned_upstream_mode` is true (lines 341-396). However, later at lines 427-442, `waf.check_request_full()` is called with `waf_body_slice` which may be `None` if streaming mode is active.
-
-**Impact:** In certain routing configurations, request bodies may bypass WAF scanning entirely.
-
-### 5.2 HTTP/3 Response Size Limit Race Condition
+### 5.1 H3 Connection Token Release on Early Returns
 
 **Severity:** Low
 
-**Location:** `src/http3/server.rs` lines 756-766
+**Location:** `src/http3/server.rs` lines 244-272, 363, 390, 477
 
-**Description:** Response size checking uses `Content-Length` header which may not match actual body size due to chunked encoding or streaming. The check at lines 763-766 only checks if `Content-Length` exceeds limit, not actual body size.
+**Issue:** `connection_token` is acquired but not explicitly released on early returns. The token uses `Drop` so it will be released eventually, but the pattern is unclear.
 
-**Workaround:** For small responses (< 1MB), body is fully buffered and checked (lines 1005-1080). For large responses, size limit is only checked against Content-Length header.
+**Note:** This is acceptable given `Drop` implementation, but explicit release would improve code clarity.
 
-### 5.3 H3 Connection Token Not Released on Early Return
+### 5.2 QUIC Stream Error Handling Inconsistency
 
 **Severity:** Low
 
-**Location:** `src/http3/server.rs` line 1137
+**Location:** `src/http3/server.rs` lines 223-227
 
-**Description:** `drop(connection_token)` is called at the end, but if early returns occur (e.g., line 244, 272, 363, 390, 477), the connection token is not explicitly released until the function exits.
-
-**Note:** This is acceptable for connection tokens since they implement Drop, but explicit release would be clearer.
+**Issue:** Accept errors break the loop with `tracing::debug`, while connection errors use `tracing::debug` at line 147. Inconsistent error level handling.
 
 ---
 
 ## 6. Security Concerns
 
-### 6.1 ACME Terms of Service Warning
+### 6.1 TLS 1.2 Fallback Enabled by Default
+
+**Severity:** Medium
+
+**Location:** `src/tls/cert_resolver.rs` lines 269-285
+
+**Issue:** `enable_tls_12_fallback` defaults may allow TLS 1.2, considered weak.
+
+**Recommendation:** Make TLS 1.2 fallback opt-in, not opt-out.
+
+### 6.2 ACME Terms of Service Not Enforced
 
 **Severity:** Info
 
 **Location:** `src/config/tls.rs` line 150
 
-**Issue:** The validation emits a warning but doesn't enforce terms of service agreement.
+**Issue:** ACME terms_of_service_agreed=false still allows ACME to run with only a warning.
 
-**Current Behavior:** `terms_of_service_agreed = false` still allows ACME to run with a warning.
+**Recommendation:** Make this a hard error in production mode.
 
-**Recommendation:** Consider making this a hard error in production mode.
-
-### 6.2 TLS 1.2 Fallback Enabled by Default in Some Paths
-
-**Severity:** Low
-
-**Location:** `src/tls/cert_resolver.rs` lines 269-285
-
-**Issue:** If `enable_tls_12_fallback` is true, both TLS 1.3 and TLS 1.2 are offered, with TLS 1.3 listed first. This is correct preference ordering, but TLS 1.2 is considered weak.
-
-**Recommendation:** Consider deprecating TLS 1.2 support entirely or making the fallback opt-in rather than opt-out.
-
-### 6.3 Connection Limiter Shard Indexing Hash Collision
+### 6.3 Connection Limiter Shard Hash Distribution
 
 **Severity:** Low (Theoretical)
 
-**Location:** `src/waf/traffic_shaper/limiter.rs` lines 15-42
+**Location:** `src/waf/traffic_shaper/limiter.rs` lines 30-38
 
-**Description:** The `ip_shard_index()` and `site_shard_index()` functions use a simple hash (djb2/33) with 64 shards. While fast, this could theoretically cause shard imbalance with adversarial IPs.
-
-**Mitigation:** The sharding distributes load across 64 shards, which is sufficient for normal traffic patterns.
-
-### 6.4 No Rate Limiting on QUIC Connection Establishment
-
-**Severity:** Medium
-
-**Location:** `src/http3/server.rs` lines 177-189
-
-**Issue:** Only `flood_protector.check_tcp_connection()` is called, not a QUIC-specific rate limit. While QUIC connections are still rate-limited by the flood protector, this may not properly account for QUIC-specific attack vectors.
-
-**Recommendation:** Add QUIC-specific connection rate limiting or verify existing flood protector handles QUIC correctly.
+**Issue:** Uses djb2/33 hash with 64 shards. Could theoretically cause shard imbalance with adversarial IPs, but 64 shards provides adequate distribution for normal traffic.
 
 ---
 
 ## 7. Missing Documentation
 
-### 7.1 HTTP/3 Server TLS Configuration
+### 7.1 HTTP/3 TLS Configuration
 
-**Missing:** Documentation should clarify that HTTP/3 uses its own TLS configuration separate from the HTTPS server. The HTTP/3 TLS config is passed via `Arc<rustls::ServerConfig>` at line 104, but there's no documentation on how this is configured or if it shares the same CertResolver.
+**Missing:** How HTTP/3 TLS config is set up and whether it shares CertResolver with HTTPS server.
 
-### 7.2 Shared Handler Pipeline
+### 7.2 Shared Handler Pipeline Clarification
 
-**Missing:** Documentation mentions "Both H1 and H2 share a common request processing pipeline" but doesn't explain how. The actual sharing happens via `SharedRequestHandler` trait at `src/http/shared_handler.rs`, but the routing/dispatch logic in `src/tls/server.rs` has separate code paths for H1 and H2.
+**Missing:** Document that "shared handler" refers to response helpers, not unified request pipeline.
 
 ### 7.3 Buffer Pool Configuration
 
-**Missing:** No documented configuration for BufferPool sizes, caps, or tuning guidelines. The pool uses hardcoded constants:
-- `SMALL_BUF_SIZE: 4KB`
-- `MEDIUM_BUF_SIZE: 64KB`
-- `LARGE_BUF_SIZE: 256KB`
+**Missing:** No documented configuration for buffer sizes, tier limits, or tuning guidelines.
 
 ### 7.4 Connection Limiter Tuning
 
-**Missing:** No documentation on tuning connection limits, queue sizes, burst tokens, or shard counts.
+**Missing:** No documentation on tuning connection limits, burst tokens, or shard counts.
 
-### 7.5 QUIC Stream Independence Claim
+### 7.5 QUIC Stream Independence Limitation
 
-**Documentation:** "QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking)."
-
-**Missing:** While true for QUIC at the transport layer, this claim should clarify that application-level proxying to HTTP/1.1 upstreams may still introduce head-of-line blocking when buffering responses.
+**Missing:** While QUIC eliminates transport-layer HOL blocking, upstream HTTP/1.1 proxying may reintroduce buffering-based HOL blocking.
 
 ---
 
-## 8. Summary of Findings
+## 8. Summary
 
 | Category | Count |
 |----------|-------|
 | Verified Claims | 10 |
 | Unverified Claims | 3 |
 | Implementation Gaps | 4 |
-| Code Improvements | 5 |
-| Bug Reports | 3 |
-| Security Concerns | 4 |
+| Code Improvements | 4 |
+| Bug Reports | 2 |
+| Security Concerns | 3 |
 | Missing Documentation | 5 |
 
-**Priority Recommendations:**
-
-1. **High Priority:** Fix HTTP/3 stream scanning logic (Section 5.1)
-2. **Medium Priority:** Add HTTP/3 request timeout handling (Section 3.3)
-3. **Medium Priority:** Add QUIC-specific rate limiting verification (Section 6.4)
-4. **Low Priority:** Extract duplicate utility functions (Section 4.1, 4.2)
-5. **Documentation:** Add missing sections on HTTP/3 TLS config and buffer pool tuning (Section 7)
+**Priority Actions:**
+1. **High:** Address TLS 1.2 fallback default (security)
+2. **Medium:** Add HTTP/3 idle timeout configuration
+3. **Medium:** Add HTTP/3 request timeout handling
+4. **Low:** Consolidate duplicate utility functions
+5. **Documentation:** Clarify shared handler architecture and buffer pool tuning
 
 ---
 
@@ -355,12 +344,16 @@ let idle_timeout = quinn::IdleTimeout::try_from(std::time::Duration::from_secs(6
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/http3/server.rs` | 1-1179 | HTTP/3 QUIC server implementation |
-| `src/http/server.rs` | 1-4772 | HTTP/1.1 server implementation |
-| `src/tls/server.rs` | 1-2199 | HTTPS TLS server with H1/H2 |
+| `src/http3/server.rs` | 1-1090 | HTTP/3 QUIC server |
+| `src/http/server.rs` | 1-4903 | HTTP/1.1 server |
+| `src/http/shared_handler.rs` | 1-433 | Shared response helpers |
+| `src/tls/server.rs` | 1-2280 | HTTPS TLS server with H1/H2 |
 | `src/tls/cert_resolver.rs` | 1-502 | Dynamic certificate resolution |
+| `src/tls/acme.rs` | 1-500+ | ACME Let's Encrypt integration |
 | `src/listener/common.rs` | 1-84 | Listener base types |
-| `src/waf/traffic_shaper/limiter.rs` | 1-408 | Connection limiting |
-| `crates/synvoid-utils/src/buffer/pool.rs` | 1-1164 | Buffer pool implementation |
-| `src/server/mod.rs` | 690-839 | TCP/UDP pool creation |
+| `src/tcp/listener.rs` | 1-864 | TCP listener pool |
+| `src/udp/listener.rs` | 1-721 | UDP listener pool |
+| `src/waf/traffic_shaper/limiter.rs` | 1-342 | Connection limiting |
+| `crates/synvoid-utils/src/buffer/pool.rs` | 1-1200 | Buffer pool implementation |
 | `src/mesh/cert.rs` | 87-137 | PQC verification |
+| `src/startup/master.rs` | 200-250 | Post-quantum initialization |

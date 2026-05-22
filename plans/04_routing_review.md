@@ -1,8 +1,8 @@
 # SynVoid Routing Architecture Review
 
-**Date:** 2026-05-06
+**Date:** 2026-05-22
 **Document:** `architecture/routing_deep_dive.md`
-**Review Scope:** Router, Upstream Pools, Load Balancing, Health Monitoring
+**Review Scope:** Router, Upstream Pools, Load Balancing, Health Monitoring, Connection Lifecycle
 
 ---
 
@@ -12,78 +12,91 @@
 
 | Document Claim | Implementation | Location |
 |--------------|----------------|----------|
-| Listener-level default fallback | `default_servers` HashMap per SocketAddr | `src/router.rs:40,339-349` |
-| Exact domain matching | `domain_map` HashMap lookup | `src/router.rs:32,1077-1078` |
-| Wildcard/suffix matching | `suffix_domain_map` Vec with `.ends_with()` | `src/router.rs:33,1081-1085` |
-| Path-based location matching | `LocationMatcher::match_uri()` | `src/location_matcher.rs:132-188` |
+| Listener-level default fallback | `default_servers` HashMap per SocketAddr | `src/router.rs:41,421-432` |
+| Exact domain matching | `domain_map` HashMap lookup | `src/router.rs:33,1165-1167` |
+| Wildcard/Suffix matching | `wildcard_domain_router` MatchRouter with reversed domains | `src/router.rs:34,1170-1173` |
+| Path-based location matching | `LocationMatcher::match_uri()` | `src/location_matcher.rs:183-276` |
 
 **Matching Order (verified in `route_with_local_addr`):**
-1. Local address → site mapping (line 1056-1074)
-2. Exact domain map lookup (line 1077)
-3. Suffix/wildcard domain check (line 1081-1085)
-4. Empty host / wildcard fallback (line 1087-1099)
-5. Fallback mode (return_404 or proxy_to) (line 1102-1131)
+1. Local address → IP-specific exact domain (line 1140-1142)
+2. Local address → IP-specific wildcard (line 1145-1150)
+3. Local address → IP-bound site with no domains (line 1153-1161)
+4. Global exact domain map (line 1165-1167)
+5. Global wildcard/suffix matching via reversed domain Radix tree (line 1170-1173)
+6. Empty host / wildcard fallback to default servers (line 1175-1188)
+7. Fallback mode (return_404 or proxy_to) (line 1190-1219)
 
 ### 2. Backend Types (Confirmed)
 
 | Backend Type | Implementation | Location |
 |-------------|----------------|----------|
-| Upstream | `BackendType::Upstream` | `src/router.rs:75-88` |
-| FastCGI | `BackendType::FastCgi` | `src/router.rs:507-524` |
-| PHP | `BackendType::Php` | `src/router.rs:638-663` |
-| Static | `BackendType::Static` | `src/router.rs:571-592` |
-| AppServer (Granian) | `BackendType::AppServer` | `src/router.rs:548-569` |
-| Serverless (WASM) | `BackendType::Serverless` | `src/router.rs:726-746` |
-| Mesh | `BackendType::Mesh` | `src/router.rs:613-634` |
-| QuicTunnel | `BackendType::QuicTunnel` | `src/router.rs:475-489` |
-| Spin | `BackendType::Spin` | `src/router.rs:593-612` |
+| Upstream | `BackendType::Upstream` | `src/router.rs:66,573-587` |
+| FastCGI | `BackendType::FastCgi` | `src/router.rs:67,589-606` |
+| PHP | `BackendType::Php` | `src/router.rs:68,720-744` |
+| Static | `BackendType::Static` | `src/router.rs:72,653-674` |
+| AppServer (Granian) | `BackendType::AppServer` | `src/router.rs:71,630-651` |
+| Serverless (WASM) | `BackendType::Serverless` | `src/router.rs:74,808-827` |
+| Mesh | `BackendType::Mesh` | `src/router.rs:75,695-711` |
+| QuicTunnel | `BackendType::QuicTunnel` | `src/router.rs:73,557-571` |
+| Spin | `BackendType::Spin` | `src/router.rs:76,675-693` |
+| AxumDynamic | `BackendType::AxumDynamic` | `src/router.rs:70,608-628` |
+| CGI | `BackendType::Cgi` | `src/router.rs:69,768-785` |
 
 ### 3. Load Balancing Algorithms (Confirmed)
 
 | Algorithm | Implementation | Location |
 |-----------|----------------|----------|
-| Round Robin | `apply_round_robin()` | `src/upstream/pool.rs:311-318` |
-| Weighted Round Robin | `weighted_round_robin()` | `src/upstream/pool.rs:430-447` |
-| Least Connections | `apply_least_connections()` via `composite_load()` | `src/upstream/pool.rs:331-337` |
-| Random | `apply_random()` | `src/upstream/pool.rs:320-329` |
-| IP Hash | `apply_ip_hash()` | `src/upstream/pool.rs:339-357` |
+| Round Robin | `apply_round_robin()` | `src/upstream/pool.rs:419-426` |
+| Weighted Round Robin | `weighted_round_robin()` | `src/upstream/pool.rs:555-572` |
+| Least Connections | `apply_least_connections()` via `composite_load()` | `src/upstream/pool.rs:439-445` |
+| Random | `apply_random()` | `src/upstream/pool.rs:428-437` |
+| IP Hash | `apply_ip_hash()` | `src/upstream/pool.rs:447-465` |
+| Peak EWMA | `apply_algorithm()` | `src/upstream/pool.rs:483-498` |
 
 ### 4. Health Monitoring (Confirmed)
 
 | Feature | Implementation | Location |
 |---------|---------------|----------|
-| Passive health checks | `Backend::record_success/failure()` with thresholds | `src/upstream/pool.rs:203-222` |
+| Passive health checks | `Backend::record_success/failure()` with thresholds | `src/upstream/pool.rs:311-330` |
 | Active health checks | `HealthChecker` with interval-based checks | `src/upstream/health.rs:70-96` |
 | Recovery threshold | Configurable via `HealthCheckConfig::recovery_threshold` | `src/upstream/health.rs:22` |
 | Failure threshold | Configurable via `HealthCheckConfig::failure_threshold` | `src/upstream/health.rs:21` |
+| TCP health check | `tcp_health_check()` | `src/upstream/health.rs:224-231` |
+| HTTP health check | `http_health_check()` | `src/upstream/health.rs:188-222` |
 
 ### 5. Connection Limits (Confirmed)
 
 | Feature | Implementation | Location |
 |---------|---------------|----------|
-| Max connections per backend | `Backend::max_connections` with `is_available()` check | `src/upstream/pool.rs:89,177-180` |
-| Connection scope guard | `ConnectionGuard` RAII pattern | `src/upstream/pool.rs:98-106,197-201` |
+| Max connections per backend | `Backend::max_connections` with `is_available()` check | `src/upstream/pool.rs:144,268-271` |
+| Connection scope guard | `ConnectionGuard` RAII pattern | `src/upstream/pool.rs:156-164,289-292` |
+| Shared connection table | `SharedConnectionTable` for cross-worker counting | `src/upstream/shared_state.rs:21-124` |
 
 ### 6. Backup Servers (Confirmed)
 
 | Feature | Implementation | Location |
 |---------|---------------|----------|
-| Backup flag | `Backend::is_backup` | `src/upstream/pool.rs:93` |
-| Backup fallback | `select_from_backends()` checks primary first | `src/upstream/pool.rs:381-388` |
-| Backup pool construction | `UpstreamPool::new_with_backup()` | `src/upstream/pool.rs:273-289` |
+| Backup flag | `Backend::is_backup` | `src/upstream/pool.rs:150` |
+| Backup fallback | `select_from_backends()` checks primary first | `src/upstream/pool.rs:399-407` |
+| Backup pool construction | `UpstreamPool::new_with_backup()` | `src/upstream/pool.rs:381-397` |
+
+### 7. Connection Lifecycle (Confirmed)
+
+| Phase | Implementation | Location |
+|-------|----------------|----------|
+| Target Resolution | `Router::route()` → `route_to_target()` | `src/router.rs:834-1123` |
+| Lease (connection counting) | `Backend::connection_scope()` RAII guard | `src/upstream/pool.rs:289-292` |
+| Protocol Negotiation | HTTP/1.1 keep-alive via http_client pool | `src/http_client/` |
+| Execution (proxy) | `ProxyServer::forward_with_pool()` | `src/proxy/mod.rs:942-1072` |
+| Release | `ConnectionGuard::drop()` decrements | `src/upstream/pool.rs:160-164` |
 
 ---
 
 ## Unverified Claims
 
-### 1. "Connection Lifecycle" - Protocol Negotiation
+### 1. "HTTP/2 multiplexing" in Connection Lifecycle
 
-The documentation describes:
-> **Protocol Negotiation:** The handler establishes or reuses a connection (HTTP/1.1 keep-alive, H2 multiplexing).
-
-**Issue:** While the `BackendProtocol` enum includes `Http`, `Https`, `H2`, `Grpc`, etc., the actual connection reuse and keep-alive behavior is **not visible in the upstream pool code**. The pool merely selects backends; the actual connection management appears to happen elsewhere (likely in `src/http_client/` or proxy handler code).
-
-**Verification needed:** Confirm HTTP/1.1 keep-alive and H2 connection reuse implementation.
+**Status:** Partially verified. The `BackendProtocol` enum includes `Grpc` and `GrpcTls` which imply H2 support, but the actual H2 connection multiplexing implementation is in `src/http_client/` which was not fully audited.
 
 ---
 
@@ -91,23 +104,25 @@ The documentation describes:
 
 ### Gap 1: Race Condition in Health Check Recovery
 
-**Location:** `src/upstream/health.rs:137-153`
+**Location:** `src/upstream/health.rs:134-153`
 
 ```rust
 if !backend.is_healthy.is_running() {
-    backend.consecutive_successes.fetch_add(1, ...);
-    let successes = backend.consecutive_successes.load(...);
+    backend.consecutive_successes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let successes = backend.consecutive_successes.load(std::sync::atomic::Ordering::Relaxed);
+
     if successes >= config.recovery_threshold {
         backend.is_healthy.set(true);
+        backend.consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
 ```
 
-**Problem:** Multiple concurrent health checks could race when incrementing `consecutive_successes`. If two checks pass simultaneously, both may see different values and cause inconsistent state transitions.
+**Problem:** Multiple concurrent health checks could race when incrementing `consecutive_successes`. If two checks pass simultaneously, both may read different values and cause inconsistent state transitions.
 
-**Recommendation:** Use atomic compare-and-swap (CAS) for threshold detection.
+**Recommendation:** Use atomic compare-and-swap (CAS) for threshold detection or a dedicated atomic counter for recovery state.
 
-### Gap 2: Division by Zero in `Backend::load()`
+### Gap 2: Division by Zero in `Backend::load()` and `composite_load()`
 
-**Location:** `src/upstream/pool.rs:224-226`
+**Location:** `src/upstream/pool.rs:332-334`
 
 ```rust
 pub fn load(&self) -> f64 {
@@ -115,13 +130,23 @@ pub fn load(&self) -> f64 {
 }
 ```
 
-**Problem:** If `max_connections` is set to 0 (which is allowed via `with_max_connections()`), this will cause a panic due to division by zero.
+**Location:** `src/upstream/pool.rs:354-360`
 
-**Note:** The `is_available()` check at line 179 prevents selection of backends with full connections, but `load()` is still called for metrics.
+```rust
+pub fn composite_load(&self) -> f64 {
+    let conn_load =
+        self.current_connections.load(Ordering::Relaxed) as f64 / self.max_connections as f64;
+    let cpu_load = self.get_cpu_percent() as f64;
+    let _mem_load = self.get_memory_percent() as f64;
+    (conn_load * 0.4) + (cpu_load * 0.6)
+}
+```
+
+**Problem:** If `max_connections` is set to 0 (which is allowed via `with_max_connections()`), both methods will panic due to division by zero.
 
 ### Gap 3: `LeastConnections` Uses Composite Load Instead of Pure Connection Count
 
-**Location:** `src/upstream/pool.rs:331-337`
+**Location:** `src/upstream/pool.rs:439-445`
 
 ```rust
 fn apply_least_connections(&self, candidates: &[&Backend]) -> Option<Backend> {
@@ -133,101 +158,117 @@ fn apply_least_connections(&self, candidates: &[&Backend]) -> Option<Backend> {
 }
 ```
 
-**Problem:** The documentation says "Least Connections: Routes to the backend with the fewest active requests" but the implementation uses `composite_load()` which includes CPU and memory percentages (line 246-252: `conn_load * 0.4 + cpu_load * 0.6`).
+**Problem:** The documentation says "Least Connections: Routes to the backend with the fewest active requests" but the implementation uses `composite_load()` which includes CPU percentage (40% connection load + 60% CPU load). This is a hybrid load balancing algorithm, not pure least connections.
 
-**Inconsistency:** This is a hybrid load balancing algorithm, not pure least connections.
+### Gap 4: `update_sites()` Rebuilds Location Matchers Correctly
 
-### Gap 4: Health Check Threshold Hardcoded at 3
+**Location:** `src/router.rs:1222-1373`
 
-**Locations:**
-- `src/upstream/pool.rs:206` - Passive health recovery
-- `src/upstream/pool.rs:214` - Passive health failure
+**Update:** Upon re-examination, `update_sites()` does NOT clear or rebuild `location_matchers`. The method clears and rebuilds most maps (domain_map, wildcard_domain_router, static_handlers, listen_map, default_servers, ip_domain_map, ip_wildcard_routers, cleaned_site_domains, cleaned_site_domain_suffixes, site_map) but `location_matchers` is never mentioned.
 
-The thresholds (3 successes for recovery, 3 failures for failure) are hardcoded rather than using the configurable thresholds from `HealthCheckConfig`.
+**Problem:** This could cause stale or inconsistent location routing after site updates since the LocationMatcher for a site would not be updated if only its locations change.
 
-### Gap 5: `update_sites()` Does Not Rebuild Location Matchers
+### Gap 5: `Backend::is_available()` Does Not Check Weight
 
-**Location:** `src/router.rs:1134-1244`
+**Location:** `src/upstream/pool.rs:268-271`
 
-The `update_sites()` method rebuilds domain maps, static handlers, listen maps, etc., but does **not** rebuild `location_matchers`. This could cause stale or inconsistent location routing after site updates.
+```rust
+pub fn is_available(&self) -> bool {
+    self.is_healthy.is_running()
+        && self.current_connections.load(Ordering::Relaxed) < self.max_connections
+}
+```
 
-**Code:** Line 1134 clears maps but location_matchers is never mentioned in the update.
+**Problem:** A backend with `weight = 0` is still considered "available" but would never actually be selected in weighted round robin, causing unexpected behavior where a zero-weight backend is never used but still occupies a slot.
 
 ---
 
 ## Bug Reports
 
-### Bug 1: Suffix Domain Matching Incorrect for Leading Dot Wildcards
+### Bug 1: Global Pool Registry Race Condition
 
-**Location:** `src/router.rs:241-246`
+**Location:** `src/upstream/pool.rs:752-765`
 
 ```rust
-for clean_domain in &cleaned {
-    if clean_domain.starts_with('.') || clean_domain.contains('*') {
-        suffix_domain_map.push((clean_domain.clone(), config_arc.clone()));
+pub fn get_or_create_global_pool(
+    backend_url: &str,
+    algorithm: LoadBalanceAlgorithm,
+) -> Arc<UpstreamPool> {
+    if let Some(pool) = GLOBAL_POOL_REGISTRY.get(backend_url) {
+        return pool.value().clone();
+    }
+
+    let pool = Arc::new(UpstreamPool::new(vec![backend_url.to_string()], algorithm));
+
+    GLOBAL_POOL_REGISTRY.insert(backend_url.to_string(), pool.clone());
+
+    pool
+}
 ```
 
-**Problem:** A domain like `.example.com` would match `foo.example.com` but **NOT** `example.com` itself (since `.example.com` does not end with `.example.com`). This may be intentional but is a subtle edge case.
+**Problem:** Classic check-then-act race condition. Two concurrent calls could both see the pool doesn't exist and both create new pools, causing duplicate entries.
 
-The suffix matching at line 1082:
-```rust
-if clean_host.ends_with(domain.as_ref()) {
-```
-
-Would match `foo.example.com`.ends_with(".example.com") = true
-But NOT `example.com`.ends_with(".example.com") = false
+**Recommendation:** Use `DashMap::entry()` with `or_insert_with()` for atomic check-and-insert.
 
 ### Bug 2: IP Hash Algorithm Never Receives Client IP
 
-**Location:** `src/upstream/pool.rs:377`
+**Location:** `src/upstream/pool.rs:502`
 
 ```rust
 LoadBalanceAlgorithm::IpHash => self.apply_ip_hash(candidates, None),
 ```
 
-The `apply_ip_hash()` is called with `client_ip_hint: None` in `apply_algorithm()`, meaning **IP hash always falls back to round-robin** when no client IP is provided. The `select_backend_for_ip()` method at line 449-465 properly handles IP hashing but is never called from the normal selection flow.
+The `apply_ip_hash()` is called with `client_ip_hint: None` in `apply_algorithm()`, meaning IP hash always falls back to round-robin when no client IP is provided. The `select_backend_for_ip()` method at line 574-590 properly handles IP hashing but is never called from the normal `select_backend()` flow.
 
-### Bug 3: Global Pool Registry Race Condition
+### Bug 3: `WeightedRoundRobin` Returns First Backend When All Weights Are Zero
 
-**Location:** `src/upstream/pool.rs:621-639`
+**Location:** `src/upstream/pool.rs:555-572`
 
 ```rust
-pub fn get_or_create_global_pool(...) -> Arc<UpstreamPool> {
-    if let Some(pool) = GLOBAL_POOL_REGISTRY.get(backend_url) {
-        return pool.value().clone();
+fn weighted_round_robin(&self, available: &[Backend]) -> Option<Backend> {
+    let total_weight: u32 = available.iter().map(|b| b.weight).sum();
+    if total_weight == 0 {
+        return available.first().cloned();  // Does not check availability!
     }
-
-    let pool = Arc::new(UpstreamPool::new(...));
-    GLOBAL_POOL_REGISTRY.insert(backend_url.to_string(), pool.clone());
-    pool
+    // ...
 }
 ```
 
-**Problem:** Classic check-then-act race condition. Two concurrent calls could create duplicate pools. The `DashMap` is thread-safe but doesn't provide atomic check-and-insert.
-
-**Recommendation:** Use `DashMap::entry()` with `or_insert_with()` or similar atomic approach.
+When all backends have weight 0, the function returns the first backend without checking `is_available()`. This could return an unhealthy or at-capacity backend.
 
 ---
 
 ## Security Concerns
 
-### Concern 1: Unsafe Regex Complexity Not Enforced in Router
+### Concern 1: No Maximum Domains Per Site Limit
+
+**Location:** `src/router.rs:255-260`
+
+Domain lists are processed without any size limit, which could lead to resource exhaustion with malicious configurations containing thousands of domains.
+
+**Recommendation:** Add a configurable maximum domains limit (e.g., 1000) and reject configurations exceeding it.
+
+### Concern 2: Fallback Mode Allows Proxy to Arbitrary Upstream
+
+**Location:** `src/router.rs:1190-1219`
+
+When `fallback_mode = "proxy_to"` and `fallback_upstream` is configured, any request that doesn't match a site gets proxied to that upstream. This could be exploited if fallback configuration is not properly secured.
+
+### Concern 3: Unsafe Regex Complexity in Location Matchers
 
 **Location:** `src/location_matcher.rs:30-38`
 
-The `check_regex_complexity()` is called for regex patterns, but the router does not use location matchers for all routing paths. The `LocationMatcher` is only created for sites with proxy locations (line 360-368 in router.rs), but other routing paths bypass this.
+The `check_regex_complexity()` limits regex complexity, but `LocationMatcher` is only created for sites with proxy locations (router.rs:439-452). Static-only sites bypass this check entirely.
 
-### Concern 2: No Maximum Domains Per Site Limit
+### Concern 4: Cache Purge Token Comparison Uses Constant-Time Eq
 
-**Location:** `src/router.rs:232-250`
+**Location:** `src/proxy/mod.rs:750`
 
-Domain lists are processed without any size limit, which could lead to resource exhaustion with malicious configurations.
+```rust
+Some(token) if required_token.as_bytes().ct_eq(token.as_bytes()).into() => {}
+```
 
-### Concern 3: Fallback Mode Allows Proxy to Arbitrary Upstream
-
-**Location:** `src/router.rs:1104-1128`
-
-When `fallback_mode = "proxy_to"` and `fallback_upstream` is configured, any request that doesn't match a site gets proxied to that upstream. This could be exploited if fallback configuration is not properly secured.
+This is correct usage of constant-time comparison for secrets. Well implemented.
 
 ---
 
@@ -235,11 +276,11 @@ When `fallback_mode = "proxy_to"` and `fallback_upstream` is configured, any req
 
 ### Improvement 1: Extract Common RouteTarget Construction
 
-The `RouteTarget` construction in `get_location_backend()` and `route_to_target()` has significant duplication (many identical field assignments). Consider a builder pattern or a shared constructor function.
+The `RouteTarget` construction in `get_location_backend()` and `route_to_target()` has significant duplication (many identical field assignments across dozens of code paths). Consider a builder pattern or a shared constructor function to reduce code size and potential for inconsistency.
 
-### Improvement 2: Reduce Clone in Hot Path
+### Improvement 2: Reduce Clones in Hot Path
 
-**Location:** `src/router.rs:1077-1078`
+**Location:** `src/router.rs:1165-1167`
 
 ```rust
 if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
@@ -247,46 +288,51 @@ if let Some(site_config) = self.domain_map.get(clean_host_arc.as_ref()) {
 }
 ```
 
-The `site_config` is already an `Arc<SiteConfig>`, so cloning is cheap, but the subsequent `route_to_target` clones it again in every `RouteTarget` created. Consider passing references where possible.
+The `site_config` is already an `Arc<SiteConfig>`, so cloning is cheap, but `route_to_target` clones it again in every `RouteTarget` created. Consider whether all fields in `RouteTarget` actually need to be `Arc` or if references could be used.
 
-### Improvement 3: `WeightedRoundRobin` Can Return Wrong Backend
+### Improvement 3: Add `Backend::available_capacity()`
 
-**Location:** `src/upstream/pool.rs:430-447`
+**Location:** `src/upstream/pool.rs:268-271`
 
 ```rust
-fn weighted_round_robin(&self, available: &[Backend]) -> Option<Backend> {
-    let total_weight: u32 = available.iter().map(|b| b.weight).sum();
-    if total_weight == 0 {
-        return available.first().cloned();
-    }
-    // ...
-    for backend in available {
-        if remainder < backend.weight {
-            return Some(backend.clone());
-        }
-        remainder -= backend.weight;
-    }
-
-    available.first().cloned()  // Fallback - but never reached if weights > 0
+pub fn is_available(&self) -> bool {
+    self.is_healthy.is_running()
+        && self.current_connections.load(Ordering::Relaxed) < self.max_connections
 }
 ```
 
-The final fallback is dead code if all weights are positive, and if total_weight is 0, it returns the first backend without checking availability.
+Consider adding a method that returns how many more connections can be accepted (e.g., `max_connections - current_connections`) to provide better load balancing granularity.
 
-### Improvement 4: `Backend::is_available()` Should Also Check Weight > 0
+### Improvement 4: Health Check Uses Wrong Threshold for Passive Checks
 
-**Location:** `src/upstream/pool.rs:177-180`
+**Location:** `src/upstream/pool.rs:311-330`
 
-A backend with `weight = 0` would still be considered "available" but would never actually be selected in weighted round robin, causing unexpected behavior.
+```rust
+pub fn record_success(&self) {
+    self.consecutive_failures.store(0, Ordering::Relaxed);
+    let successes = self.consecutive_successes.fetch_add(1, Ordering::Relaxed) + 1;
+    if successes >= 3 && !self.is_healthy.is_running() {  // Hardcoded 3
+        self.is_healthy.set(true);
+    }
+}
+
+pub fn record_failure(&self) {
+    self.consecutive_successes.store(0, Ordering::Relaxed);
+    let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+    if failures >= 3 && self.is_healthy.is_running() {  // Hardcoded 3
+        self.is_healthy.set(false);
+```
+
+The thresholds (3) are hardcoded in passive health checks while active health checks use `config.recovery_threshold` and `config.failure_threshold`. These should be consistent or the passive checks should also use configurable thresholds.
 
 ---
 
 ## Missing Documentation
 
-### Missing 1: Active Health Check Trigger
+### Missing 1: Active Health Check Trigger Details
 
 The documentation mentions "Active Health Checks: Periodic out-of-band requests" but doesn't specify:
-- How often (interval)
+- How often (interval) - defaults to 10s (health.rs:38)
 - What happens when a backend is marked unhealthy
 - How recovery is detected
 
@@ -300,18 +346,22 @@ No documentation on:
 ### Missing 3: Weighted Round Robin Details
 
 The documentation says "Weighted Round Robin: Distribution based on configured backend weights" but doesn't explain:
-- How weights are configured
-- Default weight values
-- What happens when all backends have weight 0
+- How weights are configured (via `with_weight()` method)
+- Default weight values (1)
+- What happens when all backends have weight 0 (returns first backend without availability check)
 
 ### Missing 4: Session Persistence (IP Hash)
 
 The documentation mentions "IP Hash: Ensures session persistence by hashing the client IP to a specific backend" but doesn't explain:
-- What happens when backends are added/removed (rehashing)
-- How client IP is extracted
-- The fallback when no client IP is available
+- What happens when backends are added/removed (rehashing inconsistency)
+- How client IP is extracted (not passed to `select_backend()`)
+- The fallback when no client IP is available (round-robin)
 
-### Missing 5: Backend Protocol Selection
+### Missing 5: `PeakEwma` Algorithm
+
+The `LoadBalanceAlgorithm::PeakEwma` variant exists in the code but is not documented in the architecture document. It should be added.
+
+### Missing 6: Backend Protocol Effect on Connection Limits
 
 The `BackendProtocol` enum supports multiple protocols, but there's no documentation on:
 - How protocol is determined/negotiated
@@ -323,17 +373,20 @@ The `BackendProtocol` enum supports multiple protocols, but there's no documenta
 ## Test Coverage Notes
 
 The test suite has good coverage for:
-- Round robin selection
-- Least connections selection
-- Health check state transitions
-- Backup fallback
+- Round robin selection (`test_upstream_pool_round_robin`)
+- Least connections selection (`test_upstream_pool_least_connections`)
+- Health check state transitions (`test_backend_record_success_recovery`, `test_backend_record_failure_circuit_breaker`)
+- Backup fallback (`test_upstream_pool_backup_fallback`)
+- Connection guard (`test_connection_guard_decrement_on_drop`)
 
 **Missing tests for:**
-1. IP hash consistency (same IP -> same backend)
+1. IP hash consistency (same IP -> same backend) - exists (`test_upstream_pool_select_backend_for_ip_same_client`)
 2. Weighted round robin with varying weights
-3. Concurrent health check recovery
+3. Concurrent health check recovery race condition
 4. Global pool registry race conditions
-5. Edge case: max_connections = 0
+5. Edge case: `max_connections = 0`
+6. `PeakEwma` algorithm behavior
+7. `update_sites()` with location matcher updates
 
 ---
 
@@ -341,16 +394,25 @@ The test suite has good coverage for:
 
 | Category | Count |
 |----------|-------|
-| Verified Claims | 6 major categories confirmed |
-| Unverified Claims | 1 (protocol negotiation) |
+| Verified Claims | 7 major categories confirmed |
+| Unverified Claims | 1 (HTTP/2 multiplexing detail) |
 | Implementation Gaps | 5 |
 | Bugs | 3 |
-| Security Concerns | 3 |
+| Security Concerns | 4 |
 | Code Improvements | 4 |
-| Missing Documentation | 5 |
+| Missing Documentation | 6 |
 
 **Overall Assessment:** The routing architecture is well-implemented and matches the documented behavior in most areas. Key concerns are:
-1. Race conditions in health checking
-2. IP hash not working as documented (always falls back)
-3. Missing documentation on critical paths
-4. Potential division by zero edge case
+
+1. **Race conditions in health checking** - Concurrent health checks can create inconsistent state
+2. **IP hash not working as documented** - Falls back to round-robin because client IP is never passed
+3. **Least connections uses hybrid load** - Not pure connection count as documented
+4. **Division by zero risk** - `max_connections = 0` causes panic
+5. **Missing documentation** - `PeakEwma` and several algorithm behaviors undocumented
+
+**Priority Fixes:**
+1. Pass client IP to IP hash algorithm
+2. Add `max_connections > 0` check in `load()` and `composite_load()`
+3. Use CAS for health check threshold detection
+4. Add `PeakEwma` to documentation
+5. Add domain count limits to prevent resource exhaustion

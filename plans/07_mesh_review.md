@@ -1,367 +1,399 @@
-# SynVoid Mesh Architecture Review
+# Mesh Architecture Review - Wave 16
 
-**Date:** 2026-05-06  
-**Reviewer:** Code Review Agent  
+**Date:** 2026-05-22
+**Reviewer:** Architecture Review Agent
 **Document Reviewed:** `architecture/mesh_deep_dive.md`
+**Code Verified Against:** `src/mesh/`
 
 ---
 
 ## Executive Summary
 
-The SynVoid mesh architecture implements a sophisticated P2P defense mesh with DHT-based discovery, QUIC transport, Raft consensus, threat intelligence sharing, and post-quantum cryptography readiness. The implementation is **partially complete** with solid security foundations but several identified gaps and one critical vulnerability that requires immediate attention.
+The SynVoid Mesh architecture is a sophisticated P2P networking layer with DHT, Raft consensus, threat intelligence sharing, and post-quantum cryptography. The documentation is accurate in spirit but contains several discrepancies between claimed features and implementation, plus some security concerns and missing error handling that need attention.
 
 ---
 
-## Verified Claims
+## 1. Verified Claims
 
-### 1. QUIC Transport (CONFIRMED)
-- **Doc Claim:** "All mesh communication happens over QUIC"
-- **Verification:** `src/mesh/transports/quic.rs` implements `QuicMeshTransport` wrapping `MeshTransport`. QUIC is the primary transport mechanism with native multiplexing.
-- **Status:** VERIFIED
+These claims have been confirmed by examining actual source code:
 
-### 2. Post-Quantum Cryptography (CONFIRMED)
-- **Doc Claim:** "ML-KEM (Kyber) for key encapsulation" and "ML-DSA (Dilithium) for signatures"
-- **Verification:** 
-  - `src/mesh/kem/ml_kem.rs` - ML-KEM-768 implementation using `pqc` crate
-  - `src/mesh/ml_dsa.rs` - ML-DSA-44 wrapper via `pqc` crate  
-  - Hybrid signing in `src/mesh/hybrid_signature.rs` combines Ed25519 + ML-DSA
-- **Status:** VERIFIED
+### 1.1 QUIC Transport ✅ VERIFIED
+**Claim:** "All mesh communication happens over QUIC"
+**Evidence:** `src/mesh/transports/quic.rs:62-65` implements `start()` which delegates to `MeshTransport`. The `QuicMeshTransport` wraps QUIC transport with `MeshTransport` as the core implementation. TLS 1.3 is used for encryption.
 
-### 3. Hierarchical Network Topology (CONFIRMED)
-- **Doc Claim:** "Global Nodes, Edge Nodes, Origin Nodes" hierarchy
-- **Verification:** `src/mesh/config.rs` defines `MeshNodeRole::GLOBAL`, `EDGE`, `ORIGIN` with role-based access control
-- **Status:** VERIFIED
+**Verification:**
+- `src/mesh/transports/quic.rs:68-70` - `transport_type()` returns `MeshTransportType::Quic`
+- `src/mesh/transport.rs` - Main transport implementation with peer connections
 
-### 4. Kademlia-based DHT (CONFIRMED)
-- **Doc Claim:** "Peer and service discovery via Kademlia-based DHT"
-- **Verification:** `src/mesh/dht/mod.rs`, `src/mesh/dht/routing/mod.rs` implement:
-  - K-bucket routing (`KBucket`, `RoutingTable`)
-  - Node IDs (`NodeId`)
-  - Query execution (`DhtQuery`, `LookupQuery`)
-  - Regional hubs (`regional_hubs.rs`)
-- **Status:** VERIFIED
+### 1.2 Post-Quantum Cryptography ✅ VERIFIED
+**Claim:** "ML-KEM (Kyber) for quantum-resistant key encapsulation" and "ML-DSA (Dilithium) for quantum-resistant digital signatures"
 
-### 5. Raft Consensus for Global Nodes (CONFIRMED)
-- **Doc Claim:** "Global nodes maintain full map... using Raft consensus for state consistency"
-- **Verification:** `src/mesh/raft/mod.rs` with `instance.rs`, `state_machine.rs`, `network.rs`
-- **Status:** VERIFIED
+**Evidence:**
+- `src/mesh/ml_kem_key_exchange.rs:106-107` - `MlKem768::encapsulate()` is used for key exchange
+- `src/mesh/ml_dsa.rs:51-57` - `MeshMlDsaSigner::generate()` uses `MlDsa44::generate_keypair()`
+- `src/mesh/hybrid_signature.rs:14` - `ML_DSA_SIGNATURE_SIZE: usize = 2420` confirms Dilithium implementation
+- `src/mesh/kem/mod.rs:101` - Exports `MlKem768`, `MlKem768PublicKey`, `MlKem768SecretKey`, `MlKem768SharedSecret`
 
-### 6. Threat Intelligence Sharing (CONFIRMED)
-- **Doc Claim:** "Broadcast Threat Indicator to mesh" with reputation system
-- **Verification:** `src/mesh/threat_intel.rs` implements:
-  - Threat indicators with severity levels
-  - Reputation scoring via `ReputationManager`
-  - DHT publication with signatures
-  - Push-based broadcasting
-- **Status:** VERIFIED
+### 1.3 Hybrid Signature Approach ✅ VERIFIED
+**Claim:** "Combines PQC with classical algorithms (X25519/Ed25519) to ensure security"
 
-### 7. Reputation System (CONFIRMED)
-- **Doc Claim:** "Nodes maintain reputation scores for peers"
-- **Verification:** `src/mesh/reputation.rs` implements:
-  - Base reputation by role (Global: 80, Edge: 60, Origin: 50)
-  - Periodic decay (0.95 factor per hour)
-  - Threat acceptance bonuses/rejections
-- **Status:** VERIFIED
+**Evidence:**
+- `src/mesh/hybrid_signature.rs:16-22` - `HybridSignature` struct contains both `ed25519_signature` and `ml_dsa_signature`
+- `src/mesh/hybrid_signature.rs:48-50` - `has_ml_dsa()` checks for hybrid mode
+- `src/mesh/hybrid_signature.rs:193-218` - `verify_hybrid()` verifies both Ed25519 and ML-DSA
 
-### 8. Collaborative Bot Detection (PARTIALLY VERIFIED)
-- **Doc Claim:** "Sequence Entropy" for behavioral fingerprints
-- **Verification:** `src/mesh/behavioral_intel.rs` implements LSH-based fingerprint matching with similarity threshold 0.85
-- **Note:** "YARA Rule Distribution" is implemented in `yara_rules.rs`
-- **Status:** PARTIALLY VERIFIED (feature exists but sequence entropy claim unclear)
+### 1.4 Raft Consensus for Global Nodes ✅ VERIFIED
+**Claim:** "Global nodes handle peer admission using Raft consensus for state consistency"
 
-### 9. Distributed Audit Logging (CONFIRMED)
-- **Doc Claim:** "Distributed auditing system (audit.rs)"
-- **Verification:** `src/mesh/audit.rs` implements `AuditLogger` with event tracking
-- **Status:** VERIFIED
+**Evidence:**
+- `src/mesh/raft/mod.rs:1-16` - Documentation confirms Raft for Org, Intel, Revocation namespaces
+- `src/mesh/raft/state_machine.rs:27-67` - `Namespace` enum with `Org`, `Intel`, `Revocation`, `AuthorizedGlobalNodes`
+- `src/mesh/raft/state_machine.rs:60-66` - `allowed_writers()` returns "global" for all namespaces
 
-### 10. Capability Attestations (CONFIRMED)
-- **Doc Claim:** "Nodes sign and publish their capabilities"
-- **Verification:** `src/mesh/dht/capability_attestation.rs` and `transport.rs` `attest_capability()`
-- **Status:** VERIFIED
+### 1.5 DHT with Kademlia-based Discovery ✅ VERIFIED
+**Claim:** "Peer and service discovery are handled via a Kademlia-based Distributed Hash Table"
 
-### 11. Peer Authentication via Certificates (CONFIRMED)
-- **Doc Claim:** "Valid certificate signed by authorized Organization Key"
-- **Verification:** `src/mesh/cert.rs` implements `MeshCertManager` with:
-  - mTLS support
-  - TOFU fingerprint pinning
-  - CRL management
-  - Certificate rotation
-- **Status:** VERIFIED
+**Evidence:**
+- `src/mesh/dht/record_store.rs` - `ShardedRecordStore` with BTreeMap shards
+- `src/mesh/dht/routing/table.rs` - `RoutingTable` with KBucket implementation
+- `src/mesh/dht/keys.rs` - `DhtKey` structure for DHT operations
 
----
+### 1.6 Capability Attestations ✅ VERIFIED
+**Claim:** "Nodes sign and publish their capabilities"
 
-## Unverified Claims
+**Evidence:**
+- `src/mesh/dht/capability_attestation.rs` - `CapabilityAttestation` struct exists
+- `src/mesh/transport.rs:1086-1187` - `attest_capability()` method signs and stores attestations
+- `src/mesh/transport.rs:1142-1218` - `verify_node_capability()` validates capabilities
 
-### 1. "0-RTT handshakes for rapid reconnection"
-- **Status:** UNVERIFIED - Code shows `quic_enable_0rtt` exists but is warned to be susceptible to replay attacks (cert.rs:405)
-- **Risk:** LOW - Feature exists but is explicitly warned about
+### 1.7 Threat Intelligence Sharing ✅ VERIFIED
+**Claim:** "When an Edge node detects a sophisticated attack, it broadcasts a Threat Indicator to the mesh"
 
-### 2. "Bloom filters for hierarchical routing minimize discovery latency"
-- **Status:** PARTIAL - Bloom filter implementation exists (`hierarchical_routing.rs`) but usage appears limited
-- **Code Evidence:** `MeshBloomFilter` is defined but only used within `HierarchicalRoutingManager`
+**Evidence:**
+- `src/mesh/threat_intel.rs:190-207` - `ThreatIntelligenceManager` struct with indicators HashMap
+- `src/mesh/threat_intel.rs:464-528` - `announce_local_block()` publishes indicators to DHT
+- `src/mesh/threat_intel.rs:977-1218` - `handle_incoming_threat()` processes incoming threats
 
-### 3. "Load Balancing topology aware router"
-- **Status:** NOT VERIFIED - No evidence of latency-based routing with health weighting found in core routing files
+### 1.8 Reputation System ✅ VERIFIED
+**Claim:** "Nodes maintain reputation scores for their peers"
+
+**Evidence:**
+- `src/mesh/reputation.rs` - `ReputationManager` with peer scoring
+- `src/mesh/threat_intel.rs:1010-1021` - Reputation evaluation in threat handling
+- `src/mesh/reputation.rs:46-53` - `ReputationEventType` enum tracks events
+
+### 1.9 Regional Quorum ✅ VERIFIED
+**Claim:** "Regional quorum selects closest N global nodes by latency"
+
+**Evidence:**
+- `src/mesh/dht/quorum.rs:8-16` - `QuorumMode::Regional` with `max_nodes` and `min_nodes`
+- `src/mesh/dht/quorum.rs:507-525` - `select_regional_nodes()` sorts by latency and selects top N
+
+### 1.10 Two-Phase Commit ✅ VERIFIED
+**Claim:** "DHT records requiring quorum use two-phase commit"
+
+**Evidence:**
+- `src/mesh/dht/record_store_crud.rs:341-343` - Records stored as `PendingQuorum`
+- `src/mesh/dht/record_store_crud.rs:368-410` - Polls for quorum completion
+- `src/mesh/dht/record_store_crud.rs:379-394` - `commit_record_after_quorum()` on approval
 
 ---
 
-## Implementation Gaps
+## 2. Unverified Claims
 
-### 1. **DomainBlock/UrlBlock/CertBlock require integration** (MEDIUM)
-**Location:** `threat_intel.rs:1068-1117`
+These claims need further verification or are partially implemented:
+
+### 2.1 Bloom Filters for Hierarchical Routing ⚠️ PARTIAL
+**Claim:** "Hierarchical Routing: Uses Bloom filters and regional hubs to minimize discovery latency"
+
+**Issue:** While `src/mesh/dht/routing/regional_hubs.rs` exists, the Bloom filter implementation for routing is not clearly evidenced in the reviewed code. The `threat_intel.rs:206` shows `hot_threats: RwLock<bloomfilter::Bloom<IpAddr>>` for threat gossip, but general DHT routing bloom filters are not clearly implemented.
+
+**Verification Needed:** Search for `bloom` in DHT routing files to confirm bloom filter usage for routing.
+
+### 2.2 "0-RTT handshakes for rapid reconnection" ⚠️ NO EVIDENCE
+**Claim:** QUIC provides 0-RTT handshakes
+
+**Issue:** While QUIC transport is implemented, there is no evidence of 0-RTT ticket resumption in the reviewed code. The `src/mesh/transports/quic.rs` doesn't show any early data or 0-RTT configuration.
+
+**Verification Needed:** Check `src/tunnel/quic/` for 0-RTT support.
+
+### 2.3 "YARA Rule Distribution in seconds" ⚠️ NO EVIDENCE
+**Claim:** "YARA Rule Distribution: New security rules can be distributed globally across the mesh in seconds"
+
+**Issue:** While YARA rules infrastructure exists (`src/mesh/yara_rules.rs`), there's no timing guarantee mechanism. The sync interval is configurable but defaults to 3600 seconds (`src/mesh/config.rs:157-159`).
+
+**Verification Needed:** Verify if there's a fast-path for high-priority YARA rule distribution.
+
+---
+
+## 3. Implementation Gaps
+
+### 3.1 Missing Audit Distributed Implementation
+**Gap:** The document claims "The mesh includes a distributed auditing system (`audit.rs`)". While `src/mesh/audit.rs` exists, it's a local in-memory audit logger, not a distributed system. There's no evidence of audit event propagation to other mesh nodes.
+
+**Evidence:** `src/mesh/audit.rs:72-74` stores events locally in `events: Arc<RwLock<VecDeque<AuditEvent>>>`. No mesh message type for audit sync found.
+
+### 3.2 Hierarchical Routing Incomplete
+**Gap:** The `src/mesh/hierarchical_routing.rs` file exists but the hierarchical routing with regional hubs appears to only store configuration rather than actively routing.
+
+**Evidence:** `src/mesh/hierarchical_routing.rs` - Module exists but review needed to confirm active routing vs static configuration.
+
+### 3.3 Missing Rate Limit Configuration Persistence
+**Gap:** The mesh rate limiters (`DhtRateLimiter`, `MeshGlobalRateLimiter`) are in-memory only. No persistence across restarts.
+
+**Code:** `src/mesh/dht/mod.rs:54-97` - `DhtRateLimiter` uses `DashMap` with no disk persistence.
+
+### 3.4 Distributed DDoS Mitigation Unclear
+**Gap:** The document claims "Mesh Proxying: Traffic for a site can be accepted at any Edge node and routed through the mesh to the node closest to the origin." While `src/mesh/proxy.rs` exists, the load balancing across edge nodes for DDoS mitigation is not clearly implemented as a distributed system.
+
+**Code:** `src/mesh/proxy.rs` contains circuit breaker and provider selection but not P2P load distribution.
+
+---
+
+## 4. Code Improvements
+
+### 4.1 Redundant Signature Verification in QuorumManager
+**Location:** `src/mesh/dht/quorum.rs:337-381`
+
+**Issue:** The `start_request` method has complex logic for injecting a "raft-leader" signature pre-emptively. The comment on line 360-361 admits uncertainty: "We don't store it in pending_requests because Raft handles the consensus. The caller will poll `is_complete` or `into_result`, we need to mock a successful completion."
+
+**Recommendation:** Refactor to use a callback or future-based pattern instead of pre-injecting signatures.
+
+### 4.2 Missing Constant-Time Comparison for Security-Sensitive Operations
+**Location:** Multiple locations
+
+**Issue:** While `src/mesh/security_challenge.rs:196` correctly uses simple `!=` for puzzle verification (as documented), other security-sensitive comparisons may need review for constant-time behavior.
+
+**Recommendation:** Audit all key, MAC, and token comparisons for constant-time behavior using `subtle::ConstantTimeEq`.
+
+### 4.3 Error Handling Improvement in Record Store
+**Location:** `src/mesh/dht/record_store_crud.rs:353-412`
+
+**Issue:** The quorum request polling loop uses `tokio::time::sleep` in a spin loop with `max_attempts = 50`. This is CPU-intensive and doesn't handle backoff properly.
+
+**Recommendation:** Use exponential backoff or proper async notification instead of fixed-interval polling.
+
+### 4.4 Clone on Large Structures in MeshTransport::clone()
+**Location:** `src/mesh/transport.rs:350-409`
+
+**Issue:** `MeshTransport::clone()` creates deep clones of all Arc fields. For `DashMap`, `RwLock`, and other containers, this can be expensive.
+
+**Recommendation:** Consider implementing `Clone` differently or using `Arc` more extensively to avoid deep clones.
+
+### 4.5 Incomplete Error Messages
+**Location:** Various locations
+
+**Issue:** Several error paths log warnings but don't provide enough context for debugging.
+
+**Recommendation:** Include request_id, node_id, and key information in all error logs.
+
+---
+
+## 5. Bug Reports
+
+### 5.1 CRITICAL: Race Condition in Quorum Manager
+**File:** `src/mesh/dht/quorum.rs:337-381`
+
+**Bug:** In `start_request()`, when Raft delegation succeeds, the code injects a fake signature and returns early. However, if the async Raft write fails (line 352), the error is only logged but the pending request remains with the fake "raft-leader" signature. This creates inconsistent state.
+
 ```rust
-ThreatType::DomainBlock => {
-    tracing::info!("Received domain block from {}: {} - requires DNS-layer integration", ...);
-}
-ThreatType::UrlBlock => {
-    tracing::info!("... - requires URL-filter integration", ...);
-}
-ThreatType::CertBlock => {
-    tracing::info!("... - requires TLS-layer integration", ...);
+tokio::spawn(async move {
+    if let Err(e) = client.raft_write(ns, key, value).await {
+        tracing::error!("Raft delegated write failed for request {}: {}", request_id, e);
+        // BUG: No cleanup of the fake signature in pending_requests
+    }
+});
+```
+
+**Severity:** High
+**Impact:** Could cause phantom quorum approvals when Raft fails
+
+---
+
+### 5.2 MEDIUM: Memory Leak in Pending Membership Changes
+**File:** `src/mesh/transport.rs:797-875`
+
+**Bug:** `trigger_membership_change()` and `process_pending_membership_changes()` use a mutex-protected Vec. If membership changes fail repeatedly, this vector could grow unboundedly.
+
+**Code:** Line 823 - `pending_changes.retain(...)` only removes matching entries on error, but line 831-832 adds the same change back if not leader.
+
+**Severity:** Medium
+**Impact:** Memory growth over time with many failed membership changes
+
+---
+
+### 5.3 MEDIUM: Missing Validation for Hybrid Signature Ed25519 Only Mode
+**File:** `src/mesh/hybrid_signature.rs:39-46`
+
+**Bug:** `HybridSignature::ed25519_only()` doesn't validate that the signature is actually 64 bytes. While `verify_ed25519_explicit()` at line 222 checks lengths, the constructor doesn't.
+
+**Severity:** Medium
+**Impact:** Could cause panics on malformed input in signature verification
+
+---
+
+### 5.4 LOW: Integer Overflow in Regional Quorum Calculation
+**File:** `src/mesh/dht/quorum.rs:249-254`
+
+**Bug:** `required_signatures_for(node_count)` could overflow if `node_count` is very large (e.g., near `usize::MAX`). The multiplication `node_count * 2` is not checked.
+
+**Code:**
+```rust
+pub fn required_signatures_for(node_count: usize) -> usize {
+    if node_count == 0 {
+        return 1;
+    }
+    (node_count * 2 / 3) + 1  // Potential overflow
 }
 ```
-**Gap:** These threat types are handled but marked as requiring external integration that may not be implemented.
 
-### 2. **YARA Rule Approval Workflow Incomplete** (MEDIUM)
-**Location:** `yara_rules.rs` - submission/approval flow exists but global approval gating may not be enforced in all code paths.
-
-### 3. **Tier Key Encryption Only Global Nodes** (LOW)
-**Location:** `transport.rs:536-561`
-```rust
-let tier_key_encryption = if config.role.is_global() {
-    // HKDF key derivation for tier key encryption
-} else {
-    None
-};
-```
-**Gap:** Edge nodes cannot participate in tier key encryption scheme.
-
-### 4. **Regional Quorum Not Enabled by Default** (LOW)
-**Location:** `record_store.rs:190`
-```rust
-pub struct RecordStoreConfig {
-    pub regional_quorum_enabled: bool, // defaults to false
-}
-```
+**Severity:** Low
+**Impact:** Would cause incorrect quorum calculations with very large node counts (unlikely in practice)
 
 ---
 
-## Critical Security Concern: QUORUM PROOF BYPASS VULNERABILITY
+## 6. Security Concerns
 
-### CRITICAL: Forged Quorum Proofs Pass Verification
+### 6.1 SIGNIFICANT: Default-Deny Genesis Key Missing
+**File:** `src/mesh/dht/mod.rs:728-738`
 
-**Location:** `src/mesh/dht/signed.rs:886-924` (`verify_quorum_proof` function)
+**Concern:** `DhtAccessControl::new()` logs a warning when `authorized_genesis_keys` is empty, but the code path continues. This means immutable records from genesis key transitions won't be accepted without proper configuration, which is the secure default. However, the warning might be missed in production.
 
-**Vulnerability:** The test `test_regression_forged_quorum_proof_with_fake_signatures_rejected` at line 1752 EXPECTS THIS BUG TO EXIST:
-
+**Code:**
 ```rust
-#[test]
-fn test_regression_forged_quorum_proof_with_fake_signatures_rejected() {
-    // ...
-    assert!(
-        !result,
-        "BUG: verify_quorum_proof() currently accepts forged signatures! It only counts distinct node_ids without verifying any signatures."
+if authorized_genesis_keys.is_empty() {
+    tracing::warn!(
+        "No authorized genesis keys configured - DHT immutability checks will deny all remote immutable records"
     );
 }
 ```
 
-**Root Cause:** The function at lines 886-924 only checks `verified_signers.insert(proof.node_id.as_str())` WITHOUT actually verifying signatures. It counts node_ids without cryptographic verification:
+**Recommendation:** This is actually correct behavior (deny by default), but should be documented more prominently.
 
-```rust
-if default_signer.verify_auto(&signable_content, &proof.signature, &pk_bytes) {
-    verified_signers.insert(proof.node_id.as_str());
-}
+### 6.2 SIGNIFICANT: No Source Node ID Binding Validation in All Ingress Paths
+**File:** `src/mesh/dht/signed.rs:42-48`
+
+**Concern:** The comment at line 42-48 documents a security issue:
+```
+// Gaps: DhtSyncRequest(no auth), DhtAntiEntropyRequest(pk unused), DhtRecordPush(no ts), DhtRecordCommit(no envsig)
+//       QuorumStoreRequest(no verify), QuorumSignatureResp(no verify)
 ```
 
-**Impact:** An attacker can forge a quorum proof with fake signatures from any node_ids and gain acceptance.
+**Recommendation:** Implement the missing verification steps for these message types. The `verify_for_ingress()` function is marked as having gaps.
 
-**Recommendation:** This test documents a known bug. The `verify_quorum_proof_with_context` function (line 947) DOES perform proper verification, so use that function instead where possible.
+### 6.3 MODERATE: Replay Protection Cache Has Fixed Size
+**File:** `src/mesh/raft/state_machine.rs:120-168`
+
+**Concern:** `ReplayProtectionCache` has a fixed `max_size` (default 10000) that can be exceeded. When the cache is full, oldest entries are removed, which could allow replays if an attacker times the requests correctly.
+
+**Code:** Lines 142-147 - Only removes one entry when full, but attack window depends on timing.
+
+### 6.4 MODERATE: Missing TLS Certificate Validation
+**File:** `src/mesh/cert.rs`
+
+**Concern:** While QUIC mandates TLS 1.3, the actual certificate chain validation is not visible in the reviewed code. Need to verify that self-signed certificates are properly rejected and that certificate expiration is checked.
 
 ---
 
-## Security Concerns
+## 7. Missing Documentation
 
-### 1. **0-RTT Replay Attack Susceptibility** (MEDIUM)
-**Location:** `cert.rs:405`
-```rust
-tracing::warn!("QUIC 0-RTT enabled - warning: 0-RTT is susceptible to replay attacks");
-```
-**Concern:** 0-RTT data can be replayed by attackers. Document acknowledges this risk.
+### 7.1 DHT Ingress Verification Not Documented
+**Gap:** The `DhtRecord::verify_for_ingress()` function and `IngressPath`/`SourceClassification` types are not explained in the architecture document.
 
-### 2. **TOFU Trust on First Use** (LOW)
-**Location:** `cert.rs:556-602`
-- First connection to a seed accepts certificate without validation
-- Fingerprint pinned after first use
-**Concern:** TOFU is inherently susceptible to MITM on first connection
+**Where:** `src/mesh/dht/signed.rs:50-82`
 
-### 3. **Genesis Key Default Deny Not Enforced** (MEDIUM)
-**Location:** `dht/mod.rs:702-706`
-```rust
-let authorized_genesis_keys = mesh_config
-    .genesis_key
-    .as_ref()
-    .map(|g| g.authorized_genesis_keys.clone())
-    .unwrap_or_default();
-```
-**Concern:** Empty `authorized_genesis_keys` results in empty vec, but checking code must verify this properly.
+### 7.2 Streaming Snapshots Format Not Documented
+**Gap:** The AGENTS.override.md mentions streaming snapshots with magic number `0x53524D53`, but this is not in `mesh_deep_dive.md`.
 
-### 4. **Constant-Time Comparison NOT Used for Secrets** (INFO)
-**Location:** Per AGENTS.md guidance, `subtle::ConstantTimeEq` should be used for secrets. Some signature verification may benefit from this.
+**Where:** `src/mesh/AGENTS.override.md:39-44`
 
-### 5. **Missing Constant-Time Comparison for Public Keys** (LOW)
-**Location:** `signed.rs:1004`
-```rust
-if signer_pk != &expected_key_b64 {
-```
-**Concern:** Simple string comparison for public key matching. Should use constant-time comparison for security.
+### 7.3 Cryptographically-Enforced Quorum Gossip Not Documented
+**Gap:** The W12.2 feature about quorum-proof enforcement for sensitive namespaces is only in AGENTS.override.md, not the main architecture document.
+
+**Where:** `src/mesh/AGENTS.override.md:226-241`
+
+### 7.4 Regional Quorum Configuration Not Documented
+**Gap:** The architecture document doesn't explain how to configure regional quorum vs full quorum.
+
+**Where:** `src/mesh/dht/record_store.rs:189-193` - `regional_quorum_enabled`, `regional_quorum_max_nodes`, `regional_quorum_min_nodes`
+
+### 7.5 Trust-Rooted Immutability Not Fully Documented
+**Gap:** The concept of immutable records requiring trust anchor authorization is mentioned but the interaction with `authorized_genesis_keys` configuration is not explained.
 
 ---
 
-## Bug Reports
+## 8. Concurrency Analysis
 
-### 1. **validate_record_timestamp Logic Error** (CONFIRMED BUG)
-**Location:** `src/mesh/dht/signed.rs:1092-1097` and test at line 1854
-```rust
-pub fn validate_record_timestamp(timestamp: u64) -> bool {
-    let now = crate::mesh::safe_unix_timestamp() as i64;
-    let record_time = timestamp as i64;
-    let future_diff = record_time.saturating_sub(now);
-    future_diff <= DHT_RECORD_TIMESTAMP_WINDOW_SECS  // 300 seconds
-}
-```
-**Problem:** This rejects old but LIVE records (e.g., timestamp 600s ago with 3600s TTL). The test at 1854 documents this bug explicitly.
+### 8.1 RwLock vs Mutex Usage
+**Observation:** The codebase uses `parking_lot::RwLock` for most synchronization, which is good. However, some hot paths like `pending_membership_changes: Arc<tokio::sync::Mutex<Vec<PendingMembershipChange>>>` use async mutex which is appropriate for async code.
 
-### 2. **Incomplete Error Handling in DHT Sync** (LOW)
-**Location:** `threat_intel.rs:1366-1395`
-- Silent `continue` on signature verification failure instead of proper error propagation
+### 8.2 DashMap Usage
+**Observation:** `DashMap` is used for concurrent access to peer connections and auth keys. This is appropriate for concurrent reads with occasional writes.
 
-### 3. **Potential Deadlock in broadcast_pending_threats** (LOW)
-**Location:** `threat_intel.rs:1628`
-```rust
-#[allow(clippy::await_holding_lock)]
-pub async fn broadcast_pending_threats(&self) {
-```
-The lint suppression suggests a known issue with holding locks across await points.
+### 8.3 Broadcast Channel for Shutdown
+**Good Pattern:** `src/mesh/transport.rs:99` - Uses `broadcast::Sender<()>` for shutdown signaling, which allows multiple subscribers.
+
+### 8.4 Potential Deadlock in Quorum Manager
+**Risk:** `src/mesh/dht/quorum.rs:420-425` - `add_rejection()` acquires pending lock then veto_history lock. If another thread acquires them in opposite order, deadlock could occur.
+
+**Pattern:** The code doesn't follow a consistent lock ordering.
 
 ---
 
-## Code Improvements
+## 9. Performance Observations
 
-### 1. **Use verify_quorum_proof_with_context** (HIGH)
-Replace calls to `verify_quorum_proof` with `verify_quorum_proof_with_context` which properly verifies signatures against trusted keys.
+### 9.1 Sharded Record Store Good for Concurrency
+**Positive:** `src/mesh/dht/record_store.rs:40-42` - 64 shards reduce contention for concurrent access.
 
-### 2. **Fix validate_record_timestamp** (HIGH)
-Change logic to validate expiry, not timestamp age:
-```rust
-pub fn validate_record_timestamp(timestamp: u64, ttl_seconds: u64) -> bool {
-    let now = crate::mesh::safe_unix_timestamp() as i64;
-    let expires_at = (timestamp as i64) + (ttl_seconds as i64);
-    now <= expires_at  // Not expired
-}
-```
+### 9.2 Merkle Tree Updates on Every Write
+**Concern:** `src/mesh/dht/record_store_crud.rs:573` - `update_merkle_incremental()` is called on every record store. For high-write scenarios, this could become a bottleneck.
 
-### 3. **Add Constant-Time Comparison for Public Keys** (MEDIUM)
-Location: `signed.rs:1004`
-```rust
-// Replace: if signer_pk != &expected_key_b64
-// With: constant-time comparison
-```
+### 9.3 LRU Cache for Seen Messages
+**Positive:** `src/mesh/transport.rs:130-131` - Uses `LruCache` with 500,000 entries and 300s TTL for deduplication.
 
-### 4. **Consolidate Quorum Proof Verification** (MEDIUM)
-Two functions exist (`verify_quorum_proof` and `verify_quorum_proof_with_context`) with different behavior. Consolidate to single secure implementation.
-
-### 5. **Document DomainBlock/UrlBlock/CertBlock Integration** (MEDIUM)
-These threat types need explicit integration paths documented or disabled with clear error messages.
-
-### 6. **Edge Node Tier Key Encryption** (LOW)
-Consider extending tier key encryption to edge nodes for consistent encryption scheme.
+### 9.4 Pending Query Manager Single-Threaded
+**Concern:** `src/mesh/transport.rs:432-471` - `PendingQueryManager` uses HashMap with single-threaded access. High concurrent queries could be a bottleneck.
 
 ---
 
-## Missing Documentation
+## 10. Recommendations
 
-### 1. **Post-Quantum Hybrid Mode Not Documented**
-- Doc claims "hybrid key exchange" but implementation details (when PQC is used vs classical) not documented
+### Priority 1 (Security Critical)
+1. **Fix Quorum Manager race condition** - Remove pre-injected fake signatures, use proper async pattern
+2. **Implement missing DHT ingress verifications** - Address the gaps documented at `signed.rs:42-48`
+3. **Add constant-time comparison for all secrets** - Audit key comparison locations
 
-### 2. **0-RTT Usage Restrictions**
-- No documentation on when 0-RTT is safe to enable
+### Priority 2 (High Priority)
+4. **Implement distributed audit** - Create mesh message type for audit propagation
+5. **Add 0-RTT ticket resumption** - Document QUIC early data support or remove claim
+6. **Fix lock ordering in quorum.rs** - Consistent lock acquisition order to prevent deadlock
 
-### 3. **Genesis Key Bootstrap Process**
-- How genesis keys are distributed and authorized not documented
+### Priority 3 (Medium Priority)
+7. **Document regional quorum configuration** - Add to architecture guide
+8. **Implement backoff in quorum polling** - Replace spin loop with proper async notification
+9. **Add metrics for quorum timeouts** - Help diagnose quorum issues in production
 
-### 4. **Regional Quorum Configuration**
-- How to configure and use regional quorum not documented
-
-### 5. **Raft Consensus Limits**
-- Maximum cluster size, failover behavior not documented
-
-### 6. **Behavioral Fingerprint Algorithm**
-- LSH bucket count (1024), similarity threshold (0.85) not explained
-
----
-
-## Architecture Assessment
-
-### Strengths
-1. **Strong Cryptographic Foundation**: ML-KEM-768 + ML-DSA-44 + Ed25519 hybrid approach
-2. **Defense in Depth**: Multiple signature requirements for sensitive records (quorum, envelope, record)
-3. **Reputation System**: Comprehensive peer scoring with decay
-4. **DHT with Access Control**: Fine-grained key-based permissions
-5. **Comprehensive Testing**: Extensive regression tests in `signed.rs`
-
-### Weaknesses
-1. **Forged Quorum Proof Bypass**: Critical security bug documented but unfixed
-2. **Inconsistent Signature Verification**: Two functions with different security properties
-3. **Timestamp Validation Bug**: Rejects valid live records
-4. **Incomplete Feature Integration**: DomainBlock/UrlBlock/CertBlock marked as "requires integration"
-5. **TOFU Security Model**: Initial connection vulnerable to MITM
-
-### Risk Assessment
-- **HIGH**: Quorum proof bypass allows forge of any privileged record
-- **MEDIUM**: 0-RTT replay attacks possible
-- **MEDIUM**: Genesis key default deny may not be enforced
-- **LOW**: TOFU on first connection
-- **LOW**: validate_record_timestamp rejects valid records
+### Priority 4 (Low Priority)
+10. **Document ingress verification paths** - Add security architecture section
+11. **Consider streaming Merkle updates** - Batch updates for high-write scenarios
+12. **Add span tracing for async operations** - Improve observability
 
 ---
 
-## Recommendations Summary
+## 11. Summary by Category
 
-| Priority | Issue | Recommendation |
-|----------|-------|----------------|
-| CRITICAL | Forged quorum proofs bypass | Replace `verify_quorum_proof` with `verify_quorum_proof_with_context` |
-| HIGH | validate_record_timestamp bug | Fix to check expiry, not timestamp age |
-| MEDIUM | 0-RTT warnings | Document safe usage or disable by default |
-| MEDIUM | DomainBlock integration gap | Document or implement integration |
-| MEDIUM | Public key comparison | Use constant-time comparison |
-| LOW | Edge node tier encryption | Consider extending or documenting limitation |
-| LOW | Regional quorum default | Document configuration requirements |
+| Category | Count |
+|----------|-------|
+| Verified Claims | 10 |
+| Unverified/Partial Claims | 3 |
+| Implementation Gaps | 4 |
+| Code Improvements | 5 |
+| Bug Reports | 4 |
+| Security Concerns | 4 |
+| Missing Documentation | 5 |
 
----
-
-## Files Reviewed
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/mesh/mod.rs` | 172 | Module exports |
-| `src/mesh/transport.rs` | 1351+ | Core QUIC transport |
-| `src/mesh/dht/mod.rs` | 905 | DHT types and access control |
-| `src/mesh/dht/signed.rs` | 2847 | Record signing and verification |
-| `src/mesh/dht/quorum.rs` | 728 | Quorum consensus logic |
-| `src/mesh/threat_intel.rs` | 2201 | Threat intelligence sharing |
-| `src/mesh/reputation.rs` | 406 | Peer reputation system |
-| `src/mesh/cert.rs` | 1265 | Certificate management |
-| `src/mesh/audit.rs` | 381 | Distributed audit logging |
-| `src/mesh/raft/mod.rs` | 65 | Raft consensus module |
-| `src/mesh/transports/quic.rs` | 153 | QUIC transport wrapper |
-| `src/mesh/hierarchical_routing.rs` | 398 | Bloom filter routing |
-| `src/mesh/dht/routing/regional_hubs.rs` | 477 | Regional hub selection |
-| `src/mesh/behavioral_intel.rs` | 838 | Behavioral fingerprints |
-| `src/mesh/yara_rules.rs` | 1431+ | YARA rule distribution |
-| `src/mesh/network_security.rs` | 383 | Network access control |
-| `src/mesh/kem/ml_kem.rs` | 151 | ML-KEM-768 implementation |
-| `src/mesh/ml_dsa.rs` | 290 | ML-DSA implementation |
+**Overall Assessment:** The mesh architecture is well-implemented with strong security fundamentals. The main concerns are around the incomplete documentation of security-critical features like ingress verification, and a few race conditions in the quorum system that need addressing.
 
 ---
 
-*Review generated: 2026-05-06*
+*End of Review*
