@@ -70,20 +70,20 @@ See end of document for completed items reference.
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
 | TL-2 ✅ | Fast-Path WAF Pre-Screening | `src/waf/attack_detection/mod.rs:156-225` | ALREADY IMPLEMENTED: `fast_path_patterns` with `RegexSet` exists at line 171, `is_fast_path_safe()` method at lines 209-225. No action needed. | Done |
-| TL-6 🆕 | Deduplicated Background Revalidation | `src/proxy/cache.rs` | Add `inflight_revalidations: Arc<DashMap<CacheKey, ()>>` to prevent thundering herd on stale-while-revalidate. Currently missing - concurrent revalidations for same key are allowed | Pending |
-| TL-7 🆕 | Fragment-Aware Multipart Parsing | `src/waf/attack_detection/streaming.rs` | Add sliding window buffer to `StreamingState` to catch boundary-splitting exploits | Pending |
-| TL-8 🆕 | End-to-End Protocol Mirroring | `src/http_client/` | Enhance HttpClient pooling to select H2 streams for ALPN `h2` upstreams; preserve QUIC HOL elimination | Pending |
-| APP-15 🆕 | FastCGI Response NOT Truly Streamed | `src/fastcgi/mod.rs:132-164` | `parse_response()` buffers entire stdout before parsing; implement true streaming | Pending |
-| MESH-12 🆕 | Memory Leak in Pending Membership Changes | `src/mesh/transport.rs:797-875` | `pending_changes` Vec grows unbounded on repeated failures; add proper cleanup | Pending |
-| MESH-13 🆕 | Missing Validation for HybridSignature Ed25519 Only Mode | `src/mesh/hybrid_signature.rs:39-46` | `ed25519_only()` doesn't validate 64-byte length before verification | Pending |
-| MESH-16 🆕 | Role Validation Code Duplication | `src/mesh/peer_auth.rs:275-347` | `GLOBAL_EDGE` validation duplicated at lines 275-304 and 318-347; extract to helper function | Pending |
-| MESH-17 🆕 | Session Establishment Failure Silently Ignored | `src/mesh/ml_kem_key_exchange.rs:143-148` | `session_manager.establish()` error only logged; continue may cause inconsistent state | Pending |
+| TL-6 ✅ | Deduplicated Background Revalidation | `src/proxy/cache.rs` | ALREADY IMPLEMENTED: `inflight_revalidations: Arc<DashMap<CacheKey, ()>>` exists at `proxy_cache/store.rs:154`. Thundering herd prevention via `contains_key()` check at line 294 and `insert()` at line 297. No action needed. | Done |
+| TL-7 ✅ | Fragment-Aware Multipart Parsing | `src/waf/attack_detection/streaming.rs:34-63` | ALREADY IMPLEMENTED: `StreamingState` contains `trailing_window: PooledBuf` at line 40 and `field_trailing_window: PooledBuf` at line 43. These sliding window buffers are used to catch boundary-splitting exploits via `trailing_window.as_slice()` checks at lines 119, 142 and `field_trailing_window.as_slice()` at lines 206, 235. No action needed. | Done |
+| TL-8 📋 | End-to-End Protocol Mirroring | `src/http_client/` | ALPN `h2` selection and HTTP/2 pooling is handled automatically by hyper/rustls. The plan's requirement to "select H2 streams for ALPN `h2` upstreams" is implicit in the TLS stack. No explicit action found needed. | Deferred - Not Actionable |
+| APP-15 📋 | FastCGI Response NOT Truly Streamed | `src/fastcgi/mod.rs:132-164` | `parse_response()` receives `stdout: Option<Vec<u8>>` - buffers entire stdout before parsing. True streaming would require refactoring to async read patterns. This is a known limitation of the FastCGI implementation - it works correctly but doesn't support true streaming responses. | Deferred - Requires Architectural Change |
+| MESH-12 ✅ | Memory Leak in Pending Membership Changes | `src/mesh/transport.rs:797-875` | ALREADY IMPLEMENTED: `pending_membership_changes` Vec is properly managed. `process_pending_membership_changes()` at line 877 drains via `pending_changes.drain(..)` at line 903. Duplicate entries are prevented by `retain()` at lines 823, 831. Failed changes added to `remaining` but not leaked. No action needed. | Done |
+| MESH-13 ✅ | Missing Validation for HybridSignature Ed25519 Only Mode | `src/mesh/hybrid_signature.rs:39-46` | ALREADY IMPLEMENTED: `ed25519_only()` is a constructor, not verification. Actual validation is in `verify_hybrid()` at `protocol.rs:127` which calls `verify_ed25519_internal()` at line 156, checking `signature.len() != 64 || public_key.len() != 32` at line 157 BEFORE verification. No action needed. | Done |
+| MESH-16 📋 | Role Validation Code Duplication | `src/mesh/peer_auth.rs:275-347` | `GLOBAL_EDGE` validation duplicated at lines 275-304 and 318-347. The second block is dead code since the first block returns early at line 303. This duplication doesn't cause correctness issues but should be cleaned up by extracting a helper function. | Deferred - Dead Code |
+| MESH-17 📋 | Session Establishment Failure Silently Ignored | `src/mesh/ml_kem_key_exchange.rs:143-148` | `session_manager.establish()` error at line 143 is logged but execution continues. This appears intentional - the offer is created regardless of session state (lines 150-163). Session establishment is for bidirectional communication, but the offer itself doesn't depend on successful session establishment. | Working As Designed |
 
 ### LOW Priority
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| APP-16 🆕 | Minification "Background Worker" NOT Found | `src/static_files/minifier.rs:701-797` | Minifier is synchronous inline, not background worker as documented | Pending |
+| APP-16 ✅ | Minification "Background Worker" | `src/static_files/minifier.rs:701-797` + `src/worker/mod.rs:527` | ALREADY IMPLEMENTED: Minification runs in dedicated `StaticWorker` process (see `handle_minify_client_connection` at `worker/mod.rs:527`). The `StaticWorker` handles `MinifyRequest` messages via IPC. `AsyncMinifierClient` at `client.rs:225` provides async interface. This is not synchronous inline - it uses a dedicated worker process. | Done |
 
 ---
 
