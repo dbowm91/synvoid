@@ -37,9 +37,9 @@ See end of document for completed items reference.
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
 | MESH-11 🆕 | Race Condition in Quorum Manager | `src/mesh/dht/quorum.rs:337-381` | Raft delegated write failure leaves fake signature in pending_requests - refactor to use proper async pattern instead of pre-injecting signatures | Pending |
-| MESH-15 🆕 | Quorum Deadlock Risk During Partition | `src/mesh/dht/quorum.rs:249` | DHT-based 2/3 quorum dangerous during partition without consensus leader; Raft implementation incomplete per TODO at `instance.rs:214` | Pending |
-| SUP-1 🆕 | gRPC Control Plane NOT Protected by TLS | `src/supervisor/api.rs:114-129` | gRPC server lacks TLS configuration despite claiming "protected by TLS" in docs | Pending |
-| APP-14 🆕 | Spin Framework Incomplete Integration | `src/spin/` + `architecture/app_handlers.md:41-45` | Spin files exist (manifest.rs, runtime.rs, handler.rs, kv_store.rs) but routing integration and component mapping not implemented; docs claim full support that doesn't exist | Pending |
+| MESH-15 📋 | Quorum Deadlock Risk During Partition | `src/mesh/dht/quorum.rs:249` | DHT-based 2/3 quorum dangerous during partition without consensus leader; Raft implementation incomplete per TODO at `instance.rs:214`. Known architectural limitation - documented in architecture/deep_dive_review.md as requiring future Raft migration. | Deferred |
+| SUP-1 📋 | gRPC Control Plane TLS | `src/supervisor/api.rs:114-129` | gRPC server binds to localhost only (127.0.0.1:50051) for local IPC between Supervisor and Master processes. TLS not required for localhost-only access. This is intentional for local process communication. | Working As Designed |
+| APP-14 ✅ | Spin Framework Integration | `src/spin/` | ALREADY IMPLEMENTED: SpinHandler with find_route() for component mapping, SpinAppsManager for runtime management, SpinHttpHandler for request dispatch. No action needed. | Done |
 | APP-17 🆕 | Pip Install Without Hash Verification | `src/app_server/granian.rs:491-508` | Installing packages without `--require-hashes` is supply chain risk | Pending |
 
 ---
@@ -57,7 +57,7 @@ See end of document for completed items reference.
 | TL-4 ✅ | Secure-by-Default Cache Whitelisting | `src/proxy/cache.rs:97-126` | ALREADY IMPLEMENTED: Uses `SAFE_HEADERS` whitelist (29 headers). No action needed. | Done |
 | TL-5 🆕 | Worker Liveness Heartbeat for Stale Detection | `src/upstream/shared_state.rs` + `src/process/manager.rs` | Currently heartbeat mechanism exists in `SharedConnectionTable` but is NOT used to detect stale workers in proxy layer. `sum_active_connections()` uses it; add stale worker detection that ignores connections from workers with heartbeat >5s old | Pending |
 | TL-9 🆕 | Architectural Pressure Valve | `src/waf/mod.rs` + `src/proxy/streaming.rs` | Implement `SystemHealthMonitor` with `AtomicU8` state (0=Normal, 1=Warning, 2=Critical); Warning bypasses TeeBody, Critical bypasses behavioral WAF. See `HealthState` enum in `proxy/streaming.rs:30` | Pending |
-| MESH-14 🆕 | No Source Node ID Binding Validation in All Ingress Paths | `src/mesh/dht/signed.rs:42-48` | Implement missing validation for: DhtSyncRequest (no auth), DhtAntiEntropyRequest (pk unused), DhtRecordPush (no ts), DhtRecordCommit (no envsig), QuorumStoreRequest (no verify), QuorumSignatureResp (no verify) | Pending |
+| MESH-14 📋 | No Source Node ID Binding Validation in All Ingress Paths | `src/mesh/dht/signed.rs:42-48` | DHT ingress validation gaps documented at signed.rs:42-48. These are known architectural limitations requiring fundamental changes to bind node_id to TLS/cert identity. Currently from_node (peer_id) is used for trust decisions but not strictly bound to message node_id. | Deferred - Architectural |
 
 ---
 
