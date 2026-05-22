@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+#[cfg(feature = "mesh")]
 use utoipa::ToSchema;
 
 pub(crate) const POW_CACHE_TTL_SECS: u64 = 3600;
@@ -153,6 +154,7 @@ impl GlobalNodeConfig {
         }
 
         // Load Ed25519 key
+        #[cfg(feature = "mesh")]
         if let Some(ref b64) = self.ed25519_private_key_base64 {
             let key_bytes = URL_SAFE_NO_PAD
                 .decode(b64)
@@ -167,6 +169,7 @@ impl GlobalNodeConfig {
             self.ed25519_private_key = Some(key);
 
             // Derive public key
+            #[cfg(feature = "mesh")]
             use ed25519_dalek::SigningKey;
             let signing_key = SigningKey::from_bytes(&key);
             self.ed25519_public_key_base64 =
@@ -626,6 +629,7 @@ impl MeshConfig {
         self.node_identity.public_key.clone()
     }
 
+    #[cfg(feature = "mesh")]
     pub fn load_node_identity(&mut self) -> Result<(), String> {
         if let Some(ref genesis_b64) = self.node_identity.genesis_key_base64 {
             tracing::warn!(

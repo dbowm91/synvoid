@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "mesh")]
 use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;
@@ -12,15 +13,18 @@ pub struct TunnelConfig {
     pub vpn: TunnelVpnConfig,
     #[serde(default)]
     pub quic: TunnelQuicConfig,
+    #[cfg(feature = "mesh")]
     #[serde(default)]
-    pub mesh: Option<crate::mesh::MeshConfig>,
+    pub mesh: Option<super::MeshConfig>,
 }
 
 impl TunnelConfig {
+    #[cfg(feature = "mesh")]
     pub fn has_mesh(&self) -> bool {
         self.mesh.as_ref().map(|m| m.enabled).unwrap_or(false)
     }
 
+    #[cfg(feature = "mesh")]
     pub fn is_global_node(&self) -> bool {
         self.mesh
             .as_ref()

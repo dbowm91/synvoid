@@ -30,7 +30,7 @@ audit = []
 post-quantum = ["dep:rustls-post-quantum"]
 verify-pq = []
 tun-rs = []
-mesh = []
+mesh = ["dep:synvoid-config", "synvoid-config/mesh", "dep:ed25519-dalek", "dep:openraft", "dep:utoipa", "dep:utoipa-swagger-ui"]
 erased_pool = []
 rkyv = []
 pqc-mesh = []  # Post-quantum mesh signatures (ML-DSA-44 for mesh messages)
@@ -111,7 +111,7 @@ unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 bloomfilter = "2"
 serde_bytes = "0.11"
-synvoid-config = { path = "crates/synvoid-config", features = ["mesh", "dns"] }
+synvoid-config = { path = "crates/synvoid-config", features = ["dns"], optional = true }
 
 # DNS support
 hickory-proto = { version = "0.26", features = ["dnssec-ring"], optional = true }
@@ -215,8 +215,8 @@ log = "0.4"
 
 # OpenAPI / Swagger UI
 schemars = "0.8"
-utoipa = "5"
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa = { version = "5", optional = true }
+utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 prost = "0.14"
 prost-build = "0.14"
 lru_time_cache = "0.11"
@@ -228,7 +228,7 @@ aes-gcm = "0.10"
 async-trait = "0.1"
 daemonize2 = "0.6"
 digest = "0.10"
-ed25519-dalek = "2"
+ed25519-dalek = { version = "2", optional = true }
 rsa = "0.9"
 rand_core_06 = { package = "rand_core", version = "0.6" }
 hkdf = "0.12"
@@ -247,7 +247,7 @@ tonic-reflection = "0.14"
 tonic-prost = "0.14"
 
 # Raft consensus for global nodes
-openraft = { version = "0.10.0-alpha.18", features = ["serde"] }
+openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true }
 openraft-legacy = "0.10.0-alpha.18"
 async-stream = "0.3.6"
 bincode = "1.3"

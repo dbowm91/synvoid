@@ -130,7 +130,7 @@ pub struct MainConfig {
     #[serde(default)]
     #[cfg(feature = "dns")]
     pub dns: DnsConfig,
-    #[serde(default)]
+    #[cfg(feature = "mesh")]
     pub mesh: Option<super::MeshConfig>,
     #[serde(default)]
     pub overseer: OverseerConfig,
@@ -164,6 +164,7 @@ impl MainConfig {
         }
 
         // Load global node keys and node identity if mesh is configured
+        #[cfg(feature = "mesh")]
         if let Some(ref mut mesh_config) = config.tunnel.mesh {
             if let Err(e) = mesh_config.load_global_node_keys() {
                 tracing::warn!("Failed to load global node keys: {}", e);
@@ -196,6 +197,7 @@ impl MainConfig {
             });
         }
 
+        #[cfg(feature = "mesh")]
         if self.mesh.is_some() && !cfg!(feature = "mesh") {
             return Err(ConfigValidationError {
                 field: "mesh".to_string(),
@@ -262,6 +264,7 @@ impl MainConfig {
             mimes: MimesConfig::default(),
             #[cfg(feature = "dns")]
             dns: DnsConfig::default(),
+            #[cfg(feature = "mesh")]
             mesh: None,
             overseer: super::OverseerConfig::default(),
             process_manager: super::ProcessManagerConfig::default(),
