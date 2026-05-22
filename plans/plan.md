@@ -95,15 +95,15 @@ See end of document for completed items reference.
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| DOC-DNS-1 🆕 | DNS Subsystem Missing from Main Body | `architecture/overview.md` | DNS appears only in Module Index, not in main narrative; add DNS section to "Distributed Systems" | Pending |
-| DOC-OVERVIEW-1 🆕 | Missing Deep Dive References | `architecture/overview.md:291-303` | Add `layer_3_5_deep_dive.md` and `deep_dive_review.md` to Deep Dive Index | Pending |
+| DOC-DNS-1 ✅ | DNS Subsystem Missing from Main Body | `architecture/overview.md` | ALREADY DONE: DNS is documented at line 229 under "### DNS (Optional - `dns` feature)" which is part of the main narrative (not just Module Index). The claim it was "missing from main body" was inaccurate. | Done |
+| DOC-OVERVIEW-1 ✅ | Missing Deep Dive References | `architecture/overview.md:291-303` | ALREADY DONE: Both `layer_3_5_deep_dive.md` and `deep_dive_review.md` are already listed in the Deep Dive Index at lines 301-302. No action needed. | Done |
 
 ### MEDIUM Priority
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| DOC-MESH-1 🆕 | DHT Ingress Verification Gaps Not Documented | `src/mesh/dht/signed.rs:42-48` | The `IngressPath` and `SourceClassification` types exist (lines 50-82) but the verification gaps (DhtSyncRequest no auth, DhtAntiEntropyRequest pk unused, etc.) documented at lines 47-48 should be added to architecture docs | Pending |
-| DOC-MESH-2 🆕 | Streaming Snapshots Format Not Documented | `src/mesh/AGENTS.override.md:39-44` | Document streaming snapshots with magic number `0x53524D53` | Pending |
+| DOC-MESH-1 📋 | DHT Ingress Verification Gaps Not Documented | `src/mesh/dht/signed.rs:42-48` | The DHT ingress verification gaps are documented in code at `signed.rs:42-48` (the identity hierarchy comment). Adding this to architecture docs would require documenting the full identity/trust model which is a larger architectural task. This is related to MESH-14 which is also deferred. | Deferred - Architectural |
+| DOC-MESH-2 ✅ | Streaming Snapshots Format Not Documented | `src/mesh/AGENTS.override.md:42` | ALREADY DONE: Streaming snapshots format with magic number `0x53524D53` is documented at line 42. Format: `[MAGIC u32 0x53524D53][COUNT u64][LEN u32][postcard entry]...`. No action needed. | Done |
 
 ---
 
