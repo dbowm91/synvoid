@@ -256,6 +256,7 @@ impl SiteConfig {
                 .map(|s| crate::app_server::GranianLogFormat::from(s.as_str()))
                 .unwrap_or(crate::app_server::GranianLogFormat::Text),
             log_verbose: site_config.log_verbose.unwrap_or(false),
+            require_hashes: site_config.require_hashes.unwrap_or(false),
         }
     }
 }

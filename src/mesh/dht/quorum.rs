@@ -126,6 +126,8 @@ pub struct QuorumRequest {
     pub deadline: u64,
     pub quorum_mode: QuorumMode,
     pub regional_nodes_contacted: Vec<String>,
+    pub raft_write_completed: bool,
+    pub raft_write_success: bool,
 }
 
 impl QuorumRequest {
@@ -182,6 +184,8 @@ impl QuorumRequest {
             deadline: now + timeout_secs,
             quorum_mode,
             regional_nodes_contacted,
+            raft_write_completed: false,
+            raft_write_success: false,
         }
     }
 
@@ -349,7 +353,7 @@ impl QuorumManager {
                     let client = raft_client.clone();
                     let request_id_for_spawn = request.request_id.clone();
 
-                    let (tx, rx) = oneshot::channel();
+                    let (tx, rx) = oneshot::channel::<Result<(), crate::mesh::raft::client::RaftAwareClientError>>();
                     {
                         let mut pending_raft = self.pending_raft_requests.write().await;
                         pending_raft.insert(request_id.clone(), rx);
@@ -357,12 +361,16 @@ impl QuorumManager {
 
                     tokio::spawn(async move {
                         let result = client.raft_write(ns, key, value).await;
-                        if let Err(e) = result {
-                            tracing::error!("Raft delegated write failed for request {}: {}", request_id_for_spawn, e);
-                        } else {
-                            tracing::info!("Raft delegated write succeeded for request {}", request_id_for_spawn);
+                        match result {
+                            Ok(_) => {
+                                tracing::info!("Raft delegated write succeeded for request {}", request_id_for_spawn);
+                                let _ = tx.send(Ok(()));
+                            }
+                            Err(e) => {
+                                tracing::error!("Raft delegated write failed for request {}: {}", request_id_for_spawn, e);
+                                let _ = tx.send(Err(e));
+                            }
                         }
-                        let _ = tx.send(());
                     });
 
                     let mut pending = self.pending_requests.write().await;
@@ -378,9 +386,20 @@ impl QuorumManager {
     }
 
     pub async fn is_request_complete(&self, request_id: &str) -> bool {
-        let pending_raft = self.pending_raft_requests.read().await;
-        if let Some(rx) = pending_raft.get(request_id) {
-            rx.is_closed()
+        let mut pending_raft = self.pending_raft_requests.write().await;
+        if let Some(rx) = pending_raft.get_mut(request_id) {
+            if let Ok(result) = rx.try_recv() {
+                let success = result.is_ok();
+                drop(rx);
+                pending_raft.remove(request_id);
+                let mut pending = self.pending_requests.write().await;
+                if let Some(req) = pending.get_mut(request_id) {
+                    req.raft_write_completed = true;
+                    req.raft_write_success = success;
+                }
+                return true;
+            }
+            false
         } else {
             true
         }

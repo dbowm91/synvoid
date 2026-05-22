@@ -315,37 +315,6 @@ pub fn validate_peer_role(
         );
     }
 
-    if role.is_global() && role.is_edge() {
-        let mut errors = Vec::new();
-
-        if pow_nonce.is_none() || pow_public_key.is_none() {
-            errors.push("GLOBAL_EDGE role requires PoW (nonce and public key)".to_string());
-        } else if let Err(e) =
-            validate_edge_node_pow(peer_node_id, peer_public_key, pow_nonce, pow_public_key)
-        {
-            errors.push(format!("PoW validation failed: {}", e));
-        }
-
-        if peer_signature.is_none() {
-            errors.push("GLOBAL_EDGE role requires Ed25519 signature".to_string());
-        } else if let Err(e) = validate_global_node(
-            peer_node_id,
-            peer_public_key,
-            peer_signature,
-            timestamp,
-            max_age_secs,
-            revoked_nodes,
-            authorized_global_pubkeys,
-        ) {
-            errors.push(format!("Signature validation failed: {}", e));
-        }
-
-        if !errors.is_empty() {
-            return Err(errors.join("; "));
-        }
-        return Ok(());
-    }
-
     if role.is_edge() && !role.is_global() && role.is_origin() {
         let mut errors = Vec::new();
 

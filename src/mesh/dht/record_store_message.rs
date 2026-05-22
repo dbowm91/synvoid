@@ -1324,6 +1324,19 @@ impl RecordStoreManager {
                             });
                         }
 
+                        if request.raft_write_completed && !request.raft_write_success {
+                            tracing::warn!(
+                                "Quorum request {} has successful DHT threshold but failed Raft write - treating as timeout",
+                                request_id
+                            );
+                            return Some(crate::mesh::dht::quorum::QuorumResult::Timeout {
+                                signatures_collected: request.signatures.clone(),
+                                threshold: crate::mesh::dht::quorum::QuorumRequest::required_signatures(
+                                    total,
+                                ),
+                            });
+                        }
+
                         return Some(crate::mesh::dht::quorum::QuorumResult::Approved(
                             request.signatures.clone(),
                         ));

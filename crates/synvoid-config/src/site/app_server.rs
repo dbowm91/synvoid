@@ -49,6 +49,8 @@ pub struct SiteAppServerConfig {
     pub log_format: Option<String>,
     #[serde(default)]
     pub log_verbose: Option<bool>,
+    #[serde(default)]
+    pub require_hashes: Option<bool>,
 }
 
 fn default_some_true() -> Option<bool> {
