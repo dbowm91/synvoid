@@ -22,17 +22,17 @@ SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant re
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Supervisor (Control Plane)                       │
 │  Process management, gRPC API, Raft consensus, DHT routing, config loading  │
-│  (Consolidated from legacy Overseer + Master hierarchy)                       │
+│  (Consolidated from legacy Overseer + Master hierarchy)                      │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-         ┌──────────────────┐ ┌──────────┐ ┌───────────────┐
-         │ UnifiedServer    │ │  Static  │ │  Mesh Agent   │
-         │ Worker (HTTP/    │ │  Worker  │ │  (optional    │
-         │ HTTPS/HTTP3)     │ │  (CSS/JS │ │   control     │
-         │                  │ │  minify) │ │   plane)      │
-         └──────────────────┘ └──────────┘ └───────────────┘
+                                     │
+                     ┌───────────────┼───────────────┐
+                     ▼               ▼               ▼
+          ┌──────────────────┐ ┌──────────┐ ┌───────────────┐
+          │ UnifiedServer    │ │  Static  │ │  Mesh Agent   │
+          │ Worker (HTTP/    │ │  Worker  │ │  (optional    │
+          │ HTTPS/HTTP3)     │ │  (CSS/JS │ │   control     │
+          │                  │ │  minify) │ │   plane)      │
+          └──────────────────┘ └──────────┘ └───────────────┘
 ```
 
 ### Key Architectural Decisions
@@ -73,6 +73,7 @@ The legacy **Overseer** process (`src/overseer/`) has been **deprecated** and re
 |----------|-------------|
 | [Process Lifecycle](process_lifecycle.md) | Supervisor-Worker hierarchy, zero-downtime upgrades |
 | [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
+| [Platform & Process Deep Dive](platform_deep_dive.md) | IPC, sandboxing, platform abstraction |
 
 ---
 
@@ -100,6 +101,14 @@ The legacy **Overseer** process (`src/overseer/`) has been **deprecated** and re
 | **Router** | `src/router.rs` | Domain-based routing to sites, Host header matching, wildcards |
 | **Upstream** | `src/upstream/` | Backend address management, health checks, load balancing algorithms |
 
+### Core Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
+| [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
+| [Proxy & Upstream Deep Dive](proxy_deep_dive.md) | Proxy server, connection pooling, retry logic, cache governor |
+
 ---
 
 ## Security & WAF
@@ -110,7 +119,7 @@ The WAF provides multi-layered protection against threats.
 
 ```
 Request → Rate Limiting → Bot Detection → Attack Detection → Challenge → Proxy
-         (IP/Global)    (JA3/JA4)      (YARA rules)       (PoW/CSS)
+          (IP/Global)    (JA3/JA4)      (YARA rules)       (PoW/CSS)
 ```
 
 | Module | Path | Purpose |
@@ -144,6 +153,7 @@ Request → Rate Limiting → Bot Detection → Attack Detection → Challenge �
 | Document | Description |
 |----------|-------------|
 | [WAF Security Pipeline](waf_deep_dive.md) | WAF engine, attack detection, bot mitigation |
+| [Admin & Auth Deep Dive](admin_deep_dive.md) | Admin API, session management, CSRF protection |
 | [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Post-quantum crypto, trust models |
 
 ---
@@ -174,8 +184,7 @@ Request → Rate Limiting → Bot Detection → Attack Detection → Challenge �
 
 | Document | Description |
 |----------|-------------|
-| [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC |
-| [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Protocol details |
+| [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
 
 ---
 
@@ -198,7 +207,8 @@ SynVoid supports multiple backend types natively.
 
 | Document | Description |
 |----------|-------------|
-| [Application Handlers](app_handlers.md) | Static files, PHP-FPM, Python, WASM, Spin |
+| [Application Handlers](app_handlers.md) | Static files, PHP-FPM, FastCGI, Python, WASM, Spin |
+| [Plugin & Serverless Deep Dive](plugin_deep_dive.md) | WASM plugin runtime, Spin, serverless execution |
 
 ---
 
@@ -234,11 +244,19 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and t
 | **Recursive Resolver** | `src/dns/` | Recursive resolution with cache |
 | **TSIG** | `src/dns/` | Transaction signature authentication |
 
+### Tunnel & VPN
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| **Tunnel** | `src/tunnel/` | QUIC tunnel, WireGuard VPN |
+| **VPN Client** | `src/vpn_client/` | VPN client functionality |
+
 ### Distributed Documentation
 
 | Document | Description |
 |----------|-------------|
 | [Mesh Deep Dive](mesh_deep_dive.md) | DHT, Raft, transport, threat intelligence |
+| [DNS & Tunnel Deep Dive](dns_deep_dive.md) | DNS server, DNSSEC, TSIG, tunnel protocols |
 | [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Post-quantum key exchange |
 
 ---
@@ -275,13 +293,12 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and t
 | **Serialization** | `src/serialization_rkyv.rs` | rkyv zero-copy serialization |
 | **Integrity** | `src/integrity/` | Merkle tree, content integrity |
 
-### VPN & Tunneling
+### Infrastructure Documentation
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Tunnel** | `src/tunnel/` | Tunnel management |
-| **VPN Client** | `src/vpn_client/` | WireGuard VPN client support |
-| **Upload** | `src/upload/` | File upload handling |
+| Document | Description |
+|----------|-------------|
+| [Platform & Process Deep Dive](platform_deep_dive.md) | IPC, sandboxing, platform abstraction |
+| [Config & Utils Deep Dive](config_deep_dive.md) | Configuration hierarchy, buffer pool |
 
 ---
 
@@ -295,27 +312,17 @@ This overview serves as an index for detailed documentation. Each link below pro
 | **Worker Architecture** | [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
 | **Networking** | [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
 | **Request Routing** | [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
+| **Proxy & Upstream** | [Proxy & Upstream Deep Dive](proxy_deep_dive.md) | Proxy server, connection pooling, retry logic, cache governor |
 | **Security/WAF** | [WAF Deep Dive](waf_deep_dive.md) | WAF pipeline, attack detection, bot mitigation, challenges |
+| **Admin & Auth** | [Admin & Auth Deep Dive](admin_deep_dive.md) | Admin API, session management, CSRF, rate limiting |
 | **Application Handlers** | [App Handlers](app_handlers.md) | Static files, PHP-FPM, FastCGI, Python, WASM, Spin |
+| **Plugin & Serverless** | [Plugin & Serverless Deep Dive](plugin_deep_dive.md) | WASM plugin runtime, Spin, serverless instance pooling |
 | **Mesh Networking** | [Mesh Deep Dive](mesh_deep_dive.md) | DHT, Raft consensus, QUIC transport, threat intelligence |
+| **DNS & Tunnel** | [DNS & Tunnel Deep Dive](dns_deep_dive.md) | DNS server, DNSSEC, TSIG, tunnel protocols, VPN client |
+| **Platform & Process** | [Platform & Process Deep Dive](platform_deep_dive.md) | IPC, sandboxing, platform abstraction, supervisor |
+| **Configuration** | [Config & Utils Deep Dive](config_deep_dive.md) | Configuration hierarchy, buffer pool, serialization |
 | **Post-Quantum & Trust** | [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | PQC key exchange, ML-DSA/ML-KEM, trust models |
 | **Review Summary** | [Deep Dive Review](deep_dive_review.md) | Cross-cutting findings, architectural analysis |
-
-### Review Plans
-
-Individual module review documents exist in `plans/`:
-
-| Module Review | Path |
-|---------------|------|
-| Process Lifecycle Review | `plans/01_process_lifecycle_review.md` |
-| Worker Architecture Review | `plans/02_worker_architecture_review.md` |
-| Networking Review | `plans/03_networking_review.md` |
-| Routing Review | `plans/04_routing_review.md` |
-| WAF Review | `plans/05_waf_review.md` |
-| App Handlers Review | `plans/06_app_handlers_review.md` |
-| Mesh Review | `plans/07_mesh_review.md` |
-| Layer 3.5 Review | `plans/08_layer_3_5_review.md` |
-| Overview Review | `plans/09_overview_review.md` |
 
 ---
 
@@ -354,19 +361,40 @@ Individual module review documents exist in `plans/`:
 | `src/sandbox/` | Process sandboxing |
 | `src/serverless/` | Serverless/WASM |
 | `src/spin/` | Spin framework |
+| `src/startup/` | Bootstrap & startup |
 | `src/static_files/` | Static file serving |
 | `src/supervisor/` | Process supervisor |
 | `src/tarpit/` | Bot tar pit |
 | `src/tcp/` | TCP proxy |
 | `src/tls/` | TLS termination |
+| `src/tunnel/` | Tunnel management |
 | `src/udp/` | UDP proxy |
 | `src/upstream/` | Backend management |
 | `src/utils/` | Utilities |
+| `src/vpn_client/` | VPN client |
 | `src/waf/` | WAF engine |
 | `src/wasm_pow/` | WASM PoW |
 | `src/worker/` | Worker process |
 | `crates/synvoid-config/` | Configuration crate |
 | `crates/synvoid-utils/` | Utilities crate |
+
+---
+
+## Feature Gates
+
+| Feature | Purpose |
+|---------|---------|
+| `dns` | DNS server with DNSSEC |
+| `mesh` | Mesh networking, DHT, Raft |
+| `socket-handoff` | Socket transfer between processes |
+| `wireguard` | WireGuard VPN |
+| `icmp-filter` | ICMP filtering |
+| `flood-ebpf` | eBPF flood protection |
+| `post-quantum` | Post-quantum TLS |
+| `pqc-mesh` | Post-quantum mesh signatures (ML-DSA-44) |
+| `macos-sandbox` | macOS sandbox enforcement |
+| `erased_pool` | Type-erased connection pool |
+| `rkyv` | Rkyv serialization |
 
 ---
 

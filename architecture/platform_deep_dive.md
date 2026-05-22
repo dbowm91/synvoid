@@ -1,0 +1,302 @@
+# Platform & Process Deep Dive
+
+## Overview
+
+This document covers the platform abstraction layer, IPC primitives, and process supervision architecture.
+
+---
+
+## 1. Platform Module (`src/platform/`)
+
+### Purpose
+
+Cross-platform abstractions providing OS-level functionality for Unix and Windows systems, including IPC transport, sandboxing, process control, and socket management.
+
+### Key Files
+
+| File | Responsibility |
+|------|----------------|
+| `mod.rs` | Platform enum detection, capability queries, exports |
+| `ipc.rs` | Traits for IPC transport abstraction (`IpcTransport`, `IpcListener`, `IpcStream`) |
+| `sandbox.rs` | Multi-backend sandboxing (Landlock, Capsicum, Pledge, Seatbelt, Job Objects) |
+| `socket.rs` | Socket creation, FD passing, owned socket wrappers |
+| `process.rs` | Process control traits, signal handling |
+| `unix.rs` | Unix-specific implementations (UnixDomain sockets, signals, daemonization) |
+| `windows_impl.rs` | Windows-specific IPC via named pipes |
+
+### Platform Abstraction Pattern
+
+```rust
+// Capability detection via Platform enum
+pub enum Platform {
+    Linux, LinuxMusl, Macos, FreeBSD, OpenBSD, NetBSD, Windows, Unknown
+}
+
+// Feature gates via boolean queries
+platform().supports_socket_fd_passing()  // Unix only
+platform().supports_signals()            // Unix only
+platform().supports_sandbox()            // Linux/FreeBSD/OpenBSD only
+platform().supports_reuse_port()         // Linux/Macos/FreeBSD
+```
+
+### Key Traits
+
+| Trait | Purpose |
+|-------|---------|
+| `IpcTransport` | Send/recv/close semantics for byte streams |
+| `IpcListener` | Binding and accepting connections |
+| `IpcStream` | Client-side connect with peer PID detection |
+| `ProcessControl` | Signal sending, daemonization |
+| `SignalHandler` | Async signal registration |
+| `SocketHandle` | TCP listener/stream conversion |
+| `SocketFDPassing` | SCM_Rights-based FD passing over Unix sockets |
+| `SandboxBackend` | Filesystem restrictions, syscall filtering |
+
+### Sandbox Backends
+
+| Platform | Backend | Key Capabilities |
+|---------|---------|------------------|
+| Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
+| FreeBSD | **Capsicum** | FD rights limiting, process limits |
+| OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
+| macOS | **Seatbelt** | Sandboxed profile compilation (requires `macos-sandbox` feature) |
+| Windows | **Job Objects + DACL** | Process memory limits, file security descriptors |
+
+---
+
+## 2. Process Module (`src/process/`)
+
+### Purpose
+
+IPC primitives, process management, socket FD passing, message framing, worker lifecycle, and signed communication.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `ipc.rs` | Message enum (60+ variants), `IpcStream` sync wrapper, validation |
+| `ipc_framing.rs` | Length-prefixed message framing (4-byte BE length header) |
+| `ipc_signed.rs` | HMAC-SHA3-256 signing, nonce replay protection, timestamp validation |
+| `ipc_transport.rs` | Async IPC transport (`IpcStream`, `IpcListener`, `IpcEndpoint`) |
+| `ipc_pool.rs` | Connection pooling per endpoint with statistics |
+| `ipc_rate_limit.rs` | Token bucket rate limiting (global + per-worker) |
+| `socket_fd.rs` | Unix FD passing via `SCM_Rights`, `SocketHolder` for batch handoff |
+| `manager.rs` | `ProcessManager` - spawn/monitor/restart workers |
+| `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
+| `pidfile.rs` | PID file management, overseer lock file |
+| `command.rs` | Command client/response types |
+
+### Message Types (IPC)
+
+The `Message` enum is organized into **15 categories**:
+
+1. **WorkerLifecycle**: `WorkerStarted`, `WorkerReady`, `WorkerHeartbeat`, `WorkerError`
+2. **MasterCommand**: `MasterShutdown`, `MasterConfigReload`, `MasterHealthCheck`
+3. **StaticWorker**: `StaticWorkerStarted`, `StaticWorkerReady`, `StaticWorkerDrain`
+4. **ThreatIntel**: `ThreatIndicatorAnnounce`, `ThreatSyncRequest/Response`
+5. **BlocklistRules**: `BlocklistUpdate`, `RulePatternsUpdate`
+6. **StaticContent**: `MinifyRequest/Response`, `PoisonImageRequest/Response`
+7. **UnifiedServer**: `UnifiedServerWorkerStarted/Ready/Drain`
+8. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
+9. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
+10. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
+11. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
+12. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
+13. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
+14. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
+15. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
+
+### IPC Framing Protocol
+
+```
+4-byte length (BE) + serialized Message
+MAX_MESSAGE_SIZE: 1 MiB
+```
+
+### Signed IPC
+
+```
+[4-byte length][8-byte timestamp][16-byte nonce][32-byte HMAC][payload]
+```
+
+**Security features**:
+- HMAC-SHA3-256 authentication
+- Timestamp validation (60-second replay window)
+- Nonce deduplication via `DashMap` sharded cache
+- Constant-time HMAC comparison via `subtle::ConstantTimeEq`
+
+### Socket FD Passing (Unix)
+
+- Uses `SCM_Rights` control messages over Unix domain sockets
+- `SocketFDPassing::send_fds()` / `recv_fds()` 
+- `MAX_FDS_PER_MESSAGE`: 254 (Linux kernel limit)
+- `SocketHolder` batches multiple sockets for handoff
+
+---
+
+## 3. Supervisor Module (`src/supervisor/`)
+
+### Purpose
+
+Consolidated supervisor process handling zero-downtime upgrades, IPC communications, and worker orchestration via `ProcessManager`.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `process.rs` | `SupervisorProcess` struct, `run_supervisor_mode()` entry point |
+| `api.rs` | gRPC control plane server (tonic-based) |
+| `state.rs` | `SupervisorState` with trackers |
+| `commands.rs` | Command handling |
+| `mesh.rs` | Mesh agent mode |
+
+### Supervisor Process Architecture
+
+```
+SupervisorProcess
+├── state: SupervisorState
+├── process_manager: Arc<ProcessManager>
+├── event_rx: mpsc::Receiver<ProcessEvent>
+├── running: RunningFlag
+└── ipc_listener: Option<IpcListener>
+```
+
+**Main responsibilities**:
+1. Spawns unified server workers
+2. Maintains IPC listener for worker/command connections
+3. Runs gRPC control API on `localhost` (port 50051 default)
+4. Periodic health checks and zombie reaping (every 5 seconds)
+5. Shared state initialization (connection table, rate limit table)
+
+### gRPC Control Plane API
+
+| RPC | Purpose |
+|-----|---------|
+| `GetStatus` | Worker info, request statistics |
+| `ReloadConfig` | Hot-reload configuration |
+| `Stop` | Graceful shutdown |
+| `BlockIp` | Manual IP block |
+| `UnblockIp` | Manual IP unblock |
+
+**Security note**: gRPC binds to `localhost` only - TLS not required for local IPC.
+
+---
+
+## 4. Startup Module (`src/startup/`)
+
+### Purpose
+
+Bootstrap, daemonization, master/worker startup entry points.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `bootstrap.rs` | Logging initialization, test mode warning |
+| `daemon.rs` | Signal handlers, PID file acquisition, daemonize |
+| `master.rs` | `run_master_mode()`, `run_overseer_mode()`, master event loop |
+| `worker.rs` | Worker argument builders (`build_static_worker_args`, `build_unified_server_worker_args`) |
+| `mod.rs` | `MasterState`, `MasterStateTrackers` shared across processes |
+
+### Startup Flow
+
+```
+run_master_mode()
+├── setup_panic_handler()
+├── ConfigManager::load_main()
+├── Tokio multi-thread runtime
+├── BlockStore initialization
+├── RuleFeedManager (if enabled)
+├── ProcessManager::new()
+├── IpcListener bind
+├── spawn_unified_server_workers()
+├── setup_signal_handlers()
+├── start_health_monitor()
+├── start_admin_server()
+└── event_rx loop
+```
+
+### Critical Architecture Requirements (from `startup/master.rs`)
+
+**Master MUST NOT**:
+- Run UnifiedServer inline for request handling
+- Accept HTTP/TCP/UDP/QUIC/WebSocket requests
+- Handle external network traffic
+
+**Master ONLY**:
+- Runs admin panel API
+- Orchestrates threat intelligence
+- Manages worker processes
+- Handles IPC communications
+
+---
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Supervisor Process                          │
+│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────┐  │
+│  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API   │  │
+│  │  - Config     │  │  - Workers[]   │  │  (localhost:50051)   │  │
+│  │  - BlockStore│  │  - Unified[]   │  │                      │  │
+│  │  - Trackers  │  │  - Static      │  │                      │  │
+│  └──────────────┘  └─────────────────┘  └───────────────────────┘  │
+│         │                    │                      │              │
+│         │         ┌──────────┴──────────┐            │              │
+│         │         │   IPC Listener      │            │              │
+│         │         │ (Unix Domain Socket)│            │              │
+│         │         └─────────────────────┘            │              │
+└─────────┼─────────────────────────────────────────────┼──────────────┘
+          │                                             │
+          │         ┌─────────────────────────────────┘
+          │         │
+    ┌─────▼───────▼──────────────────────────────────┐
+    │               Master Process                      │
+    │  ┌─────────────────┐  ┌──────────────────────┐  │
+    │  │ ProcessManager   │  │ Admin Server         │  │
+    │  │ (shared w/ sup)  │  │ (port from config)   │  │
+    │  └─────────────────┘  └──────────────────────┘  │
+    │           │                                     │
+    └───────────┼─────────────────────────────────────┘
+                │
+    ┌───────────▼───────────────┐
+    │   IPC Socket (signing)     │
+    └───────────▲───────────────┘
+                │
+    ┌───────────┴───────────────┐
+    │   Worker Processes        │
+    │  ┌─────────────────────┐  │
+    │  │ UnifiedServerWorker │  │  (HTTP/HTTPS/HTTP3 + WAF)
+    │  │ (tokio async loop)   │  │
+    │  └─────────────────────┘  │
+    │  ┌─────────────────────┐  │
+    │  │ StaticWorker        │  │  (CSS/JS minification)
+    │  │ (std thread pool)   │  │
+    │  └─────────────────────┘  │
+    └───────────────────────────┘
+```
+
+---
+
+## Key Security Patterns
+
+| Pattern | Implementation |
+|---------|----------------|
+| **IPC Signing** | HMAC-SHA3-256 with nonce + timestamp |
+| **Replay Protection** | Sharded nonce cache (DashMap), 60s window |
+| **Constant-time Compare** | `subtle::ConstantTimeEq` for HMAC |
+| **Key Injection** | Temp file with 0o600 perms, not env var |
+| **Sandboxing** | Landlock/Capsicum/Pledge/Seatbelt per-platform |
+| **Strict Sandbox** | Requires read-path allowlist support |
+| **IPC Rate Limiting** | Token bucket + per-worker isolation |
+| **FD Passing** | Unix-only SCM_Rights, max 254 FDs |
+| **Message Validation** | String length limits, path traversal checks |
+
+---
+
+## Related Documentation
+
+- [Overview](overview.md) - Bird's eye view of SynVoid architecture
+- [Process Lifecycle](process_lifecycle.md) - Detailed process lifecycle
+- [Worker Architecture](worker_architecture.md) - Worker architecture details
