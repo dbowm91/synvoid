@@ -80,6 +80,9 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
+| `src/mesh/dht/quorum.rs:337` | Quorum Manager race condition - Raft write failure leaves fake signature |
+| `src/supervisor/api.rs:114-129` | gRPC server without TLS configuration |
+| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response (not truly streamed) |
 
 ## Modular Agent Guidance
 
@@ -110,7 +113,7 @@ SynVoid uses a multi-process architecture designed for **high scalability (1M+ R
 
 | Process | Flag | Purpose | Default Count |
 |---------|------|---------|---------------|
-| **Overseer** | (default) | Manages master lifecycle, upgrades, health monitoring | 1 |
+| **Supervisor** | (default) | Manages master lifecycle, upgrades, health monitoring; consolidates legacy Overseer and Master | 1 |
 | **Master** | `--master` | Spawns/manages workers, handles IPC, runs admin API | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | Handles HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | 1 |
@@ -165,6 +168,27 @@ Large plans should be organized into **waves** that can execute in parallel:
 |-------------------|-----------------|-------|
 | `src/http/shared_handler.rs` | `src/http/server.rs:4532` | Function is in server.rs, not shared_handler |
 | `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs:860-934` | Quorum verification is in signed.rs, not state_machine |
+
+### Lessons Learned (2026-05-22)
+
+1. **Spin framework IS implemented** - `src/spin/` exists with manifest.rs, runtime.rs, handler.rs, kv_store.rs. Don't remove from docs.
+
+2. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate.
+
+3. **Quorum Manager race** - `src/mesh/dht/quorum.rs:337-381` - Raft write failure leaves fake signature in pending_requests. Requires refactor to proper async pattern.
+
+4. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp.
+
+5. **Traffic Layer Improvements** - 9 new items from `11_traffic_layer_improvements.md`:
+   - TL-1: Global Cache Resource Governor
+   - TL-2: Fast-Path WAF Pre-Screening
+   - TL-3: Unified Host Routing Index
+   - TL-4: Secure-by-Default Cache Whitelisting
+   - TL-5: Worker Liveness Heartbeat
+   - TL-6: Deduplicated Background Revalidation
+   - TL-7: Fragment-Aware Multipart Parsing
+   - TL-8: End-to-End Protocol Mirroring
+   - TL-9: Architectural Pressure Valve
 
 ## Skills Reference
 

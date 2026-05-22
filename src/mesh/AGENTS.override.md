@@ -454,3 +454,42 @@ Wave 15 fixed warnings in mesh/DHT/Raft files:
 - Prefix unused variables with underscore (`_pool`)
 - Add `#[derive(Default)]` with `#[default]` on `DhtRecordStatus`
 - Collapse nested if-else blocks
+
+## Lessons Learned (2026-05-22)
+
+### Quorum Manager Race Condition
+
+`src/mesh/dht/quorum.rs:337-381` - The `start_request` method has a race condition:
+- A fake "raft-leader" signature is pre-injected into `pending_requests` before Raft write completes
+- If Raft write fails, the error is logged but the fake signature remains
+- This can cause phantom quorum approvals when Raft fails
+
+**Fix approach**: Refactor to use callback/future-based pattern instead of pre-injecting signatures. When Raft succeeds, call a completion handler. When it fails, clean up the pending request.
+
+### DHT Ingress Verification Gaps
+
+`src/mesh/dht/signed.rs:42-48` documents unverified paths:
+- DhtSyncRequest (no auth)
+- DhtAntiEntropyRequest (pk unused)
+- DhtRecordPush (no ts)
+- DhtRecordCommit (no envsig)
+- QuorumStoreRequest (no verify)
+- QuorumSignatureResp (no verify)
+
+These L1-L5 identity hierarchy gaps should be addressed in future hardening work.
+
+### Role Validation Code Duplication
+
+`src/mesh/peer_auth.rs:275-347` has duplicate GLOBAL_EDGE validation code:
+- Lines 275-304: First occurrence
+- Lines 318-347: Second occurrence (unreachable dead code since first block returns)
+
+The second block should be removed and the logic extracted to a helper function `validate_global_edge_role()`.
+
+### Session Establishment Error Handling
+
+`src/mesh/ml_kem_key_exchange.rs:143-148` - Session establishment failures are only logged, not returned to caller. The `confirm_key` method may proceed when the session doesn't exist, causing inconsistent state.
+
+### Memory Leak in Pending Membership Changes
+
+`src/mesh/transport.rs:797-875` - The `pending_changes` Vec can grow unboundedly when membership changes fail repeatedly. The `retain()` at line 823 only removes matching entries on error, but line 831-832 re-adds the same change if not leader.
