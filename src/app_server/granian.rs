@@ -488,8 +488,14 @@ impl GranianSupervisor {
 
         tracing::info!("Installing Granian in virtual environment...");
 
+        let mut args = vec!["-m".to_string(), "pip".to_string(), "install".to_string()];
+        if self.config.require_hashes {
+            args.push("--require-hashes".to_string());
+        }
+        args.push("granian".to_string());
+
         let install_output = Command::new(python_binary)
-            .args(["-m", "pip", "install", "granian"])
+            .args(&args)
             .output()
             .await
             .map_err(|e| format!("Failed to run pip install: {}", e))?;
@@ -540,14 +546,19 @@ impl GranianSupervisor {
             requirements_path.display()
         );
 
+        let mut args = vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "install".to_string(),
+        ];
+        if self.config.require_hashes {
+            args.push("--require-hashes".to_string());
+        }
+        args.push("-r".to_string());
+        args.push(requirements_path.to_str().unwrap_or("").to_string());
+
         let install_output = Command::new(python_binary)
-            .args([
-                "-m",
-                "pip",
-                "install",
-                "-r",
-                requirements_path.to_str().unwrap_or(""),
-            ])
+            .args(&args)
             .current_dir(working_dir)
             .output()
             .await
