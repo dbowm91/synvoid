@@ -27,3 +27,5 @@ This directory contains detailed documentation for various subsystems.
 | `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
 | `buffer_pool.md` | Sharded mutex buffer pool (replaces TreiberStack with ABA-safe implementation) |
 | `extension_runtime.md` | ExtensionRuntime trait and registry for worker lifecycle management |
+| `quorum_manager_fix.md` | Quorum Manager race condition fix with Raft oneshot completion |
+| `supply_chain_hashes.md` | Supply chain security with pip --require-hashes |
