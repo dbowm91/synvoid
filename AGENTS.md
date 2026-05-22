@@ -171,7 +171,7 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 ### Lessons Learned (2026-05-22)
 
-1. **Spin framework IS implemented** - `src/spin/` exists with manifest.rs, runtime.rs, handler.rs, kv_store.rs. Don't remove from docs.
+1. **Spin framework partially implemented** - `src/spin/` exists with manifest.rs, runtime.rs, handler.rs, kv_store.rs. However, routing integration and component mapping is NOT implemented. Architecture docs claim full Spin support that doesn't exist.
 
 2. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate.
 
@@ -179,16 +179,15 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 4. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp.
 
-5. **Traffic Layer Improvements** - 9 new items from `11_traffic_layer_improvements.md`:
-   - TL-1: Global Cache Resource Governor
-   - TL-2: Fast-Path WAF Pre-Screening
-   - TL-3: Unified Host Routing Index
-   - TL-4: Secure-by-Default Cache Whitelisting
-   - TL-5: Worker Liveness Heartbeat
-   - TL-6: Deduplicated Background Revalidation
-   - TL-7: Fragment-Aware Multipart Parsing
-   - TL-8: End-to-End Protocol Mirroring
-   - TL-9: Architectural Pressure Valve
+5. **Already-implemented items** - Several items in plans appear as "new" but are already implemented:
+   - TL-1 (Global Cache Governor): Already implemented in `src/proxy/governor.rs` with 512MB limit
+   - TL-2 (Fast-Path WAF Pre-Screening): Already implemented in `src/waf/attack_detection/mod.rs:156-225` with `RegexSet` and `is_fast_path_safe()`
+   - TL-4 (SAFE_HEADERS whitelist): Already implemented in `src/proxy/cache.rs:97-126` with 29 headers
+
+6. **Key path corrections**:
+   - `src/http/shared_handler.rs` does NOT contain `collect_body_with_chunk_waf` — it's in `src/http/server.rs:4530-4537`
+   - `src/mesh/raft/state_machine.rs:166-172` does NOT contain quorum verification — it's in `src/mesh/dht/signed.rs:860-934`
+   - `src/config/site/misc.rs:37` is NOT transport config — correct path is `crates/synvoid-config/src/site/misc.rs:37`
 
 ## Skills Reference
 
