@@ -172,30 +172,27 @@ impl HeaderValidator {
         // where the same header appears multiple times in the raw request, but
         // the second occurrence's VALUE is lost. For Content-Length specifically,
         // the RequestSmugglingDetector.check_headers() catches CL+TE conflicts
-        // which is the primary smuggling concern.
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        fn check_duplicate_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
+            for name in headers.keys() {
+                if headers.get_all(name).iter().count() > 1 {
+                    let name_str = name.as_str().to_lowercase();
+                    tracing::warn!(
+                        attack_type = "header_validation",
+                        header = %name_str,
+                        "Duplicate header detected"
+                    );
 
-        for name in headers.keys() {
-            let name_str = name.as_str().to_lowercase();
-            if !seen.insert(name_str.clone()) {
-                tracing::warn!(
-                    attack_type = "header_validation",
-                    header = %name_str,
-                    "Duplicate header detected"
-                );
-
-                let matched = name_str.clone();
-                return Some(AttackDetectionResult {
-                    attack_type: AttackType::RequestSmuggling,
-                    fingerprint: Some("duplicate_header".to_string()),
-                    matched_pattern: Some(matched),
-                    input_location: InputLocation::Header(name_str.into()),
-                });
+                    return Some(AttackDetectionResult {
+                        attack_type: AttackType::RequestSmuggling,
+                        fingerprint: Some("duplicate_header".to_string()),
+                        matched_pattern: Some(name_str.clone()),
+                        input_location: InputLocation::Header(name_str.into()),
+                    });
+                }
             }
-        }
 
-        None
-    }
+            None
+        }
 }
 
 impl Default for HeaderValidator {

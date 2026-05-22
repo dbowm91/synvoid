@@ -190,6 +190,8 @@ impl RequestSanitizer {
                     return None;
                 }
                 return Some(ip);
+            } else {
+                return None;
             }
         }
         None

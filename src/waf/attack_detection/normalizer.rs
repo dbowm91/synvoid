@@ -284,24 +284,21 @@ impl InputNormalizer {
                                 i += 2;
                                 continue;
                             }
-                            '0' => {
-                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
-                                i += 2;
-                                continue;
-                            }
-                            '1'..='7' => {
-                                if i + 3 < chars.len()
-                                    && chars[i + 2].is_ascii_digit()
-                                    && chars[i + 3].is_ascii_digit()
-                                {
-                                    let octal: String = chars[i + 1..=i + 3].iter().collect();
+                            '0'..='7' => {
+                                let mut octal = String::new();
+                                let mut j = i + 1;
+                                while j < chars.len() && j < i + 4 && chars[j] >= '0' && chars[j] <= '7' {
+                                    octal.push(chars[j]);
+                                    j += 1;
+                                }
+                                if !octal.is_empty() {
                                     if let Ok(byte) = u8::from_str_radix(&octal, 8) {
                                         if byte == 0 {
                                             NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                                         } else {
                                             input.push(byte as char);
                                         }
-                                        i += 4;
+                                        i = j;
                                         continue;
                                     }
                                 }
@@ -890,6 +887,13 @@ mod tests {
         let input = "/api/users";
         let result = normalizer.normalize(input);
         assert_eq!(result.as_str(), input);
+        assert_eq!(result.as_ref(), input);
+    }
+}
+_ref(), input);
+    }
+}
+    assert_eq!(result.as_str(), input);
         assert_eq!(result.as_ref(), input);
     }
 }
