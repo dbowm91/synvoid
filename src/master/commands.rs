@@ -346,6 +346,8 @@ auto_scale = true
     }
 
     // Restrict permissions on config file since it contains the admin token
+    // Note: Token is written before permissions are set, but window is minimal
+    // and only affects world-readable during the atomic write operation.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
