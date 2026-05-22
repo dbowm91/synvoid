@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuorumMode {
@@ -303,6 +303,7 @@ impl QuorumRequest {
 
 pub struct QuorumManager {
     pending_requests: Arc<RwLock<HashMap<String, QuorumRequest>>>,
+    pending_raft_requests: Arc<RwLock<HashMap<String, oneshot::Receiver<()>>>>,
     veto_history: Arc<RwLock<HashMap<String, Vec<RejectedClaim>>>>,
     verification_enabled: bool,
     raft_client: Arc<RwLock<Option<Arc<crate::mesh::raft::client::RaftAwareClient>>>>,
@@ -320,6 +321,7 @@ impl QuorumManager {
     pub fn new() -> Self {
         Self {
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            pending_raft_requests: Arc::new(RwLock::new(HashMap::new())),
             veto_history: Arc::new(RwLock::new(HashMap::new())),
             verification_enabled: true,
             raft_client: Arc::new(RwLock::new(None)),
@@ -336,8 +338,7 @@ impl QuorumManager {
 
     pub async fn start_request(&self, request: QuorumRequest) -> String {
         let request_id = request.request_id.clone();
-        
-        // Phase 4: Delegate to Raft if namespace is supported
+
         let parts: Vec<&str> = request.key.splitn(2, ':').collect();
         if parts.len() == 2 {
             if let Some(ns) = crate::mesh::raft::state_machine::Namespace::try_from_str(parts[0]) {
@@ -346,31 +347,27 @@ impl QuorumManager {
                     let key = parts[1].to_string();
                     let value = request.value.clone();
                     let client = raft_client.clone();
-                    
-                    // Spawn Raft write asynchronously to avoid blocking the caller
+                    let request_id_for_spawn = request.request_id.clone();
+
+                    let (tx, rx) = oneshot::channel();
+                    {
+                        let mut pending_raft = self.pending_raft_requests.write().await;
+                        pending_raft.insert(request_id.clone(), rx);
+                    }
+
                     tokio::spawn(async move {
-                        if let Err(e) = client.raft_write(ns, key, value).await {
-                            tracing::error!("Raft delegated write failed for request {}: {}", request_id, e);
+                        let result = client.raft_write(ns, key, value).await;
+                        if let Err(e) = result {
+                            tracing::error!("Raft delegated write failed for request {}: {}", request_id_for_spawn, e);
                         } else {
-                            tracing::info!("Raft delegated write succeeded for request {}", request_id);
+                            tracing::info!("Raft delegated write succeeded for request {}", request_id_for_spawn);
                         }
+                        let _ = tx.send(());
                     });
-                    
-                    // We don't store it in pending_requests because Raft handles the consensus.
-                    // The caller will poll `is_complete` or `into_result`, we need to mock a successful completion.
-                    // Actually, if we return early, `into_result` might not find it and timeout.
-                    // We will inject a pre-approved request.
-                    let mut approved_req = request.clone();
-                    approved_req.signatures.push(QuorumSignature {
-                        node_id: "raft-leader".to_string(),
-                        signature: vec![],
-                        timestamp: safe_unix_timestamp(),
-                        signer_public_key: None,
-                    });
-                    
+
                     let mut pending = self.pending_requests.write().await;
-                    pending.insert(request.request_id.clone(), approved_req);
-                    return request.request_id;
+                    pending.insert(request_id.clone(), request);
+                    return request_id;
                 }
             }
         }
@@ -378,6 +375,15 @@ impl QuorumManager {
         let mut pending = self.pending_requests.write().await;
         pending.insert(request_id.clone(), request);
         request_id
+    }
+
+    pub async fn is_request_complete(&self, request_id: &str) -> bool {
+        let pending_raft = self.pending_raft_requests.read().await;
+        if let Some(rx) = pending_raft.get(request_id) {
+            rx.is_closed()
+        } else {
+            true
+        }
     }
 
     pub async fn get_request(&self, request_id: &str) -> Option<QuorumRequest> {
@@ -439,7 +445,14 @@ impl QuorumManager {
 
     pub async fn complete_request(&self, request_id: &str) -> Option<QuorumRequest> {
         let mut pending = self.pending_requests.write().await;
-        pending.remove(request_id)
+        let result = pending.remove(request_id);
+
+        if result.is_some() {
+            let mut pending_raft = self.pending_raft_requests.write().await;
+            pending_raft.remove(request_id);
+        }
+
+        result
     }
 
     pub async fn verify_rejection(
@@ -484,6 +497,15 @@ impl QuorumManager {
         let now = safe_unix_timestamp();
         let mut pending = self.pending_requests.write().await;
         pending.retain(|_, r| now - r.created_at < max_age_seconds);
+
+        let mut pending_raft = self.pending_raft_requests.write().await;
+        pending_raft.retain(|request_id, rx| {
+            if rx.is_closed() {
+                false
+            } else {
+                pending.contains_key(request_id)
+            }
+        });
 
         let mut history = self.veto_history.write().await;
         for claims in history.values_mut() {
