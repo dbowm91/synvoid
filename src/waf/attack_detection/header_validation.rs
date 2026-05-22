@@ -161,38 +161,26 @@ impl HeaderValidator {
     }
 
     fn check_duplicate_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
-        // PARSER NOTE: http::HeaderMap cannot represent duplicate headers with
-        // different values. Hyper's httparse keeps only the FIRST occurrence of
-        // each header name. If a raw request has:
-        //   Content-Length: 10\r\n
-        //   Content-Length: 5
-        // The HeaderMap will only contain Content-Length: 10.
-        //
-        // This means duplicate header NAME detection in the WAF catches cases
-        // where the same header appears multiple times in the raw request, but
-        // the second occurrence's VALUE is lost. For Content-Length specifically,
-        // the RequestSmugglingDetector.check_headers() catches CL+TE conflicts
-        fn check_duplicate_headers(&self, headers: &http::HeaderMap) -> Option<AttackDetectionResult> {
-            for name in headers.keys() {
-                if headers.get_all(name).iter().count() > 1 {
-                    let name_str = name.as_str().to_lowercase();
-                    tracing::warn!(
-                        attack_type = "header_validation",
-                        header = %name_str,
-                        "Duplicate header detected"
-                    );
+        for name in headers.keys() {
+            if headers.get_all(name).iter().count() > 1 {
+                let name_str = name.as_str().to_lowercase();
+                tracing::warn!(
+                    attack_type = "header_validation",
+                    header = %name_str,
+                    "Duplicate header detected"
+                );
 
-                    return Some(AttackDetectionResult {
-                        attack_type: AttackType::RequestSmuggling,
-                        fingerprint: Some("duplicate_header".to_string()),
-                        matched_pattern: Some(name_str.clone()),
-                        input_location: InputLocation::Header(name_str.into()),
-                    });
-                }
+                return Some(AttackDetectionResult {
+                    attack_type: AttackType::RequestSmuggling,
+                    fingerprint: Some("duplicate_header".to_string()),
+                    matched_pattern: Some(name_str.clone()),
+                    input_location: InputLocation::Header(name_str.into()),
+                });
             }
-
-            None
         }
+
+        None
+    }
 }
 
 impl Default for HeaderValidator {

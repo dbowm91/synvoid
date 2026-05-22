@@ -890,10 +890,3 @@ mod tests {
         assert_eq!(result.as_ref(), input);
     }
 }
-_ref(), input);
-    }
-}
-    assert_eq!(result.as_str(), input);
-        assert_eq!(result.as_ref(), input);
-    }
-}

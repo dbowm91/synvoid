@@ -184,7 +184,10 @@ fastcgi-client = "0.10"
 # Dynamic plugin loading
 libloading = "0.8"
 
-# eBPF support
+# eBPF support (Linux-only - aya uses netlink APIs not available on other platforms)
+aya = { version = "0.13", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", optional = true }
 
 synvoid-utils = { path = "crates/synvoid-utils" }
