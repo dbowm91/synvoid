@@ -203,6 +203,19 @@ pub async fn init_mesh_control_plane(
         mesh_config_arc.clone(),
         record_store.clone(),
     ));
+
+    if let Some(ref rs) = record_store {
+        let qm_lock = rs.quorum_manager();
+        let qm_guard = qm_lock.read();
+        if let Some(qm) = qm_guard.as_ref() {
+            let rc = raft_client.clone();
+            let qm_clone = qm.clone();
+            tokio::spawn(async move {
+                qm_clone.set_raft_client(rc).await;
+            });
+        }
+    }
+
     // threat_intel.set_raft_client(raft_client); // Removed: set_raft_client doesn't exist on ThreatIntelligenceManager
     threat_intel.start_background_tasks();
 

@@ -2,10 +2,13 @@ use memmap2::{MmapMut, MmapOptions};
 use parking_lot::RwLock;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
 pub static GLOBAL_SHARED_CONNECTION_TABLE: LazyLock<RwLock<Option<SharedConnectionTable>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+pub static GLOBAL_SHARED_RATELIMIT_TABLE: LazyLock<RwLock<Option<SharedRateLimitTable>>> =
     LazyLock::new(|| RwLock::new(None));
 
 /// Shared connection table for distributed load balancing with worker liveness.
@@ -126,6 +129,65 @@ impl Clone for SharedConnectionTable {
             mmap: self.mmap.clone(),
             max_workers: self.max_workers,
             max_backends: self.max_backends,
+        }
+    }
+}
+
+/// Shared rate limit table for cross-worker IP rate limiting.
+///
+/// Layout:
+/// - [0..num_slots * 4]: second_counters (AtomicU32)
+/// - [...]: minute_counters (AtomicU32)
+/// - [...]: five_min_counters (AtomicU32)
+/// - [...]: dirty_bits (AtomicU32)
+pub struct SharedRateLimitTable {
+    mmap: Arc<MmapMut>,
+    num_slots: usize,
+}
+
+impl SharedRateLimitTable {
+    pub fn init_global(path: PathBuf, num_slots: usize) -> std::io::Result<()> {
+        let table = Self::new(path, num_slots)?;
+        let mut global = GLOBAL_SHARED_RATELIMIT_TABLE.write();
+        *global = Some(table);
+        Ok(())
+    }
+
+    pub fn get_global() -> Option<SharedRateLimitTable> {
+        GLOBAL_SHARED_RATELIMIT_TABLE.read().as_ref().cloned()
+    }
+
+    pub fn new(path: PathBuf, num_slots: usize) -> std::io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)?;
+
+        let counter_size = num_slots * std::mem::size_of::<AtomicU32>();
+        let dirty_bits_size = (num_slots / 32) * std::mem::size_of::<AtomicU32>();
+        let total_size = (counter_size * 3) + dirty_bits_size;
+
+        file.set_len(total_size as u64)?;
+
+        let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
+
+        Ok(Self {
+            mmap: Arc::new(mmap),
+            num_slots,
+        })
+    }
+
+    pub fn get_mmap(&self) -> Arc<MmapMut> {
+        self.mmap.clone()
+    }
+}
+
+impl Clone for SharedRateLimitTable {
+    fn clone(&self) -> Self {
+        Self {
+            mmap: self.mmap.clone(),
+            num_slots: self.num_slots,
         }
     }
 }

@@ -66,6 +66,15 @@ impl SupervisorProcess {
             tracing::warn!("Failed to initialize shared connection table: {}", e);
         }
 
+        // Initialize Shared Rate Limit Table
+        let ratelimit_shm_path = paths.ratelimit_shm_path();
+        if let Err(e) = crate::upstream::shared_state::SharedRateLimitTable::init_global(
+            ratelimit_shm_path,
+            crate::waf::ratelimit::core::IP_RATE_LIMIT_SLOTS,
+        ) {
+            tracing::warn!("Failed to initialize shared rate limit table: {}", e);
+        }
+
         // Spawn initial unified workers (data plane)
         tracing::info!("Spawning {} unified server workers", config.unified_server_workers);
         if let Err(e) = self.process_manager.spawn_unified_server_workers(config.unified_server_workers) {

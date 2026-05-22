@@ -5,6 +5,7 @@ use crate::utils::ratelimit::{
 use crate::RunningFlag;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 const SHARD_COUNT: usize = 16;
@@ -390,10 +391,31 @@ impl Default for IpRateLimitConfig {
 
 pub const IP_RATE_LIMIT_SLOTS: usize = 65536;
 
+pub enum CounterArray {
+    Local(Box<[AtomicU32]>),
+    Shared {
+        mmap: Arc<memmap2::MmapMut>,
+        offset: usize,
+        len: usize,
+    },
+}
+
+impl CounterArray {
+    pub fn get_slice(&self) -> &[AtomicU32] {
+        match self {
+            CounterArray::Local(b) => b,
+            CounterArray::Shared { mmap, offset, len } => {
+                let ptr = unsafe { mmap.as_ptr().add(*offset) } as *const AtomicU32;
+                unsafe { std::slice::from_raw_parts(ptr, *len) }
+            }
+        }
+    }
+}
+
 pub struct SlottedIpRateLimiter {
-    second_counters: Box<[AtomicU32; IP_RATE_LIMIT_SLOTS]>,
-    minute_counters: Box<[AtomicU32; IP_RATE_LIMIT_SLOTS]>,
-    five_min_counters: Box<[AtomicU32; IP_RATE_LIMIT_SLOTS]>,
+    second_counters: CounterArray,
+    minute_counters: CounterArray,
+    five_min_counters: CounterArray,
 
     config: IpRateLimitConfig,
 
@@ -403,7 +425,7 @@ pub struct SlottedIpRateLimiter {
 
     start_instant: Instant,
 
-    dirty_bits: Vec<AtomicU32>,
+    dirty_bits: CounterArray,
 }
 
 impl SlottedIpRateLimiter {
@@ -412,15 +434,38 @@ impl SlottedIpRateLimiter {
             .map(|_| AtomicU32::new(0))
             .collect();
         Self {
-            second_counters: Box::new([const { AtomicU32::new(0) }; IP_RATE_LIMIT_SLOTS]),
-            minute_counters: Box::new([const { AtomicU32::new(0) }; IP_RATE_LIMIT_SLOTS]),
-            five_min_counters: Box::new([const { AtomicU32::new(0) }; IP_RATE_LIMIT_SLOTS]),
+            second_counters: CounterArray::Local((0..IP_RATE_LIMIT_SLOTS).map(|_| AtomicU32::new(0)).collect::<Vec<_>>().into()),
+            minute_counters: CounterArray::Local((0..IP_RATE_LIMIT_SLOTS).map(|_| AtomicU32::new(0)).collect::<Vec<_>>().into()),
+            five_min_counters: CounterArray::Local((0..IP_RATE_LIMIT_SLOTS).map(|_| AtomicU32::new(0)).collect::<Vec<_>>().into()),
             config,
             current_second: AtomicU64::new(0),
             current_minute: AtomicU64::new(0),
             current_five_min: AtomicU64::new(0),
             start_instant: Instant::now(),
-            dirty_bits,
+            dirty_bits: CounterArray::Local(dirty_bits.into()),
+        }
+    }
+
+    /// Create a SlottedIpRateLimiter that uses shared memory buffers.
+    ///
+    /// The buffers must have at least IP_RATE_LIMIT_SLOTS length (dirty_bits: IP_RATE_LIMIT_SLOTS / 32).
+    pub fn new_shared(
+        config: IpRateLimitConfig,
+        mmap: Arc<memmap2::MmapMut>,
+    ) -> Self {
+        let num_slots = IP_RATE_LIMIT_SLOTS;
+        let c_size = num_slots * std::mem::size_of::<AtomicU32>();
+        
+        Self {
+            second_counters: CounterArray::Shared { mmap: mmap.clone(), offset: 0, len: num_slots },
+            minute_counters: CounterArray::Shared { mmap: mmap.clone(), offset: c_size, len: num_slots },
+            five_min_counters: CounterArray::Shared { mmap: mmap.clone(), offset: c_size * 2, len: num_slots },
+            config,
+            current_second: AtomicU64::new(0),
+            current_minute: AtomicU64::new(0),
+            current_five_min: AtomicU64::new(0),
+            start_instant: Instant::now(),
+            dirty_bits: CounterArray::Shared { mmap, offset: c_size * 3, len: num_slots / 32 },
         }
     }
 
@@ -432,23 +477,26 @@ impl SlottedIpRateLimiter {
 
         let word_idx = slot / 32;
         let bit_idx = slot % 32;
-        self.dirty_bits[word_idx].fetch_or(1u32 << bit_idx, Ordering::Relaxed);
+        let dirty_slice = self.dirty_bits.get_slice();
+        if word_idx < dirty_slice.len() {
+            dirty_slice[word_idx].fetch_or(1u32 << bit_idx, Ordering::Relaxed);
+        }
 
-        let second_count = self.second_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
+        let second_count = self.second_counters.get_slice()[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if second_count > self.config.per_second {
             return RateLimitDecision::Limited {
                 limit_type: "ip_per_second",
             };
         }
 
-        let minute_count = self.minute_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
+        let minute_count = self.minute_counters.get_slice()[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if minute_count > self.config.per_minute {
             return RateLimitDecision::Limited {
                 limit_type: "ip_per_minute",
             };
         }
 
-        let five_min_count = self.five_min_counters[slot].fetch_add(1, Ordering::Relaxed) + 1;
+        let five_min_count = self.five_min_counters.get_slice()[slot].fetch_add(1, Ordering::Relaxed) + 1;
         if five_min_count > self.config.per_5min {
             return RateLimitDecision::Limited {
                 limit_type: "ip_per_5min",
@@ -500,13 +548,14 @@ impl SlottedIpRateLimiter {
     }
 
     pub fn reset_slot(&self, slot: usize) {
-        self.second_counters[slot].store(0, Ordering::Relaxed);
-        self.minute_counters[slot].store(0, Ordering::Relaxed);
-        self.five_min_counters[slot].store(0, Ordering::Relaxed);
+        self.second_counters.get_slice()[slot].store(0, Ordering::Relaxed);
+        self.minute_counters.get_slice()[slot].store(0, Ordering::Relaxed);
+        self.five_min_counters.get_slice()[slot].store(0, Ordering::Relaxed);
     }
 
     pub fn decay_all(&self, factor: u32) {
-        for (word_idx, word) in self.dirty_bits.iter().enumerate() {
+        let dirty_slice = self.dirty_bits.get_slice();
+        for (word_idx, word) in dirty_slice.iter().enumerate() {
             let bits = word.load(Ordering::Relaxed);
             if bits == 0 {
                 continue;
@@ -520,22 +569,22 @@ impl SlottedIpRateLimiter {
                 let slot = base_slot + bit_idx;
                 remaining &= remaining - 1;
 
-                let second = self.second_counters[slot].load(Ordering::Relaxed);
-                let minute = self.minute_counters[slot].load(Ordering::Relaxed);
-                let five_min = self.five_min_counters[slot].load(Ordering::Relaxed);
+                let second = self.second_counters.get_slice()[slot].load(Ordering::Relaxed);
+                let minute = self.minute_counters.get_slice()[slot].load(Ordering::Relaxed);
+                let five_min = self.five_min_counters.get_slice()[slot].load(Ordering::Relaxed);
 
                 if second == 0 && minute == 0 && five_min == 0 {
                     continue;
                 }
 
                 if second > 0 {
-                    self.second_counters[slot].store(second / factor, Ordering::Relaxed);
+                    self.second_counters.get_slice()[slot].store(second / factor, Ordering::Relaxed);
                 }
                 if minute > 0 {
-                    self.minute_counters[slot].store(minute / factor, Ordering::Relaxed);
+                    self.minute_counters.get_slice()[slot].store(minute / factor, Ordering::Relaxed);
                 }
                 if five_min > 0 {
-                    self.five_min_counters[slot].store(five_min / factor, Ordering::Relaxed);
+                    self.five_min_counters.get_slice()[slot].store(five_min / factor, Ordering::Relaxed);
                 }
             }
         }
@@ -571,7 +620,7 @@ impl RateLimitStatsProvider for GlobalRateLimiter {
 impl RateLimitStatsProvider for SlottedIpRateLimiter {
     fn get_stats(&self) -> Option<RateLimitStats> {
         let slot = 0;
-        let current_count = self.second_counters[slot].load(Ordering::Relaxed) as u64;
+        let current_count = self.second_counters.get_slice()[slot].load(Ordering::Relaxed) as u64;
         Some(RateLimitStats {
             current_count,
             limit: self.config.per_second as u64,
