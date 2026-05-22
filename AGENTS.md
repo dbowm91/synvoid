@@ -80,9 +80,9 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
-| `src/mesh/dht/quorum.rs:337` | Quorum Manager race condition - Raft write failure leaves fake signature |
-| `src/supervisor/api.rs:114-129` | gRPC server without TLS configuration |
-| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response (not truly streamed) |
+| `src/mesh/dht/quorum.rs:337` | Quorum Manager race condition - FIXED: Uses oneshot channel for Raft completion notification |
+| `src/supervisor/api.rs:114-129` | gRPC server binds to localhost only for local IPC - TLS not required |
+| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
 
 ## Modular Agent Guidance
 

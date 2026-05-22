@@ -71,7 +71,17 @@ All DHT records are validated against future timestamps using `validate_record_t
 
 ### DHT Ingress Verification (W14)
 
-`DhtRecord.verify_for_ingress()` provides centralized verification for all DHT record ingress paths:
+`DhtRecord.verify_for_ingress()` provides centralized verification for all DHT record ingress paths. However, not all ingress paths use it:
+
+**Known Gaps** (documented at `signed.rs:42-48`):
+- `DhtSyncRequest`: node_id in message is not validated against peer_id/TLS cert
+- `DhtAntiEntropyRequest`: signer_public_key present but not used for verification
+- `DhtRecordPush`: timestamp ignored, lacks envelope signature
+- `DhtRecordCommit`: has timestamp but lacks envelope signature validation
+- `QuorumStoreRequest`: no verification performed
+- `QuorumSignatureResp`: no verification performed
+
+These gaps require future architectural work to bind source_node_id to TLS/cert identity layer.
 
 ```rust
 // Context types
@@ -102,7 +112,7 @@ DHT quorum supports two modes via `QuorumMode`:
 - **Regional**: Selects closest N global nodes by latency, computes quorum from that subset only.
 
 Key files:
-- `src/mesh/dht/quorum.rs` — `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo`
+- `src/mesh/dht/quorum.rs` — `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo`, `QuorumManager` with Raft write completion via oneshot channel
 - `src/mesh/dht/record_store.rs` — `RecordStoreConfig` fields: `regional_quorum_enabled`, `regional_quorum_max_nodes`, `regional_quorum_min_nodes`
 - `src/mesh/dht/record_store_message.rs` — `start_quorum_request()` uses regional mode when enabled
 
