@@ -20,14 +20,9 @@ SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant re
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Overseer (Optional)                             │
-│         Upgrade coordination, health monitoring, rollback                   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Supervisor (Control Plane)                       │
 │  Process management, gRPC API, Raft consensus, DHT routing, config loading  │
+│  (Consolidated from legacy Overseer + Master hierarchy)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                     ┌───────────────┼───────────────┐
@@ -58,11 +53,17 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 
 | Process | Binary Flag | Purpose | Count |
 |---------|-------------|---------|-------|
-| **Overseer** | (default) | Master lifecycle, upgrades, health monitoring | 1 |
-| **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane | 1 |
-| **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
+| **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane, zero-downtime upgrades | 1 |
+| **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | N |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | N |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination | N |
+
+### Legacy Overseer (Deprecated)
+
+The legacy **Overseer** process (`src/overseer/`) has been **deprecated** and replaced by the Supervisor. The Overseer module remains in the codebase for backward compatibility but is not invoked in the current execution path.
+
+- **Old model:** Overseer → Master → Worker
+- **Current model:** Supervisor → Worker (consolidated)
 
 **Note:** The UnifiedServerWorker uses a single Tokio runtime with `worker_threads` equal to CPU cores. Adding more worker processes does NOT increase throughput—it only adds process isolation overhead.
 
@@ -70,7 +71,7 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 
 | Document | Description |
 |----------|-------------|
-| [Process Lifecycle](process_lifecycle.md) | Supervisor-coordinator-worker hierarchy, zero-downtime upgrades |
+| [Process Lifecycle](process_lifecycle.md) | Supervisor-Worker hierarchy, zero-downtime upgrades |
 | [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
 
 ---

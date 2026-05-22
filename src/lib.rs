@@ -1,8 +1,7 @@
 //! # SynVoid — Multi-Process Web Application Firewall
 //!
 //! SynVoid is a high-performance WAF with a multi-process architecture:
-//! - **Overseer**: Manages master process lifecycle, upgrades, health monitoring
-//! - **Master**: Parent process that spawns/manages workers, handles IPC
+//! - **Supervisor**: Single control plane process (consolidated from legacy Overseer+Master)
 //! - **Worker**: Handles HTTP requests via Unix domain sockets
 //!
 //! ## Key Modules
@@ -11,6 +10,7 @@
 //! - [`proxy`] — Reverse proxy and request forwarding
 //! - [`config`] — Configuration loading and validation
 //! - [`process`] — IPC communication and process management
+//! - [`supervisor`] — Process supervision and worker orchestration
 //! - [`mesh`] — Mesh networking and DHT-based peer discovery
 //! - [`tls`] — TLS termination, ACME certificate management
 //! - [`dns`] — DNS server with DNSSEC support (feature-gated)
