@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
-use crate::tunnel::tun::{is_tun_available, TunInterface};
+use crate::tunnel::tun::{is_tun_available, TunConfig, TunInterface};
 #[cfg(feature = "tun-rs")]
 use crate::tunnel::tun::{TunReader, TunWriter};
 use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};

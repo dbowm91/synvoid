@@ -10,6 +10,8 @@
 
 use std::result::Result;
 
+pub use rand_core_06;
+
 pub use super::dnssec_key_mgmt::DnsSecKeyManager;
 pub use super::dnssec_signing::{
     base32_encode, create_nsec3_owner_name, create_nsec3_record, create_nsec3param_record,
