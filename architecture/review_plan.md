@@ -1,155 +1,62 @@
 # Architecture Review Plan
 
-**Created**: 2026-05-22
-**Purpose**: Review SynVoid architecture documentation, verify code claims, identify improvements and bugs.
-**Status**: INCOMPLETE - Wave 1 in progress (fixes being implemented)
+This plan coordinates a comprehensive review of SynVoid architecture documentation, verifying claims against code and identifying improvements.
 
-## Modules
+## Modules and Assignments
 
-The following discrete modules will be reviewed:
-
-| # | Module | Document(s) | Source Path(s) |
-|---|--------|-------------|-----------------|
-| 1 | Process Lifecycle | `process_lifecycle.md` | `src/overseer/`, `src/master/`, `src/process/` |
-| 2 | Worker Architecture | `worker_architecture.md` | `src/worker/`, `src/server/` |
-| 3 | Networking | `networking_deep_dive.md` | `src/listener/`, `src/http/`, `src/http3/` |
-| 4 | Routing | `routing_deep_dive.md` | `src/router/`, `src/upstream/` |
-| 5 | WAF | `waf_deep_dive.md` | `src/waf/`, `src/filter/`, `src/challenge/` |
-| 6 | App Handlers | `app_handlers.md` | `src/static_files/`, `src/php/`, `src/serverless/` |
-| 7 | Mesh | `mesh_deep_dive.md` | `src/mesh/` |
-| 8 | Layer 3.5 | `layer_3_5_deep_dive.md` | Cross-cutting (PQC, trust models) |
-| 9 | Deep Dive Review | `deep_dive_review.md` | Cross-cutting (security analysis) |
-| 10 | Overview | `overview.md` | Meta-document |
+| Module | Documents | Subagent |
+|--------|-----------|----------|
+| **Core/Overview** | `overview.md`, `deep_dive_review.md` | subagent-1 |
+| **HTTP/Proxy** | `proxy_deep_dive.md`, `routing_deep_dive.md`, `app_handlers.md`, `layer_3_5_deep_dive.md` | subagent-2 |
+| **DNS** | `dns_deep_dive.md` | subagent-3 |
+| **Mesh/Networking** | `mesh_deep_dive.md`, `networking_deep_dive.md` | subagent-4 |
+| **Platform** | `platform_deep_dive.md`, `process_lifecycle.md`, `worker_architecture.md` | subagent-5 |
+| **Config/Admin** | `config_deep_dive.md`, `admin_deep_dive.md` | subagent-6 |
+| **WAF** | `waf_deep_dive.md` | subagent-7 |
+| **Plugin** | `plugin_deep_dive.md` | subagent-8 |
 
 ## Review Workflow
 
 Each subagent will:
-1. Read the architecture document(s) for the assigned module
-2. Identify claims and architectural assertions
-3. Verify claims against actual source code
-4. Interrogate code for:
-   - Implementation gaps
-   - Security vulnerabilities
-   - Performance issues
-   - Concurrency bugs
-   - Missing error handling
-   - API/design improvements
-5. Write findings to `plans/{module}_review.md`
+1. Read all documents assigned to their module
+2. Verify architectural claims against actual code implementation
+3. Cross-reference with AGENTS.md for known corrections
+4. Identify discrepancies, bugs, or improvement opportunities
+5. Write a detailed improvement plan to `plans/<module>_review_plan.md`
 
-## Subagent Tasks
+## Output Files
 
-### Subagent 1: Process Lifecycle
-- **Document**: `architecture/process_lifecycle.md`
-- **Output**: `plans/01_process_lifecycle_review.md`
-- **Focus**: Overseer/Master/Worker hierarchy, zero-downtime upgrades, IPC security
-- **Source paths**: `src/overseer/`, `src/master/`, `src/process/`
-
-### Subagent 2: Worker Architecture
-- **Document**: `architecture/worker_architecture.md`
-- **Output**: `plans/02_worker_architecture_review.md`
-- **Focus**: Unified server, listener pools, request flow
-- **Source paths**: `src/worker/`, `src/server/`
-
-### Subagent 3: Networking
-- **Document**: `architecture/networking_deep_dive.md`
-- **Output**: `plans/03_networking_review.md`
-- **Focus**: HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection limiting
-- **Source paths**: `src/listener/`, `src/http/`, `src/http3/`
-
-### Subagent 4: Routing
-- **Document**: `architecture/routing_deep_dive.md`
-- **Output**: `plans/04_routing_review.md`
-- **Focus**: Router, upstream pools, load balancing, health monitoring
-- **Source paths**: `src/router/`, `src/upstream/`
-
-### Subagent 5: WAF
-- **Document**: `architecture/waf_deep_dive.md`
-- **Output**: `plans/05_waf_review.md`
-- **Focus**: WAF pipeline, attack detection, bot mitigation, challenges
-- **Source paths**: `src/waf/`, `src/filter/`, `src/challenge/`
-
-### Subagent 6: App Handlers
-- **Document**: `architecture/app_handlers.md`
-- **Output**: `plans/06_app_handlers_review.md`
-- **Focus**: Static files, FastCGI/PHP-FPM, Python (Granian), WASM, Spin
-- **Source paths**: `src/static_files/`, `src/php/`, `src/serverless/`, `src/app_server/`
-
-### Subagent 7: Mesh
-- **Document**: `architecture/mesh_deep_dive.md`
-- **Output**: `plans/07_mesh_review.md`
-- **Focus**: DHT, QUIC transport, threat intelligence, P2P networking
-- **Source paths**: `src/mesh/`
-
-### Subagent 8: Layer 3.5
-- **Document**: `architecture/layer_3_5_deep_dive.md`
-- **Output**: `plans/08_layer_3_5_review.md`
-- **Focus**: PQC implementation, hybrid signatures, ML-KEM, cross-cutting concerns
-- **Source paths**: Cross-cutting (verify in `src/mesh/`, `src/crypto/`)
-
-### Subagent 9: Deep Dive Review
-- **Document**: `architecture/deep_dive_review.md`
-- **Output**: `plans/09_deep_dive_review.md`
-- **Focus**: Security analysis, threat models, cross-cutting architectural concerns
-- **Source paths**: Cross-cutting
-
-### Subagent 10: Overview (Meta)
-- **Document**: `architecture/overview.md`
-- **Output**: `plans/10_overview_review.md`
-- **Focus**: Document consistency, cross-references, completeness
-- **Source paths**: All modules
-
-## Execution Order
-
-**Wave 1** (Modules 1-7, can run in parallel):
-- Subagent 1: Process Lifecycle
-- Subagent 2: Worker Architecture
-- Subagent 3: Networking
-- Subagent 4: Routing
-- Subagent 5: WAF
-- Subagent 6: App Handlers
-- Subagent 7: Mesh
-
-**Wave 2** (Modules 8-10, depends on Wave 1 completion):
-- Subagent 8: Layer 3.5
-- Subagent 9: Deep Dive Review
-- Subagent 10: Overview
-
-## Review Criteria
-
-Each subagent will evaluate:
-1. **Accuracy**: Do the documents match the implementation?
-2. **Completeness**: Are all features documented?
-3. **Correctness**: Are the architectural decisions sound?
-4. **Security**: Are there security concerns not addressed?
-5. **Performance**: Are there performance implications?
-6. **Maintainability**: Is the code well-structured for long-term maintenance?
-
-## Output Format
-
-Each review plan will contain:
-- **Verified Claims**: What the documentation says that is confirmed in code
-- **Unverified Claims**: Claims that need verification or are uncertain
-- **Implementation Gaps**: Features documented but not fully implemented
-- **Code Improvements**: Refactoring suggestions
-- **Bug Report**: Any bugs discovered
-- **Security Concerns**: Potential security issues
-- **Missing Documentation**: Important implementation details not documented
+Each subagent writes to `plans/<module>_review_plan.md`:
+- `plans/core_overview_review_plan.md`
+- `plans/http_proxy_review_plan.md`
+- `plans/dns_review_plan.md`
+- `plans/mesh_networking_review_plan.md`
+- `plans/platform_review_plan.md`
+- `plans/config_admin_review_plan.md`
+- `plans/waf_review_plan.md`
+- `plans/plugin_review_plan.md`
 
 ## Verification Commands
 
 ```bash
-# Core profile check
+cargo test --lib --no-run    # Verify tests compile
 cargo check --no-default-features
-
-# Mesh profile check
 cargo check --no-default-features --features mesh
-
-# Full profile check
+cargo check --no-default-features --features dns
 cargo check --no-default-features --features mesh,dns
-
-# Format and lint
 cargo fmt && cargo clippy --lib -- -D warnings
-
-# Run all lib tests (compile check)
-cargo test --lib --no-run
 ```
+
+## Key Reference Documents
+
+- `AGENTS.md` - Known file path corrections and architectural notes
+- `src/mesh/AGENTS.override.md` - Mesh subsystem guidance
+- `src/dns/AGENTS.override.md` - DNS subsystem guidance
+- `src/waf/AGENTS.override.md` - WAF subsystem guidance
+- `src/http/AGENTS.override.md` - HTTP server guidance
+- `src/http_client/AGENTS.override.md` - HTTP client guidance
+- `src/proxy/AGENTS.override.md` - Proxy routing guidance
+- `src/config/AGENTS.override.md` - Config subsystem guidance
+- `src/admin/AGENTS.override.md` - Admin API guidance
+- `src/auth/AGENTS.override.md` - Auth subsystem guidance
+- `src/platform/AGENTS.override.md` - Platform abstraction guidance
