@@ -1,91 +1,97 @@
 # Quorum Manager Race Condition Fix
 
-## Problem
+## Problem (FIXED 2026-05-22)
 
 The `QuorumManager::start_request()` method had a race condition when delegating writes to Raft:
 
 ```rust
-// OLD CODE (race condition)
+// OLD CODE (buggy - always sends unit regardless of result)
+let (tx, rx) = oneshot::channel();
 tokio::spawn(async move {
-    if let Err(e) = client.raft_write(ns, key, value).await {
-        tracing::error!("Raft delegated write failed...");
-    }
-});
-
-// Pre-inject fake signature - race condition!
-let mut approved_req = request.clone();
-approved_req.signatures.push(QuorumSignature {
-    node_id: "raft-leader".to_string(),
-    signature: vec![],
-    timestamp: safe_unix_timestamp(),
-    signer_public_key: None,
+    let result = client.raft_write(ns, key, value).await;
+    // ... log result ...
+    let _ = tx.send(()); // Always sends unit - doesn't indicate success/failure!
 });
 ```
 
-If the Raft write failed silently, the request would appear complete with a fake signature.
+When Raft write failed, `tx.send(())` still fired, causing `is_request_complete()` to return `true` (via `rx.is_closed()`), making the system think the request succeeded when it actually failed.
 
-## Solution
+## Solution Implemented
 
-Use proper async pattern with oneshot channel:
+Use `Result` through the oneshot channel to track actual success/failure:
 
 ```rust
-pub struct QuorumManager {
-    pending_requests: Arc<RwLock<HashMap<String, QuorumRequest>>>,
-    pending_raft_requests: Arc<RwLock<HashMap<String, oneshot::Receiver<()>>>>, // NEW
-    veto_history: Arc<RwLock<HashMap<String, Vec<RejectedClaim>>>>,
-    verification_enabled: bool,
-    raft_client: Arc<RwLock<Option<Arc<RaftAwareClient>>>>,
+pub struct QuorumRequest {
+    // ... existing fields ...
+    pub raft_write_completed: bool,
+    pub raft_write_success: bool,
 }
 ```
 
 ### Key Changes
 
-1. **Store pending RAFT requests with oneshot::Receiver**:
+1. **Channel sends Result instead of unit**:
    ```rust
-   let (tx, rx) = oneshot::channel();
-   {
-       let mut pending_raft = self.pending_raft_requests.write().await;
-       pending_raft.insert(request_id.clone(), rx);
-   }
-   ```
-
-2. **Notify via channel when Raft completes**:
-   ```rust
+   let (tx, rx) = oneshot::channel::<Result<(), RaftAwareClientError>>();
    tokio::spawn(async move {
        let result = client.raft_write(ns, key, value).await;
-       // ... log result ...
-       let _ = tx.send(()); // Notify completion
+       match result {
+           Ok(_) => {
+               tracing::info!("Raft delegated write succeeded...");
+               let _ = tx.send(Ok(()));
+           }
+           Err(e) => {
+               tracing::error!("Raft delegated write failed...");
+               let _ = tx.send(Err(e));
+           }
+       }
    });
    ```
 
-3. **New helper method to check completion**:
+2. **`is_request_complete()` now checks actual result**:
    ```rust
    pub async fn is_request_complete(&self, request_id: &str) -> bool {
-       let pending_raft = self.pending_raft_requests.read().await;
-       if let Some(rx) = pending_raft.get(request_id) {
-           rx.is_closed()
+       let mut pending_raft = self.pending_raft_requests.write().await;
+       if let Some(rx) = pending_raft.get_mut(request_id) {
+           if let Ok(result) = rx.try_recv() {
+               let success = result.is_ok();
+               drop(rx);
+               pending_raft.remove(request_id);
+               let mut pending = self.pending_requests.write().await;
+               if let Some(req) = pending.get_mut(request_id) {
+                   req.raft_write_completed = true;
+                   req.raft_write_success = success;
+               }
+               return true;
+           }
+           false
        } else {
            true
        }
    }
    ```
 
-4. **Cleanup properly removes raft requests**:
+3. **`check_quorum_completion()` treats failed Raft writes as timeout**:
    ```rust
-   pub async fn complete_request(&self, request_id: &str) -> Option<QuorumRequest> {
-       let mut pending = self.pending_requests.write().await;
-       let result = pending.remove(request_id);
-       if result.is_some() {
-           let mut pending_raft = self.pending_raft_requests.write().await;
-           pending_raft.remove(request_id);
+   if request.threshold_met(total) {
+       // ... rejections check ...
+       
+       if request.raft_write_completed && !request.raft_write_success {
+           tracing::warn!(
+               "Quorum request {} has successful DHT threshold but failed Raft write - treating as timeout",
+               request_id
+           );
+           return Some(QuorumResult::Timeout { ... });
        }
-       result
+       
+       return Some(QuorumResult::Approved(...));
    }
    ```
 
 ## Files Modified
 
-- `src/mesh/dht/quorum.rs` — Added `pending_raft_requests`, `is_request_complete()`, proper cleanup
+- `src/mesh/dht/quorum.rs` — Changed oneshot to send `Result`, added `raft_write_completed`/`raft_write_success` fields to `QuorumRequest`, updated `is_request_complete()`
+- `src/mesh/dht/record_store_message.rs:1319-1345` — `check_quorum_completion()` now checks for Raft write failure
 
 ## Testing
 

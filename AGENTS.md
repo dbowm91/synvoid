@@ -80,7 +80,8 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
-| `src/mesh/dht/quorum.rs:337` | Quorum Manager race condition - FIXED: Uses oneshot channel for Raft completion notification |
+| `src/mesh/dht/quorum.rs:339-386` | Quorum Manager race condition - ✅ FIXED: Uses oneshot channel with Result tracking |
+| `src/mesh/dht/record_store_message.rs:1319-1345` | check_quorum_completion treats failed Raft writes as timeout - MESH-11 ✅ FIXED |
 | `src/supervisor/api.rs:114-129` | gRPC server binds to localhost only for local IPC - TLS not required |
 | `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
 
@@ -173,11 +174,11 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 1. **Spin framework partially implemented** - `src/spin/` exists with manifest.rs, runtime.rs, handler.rs, kv_store.rs. However, routing integration and component mapping is NOT implemented. Architecture docs claim full Spin support that doesn't exist.
 
-2. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate.
+2. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate. This is intentional for localhost IPC - not a bug.
 
-3. **Quorum Manager race** - `src/mesh/dht/quorum.rs:337-381` - Raft write failure leaves fake signature in pending_requests. Requires refactor to proper async pattern.
+3. **Quorum Manager race** - ✅ FIXED (2026-05-22): `src/mesh/dht/quorum.rs:339-386` - Raft write now sends actual Result through oneshot channel. `check_quorum_completion` at `record_store_message.rs:1319-1345` treats failed Raft writes as timeout.
 
-4. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp.
+4. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp. Known architectural limitation.
 
 5. **Already-implemented items** - Several items in plans appear as "new" but are already implemented:
    - TL-1 (Global Cache Governor): Already implemented in `src/proxy/governor.rs` with 512MB limit
@@ -188,6 +189,10 @@ Large plans should be organized into **waves** that can execute in parallel:
    - `src/http/shared_handler.rs` does NOT contain `collect_body_with_chunk_waf` — it's in `src/http/server.rs:4530-4537`
    - `src/mesh/raft/state_machine.rs:166-172` does NOT contain quorum verification — it's in `src/mesh/dht/signed.rs:860-934`
    - `src/config/site/misc.rs:37` is NOT transport config — correct path is `crates/synvoid-config/src/site/misc.rs:37`
+
+7. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig). Missing propagation caused APP-17 (require_hashes) to not work.
+
+8. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code (MESH-16). The second GLOBAL_EDGE block in `peer_auth.rs` was identical to the first and unreachable.
 
 ## Skills Reference
 

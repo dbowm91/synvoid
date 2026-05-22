@@ -1,10 +1,24 @@
 # Knowledge Base: Deferred Items
 
-Implementation plan is complete. Remaining items are documented in `plans/plan.md`.
+Implementation plan remaining items are documented in `plans/plan.md`.
 
-## Current Status (2026-05-04)
+## Current Status (2026-05-22)
 
-All plan items have been verified and completed. The plan file has been pruned to contain only deferred items.
+Wave 6 and Wave 8 have been completed:
+- MESH-11: Quorum Manager race condition ✅ FIXED
+- APP-17: pip install hash verification ✅ FIXED
+- MESH-16: dead code removal ✅ FIXED
+
+## Remaining Deferred Items
+
+| ID | Issue | Reason |
+|----|-------|--------|
+| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete per TODO at `instance.rs:214` |
+| APP-15 | FastCGI Response NOT Truly Streamed | Requires architectural change to async streaming |
+| MESH-14 | No Source Node ID Binding Validation | Fundamental identity model changes needed |
+| DOC-MESH-1 | DHT Ingress Verification Gaps Not Documented | Related to MESH-14 |
+| SUP-1 | gRPC Control Plane TLS | Working As Designed - localhost IPC doesn't need TLS |
+| MESH-17 | Session Establishment Failure Silently Ignored | Working As Designed - session is optional for key offers |
 
 ## Architecture Documents
 
@@ -26,22 +40,13 @@ cargo check --no-default-features --features mesh,dns
 cargo test --test security_regression
 ```
 
-## Completed Items (2026-05-04)
+## Previously Completed Items
 
-The following major items were completed:
-- All 4 implementation waves (W1-W4)
+- All 4 implementation waves (W1-W5) - completed 2026-05-06
 - All architecture profiles compile
 - All security hardening items
 - All buffer pool refactoring
 - All IPC consolidation
 - PID file lock ordering fix
 - Profile compilation fixes (mesh, dns, full)
-
-## Deferred Items
-
-Remaining deferred items are documented in `plans/plan.md` and include:
-- Testing infrastructure (Sandbox Leak Test, Socket Hijack Test)
-- Plugin isolation (GlobalWasmMemoryBudget wiring)
-- Health API integration
-- Config reload improvements
-- DHT routing optimization for 100k+ node scale
+- Wave 6/8 fixes (MESH-11, APP-17, MESH-16) - completed 2026-05-22

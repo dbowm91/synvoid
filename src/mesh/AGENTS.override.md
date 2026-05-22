@@ -467,16 +467,15 @@ Wave 15 fixed warnings in mesh/DHT/Raft files:
 
 ## Lessons Learned (2026-05-22)
 
-### Quorum Manager Race Condition
+### Quorum Manager Race Condition ✅ FIXED
 
-`src/mesh/dht/quorum.rs:337-381` - The `start_request` method has a race condition:
-- A fake "raft-leader" signature is pre-injected into `pending_requests` before Raft write completes
-- If Raft write fails, the error is logged but the fake signature remains
-- This can cause phantom quorum approvals when Raft fails
+`src/mesh/dht/quorum.rs:339-386` - Fixed by:
+- Changed `oneshot::channel()` to `oneshot::channel::<Result<(), RaftAwareClientError>>()`
+- `is_request_complete()` now receives actual result via `try_recv()` and tracks success in `QuorumRequest`
+- Added `raft_write_completed: bool` and `raft_write_success: bool` fields to `QuorumRequest`
+- `check_quorum_completion()` at `record_store_message.rs:1319-1345` now treats successful DHT threshold but failed Raft write as timeout
 
-**Fix approach**: Refactor to use callback/future-based pattern instead of pre-injecting signatures. When Raft succeeds, call a completion handler. When it fails, clean up the pending request.
-
-### DHT Ingress Verification Gaps
+### DHT Ingress Verification Gaps (Deferred - Architectural)
 
 `src/mesh/dht/signed.rs:42-48` documents unverified paths:
 - DhtSyncRequest (no auth)
@@ -486,20 +485,16 @@ Wave 15 fixed warnings in mesh/DHT/Raft files:
 - QuorumStoreRequest (no verify)
 - QuorumSignatureResp (no verify)
 
-These L1-L5 identity hierarchy gaps should be addressed in future hardening work.
+These L1-L5 identity hierarchy gaps require future architectural work. Known limitation.
 
-### Role Validation Code Duplication
+### Role Validation Code Duplication ✅ FIXED
 
-`src/mesh/peer_auth.rs:275-347` has duplicate GLOBAL_EDGE validation code:
-- Lines 275-304: First occurrence
-- Lines 318-347: Second occurrence (unreachable dead code since first block returns)
+`src/mesh/peer_auth.rs:275-304` - Removed duplicate GLOBAL_EDGE block (was lines 318-347). The first block handles this case and returns early, making the second block unreachable dead code.
 
-The second block should be removed and the logic extracted to a helper function `validate_global_edge_role()`.
+### Session Establishment Error Handling (Working As Designed)
 
-### Session Establishment Error Handling
+`src/mesh/ml_kem_key_exchange.rs:143-148` - Session establishment failures are only logged. The offer is created regardless of session state since bidirectional communication is optional for key offers.
 
-`src/mesh/ml_kem_key_exchange.rs:143-148` - Session establishment failures are only logged, not returned to caller. The `confirm_key` method may proceed when the session doesn't exist, causing inconsistent state.
+### Memory Leak in Pending Membership Changes ✅ ALREADY FIXED
 
-### Memory Leak in Pending Membership Changes
-
-`src/mesh/transport.rs:797-875` - The `pending_changes` Vec can grow unboundedly when membership changes fail repeatedly. The `retain()` at line 823 only removes matching entries on error, but line 831-832 re-adds the same change if not leader.
+`src/mesh/transport.rs:797-875` - `pending_membership_changes` Vec is properly managed. `process_pending_membership_changes()` drains via `drain(..)` at line 903. Duplicate entries prevented by `retain()` at lines 823, 831. Already verified in plan review.

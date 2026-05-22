@@ -1,6 +1,6 @@
 # Supply Chain Security: pip install --require-hashes
 
-## Problem
+## Problem (FIXED 2026-05-22)
 
 The Granian app server was installing Python packages without hash verification:
 
@@ -12,27 +12,26 @@ Command::new(python_binary)
 
 This is a supply chain risk - malicious packages could be installed via typosquatting or man-in-the-middle attacks.
 
-## Solution
+## Solution Implemented
 
-Add `require_hashes` config option and pass `--require-hashes` to pip:
+The `require_hashes` field was already present in `AppServerConfig` but was missing from `GranianConfig`, so the `--require-hashes` flag was never passed to pip. Fixed by adding the field to all config layers.
 
-```rust
-// AppServerConfig (src/app_server/mod.rs)
-pub struct AppServerConfig {
-    // ... existing fields ...
-    pub require_hashes: bool,  // NEW
-}
+### Configuration Flow
 
-// Default value is false for backward compatibility
-impl Default for AppServerConfig {
-    fn default() -> Self {
-        Self {
-            // ...
-            require_hashes: false,
-        }
-    }
-}
 ```
+SiteAppServerConfig (site/app_server.rs) - has require_hashes: Option<bool>
+    ↓ app_server_config() conversion
+AppServerConfig (app_server.rs) - has require_hashes: bool
+    ↓ From<&AppServerConfig> conversion
+GranianConfig (granian.rs) - has require_hashes: bool  ← WAS MISSING
+```
+
+### Files Modified
+
+- `crates/synvoid-config/src/site/app_server.rs` — Added `require_hashes: Option<bool>` to `SiteAppServerConfig`
+- `crates/synvoid-config/src/site/mod.rs` — Added `require_hashes` field mapping in `app_server_config()`
+- `src/app_server/mod.rs` — Already had `require_hashes: bool`
+- `src/app_server/granian.rs` — Added `require_hashes: bool` to `GranianConfig` and `From<&AppServerConfig>` impl
 
 ### Usage in granian.rs
 
@@ -67,12 +66,6 @@ let config = AppServerConfig {
     ..Default::default()
 };
 ```
-
-## Files Modified
-
-- `crates/synvoid-config/src/app_server.rs` — Added `require_hashes` field
-- `src/app_server/mod.rs` — Added `require_hashes` field  
-- `src/app_server/granian.rs` — Pass `--require-hashes` when enabled
 
 ## Security Notes
 
