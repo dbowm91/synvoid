@@ -3,6 +3,9 @@ name = "synvoid-utils"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+buffer = []
+
 [dependencies]
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
