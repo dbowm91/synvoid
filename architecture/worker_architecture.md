@@ -24,11 +24,14 @@ The Unified Server is designed to handle multiple protocols and transport layers
 - **`UdpListenerPool`:** Handles UDP packet reception, protocol detection, and forwarding. Includes protection against reflection/amplification attacks.
 
 ### 2. WAF Pipeline
-Every request passing through the Unified Server is processed by the **WAF Pipeline**. This pipeline is modular and executes in stages:
-1.  **Connection Phase:** IP-based rate limiting, CIDR filtering, and flood protection.
-2.  **Protocol Phase:** Validates HTTP methods, headers, and protocol-level constraints.
-3.  **Request Phase:** Deep packet inspection for SQLi, XSS, etc. (using `WafCore` and `AttackDetector`).
-4.  **Bot Detection:** Challenges (JS/CAPTCHA), behavioral analysis, and honeypot matching.
+ Every request passing through the Unified Server is processed by the **WAF Pipeline**. This pipeline is modular and executes in stages (verified order in `WafCore::check_request_full`):
+1.  **Block Store Check:** IP/CIDR block list lookup from threat intelligence.
+2.  **Rate Limits:** IP-based rate limiting, CIDR filtering, and flood protection.
+3.  **Endpoint Block:** Block specific endpoints/paths.
+4.  **Honeypot Detection:** Hidden link matching and trap endpoints.
+5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting.
+6.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
+7.  **Challenge:** Issue challenges (PoW, CSS) if threat level requires.
 
 ### 3. Upstream Management
 - **Connection Pooling:** Maintains persistent connections to backend servers (PHP-FPM, Granian, etc.) to reduce latency.

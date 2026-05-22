@@ -1465,6 +1465,13 @@ pub async fn run_unified_server_worker(
                             Mesh, YARA rules, threat intel, and honeypot changes require full worker restart. \
                             Please restart the worker to apply mesh-related configuration changes."
                         );
+                        let mut ipc = ipc_state.ipc.lock().await;
+                        let _ = ipc.send(&Message::WorkerError {
+                            id: ipc_state.worker_id,
+                            error: "Config hot-reload not supported with mesh feature enabled".to_string(),
+                            severity: crate::process::ErrorSeverity::Warning,
+                            error_code: crate::process::ErrorCode::ConfigLoadFailed,
+                        }).await;
                         continue;
                     }
 
