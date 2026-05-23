@@ -208,7 +208,7 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
         let req = request.into_inner();
 
         let session_id = req.session_id;
-        let _client_mlkem_pubkey_b64 = req.client_mlkem_pubkey;
+        let client_mlkem_pubkey_b64 = req.client_mlkem_pubkey;
 
         if session_id.is_empty() {
             return Err(Status::invalid_argument("session_id is required"));
@@ -216,16 +216,50 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
 
         tracing::debug!("ML-KEM key confirm: session_id={}", session_id);
 
-        if self.session_manager.get(&session_id).is_some() {
-            Ok(Response::new(MlKemKeyConfirmResponse {
-                success: true,
-                error: String::new(),
-            }))
-        } else {
-            Ok(Response::new(MlKemKeyConfirmResponse {
-                success: false,
-                error: "Session not found".to_string(),
-            }))
+        let session = match self.session_manager.get(&session_id) {
+            Some(s) => s,
+            None => {
+                return Ok(Response::new(MlKemKeyConfirmResponse {
+                    success: false,
+                    error: "Session not found".to_string(),
+                }))
+            }
+        };
+
+        let client_mlkem_pubkey_bytes = URL_SAFE_NO_PAD
+            .decode(&client_mlkem_pubkey_b64)
+            .map_err(|_| Status::invalid_argument("Invalid base64 client_mlkem_pubkey"))?;
+
+        if client_mlkem_pubkey_bytes.len() != MlKem768::PUBLIC_KEY_SIZE {
+            return Err(Status::invalid_argument(format!(
+                "Invalid public key size: expected {}, got {}",
+                MlKem768::PUBLIC_KEY_SIZE,
+                client_mlkem_pubkey_bytes.len()
+            )));
         }
+
+        let client_pk = MlKem768PublicKey(client_mlkem_pubkey_bytes);
+        if client_pk.as_ref() != session.peer_public_key.as_ref() {
+            return Ok(Response::new(MlKemKeyConfirmResponse {
+                success: false,
+                error: "Public key mismatch".to_string(),
+            }));
+        }
+
+        let decapsulated_secret = MlKem768::decapsulate(&session.ciphertext, &session.local_secret_key)
+            .map_err(|e| {
+                tracing::warn!("ML-KEM decapsulation failed during confirm: {}", e);
+                Status::internal("Decapsulation failed")
+            })?;
+
+        tracing::debug!(
+            "ML-KEM key confirm verified: session_id={}, shared_secret_present=true",
+            session_id
+        );
+
+        Ok(Response::new(MlKemKeyConfirmResponse {
+            success: true,
+            error: String::new(),
+        }))
     }
 }
