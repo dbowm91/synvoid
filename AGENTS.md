@@ -147,29 +147,29 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
-| BUG-L1 | `src/mesh/ml_dsa.rs:206-218` | `verify_hybrid()` returns `true` when ML-DSA absent, accepting Ed25519-only | Needs Fix |
 | BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:63-164` | ML-KEM key exchange lacks proof of possession verification | Needs Fix |
-| BUG-PROXY-1 | `src/proxy/mod.rs:293-316` | `retry_config` remains `None` when `upstream_pool` is `None` | Needs Fix |
 
 ### Known Implementation Issues
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| `current_depth()` doesn't exist | `src/location_matcher.rs:191-195` | Only `is_empty()` and `len()` exist - documentation error |
-| `allowed_dht_prefixes` hardcoded empty | `src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186` | DHT restrictions not enforced for pooled instances |
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3302` | ErasedHttpClient never used - Phase 9 incomplete |
 | HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false` - infrastructure exists but unused |
-| Spin creates new instance per request | `src/spin/runtime.rs:251` | High cold-start overhead |
-| UpstreamPool no active health checks | `src/upstream/pool.rs` | Only FastCgiPool has `start_health_check()` |
 
 ### Verified "Already Fixed" Items
 
 These items were identified in reviews but have been fixed:
+- LocationMatcher `current_depth()` stub removed (`src/location_matcher.rs:191-195` - only `is_empty()` and `len()` exist; no stub was ever present)
 - Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
 - StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
 - gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
 - CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
 - macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
+- BUG-L1 verify_hybrid() requires ML-DSA (`src/mesh/ml_dsa.rs:217` - returns false when ML-DSA absent)
+- BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
+- allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
+- Spin instance reuse implemented (`src/spin/runtime.rs:118` - compiled_runtimes cache)
+- UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 
 ## Implementation Planning
 

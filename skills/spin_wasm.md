@@ -124,6 +124,24 @@ The runtime uses a supervisor pattern for lifecycle management:
 2. **Health Checks**: Periodic health checks on running instances
 3. **Component Loading**: Manifest-based component loading with route matching
 
+## Instance Reuse (2026-05-23)
+
+`SpinRuntime` caches compiled `WasmRuntime` instances by component_id:
+
+```rust
+pub struct SpinRuntime {
+    pub config: SpinRuntimeConfig,
+    manifest: RwLock<Option<Manifest>>,
+    instances: RwLock<HashMap<String, SpinAppInstance>>,
+    compiled_runtimes: RwLock<HashMap<String, Arc<WasmRuntime>>>,  // Cache compiled WASM modules
+    engine: Engine,
+}
+```
+
+This eliminates the high cold-start overhead of recompiling WASM for every request. The `SpinAppInstance` (per-request state with `last_request`, `request_count`) is still created per request, but the expensive `WasmRuntime` compilation is cached and reused.
+
+Key method: `SpinRuntime::instantiate_app()` checks the cache first before creating a new `WasmRuntime`.
+
 ## Testing
 
 ```bash
