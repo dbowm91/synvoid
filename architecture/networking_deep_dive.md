@@ -15,6 +15,7 @@ SynVoid features native HTTP/3 support via the **Quinn** library.
 - **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections.
 - **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte.
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
+- **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `src/tunnel/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
 ### 3. TCP & UDP Listeners
 Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
