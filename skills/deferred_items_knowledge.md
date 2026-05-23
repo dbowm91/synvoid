@@ -4,21 +4,7 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 
 ## Current Status (2026-05-23)
 
-All implementation waves completed. Remaining items are deferred due to architectural complexity.
-
-## Recently Completed (2026-05-23)
-
-During the 2026-05-23 plan verification, these fixes were completed:
-
-| ID | Fix | Verification |
-|----|-----|--------------|
-| REC-1 | Fast-path patterns expanded from 13 to 38 | `src/waf/attack_detection/mod.rs:156-170` |
-| REC-3 | Block status configurable via `block_status` field | `src/waf/attack_detection/config.rs:181-186` |
-| REC-5 | Request smuggling indicators added to fast_path | Added `transfer-encoding`, `content-length` patterns |
-| DOC-3 | VpnClientBuilder documentation corrected | `architecture/dns_deep_dive.md:222` |
-| DOC-4 | DNS modules added to docs | `hsm.rs`, `cookie.rs`, `update.rs`, `transfer.rs` |
-| ISSUE-5 | Handler count corrected to 28 | Added `behavioral_intel` handler |
-| PLUGIN-3 | verify_caller_permission documented | `src/serverless/manager.rs:145-157` |
+All waves (1-3) completed and merged. Remaining items are deferred due to architectural complexity or are working-as-designed.
 
 ## Deferred Items
 
@@ -30,6 +16,15 @@ During the 2026-05-23 plan verification, these fixes were completed:
 | APP-15 | FastCGI Response NOT Truly Streamed | Known limitation - buffers entire stdout | Deferred - Architectural |
 | SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS | Working As Designed |
 | DOC-MESH-1 | DHT Ingress Verification Gaps Not Documented | Related to MESH-14 | Deferred |
+
+## Known Incomplete Items
+
+These are known limitations, not bugs:
+
+| Item | Location | Issue |
+|------|----------|-------|
+| ErasedHttpClient Phase 9 | `server.rs:3302` | `use_erased_client` hardcoded to `false` |
+| AXFR record types | `transfer.rs:829-878` | Missing SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA |
 
 ## Architecture Documents
 
@@ -50,13 +45,3 @@ cargo check --no-default-features --features mesh,dns
 # Security regression tests
 cargo test --test security_regression
 ```
-
-## Previously Completed Items
-
-- All 6 implementation waves (W1-W6) - completed 2026-05-23
-- All architecture profiles compile
-- All security hardening items
-- All buffer pool refactoring
-- All IPC consolidation
-- PID file lock ordering fix
-- Profile compilation fixes (mesh, dns, full)
