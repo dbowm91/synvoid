@@ -164,7 +164,7 @@ SupervisorProcess
 **Main responsibilities**:
 1. Spawns unified server workers
 2. Maintains IPC listener for worker/command connections
-3. Runs gRPC control API on `localhost` (port 50051 default)
+3. Runs gRPC control API on `127.0.0.1:50051` (default, configurable via `control_api_addr`)
 4. Periodic health checks and zombie reaping (every 5 seconds)
 5. Shared state initialization (connection table, rate limit table)
 
@@ -178,7 +178,7 @@ SupervisorProcess
 | `BlockIp` | Manual IP block |
 | `UnblockIp` | Manual IP unblock |
 
-**Security note**: gRPC binds to `localhost` only - TLS not required for local IPC.
+**Security note**: gRPC binds to `127.0.0.1:50051` only - TLS not required for local IPC.
 
 ---
 
@@ -230,7 +230,7 @@ run_master_mode()
 │                         Supervisor Process                          │
 │  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────┐  │
 │  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API   │  │
-│  │  - Config     │  │  - Workers[]   │  │  (localhost:50051)   │  │
+│  │  - Config     │  │  - Workers[]   │  │  (127.0.0.1:50051)   │  │
 │  │  - BlockStore│  │  - Unified[]   │  │                      │  │
 │  │  - Trackers  │  │  - Static      │  │                      │  │
 │  └──────────────┘  └─────────────────┘  └───────────────────────┘  │

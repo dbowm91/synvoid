@@ -44,7 +44,7 @@ Workers are lightweight, "dumb" request-handling engines that operate in a share
 
 - **Isolation:** Each worker process is completely independent.
 - **Kernel Load Balancing:** Uses `SO_REUSEPORT` to allow the kernel to distribute incoming connections across workers with zero coordination overhead.
-- **CPU Pinning:** On Linux, workers are automatically pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing.
+- **CPU Pinning:** On Linux, workers can be pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing. **Must be explicitly configured via `cpu_affinity` parameter** - not automatic. Not supported on macOS/BSD.
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
 
@@ -65,7 +65,7 @@ SynVoid utilizes a tiered communication strategy:
 The transition to a shared-nothing model ensures that the data plane can scale linearly with the number of CPU cores:
 
 - **No Shared State:** Workers do not share memory or mutexes for request handling.
-- **Independent Listeners:** Each worker opens its own set of listeners using `SO_REUSEPORT`.
+- **Independent Listeners:** Each worker opens its own set of listeners. `SO_REUSEPORT` is used during upgrades to allow kernel distribution across old and new workers, but initial workers use `reuse_port: false`.
 - **Async Efficiency:** Each worker runs a dedicated Tokio runtime optimized for its assigned core.
 
 ---
