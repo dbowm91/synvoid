@@ -12,7 +12,7 @@ The WAF pipeline operates in several distinct phases, from the connection level 
 - **Per-IP Connection Limiting:** `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) tracks connection counts per IP
 - **TokenBucket Rate Limiting:** Precise refill-based rate limiting with global and per-IP isolation (`src/process/ipc_rate_limit.rs:132-141`)
 - **eBPF Integration:** (Linux only, `flood-ebpf` feature) Kernel-level traffic filtering via `src/waf/flood/ebpf_flood.rs`
-- **ASN & GeoIP Blocking:** ASN tracking via `src/waf/asn_tracker.rs` (GeoIP blocking not fully implemented)
+- **ASN-Based Blocking:** ASN tracking via `src/waf/asn_tracker.rs` detects distributed scraping campaigns by monitoring request volume per ASN. Uses GeoIP for IP→ASN lookups (GeoIP country blocking not implemented).
 
 ### 2. Protocol Layer (Request Sanitization)
 - **HTTP Validation:** Ensures requests adhere to protocol standards (method validation, header size limits, URI length).
@@ -29,7 +29,7 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Command Injection:** Detects shell commands and metacharacters.
 - **JWT Validation:** JWT tokens are validated for signature and claims via `src/waf/attack_detection/jwt.rs` (not an attack detector).
 - **XXE Detection:** XML External Entity injection detection via `src/waf/attack_detection/xxe.rs`.
-- **Anomaly Scoring:** Optionally combines multiple low-severity signals to block sophisticated attacks.
+- **Anomaly Scoring:** `ThreatLevelManager` (`src/waf/threat_level/mod.rs`) uses statistical anomaly detection. Collects metrics (requests/minute, attacks/minute, rate-limit hits/minute), calculates baseline during learning period, then uses z-score comparison to determine threat level. Optional SQLite-backed history (`persistence/sqlite.rs`) for long-term analysis.
 
 ### 4. Bot Detection Layer
 - **CSS Honeypot:** Hidden CSS links (`src/challenge/css.rs`) that flag bots visiting trap URLs
@@ -92,6 +92,6 @@ The WAF can take several actions based on its findings:
 
 - **Zero-Copy Inspection:** Minimizes data copying during inspection via `BufferPool` and `PooledBuf` types (`src/waf/attack_detection/streaming.rs`)
 - **Parallel Processing:** Different layers of the WAF execute concurrently where possible via async pipeline (`src/waf/mod.rs:484-512`)
-- **Regex & libinjection:** High-performance pattern matching engines are used for rule evaluation
+- **Regex & libinjection:** High-performance pattern matching engines are used for rule evaluation. The `PatternDetector` trait (`detector_common.rs:264`) provides Aho-Corasick pattern matching used by 11 detectors (XssDetector, SqliDetector, SstiDetector, XxeDetector, XPathInjectionDetector, SsrfDetector, RfiDetector, LdapInjectionDetector, PathTraversalDetector, OpenRedirectDetector, CmdInjectionDetector). The `pattern_detector!` and `url_decode_detector!` macros simplify detector creation.
 - **Streaming WAF:** True streaming attack detection via `StreamingWafCore` for chunked processing and multipart parsing (`src/waf/attack_detection/streaming.rs`)
-- **Distributed Intelligence:** In a Mesh deployment, WAF nodes share blocked IP addresses and threat signatures in real-time, providing collective defense.
+- **Distributed Intelligence:** In a Mesh deployment, WAF nodes share blocked IP addresses and threat signatures via `ThreatIntelligenceManager` (`src/mesh/threat_intel.rs`). Local blocks are announced via `announce_local_block()` and published to DHT. Incoming threats from peers are validated via signature verification and reputation scoring before application.
