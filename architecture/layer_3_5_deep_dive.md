@@ -29,7 +29,7 @@ Yes, the mesh layer (`Layer 5`) is **highly complex** and represents the greates
 *   **Current Architecture:** It uses a custom Kademlia-style DHT (`ShardedRecordStore`) over QUIC for peer discovery, threat intelligence sharing, and dynamic routing, combined with a custom PKI trust chain and PQC handshakes.
 *   **The Issue:** Maintaining state consistency and preventing split-brain scenarios in a high-churn, globally distributed Kademlia DHT is notoriously difficult. Custom cryptographic wrappers over QUIC streams increase the surface area for logic bugs compared to standard mTLS.
 *   **Room for Simplification:**
-    1.  **Separate Control and Data Planes:** Instead of using a flat Kademlia DHT for everything, the Global nodes could run a proven consensus protocol (like `Raft` via the `async-raft` or `openraft` crates) to maintain the single source of truth for routing and threat intel.
+    1.  **Raft Consensus:** Global nodes use Raft consensus (`src/mesh/raft/`) for state consistency. The Raft implementation handles leader election and log replication, though quorum deadlock risks during network partitions remain a known limitation (see MESH-15).
     2.  **Standardize mTLS:** Edge and Origin nodes could simply connect to Global nodes using standard TLS 1.3 mTLS (with PQC enabled) rather than custom KEM handshake protocols over raw QUIC streams.
 
 ## 4. The Trust Model: Genesis to Edge
