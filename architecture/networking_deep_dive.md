@@ -46,6 +46,7 @@ SynVoid is at the forefront of post-quantum security:
 **Feature Flags:**
 - `post-quantum` — Enables TLS hybrid key exchange (ML-KEM)
 - `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA)
+- `verify-pq` — Enables post-quantum key exchange verification for mesh connections
 
 ---
 
