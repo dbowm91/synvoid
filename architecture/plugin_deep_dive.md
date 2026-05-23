@@ -30,7 +30,7 @@ Provides dynamic loading and execution of WASM plugins for request filtering, re
 
 - **`WasmRuntime`** — A single WASM module loaded from file or memory. Contains a `wasmtime::Engine`, compiled `Module`, instance pool, and `Linker` with pre-registered host functions.
 
-- **`WasmResourceLimits`** — Resource constraints per plugin: `max_memory_mb`, `max_table_elements`, `max_cpu_fuel`, `timeout_seconds`, `max_instances`, `wasi_enabled`, `allowed_dht_prefixes`.
+- **`WasmResourceLimits`** — Resource constraints per plugin: `max_memory_mb`, `memory_budget_mb`, `max_table_elements`, `max_cpu_fuel`, `timeout_seconds`, `max_instances`, `wasi_enabled`, `allowed_dht_prefixes`.
 
 - **`RequestContext`** — Per-request store data tracking wall-clock timeout, environment variables, DHT prefixes, memory limits, and optional body receiver for streaming.
 
