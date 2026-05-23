@@ -7,11 +7,33 @@ SynVoid features a multi-layered Web Application Firewall (WAF) pipeline that in
 The WAF pipeline operates in several distinct phases, from the connection level to the application layer.
 
 ### 1. Connection Layer (Flood Protection)
-- **Volumetric Mitigation:** Protects against SYN floods, UDP floods, and connection exhaustion via `FloodProtector` (`src/waf/flood/mod.rs:225-367`)
-- **SYN Flood Protection:** Half-open connection tracking to limit simultaneous incomplete connections
-- **Per-IP Connection Limiting:** `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) tracks connection counts per IP
-- **TokenBucket Rate Limiting:** Precise refill-based rate limiting with global and per-IP isolation (`src/process/ipc_rate_limit.rs:132-141`)
-- **eBPF Integration:** (Linux only, `flood-ebpf` feature) Kernel-level traffic filtering via `src/waf/flood/ebpf_flood.rs`
+
+The `FloodProtector` (`src/waf/flood/mod.rs:225-367`) provides comprehensive flood protection with multiple backends:
+
+#### SYN Flood Protection
+- **Half-open connection tracking:** Tracks incomplete TCP connections via `SynFloodProtector`
+- **Per-IP rate limiting:** Default 50 SYNs/sec per IP, 10,000 SYNs/sec global
+- **eBPF backend (Linux only):** Optional kernel-level tracking when `flood-ebpf` feature is enabled
+- **Userspace backend:** Default fallback using atomic counters
+
+#### Per-IP Connection Limiting
+The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connection limits:
+- **Global connection limit:** Default 20,000 concurrent connections
+- **Per-IP limits:** Default 100 connections per IP
+- **Burst tokens:** IP burst allowance (default 10) enables short-term bursts
+- **Site-level tracking:** Per-site connection counting via `SiteConnectionLimiter`
+- **Queue system:** When limits are hit, connections can queue (default 1000 queue size, 5000ms timeout)
+
+#### TokenBucket Rate Limiting
+The `TokenBucket` (`src/waf/traffic_shaper/bucket.rs`) provides precise rate-based limiting:
+- **Capacity-based refilling:** Tokens refill at configurable rate (bytes/sec)
+- **GlobalTrafficShaper:** Enforces ingress/egress bandwidth limits with burst allowance
+- **SiteTrafficShaper:** Per-site bandwidth limits that can override global settings
+- **AsyncTokenBucket:** Async-compatible version for request processing
+
+#### Volumetric Mitigation
+- **UDP Flood Protection:** `UdpFloodProtector` with per-IP (1000/sec) and global (100,000/sec) limits
+- **Blackhole mode:** When attack detected, enters blackhole for configurable duration (default 60s)
 - **ASN & GeoIP Blocking:** ASN tracking via `src/waf/asn_tracker.rs` (GeoIP blocking not fully implemented)
 
 ### 2. Protocol Layer (Request Sanitization)
@@ -32,16 +54,31 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Anomaly Scoring:** Optionally combines multiple low-severity signals to block sophisticated attacks.
 
 ### 4. Bot Detection Layer
-- **CSS Honeypot:** Hidden CSS links (`src/challenge/css.rs`) that flag bots visiting trap URLs
-- **JS Challenge:** Browser verification via JavaScript execution (`src/challenge/js.rs`)
-- **CAPTCHA:** Integration for intrusive verification when needed
-- **Proof of Work (PoW):** Computational puzzle to slow automated tools (`src/wasm_pow/`)
-- **Honeypots:** Hidden CSS links and trap endpoints that only bots will follow.
-- **Challenges:**
-  - **JS Challenge:** Requires the client to execute a simple JavaScript snippet to prove it's a browser.
-  - **CAPTCHA:** Integration for more intrusive verification when needed.
-  - **Proof of Work (PoW):** Requires the client to solve a computational puzzle, effective against high-volume automated tools.
-- **Behavioral Analysis:** (Mesh mode only) Analyzes request timing, sequence entropy, and entropy to identify non-human traffic patterns.
+
+Bot detection uses multiple techniques to distinguish real browsers from automated tools:
+
+#### CSS Challenge (Honeypot)
+The `CssManager` (`src/challenge/css.rs`) generates CSS-based challenges:
+- **Valid CSS rules:** Use `@media (min-aspect-ratio: X/Y) and (max-aspect-ratio: X/Y)` with realistic aspect ratio ranges. Real browsers will match at least one rule and request the associated asset.
+- **Invalid CSS rules:** Use impossible aspect ratios (negative or zero denominators). Only bots that don't parse CSS correctly will request these assets.
+- **Flow:** Challenge page → Browser matches valid rule → Requests `/rnd-<name>.png` → Session verified → Cookie set
+- **Bots that follow invalid links** are blocked immediately
+
+#### HTTP Honeypot Traps
+The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs:
+- **Trap paths:** Random URLs under `/_waf_hp_<random>` that are hidden from real users
+- **Hidden links:** HTML links with `display:none;visibility:hidden;opacity:0;position:absolute;left:-9999px;width:0;height:0` — invisible to humans but crawlable by bots
+- **Per-IP tracking:** Each IP gets unique trap paths that expire after TTL
+- **Hit detection:** Bots visiting trap URLs are immediately flagged
+
+#### JS Challenge
+Browser verification via JavaScript execution (`src/challenge/js.rs`). Client must execute JavaScript to prove browser identity.
+
+#### Proof of Work (PoW)
+Computational puzzle requiring client to solve a computational challenge (`src/wasm_pow/`), effective against high-volume automated tools.
+
+#### Behavioral Analysis
+(Mesh mode only) Analyzes request timing, sequence entropy, and request patterns to identify non-human traffic.
 
 ### 5. Streaming WAF (Chunked Processing)
 
