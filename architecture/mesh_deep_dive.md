@@ -27,7 +27,7 @@ SynVoid Mesh is designed for future-proof security, utilizing hybrid key exchang
 ### 3. Distributed Discovery (DHT)
 Peer and service discovery are handled via a Kademlia-based **Distributed Hash Table (DHT)**.
 - **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT.
-- **Hierarchical Routing:** Uses Bloom filters and regional hubs to minimize discovery latency in large-scale networks.
+- **Hierarchical Routing:** Uses Bloom filters and regional hubs to enable memory-efficient route announcement checking in large-scale networks, not to minimize DHT discovery latency. Bloom filters check if a route advertisement has been seen before (via `MeshBloomFilter` in `src/mesh/hierarchical_routing.rs:66`), reducing redundant route propagation.
 
 ---
 

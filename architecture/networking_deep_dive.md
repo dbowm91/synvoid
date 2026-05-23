@@ -51,8 +51,8 @@ SynVoid is at the forefront of post-quantum security:
 
 ## Performance Optimizations
 
-### 1. Zero-Copy IO
-SynVoid leverages Rust's ownership model to minimize data copying between the network stack and the application handlers.
+### 1. Ownership-Based Buffer Reuse
+SynVoid leverages Rust's ownership model and a custom `BufferPool` to minimize data copying and allocation overhead. The buffer pool (see `crates/synvoid-utils/src/buffer/pool.rs`) provides reusable buffers across IO operations, significantly reducing garbage collection pressure. True zero-copy paths exist in specific hot paths, but most handlers currently copy data between network and application layers.
 
 ### 2. Connection Limiting
 The `ConnectionLimiter` provides fine-grained control over concurrent connections at multiple levels:
