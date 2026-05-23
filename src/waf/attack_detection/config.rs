@@ -183,6 +183,8 @@ pub struct AttackDetectionResult {
     pub fingerprint: Option<String>,
     pub matched_pattern: Option<String>,
     pub input_location: InputLocation,
+    #[serde(default)]
+    pub block_status: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

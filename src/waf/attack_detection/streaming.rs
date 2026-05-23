@@ -374,7 +374,7 @@ impl StreamingWafCore {
 
 impl AttackDetectionResult {
     pub fn get_block_status(&self) -> Option<u16> {
-        Some(match self.attack_type {
+        self.block_status.or(Some(match self.attack_type {
             crate::waf::attack_detection::AttackType::Sqli => 403,
             crate::waf::attack_detection::AttackType::Xss => 403,
             crate::waf::attack_detection::AttackType::PathTraversal => 403,
@@ -382,7 +382,7 @@ impl AttackDetectionResult {
             crate::waf::attack_detection::AttackType::CmdInjection => 403,
             crate::waf::attack_detection::AttackType::Rce => 403,
             _ => 403,
-        })
+        }))
     }
 }
 

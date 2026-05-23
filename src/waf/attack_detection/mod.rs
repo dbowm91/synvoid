@@ -154,19 +154,46 @@ impl AttackDetector {
         ));
 
         let fast_path_patterns = vec![
-            r#"['";]--"#,            // SQL comment/injection
-            r#"(?i)union\s+select"#, // SQL union
-            r#"(?i)select\s+.*\s+from"#,
-            r#"<script"#, // XSS
-            r#"javascript:"#,
-            r#"onload="#,
-            r#"onerror="#,
-            r#"\.\./\.\./"#, // Path traversal
-            r#"/etc/passwd"#,
-            r#"/windows/system32"#,
-            r#"<\?php"#, // PHP tags
-            r#"\$\{"#,   // Expression injection
-            r#"\{\{"#,   // Template injection
+            r#"['";]--"#,                // SQL comment/injection
+            r#"(?i)union\s+select"#,      // SQL union
+            r#"(?i)select\s+.*\s+from"#, // SQL select
+            r#"(?i)drop\s+(table|database|index)"#, // SQL drop
+            r#"(?i)insert\s+into"#,       // SQL insert
+            r#"(?i)update\s+.*\s+set"#,  // SQL update
+            r#"(?i)alter\s+"#,           // SQL alter
+            r#"<script"#,                // XSS
+            r#"javascript:"#,             // XSS JS protocol
+            r#"onload="#,                 // XSS event handler
+            r#"onerror="#,                // XSS event handler
+            r#"onclick="#,                // XSS event handler
+            r#"\.\./\.\./"#,              // Path traversal
+            r#"\.\./"#,                   // Path traversal
+            r#"/etc/passwd"#,             // Path traversal
+            r#"/windows/system32"#,       // Path traversal
+            r#"/proc/self"#,              // Path traversal
+            r#"<\?php"#,                  // PHP tags
+            r#"<\?="#,                    // PHP short tag
+            r#"\{\{"#,                    // Template injection
+            r#"\$\{"#,                    // Expression injection
+            r#"\{%\s"#,                   // Template injection (Jinja2)
+            r#";\s*(rm|del|erase)"#,     // Command injection
+            r#"\|\s*(cat|ls|curl|wget)"#, // Command injection pipe
+            r#";\s*wget\s+"#,             // Wget download
+            r#";\s*curl\s+"#,             // Curl download
+            r#"`.*`"#,                    // Command injection backticks
+            r#"\$\(.*\)"#,                // Command injection $()
+            r#"%00"#,                     // Null byte injection
+            r#"%2f"#,                     // Path encoding
+            r#"%0a"#,                     // CRLF injection
+            r#"%0d%0a"#,                  // CRLF injection
+            r#"http://"#,                 // SSRF
+            r#"https://"#,                // SSRF
+            r#"file://"#,                 // SSRF/local file access
+            r#"<!DOCTYPE"#,               // XXE
+            r#"<!ENTITY"#,                 // XXE
+            r#"<!\[CDATA\["#,              // XXE
+            r#"transfer-encoding"#,       // Request smuggling
+            r#"content-length"#,          // Request smuggling
         ];
         let fast_path_detector = regex::RegexSet::new(fast_path_patterns).ok();
 
