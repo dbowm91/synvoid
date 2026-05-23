@@ -45,19 +45,18 @@ Implementation is organized into **waves** that can execute in parallel where de
 ### Items to INVESTIGATE or CORRECT
 | Item | Description | Location | Status |
 |------|-------------|----------|--------|
-| 1.3 | verify_hybrid() Accepts Ed25519-Only | `src/mesh/ml_dsa.rs:206-218` | Needs Fix - returns `true` when ML-DSA absent, defeating hybrid security |
 | 1.4 | ML-KEM Missing Proof of Possession | `src/mesh/ml_kem_key_exchange.rs:63-164` | Needs Fix - no verification client can decapsulate |
-| 1.6 | current_depth() Doesn't Exist | `src/location_matcher.rs:191-195` | Needs Investigation - function doesn't exist, only `is_empty()` and `len()` |
-| 1.7 | allowed_dht_prefixes Not Propagated | `instance_pool.rs:186,213-226` | Needs Fix - both serverless and plugin pools hardcode `Vec::new()` |
+| 1.6 | current_depth() Doesn't Exist | `src/location_matcher.rs:191-195` | **RESOLVED** - Documentation error, only `is_empty()` and `len()` exist |
+| 1.7 | allowed_dht_prefixes Not Propagated | `instance_pool.rs:186,213-226` | **FIXED** - Now propagated via config |
 | 1.8 | macos-sandbox Feature Gate | `src/platform/sandbox.rs:1036-1133` | Feature EXISTS - just needs enabling via `macos-sandbox` feature flag |
-| 1.9 | Retry Config Not Applied | `src/proxy/mod.rs:293-312` | Needs Fix - `retry_config` remains `None` when `upstream_pool` is `None` |
 
-### 1.3 [ ] verify_hybrid() Accepts Ed25519-Only Signatures (BUG-L1)
+### 1.3 [x] verify_hybrid() Accepts Ed25519-Only Signatures (BUG-L1) - FIXED
 - **Location:** `src/mesh/ml_dsa.rs:206-218`
 - **Impact:** Medium - weakens fail-safe design
 - **Issue:** When `signature.has_ml_dsa()` returns `false`, function returns `true` at line 217. Pure Ed25519-only signatures are accepted without ML-DSA verification.
 - **Fix:** For hybrid signatures, both Ed25519 AND ML-DSA should be required. Return `false` when ML-DSA is absent.
 - **Source:** batch1_layer_3_5_review
+- **Status:** Fixed in `chore/wave1-mesh-critical-fixes` branch
 
 ### 1.4 [ ] ML-KEM Key Encapsulation Missing Proof of Possession (BUG-L3)
 - **Location:** `src/mesh/ml_kem_key_exchange.rs:63-164`
@@ -66,19 +65,21 @@ Implementation is organized into **waves** that can execute in parallel where de
 - **Fix:** Add verification that client can decrypt the ciphertext before confirming session.
 - **Source:** batch1_layer_3_5_review
 
-### 1.6 [ ] current_depth() Doesn't Exist (C4)
+### 1.6 [x] current_depth() Doesn't Exist (C4) - RESOLVED
 - **Location:** `src/location_matcher.rs:191-195`
 - **Impact:** HIGH - documentation references non-existent function
 - **Issue:** The file contains `is_empty()` and `len()` methods but not `current_depth()`. This appears to be dead code or documentation error.
-- **Fix:** Either implement `current_depth()` if needed, or update documentation to reference `len()` or remove the reference entirely.
+- **Fix:** Documentation error - no implementation needed.
 - **Source:** batch2_routing_review
+- **Status:** Resolved - documented in AGENTS.md
 
-### 1.7 [ ] allowed_dht_prefixes Not Propagated to Pooled Instances (C5)
+### 1.7 [x] allowed_dht_prefixes Not Propagated to Pooled Instances (C5) - FIXED
 - **Location:** `src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`
 - **Impact:** CRITICAL - DHT restrictions may not enforce correctly for pooled instances
-- **Issue:** Both locations hardcode `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values.
+- **Issue:** Both locations hardcoded `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values.
 - **Fix:** Set `allowed_dht_prefixes` from `WasmResourceLimits` during warmup (instance_pool.rs:79-209 warmup flow)
 - **Source:** batch2_plugin_review, AGENTS.md Lesson #19
+- **Status:** Fixed in `chore/wave1-dht-prefix-fixes` branch
 
 ### 1.8 [~] macos-sandbox Feature Gate (BUG-PLATFORM-1) - FEATURE EXISTS
 - **Location:** `Cargo.toml:38`, `src/platform/sandbox.rs:1037-1126`
@@ -87,12 +88,13 @@ Implementation is organized into **waves** that can execute in parallel where de
 - **Action:** Ensure documentation clearly states users must enable `macos-sandbox` feature for enforcement.
 - **Source:** batch3_platform_review, AGENTS.md Lesson #8
 
-### 1.9 [ ] Retry Config Not Applied from from_config() (BUG-PROXY-1)
+### 1.9 [x] Retry Config Not Applied from from_config() (BUG-PROXY-1) - FIXED
 - **Location:** `src/proxy/mod.rs:293-316`
 - **Impact:** HIGH - Retries **always disabled** regardless of configuration
 - **Issue:** When `upstream_pool` is `None` (lines 252-260), `with_upstream_pool()` is never called, so `retry_config` remains `None`.
 - **Fix:** Ensure `retry_config` is set even when `upstream_pool` is `None`, or call `with_upstream_pool()` regardless.
 - **Source:** batch3_proxy_review, AGENTS.md Lesson #20
+- **Status:** Fixed in `chore/wave1-proxy-critical-fixes` branch
 
 ---
 
@@ -100,27 +102,27 @@ Implementation is organized into **waves** that can execute in parallel where de
 
 **These items can be executed in parallel by different agents. Each is independent.**
 
-| Item | Description | Location | Dependencies |
-|------|-------------|----------|--------------|
-| 2.1 | DNS - Complete AXFR Record Type Support | `src/dns/transfer.rs:829-878` | None |
-| 2.2 | DNS - Verify DNS Cookie Server Integration | `src/dns/cookie.rs` | None |
-| 2.3 | DNS - Complete GOST Algorithm Support | `src/dns/dnssec_validation.rs:260` | None |
-| 2.4 | WAF - Complete GeoIP Country Blocking | `src/waf/asn_tracker.rs` | None |
-| 2.5 | Layer 3.5 - Update Raft Documentation | `architecture/layer_3_5_deep_dive.md:32` | None |
-| 2.6 | Layer 3.5 - Address Quorum Deadlock | `src/mesh/peer_auth.rs:230-243` | None |
-| 2.7 | Mesh - Document DHT Ingress Verification Gaps | `architecture/mesh_deep_dive.md` | None |
-| 2.8 | Config - Fix Sites HashMap Location in Diagram | `architecture/config_deep_dive.md` | None - already correct |
-| 2.9 | Config - Add Missing Fields to MainConfig | `architecture/config_deep_dive.md` | None |
-| 2.10 | App Handlers - Integrate or Remove Minification | `src/static_files/mod.rs:131-137` | None |
-| 2.11 | Routing - Document Missing Backend Types | `src/router.rs:65-77` | None |
-| 2.12 | Routing - Add Active Health Checks to UpstreamPool | `src/upstream/pool.rs` | None |
-| 2.13 | Plugin - Implement Spin Instance Reuse | `src/spin/runtime.rs:251` | None |
-| 2.14 | Worker - Document Linux-Only CPU Affinity | `src/worker/unified_server.rs:205-208` | None |
-| 2.15 | HTTP/Proxy - Verify ErasedHttpClient Integration | `src/http/server.rs:3302` | None |
-| 2.16 | HTTP/Proxy - Complete HTTP/2 Support | `src/http_client/mod.rs:890` | None |
-| 2.17 | Core/Overview - Add MeshProxy to Module Index | `architecture/overview.md` | None |
-| 2.18 | Core/Overview - Add Missing Modules to Index | `architecture/overview.md` | None |
-| 2.19 | Networking - Clarify PQC Feature Flag Interactions | `architecture/networking_deep_dive.md` | None |
+| Item | Description | Location | Dependencies | Status |
+|------|-------------|----------|--------------|--------|
+| 2.1 | DNS - Complete AXFR Record Type Support | `src/dns/transfer.rs:829-878` | None | **DONE** - `chore/wave2-dns-axfr-fixes` |
+| 2.2 | DNS - Verify DNS Cookie Server Integration | `src/dns/cookie.rs` | None | |
+| 2.3 | DNS - Complete GOST Algorithm Support | `src/dns/dnssec_validation.rs:260` | None | **DOCUMENTED** - requires GOST crate |
+| 2.4 | WAF - Complete GeoIP Country Blocking | `src/waf/asn_tracker.rs` | None | **DOCUMENTED** - actually ASN-based |
+| 2.5 | Layer 3.5 - Update Raft Documentation | `architecture/layer_3_5_deep_dive.md:32` | None | **DONE** - `chore/wave2-documentation-updates` |
+| 2.6 | Layer 3.5 - Address Quorum Deadlock | `src/mesh/peer_auth.rs:230-243` | None | Deferred - MESH-15 |
+| 2.7 | Mesh - Document DHT Ingress Verification Gaps | `architecture/mesh_deep_dive.md` | None | **DONE** - already documented |
+| 2.8 | Config - Fix Sites HashMap Location in Diagram | `architecture/config_deep_dive.md` | None | Already correct |
+| 2.9 | Config - Add Missing Fields to MainConfig | `architecture/config_deep_dive.md` | None | Already present |
+| 2.10 | App Handlers - Integrate or Remove Minification | `src/static_files/mod.rs:131-137` | None | |
+| 2.11 | Routing - Document Missing Backend Types | `src/router.rs:65-77` | None | **DOCUMENTED** |
+| 2.12 | Routing - Add Active Health Checks to UpstreamPool | `src/upstream/pool.rs` | None | **DONE** - `chore/wave2-upstream-health-checks` |
+| 2.13 | Plugin - Implement Spin Instance Reuse | `src/spin/runtime.rs:118` | None | **DONE** - `chore/wave2-spin-fixes` |
+| 2.14 | Worker - Document Linux-Only CPU Affinity | `src/worker/unified_server.rs:205-208` | None | **DOCUMENTED** |
+| 2.15 | HTTP/Proxy - Verify ErasedHttpClient Integration | `src/http/server.rs:3302` | None | Phase 9 incomplete - documented |
+| 2.16 | HTTP/Proxy - Complete HTTP/2 Support | `src/http_client/mod.rs:890` | None | Requires ALPN - documented |
+| 2.17 | Core/Overview - Add MeshProxy to Module Index | `architecture/overview.md` | None | Already present |
+| 2.18 | Core/Overview - Add Missing Modules to Index | `architecture/overview.md` | None | Already present |
+| 2.19 | Networking - Clarify PQC Feature Flag Interactions | `architecture/networking_deep_dive.md` | None | **DONE** - `chore/wave2-documentation-updates` |
 
 ### 2.1 DNS - Complete AXFR Record Type Support
 - **Location:** `src/dns/transfer.rs:829-878`
