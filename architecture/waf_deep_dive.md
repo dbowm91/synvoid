@@ -43,6 +43,36 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
   - **Proof of Work (PoW):** Requires the client to solve a computational puzzle, effective against high-volume automated tools.
 - **Behavioral Analysis:** (Mesh mode only) Analyzes request timing, sequence entropy, and entropy to identify non-human traffic patterns.
 
+### 5. Streaming WAF (Chunked Processing)
+
+The `StreamingWafCore` (`src/waf/attack_detection/streaming.rs`) provides true streaming attack detection for large or chunked request bodies, enabling O(1) memory usage regardless of body size.
+
+**Chunked Processing:**
+- Processes data in configurable chunks (default 4096 bytes)
+- Maintains a **trailing window** (512 bytes) to detect attacks spanning chunk boundaries
+- Uses fragmented scanning via `check_body_fragments()` to avoid memory allocation and copying
+- Bounded memory: configurable `max_buffered_bytes` (default 2MB) prevents memory exhaustion attacks
+
+**Multipart Handling:**
+- Parses `multipart/form-data` bodies via state machine: `LookingForBoundary` → `ReadingHeaders` → `ReadingField/SkippingFile`
+- Distinguishes file uploads from form fields by inspecting `Content-Disposition` headers for `filename=`
+- File content scanning is skipped (`SkippingFile` state) to avoid false positives on binary uploads
+- Form fields are scanned for attack patterns using the same detection engine
+
+**Trailing Window Mechanism:**
+- Preserves last 512 bytes of each chunk to catch boundary-crossing attack patterns
+- Enables detection of payloads like `1' OR '1'='1'` split across multiple chunks
+- For multipart data, each field maintains its own `field_trailing_window` for intra-field boundary detection
+
+**State Machine Transitions:**
+```
+None → LookingForBoundary → ReadingHeaders → ReadingField → (scan) → LookingForBoundary
+                              ↓
+                        SkippingFile → (scan) → LookingForBoundary
+```
+
+---
+
 ---
 
 ## Decisions & Actions
