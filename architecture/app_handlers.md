@@ -46,7 +46,7 @@ SynVoid also supports the **Fermyon Spin** framework, allowing for the execution
 
 ### Spin vs Generic WASM Edge Functions
 
-Spin is **not** the same as generic WASM edge functions. Key distinctions:
+Spin is **not** the same as the generic WASM edge functions described above. Key distinctions:
 
 | Aspect | Generic WASM Edge Functions | Spin |
 |--------|---------------------------|------|
@@ -57,6 +57,6 @@ Spin is **not** the same as generic WASM edge functions. Key distinctions:
 | **Components** | Single WASM module per route | Multiple named components in manifest |
 | **HTTP Dispatch** | `WasmHandler` in server pipeline | `SpinHttpHandler` at `src/http/server.rs:2423` |
 
-Spin apps are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
+Spin applications are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps the `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
 
 **Integration Point:** When `BackendType::Spin` is configured, the HTTP server creates a `SpinHttpHandler` that routes requests through the Spin runtime to the appropriate component based on the Spin manifest.

@@ -115,6 +115,7 @@ pub struct SpinRuntime {
     pub config: SpinRuntimeConfig,
     manifest: RwLock<Option<Manifest>>,
     instances: RwLock<HashMap<String, SpinAppInstance>>,
+    compiled_runtimes: RwLock<HashMap<String, Arc<WasmRuntime>>>,
     #[allow(dead_code)]
     engine: Engine,
 }
@@ -141,6 +142,7 @@ impl SpinRuntime {
             config,
             manifest: RwLock::new(manifest),
             instances: RwLock::new(HashMap::new()),
+            compiled_runtimes: RwLock::new(HashMap::new()),
             engine,
         })
     }
@@ -178,19 +180,29 @@ impl SpinRuntime {
             ));
         }
 
-        let limits = WasmResourceLimits {
-            max_memory_mb: 64,
-            max_table_elements: None,
-            max_cpu_fuel: 1000000,
-            timeout_seconds: self.config.default_timeout_seconds,
-            max_instances: 1,
-            memory_budget_mb: None,
-            wasi_enabled: true,
-            allowed_dht_prefixes: Vec::new(),
+        let wasm_runtime = {
+            let cache = self.compiled_runtimes.read();
+            if let Some(runtime) = cache.get(component_id) {
+                runtime.clone()
+            } else {
+                drop(cache);
+                let limits = WasmResourceLimits {
+                    max_memory_mb: 64,
+                    max_table_elements: None,
+                    max_cpu_fuel: 1000000,
+                    timeout_seconds: self.config.default_timeout_seconds,
+                    max_instances: 1,
+                    memory_budget_mb: None,
+                    wasi_enabled: true,
+                    allowed_dht_prefixes: Vec::new(),
+                };
+                let new_runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)
+                    .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))?;
+                let runtime = Arc::new(new_runtime);
+                self.compiled_runtimes.write().insert(component_id.to_string(), runtime.clone());
+                runtime
+            }
         };
-
-        let wasm_runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)
-            .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))?;
 
         let kv_store = self
             .config

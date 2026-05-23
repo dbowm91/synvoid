@@ -585,4 +585,82 @@ mod tests {
             "new_for_test creates stub with is_available false"
         );
     }
+
+    #[tokio::test]
+    async fn test_checkout_new_connection() {
+        use std::net::SocketAddr;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let pool = ErasedConnectionPool::new(10);
+
+        let key = PoolKey {
+            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
+            is_http2: false,
+        };
+
+        let initial_idle = pool.idle_count(&key).await;
+        assert_eq!(initial_idle, 0);
+
+        let conn = pool.checkout(key.clone()).await.unwrap();
+        assert!(conn.is_connected());
+        assert_eq!(pool.idle_count(&key).await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_connection_reuse() {
+        use std::net::SocketAddr;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let pool = ErasedConnectionPool::new(10);
+
+        let key = PoolKey {
+            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
+            is_http2: false,
+        };
+
+        let conn1 = pool.checkout(key.clone()).await.unwrap();
+        assert!(conn1.is_connected());
+
+        pool.checkin(key.clone(), conn1).await;
+        assert_eq!(pool.idle_count(&key).await, 1);
+
+        let conn2 = pool.checkout(key.clone()).await.unwrap();
+        assert!(conn2.is_connected());
+        assert_eq!(pool.idle_count(&key).await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_invalid_authority() {
+        let pool = ErasedConnectionPool::new(10);
+
+        let key = PoolKey {
+            authority: "not-a-valid-authority".to_string(),
+            is_http2: false,
+        };
+
+        let result = pool.checkout(key).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_connection_timeout() {
+        let pool = ErasedConnectionPool::new(10);
+
+        let key = PoolKey {
+            authority: "192.0.2.1:12345".parse().unwrap(),
+            is_http2: false,
+        };
+
+        let pool_with_timeout = pool.with_connect_timeout(std::time::Duration::from_millis(50));
+        let result = pool_with_timeout.checkout(key).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
 }
