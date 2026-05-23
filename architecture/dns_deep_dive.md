@@ -31,11 +31,11 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `dnssec_validation.rs` | Signature verification, chain of trust, DS record handling |
 | `dnssec_key_mgmt.rs` | DNSSEC key lifecycle management |
 | `tsig.rs` | TSIG authentication for dynamic updates and zone transfers |
-| `recursive.rs` | Recursive DNS resolver using hickory-resolver |
+| `recursive.rs` | Recursive DNS resolver using `hickory_resolver::TokioResolver` |
 | `recursive_cache.rs` | Cache for recursive resolver responses |
 | `trust_anchor.rs` | RFC 5011 trust anchor management |
 | `hsm.rs` | HSM-based key storage and signing |
-| `cookie.rs` | RFC 8905 DNS cookies for client authentication |
+| `cookie.rs` | RFC 8905 DNS cookies - client authentication via cookie exchange |
 | `update.rs` | Dynamic DNS updates (RFC 2136) |
 | `transfer.rs` | Zone transfers (AXFR/IXFR) |
 | `doh.rs` | DNS-over-HTTPS server |
@@ -47,6 +47,12 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `messages.rs` | Mesh sync messages for distributed DNS |
 | `anycast.rs` | Anycast socket management |
 | `anycast_sync.rs` | Mesh-based zone synchronization |
+| `qname.rs` | DNS query name parsing and normalization |
+| `zone_manager.rs` | Zone lifecycle management, loading, and persistence |
+| `zone_file.rs` | Zone file parsing and serialization |
+| `rpz.rs` | Response Policy Zones for DNS firewall rules |
+| `edns.rs` | EDNS(0) extension handling (OPT records, buffer size) |
+| `limits.rs` | Query and response size limits, rate limiting thresholds |
 
 ### Query Flow
 
@@ -84,15 +90,16 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 ### DNSSEC Signing/Validation
 
 **Signing** (`dnssec_signing.rs`):
-- Algorithms: **Ed25519** (Algorithm 15), **RSA/SHA-256** (Algorithm 8)
+- Supported Algorithms: **Ed25519** (Algorithm 15), **RSA/SHA-256** (Algorithm 8)
 - `sign_data()` - Signs RDATA using Ed25519 or RSA private key
 - `create_rrsig_record()` - Builds RRSIG with inception/expiration (7 days signed)
 - `create_nsec_record()` / `create_nsec3_record()` - Proof of nonexistence
+- **NSEC3 Algorithms**: Algorithm 1 (SHA-1) and Algorithm 2 (SHA-256) supported
 
 **Validation** (`dnssec_validation.rs`):
 - `calculate_key_tag()` - DNSKEY key tag per RFC 4034
 - `compute_dnskey_canonical()` - Canonical DNSKEY wire format
-- `compute_ds_digest()` - DS record digest (SHA-1, SHA-256, SHA-384)
+- `compute_ds_digest()` - DS record digest (SHA-1 [type 1], SHA-256 [type 2], SHA-384 [type 4]). GOST (type 3) not implemented.
 - `verify_ds_digest()` - Validates DS against DNSKEY
 - Chain of trust: DS → DNSKEY → RRSIG → Zone data
 
@@ -106,6 +113,8 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 - States: `Seen → Pending → Valid → Revoked → Removed → Missing`
 
 ### TSIG (Feature-Gated)
+
+**Rust Version Requirement**: Uses `u64::abs_diff()` which requires Rust 1.78+ (mitigated by modern Rust edition 2021).
 
 **Algorithms**: HMAC-SHA1, HMAC-SHA256, HMAC-SHA384, HMAC-SHA512
 

@@ -15,6 +15,7 @@ SynVoid features native HTTP/3 support via the **Quinn** library.
 - **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections.
 - **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte.
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
+- **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `src/tunnel/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
 ### 3. TCP & UDP Listeners
 Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
@@ -28,7 +29,7 @@ Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
 ### 1. TLS Termination
 SynVoid handles TLS termination at the edge using **Rustls**.
 - **Dynamic Certificate Selection:** The `CertResolver` selects the appropriate certificate for each connection based on SNI.
-- **ACME Integration:** Built-in support for Let's Encrypt and other ACME-based CAs for automated certificate issuance and renewal.
+- **ACME Integration:** Built-in support for Let's Encrypt and other ACME-based CAs for automated certificate issuance and renewal. Requires explicit configuration via `tls.acme` in site config.
 
 ### 2. Post-Quantum Cryptography (PQC)
 SynVoid is at the forefront of post-quantum security:
@@ -58,7 +59,7 @@ SynVoid leverages Rust's ownership model and a custom `BufferPool` to minimize d
 ### 2. Connection Limiting
 The `ConnectionLimiter` provides fine-grained control over concurrent connections at multiple levels:
 - **Global Limit:** Total connections the WAF instance will accept.
-- **Per-Site Limit:** Limits the impact of a surge in traffic to a single domain.
+- **Per-Site Limit:** `SiteConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs:306`) limits the impact of a surge in traffic to a single domain.
 - **Per-IP Limit:** Prevents connection exhaustion attacks from a single source.
 
 ### 3. Buffer Management

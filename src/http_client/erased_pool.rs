@@ -242,13 +242,62 @@ impl ErasedConnectionPool {
         self
     }
 
+/// Checks out a connection from the pool or creates a new one.
+    ///
+    /// # Error Paths
+    ///
+    /// Returns an error in the following cases:
+    /// - `InvalidInput` (kind): The authority string in `PoolKey` is malformed (e.g., "not-a-valid-authority")
+    /// - `InvalidInput` (kind): The host/port in the authority cannot be parsed as a valid socket address
+    /// - `Other`: TCP connection to the upstream failed (includes underlying OS error details)
+    /// - `TimedOut`: Connection handshake did not complete within `connect_timeout`
+    ///
+    /// # Checkout Flow
+    ///
+    /// 1. Attempt to pop an existing connected connection from the pool for the given `PoolKey`
+    /// 2. If no pooled connection available, parse authority to extract host/port
+    /// 3. Establish new TCP connection to the upstream
+    /// 4. Perform HTTP/1.1 handshake via `Http1PooledConnection::new()`
+    /// 5. Apply `connect_timeout` to the entire connection establishment
     pub async fn checkout(&self, key: PoolKey) -> Result<Http1PooledConnection, std::io::Error> {
         let mut pool = self.inner.lock().await;
         if let Some(conns) = pool.get_mut(&key) {
             if let Some(conn) = conns.pop_front() {
                 if conn.is_connected() {
                     return Ok(conn);
-}
+                }
+            }
+        }
+        drop(pool);
+
+        let authority: http::uri::Authority = key.authority.parse().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid authority: {}", e),
+            )
+        })?;
+        let port = authority.port_u16().unwrap_or(80);
+        let connect_addr: std::net::SocketAddr = format!("{}:{}", authority.host(), port)
+            .parse()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid address: {}", e),
+                )
+            })?;
+        let stream = tokio::net::TcpStream::connect(connect_addr)
+            .await
+            .map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("connect failed: {}", e))
+            })?;
+        let conn = tokio::time::timeout(
+            self.connect_timeout,
+            Http1PooledConnection::new(stream, authority),
+        )
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
+        Ok(conn)
+    }
 }
 
 #[cfg(test)]
@@ -333,76 +382,6 @@ mod integration_tests {
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
     }
 }
-        }
-        drop(pool);
-
-        let authority: http::uri::Authority = key.authority.parse().map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("invalid authority: {}", e),
-            )
-        })?;
-        let port = authority.port_u16().unwrap_or(80);
-        let connect_addr: std::net::SocketAddr = format!("{}:{}", authority.host(), port)
-            .parse()
-            .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("invalid address: {}", e),
-            )
-        })?;
-        let stream = tokio::net::TcpStream::connect(connect_addr)
-            .await
-            .map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("connect failed: {}", e))
-            })?;
-        let conn = tokio::time::timeout(
-            self.connect_timeout,
-            Http1PooledConnection::new(stream, authority),
-        )
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
-        Ok(conn)
-    }
-
-    pub async fn checkin(&self, key: PoolKey, conn: Http1PooledConnection) {
-        if conn.is_connected() {
-            let mut pool = self.inner.lock().await;
-            let conns = pool
-                .entry(key)
-                .or_insert_with(std::collections::VecDeque::new);
-            if conns.len() < self.max_idle_per_host {
-                conns.push_back(conn);
-            }
-        }
-    }
-
-    pub async fn idle_count(&self, key: &PoolKey) -> usize {
-        let pool = self.inner.lock().await;
-        pool.get(key).map(|v| v.len()).unwrap_or(0)
-    }
-
-    pub async fn total_idle_count(&self) -> usize {
-        let pool = self.inner.lock().await;
-        pool.values().map(|v| v.len()).sum()
-    }
-}
-
-impl Default for ErasedConnectionPool {
-    fn default() -> Self {
-        Self::new(10)
-    }
-}
-
-impl Clone for ErasedConnectionPool {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            max_idle_per_host: self.max_idle_per_host,
-            connect_timeout: self.connect_timeout,
-        }
-    }
-}
 
 pub struct ErasedHttpClient {
     pool: ErasedConnectionPool,
@@ -444,6 +423,12 @@ impl ErasedHttpClient {
 
     pub fn pool(&self) -> &ErasedConnectionPool {
         &self.pool
+    }
+}
+
+impl Default for ErasedHttpClient {
+    fn default() -> Self {
+        Self::new(10)
     }
 }
 

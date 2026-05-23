@@ -80,11 +80,20 @@ pub struct ErasedHttpClient {
 - Primary interface for type-erased HTTP requests
 - `send_request()` with pool checkout/checkin
 
-### Remaining Integration (Phase 9)
+### Remaining Integration (Phase 9) ⚠️ INCOMPLETE
 
-Integration into `http/server.rs` proxy path is pending:
-- Wire `BodyBufferingPolicy::Streaming` to use `ErasedHttpClient`
-- Requires adding `ErasedHttpClient` to `HttpServer` struct
+**Status**: ⚠️ NOT COMPLETED (2026-05-23)
+
+The ErasedHttpClient was implemented but Phase 9 integration into `http/server.rs` proxy path was never completed:
+- `ErasedHttpClient` IS added to `HttpServer` struct (`server.rs:357,401`)
+- BUT at `server.rs:3302`: `let use_erased_client = false` (hardcoded, never activated)
+- The streaming path uses `StreamingHttpClient` from `UpstreamClientRegistry.get_or_create_streaming()` instead
+- `ErasedHttpClient` is cloned throughout but never actually called in request path
+
+**To complete Phase 9**:
+1. Change line 3302 from `let use_erased_client = false` to proper conditional logic
+2. Use `erased_http_client.send_request()` instead of `streaming_client` in the `if use_erased_client` block at line 3329
+3. Test with `BodyBufferingPolicy::Streaming` policy
 
 ## Verification Commands
 
