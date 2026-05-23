@@ -147,7 +147,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
-| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:63-164` | ML-KEM key exchange lacks proof of possession verification | Needs Fix |
+| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED |
 
 ### Known Implementation Issues
 
@@ -168,8 +168,8 @@ These items were identified in reviews but have been fixed:
 - BUG-L1 verify_hybrid() requires ML-DSA (`src/mesh/ml_dsa.rs:217` - returns false when ML-DSA absent)
 - BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
-- Spin instance reuse implemented (`src/spin/runtime.rs:118` - compiled_runtimes cache)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
+- BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
 
 ## Implementation Planning
 
