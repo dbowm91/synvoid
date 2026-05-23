@@ -24,7 +24,11 @@ pub(crate) struct WasmPooledInstance {
 }
 
 impl WasmInstancePool {
-    pub fn new(engine: Arc<Engine>, max_size: usize, default_allowed_dht_prefixes: Vec<String>) -> Self {
+    pub fn new(
+        engine: Arc<Engine>,
+        max_size: usize,
+        default_allowed_dht_prefixes: Vec<String>,
+    ) -> Self {
         Self {
             pool: Arc::new(Mutex::new(VecDeque::new())),
             engine,

@@ -199,7 +199,9 @@ impl SpinRuntime {
                 let new_runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)
                     .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))?;
                 let runtime = Arc::new(new_runtime);
-                self.compiled_runtimes.write().insert(component_id.to_string(), runtime.clone());
+                self.compiled_runtimes
+                    .write()
+                    .insert(component_id.to_string(), runtime.clone());
                 runtime
             }
         };

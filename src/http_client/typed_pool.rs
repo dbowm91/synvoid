@@ -132,7 +132,8 @@ fn create_typed_client(
     let config = builder
         .dangerous()
         .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
+        .with_no_client_auth()
+        .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
 
     let mut http_connector = HttpConnector::new();
     http_connector.set_connect_timeout(Some(std::time::Duration::from_secs(5)));

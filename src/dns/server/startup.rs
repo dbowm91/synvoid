@@ -23,6 +23,7 @@ impl DnsServer {
             query_coalescer: self.query_coalescer.clone(),
             #[cfg(feature = "dns")]
             acme_dns_challenges: self.acme_dns_challenges.clone(),
+            cookie_server: self.cookie_server.clone(),
         }
     }
 
@@ -229,6 +230,7 @@ impl DnsServer {
         let udp_buffer_size = config.limits.udp_buffer_size;
         #[cfg(feature = "dns")]
         let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
+        let cookie_server_udp = self.cookie_server.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -252,6 +254,7 @@ impl DnsServer {
                 query_coalescer: query_coalescer_udp,
                 #[cfg(feature = "dns")]
                     acme_dns_challenges: _acme_dns_challenges_udp,
+                cookie_server: cookie_server_udp,
             } = udp_state;
             let ctx = QueryContext {
                 zones: &zones_udp,
@@ -278,6 +281,7 @@ impl DnsServer {
                 dns64_translator: None,
                 #[cfg(feature = "dns")]
                 acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
+                cookie_server: cookie_server_udp.as_ref(),
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -600,6 +604,7 @@ impl DnsServer {
         let geoip_lookup_udp = geoip_lookup.clone();
         #[cfg(feature = "dns")]
         let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
+        let cookie_server_udp = self.cookie_server.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -623,6 +628,7 @@ impl DnsServer {
                 query_coalescer: query_coalescer_udp,
                 #[cfg(feature = "dns")]
                     acme_dns_challenges: _acme_dns_challenges_udp,
+                cookie_server: cookie_server_udp,
             } = udp_state;
             let ctx = QueryContext {
                 zones: &zones_udp,

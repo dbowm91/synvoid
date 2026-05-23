@@ -246,8 +246,8 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
             }));
         }
 
-        let decapsulated_secret = MlKem768::decapsulate(&session.ciphertext, &session.local_secret_key)
-            .map_err(|e| {
+        let decapsulated_secret =
+            MlKem768::decapsulate(&session.ciphertext, &session.local_secret_key).map_err(|e| {
                 tracing::warn!("ML-KEM decapsulation failed during confirm: {}", e);
                 Status::internal("Decapsulation failed")
             })?;

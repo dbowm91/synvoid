@@ -116,7 +116,11 @@ impl WasmPluginManager {
             runtimes: RwLock::new(Vec::new()),
             sorted_runtimes_cache: RwLock::new(None),
             default_limits: WasmResourceLimits::default(),
-            pool: Arc::new(WasmInstancePool::new(Arc::new(Engine::default()), 100, Vec::new())),
+            pool: Arc::new(WasmInstancePool::new(
+                Arc::new(Engine::default()),
+                100,
+                Vec::new(),
+            )),
             plugin_paths: RwLock::new(HashMap::new()),
         }
     }

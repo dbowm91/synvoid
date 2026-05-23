@@ -624,6 +624,17 @@ impl MeshTransport {
                 signature: _,
                 ..
             } => {
+                if self
+                    .validate_peer_node_id_binding(peer_id, &source_node_id)
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "DhtRecordAnnounce rejected: source_node_id {} doesn't match peer {}",
+                        source_node_id,
+                        peer_id
+                    );
+                    return;
+                }
                 self.handle_dht_record_announce(peer_id, &source_node_id, records)
                     .await;
             }
@@ -678,6 +689,17 @@ impl MeshTransport {
                 node_id,
                 from_version,
             } => {
+                if self
+                    .validate_peer_node_id_binding(peer_id, &node_id)
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "DhtSyncRequest rejected: node_id {} doesn't match peer {}",
+                        node_id,
+                        peer_id
+                    );
+                    return;
+                }
                 self.handle_dht_sync_request(peer_id, &request_id, &node_id, from_version)
                     .await;
             }
@@ -708,6 +730,17 @@ impl MeshTransport {
                 timestamp,
                 ..
             } => {
+                if self
+                    .validate_peer_node_id_binding(peer_id, &node_id)
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "DhtAntiEntropyRequest rejected: node_id {} doesn't match peer {}",
+                        node_id,
+                        peer_id
+                    );
+                    return;
+                }
                 self.handle_dht_anti_entropy_request(
                     peer_id,
                     &request_id,
@@ -1071,9 +1104,20 @@ impl MeshTransport {
                 value,
                 ttl_seconds,
                 origin_node_id,
-                origin_signature,
+                origin_signature: _,
                 action: _,
             } => {
+                if self
+                    .validate_peer_node_id_binding(peer_id, &origin_node_id)
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "QuorumStoreRequest rejected: origin_node_id {} doesn't match peer {}",
+                        origin_node_id,
+                        peer_id
+                    );
+                    return;
+                }
                 if let Some(ref record_store) = self.record_store {
                     let record = crate::mesh::protocol::DhtRecord {
                         key: key.to_string(),
@@ -1158,6 +1202,17 @@ impl MeshTransport {
                 signature: _,
                 signer_public_key: _,
             } => {
+                if self
+                    .validate_peer_node_id_binding(peer_id, &source_node_id)
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "DhtRecordCommit rejected: source_node_id {} doesn't match peer {}",
+                        source_node_id,
+                        peer_id
+                    );
+                    return;
+                }
                 if let Some(ref record_store) = self.record_store {
                     record_store.handle_record_commit(record, quorum_signatures, &source_node_id);
                 }
@@ -1284,6 +1339,25 @@ impl MeshTransport {
         if let Some(mut peer) = self.peer_connections.get_mut(peer_id) {
             peer.last_seen = Instant::now();
         }
+    }
+
+    pub(crate) fn validate_peer_node_id_binding(
+        &self,
+        peer_id: &str,
+        source_node_id: &str,
+    ) -> Result<(), ()> {
+        if let Some(peer) = self.peer_connections.get(peer_id) {
+            if peer.node_id != source_node_id {
+                tracing::warn!(
+                    "Node ID mismatch: peer_id={}, expected node_id={}, got source_node_id={}",
+                    peer_id,
+                    peer.node_id,
+                    source_node_id
+                );
+                return Err(());
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn handle_lookup_request(

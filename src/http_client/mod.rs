@@ -513,7 +513,8 @@ fn build_tls_config(
         let config = builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+            .with_no_client_auth()
+            .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
         return config;
     }
 
@@ -557,6 +558,7 @@ fn build_tls_config(
     builder
         .with_root_certificates(root_store)
         .with_no_client_auth()
+        .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()])
 }
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -887,7 +889,7 @@ pub async fn send_request_erased_streaming(
         .authority()
         .map(|a| a.to_string())
         .unwrap_or_default();
-    let is_http2 = false;
+    let is_http2 = true;
 
     let response = if let Some(t) = timeout {
         match tokio::time::timeout(t, client.send_request(req, authority, is_http2, Some(t))).await

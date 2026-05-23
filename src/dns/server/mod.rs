@@ -411,6 +411,7 @@ struct DnsHandlerState {
     query_coalescer: Option<Arc<super::query_coalesce::QueryCoalescer>>,
     #[cfg(feature = "dns")]
     acme_dns_challenges: Option<Arc<crate::tls::AcmeDnsChallenge>>,
+    cookie_server: Option<Arc<crate::dns::cookie::DnsCookieServer>>,
 }
 
 /// Shared DNS query context to reduce function parameter count.
@@ -440,6 +441,7 @@ pub struct QueryContext<'a> {
     pub dns64_translator: Option<&'a super::dns64::Dns64Translator>,
     #[cfg(feature = "dns")]
     pub acme_dns_challenges: Option<&'a Arc<crate::tls::AcmeDnsChallenge>>,
+    pub cookie_server: Option<&'a Arc<crate::dns::cookie::DnsCookieServer>>,
 }
 
 pub struct DnsServer {
@@ -482,6 +484,7 @@ pub struct DnsServer {
     dns64_translator: Option<super::dns64::Dns64Translator>,
     #[cfg(feature = "dns")]
     pub(crate) acme_dns_challenges: Option<Arc<crate::tls::AcmeDnsChallenge>>,
+    cookie_server: Option<Arc<crate::dns::cookie::DnsCookieServer>>,
 }
 
 impl Clone for DnsServer {
@@ -524,6 +527,7 @@ impl Clone for DnsServer {
             dns64_translator: self.dns64_translator.clone(),
             #[cfg(feature = "dns")]
             acme_dns_challenges: self.acme_dns_challenges.clone(),
+            cookie_server: self.cookie_server.clone(),
         }
     }
 }
@@ -843,6 +847,7 @@ impl DnsServer {
             dns64_translator,
             #[cfg(feature = "dns")]
             acme_dns_challenges: None,
+            cookie_server: Some(Arc::new(crate::dns::cookie::DnsCookieServer::new())),
         }
     }
 
@@ -852,6 +857,15 @@ impl DnsServer {
         challenges: Arc<crate::tls::AcmeDnsChallenge>,
     ) -> Self {
         self.acme_dns_challenges = Some(challenges);
+        self
+    }
+
+    #[cfg(feature = "dns")]
+    pub fn with_cookie_server(
+        mut self,
+        cookie_server: Arc<crate::dns::cookie::DnsCookieServer>,
+    ) -> Self {
+        self.cookie_server = Some(cookie_server);
         self
     }
 }

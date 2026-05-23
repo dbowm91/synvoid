@@ -27,8 +27,8 @@ impl MeshTransport {
         // Get current commit index from Raft
         let current_index = raft.get_last_log_index().await;
 
-        if last_sync_index >= current_index {
-            // Peer is already up to date
+        if current_index <= last_sync_index {
+            // Peer has same or newer index than us - they're up to date
             let response = MeshMessage::ReplicaSyncResponse {
                 request_id: ArcStr::from(request_id.to_string()),
                 current_index,
@@ -40,7 +40,7 @@ impl MeshTransport {
         }
 
         // If the gap is too large, suggest a snapshot
-        if current_index - last_sync_index > 5000 {
+        if last_sync_index > current_index + 5000 {
             let response = MeshMessage::ReplicaSyncResponse {
                 request_id: ArcStr::from(request_id.to_string()),
                 current_index,

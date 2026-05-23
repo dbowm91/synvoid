@@ -60,6 +60,8 @@ pub struct StaticFileHandler {
     mesh_minification: Option<MeshMinificationConfig>,
     theme_config: ThemeConfig,
     directory_template_path: Option<String>,
+    minifier_client: Option<client::MinifierClient>,
+    image_poison_config: Option<MeshImageProtectionConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -132,7 +134,7 @@ impl StaticFileHandler {
         config: SiteStaticConfig,
         site_id: String,
         _minifier_cache: Option<Arc<MinifierCache>>,
-        _minifier_client: Option<client::MinifierClient>,
+        minifier_client: Option<client::MinifierClient>,
         _async_minifier_client: Option<client::AsyncMinifierClient>,
         mesh_image_protection: Option<MeshImageProtectionConfig>,
         mesh_compression: Option<MeshCompressionConfig>,
@@ -184,6 +186,8 @@ impl StaticFileHandler {
                 mesh_minification,
                 theme_config,
                 directory_template_path: None,
+                minifier_client,
+                image_poison_config: mesh_image_protection.clone(),
             });
         }
 
@@ -256,6 +260,8 @@ impl StaticFileHandler {
             mesh_minification,
             theme_config,
             directory_template_path,
+            minifier_client,
+            image_poison_config: mesh_image_protection.clone(),
         })
     }
 
@@ -622,6 +628,51 @@ impl StaticFileHandler {
                 }
             }
 
+            if self.minifier_client.is_some()
+                && self.mesh_minification.is_some()
+                && is_minifiable_content(&mime_type)
+            {
+                let relative_path = path.strip_prefix(&location.fs_root).unwrap_or(path);
+                let encoding = accept_encoding.as_deref().unwrap_or("identity");
+
+                if let Some(ref minifier_client) = self.minifier_client {
+                    match minifier_client.request_minify(
+                        &self.site_id,
+                        relative_path.to_str().unwrap_or(""),
+                        Some(encoding),
+                    ) {
+                        Ok(result) => {
+                            if result.content_len > 0 {
+                                histogram!("synvoid.static.served_minified").record(1.0);
+                                counter!("synvoid.static.minification_served", "site" => self.site_id.clone()).increment(1);
+
+                                if encoding == "br" {
+                                    headers
+                                        .push(("Content-Encoding".to_string(), "br".to_string()));
+                                } else if encoding == "gzip" {
+                                    headers
+                                        .push(("Content-Encoding".to_string(), "gzip".to_string()));
+                                }
+                                headers.push(("Vary".to_string(), "Accept-Encoding".to_string()));
+
+                                return Ok(StaticResponse {
+                                    status: StatusCode::OK,
+                                    headers,
+                                    body: StaticResponseBody::InMemory(Bytes::from(result.content)),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "Minification failed for {}: {}",
+                                relative_path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
             if use_gzip_otf
                 && encoding.contains("gzip")
                 && body.len() >= self.gzip_min_size
@@ -909,6 +960,31 @@ fn default_gzip_types() -> Vec<String> {
         "text/x-component".to_string(),
         "text/x-cross-domain-policy".to_string(),
     ]
+}
+
+fn is_minifiable_content(mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "text/html"
+            | "text/css"
+            | "text/javascript"
+            | "application/javascript"
+            | "application/json"
+            | "application/xml"
+            | "text/xml"
+            | "application/atom+xml"
+            | "application/rss+xml"
+            | "application/vnd.ms-fontobject"
+            | "application/x-font-ttf"
+            | "application/x-web-app-manifest+json"
+            | "font/opentype"
+            | "font/ttf"
+            | "font/eot"
+            | "font/otf"
+            | "image/svg+xml"
+            | "text/x-component"
+            | "text/x-cross-domain-policy"
+    )
 }
 
 mod httpdate {

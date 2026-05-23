@@ -69,19 +69,29 @@ These use `SignedRecordType::is_immutable()` check in both `store_record_global(
 
 All DHT records are validated against future timestamps using `validate_record_timestamp()` with `DHT_RECORD_TIMESTAMP_WINDOW_SECS` (300 seconds). Records with timestamps too far in the future are rejected before storage.
 
-### DHT Ingress Verification (W14)
+### DHT Ingress Verification (W14) - FIXED
 
-`DhtRecord.verify_for_ingress()` provides centralized verification for all DHT record ingress paths. However, not all ingress paths use it:
+`DhtRecord.verify_for_ingress()` provides centralized verification for all DHT record ingress paths. The peer node_id binding validation has been implemented via `validate_peer_node_id_binding()` helper in `transport_peer.rs:1341-1360`.
 
-**Known Gaps** (documented at `signed.rs:42-48`):
-- `DhtSyncRequest`: node_id in message is not validated against peer_id/TLS cert
-- `DhtAntiEntropyRequest`: signer_public_key present but not used for verification
+**Fixed paths** (binding validation applied):
+- `DhtRecordAnnounce` — validates `source_node_id` against peer TLS identity
+- `DhtSyncRequest` — validates `node_id` against peer TLS identity
+- `DhtAntiEntropyRequest` — validates `node_id` against peer TLS identity
+- `QuorumStoreRequest` — validates `origin_node_id` against peer TLS identity
+- `DhtRecordCommit` — validates `source_node_id` against peer TLS identity
+
+**Still has gaps** (per signed.rs:42-48):
 - `DhtRecordPush`: timestamp ignored, lacks envelope signature
-- `DhtRecordCommit`: has timestamp but lacks envelope signature validation
-- `QuorumStoreRequest`: no verification performed
-- `QuorumSignatureResp`: no verification performed
+- `QuorumSignatureResp`: response-only message, no source_node_id field to validate
 
-These gaps require future architectural work to bind source_node_id to TLS/cert identity layer.
+```rust
+// Helper method added to MeshTransport
+pub(crate) fn validate_peer_node_id_binding(
+    &self,
+    peer_id: &str,
+    source_node_id: &str,
+) -> Result<(), ()>
+```
 
 ```rust
 // Context types

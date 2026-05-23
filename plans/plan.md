@@ -14,7 +14,8 @@ This plan consolidates findings from 4 batches of architecture reviews across 16
 
 | Category | Count | Status |
 |----------|-------|--------|
-| **Deferred Items** | 4 | MESH-14, MESH-15, APP-15, SUP-1 |
+| **Completed Fixes** | 2 | MESH-14 (binding validation), MESH-15 (deadlock/sync fixes) |
+| **Deferred Items** | 2 | APP-15, SUP-1 |
 | **Incomplete but Working** | 7 | Known limitations |
 | **High Priority (Needs Work)** | 1 | DNS Cookie Server integration |
 | **Documentation Only** | 3 | Already documented, no action needed |
@@ -27,8 +28,8 @@ These items require significant architectural changes and are intentionally defe
 
 | ID | Issue | Location | Reason | Status |
 |----|-------|----------|--------|--------|
-| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | `src/mesh/dht/signed.rs:42-48` | DHT ingress validation gaps require fundamental changes to bind node_id to TLS/cert identity | Deferred - Architectural |
-| MESH-15 | Quorum Deadlock Risk During Partition | `src/mesh/peer_auth.rs:230-243`, `instance.rs:214` | Raft implementation incomplete (get_last_log_index returns 0) | Deferred - Requires Raft |
+| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | `src/mesh/transport_peer.rs:1288-1303` | Added `validate_peer_node_id_binding()` helper and applied to 5 ingress paths | **FIXED** - 2026-05-23 |
+| MESH-15 | Quorum Deadlock Risk During Partition | `src/mesh/raft/instance.rs:225-235` | RwLock deadlock was overstated (RwLock allows concurrent readers); fixed `get_last_log_index()` and inverted sync logic | **FIXED** - 2026-05-23 |
 | APP-15 | FastCGI Response NOT Truly Streamed | `src/fastcgi/mod.rs:132-164` | Buffers entire stdout; true streaming requires architectural change | Deferred - Architectural |
 | SUP-1 | gRPC Control Plane TLS | `src/supervisor/api.rs:114-129` | Intentional - localhost IPC doesn't need TLS | Working As Designed |
 

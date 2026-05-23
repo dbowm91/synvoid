@@ -211,8 +211,14 @@ impl RaftInstance {
     }
 
     pub async fn get_last_log_index(&self) -> u64 {
-        // TODO: Fix get_last_log_index for openraft 0.10
-        0
+        let mut log_storage = self.registry.log_storage.clone();
+        match log_storage.get_log_state().await {
+            Ok(state) => state.last_log_id.map(|id| id.index).unwrap_or(0),
+            Err(e) => {
+                tracing::error!("Failed to get last log index: {}", e);
+                0
+            }
+        }
     }
 
     pub async fn get_leader_id(&self) -> Option<u64> {
