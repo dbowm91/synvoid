@@ -182,7 +182,12 @@ impl MeshMessageSigner {
         self.verify(content, signature, public_key)
     }
 
-    pub async fn verify_any_async(&self, content: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+    pub async fn verify_any_async(
+        &self,
+        content: &[u8],
+        signature: &[u8],
+        public_key: &[u8],
+    ) -> bool {
         if let Ok(hybrid) = HybridSignature::from_bytes(signature) {
             return self.verify_hybrid_async(content, &hybrid).await;
         }

@@ -614,10 +614,12 @@ impl UnifiedServer {
                 (global_limit.per_second as f64 / worker_count as f64).ceil() as u32;
             global_limit.per_minute =
                 (global_limit.per_minute as f64 / worker_count as f64).ceil() as u32;
-            
+
             tracing::info!(
                 "Scaling worker rate limits by 1/{} (IP: {} RPS, Global: {} RPS)",
-                worker_count, ip_limit.per_second, global_limit.per_second
+                worker_count,
+                ip_limit.per_second,
+                global_limit.per_second
             );
         }
 
@@ -1152,8 +1154,7 @@ impl UnifiedServer {
         #[cfg(feature = "mesh")]
         if let Some(mesh_cfg_external) = mesh_config {
             let mesh_cfg_internal: crate::mesh::config::MeshConfig =
-                serde_json::from_str(&serde_json::to_string(&mesh_cfg_external).unwrap())
-                    .unwrap();
+                serde_json::from_str(&serde_json::to_string(&mesh_cfg_external).unwrap()).unwrap();
             server = server.with_mesh_config(Some(Arc::new(mesh_cfg_internal)));
         }
 

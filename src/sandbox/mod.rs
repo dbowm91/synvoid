@@ -10,13 +10,13 @@ use crate::platform::sandbox::{ProcessSandbox, SandboxLevel, SandboxPaths};
 
 pub fn run_wasm_jail_mode() {
     tracing::info!("Starting WASM plugin execution jail");
-    
+
     // Apply strict sandbox immediately
     let level = SandboxLevel::Strict;
     let paths = SandboxPaths::new()
         .add_read_path("/usr/lib") // Minimal system libs
         .add_read_path("/lib");
-    
+
     if let Err(e) = ProcessSandbox::with_paths(level, paths) {
         tracing::error!("Failed to initialize WASM jail sandbox: {}", e);
         std::process::exit(1);
@@ -38,7 +38,7 @@ pub fn run_yara_jail_mode() {
     let paths = SandboxPaths::new()
         .add_read_path("/usr/lib")
         .add_read_path("/lib");
-    
+
     if let Err(e) = ProcessSandbox::with_paths(level, paths) {
         tracing::error!("Failed to initialize YARA jail sandbox: {}", e);
         std::process::exit(1);

@@ -1004,7 +1004,11 @@ impl Message {
                 backend_stats,
             } => {
                 for url in backend_stats.keys() {
-                    check_str("UpstreamGlobalStats.backend_stats.url", url, MAX_PATH_LENGTH)?;
+                    check_str(
+                        "UpstreamGlobalStats.backend_stats.url",
+                        url,
+                        MAX_PATH_LENGTH,
+                    )?;
                 }
                 Ok(())
             }
@@ -1224,11 +1228,19 @@ impl Message {
                 check_path_str("socket_path", socket_path, MAX_PATH_LENGTH)
             }
             Message::SocketHandoffFailed { error } => check_str("error", error, MAX_STRING_LENGTH),
-            Message::SocketHandoffActiveConnection { protocol, client_addr, .. } => {
+            Message::SocketHandoffActiveConnection {
+                protocol,
+                client_addr,
+                ..
+            } => {
                 check_str("protocol", protocol, MAX_STRING_LENGTH)?;
                 check_str("client_addr", client_addr, MAX_STRING_LENGTH)
             }
-            Message::WorkerConnectionHandoff { protocol, client_addr, .. } => {
+            Message::WorkerConnectionHandoff {
+                protocol,
+                client_addr,
+                ..
+            } => {
                 check_str("protocol", protocol, MAX_STRING_LENGTH)?;
                 check_str("client_addr", client_addr, MAX_STRING_LENGTH)
             }
@@ -1301,9 +1313,11 @@ impl Message {
                     MAX_STRING_LENGTH,
                 )
             }
-            Message::StreamChunk { chunk, .. } => {
-                check_str("StreamChunk.chunk", &format!("{}", chunk.len()), MAX_STRING_LENGTH)
-            }
+            Message::StreamChunk { chunk, .. } => check_str(
+                "StreamChunk.chunk",
+                &format!("{}", chunk.len()),
+                MAX_STRING_LENGTH,
+            ),
             Message::MeshControlRequest { request, .. } => match request {
                 MeshControlRequest::DhtLookup { key } => {
                     check_str("MeshControlRequest.DhtLookup.key", key, MAX_STRING_LENGTH)
@@ -1405,7 +1419,6 @@ impl Message {
             }
 
             Message::ThreatIndicatorAnnounce { .. }
-
             | Message::ThreatIndicatorFromMesh { .. }
             | Message::ThreatSyncRequest { .. }
             | Message::ThreatSyncResponse { .. }

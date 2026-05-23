@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::theme::ThemeConfig;
 use super::renderer::ThemeRenderer;
+use crate::theme::ThemeConfig;
 
 fn percent_encode(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);

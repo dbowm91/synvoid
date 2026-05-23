@@ -64,7 +64,9 @@ impl PowManager {
             return self.difficulty;
         }
 
-        let active = self.active_challenges.load(std::sync::atomic::Ordering::Relaxed);
+        let active = self
+            .active_challenges
+            .load(std::sync::atomic::Ordering::Relaxed);
         if active < 100 {
             self.difficulty
         } else {
@@ -98,7 +100,8 @@ impl PowManager {
         let difficulty = self.get_computed_difficulty();
 
         // Increment active challenges counter
-        self.active_challenges.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.active_challenges
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let mut challenge_data = Vec::new();
         challenge_data.extend_from_slice(&self.secret_key);
@@ -118,7 +121,8 @@ impl PowManager {
 
     pub fn verify_solution(&self, challenge: &str, client_nonce: &str) -> bool {
         // Decrement active challenges counter on verification attempt (best effort)
-        self.active_challenges.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.active_challenges
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         let now = current_timestamp();
 

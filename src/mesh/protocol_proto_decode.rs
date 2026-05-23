@@ -1265,13 +1265,15 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         blocked_at: b.blocked_at,
                         blocked_by: b.blocked_by,
                         expires_at: b.expires_at,
-                        evidence_receipt: b.evidence_receipt.map(|er| crate::mesh::dht::AuditReceipt {
-                            reporter_node_id: er.reporter_node_id,
-                            target_node_id: er.target_node_id,
-                            evidence_hash: er.evidence_hash,
-                            evidence_type: er.evidence_type,
-                            reporter_signature: er.reporter_signature,
-                            timestamp: er.timestamp,
+                        evidence_receipt: b.evidence_receipt.map(|er| {
+                            crate::mesh::dht::AuditReceipt {
+                                reporter_node_id: er.reporter_node_id,
+                                target_node_id: er.target_node_id,
+                                evidence_hash: er.evidence_hash,
+                                evidence_type: er.evidence_type,
+                                reporter_signature: er.reporter_signature,
+                                timestamp: er.timestamp,
+                            }
                         }),
                     })
                     .collect();
@@ -1304,13 +1306,15 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         blocked_at: b.blocked_at,
                         blocked_by: b.blocked_by,
                         expires_at: b.expires_at,
-                        evidence_receipt: b.evidence_receipt.map(|er| crate::mesh::dht::AuditReceipt {
-                            reporter_node_id: er.reporter_node_id,
-                            target_node_id: er.target_node_id,
-                            evidence_hash: er.evidence_hash,
-                            evidence_type: er.evidence_type,
-                            reporter_signature: er.reporter_signature,
-                            timestamp: er.timestamp,
+                        evidence_receipt: b.evidence_receipt.map(|er| {
+                            crate::mesh::dht::AuditReceipt {
+                                reporter_node_id: er.reporter_node_id,
+                                target_node_id: er.target_node_id,
+                                evidence_hash: er.evidence_hash,
+                                evidence_type: er.evidence_type,
+                                reporter_signature: er.reporter_signature,
+                                timestamp: er.timestamp,
+                            }
                         }),
                     })
                     .collect();

@@ -9,9 +9,9 @@ use crate::waf::{
 };
 
 #[cfg(feature = "mesh")]
-use crate::waf::YaraRulesManager;
-#[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
+#[cfg(feature = "mesh")]
+use crate::waf::YaraRulesManager;
 
 #[derive(Clone)]
 pub struct SupervisorState {

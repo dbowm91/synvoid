@@ -82,6 +82,13 @@ pub(crate) static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_QUORUM_FAILED_COUNT: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_QUORUM_REGIONAL_COUNT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_QUORUM_FULL_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_VERIFICATION_FAILURES: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static DHT_RAFT_WRITE_FAILURES: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
 
 pub(crate) static DHT_QUERY_LATENCIES: LazyLock<Mutex<VecDeque<u64>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
@@ -394,6 +401,38 @@ pub fn get_dht_quorum_achieved_count() -> u64 {
 
 pub fn get_dht_quorum_failed_count() -> u64 {
     DHT_QUORUM_FAILED_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_quorum_regional() {
+    DHT_QUORUM_REGIONAL_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_dht_quorum_full() {
+    DHT_QUORUM_FULL_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_quorum_regional_count() -> u64 {
+    DHT_QUORUM_REGIONAL_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn get_dht_quorum_full_count() -> u64 {
+    DHT_QUORUM_FULL_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_verification_failure() {
+    DHT_VERIFICATION_FAILURES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_verification_failures() -> u64 {
+    DHT_VERIFICATION_FAILURES.load(Ordering::Relaxed)
+}
+
+pub fn record_dht_raft_write_failure() {
+    DHT_RAFT_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_dht_raft_write_failures() -> u64 {
+    DHT_RAFT_WRITE_FAILURES.load(Ordering::Relaxed)
 }
 
 pub fn record_dht_query_latency(latency_ms: u64) {

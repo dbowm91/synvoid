@@ -711,10 +711,9 @@ impl YaraRulesManager {
             return None;
         };
 
-        if let Ok(record) =
-            crate::serialization::deserialize::<crate::mesh::dht::YaraRuleContentRecord>(
-                &rule_record.value,
-            )
+        if let Ok(record) = crate::serialization::deserialize::<
+            crate::mesh::dht::YaraRuleContentRecord,
+        >(&rule_record.value)
         {
             if record.is_chunked {
                 tracing::debug!(
@@ -733,7 +732,12 @@ impl YaraRulesManager {
             let timestamp: u64 = value
                 .get("timestamp")
                 .and_then(|v| v.as_u64())
-                .or_else(|| value.get("timestamp").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()))
+                .or_else(|| {
+                    value
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse().ok())
+                })
                 .unwrap_or(0);
             return Some((version_str, rules_str, timestamp));
         }
@@ -755,10 +759,9 @@ impl YaraRulesManager {
             return None;
         };
 
-        if let Ok(record) =
-            crate::serialization::deserialize::<crate::mesh::dht::YaraCompiledRuleContentRecord>(
-                &rule_record.value,
-            )
+        if let Ok(record) = crate::serialization::deserialize::<
+            crate::mesh::dht::YaraCompiledRuleContentRecord,
+        >(&rule_record.value)
         {
             return Some((record.version, record.compiled_rules, record.timestamp));
         }
@@ -897,21 +900,71 @@ impl YaraRulesManager {
         for record in &dht_records {
             if record.key.starts_with("yara_rules_manifest:") {
                 // Try to deserialize as typed manifest first
-                let manifest_opt: Option<crate::mesh::dht::YaraRulesManifest> = 
+                let manifest_opt: Option<crate::mesh::dht::YaraRulesManifest> =
                     crate::serialization::deserialize(&record.value).ok();
 
-                let (manifest_node_id, peer_hash, manifest_version, manifest_timestamp, is_chunked, chunk_count, manifest_signature, manifest_signer_pk, compiled_hash) = if let Some(ref m) = manifest_opt {
-                    (m.node_id.clone(), m.content_hash.clone(), m.version.clone(), m.timestamp, m.is_chunked, m.chunk_count, URL_SAFE_NO_PAD.encode(&m.signature), m.signer_public_key.clone().unwrap_or_default(), m.compiled_hash.clone())
-                } else if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value) {
-                    let node_id = value.get("node_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let hash = value.get("content_hash").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let version = value.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let ts_str = value.get("timestamp").and_then(|v| v.as_str()).unwrap_or("0");
+                let (
+                    manifest_node_id,
+                    peer_hash,
+                    manifest_version,
+                    manifest_timestamp,
+                    is_chunked,
+                    chunk_count,
+                    manifest_signature,
+                    manifest_signer_pk,
+                    compiled_hash,
+                ) = if let Some(ref m) = manifest_opt {
+                    (
+                        m.node_id.clone(),
+                        m.content_hash.clone(),
+                        m.version.clone(),
+                        m.timestamp,
+                        m.is_chunked,
+                        m.chunk_count,
+                        URL_SAFE_NO_PAD.encode(&m.signature),
+                        m.signer_public_key.clone().unwrap_or_default(),
+                        m.compiled_hash.clone(),
+                    )
+                } else if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&record.value)
+                {
+                    let node_id = value
+                        .get("node_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let hash = value
+                        .get("content_hash")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let version = value
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let ts_str = value
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("0");
                     let ts: u64 = ts_str.parse().unwrap_or(0);
-                    let chunked = value.get("is_chunked").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let count = value.get("chunk_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-                    let sig = value.get("signature").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let pk = value.get("signer_public_key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let chunked = value
+                        .get("is_chunked")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let count = value
+                        .get("chunk_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1) as usize;
+                    let sig = value
+                        .get("signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let pk = value
+                        .get("signer_public_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     (node_id, hash, version, ts, chunked, count, sig, pk, None)
                 } else {
                     continue;
@@ -925,7 +978,9 @@ impl YaraRulesManager {
                 if manifest_timestamp > now + YARA_TIMESTAMP_FUTURE_BOUND_SECS {
                     continue;
                 }
-                if now > manifest_timestamp && now - manifest_timestamp > YARA_TIMESTAMP_PAST_BOUND_SECS {
+                if now > manifest_timestamp
+                    && now - manifest_timestamp > YARA_TIMESTAMP_PAST_BOUND_SECS
+                {
                     continue;
                 }
 
@@ -982,9 +1037,18 @@ impl YaraRulesManager {
                         for sig_record in m_sigs {
                             if let Ok(pk) = URL_SAFE_NO_PAD.decode(&sig_record.public_key) {
                                 if let Ok(pk_arr) = pk.try_into() {
-                                    let m_signer = crate::mesh::protocol::MeshMessageSigner::new(pk_arr);
-                                    if m_signer.verify(signature_content.as_bytes(), &sig_record.signature, &pk_arr) {
-                                        if self.config.trusted_signers.contains(&sig_record.public_key) {
+                                    let m_signer =
+                                        crate::mesh::protocol::MeshMessageSigner::new(pk_arr);
+                                    if m_signer.verify(
+                                        signature_content.as_bytes(),
+                                        &sig_record.signature,
+                                        &pk_arr,
+                                    ) {
+                                        if self
+                                            .config
+                                            .trusted_signers
+                                            .contains(&sig_record.public_key)
+                                        {
                                             valid_count += 1;
                                         }
                                     }
@@ -995,12 +1059,20 @@ impl YaraRulesManager {
                         // Threshold: 2/3 of global nodes (simplified to 2 for now, or use trusted_signers.len())
                         let threshold = (self.config.trusted_signers.len() * 2 / 3).max(1);
                         if valid_count < threshold {
-                            tracing::warn!("YARA sync: manifest has insufficient signatures ({} < {})", valid_count, threshold);
+                            tracing::warn!(
+                                "YARA sync: manifest has insufficient signatures ({} < {})",
+                                valid_count,
+                                threshold
+                            );
                             continue;
                         }
                     } else if !self.node_role.is_global() {
                         // Fallback for single signature if multi-sig is not yet used
-                        if !self.config.trusted_signers.contains(&manifest_signer_pk.to_string()) {
+                        if !self
+                            .config
+                            .trusted_signers
+                            .contains(&manifest_signer_pk.to_string())
+                        {
                             continue;
                         }
                     }
@@ -1036,7 +1108,9 @@ impl YaraRulesManager {
                     rules_str_opt.map(|(ver, s, ts)| (ver, Some(s), None, ts))
                 };
 
-                let Some((version_str, rules_string_opt, compiled_rules_opt, timestamp)) = rules_data else {
+                let Some((version_str, rules_string_opt, compiled_rules_opt, timestamp)) =
+                    rules_data
+                else {
                     continue;
                 };
 
@@ -1092,7 +1166,9 @@ impl YaraRulesManager {
                             )?;
                         } else {
                             // Fetch source rules to accompany compiled rules
-                            if let Some((_, source, _)) = self.fetch_rules_from_dht(&new_hash, &record_store) {
+                            if let Some((_, source, _)) =
+                                self.fetch_rules_from_dht(&new_hash, &record_store)
+                            {
                                 self.apply_compiled_rules(
                                     source,
                                     compiled,
@@ -1102,11 +1178,7 @@ impl YaraRulesManager {
                             }
                         }
                     } else if let Some(source) = best_rules {
-                        self.apply_rules(
-                            source,
-                            new_version.clone(),
-                            YaraRuleSource::MeshGlobal,
-                        )?;
+                        self.apply_rules(source, new_version.clone(), YaraRuleSource::MeshGlobal)?;
                     }
                 }
             }
@@ -1401,10 +1473,7 @@ impl YaraRulesManager {
     fn broadcast_submission(&self, submission: &YaraRuleSubmission) -> Result<(), YaraRulesError> {
         let sender = self.mesh_sender.read();
         if let Some(ref sender) = *sender {
-            let signer_public_key = self
-                .signer
-                .as_ref()
-                .map(|s| s.get_public_key());
+            let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key());
 
             let message = MeshMessage::YaraRuleSubmission {
                 request_id: submission.submission_id.clone().into(),
@@ -1635,10 +1704,7 @@ impl YaraRulesManager {
                 .clone()
                 .ok_or(YaraRulesError::NoLocalRules)?;
 
-            let signer_public_key = self
-                .signer
-                .as_ref()
-                .map(|s| s.get_public_key());
+            let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key());
 
             let compiled_rules = match yara_x::compile(rules.as_str()) {
                 Ok(compiled) => match compiled.serialize() {
@@ -1931,7 +1997,9 @@ impl YaraRulesManager {
                 );
 
                 // Verify signature if the sender provided one and we have a signer
-                if !signature.is_empty() && signer_public_key.as_ref().map_or(false, |s| !s.is_empty()) {
+                if !signature.is_empty()
+                    && signer_public_key.as_ref().map_or(false, |s| !s.is_empty())
+                {
                     if let Some(ref signer) = self.signer {
                         let sign_content = format!("{}:{}", version, rules);
                         let pk_bytes = URL_SAFE_NO_PAD
@@ -2069,7 +2137,9 @@ impl YaraRulesManager {
                     );
                 }
 
-                if !signature.is_empty() && signer_public_key.as_ref().map_or(false, |s| !s.is_empty()) {
+                if !signature.is_empty()
+                    && signer_public_key.as_ref().map_or(false, |s| !s.is_empty())
+                {
                     if let Some(ref signer) = self.signer {
                         let sign_content = if !compiled_rules.is_empty() {
                             format!("{}:{}:{}", version, checksum, source_rules.len())
@@ -2197,10 +2267,7 @@ impl YaraRulesManager {
 
                 if let Some(rules) = self.local_rules.read().clone() {
                     let ver = self.current_version.read().clone();
-                    let signer_public_key = self
-                        .signer
-                        .as_ref()
-                        .map(|s| s.get_public_key());
+                    let signer_public_key = self.signer.as_ref().map(|s| s.get_public_key());
 
                     let is_full = version
                         .as_ref()
@@ -2246,7 +2313,9 @@ impl YaraRulesManager {
                 );
 
                 if self.config.require_signature {
-                    if !signature.is_empty() && signer_public_key.as_ref().map_or(false, |s| !s.is_empty()) {
+                    if !signature.is_empty()
+                        && signer_public_key.as_ref().map_or(false, |s| !s.is_empty())
+                    {
                         if let Some(ref signer) = self.signer {
                             let sign_content = format!("{}:{}", version, rules);
                             let pk_bytes = base64::engine::general_purpose::STANDARD

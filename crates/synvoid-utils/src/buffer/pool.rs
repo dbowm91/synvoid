@@ -345,7 +345,8 @@ impl BufferPool {
             BufferTier::Jumbo => size, // Jumbo buffers are sized exactly
         };
 
-        GLOBAL_ALLOCATED_BYTES.fetch_add(allocated_size as u64, std::sync::atomic::Ordering::Relaxed);
+        GLOBAL_ALLOCATED_BYTES
+            .fetch_add(allocated_size as u64, std::sync::atomic::Ordering::Relaxed);
 
         let tls_result = TLS_CACHE.with(|cache| {
             if let Some(buf) = cache.pop(tier) {
@@ -644,7 +645,10 @@ impl std::io::Write for PooledBuf {
 impl Drop for PooledBuf {
     fn drop(&mut self) {
         if let Some(buf) = self.buf.take() {
-            GLOBAL_ALLOCATED_BYTES.fetch_sub(self.allocated_size as u64, std::sync::atomic::Ordering::Relaxed);
+            GLOBAL_ALLOCATED_BYTES.fetch_sub(
+                self.allocated_size as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             TLS_CACHE.with(|cache| {
                 if cache.len(self.tier) < TLS_CACHE_SIZE {
                     cache.push(buf, self.tier);
@@ -674,7 +678,10 @@ impl std::fmt::Debug for PooledBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PooledBuf")
             .field("len", &self.requested_size)
-            .field("capacity", &self.buf.as_ref().map(|b| b.capacity()).unwrap_or(0))
+            .field(
+                "capacity",
+                &self.buf.as_ref().map(|b| b.capacity()).unwrap_or(0),
+            )
             .finish()
     }
 }

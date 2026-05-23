@@ -179,13 +179,16 @@ impl UploadValidator {
                             let new_version = yara_rules.get_current_version();
 
                             if current_version != new_version {
-                                if let Some(compiled_rules) = yara_rules.get_current_compiled_rules() {
+                                if let Some(compiled_rules) =
+                                    yara_rules.get_current_compiled_rules()
+                                {
                                     tracing::debug!(
                                         current_version = ?current_version,
                                         new_version = ?new_version,
                                         "Reloading YARA rules with new version (pre-compiled binary)"
                                     );
-                                    yara_scanner.reload_with_compiled_rules(&compiled_rules, new_version)?;
+                                    yara_scanner
+                                        .reload_with_compiled_rules(&compiled_rules, new_version)?;
                                 } else if let Some(new_rules) = yara_rules.get_current_rules() {
                                     tracing::debug!(
                                         current_version = ?current_version,

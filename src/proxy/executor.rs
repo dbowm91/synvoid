@@ -161,8 +161,10 @@ impl ProxyExecutor {
                                     let status = response.status().as_u16();
                                     let body = response.body().clone();
                                     let allowed_headers = cache.settings().allowed_headers.clone();
-                                    let filtered_headers =
-                                        filter_cacheable_headers(response.headers(), &allowed_headers);
+                                    let filtered_headers = filter_cacheable_headers(
+                                        response.headers(),
+                                        &allowed_headers,
+                                    );
                                     let max_age = get_cache_max_age_static(&filtered_headers);
 
                                     if let Err(e) = cache.insert(

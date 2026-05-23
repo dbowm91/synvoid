@@ -812,7 +812,9 @@ impl DhtKey {
             DhtKey::TransformedContent { .. } => None,
             DhtKey::PoisonedImage { .. } => None,
             DhtKey::YaraRuleContent { .. } => Some(SignedRecordType::YaraRuleContent),
-            DhtKey::YaraCompiledRuleContent { .. } => Some(SignedRecordType::YaraCompiledRuleContent),
+            DhtKey::YaraCompiledRuleContent { .. } => {
+                Some(SignedRecordType::YaraCompiledRuleContent)
+            }
             DhtKey::YaraRulesManifest { .. } => Some(SignedRecordType::YaraRulesManifest),
             DhtKey::YaraChunk { .. } => None,
             DhtKey::YaraCompiledChunk { .. } => None,

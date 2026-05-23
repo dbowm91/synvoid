@@ -32,8 +32,20 @@ SynVoid handles TLS termination at the edge using **Rustls**.
 
 ### 2. Post-Quantum Cryptography (PQC)
 SynVoid is at the forefront of post-quantum security:
-- **X25519MLKEM768:** A hybrid key exchange that combines classical X25519 with the ML-KEM (Kyber) algorithm.
-- **Feature-Gated:** PQ security can be enabled via the `post-quantum` feature flag.
+
+**Key Exchange:**
+- **X25519MLKEM768:** A hybrid key exchange that combines classical X25519 with the ML-KEM-768 (Kyber) algorithm.
+- **Feature-Gated:** PQ key exchange can be enabled via the `post-quantum` feature flag.
+- Configuration: `mesh.ml_kem` section in `MeshConfig` (variant, rotation interval, session TTL, max sessions).
+
+**Message Signatures:**
+- **ML-DSA-44:** Post-quantum digital signature algorithm for mesh message authentication.
+- **Feature-Gated:** PQ mesh signatures can be enabled via the `pqc-mesh` feature flag.
+- Configuration: `global_node.ml_dsa_private_key_base64` in `GlobalNodeConfig`.
+
+**Feature Flags:**
+- `post-quantum` — Enables TLS hybrid key exchange (ML-KEM)
+- `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA)
 
 ---
 

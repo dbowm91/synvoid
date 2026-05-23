@@ -10,6 +10,6 @@ pub mod mesh;
 pub mod process;
 pub mod state;
 
+pub use mesh::run_mesh_agent_mode;
 pub use process::{run_supervisor_mode, SupervisorProcess};
 pub use state::{SupervisorState, SupervisorStateTrackers};
-pub use mesh::run_mesh_agent_mode;

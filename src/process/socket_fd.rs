@@ -619,7 +619,9 @@ mod tests {
         let socket_path = dir.path().join("test.sock");
 
         let listener = UnixListener::bind(&socket_path).expect("Failed to bind");
-        listener.set_nonblocking(true).expect("Failed to set nonblocking");
+        listener
+            .set_nonblocking(true)
+            .expect("Failed to set nonblocking");
 
         let mut passer = SocketFDPassing::new();
 
@@ -632,7 +634,9 @@ mod tests {
 
         if let Ok((stream, _)) = listener.accept() {
             let mut server_passer = SocketFDPassing::from_stream(stream);
-            let (fds, data) = server_passer.recv_fds(10).unwrap_or_else(|_| (vec![], vec![]));
+            let (fds, data) = server_passer
+                .recv_fds(10)
+                .unwrap_or_else(|_| (vec![], vec![]));
             drop(fds);
             drop(data);
         }
@@ -650,7 +654,10 @@ mod tests {
                 let _ = close_fd(fd);
             }
             Err(e) => {
-                tracing::debug!("Socket creation returned error (expected in some envs): {}", e);
+                tracing::debug!(
+                    "Socket creation returned error (expected in some envs): {}",
+                    e
+                );
             }
         }
     }

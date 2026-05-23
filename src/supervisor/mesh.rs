@@ -2,23 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(feature = "mesh")]
-use crate::config::{ConfigManager, MainConfig};
-#[cfg(feature = "mesh")]
 use crate::block_store::BlockStore;
 #[cfg(feature = "mesh")]
-use crate::waf::YaraRulesManager;
+use crate::config::{ConfigManager, MainConfig};
 #[cfg(feature = "mesh")]
-use crate::mesh::threat_intel::{ThreatIntelligenceManager, ThreatIntelligenceConfig};
+use crate::mesh::threat_intel::{ThreatIntelligenceConfig, ThreatIntelligenceManager};
 #[cfg(feature = "mesh")]
 use crate::mesh::{
-    topology::MeshTopology,
-    dht::routing::DhtRoutingManager,
-    crypto_verification::CryptoVerificationPool,
-    transports::MeshTransportManager,
-    proxy::MeshProxy,
-    backend::MeshBackendPool,
-    backend::create_record_store,
+    backend::create_record_store, backend::MeshBackendPool,
+    crypto_verification::CryptoVerificationPool, dht::routing::DhtRoutingManager, proxy::MeshProxy,
+    topology::MeshTopology, transports::MeshTransportManager,
 };
+#[cfg(feature = "mesh")]
+use crate::waf::YaraRulesManager;
 
 #[cfg(feature = "mesh")]
 pub struct MeshControlPlane {
@@ -43,7 +39,7 @@ pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
         tracing::error!("Failed to load main.toml for mesh agent: {}", e);
         std::process::exit(1);
     }
-    
+
     let main_config = config_manager.main.clone();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -71,7 +67,8 @@ pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
         };
 
         // Mesh agent handles gRPC control API for mesh-related queries
-        let grpc_addr: Result<std::net::SocketAddr, _> = main_config.supervisor.control_api_addr.parse();
+        let grpc_addr: Result<std::net::SocketAddr, _> =
+            main_config.supervisor.control_api_addr.parse();
         if let Ok(addr) = grpc_addr {
             // Note: Standalone mesh agent doesn't manage workers, so PM is None-equivalent
             // We might need a dummy PM or refactor gRPC server to handle mesh-only mode.
@@ -81,7 +78,7 @@ pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
 
         // Keep running until signaled
         tracing::info!("Mesh Agent is now active.");
-        
+
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("Mesh Agent shutting down...");
     });
@@ -99,8 +96,9 @@ pub async fn init_mesh_control_plane(
     block_store: Arc<BlockStore>,
 ) -> Option<MeshControlPlane> {
     let mesh_config_external = main_config.tunnel.mesh.as_ref()?;
-    let mesh_config: crate::mesh::config::MeshConfig = serde_json::from_str(&serde_json::to_string(mesh_config_external).unwrap()).unwrap();
-    
+    let mesh_config: crate::mesh::config::MeshConfig =
+        serde_json::from_str(&serde_json::to_string(mesh_config_external).unwrap()).unwrap();
+
     if !mesh_config.enabled {
         tracing::info!("Mesh is disabled in configuration.");
         return None;
@@ -113,7 +111,12 @@ pub async fn init_mesh_control_plane(
     let topology = Arc::new(MeshTopology::new(mesh_config_arc.clone()));
     topology.start_background_tasks();
 
-    let routing_manager = if mesh_config.dht.as_ref().map(|d| d.routing_enabled).unwrap_or(false) {
+    let routing_manager = if mesh_config
+        .dht
+        .as_ref()
+        .map(|d| d.routing_enabled)
+        .unwrap_or(false)
+    {
         let manager = Arc::new(DhtRoutingManager::new(mesh_config_arc.clone()));
         let manager_clone = manager.clone();
         manager.start_background_tasks();
@@ -143,11 +146,8 @@ pub async fn init_mesh_control_plane(
         topology.clone(),
         None,
     ));
-    
-    let backend_pool = Arc::new(MeshBackendPool::new(
-        proxy.clone(),
-        topology.clone(),
-    ));
+
+    let backend_pool = Arc::new(MeshBackendPool::new(proxy.clone(), topology.clone()));
 
     let signer_key = if let Some(ref key) = mesh_config.global_node_key {
         let mut key_bytes = [0u8; 32];
@@ -161,7 +161,8 @@ pub async fn init_mesh_control_plane(
         let ikm = node_id.as_bytes();
         let hk = Hkdf::<Sha256>::new(None, ikm);
         let mut okm = [0u8; 32];
-        hk.expand(b"synvoid-mesh-signer", &mut okm).expect("HKDF expand failed");
+        hk.expand(b"synvoid-mesh-signer", &mut okm)
+            .expect("HKDF expand failed");
         okm
     };
 
@@ -196,7 +197,11 @@ pub async fn init_mesh_control_plane(
         Some(Arc::new(signer_for_threat)),
     ));
 
-    let transport = transport_manager.clone().get_quic_transport().expect("Failed to get transport").get_inner();
+    let transport = transport_manager
+        .clone()
+        .get_quic_transport()
+        .expect("Failed to get transport")
+        .get_inner();
     let raft_client = Arc::new(crate::mesh::raft::client::RaftAwareClient::new(
         backend_pool.clone(),
         transport,
@@ -238,11 +243,14 @@ pub async fn init_mesh_control_plane(
         transport_manager.clone(),
         backend_pool.clone(),
         Some(threat_intel.clone()),
-        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(signer_key))),
+        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
+            signer_key,
+        ))),
         None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
         None::<Arc<crate::dns::MeshDnsRegistry>>,
     )
-    .await {
+    .await
+    {
         tracing::warn!("Supervisor Mesh transport initialization failed: {}", e);
     }
 

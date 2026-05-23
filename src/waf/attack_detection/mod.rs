@@ -154,45 +154,19 @@ impl AttackDetector {
         ));
 
         let fast_path_patterns = vec![
-            r#"['";]--"#,                           // SQL comment/injection
-            r#"(?i)union\s+select"#,                // SQL union
-            r#"(?i)select\s+.*\s+from"#,            // SQL select from
-            r#"(?i)drop\s+(table|database|index)"#, // SQL drop
-            r#"(?i)insert\s+into"#,                 // SQL insert
-            r#"(?i)update\s+.*\s+set"#,             // SQL update
-            r#"(?i)exec\s*\(|execute\s*\("#,        // SQL exec/execute
-            r#"<script"#,                           // XSS
+            r#"['";]--"#,            // SQL comment/injection
+            r#"(?i)union\s+select"#, // SQL union
+            r#"(?i)select\s+.*\s+from"#,
+            r#"<script"#, // XSS
             r#"javascript:"#,
             r#"onload="#,
             r#"onerror="#,
-            r#"onclick="#,
-            r#"<iframe"#,
             r#"\.\./\.\./"#, // Path traversal
             r#"/etc/passwd"#,
             r#"/windows/system32"#,
-            r#"/proc/self"#,
-            r#";\s*(cat|ls|curl|wget|ping|sh|bash)"#, // Command injection separators
-            r#"\|\s*(cat|ls|curl|wget|ping|sh|bash)"#, // Pipe command injection
-            r#"\&\&\s*(cat|ls|curl|wget|ping|sh|bash)"#, // And command injection
-            r#";\s*\$\("#,                            // Command substitution
-            r#"\$\(\s*\("#,                           // Nested command substitution
-            r#"<\?php"#,                              // PHP tags
-            r#"<%="#,                                 // ASP tags
-            r#"\$\{"#,                                // Expression injection (SSTI)
-            r#"\{\{"#,                                // Template injection
-            r#"\{\%\s*"#,                             // Template block
-            r#"%00"#,                                 // Null byte
-            r#"%2f"#,                                 // Path encoding
-            r#"%0a"#,                                 // Line feed encoding
-            r#"\bcurl\s+"#,                           // Curl command
-            r#"\bwget\s+"#,                           // Wget command
-            r#"file://"#,                             // Local file inclusion
-            r#"php://"#,                              // PHP wrapper
-            r#"expect://"#,                           // Expect wrapper
-            r#"smuggle"#,                             // Smuggling indicators
-            r#"transfer-encoding"#,                   // HTTP smuggling header
-            r#"chunked"#,                             // Chunked encoding
-            r#"content-length\s*:"#,                  // CL header variation
+            r#"<\?php"#, // PHP tags
+            r#"\$\{"#,   // Expression injection
+            r#"\{\{"#,   // Template injection
         ];
         let fast_path_detector = regex::RegexSet::new(fast_path_patterns).ok();
 

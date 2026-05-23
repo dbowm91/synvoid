@@ -1,7 +1,10 @@
-use std::sync::Arc;
-use crate::process::{MasterCommand, CommandResponse, MasterStatus, StatusStats, ThreatSummary, ProcessManager, Message};
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
+use crate::process::{
+    CommandResponse, MasterCommand, MasterStatus, Message, ProcessManager, StatusStats,
+    ThreatSummary,
+};
 use crate::supervisor::state::SupervisorState;
+use std::sync::Arc;
 
 pub async fn handle_supervisor_command(
     ipc: &mut AsyncIpcStream,
@@ -39,7 +42,8 @@ pub async fn handle_supervisor_command(
                 }
                 MasterCommand::Stop { graceful } => {
                     tracing::info!("Supervisor: Stop command received (graceful: {})", graceful);
-                    ipc.send(&CommandResponse::Ok("Shutdown initiated".to_string())).await?;
+                    ipc.send(&CommandResponse::Ok("Shutdown initiated".to_string()))
+                        .await?;
                     state.shutdown().await;
                 }
                 MasterCommand::ReloadConfig => {
@@ -48,7 +52,8 @@ pub async fn handle_supervisor_command(
                         let mut config = state.config.write().await;
                         config.reload_all();
                     }
-                    ipc.send(&CommandResponse::Ok("Configuration reloaded".to_string())).await?;
+                    ipc.send(&CommandResponse::Ok("Configuration reloaded".to_string()))
+                        .await?;
                 }
                 MasterCommand::HealthCheck => {
                     ipc.send(&CommandResponse::Ok("true".to_string())).await?;

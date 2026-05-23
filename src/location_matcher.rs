@@ -121,9 +121,12 @@ impl TrieNode {
         }
         // Prefer exact or preferential prefix over simple prefix if they land on the same node
         if let Some((_, old_type)) = current.value {
-            if value.1 == LocationMatchType::Exact || value.1 == LocationMatchType::PreferentialPrefix {
+            if value.1 == LocationMatchType::Exact
+                || value.1 == LocationMatchType::PreferentialPrefix
+            {
                 current.value = Some(value);
-            } else if old_type == LocationMatchType::Prefix && value.1 == LocationMatchType::Prefix {
+            } else if old_type == LocationMatchType::Prefix && value.1 == LocationMatchType::Prefix
+            {
                 // If both are prefix, we'd typically want the one that was defined first or longest.
                 // But here they share the same path, so they are identical in "length".
                 current.value = Some(value);
@@ -133,7 +136,13 @@ impl TrieNode {
         }
     }
 
-    fn find_best_match(&self, path: &str) -> (Option<(usize, LocationMatchType)>, Option<(usize, LocationMatchType)>) {
+    fn find_best_match(
+        &self,
+        path: &str,
+    ) -> (
+        Option<(usize, LocationMatchType)>,
+        Option<(usize, LocationMatchType)>,
+    ) {
         let mut current = self;
         let mut best_prefix = self.value;
         let mut exact_or_pref = None;
@@ -146,7 +155,9 @@ impl TrieNode {
             if let Some(next) = current.children.get(segment) {
                 current = next;
                 if let Some(v) = current.value {
-                    if v.1 == LocationMatchType::Exact || v.1 == LocationMatchType::PreferentialPrefix {
+                    if v.1 == LocationMatchType::Exact
+                        || v.1 == LocationMatchType::PreferentialPrefix
+                    {
                         // This might be our final result if we stop here
                         exact_or_pref = Some(v);
                     }
@@ -158,15 +169,19 @@ impl TrieNode {
         }
 
         // Check if the current node matches the full path for an exact match
-        let is_exact_match = path.strip_prefix('/').unwrap_or(path).trim_end_matches('/').is_empty() 
+        let is_exact_match = path
+            .strip_prefix('/')
+            .unwrap_or(path)
+            .trim_end_matches('/')
+            .is_empty()
             || path.split('/').filter(|s| !s.is_empty()).count() == current_depth(current, self);
-        
+
         if is_exact_match {
-             if let Some(v) = current.value {
-                 if v.1 == LocationMatchType::Exact || v.1 == LocationMatchType::PreferentialPrefix {
-                     return (Some(v), Some(v));
-                 }
-             }
+            if let Some(v) = current.value {
+                if v.1 == LocationMatchType::Exact || v.1 == LocationMatchType::PreferentialPrefix {
+                    return (Some(v), Some(v));
+                }
+            }
         }
 
         (exact_or_pref, best_prefix)
@@ -249,7 +264,9 @@ impl LocationMatcher {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.exact_locations.is_empty() && self.prefix_locations.is_empty() && self.regex_locations.is_empty()
+        self.exact_locations.is_empty()
+            && self.prefix_locations.is_empty()
+            && self.regex_locations.is_empty()
     }
 
     pub fn len(&self) -> usize {

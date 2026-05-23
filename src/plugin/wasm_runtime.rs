@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::http_client::ErasedBody;
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response, StatusCode};
 use http_body_util::BodyExt;
-use crate::http_client::ErasedBody;
 use parking_lot::RwLock;
 use wasmtime::component::{Component, Linker as ComponentLinker};
 use wasmtime::{
@@ -818,18 +818,22 @@ impl WasmRuntime {
                                 Some(wasmtime::Extern::Memory(m)) => m,
                                 _ => return -3, // No memory export
                             };
-                            if let Err(_) = mem.write(&mut caller, out_ptr as usize, &chunk[..len]) {
+                            if let Err(_) = mem.write(&mut caller, out_ptr as usize, &chunk[..len])
+                            {
                                 return -4; // Memory write error
                             }
                             len as i32
                         }
                         Some(Err(_)) => -2, // Error reading chunk
-                        None => 0, // EOF
+                        None => 0,          // EOF
                     }
                 },
             )
             .map_err(|e| {
-                WasmPluginError::LoadFailed(format!("failed to link synvoid_read_body_chunk: {}", e))
+                WasmPluginError::LoadFailed(format!(
+                    "failed to link synvoid_read_body_chunk: {}",
+                    e
+                ))
             })?;
 
         linker

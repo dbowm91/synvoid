@@ -136,19 +136,24 @@ fn create_socket_with_options(
 }
 
 #[cfg(target_os = "linux")]
-fn attach_reuseport_ebpf(socket: &socket2::Socket) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn attach_reuseport_ebpf(
+    socket: &socket2::Socket,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::os::fd::AsRawFd;
-    
+
     // In a real implementation, we would load the BPF bytecode from a file or embedded bytes.
     // For this architectural improvement, we provide the loader infrastructure.
-    tracing::debug!("Attaching eBPF reuseport balancer to socket {}", socket.as_raw_fd());
-    
+    tracing::debug!(
+        "Attaching eBPF reuseport balancer to socket {}",
+        socket.as_raw_fd()
+    );
+
     // Placeholder for actual BPF loading logic:
     // let mut bpf = aya::Bpf::load(BPF_BYTES)?;
     // let program: &mut aya::programs::SkReuseport = bpf.program_mut("balance_workers")?.try_into()?;
     // program.load()?;
     // program.attach(socket.as_raw_fd())?;
-    
+
     Ok(())
 }
 

@@ -445,7 +445,10 @@ impl ServerlessManager {
                 pre_warm_instances: func_def_clone.pre_warm_instances.unwrap_or(2),
                 max_scale_up_per_tick: 5,
             };
-            let pool = Arc::new(InstancePool::new(pool_config, func_def_clone.clone()).map_err(|e| ServerlessError::WasmError(e.to_string()))?);
+            let pool = Arc::new(
+                InstancePool::new(pool_config, func_def_clone.clone())
+                    .map_err(|e| ServerlessError::WasmError(e.to_string()))?,
+            );
             let pool_clone = pool.clone();
             tokio::spawn(async move {
                 pool_clone.run_autoscaler().await;

@@ -41,7 +41,16 @@ pub fn deserialize<T: serde::de::DeserializeOwned>(data: &[u8]) -> io::Result<T>
 pub fn deserialize_rkyv<'a, T>(data: &'a [u8]) -> io::Result<&'a rkyv::Archived<T>>
 where
     T: rkyv::Archive,
-    T::Archived: rkyv::Portable + for<'b> rkyv::bytecheck::CheckBytes<rkyv::rancor::Strategy<rkyv::validation::Validator<rkyv::validation::archive::ArchiveValidator<'b>, rkyv::validation::shared::SharedValidator>, rkyv::rancor::Error>>,
+    T::Archived: rkyv::Portable
+        + for<'b> rkyv::bytecheck::CheckBytes<
+            rkyv::rancor::Strategy<
+                rkyv::validation::Validator<
+                    rkyv::validation::archive::ArchiveValidator<'b>,
+                    rkyv::validation::shared::SharedValidator,
+                >,
+                rkyv::rancor::Error,
+            >,
+        >,
 {
     rkyv::access::<rkyv::Archived<T>, rkyv::rancor::Error>(data)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("rkyv check failed: {}", e)))

@@ -37,17 +37,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use http_body_util::{Full, BodyExt};
-use http_body_util::combinators::BoxBody;
-use bytes::Bytes;
 use crate::proxy::streaming::TeeBody;
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Full};
 
 use subtle::ConstantTimeEq;
 
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, RetryConfig};
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, HttpClient,
-    UpstreamTlsConfig, BoxErasedBody, ErasedHttpClient, ErasedBody,
+    create_http_client_with_config, create_upstream_client, BoxErasedBody, ErasedBody,
+    ErasedHttpClient, HttpClient, UpstreamTlsConfig,
 };
 
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
@@ -334,29 +334,39 @@ impl ProxyServer {
                     counter!("synvoid.traffic.connection_limited").increment(1);
                     return Ok(Response::builder()
                         .status(429)
-                        .body(Full::new(Bytes::from("Too Many Connections\n")).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
+                        .body(
+                            Full::new(Bytes::from("Too Many Connections\n"))
+                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .boxed(),
+                        )
                         .unwrap());
                 }
             }
         }
 
-        let (full_body_bytes, body): (Option<bytes::Bytes>, Option<BoxErasedBody>) = if !skip_waf_check {
-            const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
-            if let Some(b) = body {
-                let collected = b.collect().await.map_err(|e| format!("Body collection error: {}", e))?;
-                let bytes = collected.to_bytes();
-                let boxed_body: Option<BoxErasedBody> = Some(crate::http_client::ErasedBodyImpl::new(Full::new(bytes.clone())));
-                if bytes.len() <= MAX_WAF_BODY_SIZE {
-                    (Some(bytes), boxed_body)
+        let (full_body_bytes, body): (Option<bytes::Bytes>, Option<BoxErasedBody>) =
+            if !skip_waf_check {
+                const MAX_WAF_BODY_SIZE: usize = 1024 * 1024; // 1MB limit for WAF inspection
+                if let Some(b) = body {
+                    let collected = b
+                        .collect()
+                        .await
+                        .map_err(|e| format!("Body collection error: {}", e))?;
+                    let bytes = collected.to_bytes();
+                    let boxed_body: Option<BoxErasedBody> = Some(
+                        crate::http_client::ErasedBodyImpl::new(Full::new(bytes.clone())),
+                    );
+                    if bytes.len() <= MAX_WAF_BODY_SIZE {
+                        (Some(bytes), boxed_body)
+                    } else {
+                        (None, boxed_body)
+                    }
                 } else {
-                    (None, boxed_body)
+                    (None, None)
                 }
             } else {
-                (None, None)
-            }
-        } else {
-            (None, body)
-        };
+                (None, body)
+            };
 
         if !skip_waf_check {
             let drop = self.waf.config.drop_blocked_requests;
@@ -407,7 +417,11 @@ impl ProxyServer {
                     }
                     return Ok(Response::builder()
                         .status(status_code)
-                        .body(Full::new(Bytes::from(message)).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
+                        .body(
+                            Full::new(Bytes::from(message))
+                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .boxed(),
+                        )
                         .unwrap());
                 }
                 WafDecision::Challenge(_type, html) => {
@@ -417,7 +431,11 @@ impl ProxyServer {
                         .status(200)
                         .header("Content-Type", "text/html")
                         .header("Cache-Control", "no-store, no-cache, must-revalidate")
-                        .body(Full::new(bytes::Bytes::from(html)).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
+                        .body(
+                            Full::new(bytes::Bytes::from(html))
+                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .boxed(),
+                        )
                         .unwrap());
                 }
                 WafDecision::ChallengeWithCookie {
@@ -438,7 +456,11 @@ impl ProxyServer {
                         .header("Content-Type", "text/html")
                         .header("Cache-Control", "no-store, no-cache, must-revalidate")
                         .header("Set-Cookie", cookie)
-                        .body(Full::new(bytes::Bytes::from(html)).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
+                        .body(
+                            Full::new(bytes::Bytes::from(html))
+                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .boxed(),
+                        )
                         .unwrap());
                 }
                 WafDecision::Tarpit(tar_path) => {
@@ -450,7 +472,7 @@ impl ProxyServer {
                         .header("Content-Type", "text/html")
                         .header("Cache-Control", "no-store, no-cache, must-revalidate")
                         .body(BodyExt::boxed(http_body_util::StreamBody::new(
-                            futures::StreamExt::map(stream, |res| res.map(http_body::Frame::data))
+                            futures::StreamExt::map(stream, |res| res.map(http_body::Frame::data)),
                         )))
                         .unwrap());
                 }
@@ -531,8 +553,15 @@ impl ProxyServer {
                 histogram!("synvoid.request.duration").record(start.elapsed());
                 Ok(Response::builder()
                     .status(502)
-                    .body(Full::new(Bytes::from_static(b"Bad Gateway")).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())
-                    .unwrap_or_else(|_| crate::http::fallback_error_boxed().map(|b| b.map_err(|_| unreachable!()).boxed())))
+                    .body(
+                        Full::new(Bytes::from_static(b"Bad Gateway"))
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                            .boxed(),
+                    )
+                    .unwrap_or_else(|_| {
+                        crate::http::fallback_error_boxed()
+                            .map(|b| b.map_err(|_| unreachable!()).boxed())
+                    }))
             }
         }
     }
@@ -589,7 +618,13 @@ impl ProxyServer {
             return self
                 .handle_cache_purge(path, host, purge_token, client_ip)
                 .await
-                .map(|r| r.map(|b| Full::new(b).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed()));
+                .map(|r| {
+                    r.map(|b| {
+                        Full::new(b)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                            .boxed()
+                    })
+                });
         }
 
         if !self.is_cacheable_method(&method) {
@@ -674,7 +709,11 @@ impl ProxyServer {
                             }
 
                             let response = self.build_cached_response(&cached);
-                            return Ok(response.map(|b| Full::new(b).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed()));
+                            return Ok(response.map(|b| {
+                                Full::new(b)
+                                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                    .boxed()
+                            }));
                         }
 
                         tracing::debug!("Cache MISS for {}", path);
@@ -682,18 +721,22 @@ impl ProxyServer {
                         cache.record_cache_miss();
                         record_proxy_cache_miss();
 
-                        let result = self
-                            .forward_request(method.clone(), path, body)
-                            .await;
+                        let result = self.forward_request(method.clone(), path, body).await;
 
                         match result {
                             Ok(response) => {
                                 self.process_cache_invalidate_header(response.headers());
 
-                                if self.is_response_cacheable_headers(response.status(), response.headers()) {
+                                if self.is_response_cacheable_headers(
+                                    response.status(),
+                                    response.headers(),
+                                ) {
                                     let status = response.status().as_u16();
                                     let allowed_headers = cache.settings().allowed_headers.clone();
-                                    let headers_to_cache = filter_cacheable_headers_impl(response.headers(), &allowed_headers);
+                                    let headers_to_cache = filter_cacheable_headers_impl(
+                                        response.headers(),
+                                        &allowed_headers,
+                                    );
                                     let max_age = self.get_cache_max_age(&headers_to_cache);
 
                                     let (parts, body) = response.into_parts();
@@ -921,7 +964,8 @@ impl ProxyServer {
 
                 if cache.is_status_cacheable(status) {
                     let allowed_headers = cache.settings().allowed_headers.clone();
-                    let filtered_headers = filter_cacheable_headers_impl(&headers, &allowed_headers);
+                    let filtered_headers =
+                        filter_cacheable_headers_impl(&headers, &allowed_headers);
                     let max_age = get_cache_max_age_static_impl(&filtered_headers);
                     if let Err(e) = cache.insert(key, body, status, filtered_headers, max_age) {
                         tracing::warn!("Failed to update cached response: {}", e);
@@ -1166,7 +1210,11 @@ impl ProxyServer {
                 return Err("Response too large".into());
             }
 
-            return Ok(builder.body(Full::new(response_body).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)).boxed())?);
+            return Ok(builder.body(
+                Full::new(response_body)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    .boxed(),
+            )?);
         }
 
         let forward_headers = headers.cloned().unwrap_or_default();
@@ -1175,7 +1223,11 @@ impl ProxyServer {
             &self.erased_client,
             method,
             url,
-            body.unwrap_or_else(|| crate::http_client::ErasedBodyImpl::from_full(http_body_util::Full::new(bytes::Bytes::new()))),
+            body.unwrap_or_else(|| {
+                crate::http_client::ErasedBodyImpl::from_full(http_body_util::Full::new(
+                    bytes::Bytes::new(),
+                ))
+            }),
             forward_headers,
             Some(std::time::Duration::from_secs(30)),
         )
@@ -1190,7 +1242,8 @@ impl ProxyServer {
             }
         }
 
-        let streamed_body = incoming_body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)));
+        let streamed_body = incoming_body
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)));
 
         Ok(builder.body(streamed_body.boxed())?)
     }

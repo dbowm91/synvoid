@@ -1,6 +1,6 @@
-use crate::theme::ThemeConfig;
 use super::renderer::ThemeRenderer;
 use crate::http::headers::generate_stealth_timestamp;
+use crate::theme::ThemeConfig;
 
 pub struct ChallengePageTemplate {
     renderer: ThemeRenderer,

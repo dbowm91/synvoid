@@ -97,8 +97,12 @@ impl ConnectionCounter {
     pub fn load(&self, order: Ordering) -> usize {
         match self {
             Self::Local(c) => c.load(order),
-            Self::Shared { table, backend_index, .. } => {
-                // Sum active connections across all live workers. 
+            Self::Shared {
+                table,
+                backend_index,
+                ..
+            } => {
+                // Sum active connections across all live workers.
                 // Heartbeat timeout is 10 seconds.
                 table.sum_active_connections(*backend_index, 10)
             }
@@ -108,7 +112,11 @@ impl ConnectionCounter {
     pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
         match self {
             Self::Local(c) => c.fetch_add(val, order),
-            Self::Shared { table, backend_index, worker_id } => table
+            Self::Shared {
+                table,
+                backend_index,
+                worker_id,
+            } => table
                 .get_counter_atomic(*worker_id, *backend_index)
                 .map(|c| c.fetch_add(val, order))
                 .unwrap_or(0),
@@ -126,7 +134,11 @@ impl ConnectionCounter {
     {
         match self {
             Self::Local(c) => c.fetch_update(set_order, fetch_order, f),
-            Self::Shared { table, backend_index, worker_id } => {
+            Self::Shared {
+                table,
+                backend_index,
+                worker_id,
+            } => {
                 if let Some(c) = table.get_counter_atomic(*worker_id, *backend_index) {
                     c.fetch_update(set_order, fetch_order, f)
                 } else {
@@ -496,9 +508,8 @@ impl UpstreamPool {
                 }
                 best_backend
             }
-            LoadBalanceAlgorithm::WeightedRoundRobin => {
-                self.weighted_round_robin(&candidates.iter().map(|b| (*b).clone()).collect::<Vec<_>>())
-            }
+            LoadBalanceAlgorithm::WeightedRoundRobin => self
+                .weighted_round_robin(&candidates.iter().map(|b| (*b).clone()).collect::<Vec<_>>()),
             LoadBalanceAlgorithm::IpHash => self.apply_ip_hash(candidates, None),
         }
     }

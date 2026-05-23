@@ -33,10 +33,10 @@ impl SystemHealthMonitor {
             loop {
                 let start = Instant::now();
                 interval.tick().await;
-                
+
                 // Measure tokio schedule delay
                 let delay = start.elapsed().saturating_sub(Duration::from_millis(500));
-                
+
                 let state = if delay > Duration::from_millis(200) {
                     HealthState::Critical
                 } else if delay > Duration::from_millis(50) {
@@ -44,11 +44,15 @@ impl SystemHealthMonitor {
                 } else {
                     HealthState::Normal
                 };
-                
+
                 CURRENT_HEALTH.store(state as u8, Ordering::Relaxed);
-                
+
                 if state != HealthState::Normal {
-                    tracing::warn!("System under pressure: state={:?}, delay={:?}ms", state, delay.as_millis());
+                    tracing::warn!(
+                        "System under pressure: state={:?}, delay={:?}ms",
+                        state,
+                        delay.as_millis()
+                    );
                 }
             }
         });

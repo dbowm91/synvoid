@@ -71,7 +71,7 @@ impl TarpitHandler {
             for _ in 0..100 {
                 let sentence = chain.generate_sentence(5, 12);
                 yield bytes::Bytes::from(format!("<p>{}</p>\n", sentence));
-                
+
                 // Add some links to keep them busy
                 for i in 0..5 {
                     let random_path = format!("{}-{}", path_seed, i);

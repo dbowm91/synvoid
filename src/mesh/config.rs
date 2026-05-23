@@ -746,6 +746,10 @@ impl OriginSigningKeyConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+/// Configuration for global node identity and key exchange.
+/// Supports post-quantum cryptography when `post-quantum` feature is enabled:
+/// - ML-KEM-768 for hybrid key encapsulation (X25519 + ML-KEM)
+/// - ML-DSA-44 for post-quantum message signatures
 pub struct GlobalNodeConfig {
     #[serde(default)]
     pub known_origin_keys: HashMap<String, String>,
@@ -1120,6 +1124,9 @@ pub enum MlKemVariant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Post-quantum key exchange configuration for mesh TLS.
+/// Enable via `post-quantum` feature flag to use ML-KEM-768 or ML-KEM-1024
+/// hybrid key exchange instead of classical X25519.
 pub struct MeshMlKemConfig {
     #[serde(default = "default_mlkem_enabled")]
     pub enabled: bool,
@@ -1166,14 +1173,7 @@ impl Default for MeshMlKemConfig {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    Archive,
-    RkyvSerialize,
-    RkyvDeserialize,
+    Debug, Clone, Serialize, Deserialize, JsonSchema, Archive, RkyvSerialize, RkyvDeserialize,
 )]
 pub struct GenesisMintingProof {
     pub node_id: String,

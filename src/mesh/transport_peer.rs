@@ -3979,7 +3979,7 @@ impl MeshTransport {
 
         let mut trust_level = 1;
         if attestation_report.is_some() {
-            trust_level = 2; 
+            trust_level = 2;
         }
 
         let new_node = crate::mesh::raft::state_machine::AuthorizedGlobalNode {
@@ -3989,8 +3989,10 @@ impl MeshTransport {
             authorized_at: crate::mesh::safe_unix_timestamp(),
         };
 
-        let value = postcard::to_stdvec(&crate::mesh::raft::state_machine::StateMachineValue::AuthorizedGlobalNode(new_node))
-            .unwrap_or_default();
+        let value = postcard::to_stdvec(
+            &crate::mesh::raft::state_machine::StateMachineValue::AuthorizedGlobalNode(new_node),
+        )
+        .unwrap_or_default();
         let cmd = crate::mesh::raft::state_machine::RaftCommand::Set {
             namespace: crate::mesh::raft::state_machine::Namespace::AuthorizedGlobalNodes,
             key: public_key.to_string(),
@@ -4021,7 +4023,11 @@ impl MeshTransport {
             request_id: request_id.into(),
             approved,
             trust_level: if approved { trust_level } else { 0 },
-            reason: if approved { None } else { Some("Internal error proposing to Raft".into()) },
+            reason: if approved {
+                None
+            } else {
+                Some("Internal error proposing to Raft".into())
+            },
             timestamp: crate::mesh::safe_unix_timestamp(),
             signature: Vec::new(),
         };

@@ -394,24 +394,22 @@ impl OverseerProcess {
             }
 
             // Monitor Mesh Agent
-            if self.running.is_running() {
-                if let Some(ref mut child) = self.mesh_agent_child {
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            tracing::warn!(
-                                "Mesh Agent process exited with status: {}. Restarting...",
-                                status
-                            );
-                            let _ = self.spawn_mesh_agent();
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            tracing::error!("Failed to check mesh agent: {}", e);
-                        }
+            if let Some(ref mut child) = self.mesh_agent_child {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        tracing::warn!(
+                            "Mesh Agent process exited with status: {}. Restarting...",
+                            status
+                        );
+                        let _ = self.spawn_mesh_agent();
                     }
-                } else if self.running.is_running() {
-                    let _ = self.spawn_mesh_agent();
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::error!("Failed to check mesh agent: {}", e);
+                    }
                 }
+            } else {
+                let _ = self.spawn_mesh_agent();
             }
 
             // Periodically write status file

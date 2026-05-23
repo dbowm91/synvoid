@@ -12,7 +12,7 @@ pub static GLOBAL_SHARED_RATELIMIT_TABLE: LazyLock<RwLock<Option<SharedRateLimit
     LazyLock::new(|| RwLock::new(None));
 
 /// Shared connection table for distributed load balancing with worker liveness.
-/// 
+///
 /// Layout:
 /// - [0..8]: max_workers (u64)
 /// - [8..16]: max_backends (u64)
@@ -25,7 +25,11 @@ pub struct SharedConnectionTable {
 }
 
 impl SharedConnectionTable {
-    pub fn init_global(path: PathBuf, max_workers: usize, max_backends: usize) -> std::io::Result<()> {
+    pub fn init_global(
+        path: PathBuf,
+        max_workers: usize,
+        max_backends: usize,
+    ) -> std::io::Result<()> {
         let table = Self::new(path, max_workers, max_backends)?;
         let mut global = GLOBAL_SHARED_CONNECTION_TABLE.write();
         *global = Some(table);
@@ -51,7 +55,7 @@ impl SharedConnectionTable {
         file.set_len(total_size as u64)?;
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
-        
+
         // Initialize header
         unsafe {
             let ptr = mmap.as_ptr() as *mut u64;
@@ -81,11 +85,17 @@ impl SharedConnectionTable {
         Some(unsafe { &*ptr })
     }
 
-    pub fn get_counter_atomic(&self, worker_id: usize, backend_index: usize) -> Option<&AtomicUsize> {
+    pub fn get_counter_atomic(
+        &self,
+        worker_id: usize,
+        backend_index: usize,
+    ) -> Option<&AtomicUsize> {
         if worker_id >= self.max_workers || backend_index >= self.max_backends {
             return None;
         }
-        let offset = 16 + self.max_workers * 8 + (worker_id * self.max_backends + backend_index) * std::mem::size_of::<AtomicUsize>();
+        let offset = 16
+            + self.max_workers * 8
+            + (worker_id * self.max_backends + backend_index) * std::mem::size_of::<AtomicUsize>();
         let ptr = unsafe { self.mmap.as_ptr().add(offset) } as *const AtomicUsize;
         Some(unsafe { &*ptr })
     }

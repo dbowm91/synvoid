@@ -45,8 +45,8 @@ pub mod auth;
 pub mod block_store;
 #[cfg(feature = "buffer")]
 pub mod buffer {
-    pub use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
     pub use synvoid_utils::buffer::pool;
+    pub use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
 }
 pub mod captcha;
 pub mod cgi;

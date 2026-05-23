@@ -67,11 +67,12 @@ impl CommandClient {
 
     fn send_via_grpc(&self, command: MasterCommand) -> Result<String, CommandError> {
         let addr = self.grpc_addr.as_ref().ok_or(CommandError::NoSocket)?;
-        let rt = tokio::runtime::Runtime::new().map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
-        
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
+
         rt.block_on(async {
             use crate::supervisor::api::proto::control_plane_client::ControlPlaneClient;
-            use crate::supervisor::api::proto::{StatusRequest, ReloadRequest, StopRequest};
+            use crate::supervisor::api::proto::{ReloadRequest, StatusRequest, StopRequest};
 
             let mut client = ControlPlaneClient::connect(format!("http://{}", addr))
                 .await
@@ -79,22 +80,30 @@ impl CommandClient {
 
             match command {
                 MasterCommand::Status => {
-                    let response = client.get_status(StatusRequest {}).await
+                    let response = client
+                        .get_status(StatusRequest {})
+                        .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok(serde_json::to_string_pretty(&response.into_inner()).unwrap_or_default())
                 }
                 MasterCommand::ReloadConfig => {
-                    let response = client.reload_config(ReloadRequest {}).await
+                    let response = client
+                        .reload_config(ReloadRequest {})
+                        .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok(response.into_inner().message)
                 }
                 MasterCommand::Stop { graceful } => {
-                    let _ = client.stop(StopRequest { graceful }).await
+                    let _ = client
+                        .stop(StopRequest { graceful })
+                        .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok("Shutdown initiated".to_string())
                 }
                 MasterCommand::HealthCheck => {
-                    let _ = client.get_status(StatusRequest {}).await
+                    let _ = client
+                        .get_status(StatusRequest {})
+                        .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok("true".to_string())
                 }
@@ -282,8 +291,9 @@ impl CommandClient {
             )),
             super::ipc::CommandMethod::GRpc => {
                 let addr = self.grpc_addr.as_ref().ok_or(CommandError::NoSocket)?;
-                let rt = tokio::runtime::Runtime::new().map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
-                
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
+
                 rt.block_on(async {
                     use crate::supervisor::api::proto::control_plane_client::ControlPlaneClient;
                     use crate::supervisor::api::proto::StatusRequest;
@@ -292,20 +302,26 @@ impl CommandClient {
                         .await
                         .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-                    let response = client.get_status(StatusRequest {}).await
+                    let response = client
+                        .get_status(StatusRequest {})
+                        .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
-                    
+
                     let inner = response.into_inner();
                     let stats = inner.stats.unwrap_or_default();
 
-                    let workers = inner.workers.into_iter().map(|w| super::ipc::WorkerStatusInfo {
-                        id: w.id as usize,
-                        pid: w.pid,
-                        port: w.port as u16,
-                        status: w.status,
-                        requests: w.requests,
-                        blocked: w.blocked,
-                    }).collect();
+                    let workers = inner
+                        .workers
+                        .into_iter()
+                        .map(|w| super::ipc::WorkerStatusInfo {
+                            id: w.id as usize,
+                            pid: w.pid,
+                            port: w.port as u16,
+                            status: w.status,
+                            requests: w.requests,
+                            blocked: w.blocked,
+                        })
+                        .collect();
 
                     Ok(MasterStatus {
                         master_pid: inner.pid,

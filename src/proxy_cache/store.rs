@@ -294,7 +294,9 @@ impl ProxyCache {
         if self.inflight_revalidations.contains_key(key) {
             return false;
         }
-        self.inflight_revalidations.insert(key.clone(), ()).is_none()
+        self.inflight_revalidations
+            .insert(key.clone(), ())
+            .is_none()
     }
 
     pub fn release_revalidation(&self, key: &CacheKey) {

@@ -336,7 +336,9 @@ impl NodeIdentityConfig {
 
                     if let Some(ref proof) = self.minting_proof {
                         if pubkey != proof.node_public_key {
-                            return Err("Private key mismatch with minting proof public key".to_string());
+                            return Err(
+                                "Private key mismatch with minting proof public key".to_string()
+                            );
                         }
                     }
 
@@ -350,7 +352,9 @@ impl NodeIdentityConfig {
 
                     if let Some(ref proof) = self.minting_proof {
                         if pubkey != proof.node_public_key {
-                            return Err("Private key mismatch with minting proof public key".to_string());
+                            return Err(
+                                "Private key mismatch with minting proof public key".to_string()
+                            );
                         }
                     }
 
@@ -365,7 +369,9 @@ impl NodeIdentityConfig {
         }
 
         if self.minting_proof.is_some() {
-            return Err("Pre-minted identity configured but private key file not found".to_string());
+            return Err(
+                "Pre-minted identity configured but private key file not found".to_string(),
+            );
         }
 
         let mut key = [0u8; 32];
