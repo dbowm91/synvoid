@@ -22,14 +22,21 @@ pub struct TypedPoolKey {
     authority: String,
     is_http2: bool,
     body_type_id: TypeId,
+    allow_plaintext: bool,
 }
 
 impl TypedPoolKey {
-    pub fn new(authority: String, is_http2: bool, body_type: TypeId) -> Self {
+    pub fn new(
+        authority: String,
+        is_http2: bool,
+        body_type: TypeId,
+        allow_plaintext: bool,
+    ) -> Self {
         Self {
             authority,
             is_http2,
             body_type_id: body_type,
+            allow_plaintext,
         }
     }
 }
@@ -39,6 +46,7 @@ impl PartialEq for TypedPoolKey {
         self.authority == other.authority
             && self.is_http2 == other.is_http2
             && self.body_type_id == other.body_type_id
+            && self.allow_plaintext == other.allow_plaintext
     }
 }
 
@@ -49,6 +57,7 @@ impl Hash for TypedPoolKey {
         self.authority.hash(state);
         self.is_http2.hash(state);
         self.body_type_id.hash(state);
+        self.allow_plaintext.hash(state);
     }
 }
 
@@ -59,15 +68,17 @@ struct TypedClientEntry {
 pub struct TypedConnectionPool {
     inner: Cache<TypedPoolKey, Arc<TypedClientEntry>>,
     max_idle_per_host: usize,
+    allow_plaintext: bool,
 }
 
 impl TypedConnectionPool {
-    pub fn new(max_idle_per_host: usize) -> Self {
+    pub fn new(max_idle_per_host: usize, allow_plaintext: bool) -> Self {
         let cache = Cache::builder().max_capacity(100).build();
 
         Self {
             inner: cache,
             max_idle_per_host,
+            allow_plaintext,
         }
     }
 
@@ -76,13 +87,18 @@ impl TypedConnectionPool {
         authority: &str,
         is_http2: bool,
     ) -> Arc<TypedClientEntry> {
-        let key = TypedPoolKey::new(authority.to_string(), is_http2, TypeId::of::<Full<Bytes>>());
+        let key = TypedPoolKey::new(
+            authority.to_string(),
+            is_http2,
+            TypeId::of::<Full<Bytes>>(),
+            self.allow_plaintext,
+        );
 
         if let Some(entry) = self.inner.get(&key) {
             return entry;
         }
 
-        let client = create_typed_client(self.max_idle_per_host, is_http2);
+        let client = create_typed_client(self.max_idle_per_host, is_http2, self.allow_plaintext);
         let entry = Arc::new(TypedClientEntry { client });
         self.inner.insert(key, entry.clone());
         entry
@@ -96,6 +112,7 @@ impl TypedConnectionPool {
 fn create_typed_client(
     max_idle_per_host: usize,
     is_http2: bool,
+    allow_plaintext: bool,
 ) -> Client<HttpsConnector<HttpConnector>, Full<Bytes>> {
     use rustls::client::WebPkiServerVerifier;
     use rustls::crypto::aws_lc_rs;
@@ -123,11 +140,26 @@ fn create_typed_client(
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(std::time::Duration::from_secs(60)));
 
-    let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(config)
-        .https_or_http()
-        .enable_http2()
-        .wrap_connector(http_connector);
+    let https_connector = if allow_plaintext {
+        static WARNED_PLAINTEXT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        WARNED_PLAINTEXT.get_or_init(|| {
+            tracing::warn!(
+                "HTTP upstream allow_plaintext is enabled - HTTP connections will be allowed. \
+                This is insecure for production deployments."
+            );
+        });
+        hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(config)
+            .https_or_http()
+            .enable_http2()
+            .wrap_connector(http_connector)
+    } else {
+        hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(config)
+            .https_only()
+            .enable_http2()
+            .wrap_connector(http_connector)
+    };
 
     Client::builder(TokioExecutor::new())
         .pool_max_idle_per_host(max_idle_per_host)
@@ -141,9 +173,9 @@ pub struct TypedHttpClient {
 }
 
 impl TypedHttpClient {
-    pub fn new(max_idle_per_host: usize) -> Self {
+    pub fn new(max_idle_per_host: usize, allow_plaintext: bool) -> Self {
         Self {
-            pool: Arc::new(TypedConnectionPool::new(max_idle_per_host)),
+            pool: Arc::new(TypedConnectionPool::new(max_idle_per_host, allow_plaintext)),
         }
     }
 
@@ -182,20 +214,30 @@ mod tests {
             "example.com:80".to_string(),
             false,
             TypeId::of::<Full<Bytes>>(),
+            false,
         );
         let key2 = TypedPoolKey::new(
             "example.com:80".to_string(),
             false,
             TypeId::of::<Full<Bytes>>(),
+            false,
         );
         let key3 = TypedPoolKey::new(
             "example.com:80".to_string(),
             true,
             TypeId::of::<Full<Bytes>>(),
+            false,
+        );
+        let key4 = TypedPoolKey::new(
+            "example.com:80".to_string(),
+            false,
+            TypeId::of::<Full<Bytes>>(),
+            true,
         );
 
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
+        assert_ne!(key1, key4);
     }
 
     #[test]
@@ -207,11 +249,13 @@ mod tests {
             "example.com:80".to_string(),
             false,
             TypeId::of::<Full<Bytes>>(),
+            false,
         );
         let key2 = TypedPoolKey::new(
             "example.com:80".to_string(),
             false,
             TypeId::of::<Full<Bytes>>(),
+            false,
         );
 
         let mut h1 = DefaultHasher::new();
@@ -224,13 +268,13 @@ mod tests {
 
     #[test]
     fn test_pool_construction() {
-        let pool = TypedConnectionPool::new(100);
+        let pool = TypedConnectionPool::new(100, false);
         assert_eq!(pool.max_idle_per_host(), 100);
     }
 
     #[test]
     fn test_typed_http_client_clone() {
-        let client = TypedHttpClient::new(100);
+        let client = TypedHttpClient::new(100, false);
         let _ = client.clone();
     }
 }

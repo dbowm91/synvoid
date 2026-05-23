@@ -166,11 +166,6 @@ pub async fn create_spin_app(
         .register(&req.name, runtime.clone())
         .map_err(|_e| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let runtime_clone = runtime.clone();
-    tokio::spawn(async move {
-        runtime_clone.run_supervisor().await;
-    });
-
     tracing::info!(
         "Created Spin app '{}' from manifest '{}'",
         req.name,
@@ -180,7 +175,7 @@ pub async fn create_spin_app(
     Ok(Json(SpinAppResponse {
         success: true,
         name: req.name,
-        message: "Spin app created and supervisor started".to_string(),
+        message: "Spin app created".to_string(),
     }))
 }
 

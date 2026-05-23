@@ -3,6 +3,53 @@
 Generated: 2026-05-23
 Purpose: Review each architecture document, verify claims against code, and identify improvements and bugs.
 
+**Status**: INCOMPLETE - Iterative improvement in progress
+
+## Wave Progress
+
+| Wave | Description | Status |
+|------|-------------|--------|
+| 1 | Fix CRITICAL bugs from review plans | ✅ COMPLETED |
+| 2 | Fix HIGH priority improvements | ✅ COMPLETED |
+| 3 | Fix MEDIUM priority items | ✅ COMPLETED |
+| 4 | Fix LOW priority items and doc updates | ✅ COMPLETED |
+| 5 | Update AGENTS.override.md and skills | ✅ COMPLETED |
+
+### Completed Fixes (Wave 1 - CRITICAL Bugs)
+
+- ✅ Audit log file permissions (`src/admin/audit.rs`)
+- ✅ WAF trailing window logic (`src/waf/attack_detection/streaming.rs`)
+- ✅ Proxy retry config propagation (`src/proxy/mod.rs`)
+- ✅ LocationMatcher current_depth() stub removed
+- ✅ Plugin DHT prefix propagation (pooled instances)
+
+### Completed Fixes (Wave 2 - HIGH Priority)
+
+- ✅ CORS middleware documentation fixed (no layer exists - intentional)
+- ✅ Proxy TypedConnectionPool plaintext consistency
+- ✅ Mesh 0-RTT documentation corrected
+- ✅ Mesh DHT verification gaps documented
+- ✅ Config sites hierarchy fixed
+- ✅ WAF JS Challenge documentation fixed
+
+### Completed Fixes (Wave 3 - MEDIUM Priority)
+
+- ✅ Session timing normalization for admin auth
+- ✅ ConfigManager domain lookup and reload fixes
+- ✅ Serverless WASM Engine pooling
+- ✅ Health check TCP mode URL parsing
+- ✅ ML-KEM key freshness tracking
+- ✅ Spin supervisor dead code removed
+
+### Completed Fixes (Wave 4 - LOW Priority)
+
+- ✅ Platform startup flow documentation
+- ✅ gRPC uptime_secs tracking
+- ✅ Routing reverse-domain documentation
+- ✅ ACME DNS-01 documentation
+- ✅ Upstream TypedConnectionPool plaintext consistency
+- ✅ Various other documentation updates
+
 ## Excluded Documents
 - `review_plan.md` - This file (generated fresh)
 - `deep_dive_review.md` - General review methodology (not module-specific)

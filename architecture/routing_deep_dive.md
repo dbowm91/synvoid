@@ -10,8 +10,28 @@ The `Router` is responsible for determining the `RouteTarget` for every incoming
 
 1.  **Listener-Level Default:** If a request arrives on a listener (IP:Port) that has a `default_server` configured, it may fallback to that site if no other matches are found.
 2.  **Exact Domain Matching:** The router first checks for an exact match of the `Host` header in the `domain_map`.
-3.  **Wildcard/Suffix Matching:** If no exact match is found, it checks against suffix patterns (e.g., `*.example.com`).
-4.  **Path-Based Matching (Locations):** Once a site is identified, the `LocationMatcher` evaluates the request path against defined `location` blocks (e.g., `/api`, `/static`).
+3.  **Wildcard/Suffix Matching:** If no exact match is found, it uses a reversed-domain Radix tree to match wildcard patterns.
+4.  **Default Server Fallback:** If no domain matches, falls back to the listener's default server or the global default.
+5.  **Path-Based Matching (Locations):** Once a site is identified, the `LocationMatcher` evaluates the request path against defined `location` blocks (e.g., `/api`, `/static`).
+
+### Reverse-Domain Radix Tree for Wildcard/Suffix Matching
+
+The router uses a **Radix tree** (compressed trie) with reversed domain names to efficiently match wildcard and suffix patterns:
+
+**How it works:**
+1.  Domains are reversed and split into parts: `foo.bar.example.com` → `/foo/bar/example/com`
+2.  Wildcard patterns are normalized (e.g., `*.example.com` → `example.com`) and inserted as reversed paths.
+3.  Request hosts are similarly reversed and looked up in the tree.
+
+**Matching examples:**
+| Pattern | Reversed Inserted Path | Request Host | Reversed Request | Match? |
+|---------|------------------------|--------------|------------------|--------|
+| `*.example.com` | `/example/com` | `foo.example.com` | `/foo/example/com` | ✅ (prefix match) |
+| `*.example.com` | `/example/com` | `bar.example.com` | `/bar/example/com` | ✅ (prefix match) |
+| `example.com` | `/example/com` | `example.com` | `/example/com` | ✅ (exact match) |
+| `com` | `/com` | `example.com` | `/example/com` | ✅ (suffix match) |
+
+The Radix tree provides O(k) lookup where k is the domain part count (typically 3-5), making wildcard matching both fast and memory-efficient.
 
 ### Backend Resolution
 

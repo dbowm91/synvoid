@@ -15,7 +15,7 @@ The mesh follows a hierarchical structure inspired by decentralized networks but
 ### 1. QUIC Transport
 All mesh communication happens over QUIC. This provides:
 - **Native Multiplexing:** Multiple streams (threat intel, proxying, heartbeats) can coexist on a single connection without Head-of-Line blocking.
-- **Low Latency:** 0-RTT handshakes for rapid reconnection.
+- **Low Latency:** 0-RTT handshakes for rapid reconnection (disabled by default due to replay attack concerns — see `src/mesh/config.rs:1391-1392` for configuration).
 - **Encryption:** Mandatory TLS 1.3 encryption for all traffic.
 
 ### 2. Post-Quantum Cryptography (PQC)
@@ -55,3 +55,27 @@ The mesh allows nodes to share behavioral fingerprints of suspected bots.
 - **Peer Authentication:** All nodes must have a valid certificate signed by an authorized Organization Key (see [`validate_member_certificate`](src/mesh/peer_auth.rs:141) in `src/mesh/peer_auth.rs`).
 - **Audit Logs:** The mesh includes a distributed auditing system (`src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
 - **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](src/mesh/dht/capability_access.rs:7) in `src/mesh/dht/capability_access.rs`).
+
+### Known DHT Verification Limitations
+
+The DHT ingress path implements a multi-layer identity hierarchy (L1: peer_id/TLS cert → L2: envelope signer → L3: record signer → L4: source_node_id → L5: quorum signer), but certain message types have architectural verification gaps that are documented in [`src/mesh/dht/signed.rs:42-48`](src/mesh/dht/signed.rs:42-48):
+
+| Message Type | Verification Status | Gap Description |
+|--------------|---------------------|-----------------|
+| `DhtRecordAnnounce` | ✅ Full | Timestamp, role, envelope, record, and binding verification |
+| `DhtSyncRequest` | ❌ None | No node_id or TLS certificate validation |
+| `DhtSyncResponse` | ✅ Full | Timestamp, envelope, record, and binding verification |
+| `DhtAntiEntropyRequest` | ⚠️ Partial | `signer_public_key` field is unused in verification |
+| `DhtAntiEntropyResponse` | ✅ Full | Timestamp, envelope, record, and binding verification |
+| `DhtRecordPush` | ⚠️ Partial | Record verified but timestamp ignored, no envelope signature |
+| `DhtRecordCommit` | ⚠️ Partial | Timestamp and record verified, but no envelope signature validation |
+| `QuorumStoreRequest` | ❌ None | No verification performed |
+| `QuorumSignatureResp` | ❌ None | No verification performed |
+
+**Mitigating Factors:**
+- All DHT communication requires TLS 1.3 encryption (transport layer)
+- Global nodes use Raft consensus for state consistency, providing implicit authority
+- Reputation systems and audit logs help detect anomalous behavior
+- Edge nodes require valid certificates signed by authorized Organization Keys
+
+These limitations are known architectural constraints. Future revisions may address gaps based on threat model evolution and performance requirements.

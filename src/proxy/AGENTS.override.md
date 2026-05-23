@@ -45,3 +45,16 @@ use subtle::ConstantTimeEq;
 // For cache purge token comparison:
 required_token.as_bytes().ct_eq(token.as_bytes()).into()
 ```
+
+## Upstream Pool Fixes (2026-05-23)
+
+### Retry Config Now Applied from from_config()
+
+`ProxyServer::from_config()` now properly calls `with_upstream_pool()` to apply retry and buffering configuration. Retries were previously always disabled even when configured.
+
+### TypedConnectionPool plaintext consistency
+
+`TypedConnectionPool` now respects `allow_plaintext` configuration:
+- `TypedPoolKey` includes `allow_plaintext: bool`
+- `https_only()` used when plaintext disabled
+- Security warning logged when plaintext enabled

@@ -242,7 +242,7 @@ impl ErasedConnectionPool {
         self
     }
 
-/// Checks out a connection from the pool or creates a new one.
+    /// Checks out a connection from the pool or creates a new one.
     ///
     /// # Error Paths
     ///
@@ -280,11 +280,11 @@ impl ErasedConnectionPool {
         let connect_addr: std::net::SocketAddr = format!("{}:{}", authority.host(), port)
             .parse()
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("invalid address: {}", e),
-                )
-            })?;
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid address: {}", e),
+            )
+        })?;
         let stream = tokio::net::TcpStream::connect(connect_addr)
             .await
             .map_err(|e| {

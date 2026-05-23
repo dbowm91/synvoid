@@ -45,25 +45,47 @@ Features are additive - DNS, ICMP-filter, and Mesh modules compile only when res
 ### Configuration Hierarchy
 
 ```
-MainConfig (top-level, server-wide)
-├── server: ServerConfig          # Bind address, port, trusted proxies
-├── fallback: FallbackConfig      # 404 handling or proxy fallback
-├── admin: AdminConfig            # Admin API bind, token, CORS
-├── logging: LoggingConfig       # Log exporters
-├── metrics: MetricsConfig        # Prometheus metrics port
-├── http: HttpConfig              # HTTP protocol limits
-├── http3: Http3Config           # HTTP/3 QUIC settings
-├── tls: TlsConfig               # TLS certs, ACME
-├── defaults: DefaultsConfig     # Global default behaviors
-├── threat_level: ThreatLevelConfig
-├── dns: DnsConfig               # DNS server [feature=dns]
-├── mesh: MeshConfig             # Mesh networking [feature=mesh]
-├── tunnel: TunnelConfig        # WireGuard/QUIC VPN
-├── plugins: PluginConfig        # WASM plugin runtime
-├── process_manager: ProcessManagerConfig
-├── overseer: OverseerConfig     # Legacy process supervisor
-├── supervisor: SupervisorConfig # Main process supervisor
-└── sites: HashMap<String, SiteConfig>  # Per-domain config (loaded separately)
+ConfigManager (root container)
+├── main: MainConfig               # Server-wide configuration
+│   ├── server: ServerConfig       # Bind address, port, trusted proxies
+│   ├── fallback: FallbackConfig   # 404 handling or proxy fallback
+│   ├── admin: AdminConfig         # Admin API bind, token, CORS
+│   ├── logging: LoggingConfig     # Log exporters
+│   ├── metrics: MetricsConfig     # Prometheus metrics port
+│   ├── tokio: TokioConfig         # Tokio runtime configuration
+│   ├── http: HttpConfig           # HTTP protocol limits
+│   ├── http3: Http3Config         # HTTP/3 QUIC settings
+│   ├── tls: TlsConfig             # TLS certs, ACME
+│   ├── defaults: DefaultsConfig   # Global default behaviors
+│   ├── threat_level: ThreatLevelConfig
+│   ├── ip_feeds: IpFeedConfig
+│   ├── rule_feed: RuleFeedConfig
+│   ├── yara_feed: YaraRuleFeedConfig
+│   ├── rate_limit_memory: RateLimitMemoryConfig
+│   ├── proxy_limits: ProxyLimitsConfig
+│   ├── blocklist_limits: BlocklistLimitsConfig
+│   ├── tcp: TcpDefaults
+│   ├── udp: UdpDefaults
+│   ├── tarpit: TarpitDefaults
+│   ├── persistence: PersistenceConfig
+│   ├── traffic_shaping: TrafficShapingConfig
+│   ├── security: MainSecurityConfig
+│   ├── static_config: Option<MainStaticConfig>
+│   ├── tunnel: TunnelConfig        # WireGuard/QUIC VPN
+│   ├── plugins: PluginConfig       # WASM plugin runtime
+│   ├── serverless: ServerlessConfig
+│   ├── upgrade: Option<UpgradeConfig>
+│   ├── icmp_filter: IcmpFilterConfig  # [feature=icmp-filter]
+│   ├── mimes: MimesConfig
+│   ├── dns: DnsConfig              # [feature=dns]
+│   ├── mesh: Option<MeshConfig>     # [feature=mesh]
+│   ├── overseer: OverseerConfig    # Legacy process supervisor
+│   ├── process_manager: ProcessManagerConfig
+│   ├── supervisor: SupervisorConfig
+│   └── honeypot_port: HoneypotPortConfig
+├── sites: HashMap<String, SiteConfig>  # Per-domain configs (loaded from sites/ directory)
+├── sites_dir: PathBuf
+└── config_dir: PathBuf
 ```
 
 ### Site Config Hierarchy

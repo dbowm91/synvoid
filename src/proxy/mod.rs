@@ -290,7 +290,7 @@ impl ProxyServer {
             (None, None)
         };
 
-        ProxyServer {
+        let mut server = ProxyServer {
             erased_client: crate::http_client::ErasedHttpClient::new(100),
             client,
             revalidation_client,
@@ -299,9 +299,9 @@ impl ProxyServer {
             max_response_size,
             upstream_error_tracker,
             site_id,
-            upstream_pool,
-            retry_config,
-            buffering_config,
+            upstream_pool: None,
+            retry_config: None,
+            buffering_config: None,
             cache,
             cache_key_builder,
             skip_verify,
@@ -309,7 +309,11 @@ impl ProxyServer {
             cache_purge_allowed_ips: Arc::new(HashSet::new()),
             pool_max_idle_per_host: pool_max_idle,
             pool_idle_timeout: pool_idle,
+        };
+        if let Some(pool) = upstream_pool {
+            server = server.with_upstream_pool(pool, retry_config, buffering_config);
         }
+        server
     }
 
     pub async fn handle_request(

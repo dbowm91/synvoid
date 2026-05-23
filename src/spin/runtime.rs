@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use http::{HeaderMap, Response};
 use parking_lot::RwLock;
-use tokio::sync::watch;
 use wasmtime::{Config, Engine, OptLevel};
 
 use crate::plugin::wasm_runtime::WasmResourceLimits;
@@ -118,7 +117,6 @@ pub struct SpinRuntime {
     instances: RwLock<HashMap<String, SpinAppInstance>>,
     #[allow(dead_code)]
     engine: Engine,
-    shutdown_tx: RwLock<Option<watch::Sender<()>>>,
 }
 
 impl SpinRuntime {
@@ -144,7 +142,6 @@ impl SpinRuntime {
             manifest: RwLock::new(manifest),
             instances: RwLock::new(HashMap::new()),
             engine,
-            shutdown_tx: RwLock::new(None),
         })
     }
 
@@ -300,74 +297,6 @@ impl SpinRuntime {
         }
         serde_json::to_string(&map).unwrap_or_default()
     }
-
-    pub async fn run_supervisor(self: Arc<Self>) {
-        let (tx, mut rx) = watch::channel(());
-        *self.shutdown_tx.write() = Some(tx);
-
-        tracing::info!("Spin supervisor started for app '{}'", self.config.app_name);
-
-        loop {
-            tokio::select! {
-                _ = rx.changed() => {
-                    tracing::info!("Spin supervisor shutdown signal received");
-                    break;
-                }
-                _ = tokio::time::sleep(Duration::from_secs(10)) => {
-                    self.evict_idle_instances().await;
-                    self.check_health().await;
-                }
-            }
-        }
-
-        tracing::info!("Spin supervisor stopped for app '{}'", self.config.app_name);
-    }
-
-    async fn evict_idle_instances(&self) {
-        let idle_timeout = Duration::from_secs(self.config.idle_timeout_seconds);
-        let to_evict: Vec<String> = {
-            let instances = self.instances.read();
-            instances
-                .iter()
-                .filter(|(_, inst)| inst.is_idle(idle_timeout))
-                .map(|(id, _)| id.clone())
-                .collect()
-        };
-
-        for id in &to_evict {
-            tracing::debug!("Evicting idle Spin instance '{}'", id);
-            self.instances.write().remove(id);
-        }
-
-        if !to_evict.is_empty() {
-            tracing::info!("Evicted {} idle Spin instances", to_evict.len());
-        }
-    }
-
-    async fn check_health(&self) {
-        let instances = self.instances.read();
-        for (id, inst) in instances.iter() {
-            let uptime = inst.uptime();
-            if uptime > Duration::from_secs(3600) {
-                tracing::warn!(
-                    "Spin instance '{}' has been running for {} hours - consider restart",
-                    id,
-                    uptime.as_secs() / 3600
-                );
-            }
-        }
-    }
-
-    pub fn shutdown(&self) {
-        if let Some(tx) = self.shutdown_tx.write().take() {
-            let _ = tx.send(());
-        }
-        self.instances.write().clear();
-        tracing::info!(
-            "Spin runtime shutdown complete for app '{}'",
-            self.config.app_name
-        );
-    }
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -388,8 +317,6 @@ pub enum SpinRuntimeError {
     WasmError(String),
     #[error("KV store error: {0}")]
     KvStoreError(String),
-    #[error("Supervisor error: {0}")]
-    SupervisorError(String),
 }
 
 #[cfg(test)]

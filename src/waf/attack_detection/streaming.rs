@@ -126,9 +126,23 @@ impl StreamingWafCore {
             );
         }
 
-        // Update trailing window
+        // Update trailing window: preserve up to TRAILING_WINDOW_SIZE bytes from
+        // previous trailing + end of current chunk (sliding window pattern)
+        let previous_len = self.state.trailing_window.len().min(TRAILING_WINDOW_SIZE);
+        let current_remaining = TRAILING_WINDOW_SIZE.saturating_sub(previous_len);
+        let window_start = chunk.len().saturating_sub(current_remaining);
+
+        // Save previous trailing window content before clearing
+        let previous_content: Vec<u8> = if previous_len > 0 {
+            self.state.trailing_window[..previous_len].to_vec()
+        } else {
+            vec![]
+        };
+
         self.state.trailing_window.clear();
-        let window_start = chunk.len().saturating_sub(TRAILING_WINDOW_SIZE);
+        self.state
+            .trailing_window
+            .extend_from_slice(&previous_content);
         self.state
             .trailing_window
             .extend_from_slice(&chunk[window_start..]);

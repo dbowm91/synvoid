@@ -248,6 +248,10 @@ impl<K: KemSession + Clone> SessionManager<K> {
         removed
     }
 
+    pub fn get_all_sessions(&self) -> Vec<Session<K>> {
+        self.sessions.iter().map(|s| s.value().clone()).collect()
+    }
+
     pub fn get_local_public_key(&self, session_id: &str) -> Option<K::PublicKey> {
         self.sessions
             .get(session_id)

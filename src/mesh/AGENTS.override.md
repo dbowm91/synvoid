@@ -465,6 +465,25 @@ Wave 15 fixed warnings in mesh/DHT/Raft files:
 - Add `#[derive(Default)]` with `#[default]` on `DhtRecordStatus`
 - Collapse nested if-else blocks
 
+## ML-KEM Key Health Monitoring (2026-05-23)
+
+`MlKemKeyExchangeService` now tracks key freshness:
+
+```rust
+// Get key health metrics
+let health = ml_kem_service.get_key_health();
+
+// Fields:
+key_initialized: bool,   // Whether a node keypair exists
+key_age_secs: u64,       // Age of the keypair
+stale_session_count: u64, // Sessions that should have rotated
+expired_session_count: u64 // Sessions past expiration
+```
+
+Key files:
+- `src/mesh/ml_kem_key_exchange.rs` — `MlKemKeyHealth` struct, `get_key_health()` method
+- `src/mesh/session/manager.rs` — `get_all_sessions()` for session iteration
+
 ## Lessons Learned (2026-05-22)
 
 ### Quorum Manager Race Condition ✅ FIXED

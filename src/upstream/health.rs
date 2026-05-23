@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::time::interval;
 
 use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
+use crate::upstream::address::UpstreamAddress;
 use crate::upstream::pool::Backend;
 
 pub struct HealthChecker {
@@ -224,10 +225,18 @@ impl HealthChecker {
     async fn tcp_health_check(backend: &Backend) -> bool {
         let url = backend.url.as_ref();
 
-        matches!(
-            tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(url)).await,
-            Ok(Ok(_))
-        )
+        match UpstreamAddress::parse(url) {
+            Ok(addr) => {
+                matches!(
+                    tokio::time::timeout(Duration::from_secs(5), addr.connect_tcp_stream()).await,
+                    Ok(Ok(_))
+                )
+            }
+            Err(e) => {
+                tracing::debug!("Backend {} health check failed: {}", url, e);
+                false
+            }
+        }
     }
 
     pub fn shutdown(&self) {

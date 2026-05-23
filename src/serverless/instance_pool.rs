@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 
 use crate::config::serverless::FunctionDefinition;
+use crate::plugin::{WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 #[derive(Debug, Clone)]
 pub struct InstancePoolConfig {
@@ -63,7 +64,7 @@ impl InstanceMetrics {
 pub struct ServerlessInstance {
     pub id: String,
     pub function_name: String,
-    pub instance: Arc<crate::plugin::WasmRuntime>,
+    pub instance: Arc<WasmRuntime>,
     pub metrics: RwLock<InstanceMetrics>,
     pub created_at: Instant,
     pub state: RwLock<InstanceState>,
@@ -88,7 +89,7 @@ pub enum InstancePoolMode {
 pub struct InstancePool {
     config: InstancePoolConfig,
     function_definition: FunctionDefinition,
-    runtime: Arc<crate::plugin::WasmRuntime>,
+    runtime: Arc<WasmRuntime>,
     instances: RwLock<Vec<Arc<ServerlessInstance>>>,
     active_instances: RwLock<HashMap<String, Arc<ServerlessInstance>>>,
     idle_instances: RwLock<Vec<Arc<ServerlessInstance>>>,
@@ -99,12 +100,12 @@ pub struct InstancePool {
     last_mode_used: RwLock<InstancePoolMode>,
 }
 
+static SERVERLESS_ENGINE_POOL: std::sync::LazyLock<
+    RwLock<HashMap<String, Arc<WasmPluginManager>>>,
+> = std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
 impl ServerlessInstance {
-    pub fn new(
-        id: String,
-        function_name: String,
-        instance: Arc<crate::plugin::WasmRuntime>,
-    ) -> Self {
+    pub fn new(id: String, function_name: String, instance: Arc<WasmRuntime>) -> Self {
         Self {
             id,
             function_name,
@@ -162,9 +163,23 @@ impl InstancePool {
         function_definition: FunctionDefinition,
     ) -> Result<Self, InstancePoolError> {
         let wasm_path = std::path::Path::new(&function_definition.name).with_extension("wasm");
-        let runtime = crate::plugin::WasmPluginManager::new().load_plugin_with_limits(
+        let engine_key = format!(
+            "{}:{}",
+            function_definition.name,
+            function_definition.memory_mb.unwrap_or(64)
+        );
+
+        let wasm_manager = {
+            let mut engines = SERVERLESS_ENGINE_POOL.write();
+            engines
+                .entry(engine_key.clone())
+                .or_insert_with(|| Arc::new(WasmPluginManager::new()))
+                .clone()
+        };
+
+        let runtime = wasm_manager.load_plugin_with_limits(
             &wasm_path,
-            crate::plugin::WasmResourceLimits {
+            WasmResourceLimits {
                 max_memory_mb: function_definition.memory_mb.unwrap_or(64),
                 max_table_elements: None,
                 max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(1000000),

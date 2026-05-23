@@ -207,26 +207,40 @@ Bootstrap, daemonization, master/worker startup entry points.
 run_master_mode()
 ├── setup_panic_handler()
 ├── ConfigManager::load_main()
+├── MIME type loading (if enabled in config)
 ├── Tokio multi-thread runtime
-├── Post-quantum TLS initialization (if post-quantum feature enabled)
-├── Site discovery and loading
-├── BlockStore initialization
-├── RuleFeedManager (if threat intel enabled)
-├── ProcessManager::new()
-├── IpcListener bind
-├── Worker spawning (UnifiedServerWorker)
-├── StaticWorker spawning
-├── setup_signal_handlers()
-├── start_health_monitor()
-├── Blocklist persistence loop (periodic trigger_blocklist_persist)
-├── start_admin_server()
-├── MIME type loading/reloading (on ReloadConfig command)
-└── event_rx loop
+└── run_master() async fn
+    ├── Post-quantum TLS initialization (if post-quantum feature enabled)
+    │   └── X25519MLKEM768 hybrid key exchange setup
+    ├── init_logging()
+    ├── Site discovery and loading
+    ├── shared_config = Arc::new(RwLock::new(config_manager))
+    ├── BlockStore::new() → master_block_store
+    ├── RuleFeedManager::new() + start_background_fetching() (if threat intel enabled)
+    ├── MasterState::new() with trackers + block_store
+    │   └── MasterStateTrackers: probe_tracker, suspicious_word_tracker,
+    │       upstream_error_tracker, threat_level_manager, rule_feed_manager
+    ├── IPC session key loading (from file or env var)
+    ├── ProcessManagerConfig + ProcessManager::new()
+    ├── ThreatFeedClient::new() + set_on_update_callback() + start_background_fetching() (mesh)
+    ├── RuleFeedManager set_on_apply_callback() (if enabled)
+    ├── IpcListener bind + accept loop spawn
+    ├── Worker spawning (pre_spawn_workers count)
+    ├── StaticWorker spawning (if enabled)
+    ├── setup_signal_handlers()
+    ├── start_health_monitor() → tokio::spawn
+    ├── Blocklist persistence loop (periodic trigger_blocklist_persist)
+    │   └── tokio::spawn with interval.tick() → trigger_blocklist_persist()
+    ├── start_admin_server() → tokio::spawn
+    │   └── Admin server owns: config, trackers, rule_feed_manager, yara_rules, mesh_transport
+    └── event_rx loop
+        ├── WorkerStarted/Ready/Stopped/Failed/Restarted events
+        └── ShutdownInitiated/ShutdownComplete
 ```
 
 **Note:** The Master MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Master ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
 
-> **Source:** `src/startup/master.rs:279-302`
+> **Source:** `src/startup/master.rs:23-87` (run_master_mode), `src/startup/master.rs:205-797` (run_master)
 
 ---
 

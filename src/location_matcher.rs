@@ -1,4 +1,4 @@
-// SAFETY_REASON: Location-based routing - optimized with Radix Trie
+// SAFETY_REASON: Location-based routing
 
 use crate::utils::check_regex_complexity;
 use regex::Regex;
@@ -106,93 +106,14 @@ impl LocationMatch {
     }
 }
 
-/// A simple Radix Trie for longest-prefix and exact matching.
-#[derive(Default, Clone)]
-struct TrieNode {
-    children: HashMap<String, TrieNode>,
-    value: Option<(usize, LocationMatchType)>,
-}
-
-impl TrieNode {
-    fn insert(&mut self, path: &str, value: (usize, LocationMatchType)) {
-        let mut current = self;
-        for segment in path.split('/').filter(|s| !s.is_empty()) {
-            current = current.children.entry(segment.to_string()).or_default();
-        }
-        // Prefer exact or preferential prefix over simple prefix if they land on the same node
-        if let Some((_, old_type)) = current.value {
-            if value.1 == LocationMatchType::Exact
-                || value.1 == LocationMatchType::PreferentialPrefix
-            {
-                current.value = Some(value);
-            } else if old_type == LocationMatchType::Prefix && value.1 == LocationMatchType::Prefix
-            {
-                // If both are prefix, we'd typically want the one that was defined first or longest.
-                // But here they share the same path, so they are identical in "length".
-                current.value = Some(value);
-            }
-        } else {
-            current.value = Some(value);
-        }
-    }
-
-    fn find_best_match(
-        &self,
-        path: &str,
-    ) -> (
-        Option<(usize, LocationMatchType)>,
-        Option<(usize, LocationMatchType)>,
-    ) {
-        let mut current = self;
-        let mut best_prefix = self.value;
-        let mut exact_or_pref = None;
-
-        if path == "/" {
-            return (self.value, self.value);
-        }
-
-        for segment in path.split('/').filter(|s| !s.is_empty()) {
-            if let Some(next) = current.children.get(segment) {
-                current = next;
-                if let Some(v) = current.value {
-                    if v.1 == LocationMatchType::Exact
-                        || v.1 == LocationMatchType::PreferentialPrefix
-                    {
-                        // This might be our final result if we stop here
-                        exact_or_pref = Some(v);
-                    }
-                    best_prefix = Some(v);
-                }
-            } else {
-                break;
-            }
-        }
-
-        // Check if the current node matches the full path for an exact match
-        let is_exact_match = path
-            .strip_prefix('/')
-            .unwrap_or(path)
-            .trim_end_matches('/')
-            .is_empty()
-            || path.split('/').filter(|s| !s.is_empty()).count() == current_depth(current, self);
-
-        if is_exact_match {
-            if let Some(v) = current.value {
-                if v.1 == LocationMatchType::Exact || v.1 == LocationMatchType::PreferentialPrefix {
-                    return (Some(v), Some(v));
-                }
-            }
-        }
-
-        (exact_or_pref, best_prefix)
-    }
-}
-
-fn current_depth(node: *const TrieNode, root: *const TrieNode) -> usize {
-    // This is a bit complex to implement correctly without parent pointers.
-    // Let's simplify the Trie to use a different matching strategy.
-    0
-}
+/// LocationMatcher uses three separate structures for efficient matching:
+/// - exact_locations: HashMap for O(1) exact lookups
+/// - prefix_locations: Vec sorted by length for longest-prefix-match  
+/// - regex_locations: Vec for regex matching in definition order
+///
+/// A previous trie-based implementation (find_best_match) was removed as dead code.
+/// The current approach is simpler and faster for the use case patterns.
+///
 
 #[derive(Clone)]
 pub struct LocationMatcher {

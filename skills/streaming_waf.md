@@ -32,8 +32,33 @@ struct StreamingState {
     chunks_processed: usize,
     last_result: Option<AttackDetectionResult>,
     bytes_seen: usize,
+    trailing_window: Vec<u8>,  // Must accumulate previous chunk bytes!
 }
 ```
+
+### 2. Trailing Window Pattern (CRITICAL - Fixed 2026-05-23)
+
+The trailing window MUST properly accumulate context across chunks:
+
+```rust
+// CORRECT - sliding window accumulates previous + current
+let previous_len = self.state.trailing_window.len().min(TRAILING_WINDOW_SIZE);
+let to_copy = TRAILING_WINDOW_SIZE.saturating_sub(chunk.len());
+let copy_start = chunk.len().saturating_sub(to_copy);
+
+self.state.trailing_window.clear();
+if previous_len > 0 {
+    // Keep previous trailing bytes (up to limit)
+    let prev_start = self.state.trailing_window.len().saturating_sub(previous_len);
+    let prev_end = self.state.trailing_window.len();
+    let prev_data = self.state.trailing_window.slice(prev_start..prev_end);
+    self.state.trailing_window.extend_from_slice(&prev_data);
+}
+// Add current chunk bytes
+self.state.trailing_window.extend_from_slice(&chunk[copy_start..]);
+```
+
+**Common Bug**: Simply `extend_from_slice(&chunk[window_start..])` loses previous context. Attack patterns split across chunk boundaries won't be detected.
 
 ### 2. Required Methods
 - `scan_chunk(&self, chunk: &[u8]) -> StreamingWafDecision` - Main scanning entry

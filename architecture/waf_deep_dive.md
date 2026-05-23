@@ -68,8 +68,8 @@ The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs:
 - **Per-IP tracking:** Each IP gets unique trap paths that expire after TTL
 - **Hit detection:** Bots visiting trap URLs are immediately flagged
 
-#### JS Challenge
-Browser verification via JavaScript execution (`src/challenge/js.rs`). Client must execute JavaScript to prove browser identity.
+#### JS Challenge (WASM-based Proof of Work)
+Browser verification via WASM-compiled JavaScript (`src/challenge/pow.rs`). Client must execute JavaScript to solve a SHA-256 proof-of-work puzzle, proving browser identity.
 
 #### Proof of Work (PoW)
 Computational puzzle requiring client to solve a computational challenge (`src/wasm_pow/`), effective against high-volume automated tools.

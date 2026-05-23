@@ -82,6 +82,22 @@ Use `ServerlessWafMode` enum (`enforce|log|off`) instead of boolean `serverless_
 - `log`: WAF runs but doesn't block
 - `off`: WAF disabled
 
+## Streaming WAF Trailing Window Fix (2026-05-23)
+
+Fixed trailing window logic in `StreamingWafCore` to properly handle chunk boundary attacks:
+
+**Before**: Only copied last 512 bytes of current chunk into trailing window.
+
+**After**: Sliding window accumulates:
+1. Up to `TRAILING_WINDOW_SIZE` bytes from previous trailing window
+2. End of current chunk to fill up to `TRAILING_WINDOW_SIZE`
+
+This ensures pattern matching has full overlapping context when attacks span chunk boundaries.
+
+### JS Challenge Reference (Fixed)
+
+JS Challenge is at `src/challenge/pow.rs` (WASM-based PoW), not `src/challenge/js.rs` (doesn't exist).
+
 ### Stall/Tarpit Concurrency Safety
 
 Stall actions can exhaust worker resources at high traffic. Use bounded stall with metrics:

@@ -1279,7 +1279,11 @@ impl WasmRuntime {
         let pooled_instance = self.pool.get(&self.name);
 
         if let Some(mut inst) = pooled_instance {
-            inst.prepare_for_request((*env).clone(), self.limits.timeout_seconds);
+            inst.prepare_for_request(
+                (*env).clone(),
+                self.limits.timeout_seconds,
+                self.limits.allowed_dht_prefixes.clone(),
+            );
             let exports =
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
             let result = self.do_filter_request_with_exports(parts, body, &mut inst.store, exports);
@@ -1430,7 +1434,11 @@ impl WasmRuntime {
         let pooled_instance = self.pool.get(&self.name);
 
         if let Some(mut inst) = pooled_instance {
-            inst.prepare_for_request((*env).clone(), self.limits.timeout_seconds);
+            inst.prepare_for_request(
+                (*env).clone(),
+                self.limits.timeout_seconds,
+                self.limits.allowed_dht_prefixes.clone(),
+            );
             let exports =
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
             let result =

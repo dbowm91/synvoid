@@ -145,13 +145,15 @@ SynVoid supports two fundamentally different authentication systems that serve d
 
 ```
 Request
-  ├── CORS Layer (configurable origins)
   ├── Client IP Extraction (trusted proxy support)
   ├── Auth Middleware (bearer/session validation)
   ├── CSRF Middleware (session-only mutating requests)
-  ├── YARA Rate Limit Middleware (mesh feature)
   └── Admin Rate Limit Layer (requests per minute/second)
 ```
+
+**Note:** No CORS middleware is implemented. The Admin API uses bearer tokens and
+session cookies (not browser-based access), so CORS headers are not applicable.
+All admin clients are expected to set appropriate Authorization headers.
 
 **Key File:** `src/admin/middleware.rs`
 

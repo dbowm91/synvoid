@@ -52,7 +52,7 @@ impl ControlPlane for ControlPlaneService {
 
         Ok(Response::new(StatusResponse {
             pid: std::process::id(),
-            uptime_secs: 0, // TODO: Track start time in state
+            uptime_secs: self.state.start_time.elapsed().as_secs(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             workers,
             stats: Some(Stats {

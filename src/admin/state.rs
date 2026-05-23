@@ -734,7 +734,12 @@ impl AdminState {
 
         if let Some(valid_token) = csrf_tokens.get(token) {
             if now.duration_since(valid_token.created) < Duration::from_secs(3600)
-                && bool::from(valid_token.session_id_hash.as_bytes().ct_eq(session_hash.as_bytes()))
+                && bool::from(
+                    valid_token
+                        .session_id_hash
+                        .as_bytes()
+                        .ct_eq(session_hash.as_bytes()),
+                )
             {
                 return true;
             }

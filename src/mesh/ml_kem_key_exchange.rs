@@ -4,6 +4,7 @@
 //! post-quantum secure mesh transport communications.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signer, SigningKey};
@@ -19,6 +20,14 @@ use crate::mesh::protocol::proto::{
 };
 use crate::mesh::session::SessionManager;
 
+#[derive(Debug, Clone)]
+pub struct MlKemKeyHealth {
+    pub key_initialized: bool,
+    pub key_age_secs: Option<u64>,
+    pub stale_session_count: usize,
+    pub expired_session_count: usize,
+}
+
 fn generate_session_id() -> String {
     Uuid::new_v4().to_string()
 }
@@ -27,6 +36,8 @@ pub struct MlKemKeyExchangeService {
     config: Arc<MeshConfig>,
     session_manager: Arc<SessionManager<MlKem768>>,
     node_public_key: Arc<RwLock<Option<MlKem768PublicKey>>>,
+    key_generated_at: Arc<RwLock<Option<Instant>>>,
+    key_max_age_secs: u64,
 }
 
 impl MlKemKeyExchangeService {
@@ -35,6 +46,8 @@ impl MlKemKeyExchangeService {
             config,
             session_manager,
             node_public_key: Arc::new(RwLock::new(None)),
+            key_generated_at: Arc::new(RwLock::new(None)),
+            key_max_age_secs: 3600,
         }
     }
 
@@ -43,6 +56,7 @@ impl MlKemKeyExchangeService {
             .map_err(|e| format!("Failed to generate keypair: {}", e))?;
 
         *self.node_public_key.write() = Some(pk.clone());
+        *self.key_generated_at.write() = Some(Instant::now());
         Ok(pk)
     }
 
@@ -55,6 +69,30 @@ impl MlKemKeyExchangeService {
             .read()
             .as_ref()
             .map(|pk| URL_SAFE_NO_PAD.encode(pk.as_ref()))
+    }
+
+    pub fn get_key_health(&self) -> MlKemKeyHealth {
+        let key_initialized = self.node_public_key.read().is_some();
+        let key_age_secs = self.key_generated_at.read().map(|t| t.elapsed().as_secs());
+        let config = self.session_manager.config();
+
+        let mut stale_session_count = 0;
+        let mut expired_session_count = 0;
+
+        for session in self.session_manager.get_all_sessions() {
+            if session.is_expired(config) {
+                expired_session_count += 1;
+            } else if session.should_rotate(config) {
+                stale_session_count += 1;
+            }
+        }
+
+        MlKemKeyHealth {
+            key_initialized,
+            key_age_secs,
+            stale_session_count,
+            expired_session_count,
+        }
     }
 }
 

@@ -17,6 +17,7 @@ use crate::waf::YaraRulesManager;
 pub struct SupervisorState {
     pub config: Arc<RwLock<ConfigManager>>,
     pub shutdown_tx: broadcast::Sender<()>,
+    pub start_time: std::time::Instant,
     pub probe_tracker: Option<Arc<ProbeTracker>>,
     pub suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
     pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
@@ -59,6 +60,7 @@ impl SupervisorState {
         Self {
             config,
             shutdown_tx,
+            start_time: std::time::Instant::now(),
             probe_tracker: trackers.probe_tracker,
             suspicious_word_tracker: trackers.suspicious_word_tracker,
             upstream_error_tracker: trackers.upstream_error_tracker,

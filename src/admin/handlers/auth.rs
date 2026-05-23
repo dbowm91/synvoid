@@ -5,10 +5,21 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
+use tokio::time::{sleep, Duration as TokioDuration};
 
 use super::super::state::AdminState;
 use super::common::StatusResponse;
 use crate::admin::SESSION_COOKIE_NAME;
+
+async fn verify_dummy_admin_token() {
+    let dummy_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS.xJ5mW6";
+    let start = std::time::Instant::now();
+    let _ = bcrypt::verify("dummy_password_for_timing", dummy_hash).unwrap_or(false);
+    let elapsed = start.elapsed();
+    if elapsed < std::time::Duration::from_millis(200) {
+        sleep(TokioDuration::from_millis(200) - elapsed).await;
+    }
+}
 
 pub async fn create_session(
     State(state): State<Arc<AdminState>>,
@@ -20,10 +31,12 @@ pub async fn create_session(
         .and_then(|v| v.strip_prefix("Bearer "));
 
     let Some(token) = bearer_token else {
+        verify_dummy_admin_token().await;
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
     if !super::super::auth::verify_admin_token(token, &state.security.admin_token) {
+        verify_dummy_admin_token().await;
         return StatusCode::UNAUTHORIZED.into_response();
     }
 

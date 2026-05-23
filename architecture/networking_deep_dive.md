@@ -31,7 +31,26 @@ SynVoid handles TLS termination at the edge using **Rustls**.
 - **Dynamic Certificate Selection:** The `CertResolver` selects the appropriate certificate for each connection based on SNI.
 - **ACME Integration:** Built-in support for Let's Encrypt and other ACME-based CAs for automated certificate issuance and renewal. Requires explicit configuration via `tls.acme` in site config.
 
-### 2. Post-Quantum Cryptography (PQC)
+### 2. ACME DNS-01 Challenge Support
+SynVoid supports **DNS-01** challenges for ACME certificate issuance, enabling certificate management for wildcard domains and environments where HTTP challenges are not feasible.
+
+**Challenge Flow:**
+1. ACME server delivers a `dns-01` challenge with a key authorization
+2. SynVoid computes `SHA-256(key_authorization)` and base64url-encodes it
+3. The challenge value is stored in `AcmeDnsChallenge` (`src/tls/acme_dns.rs:25-44`)
+4. DNS server serves the value via `_acme-challenge.<domain>` TXT records (`src/dns/server/query.rs:679-698`)
+5. ACME server validates by querying the TXT record
+6. On success, the challenge is cleaned up automatically
+
+**Implementation Details:**
+- `AcmeDnsChallenge` (`src/tls/acme_dns.rs:11-64`) manages pending challenges using a thread-safe `DashMap`
+- DNS integration via `build_acme_txt_response()` in `src/dns/server/response.rs:782`
+- Feature-gated: requires `dns` feature flag
+- TXT records are only served for exact `_acme-challenge.<domain>` queries (type 16)
+
+**Configuration:** DNS-01 challenges require the `dns` feature and ACME configuration in site config (`tls.acme`).
+
+### 3. Post-Quantum Cryptography (PQC)
 SynVoid is at the forefront of post-quantum security:
 
 **Key Exchange:**

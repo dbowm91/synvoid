@@ -115,6 +115,7 @@ pub struct ConfigManager {
     pub sites: HashMap<String, SiteConfig>,
     pub sites_dir: PathBuf,
     pub config_dir: PathBuf,
+    site_filenames: HashMap<String, PathBuf>,
 }
 
 impl ConfigManager {
@@ -124,6 +125,7 @@ impl ConfigManager {
             sites: HashMap::new(),
             sites_dir: config_dir.join("sites"),
             config_dir,
+            site_filenames: HashMap::new(),
         }
     }
 
@@ -142,6 +144,8 @@ impl ConfigManager {
         let config = SiteConfig::from_file(&path)?;
         let site_id = config.site_id();
         self.sites.insert(site_id.clone(), config);
+        self.site_filenames
+            .insert(site_id.clone(), path.as_ref().to_path_buf());
         Ok(site_id)
     }
 
@@ -177,6 +181,7 @@ impl ConfigManager {
                         let site_id = config.site_id();
                         let config_for_results = config.clone();
                         self.sites.insert(site_id.clone(), config);
+                        self.site_filenames.insert(site_id.clone(), path.clone());
                         results.push((site_id, Ok(config_for_results)));
                         tracing::info!("Loaded site config: {}", filename);
                     }
@@ -193,26 +198,30 @@ impl ConfigManager {
     }
 
     pub fn get_site(&self, domain: &str) -> Option<&SiteConfig> {
-        self.sites.get(domain)
+        self.sites
+            .values()
+            .find(|site| site.site.domains.iter().any(|d| d == domain))
     }
 
     pub fn reload_site(&mut self, domain: &str) -> Result<(), String> {
-        if let Some(config) = self.sites.get(domain) {
-            let domains = config.site.domains.clone();
-            let filename = domains.first().map(|s| s.as_str()).unwrap_or("unknown");
+        if let Some(site) = self.sites.get(domain) {
+            let site_id = site.site_id();
+            let path =
+                self.site_filenames.get(&site_id).cloned().ok_or_else(|| {
+                    format!("No filename found for site {}, cannot reload", domain)
+                })?;
 
-            let path = self.sites_dir.join(format!("{}.toml", filename));
             if path.exists() {
                 match SiteConfig::from_file(&path) {
                     Ok(new_config) => {
-                        self.sites.insert(domain.to_string(), new_config);
-                        tracing::info!("Reloaded site: {}", domain);
+                        self.sites.insert(site_id.clone(), new_config);
+                        tracing::info!("Reloaded site: {}", site_id);
                         Ok(())
                     }
-                    Err(e) => Err(format!("Failed to reload site {}: {}", domain, e)),
+                    Err(e) => Err(format!("Failed to reload site {}: {}", site_id, e)),
                 }
             } else {
-                Err(format!("Site config file not found for {}", domain))
+                Err(format!("Site config file not found at {}", path.display()))
             }
         } else {
             Err(format!("Site {} not found", domain))

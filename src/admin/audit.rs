@@ -128,6 +128,15 @@ impl AuditState {
                     tracing::warn!("Failed to persist audit log: {}", e);
                     super::metrics_events::record_audit_write_failure();
                 }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = std::fs::metadata(&self.audit_file) {
+                        let mut perms = metadata.permissions();
+                        perms.set_mode(0o600);
+                        let _ = std::fs::set_permissions(&self.audit_file, perms);
+                    }
+                }
             }
         }
     }
