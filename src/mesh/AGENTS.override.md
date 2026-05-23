@@ -517,3 +517,15 @@ These L1-L5 identity hierarchy gaps require future architectural work. Known lim
 ### Memory Leak in Pending Membership Changes ✅ ALREADY FIXED
 
 `src/mesh/transport.rs:797-875` - `pending_membership_changes` Vec is properly managed. `process_pending_membership_changes()` drains via `drain(..)` at line 903. Duplicate entries prevented by `retain()` at lines 823, 831. Already verified in plan review.
+
+### BUG-L3 ML-KEM Proof-of-Possession ✅ FIXED
+
+`confirm_key()` now verifies client can decapsulate the ciphertext:
+
+1. Validates `client_mlkem_pubkey` matches session's `peer_public_key`
+2. Attempts `MlKem768::decapsulate()` with stored ciphertext and local secret key
+3. Returns error if public key mismatch or decapsulation fails
+
+This prevents rogue clients from confirming sessions they cannot decrypt.
+
+Key file: `src/mesh/ml_kem_key_exchange.rs:204-265`

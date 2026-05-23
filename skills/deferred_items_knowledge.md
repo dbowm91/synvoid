@@ -23,8 +23,12 @@ These are known limitations, not bugs:
 
 | Item | Location | Issue |
 |------|----------|-------|
-| ErasedHttpClient Phase 9 | `server.rs:3302` | `use_erased_client` hardcoded to `false` |
-| AXFR record types | `transfer.rs:829-878` | Missing SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA |
+| ErasedHttpClient Phase 9 | `server.rs:3302` | `use_erased_client` hardcoded to `false` - Phase 9 never completed |
+| HTTP/2 disabled | `http_client/mod.rs:890` | `is_http2 = false` - ALPN not configured |
+| DNS Cookie Server | `cookie.rs` + `server/mod.rs` | Complete RFC 7873 implementation exists but NOT integrated into DnsServer |
+| Minification unused | `static_files/mod.rs:134-136` | `new_with_minifier()` accepts minifier params but silently ignored |
+| Spin instance reuse | `spin/runtime.rs:260` | Only compiled_runtimes cached, not SpinAppInstance - per-request overhead |
+| GOST DS digest | `dnssec_validation.rs:260` | Returns error - requires gost94 crate |
 
 ## Architecture Documents
 
