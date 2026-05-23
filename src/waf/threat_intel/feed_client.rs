@@ -174,7 +174,12 @@ impl ThreatFeedClient {
     }
 
     fn verify_feed_signature(&self, payload: &ThreatFeedPayload) -> bool {
-        if payload.signature.is_empty() || payload.signer_public_key.as_ref().map_or(true, |s| s.is_empty()) {
+        if payload.signature.is_empty()
+            || payload
+                .signer_public_key
+                .as_ref()
+                .map_or(true, |s| s.is_empty())
+        {
             tracing::warn!("Feed payload missing signature or public key");
             return false;
         }

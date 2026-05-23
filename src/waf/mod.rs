@@ -14,37 +14,42 @@ pub mod ip_feed;
 pub mod mitigation;
 pub mod probe_tracker;
 pub mod ratelimit;
+pub mod request_sanitization;
 pub mod rule_feed;
 pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
-pub mod request_sanitization;
 pub mod violation_tracker;
 
-pub use probe_tracker::{ProbeConfig, ProbeTracker, SuspiciousWordTracker, UpstreamErrorTracker, UpstreamErrorResult};
-pub use threat_level::{ThreatLevelManager, ThreatHistorySample};
-pub use violation_tracker::ViolationTracker;
-pub use rule_feed::RuleFeedManagerForWaf;
-pub use traffic_shaper::{ConnectionToken, ConnectionLimiter, GlobalTrafficShaper};
 pub use attack_detection::AttackDetectionConfig;
+pub use probe_tracker::{
+    ProbeConfig, ProbeTracker, SuspiciousWordTracker, UpstreamErrorResult, UpstreamErrorTracker,
+};
+pub use rule_feed::RuleFeedManagerForWaf;
+pub use threat_level::{ThreatHistorySample, ThreatLevelManager};
+pub use traffic_shaper::{ConnectionLimiter, ConnectionToken, GlobalTrafficShaper};
+pub use violation_tracker::ViolationTracker;
 
 use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
-use crate::config::limits::RateLimitMemoryConfig;
-pub use crate::config::{SuspiciousWordsConfig, UpstreamErrorsConfig};
-use crate::config::traffic::{BandwidthConfig, TrafficShapingConfig};
-use crate::config::defaults::{AsnScrapingConfig, BotDefaults, BlockedDefaults};
-use crate::geoip::GeoIpManager;
-use crate::waf::attack_detection::AttackDetector;
-use crate::waf::bot::{BotDetector, BotDetectionResult};
-use crate::waf::endpoints::{EndpointBlockerManager, EndpointCheckResult, SensitiveEndpointManager, ErrorPageManager, EndpointBlocker};
-use crate::waf::ip_feed::IpFeedManager;
-use crate::waf::asn_tracker::AsnTracker;
 use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeType};
+use crate::config::defaults::{AsnScrapingConfig, BlockedDefaults, BotDefaults};
+use crate::config::limits::RateLimitMemoryConfig;
+use crate::config::traffic::{BandwidthConfig, TrafficShapingConfig};
+pub use crate::config::{SuspiciousWordsConfig, UpstreamErrorsConfig};
+use crate::geoip::GeoIpManager;
+use crate::waf::asn_tracker::AsnTracker;
+use crate::waf::attack_detection::AttackDetector;
+use crate::waf::bot::{BotDetectionResult, BotDetector};
+use crate::waf::endpoints::{
+    EndpointBlocker, EndpointBlockerManager, EndpointCheckResult, ErrorPageManager,
+    SensitiveEndpointManager,
+};
+use crate::waf::ip_feed::IpFeedManager;
 pub use request_sanitization::RequestSanitizer;
 
-pub use ratelimit::{RateLimiterManager, RateLimitResult};
-pub use flood::{FloodConfig, FloodProtector, FloodDecision};
+pub use flood::{FloodConfig, FloodDecision, FloodProtector};
+pub use ratelimit::{RateLimitResult, RateLimiterManager};
 
 // YaraRulesManager is actually in mesh module
 pub use crate::mesh::yara_rules::YaraRulesManager;
@@ -322,9 +327,9 @@ impl WafCore {
             ))
         });
 
-        let connection_limiter_instance = traffic_shaping_config.as_ref().map(|config| {
-            ConnectionLimiter::new(config.connection_limits.clone())
-        });
+        let connection_limiter_instance = traffic_shaping_config
+            .as_ref()
+            .map(|config| ConnectionLimiter::new(config.connection_limits.clone()));
 
         let asn_tracker_instance = asn_scraping_config.as_ref().map(|config| {
             Arc::new(AsnTracker::new(
@@ -344,11 +349,7 @@ impl WafCore {
 
         let sensitive_endpoint_manager =
             SensitiveEndpointManager::from_file(&"honeypot_endpoints.txt".to_string()); // dummy path
-        let error_page_manager = ErrorPageManager::new(
-            &"error_pages".to_string(),
-            None,
-            true,
-        );
+        let error_page_manager = ErrorPageManager::new(&"error_pages".to_string(), None, true);
         let challenge_manager = ChallengeManager::new(ChallengeConfig {
             cookie_name: bot_config.challenge_cookie_name.clone(),
             pow_enabled: false, // from separate config usually
@@ -389,7 +390,8 @@ impl WafCore {
             }
         }
 
-        let ad_instance = attack_detection_config.map(|config| Arc::new(AttackDetector::new(config)));
+        let ad_instance =
+            attack_detection_config.map(|config| Arc::new(AttackDetector::new(config)));
 
         let auth_manager_instance = auth_manager.unwrap_or_else(|| {
             Arc::new(AuthManager::new(
@@ -469,19 +471,24 @@ impl WafCore {
             return decision;
         }
 
+        if let Some(ref protector) = self.flood_protector {
+            match protector.check_tcp_connection(ip) {
+                FloodDecision::RateLimited => {
+                    return WafDecision::Block(429, "Rate Limited".to_string())
+                }
+                FloodDecision::Blackholed => return WafDecision::Drop,
+                FloodDecision::Allowed => {}
+            }
+        }
+
         // Parallel Attack Detection
         if let Some(ad) = self.attack_detector.load().as_ref() {
-            let http_method = http::Method::from_bytes(method.as_bytes())
-                .unwrap_or(http::Method::GET);
-            
-            let (result, score) = ad.check_request(
-                ip,
-                &http_method,
-                path,
-                query,
-                headers,
-                body,
-            ).await;
+            let http_method =
+                http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET);
+
+            let (result, score) = ad
+                .check_request(ip, &http_method, path, query, headers, body)
+                .await;
 
             if let Some(res) = result {
                 tracing::info!(
@@ -517,18 +524,9 @@ impl WafCore {
     ) -> WafDecision {
         let headers = http::HeaderMap::new();
         self.check_request_full(
-            site_id,
-            ip,
-            method,
-            path,
-            None,
-            &headers,
-            None,
-            ua,
-            None,
-            None,
-            None,
-        ).await
+            site_id, ip, method, path, None, &headers, None, ua, None, None, None,
+        )
+        .await
     }
 
     async fn check_rate_limits(&self, ip: IpAddr, site_id: Option<&str>) -> Option<WafDecision> {
@@ -640,10 +638,12 @@ impl WafCore {
         site_bot_config: Option<&crate::config::site::SiteBotConfig>,
     ) -> Option<WafDecision> {
         let block_ai = site_bot_config.and_then(|c| c.block_ai_crawlers);
-        
+
         // Use full fingerprinting check (JA3 is None here, JA4 is passed)
-        let bot_result = self.bot_detector.check_with_fingerprints(user_agent, block_ai, None, ja4_hash);
-        
+        let bot_result = self
+            .bot_detector
+            .check_with_fingerprints(user_agent, block_ai, None, ja4_hash);
+
         match bot_result {
             BotDetectionResult::Blocked { reason, .. } => {
                 tracing::info!(
@@ -670,14 +670,16 @@ impl WafCore {
                 // Suspicious if it's a known automated tool but not explicitly blocked
                 let is_automated = user_agent.is_some_and(|ua| {
                     let ua_lower = ua.to_lowercase();
-                    ua_lower.contains("curl") || 
-                    ua_lower.contains("postman") || 
-                    ua_lower.contains("python-requests") ||
-                    ua_lower.contains("go-http-client")
+                    ua_lower.contains("curl")
+                        || ua_lower.contains("postman")
+                        || ua_lower.contains("python-requests")
+                        || ua_lower.contains("go-http-client")
                 });
 
                 if is_automated {
-                    let (html, session_id) = self.challenge_manager.generate_challenge_page(&client_ip, Some(path));
+                    let (html, session_id) = self
+                        .challenge_manager
+                        .generate_challenge_page(&client_ip, Some(path));
                     if let Some(sid) = session_id {
                         return Some(WafDecision::ChallengeWithCookie {
                             challenge_type: self.challenge_manager.get_challenge_type(),
@@ -687,7 +689,10 @@ impl WafCore {
                             session_cookie_max_age: self.challenge_manager.css_window_secs(),
                         });
                     } else {
-                        return Some(WafDecision::Challenge(self.challenge_manager.get_challenge_type(), html));
+                        return Some(WafDecision::Challenge(
+                            self.challenge_manager.get_challenge_type(),
+                            html,
+                        ));
                     }
                 }
 
@@ -746,16 +751,31 @@ impl WafCore {
     }
 
     pub fn streaming(&self) -> Option<crate::waf::attack_detection::StreamingWafCore> {
-        self.attack_detector.load().as_ref().map(|ad| ad.clone().streaming())
+        self.attack_detector
+            .load()
+            .as_ref()
+            .map(|ad| ad.clone().streaming())
     }
 
-    pub fn block_ip_for_honeypot(&self, ip: IpAddr, reason: &str, duration_secs: u64, _scope: &str) {
+    pub fn block_ip_for_honeypot(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        _scope: &str,
+    ) {
         if let Some(ref store) = self.block_store {
             store.block_ip(ip, reason, duration_secs, "global");
         }
     }
 
-    pub fn block_ip_with_threat_intel(&self, ip: IpAddr, reason: &str, duration_secs: u64, _scope: &str) {
+    pub fn block_ip_with_threat_intel(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        _scope: &str,
+    ) {
         if let Some(ref store) = self.block_store {
             store.block_ip(ip, reason, duration_secs, "global");
         }
@@ -809,8 +829,10 @@ impl WafCore {
         // Placeholder
     }
 
-    pub fn get_threat_intel(&self) -> Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>> {
-        // Phase 3: Relegated to Control Plane (Supervisor). 
+    pub fn get_threat_intel(
+        &self,
+    ) -> Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>> {
+        // Phase 3: Relegated to Control Plane (Supervisor).
         None
     }
 
@@ -852,7 +874,8 @@ impl WafCore {
     }
 }
 
-pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<crate::upload::UploadValidator>> = std::sync::OnceLock::new();
+pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<crate::upload::UploadValidator>> =
+    std::sync::OnceLock::new();
 
 pub fn get_upload_validator() -> Option<Arc<crate::upload::UploadValidator>> {
     UPLOAD_VALIDATOR.get().cloned()

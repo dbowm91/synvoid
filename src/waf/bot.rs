@@ -53,6 +53,7 @@ impl BotDetector {
         ai_crawlers_block: Vec<String>,
         scraper_patterns: Vec<String>,
         block_ai_crawlers: bool,
+        block_scrapers: bool,
         known_bot_ja3_hashes: Vec<String>,
         known_bot_ja4_hashes: Vec<String>,
     ) -> Self {
@@ -88,7 +89,7 @@ impl BotDetector {
             known_bot_ja3_hashes: Arc::new(known_bot_ja3_hashes),
             known_bot_ja4_hashes: Arc::new(known_bot_ja4_hashes),
             block_ai_crawlers,
-            block_scrapers: true,
+            block_scrapers,
         }
     }
 

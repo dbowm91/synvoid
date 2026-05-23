@@ -1,7 +1,7 @@
 use std::io;
 use std::net::IpAddr;
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Trait for platform-specific IP mitigation (blocking/unblocking).
 ///
@@ -13,7 +13,7 @@ pub trait MitigationProvider: Send + Sync {
 
     /// Unblock an IP address.
     fn unblock_ip(&self, ip: IpAddr) -> io::Result<()>;
-    
+
     /// Returns the name of the provider (e.g., "aya-ebpf", "userspace-fallback").
     fn name(&self) -> &'static str;
 }
@@ -29,7 +29,7 @@ impl MitigationProvider for NoOpMitigationProvider {
     fn unblock_ip(&self, _ip: IpAddr) -> io::Result<()> {
         Ok(())
     }
-    
+
     fn name(&self) -> &'static str {
         "no-op"
     }
@@ -48,7 +48,7 @@ impl MitigationProvider for LoggingMitigationProvider {
         tracing::info!(%ip, "Mitigation (Logging): Unblocked IP");
         Ok(())
     }
-    
+
     fn name(&self) -> &'static str {
         "logging"
     }
@@ -83,12 +83,15 @@ impl MitigationProvider for EbpfMitigationProvider {
 
 #[cfg(all(target_os = "linux", feature = "flood-ebpf"))]
 impl EbpfMitigationProvider {
-    pub fn new(ebpf: Arc<parking_lot::Mutex<crate::waf::flood::ebpf_flood::EbpfSynFloodProtector>>) -> Self {
+    pub fn new(
+        ebpf: Arc<parking_lot::Mutex<crate::waf::flood::ebpf_flood::EbpfSynFloodProtector>>,
+    ) -> Self {
         Self { ebpf }
     }
 }
 
-static MITIGATION_PROVIDER: arc_swap::ArcSwapOption<SizedMitigationProvider> = arc_swap::ArcSwapOption::const_empty();
+static MITIGATION_PROVIDER: arc_swap::ArcSwapOption<SizedMitigationProvider> =
+    arc_swap::ArcSwapOption::const_empty();
 
 pub fn set_mitigation_provider(provider: Arc<dyn MitigationProvider>) {
     MITIGATION_PROVIDER.store(Some(Arc::new(SizedMitigationProvider(provider))));
