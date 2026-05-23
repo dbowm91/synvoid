@@ -54,8 +54,8 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 | Process | Binary Flag | Purpose | Count |
 |---------|-------------|---------|-------|
 | **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane, zero-downtime upgrades | 1 |
-| **Master** | `--master` | Legacy mid-tier process manager (spawned by Overseer) | 1 |
-| **Overseer** | `--overseer` | Legacy parent process (health monitoring, upgrade coordination) | 1 |
+| **Master** | (internal) | Legacy mid-tier process manager (spawned by Supervisor) | 1 |
+| **Overseer** | (internal) | Legacy parent process (health monitoring, upgrade coordination) | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | N |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | N |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination | N |
@@ -101,7 +101,7 @@ The legacy **Overseer** process (`src/overseer/`) and **Master** process (`src/m
 
 | Module | Path | Purpose |
 |--------|------|---------|
-| **Router** | `src/router.rs` | Domain-based routing to sites, Host header matching, wildcards |
+| **Router** | `src/router.rs` | MatchRouter-based routing with BackendType enum, RouteTarget resolution, domain/Host matching, wildcard support |
 | **Upstream** | `src/upstream/` | Backend address management, health checks, load balancing algorithms |
 
 ### Core Documentation
@@ -193,7 +193,7 @@ Request → Rate Limiting → Bot Detection → Attack Detection → Challenge �
 
 ## Application Handlers
 
-SynVoid supports multiple backend types natively.
+SynVoid supports multiple backend types natively. See [Routing Deep Dive](routing_deep_dive.md) for full BackendType integration details.
 
 | Handler | Path | Purpose |
 |---------|------|---------|
@@ -403,7 +403,7 @@ The following corrections were made to address discrepancies between documentati
 | Item | Correction |
 |------|------------|
 | **Process Hierarchy** | SynVoid uses a three-tier hierarchy (Overseer → Master → Worker) for legacy deployments, with Supervisor consolidating Overseer + Master responsibilities for simpler deployments. See [Process Lifecycle](process_lifecycle.md) for details. |
-| **gRPC Control Plane** | The gRPC API binds to localhost only — TLS is not required for local IPC between processes. See [Platform Deep Dive](platform_deep_dive.md). |
+| **gRPC Control Plane** | The gRPC API binds to the address configured in `supervisor.control_api_addr` (default localhost). TLS is not required for local IPC — binding to non-localhost addresses is permitted but should be protected by network segmentation. See [Platform Deep Dive](platform_deep_dive.md). |
 | **Spin Framework** | Spin support (`src/spin/`) requires manual app registration via Admin API. Routing integration and component mapping are not fully automated. |
 | **File Path Corrections** | Several file path references in deep dive docs were corrected in AGENTS.md. Key corrections: `collect_body_with_chunk_waf` is in `src/http/server.rs:4661` (not `shared_handler.rs`), quorum verification is in `src/mesh/dht/signed.rs:860-934` (not `state_machine.rs:166-172`). |
 
