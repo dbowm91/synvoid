@@ -257,6 +257,7 @@ pub fn compute_ds_digest(
             hasher.update(&canonical);
             Ok(hasher.finalize().to_vec())
         }
+        3 => Err("GOST R 34.11-94 (DS digest type 3) is not yet supported. This requires adding a GOST digest crate (e.g., gost94) to Cargo.toml".to_string()),
         _ => Err(format!("Unsupported DS digest type: {}", digest_type)),
     }
 }

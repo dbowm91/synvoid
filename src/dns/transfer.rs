@@ -874,6 +874,158 @@ impl ZoneTransfer {
                         response.extend_from_slice(part.as_bytes());
                     }
                 }
+                RecordType::SRV => {
+                    let parts: Vec<&str> = record.value.split_whitespace().collect();
+                    if parts.len() >= 4 {
+                        let priority: u16 = parts[0].parse().unwrap_or(0);
+                        let weight: u16 = parts[1].parse().unwrap_or(0);
+                        let port: u16 = parts[2].parse().unwrap_or(0);
+                        response.extend_from_slice(&6u16.to_be_bytes());
+                        response.extend_from_slice(&priority.to_be_bytes());
+                        response.extend_from_slice(&weight.to_be_bytes());
+                        response.extend_from_slice(&port.to_be_bytes());
+                        let target = parts[3];
+                        let mut target_parts: Vec<&str> =
+                            target.split('.').filter(|s| !s.is_empty()).collect();
+                        if target_parts.is_empty() {
+                            target_parts.push("");
+                        }
+                        for part in &target_parts {
+                            response.push((*part).len() as u8);
+                            response.extend_from_slice(part.as_bytes());
+                        }
+                    }
+                }
+                RecordType::PTR => {
+                    let mut target_parts: Vec<&str> =
+                        record.value.split('.').filter(|s| !s.is_empty()).collect();
+                    if target_parts.is_empty() {
+                        target_parts.push("");
+                    }
+                    let mut total_len = 0;
+                    for part in &target_parts {
+                        total_len += 1 + part.len();
+                    }
+                    response.extend_from_slice(&(total_len as u16).to_be_bytes());
+                    for part in &target_parts {
+                        response.push((*part).len() as u8);
+                        response.extend_from_slice(part.as_bytes());
+                    }
+                }
+                RecordType::DNSKEY => {
+                    if let Ok(key_bytes) = hex::decode(&record.value) {
+                        response.extend_from_slice(&(key_bytes.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&key_bytes);
+                    }
+                }
+                RecordType::RRSIG => {
+                    if let Ok(rrsig_bytes) = hex::decode(&record.value) {
+                        response.extend_from_slice(&(rrsig_bytes.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&rrsig_bytes);
+                    }
+                }
+                RecordType::NSEC => {
+                    let parts: Vec<&str> = record.value.split_whitespace().collect();
+                    if !parts.is_empty() {
+                        let next_domain = parts[0];
+                        let mut target_parts: Vec<&str> =
+                            next_domain.split('.').filter(|s| !s.is_empty()).collect();
+                        if target_parts.is_empty() {
+                            target_parts.push("");
+                        }
+                        let mut total_len = 0;
+                        for part in &target_parts {
+                            total_len += 1 + part.len();
+                        }
+                        let mut nsec_data = Vec::new();
+                        for part in &target_parts {
+                            nsec_data.push((*part).len() as u8);
+                            nsec_data.extend_from_slice(part.as_bytes());
+                        }
+                        if parts.len() > 1 {
+                            let mut bitmap = Vec::new();
+                            let mut current_window = 0u8;
+                            let mut block_bits = Vec::new();
+                            for type_str in &parts[1..] {
+                                let type_val: u16 = match type_str.to_uppercase().as_str() {
+                                    "A" => 1,
+                                    "AAAA" => 28,
+                                    "CNAME" => 5,
+                                    "NS" => 2,
+                                    "SOA" => 6,
+                                    "TXT" => 16,
+                                    "MX" => 15,
+                                    "SRV" => 33,
+                                    "PTR" => 12,
+                                    "DNSKEY" => 48,
+                                    "RRSIG" => 46,
+                                    "NSEC" => 47,
+                                    "NSEC3" => 50,
+                                    "DS" => 43,
+                                    "CAA" => 257,
+                                    _ => continue,
+                                };
+                                let window_byte = (type_val >> 8) as u8;
+                                let bitmap_bit = type_val & 0xFF;
+                                if window_byte != current_window {
+                                    if !block_bits.is_empty() {
+                                        bitmap.push(current_window);
+                                        bitmap.push(block_bits.len() as u8);
+                                        bitmap.extend_from_slice(&block_bits);
+                                    }
+                                    current_window = window_byte;
+                                    block_bits = vec![0u8; (bitmap_bit / 8) as usize + 1];
+                                }
+                                let byte_idx = (bitmap_bit / 8) as usize;
+                                let bit_idx = bitmap_bit % 8;
+                                if byte_idx < block_bits.len() {
+                                    block_bits[byte_idx] |= 1 << (7 - bit_idx);
+                                }
+                            }
+                            if !block_bits.is_empty() {
+                                bitmap.push(current_window);
+                                bitmap.push(block_bits.len() as u8);
+                                bitmap.extend_from_slice(&block_bits);
+                            }
+                            nsec_data.extend_from_slice(&bitmap);
+                        } else {
+                            nsec_data.push(0);
+                        }
+                        response.extend_from_slice(&(nsec_data.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&nsec_data);
+                    }
+                }
+                RecordType::NSEC3 => {
+                    if let Ok(nsec3_bytes) = hex::decode(&record.value) {
+                        response.extend_from_slice(&(nsec3_bytes.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&nsec3_bytes);
+                    }
+                }
+                RecordType::DS => {
+                    if let Ok(ds_bytes) = hex::decode(&record.value) {
+                        response.extend_from_slice(&(ds_bytes.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&ds_bytes);
+                    }
+                }
+                RecordType::CAA => {
+                    let parts: Vec<&str> = record.value.splitn(3, ' ').collect();
+                    let mut data = Vec::new();
+                    if parts.len() >= 3 {
+                        let flags: u8 = parts[0].parse().unwrap_or(0);
+                        let tag = parts[1].as_bytes();
+                        let value = parts[2].trim_matches('"').as_bytes();
+                        data.push(flags);
+                        data.push(tag.len() as u8);
+                        data.extend_from_slice(tag);
+                        data.extend_from_slice(value);
+                    } else {
+                        data.push(0);
+                        data.push(record.value.len() as u8);
+                        data.extend_from_slice(record.value.as_bytes());
+                    }
+                    response.extend_from_slice(&(data.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&data);
+                }
                 _ => continue,
             };
         }
