@@ -64,9 +64,9 @@ SynVoid is at the forefront of post-quantum security:
 - Configuration: `global_node.ml_dsa_private_key_base64` in `GlobalNodeConfig`.
 
 **Feature Flags:**
-- `post-quantum` — Enables TLS hybrid key exchange (ML-KEM)
-- `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA)
-- `verify-pq` — Enables post-quantum key exchange verification for mesh connections
+- `post-quantum` — Enables TLS hybrid key exchange (ML-KEM) for incoming HTTPS connections. Enables `X25519MLKEM768Draft00` in rustls for TLS 1.3 handshakes. Can be used independently for post-quantum key exchange without mesh signatures.
+- `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA-44) for inter-node communication. When enabled, Global nodes sign DHT records and threat intel messages with hybrid Ed25519+ML-DSA signatures. Requires `post-quantum` to be enabled as well for full PQC protection.
+- `verify-pq` — Enables verification of post-quantum key exchange proofs during mesh connection establishment. Ensures that hybrid key exchange properly validates both the classical and post-quantum components. Typically used in production mesh deployments.
 
 ---
 
