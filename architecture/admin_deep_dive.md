@@ -10,12 +10,69 @@ SynVoid implements a comprehensive admin API and authentication system using the
 
 ### Dual Authentication Model
 
-SynVoid supports two authentication mechanisms:
+SynVoid supports two fundamentally different authentication systems that serve distinct purposes:
 
-| Method | Use Case | CSRF Required |
-|--------|----------|---------------|
-| **Bearer Token** | API clients, programmatic access | No |
-| **Session Cookie** | Browser-based admin dashboard | Yes |
+| System | Purpose | Users | Token Type |
+|--------|---------|-------|------------|
+| **Admin Auth** | Protect Admin API (28+ endpoints) | Single admin | Static bearer token |
+| **User Auth** | Multi-user access to tenant resources | Multiple users | Username + password |
+
+**Commonality:** Both use bcrypt hashing and support session-based authentication for browser clients.
+
+---
+
+### Admin Auth: Single Token Model
+
+**Use Case:** Server administration, not tenant management.
+
+**Security Model:**
+- One static admin token configured in `admin.token`
+- Token is hashed using bcrypt (configurable cost, default 12)
+- Token verified via `verify_admin_token()` using bcrypt verify
+- No registration flow - token is configured, not created
+
+**Key Files:**
+- `src/admin/auth.rs:16-26` - `hash_admin_token()` and `verify_admin_token()`
+
+**When Admin Auth is Used:**
+- All Admin API endpoints (`/api/*`, `/config/*`, `/sites/*`, `/system/*`, etc.)
+- Bearer token authentication via `Authorization: Bearer <token>`
+- Session cookie authentication for browser-based admin dashboard
+
+---
+
+### User Auth: Multi-User Registration Model
+
+**Use Case:** Tenant multi-user access with registration.
+
+**Security Model:**
+- Multiple users can register via `AuthManager::create_user()`
+- Users login with username + password via `AuthManager::verify_login()`
+- Each user gets their own session with CSRF token
+- Brute-force protection: account locking after configurable failed attempts
+- Max 5 sessions per user, configurable session duration
+
+**Key Features:**
+- User registration with bcrypt password hashing
+- Persistent session storage (JSON-based, `auth/store.json`)
+- Brute-force protection with account lockout
+- Login audit logging (`login_logs` array in AuthStore)
+- Session refresh on activity (sliding window)
+- Constant-time CSRF comparison via `subtle::ConstantTimeEq`
+
+**Key Files:**
+- `src/auth/mod.rs:91-103` - `AuthManager` struct
+- `src/auth/mod.rs:294-333` - `create_user()` registration
+- `src/auth/mod.rs:393-533` - `verify_login()` authentication
+- `src/auth/mod.rs:561-629` - `validate_session()` session management
+
+**User Auth Flow:**
+1. User registration via `POST /api/auth/register` (if enabled) or Admin API
+2. User login via `POST /api/auth/login` → returns session + CSRF token
+3. Subsequent requests include session cookie + CSRF header
+4. Session refresh when 50%+ elapsed (configurable threshold)
+
+---
 
 ### Admin Token (Bearer)
 
@@ -336,12 +393,27 @@ Webhook URLs are validated:
 
 | Aspect | Implementation |
 |--------|----------------|
-| **Authentication** | Single admin token with bcrypt hashing, session-based auth for browsers |
-| **Brute-Force Protection** | Global per-IP rate limiter (5 attempts/60s window), 5-minute lockout |
+| **Admin Authentication** | Single static bearer token, bcrypt hashed, configured not registered |
+| **User Authentication** | Multi-user with registration, bcrypt passwords, persistent sessions |
+| **Admin Brute-Force Protection** | Global per-IP rate limiter (5 attempts/60s window), 5-minute lockout |
+| **User Brute-Force Protection** | Per-account locking after max failed attempts, configurable lockout duration |
 | **CSRF Protection** | Session-bound CSRF tokens, max 10 per session, constant-time comparison |
-| **Session Security** | HttpOnly, SameSite=Strict cookies, Secure flag in production, 1-hour TTL |
+| **Admin Session Security** | HttpOnly, SameSite=Strict cookies, Secure flag in production, 1-hour TTL |
+| **User Session Security** | Sliding window refresh, max 5 sessions per user, IP binding available |
 | **File Permissions** | Auth store: 0o700 dir, 0o600 files; Audit log: 0o600 |
 | **SSRF Protection** | Webhook URL scheme validation, private IP range blocking |
+
+### Key Distinction
+
+**Admin Auth** (`src/admin/auth.rs`) = Server administration
+- Single token, no registration
+- Protects admin API endpoints
+- Bearer token or session cookie
+
+**User Auth** (`src/auth/mod.rs`) = Multi-tenant user access
+- Multiple users with registration
+- Protects tenant resources
+- Username/password login with session
 
 ---
 
