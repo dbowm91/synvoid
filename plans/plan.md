@@ -1,8 +1,18 @@
 # SynVoid Implementation Plan
 
-**Status**: 📋 IN PROGRESS - Consolidation complete, items verified (2026-05-23)
+**Status**: ✅ ALL COMPLETED - All waves merged to main (2026-05-23)
 **Target**: Bug fixes, security hardening, and documentation updates
 **Consolidated from**: All architecture review plans in `plans/` directory
+
+**Completion Summary:**
+- Wave 1 (Plugin System Fixes): ✅ COMPLETED - 77e23081
+- Wave 2 (WAF Improvements): ✅ COMPLETED - 33a49898
+- Wave 3 (Mesh/Networking): ✅ COMPLETED - d04f3962
+- Wave 4 (Documentation Fixes): ✅ COMPLETED - e2df1984
+- Wave 5 (Config/Admin): ✅ COMPLETED - db15622f
+- Wave 6 (Plugin Doc/Enhancements): ✅ COMPLETED - 9ed575ee
+
+All items merged to main branch on 2026-05-23.
 
 ---
 
@@ -28,10 +38,10 @@ This plan consolidates actionable items from architecture reviews. Each item has
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| PLUGIN-1 / BUG-1 | Spin `find_route()` returns first match only (no longest-prefix-match) | `src/spin/runtime.rs:271-285` | Implement longest-prefix-match: collect all matching routes, return longest prefix | 📋 TODO |
-| BUG-2 | `body_receiver` not reset in `prepare_for_request()` - causes streaming failures on pooled instances | `src/plugin/instance_pool.rs:152-164` | Add `self.store.data_mut().body_receiver = None;` to reset | 📋 TODO |
-| BUG-3 | `warmup()` doesn't link all required functions - DHT/env functions unavailable on warm instances | `src/plugin/instance_pool.rs:79-148` | Link all 5 functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` | 📋 TODO |
-| BUG-4 | Idle eviction timeout hardcoded to 300s, not configurable | `src/spin/runtime.rs:319-338` | Add `idle_timeout_seconds: u64` to `SpinRuntimeConfig`, default 300 | 📋 TODO |
+| PLUGIN-1 / BUG-1 | Spin `find_route()` returns first match only (no longest-prefix-match) | `src/spin/runtime.rs:271-285` | Implement longest-prefix-match: collect all matching routes, return longest prefix | ✅ DONE |
+| BUG-2 | `body_receiver` not reset in `prepare_for_request()` - causes streaming failures on pooled instances | `src/plugin/instance_pool.rs:152-164` | Add `self.store.data_mut().body_receiver = None;` to reset | ✅ DONE |
+| BUG-3 | `warmup()` doesn't link all required functions - DHT/env functions unavailable on warm instances | `src/plugin/instance_pool.rs:79-148` | Link all 5 functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` | ✅ DONE |
+| BUG-4 | Idle eviction timeout hardcoded to 300s, not configurable | `src/spin/runtime.rs:319-338` | Add `idle_timeout_seconds: u64` to `SpinRuntimeConfig`, default 300 | ✅ DONE |
 
 ### Implementation Details for Wave 1
 
@@ -80,19 +90,19 @@ self.store.data_mut().body_receiver = None;  // Reset for streaming
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| REC-2 | Flood protector NOT integrated into request pipeline (exists at TCP level only) | `src/waf/mod.rs:438-508` | Integrate flood protector into `check_request_full()` pipeline | 📋 TODO |
-| REC-3 | Streaming WAF `get_block_status` always returns 403 for all attack types | `src/waf/attack_detection/streaming.rs:356-365` | Make block status configurable per attack type | 📋 TODO |
-| REC-5 | Request smuggling NOT included in fast-path checks - security bypass vulnerability | `src/waf/attack_detection/mod.rs:425-435` | Add smuggling indicators to fast_path_patterns OR remove early return | 📋 TODO |
-| REC-1 | Fast-path pre-screening patterns incomplete (13 patterns, missing most SQLi, command injection, SSRF, XXE, etc.) | `src/waf/attack_detection/mod.rs:156-171` | Expand fast_path_patterns to include critical patterns from each category | 📋 TODO |
-| REC-4 | Behavioral analysis mesh-only limitation undocumented | `src/waf/attack_detection/mod.rs:263-314` | Document that behavioral analysis requires `mesh` feature | 📋 TODO |
+| REC-2 | Flood protector NOT integrated into request pipeline (exists at TCP level only) | `src/waf/mod.rs:438-508` | Integrate flood protector into `check_request_full()` pipeline | ✅ DONE |
+| REC-3 | Streaming WAF `get_block_status` always returns 403 for all attack types | `src/waf/attack_detection/streaming.rs:356-365` | Make block status configurable per attack type | ✅ DONE |
+| REC-5 | Request smuggling NOT included in fast-path checks - security bypass vulnerability | `src/waf/attack_detection/mod.rs:425-435` | Add smuggling indicators to fast_path_patterns OR remove early return | ✅ DONE |
+| REC-1 | Fast-path pre-screening patterns incomplete (13 patterns, missing most SQLi, command injection, SSRF, XXE, etc.) | `src/waf/attack_detection/mod.rs:156-171` | Expand fast_path_patterns to include critical patterns from each category | ✅ DONE |
+| REC-4 | Behavioral analysis mesh-only limitation undocumented | `src/waf/attack_detection/mod.rs:263-314` | Document that behavioral analysis requires `mesh` feature | ✅ DONE |
 
 ### WAF Bugs to Fix
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| BUG-5 | Double UTF-8 lossy conversion in body handling | `src/waf/attack_detection/mod.rs:890-892` | Investigate and fix double conversion | 📋 TODO |
-| REC-6 | FloodBackend Display missing Ebpf variant | `src/waf/flood/mod.rs:66-72` | Add Ebpf variant to Display impl | 📋 TODO |
-| REC-7 | `block_scrapers` hardcoded to true, ignores parameter | `src/waf/bot.rs:91` | Make configurable via parameter | 📋 TODO |
+| BUG-5 | Double UTF-8 lossy conversion in body handling | `src/waf/attack_detection/mod.rs:890-892` | Investigate and fix double conversion | ⚠️ No issue found |
+| REC-6 | FloodBackend Display missing Ebpf variant | `src/waf/flood/mod.rs:66-72` | Add Ebpf variant to Display impl | ✅ DONE |
+| REC-7 | `block_scrapers` hardcoded to true, ignores parameter | `src/waf/bot.rs:91` | Make configurable via parameter | ✅ DONE |
 
 ### Implementation Details for Wave 2
 
@@ -124,16 +134,16 @@ if let Some(ref protector) = self.flood_protector {
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| N1 | Hierarchical routing dead code - `#[allow(dead_code)]` since file is unused | `src/mesh/hierarchical_routing.rs` | Implement or remove - decide based on multi-region roadmap | 📋 TODO |
-| N4 | Test assertion message claims bug that appears to be fixed | `src/mesh/dht/signed.rs:1803-1806` | Update assertion message to reflect current behavior | 📋 TODO |
-| N5 | Missing integration test for Regional Quorum | `src/mesh/dht/quorum.rs` | Add test: 50-node cluster, latency-based selection, fallback behavior | 📋 TODO |
+| N1 | Hierarchical routing dead code - `#[allow(dead_code)]` since file is unused | `src/mesh/hierarchical_routing.rs` | Implement or remove - decide based on multi-region roadmap | ✅ DONE - Documented as reserved for multi-region |
+| N4 | Test assertion message claims bug that appears to be fixed | `src/mesh/dht/signed.rs:1803-1806` | Update assertion message to reflect current behavior | ✅ DONE |
+| N5 | Missing integration test for Regional Quorum | `src/mesh/dht/quorum.rs` | Add test: 50-node cluster, latency-based selection, fallback behavior | ✅ DONE - Test already exists |
 
 ### Mesh Low Priority
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| N6 | Add more descriptive metrics | `src/mesh/dht/quorum.rs`, `src/mesh/dht/record_store_message.rs` | Metrics: regional vs full quorum, verification failures, Raft write failure rates | 📋 TODO |
-| N7 | Document PQC feature flag | `src/mesh/config.rs`, `architecture/networking_deep_dive.md` | Document ML-KEM/ML-DSA via `post-quantum` feature flag | 📋 TODO |
+| N6 | Add more descriptive metrics | `src/mesh/dht/quorum.rs`, `src/mesh/dht/record_store_message.rs` | Metrics: regional vs full quorum, verification failures, Raft write failure rates | ✅ DONE |
+| N7 | Document PQC feature flag | `src/mesh/config.rs`, `architecture/networking_deep_dive.md` | Document ML-KEM/ML-DSA via `post-quantum` feature flag | ✅ DONE |
 
 ---
 
@@ -143,15 +153,15 @@ if let Some(ref protector) = self.flood_protector {
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| H1 | Update architecture docs to reflect three-tier hierarchy (Overseer→Master→Worker) | `architecture/process_lifecycle.md`, `architecture/platform_deep_dive.md` | Documentation claims 2-tier but code has 3-tier | 📋 TODO |
-| H3 | Update `process_lifecycle.md` to remove non-existent `src/control_plane/` reference | `architecture/process_lifecycle.md:16` | Module `src/control_plane/` does not exist | 📋 TODO |
-| M2 | Expand startup flow documentation in `platform_deep_dive.md` to match actual complexity | `architecture/platform_deep_dive.md:201-217` | Actual flow has 15+ phases vs documented 11 steps | 📋 TODO |
-| M3 | Add Overseer row to process hierarchy table | `architecture/platform_deep_dive.md:113-121` | Missing Overseer in hierarchy table | 📋 TODO |
-| N3 | Update `mesh_deep_dive.md` accuracy | `architecture/mesh_deep_dive.md` | 1) Hierarchical routing "reserved for future" not "uses" 2) Audit system not centralized 3) Collective defense features "partial/experimental" | 📋 TODO |
-| C1 | Update `deep_dive_review.md:15` - Remove "protected by TLS" from gRPC description | `architecture/deep_dive_review.md:15` | gRPC has no TLS, intentional for localhost IPC | 📋 TODO |
-| C2 | Update `architecture/overview.md:202` - Clarify Spin support status | `architecture/overview.md:202`, `src/http/server.rs:2417-2489` | Spin routing IS integrated at HTTP dispatch level; requires manual app registration via Admin API | 📋 TODO |
-| C3 | Clarify Master process status in `architecture/overview.md` | `architecture/overview.md:56-58`, `src/main.rs:529-537` | `--master` flag still exists; Master not fully deprecated | 📋 TODO |
-| C4 | Create centralized errata section in `architecture/overview.md` | `architecture/overview.md` | Reference AGENTS.md for known path corrections | 📋 TODO |
+| H1 | Update architecture docs to reflect three-tier hierarchy (Overseer→Master→Worker) | `architecture/process_lifecycle.md`, `architecture/platform_deep_dive.md` | Documentation claims 2-tier but code has 3-tier | ✅ DONE |
+| H3 | Update `process_lifecycle.md` to remove non-existent `src/control_plane/` reference | `architecture/process_lifecycle.md:16` | Module `src/control_plane/` does not exist | ✅ DONE |
+| M2 | Expand startup flow documentation in `platform_deep_dive.md` to match actual complexity | `architecture/platform_deep_dive.md:201-217` | Actual flow has 15+ phases vs documented 11 steps | ✅ DONE |
+| M3 | Add Overseer row to process hierarchy table | `architecture/platform_deep_dive.md:113-121` | Missing Overseer in hierarchy table | ✅ DONE |
+| N3 | Update `mesh_deep_dive.md` accuracy | `architecture/mesh_deep_dive.md` | 1) Hierarchical routing "reserved for future" not "uses" 2) Audit system not centralized 3) Collective defense features "partial/experimental" | ✅ DONE |
+| C1 | Update `deep_dive_review.md:15` - Remove "protected by TLS" from gRPC description | `architecture/deep_dive_review.md:15` | gRPC has no TLS, intentional for localhost IPC | ✅ DONE |
+| C2 | Update `architecture/overview.md:202` - Clarify Spin support status | `architecture/overview.md:202`, `src/http/server.rs:2417-2489` | Spin routing IS integrated at HTTP dispatch level; requires manual app registration via Admin API | ✅ DONE |
+| C3 | Clarify Master process status in `architecture/overview.md` | `architecture/overview.md:56-58`, `src/main.rs:529-537` | `--master` flag still exists; Master not fully deprecated | ✅ DONE |
+| C4 | Create centralized errata section in `architecture/overview.md` | `architecture/overview.md` | Reference AGENTS.md for known path corrections | ✅ DONE |
 
 ### Documentation Fix Details
 
@@ -181,19 +191,19 @@ Overseer (src/overseer/)
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
 | ISSUE-1 | `src/config/AGENTS.override.md` already exists | N/A | ✅ Already created | ✅ DONE |
-| DOC-1 | TunnelMessage types incomplete (missing AuthFailure, KeepAlive, PortData, etc.) | `src/tunnel/quic/messages.rs:7-106` | Update `dns_deep_dive.md` | 📋 TODO |
-| DOC-2 | WireGuard implementation wrong - uses `defguard-boringtun`, not `wireguard-kit` | `src/tunnel/wireguard/userspace.rs:136` | Fix documentation | 📋 TODO |
-| DOC-3 | VPN client `VpnClientBuilder` is method on VpnClient, not separate struct | `src/vpn_client/mod.rs:65-76` | Update documentation | 📋 TODO |
-| DOC-4 | Missing undocumented DNS modules (hsm.rs, cookie.rs, update.rs, transfer.rs, etc.) | Various | Add to key files table | 📋 TODO |
-| DOC-5 | DNSSEC manual wire format limitation not documented | `src/dns/dnssec.rs:1-9` | Add note about limitation | 📋 TODO |
+| DOC-1 | TunnelMessage types incomplete (missing AuthFailure, KeepAlive, PortData, etc.) | `src/tunnel/quic/messages.rs:7-106` | Update `dns_deep_dive.md` | ✅ DONE |
+| DOC-2 | WireGuard implementation wrong - uses `defguard-boringtun`, not `wireguard-kit` | `src/tunnel/wireguard/userspace.rs:136` | Fix documentation | ✅ DONE |
+| DOC-3 | VPN client `VpnClientBuilder` is method on VpnClient, not separate struct | `src/vpn_client/mod.rs:65-76` | Update documentation | ✅ DONE |
+| DOC-4 | Missing undocumented DNS modules (hsm.rs, cookie.rs, update.rs, transfer.rs, etc.) | Various | Add to key files table | ✅ DONE - Table already accurate |
+| DOC-5 | DNSSEC manual wire format limitation not documented | `src/dns/dnssec.rs:1-9` | Add note about limitation | ✅ DONE |
 
 ### Config/Admin Low Priority (Optional)
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| ISSUE-3 | `SESSION_COOKIE_NAME` defined in two places | `src/admin/handlers/auth.rs:12`, `src/admin/middleware.rs:54` | Consolidate constant | 📋 TODO |
-| ISSUE-4 | YARA rate limiter cleanup task not auto-started | `src/admin/state.rs:86-143` | Ensure task auto-starts on admin state creation | 📋 TODO |
-| ISSUE-5 | Handler count is 28, should be 29 (missing `behavioral_intel`) | `architecture/admin_deep_dive.md:120` | Update handler count | 📋 TODO |
+| ISSUE-3 | `SESSION_COOKIE_NAME` defined in two places | `src/admin/handlers/auth.rs:12`, `src/admin/middleware.rs:54` | Consolidate constant | ✅ DONE |
+| ISSUE-4 | YARA rate limiter cleanup task not auto-started | `src/admin/state.rs:86-143` | Ensure task auto-starts on admin state creation | ✅ DONE |
+| ISSUE-5 | Handler count is 28, should be 29 (missing `behavioral_intel`) | `architecture/admin_deep_dive.md:120` | Update handler count | ✅ DONE |
 
 ---
 
@@ -203,10 +213,10 @@ Overseer (src/overseer/)
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| PLUGIN-2 | No `load_plugin_from_memory_with_priority` method | `src/plugin/wasm_runtime.rs:162-177` | Add for mesh plugin distribution | 📋 TODO |
-| PLUGIN-3 | Mesh-only features not documented | `src/serverless/manager.rs:145-171` | Add feature-gate documentation for serverless mesh integration | 📋 TODO |
-| PLUGIN-5 | `load_component()` is stub - loads but never uses | `src/plugin/wasm_runtime.rs:184-210` | Either implement fully or remove dead code | 📋 TODO |
-| PLUGIN-6 | Missing `memory_budget_mb` field in documentation | `architecture/plugin_deep_dive.md:33` | Update documentation | 📋 TODO |
+| PLUGIN-2 | No `load_plugin_from_memory_with_priority` method | `src/plugin/wasm_runtime.rs:162-177` | Add for mesh plugin distribution | ✅ DONE |
+| PLUGIN-3 | Mesh-only features not documented | `src/serverless/manager.rs:145-171` | Add feature-gate documentation for serverless mesh integration | ✅ DONE |
+| PLUGIN-5 | `load_component()` is stub - loads but never uses | `src/plugin/wasm_runtime.rs:184-210` | Either implement fully or remove dead code | ✅ DONE - Removed dead code |
+| PLUGIN-6 | Missing `memory_budget_mb` field in documentation | `architecture/plugin_deep_dive.md:33` | Update documentation | ✅ DONE |
 
 ### Plugin Enhancement Details
 
@@ -287,13 +297,13 @@ cargo test --lib --no-run
 
 | Wave | Items | Focus | Status |
 |------|-------|-------|--------|
-| 1 | 4 | Plugin System Fixes | 📋 TODO |
-| 2 | 8 | WAF Improvements | 📋 TODO |
-| 3 | 5 | Mesh/Networking | 📋 TODO |
-| 4 | 9 | Documentation Fixes | 📋 TODO |
-| 5 | 8 | Config/Admin | 📋 TODO |
-| 6 | 4 | Plugin Doc/Enhancements | 📋 TODO |
-| **Total** | **37** | **Action items** | |
+| 1 | 4 | Plugin System Fixes | ✅ DONE |
+| 2 | 8 | WAF Improvements | ✅ DONE |
+| 3 | 5 | Mesh/Networking | ✅ DONE |
+| 4 | 9 | Documentation Fixes | ✅ DONE |
+| 5 | 8 | Config/Admin | ✅ DONE |
+| 6 | 4 | Plugin Doc/Enhancements | ✅ DONE |
+| **Total** | **37** | **Action items** | ✅ ALL COMPLETE |
 
 | Category | Count |
 |----------|-------|
@@ -302,6 +312,7 @@ cargo test --lib --no-run
 | Low Priority | 13 |
 | Deferred | 6 |
 | Already Fixed/Done | 10 |
+| Completed | 31 |
 
 ---
 
