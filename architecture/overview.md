@@ -202,7 +202,9 @@ SynVoid supports multiple backend types natively.
 | **FastCGI** | `src/fastcgi/` | Generic FastCGI backend support |
 | **CGI** | `src/cgi/` | CGI script execution |
 | **Serverless** | `src/serverless/` | WASM runtime with instance pooling |
-| **Spin** | `src/spin/` | Fermyon Spin framework support (requires manual app registration via Admin API) |
+| **Spin** | `src/spin/` | Fermyon Spin framework support |
+
+> **Note:** Spin requires manual app registration via the Admin API before use. See [Application Handlers](app_handlers.md) for setup instructions.
 | **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading |
 | **Static Worker** | `src/worker/` | CSS/JS minification, compression |
 
@@ -229,7 +231,7 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and t
 | **Threat Intel** | `src/mesh/` | Distributed threat intelligence |
 | **YARA Rules** | `src/mesh/` | Rule distribution and sync |
 | **Mesh Backend** | `src/mesh/backend.rs` | Backend routing via mesh |
-| **MeshProxy** | `src/mesh/proxy.rs` | Peer selection, policy enforcement |
+| **MeshProxy** | `src/mesh/proxy.rs` | Backend routing via mesh, peer selection, policy enforcement |
 
 ### Node Roles
 
