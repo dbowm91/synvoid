@@ -90,8 +90,61 @@ The WAF can take several actions based on its findings:
 
 ## Performance & Scalability
 
-- **Zero-Copy Inspection:** Minimizes data copying during inspection via `BufferPool` and `PooledBuf` types (`src/waf/attack_detection/streaming.rs`)
-- **Parallel Processing:** Different layers of the WAF execute concurrently where possible via async pipeline (`src/waf/mod.rs:484-512`)
-- **Regex & libinjection:** High-performance pattern matching engines are used for rule evaluation
+### Zero-Copy Inspection
+
+The WAF uses `BufferPool` and `PooledBuf` from `crates/synvoid-utils/src/buffer/pool.rs` to minimize data copying during inspection.
+
+**BufferPool Architecture:**
+- **Tiered Design:** Four buffer tiers (Small: 4KB, Medium: 64KB, Large: 256KB, Jumbo: 256KB+) with per-tier capacity limits
+- **Sharded Pools:** 8 shards with per-shard arenas to reduce contention under concurrent load
+- **Thread-Local Cache:** Each thread caches up to 16 buffers per tier for fast allocation without locking
+- **Global Pool:** Fallback shared pool for cross-thread buffer allocation
+
+**PooledBuf Lifecycle:**
+- `BufferPool::acquire(size)` allocates from thread-local cache first, then shard arena
+- On `Drop`, buffers return to thread-local cache (up to TLS_CACHE_SIZE) or shard arena (up to tier cap)
+- Metrics track acquire/reuse rates per tier for monitoring
+
+**Zero-Copy Benefits:**
+- WAF inspection operates directly on pooled buffers without copying
+- Streaming WAF uses `check_body_fragments()` to scan data in-place
+- Multipart parsing maintains state without buffer duplication
+
+### Parallel Processing (Async WAF Pipeline)
+
+The WAF pipeline executes asynchronously at `src/waf/mod.rs:484-512` to maximize throughput:
+
+**Pipeline Stages:**
+1. **Flood Protection:** Non-blocking check via `FloodProtector::check()` returning `FloodDecision`
+2. **Parallel Attack Detection:** `AttackDetector::check_request()` runs async with `.await`
+
+**Async Execution Model:**
+- Flood protection executes first, allowing connection-level blocking before body reading
+- Attack detection awaits on `ad.check_request(ip, &http_method, path, query, headers, body)`
+- Each stage can block/allow independently; early exit on block decision
+- Violation tracking and threat level recording integrate with mesh for distributed intelligence
+
+**Integration:**
+- `check_request_full()` is the main entry point coordinating all stages
+- Threat level and violation tracker update based on attack detection results
+- Mesh mode enables shared blocked IPs and threat signatures across nodes
+
+### eBPF Integration (Linux Only)
+
+eBPF-based flood protection is available via the `flood-ebpf` feature on Linux only (`src/waf/flood/mod.rs:5-6`).
+
+**Availability:**
+- Conditionally compiled with `#[cfg(all(target_os = "linux", feature = "flood-ebpf"))]`
+- Enabled via `flood-ebpf` Cargo feature flag
+- Provides kernel-level traffic filtering via `src/waf/flood/ebpf_flood.rs`
+
+**Benefits:**
+- Kernel-space packet filtering reduces context switches
+- Earlier drop decision before packet reaches userspace
+- Higher throughput for volumetric attack mitigation
+
+### Additional Performance Features
+
+- **Regex & libinjection:** High-performance pattern matching engines for rule evaluation
 - **Streaming WAF:** True streaming attack detection via `StreamingWafCore` for chunked processing and multipart parsing (`src/waf/attack_detection/streaming.rs`)
 - **Distributed Intelligence:** In a Mesh deployment, WAF nodes share blocked IP addresses and threat signatures in real-time, providing collective defense.
