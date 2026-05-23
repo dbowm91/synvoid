@@ -66,8 +66,8 @@ Provides dynamic loading and execution of WASM plugins for request filtering, re
 - **`WasmInstancePool`** uses a `VecDeque<WasmPooledInstance>` protected by `parking_lot::Mutex`
 - `get()` pops from back, `return_instance()` pushes to back (if under `max_size`)
 - Pooled instances retain their `Store` and instantiated `Instance`
-- Before each request, `prepare_for_request()` resets timeout, fuel, and env
-- Warmup pre-populates pool via `warmup(modules)` which instantiates modules in parallel
+- Before each request, `prepare_for_request()` resets timeout, fuel, env, and body_receiver
+- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (for fast pool population); real host functions are linked on first actual request
 
 ---
 
@@ -99,8 +99,8 @@ Implements a Spin framework runtime for executing Spin-compatible WASM modules. 
 
 ### Known Limitations
 
-1. **Spin routing NOT implemented** — Component-to-URL routing is defined in manifests but not wired into HTTP request routing
-2. **No Spin HTTP trigger integration** — While manifest parsing works, the actual HTTP trigger dispatch is not connected
+1. **Spin routing uses longest-prefix-match** — Component-to-URL routing is implemented via `find_route()` in `src/spin/runtime.rs:273-291` which selects the longest matching prefix
+2. **Manual app registration required** — Spin apps must be registered via Admin API; no automatic discovery
 3. **KV store is local-only** — No distribution via mesh/DHT
 4. **No WASI socket support** — Only in-memory KV store; no outbound HTTP capability
 
