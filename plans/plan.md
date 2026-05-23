@@ -2,21 +2,23 @@
 
 **Status**: 📋 IN PROGRESS - Consolidation complete, items verified (2026-05-23)
 **Target**: Bug fixes, security hardening, and documentation updates
-**Consolidated from**: `plans/*.md` architecture reviews + codebase verification
+**Consolidated from**: All architecture review plans in `plans/` directory
 
 ---
 
 ## Overview
 
-This plan consolidates actionable items from architecture reviews. Each item has been verified against the codebase. Items marked ✅ are verified as already correct/fixed; items marked ❌ had discrepancies corrected in this version; items marked 📋 need action.
+This plan consolidates actionable items from architecture reviews. Each item has been verified against the codebase. Items marked ✅ are verified as already correct/fixed; items marked 📋 need action.
 
 **Key Corrections Made in This Version:**
 - SEC-1 (DNS DS digest): ALREADY FIXED - uses `ct_eq()`
-- PLUGIN-4 (mesh_check_threat): NOT A BUG - properly implemented
-- M1 (overseer mesh agent): ALREADY FIXED - has `running.is_running()` check
-- H2 (dead code reference): NOT A BUG - function exists
+- PLUGIN-4 (mesh_check_threat): NOT A BUG - properly implemented with DHT when mesh feature enabled
+- M1 (overseer mesh agent): ALREADY FIXED - has `running.is_running()` check at line 412
+- H2 (dead code reference): NOT A BUG - function `handle_worker_connection_single` exists at `master/ipc.rs:317-325` (referenced at `supervisor/process.rs:180`)
 - SAFE_HEADERS count: 28 headers (not 27 or 29)
 - SUP-1 (gRPC no TLS): Working as designed for localhost IPC
+- ISSUE-1 (config AGENTS.override.md): ALREADY EXISTS at `src/config/AGENTS.override.md`
+- AGENTS.md Spin routing claim: INCORRECT - Spin IS integrated into HTTP dispatch at `src/http/server.rs:2417-2489`
 
 ---
 
@@ -31,6 +33,45 @@ This plan consolidates actionable items from architecture reviews. Each item has
 | BUG-3 | `warmup()` doesn't link all required functions - DHT/env functions unavailable on warm instances | `src/plugin/instance_pool.rs:79-148` | Link all 5 functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` | 📋 TODO |
 | BUG-4 | Idle eviction timeout hardcoded to 300s, not configurable | `src/spin/runtime.rs:319-338` | Add `idle_timeout_seconds: u64` to `SpinRuntimeConfig`, default 300 | 📋 TODO |
 
+### Implementation Details for Wave 1
+
+**PLUGIN-1 / BUG-1: Spin find_route() fix**
+```rust
+// Current: returns first match
+// Fix: collect all matches, return longest prefix
+// In src/spin/runtime.rs:271-285
+fn find_route(&self, manifest: &Manifest, path: &str) -> Result<(String, String), SpinRuntimeError> {
+    let mut matches = Vec::new();
+    for component in &manifest.components {
+        if let Some(ref route) = component.url {
+            let normalized_route = route.trim_end_matches('/');
+            if path == normalized_route || path.starts_with(&format!("{}/", normalized_route)) {
+                matches.push((component.id.clone(), route.clone(), normalized_route.len()));
+            }
+        }
+    }
+    // Return longest prefix match
+    matches.into_iter().max_by_key(|m| m.2)
+        .map(|(id, route, _)| (id, route))
+        .ok_or_else(|| SpinRuntimeError::RouteNotFound(path.to_string()))
+}
+```
+
+**BUG-2: body_receiver reset**
+```rust
+// In src/plugin/instance_pool.rs:152-164
+// Add this line in prepare_for_request():
+self.store.data_mut().body_receiver = None;  // Reset for streaming
+```
+
+**BUG-3: warmup() linker fix**
+```rust
+// In src/plugin/instance_pool.rs:79-148
+// warmup() currently only links: abort, check_timeout
+// Need to also link: get_env, synvoid_read_body_chunk, mesh_query_dht, mesh_check_threat, mesh_emit_event
+// See full linker setup in instance_pool.rs around lines 95-140
+```
+
 ---
 
 ## Wave 2: WAF Improvements
@@ -43,6 +84,7 @@ This plan consolidates actionable items from architecture reviews. Each item has
 | REC-3 | Streaming WAF `get_block_status` always returns 403 for all attack types | `src/waf/attack_detection/streaming.rs:356-365` | Make block status configurable per attack type | 📋 TODO |
 | REC-5 | Request smuggling NOT included in fast-path checks - security bypass vulnerability | `src/waf/attack_detection/mod.rs:425-435` | Add smuggling indicators to fast_path_patterns OR remove early return | 📋 TODO |
 | REC-1 | Fast-path pre-screening patterns incomplete (13 patterns, missing most SQLi, command injection, SSRF, XXE, etc.) | `src/waf/attack_detection/mod.rs:156-171` | Expand fast_path_patterns to include critical patterns from each category | 📋 TODO |
+| REC-4 | Behavioral analysis mesh-only limitation undocumented | `src/waf/attack_detection/mod.rs:263-314` | Document that behavioral analysis requires `mesh` feature | 📋 TODO |
 
 ### WAF Bugs to Fix
 
@@ -51,6 +93,28 @@ This plan consolidates actionable items from architecture reviews. Each item has
 | BUG-5 | Double UTF-8 lossy conversion in body handling | `src/waf/attack_detection/mod.rs:890-892` | Investigate and fix double conversion | 📋 TODO |
 | REC-6 | FloodBackend Display missing Ebpf variant | `src/waf/flood/mod.rs:66-72` | Add Ebpf variant to Display impl | 📋 TODO |
 | REC-7 | `block_scrapers` hardcoded to true, ignores parameter | `src/waf/bot.rs:91` | Make configurable via parameter | 📋 TODO |
+
+### Implementation Details for Wave 2
+
+**REC-2: Flood protector integration**
+```rust
+// In src/waf/mod.rs:438-508 (check_request_full)
+// Add after TCP connection check:
+if let Some(ref protector) = self.flood_protector {
+    match protector.check_tcp_connection(ip) {
+        FloodDecision::RateLimited => return WafDecision::Block(429, "Rate Limited"),
+        FloodDecision::Blackholed => return WafDecision::Drop,
+        FloodDecision::Allowed => {}
+    }
+}
+```
+
+**REC-1: Fast-path pattern expansion**
+```rust
+// Current patterns at src/waf/attack_detection/mod.rs:156-171
+// Add: command separators (; | & $()), SQL keywords (UNION SELECT DROP),
+// encoding (%00 %2f), template injection ({{, ${)
+```
 
 ---
 
@@ -85,9 +149,28 @@ This plan consolidates actionable items from architecture reviews. Each item has
 | M3 | Add Overseer row to process hierarchy table | `architecture/platform_deep_dive.md:113-121` | Missing Overseer in hierarchy table | 📋 TODO |
 | N3 | Update `mesh_deep_dive.md` accuracy | `architecture/mesh_deep_dive.md` | 1) Hierarchical routing "reserved for future" not "uses" 2) Audit system not centralized 3) Collective defense features "partial/experimental" | 📋 TODO |
 | C1 | Update `deep_dive_review.md:15` - Remove "protected by TLS" from gRPC description | `architecture/deep_dive_review.md:15` | gRPC has no TLS, intentional for localhost IPC | 📋 TODO |
-| C2 | Update `architecture/overview.md:202` - Clarify Spin support status | `architecture/overview.md:202`, `src/http/server.rs:2469-2481` | Spin requires manual app registration via Admin API | 📋 TODO |
+| C2 | Update `architecture/overview.md:202` - Clarify Spin support status | `architecture/overview.md:202`, `src/http/server.rs:2417-2489` | Spin routing IS integrated at HTTP dispatch level; requires manual app registration via Admin API | 📋 TODO |
 | C3 | Clarify Master process status in `architecture/overview.md` | `architecture/overview.md:56-58`, `src/main.rs:529-537` | `--master` flag still exists; Master not fully deprecated | 📋 TODO |
 | C4 | Create centralized errata section in `architecture/overview.md` | `architecture/overview.md` | Reference AGENTS.md for known path corrections | 📋 TODO |
+
+### Documentation Fix Details
+
+**H1: Three-tier hierarchy update**
+The actual architecture in legacy mode is:
+```
+Overseer (src/overseer/)
+├── Master (src/startup/master.rs:205-797)
+│   ├── Admin API
+│   ├── BlockStore
+│   └── Workers (spawned via IPC)
+└── Supervisor (new consolidated mode, replaces Overseer+Master)
+```
+
+**C2: Spin routing clarification**
+- Spin IS integrated into HTTP dispatch at `src/http/server.rs:2417-2489`
+- When `BackendType::Spin` is configured, requests are routed to `SpinHttpHandler`
+- Spin apps must be pre-registered via Admin API (`/spin/apps` endpoint)
+- Route matching uses prefix-only comparison - no regex, glob, or priority ordering
 
 ---
 
@@ -97,7 +180,7 @@ This plan consolidates actionable items from architecture reviews. Each item has
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| ISSUE-1 | Missing `src/config/AGENTS.override.md` | N/A | Create documenting: feature-gating conventions, config propagation patterns, validation patterns, hot reload support | 📋 TODO |
+| ISSUE-1 | `src/config/AGENTS.override.md` already exists | N/A | ✅ Already created | ✅ DONE |
 | DOC-1 | TunnelMessage types incomplete (missing AuthFailure, KeepAlive, PortData, etc.) | `src/tunnel/quic/messages.rs:7-106` | Update `dns_deep_dive.md` | 📋 TODO |
 | DOC-2 | WireGuard implementation wrong - uses `defguard-boringtun`, not `wireguard-kit` | `src/tunnel/wireguard/userspace.rs:136` | Fix documentation | 📋 TODO |
 | DOC-3 | VPN client `VpnClientBuilder` is method on VpnClient, not separate struct | `src/vpn_client/mod.rs:65-76` | Update documentation | 📋 TODO |
@@ -125,6 +208,14 @@ This plan consolidates actionable items from architecture reviews. Each item has
 | PLUGIN-5 | `load_component()` is stub - loads but never uses | `src/plugin/wasm_runtime.rs:184-210` | Either implement fully or remove dead code | 📋 TODO |
 | PLUGIN-6 | Missing `memory_budget_mb` field in documentation | `architecture/plugin_deep_dive.md:33` | Update documentation | 📋 TODO |
 
+### Plugin Enhancement Details
+
+**PLUGIN-3: Mesh-only features in serverless**
+When `mesh` feature is enabled, these methods are available:
+- `ServerlessManager::set_record_store()` - registers functions in DHT
+- `ServerlessManager::set_routing_manager()` - enables hierarchical routing
+- `ServerlessManager::verify_caller_permission()` - DHT-based permission verification
+
 ---
 
 ## Deferred Items (Architectural/Large Effort)
@@ -147,11 +238,12 @@ This plan consolidates actionable items from architecture reviews. Each item has
 | SEC-1 (DNS DS digest) | `src/dns/dnssec_validation.rs:273` | Uses `ct_eq()` - FIXED |
 | PLUGIN-4 (mesh_check_threat) | `src/plugin/wasm_runtime.rs:946-960` | Properly implemented with DHT integration - NOT A BUG |
 | M1 (overseer mesh agent spawn) | `src/overseer/process.rs:412` | Has `running.is_running()` check - FIXED |
-| H2 (dead code reference) | `src/supervisor/process.rs:161` | Function exists at `master/ipc.rs:320` - NOT A BUG |
+| H2 (dead code reference) | `src/supervisor/process.rs:180` | Function exists at `master/ipc.rs:317` - NOT A BUG |
 | SAFE_HEADERS count | `src/proxy/cache.rs:97-126` | 28 headers (not 27 or 29) |
 | MESH-11 (Quorum Manager race) | `src/mesh/dht/quorum.rs:337-381` | FIXED - uses oneshot with Result tracking |
 | MESH-16 (Role validation duplication) | `src/mesh/peer_auth.rs:275-304` | FIXED - duplicate block removed |
 | APP-17 (pip install hashes) | `src/app_server/granian.rs:491-508` | FIXED - require_hashes field added |
+| ISSUE-1 (config AGENTS.override.md) | `src/config/AGENTS.override.md` | File exists and is complete |
 
 ---
 
@@ -196,40 +288,68 @@ cargo test --lib --no-run
 | Wave | Items | Focus | Status |
 |------|-------|-------|--------|
 | 1 | 4 | Plugin System Fixes | 📋 TODO |
-| 2 | 7 | WAF Improvements | 📋 TODO |
+| 2 | 8 | WAF Improvements | 📋 TODO |
 | 3 | 5 | Mesh/Networking | 📋 TODO |
 | 4 | 9 | Documentation Fixes | 📋 TODO |
-| 5 | 9 | Config/Admin | 📋 TODO |
+| 5 | 8 | Config/Admin | 📋 TODO |
 | 6 | 4 | Plugin Doc/Enhancements | 📋 TODO |
-| **Total** | **38** | **Action items** | |
+| **Total** | **37** | **Action items** | |
 
 | Category | Count |
 |----------|-------|
-| Security (Critical) | 0 |
 | High Priority | 5 (BUG-1, BUG-2, BUG-3, REC-2, REC-5) |
-| Medium Priority | 18 |
-| Low Priority | 15 |
+| Medium Priority | 19 |
+| Low Priority | 13 |
 | Deferred | 6 |
+| Already Fixed/Done | 10 |
 
 ---
 
 ## Implementation Order Recommendation
 
 ### Phase 1 (Parallel - Independent)
-- Wave 1: Plugin fixes (BUG-1, BUG-2, BUG-3, BUG-4) - 4 items
-- Wave 6: Plugin documentation (PLUGIN-2, PLUGIN-3, PLUGIN-5, PLUGIN-6) - 4 items
+- **Wave 1**: Plugin fixes (BUG-1, BUG-2, BUG-3, BUG-4) - 4 items
+- **Wave 6**: Plugin documentation (PLUGIN-2, PLUGIN-3, PLUGIN-5, PLUGIN-6) - 4 items
 
 ### Phase 2 (Parallel - After Phase 1)
-- Wave 2: WAF improvements - 7 items
-- Wave 3: Mesh/Networking - 5 items
+- **Wave 2**: WAF improvements - 8 items (includes REC-4 documentation fix)
+- **Wave 3**: Mesh/Networking - 5 items
 
 ### Phase 3 (Documentation - Can run parallel)
-- Wave 4: Documentation fixes - 9 items
+- **Wave 4**: Documentation fixes - 9 items
 
 ### Phase 4 (Lower priority)
-- Wave 5: Config/Admin - 9 items
+- **Wave 5**: Config/Admin - 8 items (ISSUE-1 is DONE)
+
+---
+
+## Detailed Implementation Notes
+
+### AGENTS.md Correction Needed
+
+The line in AGENTS.md that states "Spin framework partially implemented... routing integration and component mapping is NOT implemented" is **incorrect**. Spin IS integrated into HTTP dispatch at `src/http/server.rs:2417-2489`. Update AGENTS.md line 175 to reflect this.
+
+### Spin find_route() Longest Prefix Match Implementation
+
+Current behavior in `src/spin/runtime.rs:271-285`:
+- Iterates through components
+- Returns first matching route (prefix or exact)
+- No HTTP method filtering
+- No priority ordering
+
+Required fix:
+- Collect all matching routes
+- Return the one with longest prefix match
+- Consider adding method matching and explicit priority field
+
+### WAF Fast-Path Bypass Concern
+
+The `is_fast_path_safe()` function at `src/waf/attack_detection/mod.rs:425-435` returns early when fast-path is safe, but request smuggling patterns are NOT in the 13 fast_path_patterns. This means:
+1. Smuggling attacks bypass fast-path and go directly to heavy detectors
+2. Smuggling detectors run in parallel via JoinSet but with lower priority score
+3. Consider adding smuggling indicators to fast_path_patterns
 
 ---
 
 **Last Updated**: 2026-05-23
-**Verification Status**: ✅ All items verified against codebase. 38 action items, 6 deferred, 16 already correct/working as designed.
+**Verification Status**: ✅ All items verified against codebase. 37 action items, 6 deferred, 10 already correct/working as designed.
