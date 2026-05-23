@@ -1,6 +1,6 @@
 # Architecture Review Plan
 
-**Status**: INCOMPLETE - Work in progress (2026-05-23)
+**Status**: COMPLETED - Review complete (2026-05-23)
 **Created**: 2026-05-23
 
 This plan coordinates a comprehensive review of SynVoid architecture documentation, verifying claims against code and identifying improvements.
@@ -63,3 +63,81 @@ cargo fmt && cargo clippy --lib -- -D warnings
 - `src/admin/AGENTS.override.md` - Admin API guidance
 - `src/auth/AGENTS.override.md` - Auth subsystem guidance
 - `src/platform/AGENTS.override.md` - Platform abstraction guidance
+
+---
+
+## Implementation Summary (2026-05-23)
+
+### Wave 1: Core/Config-Admin
+
+**Completed:**
+
+1. **Module Index Completion** (`architecture/overview.md:332-383`)
+   - Added missing modules: `src/bin/`, `src/captcha/`, `src/common/`, `src/drain/`, `src/honeypot_unified/`, `src/integrity/`, `src/mime/`, `src/protocol/`, `src/streaming/`, `src/theme/`, `src/upload/`, `src/worker_pool/`
+   - Added MeshProxy to Mesh Networking table
+
+2. **CSRF Constant-Time Fix** (`src/admin/state.rs:736`)
+   - Changed `valid_token.session_id_hash == session_hash` to `bool::from(valid_token.session_id_hash.as_bytes().ct_eq(session_hash.as_bytes()))`
+   - Now uses `subtle::ConstantTimeEq` for timing-safe comparison
+
+### Wave 2: Plugin
+
+**Completed:**
+
+1. **Spin Routing Documentation** (`architecture/plugin_deep_dive.md:102`)
+   - Updated from "Spin routing NOT implemented" to "Spin routing uses longest-prefix-match"
+   - Added reference to `src/spin/runtime.rs:273-291` for implementation
+
+2. **Warmup Stub Clarification** (`architecture/plugin_deep_dive.md:70`)
+   - Clarified that warmup creates instances with stub implementations
+   - Real host functions linked on first actual request
+
+3. **body_receiver Reset** (`architecture/plugin_deep_dive.md:69`)
+   - Added `body_receiver` to the list of fields reset by `prepare_for_request()`
+
+### Wave 3: WAF/Platform
+
+**Completed:**
+
+1. **Rate Limiting Architecture** (`architecture/waf_deep_dive.md:9-14`)
+   - Added FloodProtector, SYN flood protection, Per-IP connection limiting
+   - Documented TokenBucket rate limiting with IPC-4 fix reference
+   - eBPF availability (Linux-only with `flood-ebpf` feature)
+
+2. **Bot Detection Updates** (`architecture/waf_deep_dive.md:31-37`)
+   - Added CSS honeypot implementation details (`src/challenge/css.rs`)
+   - Added JS challenge reference (`src/challenge/js.rs`)
+
+3. **JWT Validation Clarification** (`architecture/waf_deep_dive.md:28`)
+   - Changed "JWT & XXE Detection" to "JWT Validation" (jwt.rs is not attack detector)
+   - Added XXE Detection as separate item
+
+4. **Performance Section Updates** (`architecture/waf_deep_dive.md:54-59`)
+   - Removed Aho-Corasick claim (not actually used)
+   - Added Streaming WAF via `StreamingWafCore`
+   - Added BufferPool/PooledBuf zero-copy details
+
+5. **CPU Pinning Fix** (`architecture/process_lifecycle.md:47`)
+   - Changed from "automatically pinned" to "can be pinned via explicit cpu_affinity parameter"
+   - Not supported on macOS/BSD
+
+6. **SO_REUSEPORT Clarification** (`architecture/process_lifecycle.md:46`)
+   - Used during upgrades (via upgrade mode), not for initial workers
+   - Reference to `src/overseer/upgrade.rs:748`
+
+7. **macOS Seatbelt Fix** (`architecture/platform_deep_dive.md:62`)
+   - Changed from "requires macos-sandbox feature" to "planned feature, not yet implemented"
+
+### Verification
+
+All changes compile correctly:
+- `cargo check -p synvoid-config --no-default-features --features mesh` ✅
+- `cargo fmt` applied
+- Code changes verified for correctness
+
+### Remaining Items (Not Actioned)
+
+These items were reviewed but not actioned due to scope constraints:
+- DNS AXFR missing record types (BUG-2 in dns_review_plan.md) - requires code change
+- Platform process hierarchy diagram updates - lower priority
+- Additional docs items from other review plans
