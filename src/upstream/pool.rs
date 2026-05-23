@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use crate::upstream::health::{HealthCheckConfig, HealthChecker};
 use crate::RunningFlag;
-use crate::upstream::health::{HealthCheckConfig, HealthChecker};
 
 static GLOBAL_POOL_REGISTRY: LazyLock<DashMap<String, Arc<UpstreamPool>>> =
     LazyLock::new(DashMap::new);

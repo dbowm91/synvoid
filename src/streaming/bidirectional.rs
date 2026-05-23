@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use crate::buffer::BufferPool;
+use crate::waf::attack_detection::streaming::StreamingWafCore;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub type ProxyResult = Result<(), ProxyError>;
@@ -9,6 +12,7 @@ pub enum ProxyError {
     WriteError(String),
     ConnectionClosed,
     Timeout,
+    WafBlock(u16, String),
     Other(String),
 }
 
@@ -19,6 +23,9 @@ impl std::fmt::Display for ProxyError {
             Self::WriteError(e) => write!(f, "Write error: {}", e),
             Self::ConnectionClosed => write!(f, "Connection closed"),
             Self::Timeout => write!(f, "Operation timed out"),
+            Self::WafBlock(status, reason) => {
+                write!(f, "WAF blocked: {} (status {})", reason, status)
+            }
             Self::Other(e) => write!(f, "{}", e),
         }
     }
@@ -29,12 +36,25 @@ impl std::error::Error for ProxyError {}
 const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 const DEFAULT_WRITE_BUFFER_THRESHOLD: usize = 8 * 1024;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProxyConfig {
     pub buffer_size: usize,
     pub write_buffer_threshold: usize,
     pub flush_interval_bytes: usize,
     pub use_native_copy: bool,
+    pub waf_scanner: Option<Arc<StreamingWafCore>>,
+}
+
+impl std::fmt::Debug for ProxyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxyConfig")
+            .field("buffer_size", &self.buffer_size)
+            .field("write_buffer_threshold", &self.write_buffer_threshold)
+            .field("flush_interval_bytes", &self.flush_interval_bytes)
+            .field("use_native_copy", &self.use_native_copy)
+            .field("waf_scanner", &"...")
+            .finish()
+    }
 }
 
 impl Default for ProxyConfig {
@@ -44,6 +64,16 @@ impl Default for ProxyConfig {
             write_buffer_threshold: DEFAULT_WRITE_BUFFER_THRESHOLD,
             flush_interval_bytes: 32 * 1024,
             use_native_copy: true,
+            waf_scanner: None,
+        }
+    }
+}
+
+impl ProxyConfig {
+    pub fn with_waf_scanner(scanner: Arc<StreamingWafCore>) -> Self {
+        Self {
+            waf_scanner: Some(scanner),
+            ..Default::default()
         }
     }
 }
@@ -86,6 +116,7 @@ where
     let buffer_size = config.buffer_size;
     let write_threshold = config.write_buffer_threshold;
     let flush_interval = config.flush_interval_bytes;
+    let waf_scanner = config.waf_scanner.clone();
 
     let client_to_upstream = async {
         let mut buf = BufferPool::acquire(buffer_size);
@@ -93,6 +124,7 @@ where
         let mut write_pending: usize = 0;
         let mut total: u64 = 0;
         let mut last_flush_at: u64 = 0;
+        let waf_scanner = waf_scanner.clone();
 
         loop {
             match client_read.read(buf.as_mut_slice()).await {
@@ -108,6 +140,16 @@ where
                 }
                 Ok(n) => {
                     total += n as u64;
+
+                    if let Some(ref scanner) = waf_scanner {
+                        let chunk = &buf.as_slice()[..n];
+                        match scanner.scan_chunk(chunk) {
+                            crate::waf::attack_detection::streaming::StreamingWafDecision::Block(status, reason) => {
+                                return Err(ProxyError::WafBlock(status, reason));
+                            }
+                            crate::waf::attack_detection::streaming::StreamingWafDecision::Continue => {}
+                        }
+                    }
 
                     if n < write_threshold && write_pending + n <= buffer_size {
                         write_buf.as_mut_slice()[write_pending..write_pending + n]
@@ -159,6 +201,7 @@ where
         let mut write_pending: usize = 0;
         let mut total: u64 = 0;
         let mut last_flush_at: u64 = 0;
+        let waf_scanner = waf_scanner.clone();
 
         loop {
             match upstream_read.read(buf.as_mut_slice()).await {
@@ -174,6 +217,16 @@ where
                 }
                 Ok(n) => {
                     total += n as u64;
+
+                    if let Some(ref scanner) = waf_scanner {
+                        let chunk = &buf.as_slice()[..n];
+                        match scanner.scan_chunk(chunk) {
+                            crate::waf::attack_detection::streaming::StreamingWafDecision::Block(status, reason) => {
+                                return Err(ProxyError::WafBlock(status, reason));
+                            }
+                            crate::waf::attack_detection::streaming::StreamingWafDecision::Continue => {}
+                        }
+                    }
 
                     if n < write_threshold && write_pending + n <= buffer_size {
                         write_buf.as_mut_slice()[write_pending..write_pending + n]
