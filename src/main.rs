@@ -73,11 +73,7 @@ struct Args {
     )]
     worker_threads: Option<usize>,
 
-    #[arg(
-        long,
-        value_name = "CORE",
-        help = "CPU core to pin this worker to"
-    )]
+    #[arg(long, value_name = "CORE", help = "CPU core to pin this worker to")]
     cpu_affinity: Option<usize>,
 
     #[arg(
@@ -307,7 +303,10 @@ fn main() {
 
                         if mesh.has_signing_key() {
                             if let Some(ref pk) = mesh.signing_public_key() {
-                                println!("Signing Public Key: {}...", hex::encode(&pk[..16.min(pk.len())]));
+                                println!(
+                                    "Signing Public Key: {}...",
+                                    hex::encode(&pk[..16.min(pk.len())])
+                                );
                             }
                         } else {
                             println!(

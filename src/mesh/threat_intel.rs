@@ -1615,7 +1615,10 @@ impl ThreatIntelligenceManager {
             // Compute a Merkle root of all indicators for payload integrity (Phase 3.1)
             let mut records = HashMap::new();
             for indicator in &indicators {
-                let key = format!("{}:{}", indicator.indicator_value, indicator.threat_type as u8);
+                let key = format!(
+                    "{}:{}",
+                    indicator.indicator_value, indicator.threat_type as u8
+                );
                 let value = format!("{}:{}", indicator.reason, indicator.timestamp).into_bytes();
                 records.insert(key, value);
             }
@@ -1812,8 +1815,12 @@ impl ThreatIntelligenceManager {
                         // Compute a Merkle root of all indicators for payload integrity check (Phase 3.1)
                         let mut records = HashMap::new();
                         for indicator in indicators {
-                            let key = format!("{}:{}", indicator.indicator_value, indicator.threat_type as u8);
-                            let value = format!("{}:{}", indicator.reason, indicator.timestamp).into_bytes();
+                            let key = format!(
+                                "{}:{}",
+                                indicator.indicator_value, indicator.threat_type as u8
+                            );
+                            let value = format!("{}:{}", indicator.reason, indicator.timestamp)
+                                .into_bytes();
                             records.insert(key, value);
                         }
                         let tree = crate::mesh::dht::merkle::MerkleTree::from_records(&records);
@@ -1835,7 +1842,8 @@ impl ThreatIntelligenceManager {
                             timestamp,
                             hex::encode(merkle_root)
                         );
-                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty()) {
+                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty())
+                        {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1870,7 +1878,9 @@ impl ThreatIntelligenceManager {
                                     timestamp: MeshMessage::generate_timestamp(),
                                 });
                             }
-                            if !self.check_trusted_signer(source_node_id, signer_public_key.as_deref()) {
+                            if !self
+                                .check_trusted_signer(source_node_id, signer_public_key.as_deref())
+                            {
                                 tracing::warn!(
                                     "ThreatAnnounce rejected: signer {:?} not in trusted_signers list",
                                     signer_public_key

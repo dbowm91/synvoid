@@ -157,22 +157,24 @@ impl ServerlessInstance {
 }
 
 impl InstancePool {
-    pub fn new(config: InstancePoolConfig, function_definition: FunctionDefinition) -> Result<Self, InstancePoolError> {
+    pub fn new(
+        config: InstancePoolConfig,
+        function_definition: FunctionDefinition,
+    ) -> Result<Self, InstancePoolError> {
         let wasm_path = std::path::Path::new(&function_definition.name).with_extension("wasm");
-        let runtime = crate::plugin::WasmPluginManager::new()
-            .load_plugin_with_limits(
-                &wasm_path,
-                crate::plugin::WasmResourceLimits {
-                    max_memory_mb: function_definition.memory_mb.unwrap_or(64),
-                    max_table_elements: None,
-                    max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(1000000),
-                    timeout_seconds: function_definition.timeout_seconds.unwrap_or(30),
-                    max_instances: function_definition.max_instances.unwrap_or(10),
-                    memory_budget_mb: None,
-                    wasi_enabled: false,
-                    allowed_dht_prefixes: Vec::new(),
-                },
-            )?;
+        let runtime = crate::plugin::WasmPluginManager::new().load_plugin_with_limits(
+            &wasm_path,
+            crate::plugin::WasmResourceLimits {
+                max_memory_mb: function_definition.memory_mb.unwrap_or(64),
+                max_table_elements: None,
+                max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(1000000),
+                timeout_seconds: function_definition.timeout_seconds.unwrap_or(30),
+                max_instances: function_definition.max_instances.unwrap_or(10),
+                memory_budget_mb: None,
+                wasi_enabled: false,
+                allowed_dht_prefixes: Vec::new(),
+            },
+        )?;
 
         Ok(Self {
             config,

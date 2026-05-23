@@ -143,8 +143,7 @@ async fn extract_bandwidth_config(
     let bandwidth = &config_guard.main.traffic_shaping.bandwidth;
     let reset_cfg_external = bandwidth.monthly_reset.clone();
     let reset_cfg_internal: crate::metrics::bandwidth::MonthlyResetConfig =
-        serde_json::from_str(&serde_json::to_string(&reset_cfg_external).unwrap())
-            .unwrap();
+        serde_json::from_str(&serde_json::to_string(&reset_cfg_external).unwrap()).unwrap();
     (
         bandwidth.data_dir.clone(),
         bandwidth.retention_days,
@@ -429,12 +428,12 @@ pub async fn run_unified_server_worker(
     )
     .await?
     .with_drain_state(drain_state.clone())
-        .with_metrics(metrics.clone())
-        .with_ipc(ipc_for_server, worker_id_for_server)
-        .with_serverless_manager(serverless_manager.unwrap_or_else(|| {
-            let runtime = get_global_plugin_manager().get_wasm_manager();
-            Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
-        }));
+    .with_metrics(metrics.clone())
+    .with_ipc(ipc_for_server, worker_id_for_server)
+    .with_serverless_manager(serverless_manager.unwrap_or_else(|| {
+        let runtime = get_global_plugin_manager().get_wasm_manager();
+        Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
+    }));
 
     // Wrap in Arc immediately for easier sharing
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
@@ -471,8 +470,7 @@ pub async fn run_unified_server_worker(
             }
 
             let app_config_internal: crate::app_server::AppServerConfig =
-                serde_json::from_str(&serde_json::to_string(&app_config).unwrap())
-                    .unwrap();
+                serde_json::from_str(&serde_json::to_string(&app_config).unwrap()).unwrap();
             let mut granian_config = GranianConfig::from(&app_config_internal);
             granian_config = granian_config.with_site_info(site_id, worker_id_for_app.as_usize());
 
@@ -609,11 +607,10 @@ pub async fn run_unified_server_worker(
         let config = shared_config.read().await;
         config.main.tunnel.mesh.clone()
     };
-    
+
     #[cfg(feature = "mesh")]
-    let mesh_config: Option<crate::mesh::config::MeshConfig> = mesh_config_external.map(|c| {
-        serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap()
-    });
+    let mesh_config: Option<crate::mesh::config::MeshConfig> = mesh_config_external
+        .map(|c| serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap());
 
     #[cfg(feature = "mesh")]
     let (_mesh_transport_manager, _threat_intel_manager, _mesh_signer) = if let Some(
@@ -1466,12 +1463,15 @@ pub async fn run_unified_server_worker(
                             Please restart the worker to apply mesh-related configuration changes."
                         );
                         let mut ipc = ipc_state.ipc.lock().await;
-                        let _ = ipc.send(&Message::WorkerError {
-                            id: ipc_state.worker_id,
-                            error: "Config hot-reload not supported with mesh feature enabled".to_string(),
-                            severity: crate::process::ErrorSeverity::Warning,
-                            error_code: crate::process::ErrorCode::ConfigLoadFailed,
-                        }).await;
+                        let _ = ipc
+                            .send(&Message::WorkerError {
+                                id: ipc_state.worker_id,
+                                error: "Config hot-reload not supported with mesh feature enabled"
+                                    .to_string(),
+                                severity: crate::process::ErrorSeverity::Warning,
+                                error_code: crate::process::ErrorCode::ConfigLoadFailed,
+                            })
+                            .await;
                         continue;
                     }
 

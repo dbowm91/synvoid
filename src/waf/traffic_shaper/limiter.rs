@@ -1,11 +1,11 @@
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use parking_lot::RwLock;
 
 use crate::config::ConnectionLimitsConfig;
 
@@ -77,7 +77,8 @@ impl ConnectionLimiter {
         }
 
         let effective_max_per_ip = max_per_ip.unwrap_or(config.max_connections_per_ip);
-        let ip_count = self.ip_connections
+        let ip_count = self
+            .ip_connections
             .get(&client_ip)
             .map(|c| c.load(Ordering::Acquire))
             .unwrap_or(0);
@@ -86,7 +87,8 @@ impl ConnectionLimiter {
             return Err(ConnectionLimitError::PerIpLimitExceeded);
         }
 
-        let can_burst = self.ip_burst_tokens
+        let can_burst = self
+            .ip_burst_tokens
             .get(&client_ip)
             .map(|t| t.load(Ordering::Acquire))
             .unwrap_or(0);
@@ -98,19 +100,24 @@ impl ConnectionLimiter {
         self.total_connections.fetch_add(1, Ordering::Release);
 
         if max_per_site.is_some() {
-            let counter = self.site_total_connections
+            let counter = self
+                .site_total_connections
                 .entry(site_id.to_string())
                 .or_insert_with(|| AtomicU32::new(0));
             counter.fetch_add(1, Ordering::Release);
         }
 
         {
-            let counter = self.ip_connections.entry(client_ip).or_insert_with(|| AtomicU32::new(0));
+            let counter = self
+                .ip_connections
+                .entry(client_ip)
+                .or_insert_with(|| AtomicU32::new(0));
             counter.fetch_add(1, Ordering::Release);
         }
 
         if max_per_site.is_some() {
-            let site_ips = self.site_connections
+            let site_ips = self
+                .site_connections
                 .entry(site_id.to_string())
                 .or_insert_with(DashMap::new);
             let ip_counter = site_ips
@@ -139,10 +146,11 @@ impl ConnectionLimiter {
         max_per_site: Option<u32>,
     ) -> Result<(), ConnectionLimitError> {
         let effective_max_per_site = max_per_site.unwrap_or(10000);
-        let site_count = self.site_total_connections
-                .get(site_id)
-                .map(|c| c.load(Ordering::Acquire))
-                .unwrap_or(0);
+        let site_count = self
+            .site_total_connections
+            .get(site_id)
+            .map(|c| c.load(Ordering::Acquire))
+            .unwrap_or(0);
 
         if site_count >= effective_max_per_site {
             return Err(ConnectionLimitError::SiteLimitExceeded);
@@ -243,7 +251,10 @@ impl ConnectionLimiter {
     }
 
     pub fn active_connections_for_ip(&self, ip: IpAddr) -> u32 {
-        self.ip_connections.get(&ip).map(|c| c.load(Ordering::Acquire)).unwrap_or(0)
+        self.ip_connections
+            .get(&ip)
+            .map(|c| c.load(Ordering::Acquire))
+            .unwrap_or(0)
     }
 
     pub fn config(&self) -> &ConnectionLimitsConfig {

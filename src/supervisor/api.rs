@@ -11,8 +11,8 @@ pub mod proto {
 
 use proto::control_plane_server::{ControlPlane, ControlPlaneServer};
 use proto::{
-    BlockRequest, BlockResponse, ReloadRequest, ReloadResponse, StatusRequest, StatusResponse,
-    StopRequest, StopResponse, UnblockRequest, UnblockResponse, Stats, WorkerInfo,
+    BlockRequest, BlockResponse, ReloadRequest, ReloadResponse, Stats, StatusRequest,
+    StatusResponse, StopRequest, StopResponse, UnblockRequest, UnblockResponse, WorkerInfo,
 };
 
 pub struct ControlPlaneService {
@@ -36,15 +36,19 @@ impl ControlPlane for ControlPlaneService {
         _request: Request<StatusRequest>,
     ) -> Result<Response<StatusResponse>, Status> {
         let pm_status = self.process_manager.get_status();
-        
-        let workers = pm_status.workers.into_iter().map(|w| WorkerInfo {
-            id: w.id as u32,
-            pid: w.pid,
-            port: w.port as u32,
-            status: w.status,
-            requests: w.requests,
-            blocked: w.blocked,
-        }).collect();
+
+        let workers = pm_status
+            .workers
+            .into_iter()
+            .map(|w| WorkerInfo {
+                id: w.id as u32,
+                pid: w.pid,
+                port: w.port as u32,
+                status: w.status,
+                requests: w.requests,
+                blocked: w.blocked,
+            })
+            .collect();
 
         Ok(Response::new(StatusResponse {
             pid: std::process::id(),
@@ -67,7 +71,7 @@ impl ControlPlane for ControlPlaneService {
         tracing::info!("gRPC: Reloading configuration");
         let mut config = self.state.config.write().await;
         config.reload_all();
-        
+
         Ok(Response::new(ReloadResponse {
             success: true,
             message: "Configuration reloaded".to_string(),
@@ -77,7 +81,7 @@ impl ControlPlane for ControlPlaneService {
     async fn stop(&self, request: Request<StopRequest>) -> Result<Response<StopResponse>, Status> {
         let graceful = request.into_inner().graceful;
         tracing::info!("gRPC: Stop request received (graceful: {})", graceful);
-        
+
         let state_clone = self.state.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -87,13 +91,21 @@ impl ControlPlane for ControlPlaneService {
         Ok(Response::new(StopResponse { success: true }))
     }
 
-    async fn block_ip(&self, request: Request<BlockRequest>) -> Result<Response<BlockResponse>, Status> {
+    async fn block_ip(
+        &self,
+        request: Request<BlockRequest>,
+    ) -> Result<Response<BlockResponse>, Status> {
         let req = request.into_inner();
-        let ip = req.ip.parse().map_err(|_| Status::invalid_argument("Invalid IP address"))?;
-        
+        let ip = req
+            .ip
+            .parse()
+            .map_err(|_| Status::invalid_argument("Invalid IP address"))?;
+
         tracing::info!("gRPC: Manually blocking IP {} (reason: {})", ip, req.reason);
-        self.state.block_store.block_ip(ip, &req.reason, req.duration_secs, &req.scope);
-        
+        self.state
+            .block_store
+            .block_ip(ip, &req.reason, req.duration_secs, &req.scope);
+
         Ok(Response::new(BlockResponse { success: true }))
     }
 
@@ -102,11 +114,14 @@ impl ControlPlane for ControlPlaneService {
         request: Request<UnblockRequest>,
     ) -> Result<Response<UnblockResponse>, Status> {
         let req = request.into_inner();
-        let ip = req.ip.parse().map_err(|_| Status::invalid_argument("Invalid IP address"))?;
-        
+        let ip = req
+            .ip
+            .parse()
+            .map_err(|_| Status::invalid_argument("Invalid IP address"))?;
+
         tracing::info!("gRPC: Manually unblocking IP {}", ip);
         self.state.block_store.unblock_ip(&ip, &req.scope);
-        
+
         Ok(Response::new(UnblockResponse { success: true }))
     }
 }

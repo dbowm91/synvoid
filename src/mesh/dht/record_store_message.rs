@@ -101,7 +101,8 @@ impl RecordStoreManager {
                             self.node_role.bits(),
                             timestamp
                         );
-                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty()) {
+                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty())
+                        {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1329,11 +1330,13 @@ impl RecordStoreManager {
                                 "Quorum request {} has successful DHT threshold but failed Raft write - treating as timeout",
                                 request_id
                             );
+                            crate::metrics::record_dht_raft_write_failure();
                             return Some(crate::mesh::dht::quorum::QuorumResult::Timeout {
                                 signatures_collected: request.signatures.clone(),
-                                threshold: crate::mesh::dht::quorum::QuorumRequest::required_signatures(
-                                    total,
-                                ),
+                                threshold:
+                                    crate::mesh::dht::quorum::QuorumRequest::required_signatures(
+                                        total,
+                                    ),
                             });
                         }
 

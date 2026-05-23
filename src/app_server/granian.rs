@@ -548,11 +548,7 @@ impl GranianSupervisor {
             requirements_path.display()
         );
 
-        let mut args = vec![
-            "-m".to_string(),
-            "pip".to_string(),
-            "install".to_string(),
-        ];
+        let mut args = vec!["-m".to_string(), "pip".to_string(), "install".to_string()];
         if self.config.require_hashes {
             args.push("--require-hashes".to_string());
         }

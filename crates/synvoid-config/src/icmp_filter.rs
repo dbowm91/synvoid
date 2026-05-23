@@ -219,17 +219,19 @@ mod tests {
             .with_ebpf_bytecode_path("/tmp/test.o");
 
         assert_eq!(config.table_name, "custom-waf");
-        assert_eq!(config.custom_ebpf_bytecode_path, Some("/tmp/test.o".to_string()));
+        assert_eq!(
+            config.custom_ebpf_bytecode_path,
+            Some("/tmp/test.o".to_string())
+        );
     }
 
     #[test]
     fn test_serialization() {
-        let config = IcmpFilterConfig::new()
-            .with_table_name("waf_rules".to_string());
-        
+        let config = IcmpFilterConfig::new().with_table_name("waf_rules".to_string());
+
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: IcmpFilterConfig = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized.table_name, "waf_rules");
     }
 

@@ -425,12 +425,10 @@ pub fn handle_export_threat_feed(
         Default::default(),
     ));
     let internal_config: crate::mesh::threat_intel::ThreatIntelligenceConfigInternal =
-        serde_json::from_str(&serde_json::to_string(&threat_intel_config).unwrap())
-            .unwrap();
+        serde_json::from_str(&serde_json::to_string(&threat_intel_config).unwrap()).unwrap();
 
     let node_role_internal: crate::mesh::config::MeshNodeRole =
-        serde_json::from_str(&serde_json::to_string(&node_role).unwrap())
-            .unwrap();
+        serde_json::from_str(&serde_json::to_string(&node_role).unwrap()).unwrap();
 
     let threat_manager = ThreatIntelligenceManager::new(
         internal_config,

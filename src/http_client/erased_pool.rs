@@ -148,7 +148,10 @@ impl Http1PooledConnection {
         request: http::Request<BoxErasedBody>,
     ) -> Result<http::Response<hyper::body::Incoming>, std::io::Error> {
         let sender = self.sender.as_mut().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "sender missing - connection not initialized")
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "sender missing - connection not initialized",
+            )
         })?;
         sender.send_request(request).await.map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::Other, format!("request failed: {}", e))
@@ -474,7 +477,9 @@ mod tests {
         let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let echo_addr: SocketAddr = echo_listener.local_addr().unwrap();
         let echo_key = PoolKey {
-            authority: format!("{}:{}", echo_addr.ip(), echo_addr.port()).parse().unwrap(),
+            authority: format!("{}:{}", echo_addr.ip(), echo_addr.port())
+                .parse()
+                .unwrap(),
             is_http2: false,
         };
 
@@ -507,6 +512,9 @@ mod tests {
         let conn = Http1PooledConnection::new_for_test(authority);
 
         assert_eq!(conn.protocol(), HttpProtocol::Http1);
-        assert!(!conn.is_available(), "new_for_test creates stub with is_available false");
+        assert!(
+            !conn.is_available(),
+            "new_for_test creates stub with is_available false"
+        );
     }
 }

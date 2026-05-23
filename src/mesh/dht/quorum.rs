@@ -287,6 +287,7 @@ impl QuorumRequest {
         if self.has_rejections() {
             let rejection = self.rejections.first().unwrap().clone();
             let verified = true;
+            crate::metrics::record_dht_quorum_failure();
             return QuorumResult::Rejected {
                 rejection,
                 verified,
@@ -294,10 +295,17 @@ impl QuorumRequest {
         }
 
         if self.threshold_met(total_nodes) {
+            if self.quorum_mode.is_regional() {
+                crate::metrics::record_dht_quorum_regional();
+            } else {
+                crate::metrics::record_dht_quorum_full();
+            }
+            crate::metrics::record_dht_quorum_success();
             return QuorumResult::Approved(self.signatures);
         }
 
         let effective = self.effective_node_count_for(total_nodes);
+        crate::metrics::record_dht_quorum_failure();
         QuorumResult::Timeout {
             signatures_collected: self.signatures,
             threshold: Self::required_signatures_for(effective),
@@ -353,7 +361,9 @@ impl QuorumManager {
                     let client = raft_client.clone();
                     let request_id_for_spawn = request.request_id.clone();
 
-                    let (tx, rx) = oneshot::channel::<Result<(), crate::mesh::raft::client::RaftAwareClientError>>();
+                    let (tx, rx) = oneshot::channel::<
+                        Result<(), crate::mesh::raft::client::RaftAwareClientError>,
+                    >();
                     {
                         let mut pending_raft = self.pending_raft_requests.write().await;
                         pending_raft.insert(request_id.clone(), rx);
@@ -363,11 +373,18 @@ impl QuorumManager {
                         let result = client.raft_write(ns, key, value).await;
                         match result {
                             Ok(_) => {
-                                tracing::info!("Raft delegated write succeeded for request {}", request_id_for_spawn);
+                                tracing::info!(
+                                    "Raft delegated write succeeded for request {}",
+                                    request_id_for_spawn
+                                );
                                 let _ = tx.send(Ok(()));
                             }
                             Err(e) => {
-                                tracing::error!("Raft delegated write failed for request {}: {}", request_id_for_spawn, e);
+                                tracing::error!(
+                                    "Raft delegated write failed for request {}: {}",
+                                    request_id_for_spawn,
+                                    e
+                                );
                                 let _ = tx.send(Err(e));
                             }
                         }

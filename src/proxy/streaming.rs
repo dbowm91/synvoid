@@ -109,17 +109,26 @@ where
             }
             Poll::Ready(None) => {
                 // Stream finished, insert into cache if we have a buffer
-                if let (Some(cache), Some(key), Some(buf)) = (self.cache.take(), self.cache_key.take(), self.buffer.take()) {
+                if let (Some(cache), Some(key), Some(buf)) =
+                    (self.cache.take(), self.cache_key.take(), self.buffer.take())
+                {
                     let content = Bytes::copy_from_slice(buf.as_slice());
-                    if let Err(e) = cache.insert(key, content, self.status, self.headers.clone(), self.max_age) {
+                    if let Err(e) = cache.insert(
+                        key,
+                        content,
+                        self.status,
+                        self.headers.clone(),
+                        self.max_age,
+                    ) {
                         tracing::warn!("Failed to cache teed response: {}", e);
                     }
                 }
                 Poll::Ready(None)
             }
-            Poll::Ready(Some(Err(e))) => {
-                Poll::Ready(Some(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))))
-            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )))),
             Poll::Pending => Poll::Pending,
         }
     }

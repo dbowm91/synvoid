@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 
 use bytes::Bytes;
 use http::{header, StatusCode};
-use hyper::body::Frame;
 use http_body_util::{BodyExt, Full};
+use hyper::body::Frame;
 use metrics::{counter, gauge, histogram};
 
 use crate::config::site::ProxyHeadersConfig;
@@ -24,11 +24,11 @@ use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
 use crate::metrics::WorkerMetrics;
+use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers_buf,
     ForwardedProtocol, PreparedUpstreamTarget, WafDecision,
 };
-use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::router::{RouteResult, Router};
 use crate::waf::attack_detection::StreamingWafDecision;
 use crate::waf::{FloodDecision, FloodProtector, RequestSanitizer, WafCore};
@@ -310,7 +310,11 @@ impl Http3Server {
                     .r#static
                     .enable_minification
                     .unwrap_or(false)
-                    || route_target.site_config.image_poison.enabled.unwrap_or(false)
+                    || route_target
+                        .site_config
+                        .image_poison
+                        .enabled
+                        .unwrap_or(false)
                     || route_target
                         .site_config
                         .r#static
@@ -320,15 +324,13 @@ impl Http3Server {
                     .get("content-length")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| s.parse().ok());
-                matches!(route_target.backend_type, crate::router::BackendType::Upstream)
-                    && route_target
-                      .site_config
-                      .proxy
-                      .should_stream(
-                          content_length_u64,
-                          route_target.site_config.proxy.streaming_threshold_bytes,
-                      )
-                    && !needs_body_transform
+                matches!(
+                    route_target.backend_type,
+                    crate::router::BackendType::Upstream
+                ) && route_target.site_config.proxy.should_stream(
+                    content_length_u64,
+                    route_target.site_config.proxy.streaming_threshold_bytes,
+                ) && !needs_body_transform
                     && !crate::http_client::is_quictunnel_url(&route_target.upstream)
             }
             _ => false,
@@ -367,7 +369,8 @@ impl Http3Server {
 
                 // 1. Streaming scan
                 if let Some(sw) = streaming_waf.as_mut() {
-                    if let StreamingWafDecision::Block(status, message) = sw.scan_chunk(&chunk_bytes)
+                    if let StreamingWafDecision::Block(status, message) =
+                        sw.scan_chunk(&chunk_bytes)
                     {
                         counter!("synvoid.http3.requests.blocked").increment(1);
                         let body = format!("{{\"error\":\"{}\"}}", message);
@@ -650,10 +653,9 @@ impl Http3Server {
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
                     .and_then(UpstreamTlsConfig::from_site_config);
-                let streaming_client = self.upstream_client_registry.get_or_create_streaming(
-                    &route_target.site_id,
-                    tls_config.as_ref(),
-                );
+                let streaming_client = self
+                    .upstream_client_registry
+                    .get_or_create_streaming(&route_target.site_id, tls_config.as_ref());
 
                 let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
                 let streaming_body = H3ChannelBody::new(rx);
@@ -761,8 +763,11 @@ impl Http3Server {
                                     resp_builder = resp_builder.header(name.as_str(), v);
                                 }
                             }
-                            resp_builder =
-                                apply_security_headers(resp_builder, route_target, &self.main_config);
+                            resp_builder = apply_security_headers(
+                                resp_builder,
+                                route_target,
+                                &self.main_config,
+                            );
                             let response = resp_builder
                                 .body(())
                                 .map_err(|e| format!("Failed to build response: {}", e))?;
@@ -787,7 +792,8 @@ impl Http3Server {
                         if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
                             if io_err.kind() == std::io::ErrorKind::PermissionDenied {
                                 counter!("synvoid.http3.requests.blocked").increment(1);
-                                let body = "{\"error\":\"Request blocked by WAF during streaming\"}";
+                                let body =
+                                    "{\"error\":\"Request blocked by WAF during streaming\"}";
                                 let response = http::Response::builder()
                                     .status(StatusCode::FORBIDDEN)
                                     .header(header::CONTENT_TYPE, "application/json")

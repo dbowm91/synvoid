@@ -152,7 +152,11 @@ impl EdgeReplicaManager {
         }
     }
 
-    pub fn update_authorized_global_node(&self, public_key: &str, value: &[u8]) -> Result<(), rusqlite::Error> {
+    pub fn update_authorized_global_node(
+        &self,
+        public_key: &str,
+        value: &[u8],
+    ) -> Result<(), rusqlite::Error> {
         let node: AuthorizedGlobalNode = postcard::from_bytes(value)
             .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
 

@@ -310,10 +310,7 @@ mod tests {
     }
 }
 
-pub async fn handle_worker_connection(
-    ipc: AsyncIpcStream,
-    process_manager: Arc<ProcessManager>,
-) {
+pub async fn handle_worker_connection(ipc: AsyncIpcStream, process_manager: Arc<ProcessManager>) {
     handle_worker_connection_internal(ipc, process_manager, None).await;
 }
 

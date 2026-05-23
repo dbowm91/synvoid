@@ -1,6 +1,6 @@
-pub use synvoid_config::*;
 pub use synvoid_config::limits::BlocklistLimitsConfig as DenyListLimitsConfig;
 pub use synvoid_config::main_config::MainConfig;
+pub use synvoid_config::*;
 
 // Provide 'main' submodule for compatibility with existing imports
 pub mod main {
@@ -9,8 +9,8 @@ pub mod main {
 
 // Provide 'site' submodule for compatibility
 pub mod site {
-    pub use synvoid_config::site::*;
     pub use synvoid_config::site::proxy::BodyBufferingPolicy;
+    pub use synvoid_config::site::*;
 }
 
 // Provide 'dns' submodule

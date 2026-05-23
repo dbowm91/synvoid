@@ -30,9 +30,8 @@ use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::http_client::ErasedHttpClient;
 use crate::http::shared_handler::SharedRequestHandler;
-
+use crate::http_client::ErasedHttpClient;
 
 use crate::waf::traffic_shaper::ConnectionLimiter;
 use crate::waf::ConnectionToken;
@@ -473,7 +472,10 @@ impl HttpServer {
     pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let std_listener = crate::platform::socket::bind_tcp_reuse(self.addr)?;
         let listener = TcpListener::from_std(std_listener)?;
-        tracing::info!("HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]", self.addr);
+        tracing::info!(
+            "HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
+            self.addr
+        );
 
         let router = self.router.clone();
         let waf = self.waf.clone();
@@ -914,7 +916,10 @@ impl HttpServer {
             }) {
                 if waf.verify_trust_token(client_ip, token) {
                     skip_waf = true;
-                    tracing::debug!("Bypassing WAF check due to valid trust token for {}", client_ip);
+                    tracing::debug!(
+                        "Bypassing WAF check due to valid trust token for {}",
+                        client_ip
+                    );
                 }
             }
         }
@@ -1178,16 +1183,14 @@ impl HttpServer {
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse().ok());
-        let can_stream_request = (matches!(target.backend_type, crate::router::BackendType::Upstream)
-            || matches!(target.backend_type, crate::router::BackendType::Serverless))
-            && target
-                .site_config
-                .proxy
-                .should_stream(
+        let can_stream_request =
+            (matches!(target.backend_type, crate::router::BackendType::Upstream)
+                || matches!(target.backend_type, crate::router::BackendType::Serverless))
+                && target.site_config.proxy.should_stream(
                     content_length_u64,
                     target.site_config.proxy.streaming_threshold_bytes,
                 )
-            && !crate::http_client::is_quictunnel_url(&target.upstream);
+                && !crate::http_client::is_quictunnel_url(&target.upstream);
         let needs_body_transform = router.plugin_manager().is_some()
             || target
                 .site_config
@@ -1310,10 +1313,8 @@ impl HttpServer {
                         .as_ref()
                         .and_then(|u| u.tls.as_ref())
                         .and_then(UpstreamTlsConfig::from_site_config);
-                    let streaming_client = upstream_client_registry.get_or_create_streaming(
-                        &target.site_id,
-                        tls_config.as_ref(),
-                    );
+                    let streaming_client = upstream_client_registry
+                        .get_or_create_streaming(&target.site_id, tls_config.as_ref());
                     let streaming_waf = waf.streaming();
                     let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                     let erased_body = ErasedBodyImpl::new(stream_body);
@@ -1338,8 +1339,10 @@ impl HttpServer {
                                 .and_then(|v| v.parse::<u64>().ok())
                                 .unwrap_or(0);
 
-                            let filtered_headers =
-                                filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
+                            let filtered_headers = filter_response_headers_buf(
+                                &resp_parts.headers,
+                                &headers_to_filter,
+                            );
                             let mut builder = Response::builder().status(status);
                             for (key, value) in filtered_headers.iter() {
                                 if let Ok(v) = value.to_str() {
@@ -1477,7 +1480,8 @@ impl HttpServer {
                     session_cookie_name,
                     session_cookie_value,
                     session_cookie_max_age,
-                } => {                    let cookie = format!(
+                } => {
+                    let cookie = format!(
                         "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
                         session_cookie_name, session_cookie_value, session_cookie_max_age
                     );
@@ -1589,7 +1593,8 @@ impl HttpServer {
                 let (_, body_decision) = waf.check_request_body(chunk);
                 if let Some(decision) = body_decision {
                     match decision {
-                        crate::proxy::WafDecision::Drop | crate::proxy::WafDecision::Block(_, _) => {
+                        crate::proxy::WafDecision::Drop
+                        | crate::proxy::WafDecision::Block(_, _) => {
                             tracing::warn!(
                                 client_ip = %client_ip,
                                 offset = offset,
@@ -1852,35 +1857,36 @@ impl HttpServer {
         // ============================================================================
         // SECTION 13: WAF Full Request Check
         // ============================================================================
-        let waf_decision = if skip_waf {
-            crate::proxy::WafDecision::Pass
-        } else if matches!(target.backend_type, crate::router::BackendType::Serverless)
-            && target.site_config.serverless.as_ref().is_some_and(|s| {
-                s.waf_mode == crate::config::serverless::ServerlessWafMode::Off
-            })
-        {
-            tracing::debug!(
-                "serverless route with waf_mode=off - skipping WAF check for {} {}",
-                method_str,
-                path
-            );
-            crate::proxy::WafDecision::Pass
-        } else {
-            waf.check_request_full(
-                Some(&site_id),
-                client_ip,
-                method_str.as_str(),
-                &path,
-                query_string,
-                &parts.headers,
-                body_slice_ref,
-                user_agent.as_deref(),
-                None,
-                Some(&target.site_config.bot),
-                None,
-            )
-            .await
-        };
+        let waf_decision =
+            if skip_waf {
+                crate::proxy::WafDecision::Pass
+            } else if matches!(target.backend_type, crate::router::BackendType::Serverless)
+                && target.site_config.serverless.as_ref().is_some_and(|s| {
+                    s.waf_mode == crate::config::serverless::ServerlessWafMode::Off
+                })
+            {
+                tracing::debug!(
+                    "serverless route with waf_mode=off - skipping WAF check for {} {}",
+                    method_str,
+                    path
+                );
+                crate::proxy::WafDecision::Pass
+            } else {
+                waf.check_request_full(
+                    Some(&site_id),
+                    client_ip,
+                    method_str.as_str(),
+                    &path,
+                    query_string,
+                    &parts.headers,
+                    body_slice_ref,
+                    user_agent.as_deref(),
+                    None,
+                    Some(&target.site_config.bot),
+                    None,
+                )
+                .await
+            };
 
         let response = match waf_decision {
             // ============================================================================
@@ -3319,10 +3325,8 @@ impl HttpServer {
                         .as_ref()
                         .and_then(|u| u.tls.as_ref())
                         .and_then(UpstreamTlsConfig::from_site_config);
-                    let streaming_client = upstream_client_registry.get_or_create_streaming(
-                        &target.site_id,
-                        tls_config.as_ref(),
-                    );
+                    let streaming_client = upstream_client_registry
+                        .get_or_create_streaming(&target.site_id, tls_config.as_ref());
 
                     let erased_body = crate::http_client::ErasedBodyImpl::from_full(Full::new(
                         full_body_arc.as_ref().clone(),
@@ -3942,11 +3946,9 @@ impl HttpServer {
         }
 
         builder
-            .body(BodyExt::boxed(http_body_util::StreamBody::new(
-                stream.map(|res| {
-                    Ok::<_, Infallible>(http_body::Frame::data(res.unwrap_or_default()))
-                }),
-            )))
+            .body(BodyExt::boxed(http_body_util::StreamBody::new(stream.map(
+                |res| Ok::<_, Infallible>(http_body::Frame::data(res.unwrap_or_default())),
+            ))))
             .unwrap()
     }
 

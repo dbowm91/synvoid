@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::LazyLock;
 
 /// Global governor for memory-intensive proxy operations.
-/// 
+///
 /// Specifically used to limit the amount of memory consumed by concurrent
 /// response buffering (TEE) for the cache.
 pub struct GlobalCacheGovernor;
@@ -19,12 +19,12 @@ impl GlobalCacheGovernor {
     pub fn try_reserve(bytes: usize) -> bool {
         let max = MAX_BUFFERED_BYTES.load(Ordering::Relaxed);
         let mut current = CURRENT_BUFFERED_BYTES.load(Ordering::Relaxed);
-        
+
         loop {
             if current + bytes > max {
                 return false;
             }
-            
+
             match CURRENT_BUFFERED_BYTES.compare_exchange_weak(
                 current,
                 current + bytes,

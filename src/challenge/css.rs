@@ -125,10 +125,10 @@ impl CssManager {
         for name in &valid_names {
             // Use ranges to ensure real browsers match something
             let (min_num, min_den, max_num, max_den) = match rng.random_range(0..4) {
-                0 => (1, 10, 1, 1),    // Tall portrait
-                1 => (1, 1, 10, 1),    // Wide landscape
-                2 => (1, 2, 2, 1),     // Normal range
-                _ => (1, 5, 5, 1),     // Broad range
+                0 => (1, 10, 1, 1), // Tall portrait
+                1 => (1, 1, 10, 1), // Wide landscape
+                2 => (1, 2, 2, 1),  // Normal range
+                _ => (1, 5, 5, 1),  // Broad range
             };
 
             css_rules.push_str(&format!(
@@ -140,9 +140,15 @@ impl CssManager {
         for name in &invalid_names {
             // Impossible aspect ratios (negative or zero)
             let (num, den) = if rng.random_bool(0.5) {
-                (-(rng.random_range(1..1000) as i32), rng.random_range(1..1000))
+                (
+                    -(rng.random_range(1..1000) as i32),
+                    rng.random_range(1..1000),
+                )
             } else {
-                (rng.random_range(1..1000) as i32, -(rng.random_range(1..1000) as i32))
+                (
+                    rng.random_range(1..1000) as i32,
+                    -(rng.random_range(1..1000) as i32),
+                )
             };
 
             css_rules.push_str(&format!(

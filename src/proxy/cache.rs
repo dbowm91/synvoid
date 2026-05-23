@@ -128,7 +128,9 @@ pub(super) fn filter_cacheable_headers(
     let mut filtered = http::HeaderMap::new();
     for (name, value) in headers.iter() {
         let name_str = name.as_str();
-        let is_safe = SAFE_HEADERS.iter().any(|&h| h.eq_ignore_ascii_case(name_str));
+        let is_safe = SAFE_HEADERS
+            .iter()
+            .any(|&h| h.eq_ignore_ascii_case(name_str));
         let is_custom_allowed = allowed_custom_headers
             .iter()
             .any(|h| h.eq_ignore_ascii_case(name_str));

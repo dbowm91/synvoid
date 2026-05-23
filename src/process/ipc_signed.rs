@@ -442,12 +442,12 @@ impl SignedIpcMessage {
     ) -> io::Result<Vec<u8>> {
         let timestamp = crate::utils::current_timestamp();
         let nonce = generate_nonce();
-        
+
         let data_bytes = crate::serialization::serialize(msg)?;
-        
+
         let ts_bytes = timestamp.to_be_bytes();
         let hmac_bytes = signer.sign_parts(&[&ts_bytes, &nonce, &data_bytes]);
-        
+
         let envelope = IpcEnvelope {
             timestamp,
             nonce,
@@ -456,7 +456,7 @@ impl SignedIpcMessage {
         };
 
         let mut result = crate::serialization::serialize(&envelope)?;
-        
+
         // We still need to prefix with length for the framing layer if we want to stay compatible
         // with the existing read_message logic, OR we change read_message to handle postcard's
         // own framing if it had any (it doesn't, it's just bytes).
@@ -464,7 +464,7 @@ impl SignedIpcMessage {
         let mut framed = Vec::with_capacity(4 + result.len());
         framed.extend_from_slice(&(result.len() as u32).to_be_bytes());
         framed.append(&mut result);
-        
+
         Ok(framed)
     }
 
@@ -474,7 +474,7 @@ impl SignedIpcMessage {
     ) -> io::Result<T> {
         // The framing (4 bytes length) is already stripped by the caller in current implementation
         // but wait, serialize_signed added it back. Let's see how it's used.
-        
+
         let envelope: IpcEnvelope = crate::serialization::deserialize(data)?;
 
         if !verify_timestamp(envelope.timestamp) {
@@ -485,8 +485,11 @@ impl SignedIpcMessage {
         }
 
         let ts_bytes = envelope.timestamp.to_be_bytes();
-        
-        if !signer.verify_parts(&[&ts_bytes, &envelope.nonce, &envelope.data], &envelope.hmac) {
+
+        if !signer.verify_parts(
+            &[&ts_bytes, &envelope.nonce, &envelope.data],
+            &envelope.hmac,
+        ) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "IPC message HMAC verification failed",

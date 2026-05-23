@@ -179,7 +179,8 @@ impl Router {
         let mut listen_map: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let mut default_servers: HashMap<SocketAddr, String> = HashMap::new();
         let mut ip_domain_map = HashMap::new();
-        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> = HashMap::new();
+        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> =
+            HashMap::new();
         let mut cleaned_site_domains: HashMap<String, Vec<Arc<str>>> = HashMap::new();
         let mut cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>> = HashMap::new();
         let mut site_map: HashMap<String, Arc<SiteConfig>> = HashMap::new();
@@ -270,10 +271,8 @@ impl Router {
                 let reversed = Self::reverse_domain_for_router(&pattern);
                 // Match both the domain itself and subdomains
                 let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
-                let _ = wildcard_domain_router.insert(
-                    format!("{}/{{*sub}}", reversed),
-                    config_arc.clone(),
-                );
+                let _ = wildcard_domain_router
+                    .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
 
                 suffixes.push(clean_domain.clone());
             } else {
@@ -1226,7 +1225,8 @@ impl Router {
         self.listen_map.clear();
         self.default_servers.clear();
         self.ip_domain_map.clear();
-        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> = HashMap::new();
+        let mut ip_wildcard_routers_raw: HashMap<SocketAddr, MatchRouter<Arc<SiteConfig>>> =
+            HashMap::new();
         self.cleaned_site_domains.clear();
         self.cleaned_site_domain_suffixes.clear();
         self.site_map.clear();
@@ -1256,11 +1256,9 @@ impl Router {
                     let reversed = Self::reverse_domain_for_router(&pattern);
                     // Match both the domain itself and subdomains
                     let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
-                    let _ = wildcard_domain_router.insert(
-                        format!("{}/{{*sub}}", reversed),
-                        config_arc.clone(),
-                    );
-                    
+                    let _ = wildcard_domain_router
+                        .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+
                     suffixes.push(clean_domain.clone());
                 } else {
                     self.domain_map
@@ -1355,9 +1353,11 @@ impl Router {
                                     .entry(bind_addr)
                                     .or_insert_with(MatchRouter::new);
                                 let _ = router.insert(reversed.clone(), config_arc.clone());
-                                let _ = router.insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+                                let _ = router
+                                    .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
                             } else {
-                                self.ip_domain_map.insert((bind_addr, clean_domain.clone()), config_arc.clone());
+                                self.ip_domain_map
+                                    .insert((bind_addr, clean_domain.clone()), config_arc.clone());
                             }
                         }
                     }

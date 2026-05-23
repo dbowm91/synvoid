@@ -767,11 +767,7 @@ impl HttpsServer {
             let asset_name = match path.strip_prefix("/_waf_assets/rnd-") {
                 Some(name) => name.strip_suffix(".png").unwrap_or(name),
                 None => {
-                    return Ok(Self::build_response(
-                        204,
-                        "".to_string(),
-                        "text/plain",
-                    ));
+                    return Ok(Self::build_response(204, "".to_string(), "text/plain"));
                 }
             };
 
@@ -798,11 +794,7 @@ impl HttpsServer {
             let session_id = match session_id {
                 Some(sid) => sid,
                 None => {
-                    return Ok(Self::build_response(
-                        204,
-                        "".to_string(),
-                        "text/plain",
-                    ));
+                    return Ok(Self::build_response(204, "".to_string(), "text/plain"));
                 }
             };
 
@@ -811,7 +803,10 @@ impl HttpsServer {
                 .record_css_asset_request(&session_id, asset_name);
 
             if res == crate::challenge::AssetRequestResult::InvalidAsset {
-                tracing::warn!("Bot detected via CSS aspect-ratio trap (TLS): IP {}", client_ip);
+                tracing::warn!(
+                    "Bot detected via CSS aspect-ratio trap (TLS): IP {}",
+                    client_ip
+                );
                 waf.block_ip_for_honeypot(
                     client_ip,
                     "css_trap_hit",
@@ -837,11 +832,7 @@ impl HttpsServer {
                     return Ok(resp);
                 }
                 crate::challenge::CssAssetAction::DropConnection => {
-                    return Ok(Self::build_response(
-                        204,
-                        "".to_string(),
-                        "text/plain",
-                    ));
+                    return Ok(Self::build_response(204, "".to_string(), "text/plain"));
                 }
             }
         }
@@ -874,9 +865,17 @@ impl HttpsServer {
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse().ok());
-        let needs_body_transform = target.site_config.r#static.enable_minification.unwrap_or(false)
+        let needs_body_transform = target
+            .site_config
+            .r#static
+            .enable_minification
+            .unwrap_or(false)
             || target.site_config.image_poison.enabled.unwrap_or(false)
-            || target.site_config.r#static.enable_compression.unwrap_or(false);
+            || target
+                .site_config
+                .r#static
+                .enable_compression
+                .unwrap_or(false);
         let use_cache = target
             .site_config
             .proxy
@@ -884,17 +883,15 @@ impl HttpsServer {
             .as_ref()
             .and_then(|c| c.enable)
             .unwrap_or(false);
-        let can_stream_request = matches!(target.backend_type, crate::router::BackendType::Upstream)
-            && target
-                .site_config
-                .proxy
-                .should_stream(
+        let can_stream_request =
+            matches!(target.backend_type, crate::router::BackendType::Upstream)
+                && target.site_config.proxy.should_stream(
                     content_length_u64,
                     target.site_config.proxy.streaming_threshold_bytes,
                 )
-            && !needs_body_transform
-            && !use_cache
-            && !crate::http_client::is_quictunnel_url(&target.upstream);
+                && !needs_body_transform
+                && !use_cache
+                && !crate::http_client::is_quictunnel_url(&target.upstream);
 
         if can_stream_request {
             counter!("synvoid.https.request.streaming_path").increment(1);
@@ -944,10 +941,8 @@ impl HttpsServer {
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
                     .and_then(UpstreamTlsConfig::from_site_config);
-                let streaming_client = upstream_client_registry.get_or_create_streaming(
-                    &target.site_id,
-                    tls_config.as_ref(),
-                );
+                let streaming_client = upstream_client_registry
+                    .get_or_create_streaming(&target.site_id, tls_config.as_ref());
                 let streaming_waf = waf.streaming();
                 let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                 let erased_body = ErasedBodyImpl::new(stream_body);
@@ -1022,11 +1017,7 @@ impl HttpsServer {
                                         })
                                         .as_ref(),
                                 );
-                                return Ok(Self::build_response(
-                                    403,
-                                    body,
-                                    "text/html",
-                                ));
+                                return Ok(Self::build_response(403, body, "text/html"));
                             }
                         }
                         tracing::error!("Upstream streaming request error: {}", e);
@@ -1752,7 +1743,9 @@ impl HttpsServer {
                                     &host,
                                     &parts.headers,
                                     "https",
-                                    Some(crate::http_client::ErasedBodyImpl::from_full(http_body_util::Full::new(body_bytes.clone()))),
+                                    Some(crate::http_client::ErasedBodyImpl::from_full(
+                                        http_body_util::Full::new(body_bytes.clone()),
+                                    )),
                                     client_ip,
                                 )
                                 .await
@@ -1818,7 +1811,7 @@ impl HttpsServer {
                                         .body(
                                             body.map_err(|e| {
                                                 tracing::warn!("Proxy body error: {}", e);
-                                                // Infallible means we don't expect errors here, 
+                                                // Infallible means we don't expect errors here,
                                                 // but hyper will handle the underlying IO error
                                                 unreachable!()
                                             })

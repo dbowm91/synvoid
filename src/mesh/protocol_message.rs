@@ -147,11 +147,10 @@ impl MeshMessage {
             | Self::AuthChallenge { .. }
             | Self::AuthResponse { .. } => MessageCategory::System,
             Self::Raft { .. } => MessageCategory::System,
-            | Self::ReplicaSyncRequest { .. }
+            Self::ReplicaSyncRequest { .. }
             | Self::ReplicaSyncResponse { .. }
             | Self::ConsistentReadRequest { .. }
             | Self::ConsistentReadResponse { .. }
-
             | Self::NotLeader { .. }
             | Self::RaftCommitNotification { .. }
             | Self::MeshLoadUpdate { .. }

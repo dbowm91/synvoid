@@ -1,5 +1,12 @@
 #![allow(dead_code)]
-// SAFETY_REASON: Hierarchical routing for mesh - reserved for multi-region topology
+// Hierarchical routing for mesh - RESERVED for multi-region topology.
+// This module implements regional hub discovery and bloom-filter based route advertisements.
+// Currently unused but preserved for future multi-region deployment where:
+// - Regional hubs aggregate upstream routing information
+// - Bloom filters enable memory-efficient route checking across regions
+// - Route advertisements propagate via gossip protocol
+//
+// Decision: Keep implementation (not remove) based on multi-region roadmap priority.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

@@ -8,8 +8,8 @@ use crate::block_store::BlockStore;
 use crate::config::{ConfigManager, MainConfig};
 use crate::platform::fs::PlatformPaths;
 use crate::process::{
-    IpcEndpoint, IpcListener, IpcStream, Message, MasterCommand,
-    PidFileManager, ProcessManager, ProcessManagerConfig, ProcessEvent
+    IpcEndpoint, IpcListener, IpcStream, MasterCommand, Message, PidFileManager, ProcessEvent,
+    ProcessManager, ProcessManagerConfig,
 };
 use crate::waf::RuleFeedManagerForWaf;
 use crate::RunningFlag;
@@ -29,8 +29,9 @@ impl SupervisorProcess {
         state: SupervisorState,
         pm_config: ProcessManagerConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let (process_manager, event_rx) = ProcessManager::new(pm_config, Some(state.block_store.clone()));
-        
+        let (process_manager, event_rx) =
+            ProcessManager::new(pm_config, Some(state.block_store.clone()));
+
         // Initialize IPC listener (consolidated master + command socket)
         let endpoint = IpcEndpoint::master();
         let ipc_listener = endpoint.bind().await?;
@@ -53,7 +54,7 @@ impl SupervisorProcess {
         // Initialize Shared Connection Table for distributed load balancing
         let config = self.process_manager.get_config();
         let shm_path = paths.connections_shm_path();
-        
+
         // Max workers + some headroom, and 2048 possible backend slots
         let max_workers = config.unified_server_workers + 10;
         let max_backends = 2048;
@@ -76,8 +77,14 @@ impl SupervisorProcess {
         }
 
         // Spawn initial unified workers (data plane)
-        tracing::info!("Spawning {} unified server workers", config.unified_server_workers);
-        if let Err(e) = self.process_manager.spawn_unified_server_workers(config.unified_server_workers) {
+        tracing::info!(
+            "Spawning {} unified server workers",
+            config.unified_server_workers
+        );
+        if let Err(e) = self
+            .process_manager
+            .spawn_unified_server_workers(config.unified_server_workers)
+        {
             tracing::error!("Failed to spawn unified server workers: {}", e);
         }
 
@@ -105,7 +112,15 @@ impl SupervisorProcess {
         }
 
         // Start gRPC control server
-        let grpc_addr = self.state.config.read().await.main.supervisor.control_api_addr.parse();
+        let grpc_addr = self
+            .state
+            .config
+            .read()
+            .await
+            .main
+            .supervisor
+            .control_api_addr
+            .parse();
         if let Ok(addr) = grpc_addr {
             let pm = self.process_manager.clone();
             let state = self.state.clone();
@@ -150,10 +165,14 @@ impl SupervisorProcess {
         Ok(())
     }
 
-    async fn handle_connection(mut ipc: crate::process::ipc_transport::IpcStream, pm: Arc<ProcessManager>, state: SupervisorState) {
+    async fn handle_connection(
+        mut ipc: crate::process::ipc_transport::IpcStream,
+        pm: Arc<ProcessManager>,
+        state: SupervisorState,
+    ) {
         // The supervisor socket handles both Worker Messages and Admin Commands.
         // On Unix, we try to deserialize as Message first, then as MasterCommand.
-        
+
         // Use a small timeout for the initial message to distinguish between
         // a slow worker and a CLI command.
         match ipc.recv_with_timeout::<Message>(1000).await {
@@ -169,12 +188,18 @@ impl SupervisorProcess {
         }
     }
 
-    async fn handle_admin_command(mut ipc: crate::process::ipc_transport::IpcStream, pm: Arc<ProcessManager>, state: SupervisorState) {
+    async fn handle_admin_command(
+        mut ipc: crate::process::ipc_transport::IpcStream,
+        pm: Arc<ProcessManager>,
+        state: SupervisorState,
+    ) {
         // Implement command handling similar to src/startup/master.rs:handle_command_connection
         // but adapted for IpcStream.
-        
+
         // For now, we'll delegate to a new command handler.
-        if let Err(e) = crate::supervisor::commands::handle_supervisor_command(&mut ipc, pm, state).await {
+        if let Err(e) =
+            crate::supervisor::commands::handle_supervisor_command(&mut ipc, pm, state).await
+        {
             tracing::debug!("Admin command error: {}", e);
         }
     }
@@ -203,7 +228,7 @@ pub fn run_supervisor_mode(
     if let Err(e) = config_manager.load_main(&main_config_path) {
         tracing::warn!("Failed to load main.toml: {}, using defaults", e);
     }
-    
+
     let main_config = config_manager.main.clone();
 
     // Initialize core subsystems (ported from Master)
@@ -231,7 +256,7 @@ pub fn run_supervisor_mode(
     };
 
     let shared_config = Arc::new(RwLock::new(config_manager));
-    
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -252,7 +277,11 @@ pub fn run_supervisor_mode(
         .join("synvoid");
 
     if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
-        tracing::warn!("Failed to create runtime directory {}: {}", runtime_dir.display(), e);
+        tracing::warn!(
+            "Failed to create runtime directory {}: {}",
+            runtime_dir.display(),
+            e
+        );
     }
 
     let should_daemonize = !foreground && test_mode.is_none();
@@ -272,7 +301,9 @@ pub fn run_supervisor_mode(
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         rt.block_on(async {
-            let mut supervisor = SupervisorProcess::new(state, pm_config).await.expect("Failed to initialize SupervisorProcess");
+            let mut supervisor = SupervisorProcess::new(state, pm_config)
+                .await
+                .expect("Failed to initialize SupervisorProcess");
             supervisor.run().await
         })
     }));

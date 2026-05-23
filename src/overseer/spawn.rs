@@ -30,7 +30,10 @@ impl SpawnConfig {
     pub fn for_current_binary(config_path: PathBuf, mode: ProcessMode) -> Self {
         Self {
             binary_path: std::env::current_exe().unwrap_or_else(|e| {
-                tracing::warn!("Failed to get current exe path: {}, falling back to 'synvoid'", e);
+                tracing::warn!(
+                    "Failed to get current exe path: {}, falling back to 'synvoid'",
+                    e
+                );
                 PathBuf::from("synvoid")
             }),
             config_path,

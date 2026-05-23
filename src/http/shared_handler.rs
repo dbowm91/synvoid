@@ -1,21 +1,21 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use http_body::{Body, Frame};
 use bytes::{Bytes, BytesMut};
 use http::{Response, StatusCode};
+use http_body::{Body, Frame};
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use metrics;
 use std::convert::Infallible;
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use crate::config::MainConfig;
 use crate::http::response_builder::{
     build_json_response, build_response_with_alt_svc, build_response_with_cookie,
 };
-use crate::waf::attack_detection::{StreamingWafDecision, StreamingWafCore};
+use crate::waf::attack_detection::{StreamingWafCore, StreamingWafDecision};
 
 pub struct SharedRequestHandler;
 

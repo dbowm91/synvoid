@@ -882,6 +882,7 @@ pub fn verify_quorum_proof(
             "Quorum proof verification failed for key {}: no proof attached",
             record.key
         );
+        crate::metrics::record_dht_verification_failure();
         return false;
     }
 
@@ -945,6 +946,7 @@ pub fn verify_quorum_proof(
             required,
             record.quorum_proof.len()
         );
+        crate::metrics::record_dht_verification_failure();
         return false;
     }
 
@@ -967,6 +969,7 @@ pub fn verify_quorum_proof_with_context(
             "Quorum proof verification failed for key {}: no proof attached",
             record.key
         );
+        crate::metrics::record_dht_verification_failure();
         return false;
     }
 
@@ -1802,7 +1805,7 @@ mod tests {
         let result = verify_quorum_proof(&fake_signatures_record, 3, "", "add");
         assert!(
             !result,
-            "BUG: verify_quorum_proof() currently accepts forged signatures! It only counts distinct node_ids without verifying any signatures."
+            "verify_quorum_proof() should reject forged signatures - it verifies signatures against signer's public key, not just count distinct node_ids"
         );
     }
 

@@ -191,7 +191,8 @@ impl RaftAwareClient {
     ) -> Result<u64, RaftAwareClientError> {
         let timeout = Duration::from_secs(5);
         if self.config.role.is_global() {
-            match tokio::time::timeout(timeout, self.raft_write_local(namespace, key, value)).await {
+            match tokio::time::timeout(timeout, self.raft_write_local(namespace, key, value)).await
+            {
                 Ok(res) => res,
                 Err(_) => {
                     tracing::warn!("Local Raft write timed out - possible quorum loss. Operating in degradation mode.");
@@ -199,7 +200,9 @@ impl RaftAwareClient {
                 }
             }
         } else {
-            match tokio::time::timeout(timeout, self.raft_write_via_global(namespace, key, value)).await {
+            match tokio::time::timeout(timeout, self.raft_write_via_global(namespace, key, value))
+                .await
+            {
                 Ok(res) => res,
                 Err(_) => {
                     tracing::warn!("Remote Raft write timed out - possible quorum loss. Operating in degradation mode.");

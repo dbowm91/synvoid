@@ -1,8 +1,8 @@
+use crate::buffer::{BufferPool, PooledBuf};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
-use crate::buffer::{BufferPool, PooledBuf};
 
 const MAX_OUTPUT_RATIO: usize = 100;
 
@@ -120,7 +120,7 @@ impl InputNormalizer {
                                 let mut pooled = BufferPool::acquire(s.len());
                                 pooled.extend_from_slice(s.as_bytes());
                                 NormalizedData::Pooled(pooled)
-                            },
+                            }
                             NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
                             NormalizedData::Owned(o) => NormalizedData::Owned(o),
                         };
@@ -160,9 +160,9 @@ impl InputNormalizer {
             if decoded_len == prev_len && buffer.as_str() == prev_content {
                 break;
             }
-            
+
             total_passes += 1;
-            
+
             if decoded_len > max_output {
                 break;
             }
@@ -203,7 +203,8 @@ impl InputNormalizer {
                     if i + 5 < chars.len() && chars[i + 1] == 'u' {
                         if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6]) {
                             if code_point == 0 {
-                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                NORMALIZATION_FLAGS
+                                    .with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                             } else {
                                 if let Some(ch) = char::from_u32(code_point) {
                                     input.push(ch);
@@ -216,7 +217,8 @@ impl InputNormalizer {
                     if i + 2 < chars.len() {
                         if let Some(byte) = hex_chars_to_u8(&chars[i + 1..i + 3]) {
                             if byte == 0 {
-                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                NORMALIZATION_FLAGS
+                                    .with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                             } else {
                                 input.push(byte as char);
                             }
@@ -238,7 +240,9 @@ impl InputNormalizer {
                                 if i + 3 < chars.len() {
                                     if let Some(byte) = hex_chars_to_u8(&chars[i + 2..i + 4]) {
                                         if byte == 0 {
-                                            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                            NORMALIZATION_FLAGS.with(|f| {
+                                                f.borrow_mut().insert(NormalizationFlags::NULL_BYTE)
+                                            });
                                         } else {
                                             input.push(byte as char);
                                         }
@@ -255,7 +259,9 @@ impl InputNormalizer {
                                     if let Some(code_point) = hex_chars_to_u32(&chars[i + 2..i + 6])
                                     {
                                         if code_point == 0 {
-                                            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                            NORMALIZATION_FLAGS.with(|f| {
+                                                f.borrow_mut().insert(NormalizationFlags::NULL_BYTE)
+                                            });
                                         } else {
                                             if let Some(ch) = char::from_u32(code_point) {
                                                 input.push(ch);
@@ -287,14 +293,20 @@ impl InputNormalizer {
                             '0'..='7' => {
                                 let mut octal = String::new();
                                 let mut j = i + 1;
-                                while j < chars.len() && j < i + 4 && chars[j] >= '0' && chars[j] <= '7' {
+                                while j < chars.len()
+                                    && j < i + 4
+                                    && chars[j] >= '0'
+                                    && chars[j] <= '7'
+                                {
                                     octal.push(chars[j]);
                                     j += 1;
                                 }
                                 if !octal.is_empty() {
                                     if let Ok(byte) = u8::from_str_radix(&octal, 8) {
                                         if byte == 0 {
-                                            NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                            NORMALIZATION_FLAGS.with(|f| {
+                                                f.borrow_mut().insert(NormalizationFlags::NULL_BYTE)
+                                            });
                                         } else {
                                             input.push(byte as char);
                                         }
@@ -330,7 +342,8 @@ impl InputNormalizer {
                     if found_semicolon {
                         if let Some(ch) = self.decode_html_entity_simple(&entity_chars) {
                             if ch == '\0' {
-                                NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                                NORMALIZATION_FLAGS
+                                    .with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                             } else {
                                 input.push(ch);
                             }
@@ -347,7 +360,8 @@ impl InputNormalizer {
                     i = j;
                 }
                 '\0' => {
-                    NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                    NORMALIZATION_FLAGS
+                        .with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
                     i += 1;
                 }
                 c => {
@@ -530,14 +544,18 @@ impl InputNormalizer {
 
             if let Some(n) = normalized {
                 if n != *c {
-                    NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::HOMOGLYPH));
+                    NORMALIZATION_FLAGS
+                        .with(|f| f.borrow_mut().insert(NormalizationFlags::HOMOGLYPH));
                 }
                 if n.is_whitespace() {
                     input.push(' ');
                 } else if n.is_ascii() {
                     input.push(n);
                 } else {
-                    NORMALIZATION_FLAGS.with(|f| f.borrow_mut().insert(NormalizationFlags::UNICODE_NORMALIZED));
+                    NORMALIZATION_FLAGS.with(|f| {
+                        f.borrow_mut()
+                            .insert(NormalizationFlags::UNICODE_NORMALIZED)
+                    });
                     let nfkc: Cow<'_, str> = n.nfkc().collect();
                     input.push_str(&nfkc);
                 }
@@ -709,7 +727,7 @@ impl<'a> NormalizedInputs<'a> {
     ) -> Self {
         let path_norm = path.map(|p| normalizer.normalize(p));
         let path_raw = path.map(Cow::Borrowed);
-        
+
         let query_string_norm = query_string.map(|qs| normalizer.normalize(qs));
         let query_string_raw = query_string.map(Cow::Borrowed);
 
@@ -732,7 +750,7 @@ impl<'a> NormalizedInputs<'a> {
                     pooled.clear();
                     pooled.extend_from_slice(s.as_bytes());
                     NormalizedData::Pooled(pooled)
-                },
+                }
                 NormalizedData::Pooled(p) => NormalizedData::Pooled(p),
                 NormalizedData::Owned(o) => NormalizedData::Owned(o),
             };
@@ -875,9 +893,14 @@ mod tests {
         let input = "%3Cscript%3E";
         let result = normalizer.normalize(input);
         match result.normalized {
-            NormalizedData::Borrowed(_) => panic!("Expected NormalizedData::Pooled or Owned for modified input"),
+            NormalizedData::Borrowed(_) => {
+                panic!("Expected NormalizedData::Pooled or Owned for modified input")
+            }
             NormalizedData::Owned(s) => assert_eq!(s, "<script>"),
-            NormalizedData::Pooled(p) => assert_eq!(unsafe { std::str::from_utf8_unchecked(p.as_slice()) }, "<script>"),
+            NormalizedData::Pooled(p) => assert_eq!(
+                unsafe { std::str::from_utf8_unchecked(p.as_slice()) },
+                "<script>"
+            ),
         }
     }
 

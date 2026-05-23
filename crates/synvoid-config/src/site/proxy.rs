@@ -12,7 +12,9 @@ pub enum WasmOnError {
     FailClosed,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Copy, Default, JsonSchema, ToSchema, PartialEq, Eq,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum BodyBufferingPolicy {
     #[default]

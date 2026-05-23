@@ -772,7 +772,10 @@ impl RecordStoreManager {
                         self.node_role.bits(),
                         timestamp
                     );
-                    (signer.sign(content.as_bytes()), Some(signer.get_public_key()))
+                    (
+                        signer.sign(content.as_bytes()),
+                        Some(signer.get_public_key()),
+                    )
                 }
                 None => (Vec::new(), None),
             }

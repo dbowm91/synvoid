@@ -307,7 +307,9 @@ impl MeshTransport {
             if content.is_empty() {
                 false
             } else {
-                match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key.unwrap_or_default()) {
+                match base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(signer_public_key.unwrap_or_default())
+                {
                     Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
                         let mut pk_array = [0u8; 32];
                         pk_array.copy_from_slice(&pk_bytes);

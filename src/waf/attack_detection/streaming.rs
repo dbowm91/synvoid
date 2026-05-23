@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::waf::attack_detection::{AttackDetectionResult, AttackDetector};
 use crate::buffer::{BufferPool, PooledBuf};
+use crate::waf::attack_detection::{AttackDetectionResult, AttackDetector};
 
 const DEFAULT_CHUNK_SIZE: usize = 4096;
 const DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024;
@@ -115,10 +115,10 @@ impl StreamingWafCore {
 
     fn process_regular_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
         // Use fragmented scan to avoid merging buffers
-        if let Some(result) = self.inner.check_body_fragments(&[
-            self.state.trailing_window.as_slice(),
-            chunk,
-        ]) {
+        if let Some(result) = self
+            .inner
+            .check_body_fragments(&[self.state.trailing_window.as_slice(), chunk])
+        {
             self.state.last_result = Some(result.clone());
             return StreamingWafDecision::Block(
                 result.get_block_status().unwrap_or(403),
@@ -147,7 +147,9 @@ impl StreamingWafCore {
         while current_pos < total_len {
             match self.state.multipart_state {
                 MultipartState::LookingForBoundary => {
-                    if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary) {
+                    if let Some(pos) =
+                        Self::find_in_fragments(&combined_view, current_pos, boundary)
+                    {
                         self.state.multipart_state = MultipartState::ReadingHeaders;
                         self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
@@ -190,7 +192,8 @@ impl StreamingWafCore {
                     }
                 }
                 MultipartState::ReadingField => {
-                    if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary)
+                    if let Some(pos) =
+                        Self::find_in_fragments(&combined_view, current_pos, boundary)
                     {
                         let field_len = pos - current_pos;
                         let mut field_fragment = BufferPool::acquire(field_len);
@@ -247,7 +250,8 @@ impl StreamingWafCore {
 
                         // Update field trailing window
                         self.state.field_trailing_window.clear();
-                        let window_start = field_fragment.len().saturating_sub(TRAILING_WINDOW_SIZE);
+                        let window_start =
+                            field_fragment.len().saturating_sub(TRAILING_WINDOW_SIZE);
                         self.state
                             .field_trailing_window
                             .extend_from_slice(&field_fragment[window_start..]);
@@ -256,7 +260,9 @@ impl StreamingWafCore {
                     }
                 }
                 MultipartState::SkippingFile => {
-                    if let Some(pos) = Self::find_in_fragments(&combined_view, current_pos, boundary) {
+                    if let Some(pos) =
+                        Self::find_in_fragments(&combined_view, current_pos, boundary)
+                    {
                         self.state.multipart_state = MultipartState::ReadingHeaders;
                         self.state.multipart_header_buffer.clear();
                         current_pos = pos + boundary.len();
@@ -277,10 +283,12 @@ impl StreamingWafCore {
         // Perform the copy while combined_view is still valid
         let mut temp_buf = BufferPool::acquire(window_len);
         Self::copy_from_fragments(&mut temp_buf, &combined_view, window_start, window_len);
-        
+
         // Update trailing window
         self.state.trailing_window.clear();
-        self.state.trailing_window.extend_from_slice(temp_buf.as_slice());
+        self.state
+            .trailing_window
+            .extend_from_slice(temp_buf.as_slice());
 
         StreamingWafDecision::Continue
     }
@@ -288,9 +296,13 @@ impl StreamingWafCore {
     fn find_in_fragments(fragments: &[&[u8]; 2], start_pos: usize, needle: &[u8]) -> Option<usize> {
         let frag0_len = fragments[0].len();
         let total_len = frag0_len + fragments[1].len();
-        
-        if needle.is_empty() { return Some(start_pos); }
-        if start_pos + needle.len() > total_len { return None; }
+
+        if needle.is_empty() {
+            return Some(start_pos);
+        }
+        if start_pos + needle.len() > total_len {
+            return None;
+        }
 
         for i in start_pos..=(total_len - needle.len()) {
             let mut matched = true;
@@ -306,12 +318,19 @@ impl StreamingWafCore {
                     break;
                 }
             }
-            if matched { return Some(i); }
+            if matched {
+                return Some(i);
+            }
         }
         None
     }
 
-    fn copy_from_fragments(dest: &mut PooledBuf, fragments: &[&[u8]; 2], start_pos: usize, len: usize) {
+    fn copy_from_fragments(
+        dest: &mut PooledBuf,
+        fragments: &[&[u8]; 2],
+        start_pos: usize,
+        len: usize,
+    ) {
         let frag0_len = fragments[0].len();
         let end_pos = start_pos + len;
 
