@@ -201,10 +201,12 @@ SynVoid supports multiple backend types natively.
 | **PHP** | `src/php/` | PHP-FPM via FastCGI |
 | **FastCGI** | `src/fastcgi/` | Generic FastCGI backend support |
 | **CGI** | `src/cgi/` | CGI script execution |
-| **Serverless** | `src/serverless/` | WASM runtime with instance pooling |
+| **Serverless** | `src/serverless/` | WASM runtime with instance pooling (mesh feature) |
 | **Spin** | `src/spin/` | Fermyon Spin framework support (requires manual app registration via Admin API) |
 | **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading |
 | **Static Worker** | `src/worker/` | CSS/JS minification, compression |
+
+^[1: Four handlers (Serverless, Static Worker, Plugin, and Mesh integration in Worker) require the `mesh` feature flag and are not available in core builds.]
 
 ### App Handler Documentation
 

@@ -28,6 +28,7 @@ Features are additive - DNS, ICMP-filter, and Mesh modules compile only when res
 
 | File | Responsibility |
 |------|----------------|
+| `lib.rs` | ConfigManager at lines 113-233 |
 | `main_config.rs` | Root configuration container for the entire SynVoid server |
 | `site/mod.rs` | Site-level configuration (per-domain routing, upstream, listen) |
 | `site/app_server.rs` | Granian Python ASGI/RSGI/WSGI server site config |
@@ -135,7 +136,7 @@ pub struct ConfigManager {
 
 - `load_main()` - loads server-wide configuration
 - `load_site()` - loads a single domain config
-- `discover_sites()` - auto-discovers all `*.toml` in `sites/` directory
+- `discover_sites()` - auto-discovers all `*.toml` in `sites/` directory, returns `Vec<(String, Result<SiteConfig, String>)>` with site ID and result
 - `reload_site()` / `reload_all()` - hot-reload support
 - `get_site()` - domain-based lookup
 
@@ -231,6 +232,14 @@ Provides abstraction over serialization with **postcard** as the primary backend
 ## Key Architectural Patterns
 
 1. **Optional Fields Pattern**: Site config uses `Option<T>` for all optional fields, resolved to concrete types at runtime with defaults via a `*_config()` method.
+
+2. **Config Propagation Pattern**: When adding new fields to `SiteAppServerConfig`, ensure propagation to `AppServerConfig` via `SiteConfig::app_server_config()` at `site/mod.rs:208-261`. Each field in `SiteAppServerConfig` (all `Option<T>`) must have a corresponding resolved field in `AppServerConfig` (with concrete defaults). Example pattern:
+   ```rust
+   // SiteAppServerConfig: Optional field
+   pub require_hashes: Option<bool>,
+   // SiteConfig::app_server_config(): Resolved propagation
+   require_hashes: site_config.require_hashes.unwrap_or(false),
+   ```
 
 2. **Feature-Gated Compilation**: Large subsystems (DNS, Mesh) compile only when features enabled, but core HTTP server always compiles.
 
