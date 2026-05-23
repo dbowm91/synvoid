@@ -79,12 +79,8 @@ cargo check --no-default-features --features mesh,dns
 | `src/http/shared_handler.rs` | `src/http/server.rs:4532` (contains `collect_body_with_chunk_waf` and `stream_body_with_waf`) |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
-| `tests/security_regression.rs` | `tests/security_regression.rs` — Security regression tests for header sanitization |
-| `src/mesh/dht/quorum.rs:339-386` | Quorum Manager race condition - ✅ FIXED: Uses oneshot channel with Result tracking |
-| `src/mesh/dht/record_store_message.rs:1319-1345` | check_quorum_completion treats failed Raft writes as timeout - MESH-11 ✅ FIXED |
-| `src/supervisor/api.rs:114-129` | gRPC server binds to localhost only for local IPC - TLS not required |
-| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
+| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change | |
 
 ## Modular Agent Guidance
 
@@ -186,30 +182,28 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 5. **SAFE_HEADERS count is 28** - `src/proxy/cache.rs:97-126` has 28 headers, not 27 or 29.
 
-6. **Plugin instance pool bugs** - `src/plugin/instance_pool.rs` had two bugs that are now fixed:
-   - `prepare_for_request()` didn't reset `body_receiver` - caused streaming failures on pooled instances
-   - `warmup()` only linked `abort` and `check_timeout` - missing 5 functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`
+6. **Spin routing uses longest-prefix-match** - `src/spin/runtime.rs:271-285` collects all route matches and returns the longest prefix match.
 
-7. **Spin find_route uses longest-prefix-match** - `src/spin/runtime.rs:271-285` collects all route matches and returns the longest prefix match.
+7. **CPU affinity pinning is Linux-only, not automatic** - `src/worker/unified_server.rs:205-208` shows CPU affinity only works on Linux. On macOS/BSD it logs a warning but does nothing. Must be explicitly configured via `cpu_affinity` parameter, not automatic.
 
-8. **WAF fast-path bypass** - `src/waf/attack_detection/mod.rs:425-435` had early return when fast-path was safe, but request smuggling patterns were NOT in fast_path_patterns. Fixed by adding smuggling indicators (`transfer-encoding`, `content-length`) and expanding patterns from 13 to 38.
+8. **macOS Seatbelt sandbox requires feature flag** - `src/platform/sandbox.rs` has `macos-sandbox` feature gate. Enable the feature for actual enforcement on macOS.
 
-9. **Flood protector not integrated** - `src/waf/mod.rs:438-508` flood_protector existed but was NOT called during request pipeline. Now integrated into `check_request_full()` pipeline.
+9. **ConfigManager is in synvoid-config crate** - `ConfigManager` is at `crates/synvoid-config/src/lib.rs:113`, not in `main_config.rs`.
 
-10. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp. Known architectural limitation.
+10. **MeshProxy is a key routing component** - `src/mesh/proxy.rs:63` (1996 lines) handles backend routing via mesh but wasn't documented in architecture overview.
 
-11. **Spin routing IS integrated** - Spin routing is integrated into HTTP dispatch at `src/http/server.rs:2417-2489`. When `BackendType::Spin` is configured, requests go through `SpinHttpHandler`. Spin requires manual app registration via Admin API.
+11. **ErasedHttpClient integration is incomplete** - `use_erased_client` is hardcoded to `false` at `src/http/server.rs:3302`. The ErasedHttpClient is cloned throughout but never actually called in the request path. Phase 9 integration was never completed. See `skills/erased_http_client.md`.
 
-12. **CPU affinity pinning is Linux-only, not automatic** - `src/worker/unified_server.rs:205-208` shows CPU affinity only works on Linux. On macOS/BSD it logs a warning but does nothing. Must be explicitly configured via `cpu_affinity` parameter, not automatic.
+12. **AXFR transfer incomplete** - `build_axfr_record()` at `src/dns/transfer.rs:829-878` lacks SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA support.
 
-13. **macOS Seatbelt sandbox is planned, not implemented** - `src/platform/sandbox.rs` does not have a `macos-sandbox` feature gate. The seatbelt implementation is planned but not yet implemented.
+## Known Deferred Items
 
-14. **ConfigManager is in synvoid-config crate** - `ConfigManager` is at `crates/synvoid-config/src/lib.rs:113`, not in `main_config.rs`.
+Some items are intentionally deferred due to architectural complexity:
 
-15. **MeshProxy is a key routing component** - `src/mesh/proxy.rs:63` (1996 lines) handles backend routing via mesh but wasn't documented in architecture overview.
-
-16. **ErasedHttpClient integration is incomplete** - `use_erased_client` is hardcoded to `false` at `src/http/server.rs:3302`. The ErasedHttpClient is cloned throughout but never actually called in the request path. Phase 9 integration was never completed.
-
-## Skills Reference
+| ID | Issue | Reason |
+|----|-------|--------|
+| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
+| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete, requires Raft migration |
+| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation - buffers entire stdout |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
