@@ -70,6 +70,8 @@ pub struct FunctionDefinition {
     pub min_tier_level: Option<u32>,
     #[serde(default)]
     pub public_function: Option<bool>,
+    #[serde(default)]
+    pub allowed_dht_prefixes: Vec<String>,
 }
 
 fn default_handler_name() -> String {

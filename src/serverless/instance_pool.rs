@@ -187,7 +187,7 @@ impl InstancePool {
                 max_instances: function_definition.max_instances.unwrap_or(10),
                 memory_budget_mb: None,
                 wasi_enabled: false,
-                allowed_dht_prefixes: Vec::new(),
+                allowed_dht_prefixes: function_definition.allowed_dht_prefixes.clone(),
             },
         )?;
 
