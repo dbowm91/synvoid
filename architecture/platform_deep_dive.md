@@ -59,7 +59,7 @@ platform().supports_reuse_port()         // Linux/Macos/FreeBSD
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
-| macOS | **Seatbelt** | Sandboxed profile compilation (planned feature, not yet implemented) |
+| macOS | **Seatbelt** | Sandboxed profile compilation (requires `macos-sandbox` feature) |
 | Windows | **Job Objects + DACL** | Process memory limits, file security descriptors |
 
 ---
@@ -79,7 +79,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `ipc_signed.rs` | HMAC-SHA3-256 signing, nonce replay protection, timestamp validation |
 | `ipc_transport.rs` | Async IPC transport (`IpcStream`, `IpcListener`, `IpcEndpoint`) |
 | `ipc_pool.rs` | Connection pooling per endpoint with statistics |
-| `ipc_rate_limit.rs` | Token bucket rate limiting (global + per-worker) |
+| `ipc_rate_limit.rs` | Token bucket rate limiting (global + per-connection) |
 | `socket_fd.rs` | Unix FD passing via `SCM_Rights`, `SocketHolder` for batch handoff |
 | `manager.rs` | `ProcessManager` - spawn/monitor/restart workers |
 | `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
@@ -205,7 +205,7 @@ run_master_mode()
 ├── setup_panic_handler()
 ├── ConfigManager::load_main()
 ├── Tokio multi-thread runtime
-├── Post-quantum TLS initialization
+├── Post-quantum TLS initialization (if post-quantum feature enabled)
 ├── Site discovery and loading
 ├── BlockStore initialization
 ├── RuleFeedManager (if threat intel enabled)
@@ -215,7 +215,9 @@ run_master_mode()
 ├── StaticWorker spawning
 ├── setup_signal_handlers()
 ├── start_health_monitor()
+├── Blocklist persistence loop (periodic trigger_blocklist_persist)
 ├── start_admin_server()
+├── MIME type loading/reloading (on ReloadConfig command)
 └── event_rx loop
 ```
 
@@ -232,38 +234,38 @@ SynVoid supports two deployment modes:
 ### Consolidated Mode (Recommended)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Supervisor Process                           │
-│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────┐   │
-│  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API    │   │
-│  │  - Config     │  │  - Workers[]   │  │  (localhost:50051)    │   │
-│  │  - BlockStore│  │  - Unified[]   │  │                      │   │
-│  │  - Trackers  │  │  - Static      │  │                      │   │
-│  └──────────────┘  └─────────────────┘  └───────────────────────┘   │
-│         │                    │                      │                │
-│         │         ┌──────────┴──────────┐            │                │
-│         │         │   IPC Listener      │            │                │
-│         │         │ (Unix Domain Socket)│            │                │
-│         └─────────┼─────────────────────┼────────────┘                │
-│                   │                     │                             │
-│                   └──────────┬──────────┘                             │
-│                              │                                        │
-│     ┌────────────────────────▼────────────────────────┐             │
-│     │              Worker Processes                     │             │
-│     │  ┌─────────────────────────────────────────────┐  │             │
-│     │  │ UnifiedServerWorker                         │  │             │
-│     │  │ (HTTP/HTTPS/HTTP3 + WAF + Proxy)           │  │             │
-│     │  │ (tokio async loop, CPU-affinity pinned)     │  │             │
-│     │  └─────────────────────────────────────────────┘  │             │
-│     │  ┌─────────────────────────────────────────────┐  │             │
-│     │  │ StaticWorker                                │  │             │
-│     │  │ (CSS/JS minification, compression)          │  │             │
-│     │  └─────────────────────────────────────────────┘  │             │
-│     └─────────────────────────────────────────────────────┘             │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Supervisor Process                                   │
+│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────┐  ┌───────────┐ │
+│  │ SupervisorState │  │ ProcessManager │  │ Admin Server  │  │ gRPC API  │ │
+│  │  - Config     │  │  - Workers[]   │  │ (port from    │  │(localhost │ │
+│  │  - BlockStore│  │  - Unified[]   │  │  config)      │  │ :50051)   │ │
+│  │  - Trackers  │  │  - Static      │  │               │  │           │ │
+│  └──────────────┘  └─────────────────┘  └───────────────┘  └───────────┘ │
+│         │                    │                    │                │          │
+│         │         ┌──────────┴──────────┐        │                │          │
+│         │         │   IPC Listener      │        │                │          │
+│         │         │ (Unix Domain Socket) │        │                │          │
+│         └─────────┼─────────────────────┼────────┘                │          │
+│                   │                     │                         │          │
+│                   └──────────┬──────────┘                         │          │
+│                              │                                    │          │
+│     ┌────────────────────────▼────────────────────────────────────▼────┐   │
+│     │                    Worker Processes                              │   │
+│     │  ┌─────────────────────────────────────────────────────────────┐ │   │
+│     │  │ UnifiedServerWorker                                         │ │   │
+│     │  │ (HTTP/HTTPS/HTTP3 + WAF + Proxy)                           │ │   │
+│     │  │ (tokio async loop, CPU-affinity pinned)                     │ │   │
+│     │  └─────────────────────────────────────────────────────────────┘ │   │
+│     │  ┌─────────────────────────────────────────────────────────────┐ │   │
+│     │  │ StaticWorker                                                │ │   │
+│     │  │ (CSS/JS minification, compression)                          │ │   │
+│     │  └─────────────────────────────────────────────────────────────┘ │   │
+│     └──────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Legend:** Supervisor spawns Workers directly. No Master process. Use this for single-host deployments.
+**Legend:** Supervisor spawns Workers directly and runs Admin Server. No Master process. Use this for single-host deployments.
 
 ### Traditional Mode (Legacy)
 
@@ -325,9 +327,9 @@ SynVoid supports two deployment modes:
 | **Replay Protection** | Sharded nonce cache (DashMap), 60s window |
 | **Constant-time Compare** | `subtle::ConstantTimeEq` for HMAC |
 | **Key Injection** | Temp file with 0o600 perms, not env var |
-| **Sandboxing** | Landlock/Capsicum/Pledge/Seatbelt per-platform |
+| **Sandboxing** | Landlock/Capsicum/Pledge (macOS Seatbelt requires `macos-sandbox` feature) |
 | **Strict Sandbox** | Requires read-path allowlist support |
-| **IPC Rate Limiting** | Token bucket + per-worker isolation |
+| **IPC Rate Limiting** | Token bucket + per-connection (via worker_id) |
 | **FD Passing** | Unix-only SCM_Rights, max 254 FDs |
 | **Message Validation** | String length limits, path traversal checks |
 
