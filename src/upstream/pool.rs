@@ -2,8 +2,10 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use crate::RunningFlag;
+use crate::upstream::health::{HealthCheckConfig, HealthChecker};
 
 static GLOBAL_POOL_REGISTRY: LazyLock<DashMap<String, Arc<UpstreamPool>>> =
     LazyLock::new(DashMap::new);
@@ -377,6 +379,8 @@ pub struct UpstreamPool {
     backends: Arc<RwLock<Vec<Backend>>>,
     algorithm: LoadBalanceAlgorithm,
     round_robin_index: Arc<std::sync::atomic::AtomicUsize>,
+    health_check_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    health_check_config: Option<HealthCheckConfig>,
 }
 
 impl UpstreamPool {
@@ -387,6 +391,8 @@ impl UpstreamPool {
             backends: Arc::new(RwLock::new(backends)),
             algorithm,
             round_robin_index: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            health_check_task: RwLock::new(None),
+            health_check_config: None,
         }
     }
 
@@ -405,6 +411,8 @@ impl UpstreamPool {
             backends: Arc::new(RwLock::new(backends)),
             algorithm,
             round_robin_index: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            health_check_task: RwLock::new(None),
+            health_check_config: None,
         }
     }
 
@@ -742,6 +750,32 @@ impl UpstreamPool {
             backend.is_healthy.set(false);
             tracing::info!("Backend {} marked unhealthy", url);
         });
+    }
+
+    pub fn enable_health_check(&self, config: HealthCheckConfig) {
+        *self.health_check_config.write() = Some(config);
+    }
+
+    pub fn start_health_check(self: Arc<Self>) {
+        let config = match self.health_check_config.read().clone() {
+            Some(c) => c,
+            None => return,
+        };
+
+        let pool = Arc::clone(&self);
+        let handle = tokio::spawn(async move {
+            let health_checker = HealthChecker::new(config);
+            health_checker.register_pool(pool.clone()).await;
+            health_checker.start().await;
+        });
+
+        *self.health_check_task.write() = Some(handle);
+    }
+
+    pub fn stop_health_check(&self) {
+        if let Some(handle) = self.health_check_task.write().take() {
+            handle.abort();
+        }
     }
 }
 
