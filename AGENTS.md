@@ -208,6 +208,8 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 15. **MeshProxy is a key routing component** - `src/mesh/proxy.rs:63` (1996 lines) handles backend routing via mesh but wasn't documented in architecture overview.
 
+16. **ErasedHttpClient integration is incomplete** - `use_erased_client` is hardcoded to `false` at `src/http/server.rs:3302`. The ErasedHttpClient is cloned throughout but never actually called in the request path. Phase 9 integration was never completed.
+
 ## Skills Reference
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
