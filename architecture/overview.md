@@ -6,12 +6,14 @@ SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant re
 
 - [System Architecture](#system-architecture)
 - [Process Model](#process-model)
-- [Core Modules](#core-modules)
+- [HTTP Stack](#http-stack)
 - [Security & WAF](#security--waf)
-- [Networking](#networking)
+- [Proxy & Upstream](#proxy--upstream)
 - [Application Handlers](#application-handlers)
-- [Distributed Systems](#distributed-systems)
-- [Infrastructure](#infrastructure)
+- [TLS & Cryptography](#tls--cryptography)
+- [DNS Server](#dns-server)
+- [Mesh Networking](#mesh-networking)
+- [Platform & Infrastructure](#platform--infrastructure)
 - [Deep Dive Index](#deep-dive-index)
 
 ---
@@ -80,37 +82,63 @@ The legacy **Overseer** process (`src/overseer/`) and **Master** process (`src/m
 
 ---
 
-## Core Modules
-
-### HTTP Stack
+## HTTP Stack
 
 | Module | Path | Purpose |
 |--------|------|---------|
-| **HTTP Server** | `src/http/` | HTTP/1.1, HTTP/2 server, request parsing, routing, response handling |
+| **HTTP Server** | `src/http/` | HTTP/1.1, HTTP/2 server, request parsing, routing, response handling, WebDAV |
 | **HTTP/3** | `src/http3/` | HTTP/3 QUIC handling, h3 protocol implementation |
 | **HTTP Client** | `src/http_client/` | Upstream proxy connections, connection pooling, streaming |
-| **Proxy** | `src/proxy/` | Reverse proxy, upstream pool, load balancing, caching, retry logic |
+| **Listener** | `src/listener/` | Socket binding, accepting, connection limiting |
+| **Protocol** | `src/protocol/` | Protocol detection and handling |
 
-### TLS & Security Transport
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| **TLS** | `src/tls/` | TLS termination, ACME certificate management, SNI peeking |
-
-### Request Routing
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Router** | `src/router.rs` | Domain-based routing to sites, Host header matching, wildcards |
-| **Upstream** | `src/upstream/` | Backend address management, health checks, load balancing algorithms |
-
-### Core Documentation
+### HTTP Documentation
 
 | Document | Description |
 |----------|-------------|
 | [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
-| [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
+
+---
+
+## TLS & Cryptography
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| **TLS** | `src/tls/` | TLS termination, ACME/Let's Encrypt certificate management, SNI peeking |
+| **WASM PoW** | `src/wasm_pow/` | WASM-based proof-of-work with post-quantum key exchange |
+
+### Cryptographic Standards
+
+| Feature | Purpose |
+|---------|---------|
+| **Post-Quantum TLS** | ML-KEM-768 (Kyber) hybrid key exchange via `post-quantum` feature |
+| **Post-Quantum Mesh** | ML-DSA-44 signatures for mesh messages via `pqc-mesh` feature |
+| **Hashing** |Blake3 for fast checksums, SHA-3 for HMAC |
+
+### TLS Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Networking Deep Dive](networking_deep_dive.md) | TLS termination, certificate management |
+| [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Post-quantum crypto, trust models |
+
+---
+
+## Proxy & Upstream
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| **Proxy** | `src/proxy/` | Reverse proxy, upstream pool, load balancing, caching, retry logic |
+| **Proxy Cache** | `src/proxy_cache/` | Response caching layer |
+| **Upstream** | `src/upstream/` | Backend address management, health checks, load balancing |
+| **Router** | `src/router.rs` | Domain-based routing to sites, Host header matching, wildcards |
+
+### Proxy Documentation
+
+| Document | Description |
+|----------|-------------|
 | [Proxy & Upstream Deep Dive](proxy_deep_dive.md) | Proxy server, connection pooling, retry logic, cache governor |
+| [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
 
 ---
 
@@ -161,36 +189,6 @@ Request → Rate Limiting → Bot Detection → Attack Detection → Challenge �
 
 ---
 
-## Networking
-
-### Protocol Support
-
-| Protocol | Module | Path |
-|----------|--------|------|
-| HTTP/1.1 | `src/http/` | Legacy persistent connections |
-| HTTP/2 | `src/http/` | Multiplexed streams |
-| HTTP/3 | `src/http3/` | QUIC-based, 0-RTT |
-| TLS 1.2/1.3 | `src/tls/` | Termination, mutual TLS |
-| WebSocket | `src/http/` | Upgrade handling |
-| FastCGI | `src/fastcgi/` | PHP-FPM, Python backends |
-| CGI | `src/cgi/` | Common Gateway Interface |
-| QUIC Tunnel | `src/upstream/` | Upstream QUIC proxy |
-
-### Networking Infrastructure
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Listener** | `src/listener/` | Socket binding, accepting, connection limiting |
-| **Protocol** | `src/protocol/` | Protocol detection and handling |
-
-### Networking Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
-
----
-
 ## Application Handlers
 
 SynVoid supports multiple backend types natively.
@@ -220,38 +218,16 @@ SynVoid supports multiple backend types natively.
 
 ---
 
-## Distributed Systems
-
-### Mesh Networking (Optional - `mesh` feature)
-
-SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and threat intelligence sharing.
+## DNS Server (Optional - `dns` feature)
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| **DHT** | `src/mesh/dht/` | Distributed hash table for peer discovery |
-| **Raft** | `src/mesh/raft/` | Consensus for global node state |
-| **Transport** | `src/mesh/transport/` | QUIC/WireGuard transport layer |
-| **Threat Intel** | `src/mesh/` | Distributed threat intelligence |
-| **YARA Rules** | `src/mesh/` | Rule distribution and sync |
-| **Mesh Backend** | `src/mesh/backend.rs` | Backend routing via mesh |
-| **MeshProxy** | `src/mesh/proxy.rs` | Backend routing via mesh, peer selection, policy enforcement |
-
-### Node Roles
-
-| Role | Description |
-|------|-------------|
-| **Global Node** | Full mesh participant, Raft consensus, DNSSEC signing |
-| **Edge Node** | PoW enforcement, geographic distribution |
-| **Origin Node** | Backend origin, limited mesh participation |
-| **Composite Roles** | Global+Edge, Global+Origin, Edge+Origin |
-
-### DNS (Optional - `dns` feature)
-
-| Component | Path | Purpose |
-|-----------|------|---------|
-| **DNS Server** | `src/dns/` | Authoritative DNS, DNSSEC signing |
+| **DNS Server** | `src/dns/` | Authoritative DNS server with DNSSEC signing |
 | **Recursive Resolver** | `src/dns/` | Recursive resolution with cache |
-| **TSIG** | `src/dns/` | Transaction signature authentication |
+| **TSIG** | `src/dns/` | Transaction signature authentication for dynamic updates |
+| **Zone Transfer** | `src/dns/transfer.rs` | AXFR/IXFR zone transfers (partial implementation) |
+| **DNSSEC** | `src/dns/dnssec*.rs` | Signing, validation, key management |
+| **Encrypted DNS** | `src/dns/doh.rs`, `dot.rs`, `doq.rs` | DNS-over-HTTPS, DNS-over-TLS, DNS-over-QUIC |
 
 ### Tunnel & VPN
 
@@ -260,17 +236,15 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and t
 | **Tunnel** | `src/tunnel/` | QUIC tunnel, WireGuard VPN |
 | **VPN Client** | `src/vpn_client/` | VPN client functionality |
 
-### Distributed Documentation
+### DNS Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Mesh Deep Dive](mesh_deep_dive.md) | DHT, Raft, transport, threat intelligence |
-| [DNS & Tunnel Deep Dive](dns_deep_dive.md) | DNS server, DNSSEC, TSIG, tunnel protocols |
-| [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Post-quantum key exchange |
+| [DNS & Tunnel Deep Dive](dns_deep_dive.md) | DNS server, DNSSEC, TSIG, tunnel protocols, VPN client |
 
 ---
 
-## Infrastructure
+## Platform & Infrastructure
 
 ### Observability
 
@@ -283,16 +257,16 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and t
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| **Config Crate** | `crates/synvoid-config/` | Strongly-typed configuration structs |
-| **Utils Crate** | `crates/synvoid-utils/` | Buffer pooling, serialization |
+| **Config Crate** | `crates/synvoid-config/` | Strongly-typed configuration structs, validation |
+| **Utils Crate** | `crates/synvoid-utils/` | Buffer pooling with `synvoid_utils::buffer::pool`, serialization |
 
 ### Platform Abstraction
 
 | Module | Path | Purpose |
 |--------|------|---------|
 | **Platform** | `src/platform/` | Cross-platform abstractions (Linux, macOS, BSD, Windows) |
-| **Process** | `src/process/` | IPC, Unix domain sockets, named pipes |
-| **Supervisor** | `src/supervisor/` | Process supervision, health monitoring |
+| **Process** | `src/process/` | IPC, Unix domain sockets, named pipes, message framing |
+| **Supervisor** | `src/supervisor/` | Process supervision, health monitoring, zero-downtime upgrades |
 
 ### Utilities
 
@@ -319,7 +293,7 @@ This overview serves as an index for detailed documentation. Each link below pro
 |----------|----------|----------|
 | **Process Model** | [Process Lifecycle](process_lifecycle.md) | Overseer, Supervisor, Worker hierarchy, zero-downtime upgrades |
 | **Worker Architecture** | [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
-| **Networking** | [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
+| **HTTP Stack** | [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
 | **Request Routing** | [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
 | **Proxy & Upstream** | [Proxy & Upstream Deep Dive](proxy_deep_dive.md) | Proxy server, connection pooling, retry logic, cache governor |
 | **Security/WAF** | [WAF Deep Dive](waf_deep_dive.md) | WAF pipeline, attack detection, bot mitigation, challenges |
@@ -332,6 +306,69 @@ This overview serves as an index for detailed documentation. Each link below pro
 | **Configuration** | [Config & Utils Deep Dive](config_deep_dive.md) | Configuration hierarchy, buffer pool, serialization |
 | **Post-Quantum & Trust** | [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | PQC key exchange, ML-DSA/ML-KEM, trust models |
 | **Review Summary** | [Deep Dive Review](deep_dive_review.md) | Cross-cutting findings, architectural analysis |
+
+---
+
+## Mesh Networking (Optional - `mesh` feature)
+
+SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and threat intelligence sharing.
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| **DHT** | `src/mesh/dht/` | Distributed hash table for peer discovery, Kademlia routing |
+| **Raft** | `src/mesh/raft/` | Consensus for global node state, leader election |
+| **Transport** | `src/mesh/transport/` | QUIC-based transport with TLS 1.3 |
+| **Threat Intel** | `src/mesh/` | Distributed threat intelligence sharing |
+| **YARA Rules** | `src/mesh/` | Rule distribution and synchronization |
+| **MeshBackend** | `src/mesh/backend.rs` | Backend routing via mesh network |
+| **MeshProxy** | `src/mesh/proxy.rs` | Backend routing via mesh (1996 lines, key routing component) |
+| **Peer Auth** | `src/mesh/peer_auth.rs` | Peer authentication with edge/global node verification |
+| **Protocol** | `src/mesh/protocol.rs` | Mesh protocol messages and encoding |
+
+### Key Mesh Submodules (`src/mesh/`)
+
+```
+mesh/
+├── dht/                    # Distributed Hash Table
+│   ├── mod.rs
+│   ├── bucket.rs           # K-bucket maintenance
+│   ├── capability_access.rs # Capability-based access control
+│   ├── hierarchical_routing.rs # Bloom filter routing
+│   └── signed.rs          # Signed DHT entries, quorum verification
+├── raft/                   # Raft consensus (incomplete)
+│   ├── log.rs
+│   ├── state_machine.rs
+│   └── types.rs
+├── transport/              # Transport layer
+│   ├── mod.rs
+│   ├── peer.rs             # Peer-to-peer transport
+│   ├── org.rs              # Organization-level transport
+│   ├── global.rs           # Global node transport
+│   └── dns.rs              # DNS transport
+├── proxy.rs                # Mesh proxy routing (key routing component)
+├── backend.rs              # Mesh backend
+├── protocol.rs             # Protocol message definitions
+├── threat_intel.rs         # Threat intelligence handling
+├── peer_auth.rs            # Peer authentication
+├── audit.rs                # Distributed audit logging
+├── certificate.rs          # Certificate management
+└── signed.rs               # Signing utilities
+```
+
+### Mesh Node Roles
+
+| Role | Description |
+|------|-------------|
+| **Global Node** | Full mesh participant, Raft consensus, DNSSEC signing, threat intel authority |
+| **Edge Node** | PoW enforcement, geographic distribution, WAF enforcement |
+| **Origin Node** | Backend origin, announces routes through mesh |
+| **Composite Roles** | Global+Edge, Global+Origin, Edge+Origin combinations |
+
+### Mesh Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Mesh Deep Dive](mesh_deep_dive.md) | DHT, Raft consensus, QUIC transport, threat intelligence |
 
 ---
 
