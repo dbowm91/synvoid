@@ -172,36 +172,30 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 ### Lessons Learned (2026-05-23)
 
-1. **Spin framework partially implemented** - `src/spin/` exists with manifest.rs, runtime.rs, handler.rs, kv_store.rs. Basic HTTP dispatch IS integrated at `src/http/server.rs:2412-2494`, but route matching uses prefix-only comparison without method filtering or priority ordering. Spin requires manual app registration via Admin API.
-
-2. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate. This is intentional for localhost IPC - not a bug.
-
-3. **Quorum Manager race** - ✅ FIXED (2026-05-22): `src/mesh/dht/quorum.rs:339-386` - Raft write now sends actual Result through oneshot channel. `check_quorum_completion` at `record_store_message.rs:1319-1345` treats failed Raft writes as timeout.
-
-4. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp. Known architectural limitation.
-
-5. **Already-implemented items** - Several items in plans appear as "new" but are already implemented:
-   - TL-1 (Global Cache Governor): Already implemented in `src/proxy/governor.rs` with 512MB limit
-   - TL-2 (Fast-Path WAF Pre-Screening): Already implemented in `src/waf/attack_detection/mod.rs:156-225` with `RegexSet` and `is_fast_path_safe()`
-   - TL-4 (SAFE_HEADERS whitelist): Already implemented in `src/proxy/cache.rs:97-126` with 27 headers (not 29)
-
-6. **Key path corrections**:
-   - `src/http/shared_handler.rs` does NOT contain `collect_body_with_chunk_waf` — it's in `src/http/server.rs:4530-4537`
-   - `src/mesh/raft/state_machine.rs:166-172` does NOT contain quorum verification — it's in `src/mesh/dht/signed.rs:860-934`
-   - `src/config/site/misc.rs:37` is NOT transport config — correct path is `crates/synvoid-config/src/site/misc.rs:37`
-
-7. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig). Missing propagation caused APP-17 (require_hashes) to not work.
-
-8. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code (MESH-16). The second GLOBAL_EDGE block in `peer_auth.rs` was identical to the first and unreachable.
-
-9. **Process hierarchy is three-tier in traditional mode** - The codebase supports two deployment models:
+1. **Process hierarchy is three-tier in traditional mode** - The codebase supports two deployment models:
    - **Consolidated (recommended)**: Supervisor → Workers directly
    - **Traditional (legacy)**: Overseer → Master → Workers
    The Master process still exists via `--master` flag and is managed by Overseer.
 
-10. **Overseer mesh agent shutdown bug** - Fixed (2026-05-23): `src/overseer/process.rs:396-413` - Mesh agent was unconditionally spawned in else branch during shutdown. Now properly checks `running.is_running()` before spawning.
+2. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig). Missing propagation caused APP-17 (require_hashes) to not work.
 
-11. **DNS DS digest constant-time comparison** - Fixed (2026-05-23): `src/dns/dnssec_validation.rs:272` - Changed `==` to `ct_eq()` from `subtle::ConstantTimeEq` for secure comparison.
+3. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code (MESH-16). The second GLOBAL_EDGE block in `peer_auth.rs` was identical to the first and unreachable.
+
+4. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate. This is intentional for localhost IPC - not a bug.
+
+5. **SAFE_HEADERS count is 28** - `src/proxy/cache.rs:97-126` has 28 headers, not 27 or 29.
+
+6. **Plugin instance pool bugs** - `src/plugin/instance_pool.rs` has two bugs:
+   - `BUG-2`: `prepare_for_request()` (lines 152-164) doesn't reset `body_receiver` - causes streaming failures on pooled instances. Fix: add `self.store.data_mut().body_receiver = None;`
+   - `BUG-3`: `warmup()` (lines 79-148) only links `abort` and `check_timeout` - missing `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`
+
+7. **Spin find_route bug** - `src/spin/runtime.rs:271-285` returns first match only, not longest-prefix-match. More specific routes can be shadowed by less specific ones if defined earlier in manifest.
+
+8. **WAF fast-path bypass** - `src/waf/attack_detection/mod.rs:425-435` has early return when fast-path is safe, but request smuggling patterns are NOT in fast_path_patterns (only 13 patterns). Attack smuggling can bypass detection.
+
+9. **Flood protector not integrated** - `src/waf/mod.rs:438-508` flood_protector exists but is NOT called during request pipeline. It only operates at TCP level.
+
+10. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp. Known architectural limitation.
 
 ## Skills Reference
 
