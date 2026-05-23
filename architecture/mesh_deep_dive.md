@@ -22,12 +22,14 @@ All mesh communication happens over QUIC. This provides:
 SynVoid Mesh is designed for future-proof security, utilizing hybrid key exchange:
 - **ML-KEM (Kyber):** For quantum-resistant key encapsulation.
 - **ML-DSA (Dilithium):** For quantum-resistant digital signatures.
-- **Hybrid Approach:** Combines PQC with classical algorithms (X25519/Ed25519) to ensure security even if one algorithm is compromised.
+- **Hybrid Approach:** Combines PQC with classical algorithms. **X25519** provides the key exchange (ECDH-based), while **Ed25519** provides message signatures (EdDSA-based).
 
 ### 3. Distributed Discovery (DHT)
-Peer and service discovery are handled via a Kademlia-based **Distributed Hash Table (DHT)**.
+The DHT is based on Kademlia but includes significant customizations for SynVoid's security-focused workload:
+- **KBucket Routing:** Maintains deterministic peer lists organized by distance, improving reliability over vanilla Kademlia.
+- **Geo-Distance Regional Routing:** Uses `GeoDistance` and `RegionalHub` structures for latency-aware routing, not raw XOR distance.
 - **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT.
-- **Hierarchical Routing:** Uses Bloom filters and regional hubs to enable memory-efficient route announcement checking in large-scale networks, not to minimize DHT discovery latency. Bloom filters check if a route advertisement has been seen before (via `MeshBloomFilter` in `src/mesh/hierarchical_routing.rs:66`), reducing redundant route propagation.
+- **Hierarchical Routing:** Uses Bloom filters and regional hubs to enable memory-efficient route announcement checking in large-scale networks. `MeshBloomFilter` in `src/mesh/hierarchical_routing.rs:66` checks if a route advertisement has been seen before, reducing redundant route propagation.
 
 ---
 
