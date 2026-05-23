@@ -34,6 +34,22 @@ Provides dynamic loading and execution of WASM plugins for request filtering, re
 
 - **`RequestContext`** — Per-request store data tracking wall-clock timeout, environment variables, DHT prefixes, memory limits, and optional body receiver for streaming.
 
+### Architecture
+
+```
+PluginManager
+    └── WasmPluginManager
+            ├── WasmRuntime (plugin A, priority=10)
+            │       └── WasmInstancePool
+            │           └── WasmPooledInstance [Store + Instance]
+            ├── WasmRuntime (plugin B, priority=20)
+            │       └── WasmInstancePool
+            └── WasmRuntime (plugin C, priority=30)
+                    └── WasmInstancePool
+```
+
+**Flow**: `PluginManager::filter_request()` → `WasmPluginManager::filter_request()` → selects `WasmRuntime` by priority → borrows pooled instance from `WasmInstancePool` → executes guest `filter_request()` with host functions
+
 ### Plugin Loading Flow
 
 1. **Loading**: `PluginManager::load_wasm_plugin(path)` calls `WasmRuntime::load()` which:
@@ -60,6 +76,27 @@ Provides dynamic loading and execution of WASM plugins for request filtering, re
 | `mesh_check_threat(ip)` | Threat intelligence lookups |
 | `mesh_emit_event(topic, data)` | Event publishing |
 | `synvoid_read_body_chunk()` | Streaming body reading |
+
+### Security Model: DHT Prefix Restrictions
+
+WASM plugins can query the DHT via `mesh_query_dht()` but **sensitive prefix restrictions** prevent unauthorized data exfiltration:
+
+- **`allowed_dht_prefixes`**: Each plugin's `WasmResourceLimits` defines a whitelist of permitted DHT key prefixes
+- **Default deny**: If no prefixes are configured (`allowed_dht_prefixes` is empty), all DHT queries are blocked
+- **Prefix validation**: At `mesh_query_dht()` invocation, the requested key must match a configured prefix
+- **Example prefixes**: `route:`, `cert:`, `config:`, `serverless:` — plugins cannot query arbitrary mesh data
+- **Per-runtime enforcement**: Each `WasmRuntime` instance enforces its own `allowed_dht_prefixes` independently
+
+```
+WasmRuntime (plugin A)
+    └── allowed_dht_prefixes: ["route:", "cert:"]
+            └── mesh_query_dht("route:example")  ✓ allowed
+            └── mesh_query_dht("secret:key")     ✗ blocked
+
+WasmRuntime (plugin B)
+    └── allowed_dht_prefixes: []
+            └── mesh_query_dht("route:example")  ✗ blocked (default deny)
+```
 
 ### Instance Pooling
 
@@ -198,7 +235,7 @@ Flexible `ServerlessRoute` matching supporting:
 | `src/serverless/` | Serverless runs AFTER WAF; can optionally disable WAF per-route (`waf_mode=off`) |
 | `src/spin/` | No WAF integration exists |
 
-WASM plugin execution in HTTP server (`http/server.rs:3043-3086`):
+WASM plugin execution in HTTP server (`http/server.rs:3043-3060`):
 1. Request enters WAF pipeline
 2. If site has `wasm_plugins` configured, `PluginManager::apply_wasm_filters()` is called
 3. Each plugin returns `WasmFilterResult::Pass`, `Block`, or `Challenge`
@@ -214,7 +251,7 @@ WASM plugin execution in HTTP server (`http/server.rs:3043-3086`):
 | Autoscaling | No | No | Yes (10s tick, up/down thresholds) |
 | Cold start tracking | No | No | Yes |
 | Routing | None | Manifest-only (incomplete) | Full route matching |
-| Mesh integration | DHT queries | No | DHT + hierarchical routing |
+| Mesh integration | DHT queries | Limited (via WASM host functions) | DHT + hierarchical routing |
 | Hot reload | Yes (file watcher) | No | No |
 | Metrics | Yes (fuel, duration, decisions) | No | Yes (per-instance) |
 
