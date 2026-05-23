@@ -56,9 +56,30 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 4. **Firewall**: `DnsFirewall` evaluates against blocking rules (subnet, opcode)
 5. **Cache Check**: If enabled, `DnsCache` checked first
 6. **Query Coalescing**: `QueryCoalescer` collapses identical in-flight queries
+   - Implemented at `src/dns/query_coalesce.rs`
+   - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
+   - Created in `DnsServer::from_config()` at `src/dns/server/mod.rs:630-640`
+   - Passed to query handler via `DnsServerQueryHandler` context at `src/dns/server/mod.rs:517`
 7. **Zone Resolution**: `ShardedZoneStore` looks up zone, builds response
 8. **DNSSEC Signing**: If zone signed, RRSIG records added
 9. **Response**: Wire format response sent to client
+
+### Zone Transfers (AXFR/IXFR) (`transfer.rs`)
+
+**AXFR** (`build_axfr_record()`, lines 829-878):
+- **Supported record types**: A, AAAA, CNAME, NS, SOA, TXT, MX
+- **Missing record types** (require implementation per RFC):
+  - **SRV** (RFC 2782) - Service locator
+  - **PTR** (RFC 1035) - Domain pointer
+  - **DNSKEY** (RFC 4034) - DNSSEC signing key
+  - **RRSIG** (RFC 4034) - DNSSEC signature
+  - **NSEC** (RFC 4034) - Next secure record (proof of nonexistence)
+  - **NSEC3** (RFC 5153) - NSEC with cryptographic hashes
+  - **DS** (RFC 4034) - Delegation signer
+  - **CAA** (RFC 8659) - Certification authority authorization
+
+**IXFR** (RFC 1995) - Incremental zone transfer
+**TSIG** (RFC 2845) - Transaction signature authentication for zone transfers
 
 ### DNSSEC Signing/Validation
 
