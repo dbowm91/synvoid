@@ -66,8 +66,8 @@ Provides dynamic loading and execution of WASM plugins for request filtering, re
 - **`WasmInstancePool`** uses a `VecDeque<WasmPooledInstance>` protected by `parking_lot::Mutex`
 - `get()` pops from back, `return_instance()` pushes to back (if under `max_size`)
 - Pooled instances retain their `Store` and instantiated `Instance`
-- Before each request, `prepare_for_request()` resets timeout, fuel, env, and body_receiver
-- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (for fast pool population); real host functions are linked on first actual request
+- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes
+- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (all 7 host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`); real host functions are linked on first actual request
 
 ---
 
