@@ -16,27 +16,19 @@ Specialized guidance for WASM plugin runtime.
 - Instance pooling reduces instantiation overhead
 - Memory buffers should be reused across invocations
 
-## DHT Prefix Enforcement (2026-05-23)
+## Known Bugs (Still Present as of 2026-05-23)
 
-DHT prefix restrictions (`allowed_dht_prefixes`) are now properly propagated to pooled instances:
+### DHT Prefix Propagation Bug (UNFIXED)
 
-- `prepare_for_request()` accepts `allowed_dht_prefixes` parameter
-- `filter_request()` and `transform_response()` pass `self.limits.allowed_dht_prefixes.clone()`
-- Warm instances no longer reset restrictions to empty
+Both `src/serverless/instance_pool.rs:186` and `src/plugin/instance_pool.rs:186` set `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values. This is a **known bug** that affects pooled WASM instances.
 
-### Prior Bug (FIXED): DHT prefix propagation in pooled instances
+Fix requires setting `allowed_dht_prefixes` from `WasmResourceLimits` during warmup (instance_pool.rs:79-209 warmup flow).
 
-The bug caused `default_allowed_dht_prefixes` to be `Vec::new()` from warmup, effectively disabling restriction enforcement for pooled instances. Fixed as above.
+### Spin Cold-Start Bug (UNFIXED)
 
-## Spin Runtime Updates (2026-05-23)
+`src/spin/runtime.rs:251` creates new `SpinAppInstance` per request via `instantiate_app()`. No instance reuse is implemented, causing significant cold-start overhead on every request.
 
-`SpinRuntime::run_supervisor()` was removed as dead code. The Spin runtime creates fresh instances per request (`handle_http_request` calls `instantiate_app` on every request), so instance pooling and idle eviction were never needed.
-
-## Known Bugs (FIXED)
-
-- BUG-2 (body_receiver reset): Fixed
-- BUG-3 (warmup linking): Fixed
-- Spin find_route(): Verified as longest-prefix-match
+Workaround: Consider caching SpinAppInstance by component_id for reuse across requests.
 
 ## Skills Reference
 

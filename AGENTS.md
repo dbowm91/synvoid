@@ -80,7 +80,7 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
-| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change | |
+| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
 
 ## Modular Agent Guidance
 
@@ -141,6 +141,36 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 - [`docs/adr/ADR-003-unified-worker-process.md`](docs/adr/ADR-003-unified-worker-process.md) — ADR for unified worker architecture
 - [`src/worker/unified_server.rs`] — Main unified server implementation
 
+## Key Codebase Facts
+
+### Security-Critical Bugs (Known)
+
+| Bug ID | Location | Issue | Status |
+|--------|----------|-------|--------|
+| BUG-L1 | `src/mesh/ml_dsa.rs:206-218` | `verify_hybrid()` returns `true` when ML-DSA absent, accepting Ed25519-only | Needs Fix |
+| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:63-164` | ML-KEM key exchange lacks proof of possession verification | Needs Fix |
+| BUG-PROXY-1 | `src/proxy/mod.rs:293-316` | `retry_config` remains `None` when `upstream_pool` is `None` | Needs Fix |
+
+### Known Implementation Issues
+
+| Issue | Location | Impact |
+|-------|----------|--------|
+| `current_depth()` doesn't exist | `src/location_matcher.rs:191-195` | Only `is_empty()` and `len()` exist - documentation error |
+| `allowed_dht_prefixes` hardcoded empty | `src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186` | DHT restrictions not enforced for pooled instances |
+| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3302` | ErasedHttpClient never used - Phase 9 incomplete |
+| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false` - infrastructure exists but unused |
+| Spin creates new instance per request | `src/spin/runtime.rs:251` | High cold-start overhead |
+| UpstreamPool no active health checks | `src/upstream/pool.rs` | Only FastCgiPool has `start_health_check()` |
+
+### Verified "Already Fixed" Items
+
+These items were identified in reviews but have been fixed:
+- Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
+- StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
+- gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
+- CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
+- macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
+
 ## Implementation Planning
 
 When working on large implementation plans:
@@ -166,51 +196,8 @@ Large plans should be organized into **waves** that can execute in parallel:
 |-------------------|-----------------|-------|
 | `src/http/shared_handler.rs` | `src/http/server.rs:4532` | Function is in server.rs, not shared_handler |
 | `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs:860-934` | Quorum verification is in signed.rs, not state_machine |
-
-### Lessons Learned (2026-05-23)
-
-1. **Process hierarchy is three-tier in traditional mode** - The codebase supports two deployment models:
-   - **Consolidated (recommended)**: Supervisor → Workers directly
-   - **Traditional (legacy)**: Overseer → Master → Workers
-   The Master process still exists via `--master` flag and is managed by Overseer.
-
-2. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig). Missing propagation caused require_hashes to not work.
-
-3. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code. The second GLOBAL_EDGE block in `peer_auth.rs` was identical to the first and unreachable.
-
-4. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate. This is intentional for localhost IPC - not a bug.
-
-5. **SAFE_HEADERS count is 28** - `src/proxy/cache.rs:97-126` has 28 headers, not 27 or 29.
-
-6. **Spin routing uses longest-prefix-match** - `src/spin/runtime.rs:271-285` collects all route matches and returns the longest prefix match.
-
-7. **CPU affinity pinning is Linux-only, not automatic** - `src/worker/unified_server.rs:205-208` shows CPU affinity only works on Linux. On macOS/BSD it logs a warning but does nothing. Must be explicitly configured via `cpu_affinity` parameter, not automatic.
-
-8. **macOS Seatbelt sandbox requires feature flag** - `src/platform/sandbox.rs` has `macos-sandbox` feature gate. Enable the feature for actual enforcement on macOS.
-
-9. **ConfigManager is in synvoid-config crate** - `ConfigManager` is at `crates/synvoid-config/src/lib.rs:113`, not in `main_config.rs`.
-
-10. **MeshProxy is a key routing component** - `src/mesh/proxy.rs:63` (1996 lines) handles backend routing via mesh but wasn't documented in architecture overview.
-
-11. **ErasedHttpClient integration is incomplete** - `use_erased_client` is hardcoded to `false` at `src/http/server.rs:3302`. The ErasedHttpClient is cloned throughout but never actually called in the request path. Phase 9 integration was never completed. See `skills/erased_http_client.md`.
-
-12. **AXFR transfer incomplete** - `build_axfr_record()` at `src/dns/transfer.rs:829-878` lacks SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA support.
-
-13. **Plan verification is essential** - Subagent verification found multiple items already fixed (gRPC uptime at `src/supervisor/api.rs:55`, CSRF validation at `src/admin/state.rs:736`). Always verify items against codebase before marking as needing work.
-
-14. **current_depth() doesn't exist** - `src/location_matcher.rs:191-195` contains `is_empty()` and `len()` methods, not `current_depth()`. When referencing functions, verify they actually exist at the claimed location.
-
-15. **BackendType enum variants** - `src/router.rs:65-77` has: Upstream, FastCgi, Php, Cgi, AxumDynamic, AppServer, Static, QuicTunnel, Serverless, Mesh, Spin. Not all are documented in architecture.
-
-16. **Spin cold-start overhead** - `src/spin/runtime.rs:251` creates new `SpinAppInstance` per request with no reuse. Significant cold-start penalty.
-
-17. **UpstreamPool vs FastCgiPool health checks** - Only FastCgiPool (`src/fastcgi/pool.rs:148`) has active health check thread via `start_health_check()`. UpstreamPool relies on on-demand reactive checks via `HealthChecker::check()` called by admin API.
-
-18. **HTTP/2 hardcoded disabled** - `src/http_client/mod.rs:890` has `is_http2 = false`. HTTP/2 infrastructure exists but is never used.
-
-19. **Allowed DHT prefixes not propagated** - Both `src/serverless/instance_pool.rs:186` and `src/plugin/instance_pool.rs:186` set `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values.
-
-20. **Retry config edge case** - `src/proxy/mod.rs:293-312` sets `retry_config: None` when `upstream_pool` is `None` (lines 252-260), so retries are disabled even when configured.
+| `architecture/mesh_deep_dive.md:30` | Already correct | Bloom filter purpose already documented correctly |
+| `architecture/config_deep_dive.md:64-67` | `architecture/config_deep_dive.md:86` | Sites HashMap is at line 86, not 64-67 |
 
 ## Known Deferred Items
 
@@ -220,6 +207,55 @@ Some items are intentionally deferred due to architectural complexity:
 |----|-------|--------|
 | MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
 | MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete, requires Raft migration |
-| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation - buffers entire stdout |
+| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation, buffers entire stdout |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
+
+## Codebase Quick Reference
+
+### Critical Security Functions
+- **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for secrets
+- **File permissions**: Set `0o600` on private key files
+- **CSRF validation**: Uses `ct_eq()` at `src/admin/state.rs:736`
+
+### Module Key Facts
+- **MeshProxy**: `src/mesh/proxy.rs:63` (1994 lines) - key routing component not in overview
+- **BackendType**: `src/router.rs:65-77` has 11 variants
+- **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
+- **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
+
+### Process Architecture
+- **Supervisor** manages lifecycle, consolidates Overseer + Master
+- **UnifiedServerWorker** uses single Tokio event loop (NOT process-per-tenant)
+- **CPU affinity** is Linux-only, logs warning on other platforms
+
+## Skills Directory
+
+The `skills/` directory contains detailed documentation for various subsystems:
+
+| Skill | Purpose |
+|-------|---------|
+| `security_patterns.md` | Critical security fixes, constant-time comparison, path traversal, XSS prevention |
+| `streaming_waf.md` | Streaming WAF engine patterns |
+| `dht_persistence.md` | DHT neighborhood persistence |
+| `hybrid_post_quantum.md` | Post-quantum signature implementation |
+| `spin_wasm.md` | Spin WASM runtime |
+| `serverless_wasm.md` | Serverless WASM patterns |
+| `synvoid_mesh.md` | Mesh networking patterns |
+| `topology_visualizer.md` | Topology visualizer API |
+| `behavioral_intel.md` | Behavioral intelligence |
+| `performance_patterns.md` | Performance optimization patterns |
+| `admin_api.md` | Admin API patterns |
+| `dns_dnssec.md` | DNS and DNSSEC patterns |
+| `wasm_components.md` | WASM component model patterns |
+| `dht_scoping.md` | DHT site isolation and scoping patterns |
+| `threat_feed_production.md` | Production and signing of threat intel feeds |
+| `raft_consensus.md` | Raft consensus integration for global control plane |
+| `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
+| `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
+| `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
+| `buffer_pool.md` | Sharded mutex buffer pool (replaces TreiberStack with ABA-safe implementation) |
+| `extension_runtime.md` | ExtensionRuntime trait and registry for worker lifecycle management |
+| `quorum_manager_fix.md` | Quorum Manager race condition fix with Raft oneshot completion |
+| `supply_chain_hashes.md` | Supply chain security with pip --require-hashes |
+| `erased_http_client.md` | ErasedHttpClient Phase 9 incomplete integration |

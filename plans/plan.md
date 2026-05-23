@@ -1,7 +1,8 @@
 # SynVoid Architecture Review - Implementation Plan
 
 **Generated:** 2026-05-23
-**Source Files:** batch1-4 consolidated reviews covering DNS, WAF, Layer 3.5, Admin API, Mesh, Process Lifecycle, Config, App Handlers, Routing, Plugin/WASM, Worker, Proxy, Platform, Networking, HTTP/Proxy, Config/Admin, Core/Overview
+**Last Updated:** 2026-05-23 (consolidated and verified)
+**Source:** batch1-4 consolidated reviews covering DNS, WAF, Layer 3.5, Admin API, Mesh, Process Lifecycle, Config, App Handlers, Routing, Plugin/WASM, Worker, Proxy, Platform, Networking, HTTP/Proxy, Config/Admin, Core/Overview
 
 ---
 
@@ -13,254 +14,228 @@ This plan consolidates findings from 4 batches of architecture reviews across 16
 
 | Category | Count | Wave |
 |----------|-------|------|
-| **Critical Bugs (needs fix)** | 5 | Wave 1 |
-| **Critical Bugs (already fixed)** | 2 | Wave 1 |
-| **Critical Bugs (needs investigation)** | 1 | Wave 1 |
-| **High Priority Items** | 21 | Wave 2 |
-| **Medium Priority Items** | 43 | Wave 3 |
+| **Critical Bugs (needs fix)** | 3 | Wave 1 |
+| **Critical Bugs (already fixed)** | 4 | Wave 1 |
+| **Critical Bugs (needs investigation/removal)** | 3 | Wave 1 |
+| **High Priority Items** | 19 | Wave 2 |
+| **Medium Priority Items** | 40 | Wave 3 |
 | **Implementation Projects** | 9 | Wave 4 |
 | **Documentation Fixes** | 10 doc targets | Wave 5 |
 | **Low Priority Items** | 50+ | Wave 6 |
-| **Total Action Items** | 130+ | |
+| **Total Action Items** | 120+ | |
 
-### Priority Order for Execution
+### Wave Organization
 
-Implementation is organized into **waves** that can execute in parallel where dependencies allow.
+Implementation is organized into **waves** that can execute in parallel where dependencies allow. Items within a wave can be worked on simultaneously by different agents.
 
 ---
 
-## Wave 1: Critical Security/Safety Bugs (Parallel Execution)
+## Wave 1: Critical Security/Safety Bugs
 
-**These items require immediate attention and can be executed in parallel since they are independent.**
+**These items require immediate attention. Items marked "Already Fixed" should be removed from active tracking. Items marked "Needs Investigation" need clarification before work begins.**
 
+### Items to REMOVE (Already Fixed)
 | Item | Description | Location | Status |
 |------|-------------|----------|--------|
-| 1.1 | Audit Log File Permissions Not Set | `src/admin/audit.rs:76` | Needs Fix |
-| 1.2 | StreamingWafCore Trailing Window Logic | `src/waf/attack_detection/streaming.rs:129-134` | Needs Fix |
-| 1.3 | verify_hybrid() Accepts Ed25519-Only | `src/mesh/ml_dsa.rs:206-218` | Needs Fix |
-| 1.4 | ML-KEM Missing Proof of Possession | `src/mesh/ml_kem_key_exchange.rs:63-164` | Needs Fix |
-| 1.5 | gRPC Uptime Hardcoded | `src/supervisor/api.rs:55` | ✅ Already Fixed |
-| 1.6 | current_depth() Status Unclear | `src/location_matcher.rs:191-195` | Needs Investigation |
-| 1.7 | allowed_dht_prefixes Not Propagated | `instance_pool.rs:186,213-226` | Needs Fix |
-| 1.8 | macos-sandbox Feature Missing | `src/platform/sandbox.rs:1036-1133` | Needs Fix |
-| 1.9 | Retry Config Not Applied | `src/proxy/mod.rs:293-312` | Needs Fix |
-| 1.10 | CSRF Validation | `src/admin/state.rs:736` | ✅ Already Fixed |
+| 1.1 | Audit Log File Permissions | `src/admin/audit.rs:76` | Already Fixed - permissions set in `log()` method at lines 131-139 |
+| 1.2 | StreamingWafCore Trailing Window | `src/waf/attack_detection/streaming.rs:129-134` | Already Fixed - sliding window logic is correct |
+| 1.5 | gRPC Uptime Hardcoded | `src/supervisor/api.rs:55` | Already Fixed - now returns `self.state.start_time.elapsed().as_secs()` |
+| 1.10 | CSRF Validation | `src/admin/state.rs:736` | Already Fixed - uses `ct_eq()` constant-time comparison |
 
-### 1.1 [ ] Audit Log File Permissions Not Set (BUG-A1)
-- **Location:** `src/admin/audit.rs:76`
-- **Issue:** `with_audit_dir()` only sets permissions if file already exists. New files via `log()` don't get 0o600.
-- **Fix:** Set permissions when creating file in `log()` method
-- **Source:** batch1_admin_review
-
-### 1.2 [ ] StreamingWafCore Trailing Window Logic Incorrect (BUG-W1)
-- **Location:** `src/waf/attack_detection/streaming.rs:129-134`
-- **Issue:** When updating trailing window for regular chunks, code copies only LAST 512 bytes of CURRENT chunk. For attack detection spanning chunk boundaries, trailing window should contain END of PREVIOUS + beginning of CURRENT.
-- **Fix:** Trailing window should be a sliding window accumulating previous trailing window (up to 512 bytes) + as much of current chunk as fits in 512 bytes.
-- **Source:** batch1_waf_review
+### Items to INVESTIGATE or CORRECT
+| Item | Description | Location | Status |
+|------|-------------|----------|--------|
+| 1.3 | verify_hybrid() Accepts Ed25519-Only | `src/mesh/ml_dsa.rs:206-218` | Needs Fix - returns `true` when ML-DSA absent, defeating hybrid security |
+| 1.4 | ML-KEM Missing Proof of Possession | `src/mesh/ml_kem_key_exchange.rs:63-164` | Needs Fix - no verification client can decapsulate |
+| 1.6 | current_depth() Doesn't Exist | `src/location_matcher.rs:191-195` | Needs Investigation - function doesn't exist, only `is_empty()` and `len()` |
+| 1.7 | allowed_dht_prefixes Not Propagated | `instance_pool.rs:186,213-226` | Needs Fix - both serverless and plugin pools hardcode `Vec::new()` |
+| 1.8 | macos-sandbox Feature Gate | `src/platform/sandbox.rs:1036-1133` | Feature EXISTS - just needs enabling via `macos-sandbox` feature flag |
+| 1.9 | Retry Config Not Applied | `src/proxy/mod.rs:293-312` | Needs Fix - `retry_config` remains `None` when `upstream_pool` is `None` |
 
 ### 1.3 [ ] verify_hybrid() Accepts Ed25519-Only Signatures (BUG-L1)
 - **Location:** `src/mesh/ml_dsa.rs:206-218`
 - **Impact:** Medium - weakens fail-safe design
-- **Issue:** verify_hybrid() accepts Ed25519-only signatures by default
+- **Issue:** When `signature.has_ml_dsa()` returns `false`, function returns `true` at line 217. Pure Ed25519-only signatures are accepted without ML-DSA verification.
+- **Fix:** For hybrid signatures, both Ed25519 AND ML-DSA should be required. Return `false` when ML-DSA is absent.
 - **Source:** batch1_layer_3_5_review
 
 ### 1.4 [ ] ML-KEM Key Encapsulation Missing Proof of Possession (BUG-L3)
 - **Location:** `src/mesh/ml_kem_key_exchange.rs:63-164`
 - **Impact:** Medium - key encapsulation doesn't verify client proof of possession
+- **Issue:** `confirm_key()` only checks if `session_id` exists (line 219), doesn't verify client can decapsulate. A rogue client could send any peer's public key.
+- **Fix:** Add verification that client can decrypt the ciphertext before confirming session.
 - **Source:** batch1_layer_3_5_review
 
-### 1.5 [~] gRPC Uptime_secs Hardcoded to 0 (C1) - ALREADY FIXED
-- **Location:** `src/supervisor/api.rs:55`
-- **Issue:** Previously hardcoded to 0, now returns `self.state.start_time.elapsed().as_secs()`
-- **Status:** ✅ Already fixed in codebase
-- **Source:** batch2_process_lifecycle
-
-### 1.6 [~] current_depth() Always Returns 0 (C4) - LOCATION/STATUS UNCLEAR
+### 1.6 [ ] current_depth() Doesn't Exist (C4)
 - **Location:** `src/location_matcher.rs:191-195`
-- **Impact:** HIGH - could cause incorrect route matching if trie path is used
-- **Issue:** The function `current_depth()` does not appear to exist at this location. The file contains `is_empty()` and `len()` methods but not `current_depth()`.
-- **Fix Needed:** Verify if this function exists elsewhere or if this is dead code that should be removed
+- **Impact:** HIGH - documentation references non-existent function
+- **Issue:** The file contains `is_empty()` and `len()` methods but not `current_depth()`. This appears to be dead code or documentation error.
+- **Fix:** Either implement `current_depth()` if needed, or update documentation to reference `len()` or remove the reference entirely.
 - **Source:** batch2_routing_review
 
 ### 1.7 [ ] allowed_dht_prefixes Not Propagated to Pooled Instances (C5)
-- **Location:** `instance_pool.rs:186,213-226` (serverless and plugin)
+- **Location:** `src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`
 - **Impact:** CRITICAL - DHT restrictions may not enforce correctly for pooled instances
-- **Issue:** `default_allowed_dht_prefixes` is always empty (`Vec::new()` from warmup)
-- **Fix:** Set `default_allowed_dht_prefixes` from `WasmResourceLimits` during warmup
-- **Implementation Context:** Understanding `instance_pool.rs:79-209` warmup flow is required
-- **Source:** batch2_plugin_review
+- **Issue:** Both locations hardcode `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values.
+- **Fix:** Set `allowed_dht_prefixes` from `WasmResourceLimits` during warmup (instance_pool.rs:79-209 warmup flow)
+- **Source:** batch2_plugin_review, AGENTS.md Lesson #19
 
-### 1.8 [ ] macos-sandbox Feature Gate Does Not Exist (BUG-PLATFORM-1)
-- **Location:** `src/platform/sandbox.rs:1036-1133`, `Cargo.toml`
-- **Impact:** CRITICAL - Seatbelt sandbox **cannot be enabled** on macOS
-- **Fix:** Add `macos-sandbox = []` to Cargo.toml or remove dead code
-- **Source:** batch3_platform_review
-- **Also noted:** AGENTS.md Lesson #8
+### 1.8 [~] macos-sandbox Feature Gate (BUG-PLATFORM-1) - FEATURE EXISTS
+- **Location:** `Cargo.toml:38`, `src/platform/sandbox.rs:1037-1126`
+- **Impact:** Medium - seatbelt sandbox requires explicit feature enablement
+- **Status:** Feature EXISTS in Cargo.toml (`macos-sandbox = []`). Code is properly gated with `#[cfg(feature = "macos-sandbox")]`. Users must enable the feature for enforcement on macOS.
+- **Action:** Ensure documentation clearly states users must enable `macos-sandbox` feature for enforcement.
+- **Source:** batch3_platform_review, AGENTS.md Lesson #8
 
 ### 1.9 [ ] Retry Config Not Applied from from_config() (BUG-PROXY-1)
-- **Location:** `src/proxy/mod.rs:293-312`
+- **Location:** `src/proxy/mod.rs:293-316`
 - **Impact:** HIGH - Retries **always disabled** regardless of configuration
-- **Issue:** `from_config()` doesn't call `with_upstream_pool()` when `upstream_pool` is `None` (lines 252-260), so retry_config remains `None`
-- **Fix:** Ensure `with_upstream_pool()` is called even when upstream_pool is None, or set retry_config directly
-- **Source:** batch3_proxy_review
-
-### 1.10 [~] CSRF Validation Missing ConstantTimeEq (BUG-1 + BUG-2) - ALREADY FIXED
-- **Location:** `src/admin/state.rs:736` (BUG-1), `src/auth/mod.rs:772` (BUG-2)
-- **Issue:** Previously used simple `==` comparison; now correctly uses `ct_eq()`
-- **Status:** ✅ Already fixed in codebase
-- **Source:** batch4_config_admin_review
+- **Issue:** When `upstream_pool` is `None` (lines 252-260), `with_upstream_pool()` is never called, so `retry_config` remains `None`.
+- **Fix:** Ensure `retry_config` is set even when `upstream_pool` is `None`, or call `with_upstream_pool()` regardless.
+- **Source:** batch3_proxy_review, AGENTS.md Lesson #20
 
 ---
 
 ## Wave 2: High Priority Items (Parallel Execution)
 
-**These items can be executed in parallel by different agents.**
+**These items can be executed in parallel by different agents. Each is independent.**
 
 | Item | Description | Location | Dependencies |
 |------|-------------|----------|--------------|
 | 2.1 | DNS - Complete AXFR Record Type Support | `src/dns/transfer.rs:829-878` | None |
 | 2.2 | DNS - Verify DNS Cookie Server Integration | `src/dns/cookie.rs` | None |
-| 2.3 | WAF - Update JS Challenge Reference | `architecture/waf_deep_dive.md:72` | None |
+| 2.3 | DNS - Complete GOST Algorithm Support | `src/dns/dnssec_validation.rs:260` | None |
 | 2.4 | WAF - Complete GeoIP Country Blocking | `src/waf/asn_tracker.rs` | None |
-| 2.5 | WAF - Add Feature-Gate Comments | `src/waf/attack_detection/mod.rs:77-79` | None |
-| 2.6 | Layer 3.5 - Update Raft Documentation | `architecture/layer_3_5_deep_dive.md:32` | None |
-| 2.7 | Layer 3.5 - Address Quorum Deadlock | `src/mesh/peer_auth.rs:230-243` | None |
-| 2.8 | Mesh - Document 0-RTT Disabled by Default | `architecture/mesh_deep_dive.md:18` | None |
-| 2.9 | Mesh - Strengthen Bloom Filter Purpose | `architecture/mesh_deep_dive.md:30` | None |
-| 2.10 | Mesh - Document DHT Ingress Verification Gaps | `architecture/mesh_deep_dive.md` | None |
-| 2.11 | Config - Fix Sites HashMap Location in Diagram | `architecture/config_deep_dive.md:64-67` | None |
-| 2.12 | Config - Add Missing Fields to MainConfig | `architecture/config_deep_dive.md:45-67` | None |
-| 2.13 | App Handlers - Integrate or Remove Minification | `src/static_files/mod.rs:131-137` | None |
-| 2.14 | App Handlers - Update Generic WASM Handler Reference | `architecture/app_handlers.md:58` | None |
-| 2.15 | Routing - Document Missing Backend Types | `src/router.rs:65-77` | None |
-| 2.16 | Routing - Add Active Health Checks to UpstreamPool | `src/upstream/pool.rs` | None |
-| 2.17 | Plugin - Implement Spin Instance Reuse | `src/spin/runtime.rs:251` | None |
-| 2.18 | Worker - Document Linux-Only CPU Affinity | `src/worker/unified_server.rs:205-208` | None |
-| 2.19 | Worker - Clarify WAF Challenge Stage | `src/waf/mod.rs:440-515` or docs | None |
-| 2.20 | HTTP/Proxy - Verify ErasedHttpClient Integration | `src/http/server.rs:3302` | None |
-| 2.21 | HTTP/Proxy - Complete HTTP/2 Support | `src/http_client/mod.rs:890` | None |
+| 2.5 | Layer 3.5 - Update Raft Documentation | `architecture/layer_3_5_deep_dive.md:32` | None |
+| 2.6 | Layer 3.5 - Address Quorum Deadlock | `src/mesh/peer_auth.rs:230-243` | None |
+| 2.7 | Mesh - Document DHT Ingress Verification Gaps | `architecture/mesh_deep_dive.md` | None |
+| 2.8 | Config - Fix Sites HashMap Location in Diagram | `architecture/config_deep_dive.md` | None - already correct |
+| 2.9 | Config - Add Missing Fields to MainConfig | `architecture/config_deep_dive.md` | None |
+| 2.10 | App Handlers - Integrate or Remove Minification | `src/static_files/mod.rs:131-137` | None |
+| 2.11 | Routing - Document Missing Backend Types | `src/router.rs:65-77` | None |
+| 2.12 | Routing - Add Active Health Checks to UpstreamPool | `src/upstream/pool.rs` | None |
+| 2.13 | Plugin - Implement Spin Instance Reuse | `src/spin/runtime.rs:251` | None |
+| 2.14 | Worker - Document Linux-Only CPU Affinity | `src/worker/unified_server.rs:205-208` | None |
+| 2.15 | HTTP/Proxy - Verify ErasedHttpClient Integration | `src/http/server.rs:3302` | None |
+| 2.16 | HTTP/Proxy - Complete HTTP/2 Support | `src/http_client/mod.rs:890` | None |
+| 2.17 | Core/Overview - Add MeshProxy to Module Index | `architecture/overview.md` | None |
+| 2.18 | Core/Overview - Add Missing Modules to Index | `architecture/overview.md` | None |
+| 2.19 | Networking - Clarify PQC Feature Flag Interactions | `architecture/networking_deep_dive.md` | None |
 
 ### 2.1 DNS - Complete AXFR Record Type Support
 - **Location:** `src/dns/transfer.rs:829-878`
-- **Issue:** Missing SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA record types
+- **Issue:** `build_axfr_record()` only handles A, AAAA, CNAME, NS, SOA, TXT, MX. Missing: SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA
 - **Priority:** HIGH
-- **Source:** batch1_dns_review
+- **Fix:** Add match arms for all missing record types
+- **Source:** batch1_dns_review, AGENTS.md Lesson #12
 
 ### 2.2 DNS - Verify DNS Cookie Server Integration
 - **Location:** `src/dns/cookie.rs`
+- **Issue:** Cookie server exists (141 lines) with RFC 7873 compliant implementation. "Verify" means clarify integration points are correct.
+- **Priority:** MEDIUM
+- **Source:** batch1_dns_review
+
+### 2.3 DNS - Complete GOST Algorithm Support
+- **Location:** `src/dns/dnssec_validation.rs:260`
+- **Issue:** GOST type 3 DS digest not supported
 - **Priority:** HIGH
 - **Source:** batch1_dns_review
 
-### 2.3 WAF - Update JS Challenge Reference
-- **Location:** `architecture/waf_deep_dive.md:72`
-- **Issue:** Document references `src/challenge/js.rs` but actual is `src/challenge/pow.rs`
-- **Priority:** HIGH
-- **Source:** batch1_waf_review
-
-### 2.4 WAF - Complete GeoIP Country Blocking
+### 2.4 WAF - Complete GeoIP Country Blocking (NOTE: Actually ASN-based)
 - **Location:** `src/waf/asn_tracker.rs`
-- **Priority:** HIGH
+- **Issue:** `AsnTracker` implements **ASN-based distributed scraper detection**, not true GeoIP country blocking. Uses `GeoIpManager` only for ASN lookups.
+- **Priority:** MEDIUM - clarify documentation to reflect actual behavior
 - **Source:** batch1_waf_review
 
-### 2.5 WAF - Add Feature-Gate Comments for Mesh-Only Features
-- **Location:** `src/waf/attack_detection/mod.rs:77-79`
-- **Priority:** HIGH
-- **Source:** batch1_waf_review
-
-### 2.6 Layer 3.5 - Update Raft Documentation
+### 2.5 Layer 3.5 - Update Raft Documentation
 - **Location:** `architecture/layer_3_5_deep_dive.md:32`
-- **Issue:** Document recommends Raft migration but Raft already implemented
+- **Issue:** Document recommends Raft migration but Raft already implemented in `src/mesh/raft/`
 - **Priority:** HIGH
 - **Source:** batch1_layer_3_5_review
 
-### 2.7 Layer 3.5 - Address Quorum Deadlock
+### 2.6 Layer 3.5 - Address Quorum Deadlock
 - **Location:** `src/mesh/peer_auth.rs:230-243`
-- **Issue:** Requires completing DHT-to-Raft trust chain migration
+- **Issue:** Quorum deadlock risk during partition - requires DHT-to-Raft trust chain migration
 - **Priority:** HIGH
-- **Source:** batch1_layer_3_5_review
+- **Source:** batch1_layer_3_5_review, MESH-15
 
-### 2.8 Mesh - Document 0-RTT Disabled by Default
-- **Location:** `architecture/mesh_deep_dive.md:18`
-- **Priority:** HIGH
-- **Source:** batch1_mesh_review
-
-### 2.9 Mesh - Strengthen Bloom Filter Purpose Documentation
-- **Location:** `architecture/mesh_deep_dive.md:30`
-- **Issue:** Clarify "reduces redundant route propagation, not DHT discovery latency"
-- **Priority:** HIGH
-- **Source:** batch1_mesh_review
-
-### 2.10 Mesh - Document DHT Ingress Verification Gaps
+### 2.7 Mesh - Document DHT Ingress Verification Gaps
 - **Location:** `architecture/mesh_deep_dive.md`
-- **Issue:** Multiple message types lack node_id/TLS cert validation
+- **Issue:** Multiple message types lack node_id/TLS cert validation (MESH-14)
 - **Priority:** HIGH
-- **Source:** batch1_mesh_review, batch4_mesh_networking
+- **Source:** batch1_mesh_review, batch4_mesh_networking, MESH-14
 
-### 2.11 Config - Fix Sites HashMap Location in Diagram
-- **Location:** `architecture/config_deep_dive.md:64-67`
-- **Issue:** Shows `sites: HashMap<String, SiteConfig>` under MainConfig, but it's in ConfigManager
-- **Priority:** HIGH
+### 2.8 Config - Fix Sites HashMap Location in Diagram
+- **Location:** `architecture/config_deep_dive.md`
+- **Issue:** Diagram at line 86 shows `sites: HashMap<String, SiteConfig>` under **ConfigManager** (correct), not MainConfig. Documentation is ACCURATE.
+- **Action:** Verify diagram correctness and remove if already fixed
 - **Source:** batch2_config_review
 
-### 2.12 Config - Add Missing Fields to MainConfig Hierarchy
+### 2.9 Config - Add Missing Fields to MainConfig Hierarchy
 - **Location:** `architecture/config_deep_dive.md:45-67`
 - **Issue:** Diagram omits 20+ fields (tokio, ip_feeds, rule_feed, yara_feed, rate_limit_memory, proxy_limits, etc.)
 - **Priority:** HIGH
 - **Source:** batch2_config_review
 
-### 2.13 App Handlers - Integrate or Remove Minification
+### 2.10 App Handlers - Integrate or Remove Minification
 - **Location:** `src/static_files/mod.rs:131-137`
 - **Issue:** `new_with_minifier()` accepts minifier params but they are UNUSED (prefixed with `_`)
 - **Priority:** HIGH
 - **Source:** batch2_app_handlers_review
 
-### 2.14 App Handlers - Update Generic WASM Handler Reference
-- **Location:** `architecture/app_handlers.md:58`
-- **Issue:** Document mentions `WasmHandler` but generic WASM uses `WasmRuntime` directly
-- **Priority:** HIGH
-- **Source:** batch2_app_handlers_review
-
-### 2.15 Routing - Document Missing Backend Types
+### 2.11 Routing - Document Missing Backend Types
 - **Location:** `src/router.rs:65-77`
-- **Issue:** AxumDynamic, Spin, Cgi, PeakEwma exist but not documented
+- **Issue:** BackendType enum has 11 variants (Upstream, FastCgi, Php, Cgi, AxumDynamic, AppServer, Static, QuicTunnel, Serverless, Mesh, Spin) - not all documented. PeakEwma is NOT in the enum.
 - **Priority:** HIGH
-- **Source:** batch2_routing_review
+- **Source:** batch2_routing_review, AGENTS.md Lesson #15
 
-### 2.16 Routing - Add Active Health Checks to UpstreamPool
+### 2.12 Routing - Add Active Health Checks to UpstreamPool
 - **Location:** `src/upstream/pool.rs`
-- **Issue:** Only FastCgiPool has active health check thread (via `start_health_check()`); UpstreamPool relies only on on-demand/reactive health checks via `HealthChecker::check()` called manually by admin API
+- **Issue:** Only FastCgiPool has active health check thread (`start_health_check()` at `src/fastcgi/pool.rs:148`). UpstreamPool relies only on on-demand/reactive checks via `HealthChecker::check()` called by admin API.
 - **Priority:** HIGH
-- **Source:** batch2_routing_review
+- **Source:** batch2_routing_review, AGENTS.md Lesson #17
 
-### 2.17 Plugin - Implement Spin Instance Reuse
+### 2.13 Plugin - Implement Spin Instance Reuse
 - **Location:** `src/spin/runtime.rs:251`
-- **Issue:** Each request creates new `SpinAppInstance` - high cold-start overhead
+- **Issue:** Each request creates new `SpinAppInstance` via `instantiate_app()` - high cold-start overhead
 - **Priority:** HIGH
-- **Source:** batch2_plugin_review
+- **Source:** batch2_plugin_review, AGENTS.md Lesson #16
 
-### 2.18 Worker - Document Linux-Only CPU Affinity
+### 2.14 Worker - Document Linux-Only CPU Affinity
 - **Location:** `src/worker/unified_server.rs:205-208`
-- **Issue:** CPU affinity only works on Linux; logs warning on non-Linux
-- **Priority:** HIGH
-- **Source:** batch3_worker_review
+- **Issue:** CPU affinity only works on Linux; logs warning on non-Linux platforms
+- **Priority:** MEDIUM
+- **Source:** batch3_worker_review, AGENTS.md Lesson #7
 
-### 2.19 Worker - Clarify WAF Challenge Stage
-- **Location:** `src/waf/mod.rs:440-515` or architecture docs
-- **Issue:** Document lists 7 stages including "Challenge" but code integrates via threat level escalation
-- **Priority:** HIGH
-- **Source:** batch3_worker_review
-
-### 2.20 HTTP/Proxy - Verify ErasedHttpClient Integration
+### 2.15 HTTP/Proxy - Verify ErasedHttpClient Integration
 - **Location:** `src/http/server.rs:3302`
-- **Issue:** `use_erased_client` hardcoded to `false` - ErasedHttpClient never actually used
+- **Issue:** `use_erased_client` hardcoded to `false`. ErasedHttpClient cloned but never called. Phase 9 integration incomplete.
 - **Priority:** HIGH
 - **Source:** batch3_http_proxy_review, AGENTS.md Lesson #11
 
-### 2.21 HTTP/Proxy - Complete HTTP/2 Support
+### 2.16 HTTP/Proxy - Complete HTTP/2 Support
 - **Location:** `src/http_client/mod.rs:890`
-- **Issue:** `is_http2` hardcoded to `false`; HTTP/2 never used despite infrastructure
+- **Issue:** `is_http2` hardcoded to `false`; HTTP/2 infrastructure exists but never used
 - **Priority:** HIGH
-- **Source:** batch3_http_proxy_review
+- **Source:** batch3_http_proxy_review, AGENTS.md Lesson #18
+
+### 2.17 Core/Overview - Add MeshProxy to Module Index
+- **Location:** `architecture/overview.md`
+- **Issue:** `MeshProxy` at `src/mesh/proxy.rs:63` (1994 lines) is key routing component but not mentioned in architecture overview
+- **Priority:** HIGH
+- **Source:** batch4_core_overview, AGENTS.md Lesson #10
+
+### 2.18 Core/Overview - Add Missing Modules to Index
+- **Location:** `architecture/overview.md`
+- **Issue:** Missing modules: `src/icmp_filter/`, `src/serverless/`, `src/spin/`, `src/wasm_pow/`, `src/tarpit/`, `src/honeypot_port/`, `src/plugin/`, `src/sandbox/`
+- **Priority:** MEDIUM
+- **Source:** batch4_core_overview
+
+### 2.19 Networking - Clarify PQC Feature Flag Interactions
+- **Location:** `architecture/networking_deep_dive.md`
+- **Issue:** Need to clarify `post-quantum` vs `pqc-mesh` vs `verify-pq` feature flags
+- **Priority:** MEDIUM
+- **Source:** batch3_networking_review
 
 ---
 
@@ -289,174 +264,159 @@ Implementation is organized into **waves** that can execute in parallel where de
 - **Issue:** Currently hardcoded 2048; make configurable
 - **Source:** batch1_dns_review
 
-### 3.6 DNS - Add GOST Algorithm Support
-- **Location:** `src/dns/dnssec_validation.rs:260`
-- **Issue:** GOST type 3 DS digest not supported
-- **Source:** batch1_dns_review
-
-### 3.7 Admin - Add Timing Normalization to Auth Handler
-- **Location:** `src/admin/handlers/auth.rs:17-28`
-- **Issue:** Session enumeration timing leak
-- **Source:** batch1_admin_review, batch4_config_admin
-
-### 3.8 Admin - Clarify Rate Limiter Distinction
-- **Location:** `src/admin/auth.rs:139`, `src/admin/middleware.rs:124-128`
-- **Issue:** Global vs per-instance rate_limiter distinction unclear
-- **Source:** batch1_admin_review
-
-### 3.9 Mesh - Update Topology-Aware Router Description
-- **Location:** `architecture/mesh_deep_dive.md:44`
-- **Issue:** Update to "weighted scoring based on latency, reputation, and node role"
-- **Source:** batch1_mesh_review
-
-### 3.10 Mesh - Soften Threat Propagation Timing
-- **Location:** `architecture/mesh_deep_dive.md:49`
-- **Issue:** Change to "Distributed via DHT propagation and Raft consensus"
-- **Source:** batch1_mesh_review
-
-### 3.11 Mesh - Clarify Raft Consensus Scope
-- **Location:** `architecture/mesh_deep_dive.md:9`
-- **Issue:** Clarify "OrgPublicKey and ThreatIntel records; DHT for routing and other state"
-- **Source:** batch1_mesh_review
-
-### 3.12 Layer 3.5 - Implement ML-KEM Key Rotation
+### 3.6 Layer 3.5 - Implement ML-KEM Key Rotation
 - **Location:** `src/mesh/ml_kem_key_exchange.rs:41-58`, `src/mesh/transport.rs:1989-2001`
 - **Source:** batch1_layer_3_5_review
 
-### 3.13 Layer 3.5 - Consider Raft-Based Revocation Replication
+### 3.7 Layer 3.5 - Consider Raft-Based Revocation Replication
 - **Location:** `src/mesh/peer_auth.rs:21-117`
 - **Issue:** Instead of DHT distribution
 - **Source:** batch1_layer_3_5_review
 
-### 3.14 Layer 3.5 - DhtAccessControl::require_global_node() Dead Code
-- **Location:** `src/mesh/dht/mod.rs:755`
-- **Issue:** Never called - add to verification path or remove
-- **Source:** batch1_layer_3_5_review
+### 3.8 Layer 3.5 - Update Topology-Aware Router Description
+- **Location:** `architecture/mesh_deep_dive.md:44`
+- **Issue:** Update to "weighted scoring based on latency, reputation, and node role"
+- **Source:** batch1_mesh_review
 
-### 3.15 WAF - Document check_body_fragments() Zero-Copy
+### 3.9 Layer 3.5 - Soften Threat Propagation Timing
+- **Location:** `architecture/mesh_deep_dive.md:49`
+- **Issue:** Change to "Distributed via DHT propagation and Raft consensus"
+- **Source:** batch1_mesh_review
+
+### 3.10 Layer 3.5 - Clarify Raft Consensus Scope
+- **Location:** `architecture/mesh_deep_dive.md:9`
+- **Issue:** Clarify "OrgPublicKey and ThreatIntel records; DHT for routing and other state"
+- **Source:** batch1_mesh_review
+
+### 3.11 WAF - Document check_body_fragments() Zero-Copy
 - **Location:** `src/waf/attack_detection/streaming.rs:118`
 - **Source:** batch1_waf_review
 
-### 3.16 WAF - Move FloodConfig Hardcoded Defaults
+### 3.12 WAF - Move FloodConfig Hardcoded Defaults
 - **Location:** `src/waf/flood/mod.rs:40-56`
 - **Source:** batch1_waf_review
 
-### 3.17 WAF - Update Burst Tokens Documentation
+### 3.13 WAF - Update Burst Tokens Documentation
 - **Location:** `src/waf/traffic_shaper/limiter.rs:96`
 - **Issue:** Document says "default 10" but it's configurable
 - **Source:** batch1_waf_review
 
-### 3.18 Config - ConfigManager Site Lookup Exact Match
+### 3.14 Config - ConfigManager Site Lookup Exact Match
 - **Location:** `crates/synvoid-config/src/lib.rs:195-197`
 - **Issue:** May not work for alias domains
 - **Source:** batch2_config_review
 
-### 3.19 Config - reload_site() Filename Storage
+### 3.15 Config - reload_site() Filename Storage
 - **Location:** `crates/synvoid-config/src/lib.rs:199-220`
 - **Issue:** Relies on `domains.first()` for filename; fails if filename ≠ primary domain
 - **Source:** batch2_config_review
 
-### 3.20 App Handlers - Verify Spin Registration Mechanism
+### 3.16 App Handlers - Verify Spin Registration Mechanism
 - **Location:** Admin API
 - **Source:** batch2_app_handlers_review
 
-### 3.21 App Handlers - Verify FastCGI Streaming
+### 3.17 App Handlers - Verify FastCGI Streaming
 - **Location:** `src/fastcgi/mod.rs`
 - **Source:** batch2_app_handlers_review
 
-### 3.22 Routing - Update Connection Lifecycle Documentation
+### 3.18 Routing - Update Connection Lifecycle Documentation
 - **Location:** `src/router.rs:1124-1219`
 - **Issue:** "Protocol Negotiation" step doesn't match - no explicit lease
 - **Source:** batch2_routing_review
 
-### 3.23 Routing - Verify Weighted Round Robin Configurable
+### 3.19 Routing - Verify Weighted Round Robin Configurable
 - **Location:** `src/upstream/pool.rs:566-583`
 - **Source:** batch2_routing_review
 
-### 3.24 Plugin - Serverless Engine Sharing
+### 3.20 Plugin - Serverless Engine Sharing
 - **Location:** `instance_pool.rs:165`
 - **Issue:** Creates fresh `Engine` per function pool; should share across serverless functions
 - **Source:** batch2_plugin_review
 
-### 3.25 Plugin - DHT Prefix Hardcoded List
+### 3.21 Plugin - DHT Prefix Hardcoded List
 - **Location:** `wasm_runtime.rs:840-848`
 - **Issue:** Sensitive prefixes hardcoded; make configurable
 - **Source:** batch2_plugin_review
 
-### 3.26 Worker - Add BufferPool Documentation
+### 3.22 Admin - Add Timing Normalization to Auth Handler
+- **Location:** `src/admin/handlers/auth.rs:17-28`
+- **Issue:** Session enumeration timing leak
+- **Source:** batch1_admin_review, batch4_config_admin
+
+### 3.23 Admin - Clarify Rate Limiter Distinction
+- **Location:** `src/admin/auth.rs:139`, `src/admin/middleware.rs:124-128`
+- **Issue:** Global vs per-instance rate_limiter distinction unclear
+- **Source:** batch1_admin_review
+
+### 3.24 Worker - Add BufferPool Documentation
 - **Source:** batch3_worker_review
 
-### 3.27 Worker - Clarify Process Hierarchy
+### 3.25 Worker - Clarify Process Hierarchy
 - **Location:** `architecture/platform_deep_dive.md`
 - **Source:** batch3_worker_review
 
-### 3.28 Platform - Clarify SO_REUSEPORT Usage
+### 3.26 Platform - Clarify SO_REUSEPORT Usage
 - **Location:** architecture docs
 - **Issue:** Only used during upgrades, not initial workers
 - **Source:** batch3_platform_review
 
-### 3.29 Proxy - Add Health Check TCP Mode
+### 3.27 Proxy - Add Health Check TCP Mode
 - **Location:** `src/upstream/health.rs:224-231`
 - **Issue:** Use `UpstreamAddress::parse()`
 - **Source:** batch3_proxy_review
 
-### 3.30 Proxy - Add Connection Health Check Before Checkin
+### 3.28 Proxy - Add Connection Health Check Before Checkin
 - **Location:** `src/http_client/erased_pool.rs:419`
 - **Source:** batch3_proxy_review
 
-### 3.31 Proxy - Fix TypedConnectionPool https_or_http() Inconsistency
+### 3.29 Proxy - Fix TypedConnectionPool https_or_http() Inconsistency
 - **Location:** `src/http_client/typed_pool.rs:128`
 - **Source:** batch3_proxy_review
 
-### 3.32 HTTP/Proxy - Document Layer 3.5 Half-TCP
+### 3.30 HTTP/Proxy - Document Layer 3.5 Half-TCP
 - **Location:** `src/upstream/pool.rs:67`, `src/upstream/address.rs`
 - **Source:** batch3_http_proxy_review
 
-### 3.33 HTTP/Proxy - Add Integration Test for Connection Pool Checkout
+### 3.31 HTTP/Proxy - Add Integration Test for Connection Pool Checkout
 - **Location:** `src/http_client/erased_pool.rs:245-283`
 - **Source:** batch3_http_proxy_review
 
-### 3.34 Networking - Document ACME Configuration Requirements
+### 3.32 Networking - Document ACME Configuration Requirements
 - **Issue:** DNS-01 vs HTTP-01, cache_dir requirements
 - **Source:** batch3_networking_review
 
-### 3.35 Networking - Clarify PQC Feature Flag Interactions
-- **Issue:** `post-quantum` vs `pqc-mesh` vs `verify-pq`
+### 3.33 Networking - Add Amplification Protection Configuration
 - **Source:** batch3_networking_review
 
-### 3.36 Networking - Add Amplification Protection Configuration
-- **Source:** batch3_networking_review
-
-### 3.37 Core/Overview - Add MeshProxy to Module Index
-- **Location:** `architecture/overview.md:219-233`
-- **Issue:** Key component (1964 lines) not mentioned
-- **Source:** batch4_core_overview
-
-### 3.38 Core/Overview - Improve Spin Handler Documentation
-- **Source:** batch4_core_overview
-
-### 3.39 Config/Admin - Clarify Admin Auth vs User Auth Distinction
-- **Location:** `architecture/admin_deep_dive.md`
-- **Source:** batch4_config_admin
-
-### 3.40 Config/Admin - Add AUTH_WINDOW_DURATION Constant
-- **Location:** `architecture/admin_deep_dive.md`
-- **Source:** batch4_config_admin
-
-### 3.41 Mesh/Networking - Clarify Bloom Filter Usage
-- **Location:** `architecture/mesh_deep_dive.md:30`
-- **Issue:** Route announcements, not DHT discovery
-- **Source:** batch4_mesh_networking
-
-### 3.42 Mesh/Networking - Document DHT Ingress Verification Gaps
-- **Location:** `architecture/mesh_deep_dive.md`
-- **Issue:** node_id not validated against peer_id/TLS cert
-- **Source:** batch4_mesh_networking
-
-### 3.43 Mesh/Networking - Soften Zero-Copy IO Claim
+### 3.34 Networking - Soften Zero-Copy IO Claim
 - **Location:** `architecture/networking_deep_dive.md:54-55`
 - **Issue:** Zero-copy is aspirational, not implementation fact
 - **Source:** batch4_mesh_networking
+
+### 3.35 Config/Admin - Clarify Admin Auth vs User Auth Distinction
+- **Location:** `architecture/admin_deep_dive.md`
+- **Source:** batch4_config_admin
+
+### 3.36 Config/Admin - Add AUTH_WINDOW_DURATION Constant
+- **Location:** `architecture/admin_deep_dive.md`
+- **Source:** batch4_config_admin
+
+### 3.37 Mesh/Networking - Clarify Bloom Filter Usage
+- **Location:** `architecture/mesh_deep_dive.md:30`
+- **Issue:** Route announcements, not DHT discovery (documentation already clarifies this)
+- **Source:** batch4_mesh_networking
+
+### 3.38 Mesh/Networking - Soften Zero-Copy IO Claim
+- **Location:** `architecture/networking_deep_dive.md:54-55`
+- **Source:** batch4_mesh_networking
+
+### 3.39 Core/Overview - Improve Spin Handler Documentation
+- **Source:** batch4_core_overview
+
+### 3.40 Core/Overview - Update Generic WASM Handler Reference
+- **Location:** `architecture/app_handlers.md:58`
+- **Issue:** Document mentions `WasmHandler` but generic WASM uses `WasmRuntime` directly
+- **Source:** batch4_core_overview
 
 ---
 
@@ -477,23 +437,24 @@ Implementation is organized into **waves** that can execute in parallel where de
 - **Estimated Effort:** Medium
 - **Source:** batch1_dns_review
 
-### 4.3 CORS Middleware (Admin)
-- **Location:** `src/admin/middleware.rs`
+### 4.3 CORS Middleware (Admin) - NOTE: Already Implemented
+- **Location:** `src/admin/mod.rs:48-94` (NOT middleware.rs)
 - **Dependencies:** None
-- **Estimated Effort:** Low
-- **Issue:** Claimed but not implemented
+- **Estimated Effort:** N/A - Verify and update documentation
+- **Issue:** CORS is implemented via `create_cors_layer()`, not in middleware.rs
 - **Source:** batch1_admin_review
 
 ### 4.4 DHT-to-Raft Migration (Layer 3.5)
 - **Location:** `src/mesh/peer_auth.rs:230-243`
 - **Dependencies:** Requires thorough testing, could affect mesh networking
 - **Estimated Effort:** High
-- **Source:** batch1_layer_3_5_review
+- **Source:** batch1_layer_3_5_review, MESH-15
 
-### 4.5 GeoIP Blocking (WAF)
+### 4.5 GeoIP Blocking (WAF) - NOTE: Actually ASN Scraping Detection
 - **Location:** `src/waf/asn_tracker.rs`
-- **Dependencies:** May need GeoIP database integration
+- **Dependencies:** May need GeoIP database integration for true country blocking
 - **Estimated Effort:** Medium
+- **Note:** Current implementation is ASN-based scraper detection, not GeoIP country blocking
 - **Source:** batch1_waf_review
 
 ### 4.6 ErasedHttpClient Integration (HTTP/Proxy)
@@ -505,7 +466,7 @@ Implementation is organized into **waves** that can execute in parallel where de
 
 ### 4.7 HTTP/2 Complete Support (HTTP/Proxy)
 - **Location:** `src/http_client/mod.rs:890`
-- **Dependencies:** Item 4.6 (ErasedHttpClient integration)
+- **Dependencies:** Item 4.6 (ErasedHttpClient integration) - both relate to `is_http2` in PoolKey
 - **Estimated Effort:** Medium
 - **Source:** batch3_http_proxy_review
 
@@ -529,19 +490,18 @@ Implementation is organized into **waves** that can execute in parallel where de
 **Documentation-only changes grouped by target document. Multiple agents can work in parallel on different documents.**
 
 ### 5.1 architecture/mesh_deep_dive.md
-- [ ] Update 0-RTT disabled by default (was incorrectly implied as enabled)
-- [ ] Update Raft already implemented (was marked as migration needed)
-- [ ] Strengthen Bloom filter purpose - route propagation, not DHT discovery
-- [ ] Document DHT ingress verification gaps as known limitations
+- [ ] Update - Raft already implemented (not migration needed)
 - [ ] Update topology-aware router description
 - [ ] Soften threat propagation timing claims
 - [ ] Clarify Raft consensus scope
+- [ ] Strengthen Bloom filter purpose - route propagation, not DHT discovery (already documented at line 30)
+- [ ] Document DHT ingress verification gaps as known limitations (MESH-14)
 - [ ] Fix Ed25519/X25519 confusion
 - [ ] Clarify "Kademlia-inspired with geo-distance enhancements"
 - [ ] Add PQC feature flag cross-reference
 
 ### 5.2 architecture/waf_deep_dive.md
-- [ ] Update JS Challenge location: `src/challenge/pow.rs` (not `js.rs`)
+- [ ] Verify JS Challenge location: `src/challenge/pow.rs` (documentation at line 72 appears correct)
 - [ ] Standardize detector names
 - [ ] Document check_body_fragments() as zero-copy
 - [ ] Update burst tokens documentation
@@ -557,10 +517,10 @@ Implementation is organized into **waves** that can execute in parallel where de
 - [ ] Document DNS cookie server integration points
 
 ### 5.5 architecture/config_deep_dive.md
-- [ ] Fix sites HashMap location (in ConfigManager, not MainConfig)
+- [ ] Verify sites HashMap location (appears correct at line 86 under ConfigManager)
 - [ ] Add missing fields: tokio, ip_feeds, rule_feed, yara_feed, rate_limit_memory, proxy_limits, etc.
-- [ ] Fix Utils crate path: `crates/synvoid-utils/` → `crates/synvoid-utils/` (verify correct path)
-- [ ] Clarify ConfigManager location in lib.rs
+- [ ] Fix Utils crate path: `crates/synvoid-utils/` (verify correct path)
+- [ ] Clarify ConfigManager location in lib.rs (at `crates/synvoid-config/src/lib.rs:113`)
 - [ ] Add config propagation pattern section
 - [ ] Add site_id to SiteConfig hierarchy
 
@@ -578,10 +538,9 @@ Implementation is organized into **waves** that can execute in parallel where de
   - `src/wasm_pow/` — WASM PoW
   - `src/tarpit/` — Bot tar pit
   - `src/honeypot_port/` — Honeypot ports
-  - `src/mesh/proxy.rs` — MeshProxy (key component, 1964 lines)
+  - `src/mesh/proxy.rs` — MeshProxy (key component, 1994 lines)
   - `src/plugin/` — Plugin system
   - `src/sandbox/` — Process sandboxing
-- [ ] Add MeshProxy to mesh networking table
 - [ ] Improve Spin manual registration requirement visibility
 - [ ] Update Router module description (1377 lines, radix tree complexity)
 - [ ] Process flags verification for MeshAgent
@@ -685,7 +644,7 @@ Implementation is organized into **waves** that can execute in parallel where de
 | Issue | Appears In | Priority |
 |-------|-----------|----------|
 | CPU affinity Linux-only | worker_review, platform_review, networking | Document |
-| macos-sandbox feature missing | platform_review, AGENTS.md | CRITICAL |
+| macos-sandbox feature exists | platform_review, AGENTS.md | Document (feature exists, just needs enabling) |
 | ErasedHttpClient not used | http_proxy_review, AGENTS.md Lesson #11 | HIGH |
 | gRPC plaintext | worker_review, platform_review | Document |
 | Retry config disabled | proxy_review | CRITICAL |
@@ -737,14 +696,51 @@ cargo check -p synvoid-config --no-default-features --features mesh,dns
 
 ---
 
-## Appendix A: Source File Reference
+## Appendix A: Consolidated Lessons Learned (2026-05-23)
 
-| Batch | Source Files |
-|-------|-------------|
-| batch1 | dns_review_plan.md, waf_review_plan.md, layer_3_5_review_plan.md, admin_review_plan.md, mesh_review_plan.md |
-| batch2 | process_lifecycle_review_plan.md, config_review_plan.md, app_handlers_review_plan.md, routing_review_plan.md, plugin_review_plan.md |
-| batch3 | worker_review_plan.md, proxy_review_plan.md, platform_review_plan.md, networking_review_plan.md, http_proxy_review_plan.md |
-| batch4 | config_admin_review_plan.md, core_overview_review_plan.md, mesh_networking_review_plan.md |
+These lessons should be incorporated into future agent work:
+
+1. **Process hierarchy is three-tier in traditional mode** - The codebase supports two deployment models:
+   - **Consolidated (recommended)**: Supervisor → Workers directly
+   - **Traditional (legacy)**: Overseer → Master → Workers
+
+2. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig).
+
+3. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code.
+
+4. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. This is intentional for localhost IPC.
+
+5. **SAFE_HEADERS count is 28** - `src/proxy/cache.rs:97-126` has 28 headers.
+
+6. **Spin routing uses longest-prefix-match** - `src/spin/runtime.rs:271-285` collects all route matches and returns the longest prefix match.
+
+7. **CPU affinity pinning is Linux-only** - Must be explicitly configured via `cpu_affinity` parameter.
+
+8. **macOS Seatbelt sandbox requires feature flag** - Enable the `macos-sandbox` feature for actual enforcement on macOS.
+
+9. **ConfigManager is in synvoid-config crate** - `ConfigManager` is at `crates/synvoid-config/src/lib.rs:113`.
+
+10. **MeshProxy is a key routing component** - `src/mesh/proxy.rs:63` (1994 lines) handles backend routing via mesh.
+
+11. **ErasedHttpClient integration is incomplete** - `use_erased_client` is hardcoded to `false`. Phase 9 integration was never completed.
+
+12. **AXFR transfer incomplete** - `build_axfr_record()` at `src/dns/transfer.rs:829-878` lacks SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA support.
+
+13. **Plan verification is essential** - Always verify items against codebase before marking as needing work.
+
+14. **current_depth() doesn't exist** - `src/location_matcher.rs:191-195` contains `is_empty()` and `len()` methods, not `current_depth()`.
+
+15. **BackendType enum variants** - `src/router.rs:65-77` has 11 variants not all documented.
+
+16. **Spin cold-start overhead** - `src/spin/runtime.rs:251` creates new `SpinAppInstance` per request with no reuse.
+
+17. **UpstreamPool vs FastCgiPool health checks** - Only FastCgiPool has active health check thread. UpstreamPool relies on on-demand reactive checks.
+
+18. **HTTP/2 hardcoded disabled** - `src/http_client/mod.rs:890` has `is_http2 = false`.
+
+19. **Allowed DHT prefixes not propagated** - Both `src/serverless/instance_pool.rs:186` and `src/plugin/instance_pool.rs:186` set `allowed_dht_prefixes: Vec::new()` during warmup.
+
+20. **Retry config edge case** - `src/proxy/mod.rs:293-312` sets `retry_config: None` when `upstream_pool` is `None`.
 
 ---
 
