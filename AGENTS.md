@@ -196,6 +196,22 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 12. **AXFR transfer incomplete** - `build_axfr_record()` at `src/dns/transfer.rs:829-878` lacks SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA support.
 
+13. **Plan verification is essential** - Subagent verification found multiple items already fixed (gRPC uptime at `src/supervisor/api.rs:55`, CSRF validation at `src/admin/state.rs:736`). Always verify items against codebase before marking as needing work.
+
+14. **current_depth() doesn't exist** - `src/location_matcher.rs:191-195` contains `is_empty()` and `len()` methods, not `current_depth()`. When referencing functions, verify they actually exist at the claimed location.
+
+15. **BackendType enum variants** - `src/router.rs:65-77` has: Upstream, FastCgi, Php, Cgi, AxumDynamic, AppServer, Static, QuicTunnel, Serverless, Mesh, Spin. Not all are documented in architecture.
+
+16. **Spin cold-start overhead** - `src/spin/runtime.rs:251` creates new `SpinAppInstance` per request with no reuse. Significant cold-start penalty.
+
+17. **UpstreamPool vs FastCgiPool health checks** - Only FastCgiPool (`src/fastcgi/pool.rs:148`) has active health check thread via `start_health_check()`. UpstreamPool relies on on-demand reactive checks via `HealthChecker::check()` called by admin API.
+
+18. **HTTP/2 hardcoded disabled** - `src/http_client/mod.rs:890` has `is_http2 = false`. HTTP/2 infrastructure exists but is never used.
+
+19. **Allowed DHT prefixes not propagated** - Both `src/serverless/instance_pool.rs:186` and `src/plugin/instance_pool.rs:186` set `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values.
+
+20. **Retry config edge case** - `src/proxy/mod.rs:293-312` sets `retry_config: None` when `upstream_pool` is `None` (lines 252-260), so retries are disabled even when configured.
+
 ## Known Deferred Items
 
 Some items are intentionally deferred due to architectural complexity:
