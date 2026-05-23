@@ -84,6 +84,7 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/dht/record_store_message.rs:1319-1345` | check_quorum_completion treats failed Raft writes as timeout - MESH-11 ✅ FIXED |
 | `src/supervisor/api.rs:114-129` | gRPC server binds to localhost only for local IPC - TLS not required |
 | `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
+| ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
 
 ## Modular Agent Guidance
 
@@ -177,33 +178,35 @@ Large plans should be organized into **waves** that can execute in parallel:
    - **Traditional (legacy)**: Overseer → Master → Workers
    The Master process still exists via `--master` flag and is managed by Overseer.
 
-2. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig). Missing propagation caused APP-17 (require_hashes) to not work.
+2. **Config field propagation** - When adding new fields to config structs, ensure they propagate through all layers (SiteAppServerConfig → AppServerConfig → GranianConfig). Missing propagation caused require_hashes to not work.
 
-3. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code (MESH-16). The second GLOBAL_EDGE block in `peer_auth.rs` was identical to the first and unreachable.
+3. **Dead code detection** - When code blocks are duplicated with no intervening return/break, check if second block is unreachable dead code. The second GLOBAL_EDGE block in `peer_auth.rs` was identical to the first and unreachable.
 
 4. **gRPC server has no TLS** - `src/supervisor/api.rs:114-129` uses plaintext gRPC. Claims of "protected by TLS" in docs are inaccurate. This is intentional for localhost IPC - not a bug.
 
 5. **SAFE_HEADERS count is 28** - `src/proxy/cache.rs:97-126` has 28 headers, not 27 or 29.
 
-6. **Plugin instance pool bugs** - `src/plugin/instance_pool.rs` had two bugs:
-   - `BUG-2`: `prepare_for_request()` didn't reset `body_receiver` - caused streaming failures on pooled instances. **FIXED**: Added `self.store.data_mut().body_receiver = None;`
-   - `BUG-3`: `warmup()` only linked `abort` and `check_timeout` - missing `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`. **FIXED**: All 5 functions now linked in warmup()
+6. **Plugin instance pool bugs** - `src/plugin/instance_pool.rs` had two bugs that are now fixed:
+   - `prepare_for_request()` didn't reset `body_receiver` - caused streaming failures on pooled instances
+   - `warmup()` only linked `abort` and `check_timeout` - missing 5 functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`
 
-7. **Spin find_route bug** - `src/spin/runtime.rs:271-285` returned first match only, not longest-prefix-match. **FIXED**: Now collects all matches and returns longest prefix.
+7. **Spin find_route uses longest-prefix-match** - `src/spin/runtime.rs:271-285` collects all route matches and returns the longest prefix match.
 
-8. **WAF fast-path bypass** - `src/waf/attack_detection/mod.rs:425-435` had early return when fast-path was safe, but request smuggling patterns were NOT in fast_path_patterns. **FIXED**: Added smuggling indicators (`transfer-encoding`, `content-length`) to fast_path_patterns and expanded patterns from 13 to 38.
+8. **WAF fast-path bypass** - `src/waf/attack_detection/mod.rs:425-435` had early return when fast-path was safe, but request smuggling patterns were NOT in fast_path_patterns. Fixed by adding smuggling indicators (`transfer-encoding`, `content-length`) and expanding patterns from 13 to 38.
 
-9. **Flood protector not integrated** - `src/waf/mod.rs:438-508` flood_protector existed but was NOT called during request pipeline. **FIXED**: Integrated into `check_request_full()` pipeline.
+9. **Flood protector not integrated** - `src/waf/mod.rs:438-508` flood_protector existed but was NOT called during request pipeline. Now integrated into `check_request_full()` pipeline.
 
 10. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp. Known architectural limitation.
 
-11. **Spin routing IS integrated** - Contrary to earlier AGENTS.md claims, Spin routing IS integrated into HTTP dispatch at `src/http/server.rs:2417-2489`. When `BackendType::Spin` is configured, requests go through `SpinHttpHandler`. Spin requires manual app registration via Admin API.
+11. **Spin routing IS integrated** - Spin routing is integrated into HTTP dispatch at `src/http/server.rs:2417-2489`. When `BackendType::Spin` is configured, requests go through `SpinHttpHandler`. Spin requires manual app registration via Admin API.
 
-12. **Admin CSRF uses constant-time comparison** - `src/admin/state.rs:736` now uses `subtle::ConstantTimeEq` for session hash comparison in `validate_csrf()`. Previously used simple `==` comparison.
+12. **CPU affinity pinning is Linux-only, not automatic** - `src/worker/unified_server.rs:205-208` shows CPU affinity only works on Linux. On macOS/BSD it logs a warning but does nothing. Must be explicitly configured via `cpu_affinity` parameter, not automatic.
 
-13. **CPU affinity pinning is Linux-only, not automatic** - `src/worker/unified_server.rs:205-208` shows CPU affinity only works on Linux. On macOS/BSD it logs a warning but does nothing. Must be explicitly configured via `cpu_affinity` parameter, not automatic.
+13. **macOS Seatbelt sandbox is planned, not implemented** - `src/platform/sandbox.rs` does not have a `macos-sandbox` feature gate. The seatbelt implementation is planned but not yet implemented.
 
-14. **macOS Seatbelt sandbox is planned, not implemented** - `src/platform/sandbox.rs` does not have a `macos-sandbox` feature gate. The seatbelt implementation is planned but not yet implemented.
+14. **ConfigManager is in synvoid-config crate** - `ConfigManager` is at `crates/synvoid-config/src/lib.rs:113`, not in `main_config.rs`.
+
+15. **MeshProxy is a key routing component** - `src/mesh/proxy.rs:63` (1996 lines) handles backend routing via mesh but wasn't documented in architecture overview.
 
 ## Skills Reference
 
