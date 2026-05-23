@@ -75,7 +75,7 @@ Provides dynamic loading and execution of WASM plugins for request filtering, re
 
 ### Purpose
 
-Implements a Spin framework runtime for executing Spin-compatible WASM modules. **This module is partially implemented** — manifest parsing works but routing integration and component mapping is NOT complete.
+Implements a Spin framework runtime for executing Spin-compatible WASM modules. Manifest parsing and longest-prefix-match routing are implemented; requests are dispatched via `SpinHttpHandler` at `src/http/server.rs:2417-2489`.
 
 ### Key Files
 
