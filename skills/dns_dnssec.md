@@ -265,6 +265,26 @@ Keys with `trust_point == 0` (never valid) must use `trust_anchor_check()` with 
 3. **NSEC3 uses SHA-1** - RFC 9276 suggests SHA-1 is acceptable for NSEC3 hashing
 4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `src/dns/dnssec_signing.rs` handles this correctly.
 
+## Security Notes
+
+### DS Digest Comparison (2026-05-23)
+
+**Location**: `src/dns/dnssec_validation.rs:272`
+
+DS digest comparison MUST use constant-time comparison to prevent timing attacks:
+
+```rust
+use subtle::ConstantTimeEq;
+
+// BEFORE (vulnerable to timing attack)
+Ok(computed == expected_digest)
+
+// AFTER (constant-time)
+Ok(bool::from(computed.ct_eq(expected_digest)))
+```
+
+This matches the pattern used in `tsig.rs:238` and `cookie.rs:86`.
+
 ## Testing
 
 ```bash
