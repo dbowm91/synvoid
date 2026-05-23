@@ -142,6 +142,17 @@ impl ServerlessManager {
         self
     }
 
+    /// Mesh-only features for DHT-integrated serverless execution.
+    ///
+    /// When the `mesh` feature is enabled, these methods become available:
+    /// - `set_record_store()` - Registers functions in the DHT for distributed lookup
+    /// - `set_routing_manager()` - Enables hierarchical routing for multi-region deployments
+    /// - `set_org_manager()` - Sets the organization manager for tenant isolation
+    /// - `set_revocation_list()` - Configures the global node revocation list for security
+    /// - `set_transport()` - Sets the mesh transport for peer-to-peer communication
+    ///
+    /// These features are only available when building with `--features mesh` and allow
+    /// serverless functions to participate in the mesh distributed hash table.
     #[cfg(feature = "mesh")]
     pub fn set_record_store(&self, store: Arc<crate::mesh::dht::RecordStoreManager>) {
         *self.record_store.write() = Some(store);

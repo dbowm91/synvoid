@@ -165,7 +165,17 @@ impl WasmPluginManager {
         data: &[u8],
         limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
-        let runtime = WasmRuntime::load_from_bytes(name, data, limits)?;
+        self.load_plugin_from_memory_with_priority(name, data, limits, 0)
+    }
+
+    pub fn load_plugin_from_memory_with_priority(
+        &self,
+        name: &str,
+        data: &[u8],
+        limits: WasmResourceLimits,
+        priority: i32,
+    ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        let runtime = WasmRuntime::load_from_bytes_with_priority(name, data, limits, priority)?;
         let arc = Arc::new(runtime);
         let runtime_name = arc.name().to_string();
         self.runtimes.write().push(arc.clone());
@@ -174,39 +184,6 @@ impl WasmPluginManager {
             .write()
             .insert(runtime_name, PathBuf::from(format!("mesh://{}", name)));
         Ok(arc)
-    }
-
-    /// Load a WASM component using the Component Model with WIT-defined interface.
-    ///
-    /// This method supports plugins compiled against the new Component Model ABI,
-    /// as defined in `plugin.wit`. The old `load_plugin` method continues to work
-    /// for legacy plugins using the linear-memory ABI.
-    pub fn load_component(&self, path: &Path) -> Result<(), WasmPluginError> {
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true);
-        let engine = wasmtime::Engine::new(&config)
-            .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
-
-        let component = Component::from_file(&engine, path)
-            .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
-
-        tracing::info!("Loaded WASM component from '{}'", path.display());
-
-        let mut linker: ComponentLinker<RequestContext> = ComponentLinker::new(&engine);
-
-        Self::link_host_functions(&mut linker)?;
-
-        let mut store = Self::create_component_store(&engine, &self.default_limits);
-        let instance = linker.instantiate(&mut store, &component).map_err(|e| {
-            WasmPluginError::ExecutionFailed(format!("component instantiation failed: {}", e))
-        })?;
-
-        let _func = instance
-            .get_export(&mut store, None, "filter-request")
-            .ok_or_else(|| WasmPluginError::FunctionNotFound("filter-request".to_string()))?;
-
-        tracing::info!("WASM component instantiated successfully with WIT-defined host interface");
-        Ok(())
     }
 
     fn create_component_store(
