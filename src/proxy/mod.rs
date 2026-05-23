@@ -300,7 +300,7 @@ impl ProxyServer {
             upstream_error_tracker,
             site_id,
             upstream_pool: None,
-            retry_config: None,
+            retry_config,
             buffering_config: None,
             cache,
             cache_key_builder,
