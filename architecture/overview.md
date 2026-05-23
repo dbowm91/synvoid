@@ -54,16 +54,19 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 | Process | Binary Flag | Purpose | Count |
 |---------|-------------|---------|-------|
 | **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane, zero-downtime upgrades | 1 |
+| **Master** | `--master` | Legacy mid-tier process manager (spawned by Overseer) | 1 |
+| **Overseer** | `--overseer` | Legacy parent process (health monitoring, upgrade coordination) | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | N |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | N |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination | N |
 
-### Legacy Overseer (Deprecated)
+### Legacy Overseer & Master (Deprecated)
 
-The legacy **Overseer** process (`src/overseer/`) has been **deprecated** and replaced by the Supervisor. The Overseer module remains in the codebase for backward compatibility but is not invoked in the current execution path.
+The legacy **Overseer** process (`src/overseer/`) and **Master** process (`src/master/`) have been **deprecated** in favor of the consolidated Supervisor. These modules remain in the codebase for backward compatibility but are not invoked when using the default Supervisor mode.
 
-- **Old model:** Overseer → Master → Worker
-- **Current model:** Supervisor → Worker (consolidated)
+- **Old model:** Overseer → Master → Worker (three-tier hierarchy)
+- **Current model:** Supervisor → Worker (consolidated two-tier for simpler deployments)
+- **Note:** The `--master` and `--overseer` flags still exist for environments requiring the legacy hierarchy.
 
 **Note:** The UnifiedServerWorker uses a single Tokio runtime with `worker_threads` equal to CPU cores. Adding more worker processes does NOT increase throughput—it only adds process isolation overhead.
 
@@ -199,7 +202,7 @@ SynVoid supports multiple backend types natively.
 | **FastCGI** | `src/fastcgi/` | Generic FastCGI backend support |
 | **CGI** | `src/cgi/` | CGI script execution |
 | **Serverless** | `src/serverless/` | WASM runtime with instance pooling |
-| **Spin** | `src/spin/` | Fermyon Spin framework support |
+| **Spin** | `src/spin/` | Fermyon Spin framework support (requires manual app registration via Admin API) |
 | **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading |
 | **Static Worker** | `src/worker/` | CSS/JS minification, compression |
 
@@ -377,6 +380,19 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/worker/` | Worker process |
 | `crates/synvoid-config/` | Configuration crate |
 | `crates/synvoid-utils/` | Utilities crate |
+
+---
+
+## Errata & Known Corrections
+
+The following corrections were made to address discrepancies between documentation and implementation:
+
+| Item | Correction |
+|------|------------|
+| **Process Hierarchy** | SynVoid uses a three-tier hierarchy (Overseer → Master → Worker) for legacy deployments, with Supervisor consolidating Overseer + Master responsibilities for simpler deployments. See [Process Lifecycle](process_lifecycle.md) for details. |
+| **gRPC Control Plane** | The gRPC API binds to localhost only — TLS is not required for local IPC between processes. See [Platform Deep Dive](platform_deep_dive.md). |
+| **Spin Framework** | Spin support (`src/spin/`) requires manual app registration via Admin API. Routing integration and component mapping are not fully automated. |
+| **File Path Corrections** | Several file path references in deep dive docs were corrected in AGENTS.md. Key corrections: `collect_body_with_chunk_waf` is in `src/http/server.rs:4661` (not `shared_handler.rs`), quorum verification is in `src/mesh/dht/signed.rs:860-934` (not `state_machine.rs:166-172`). |
 
 ---
 

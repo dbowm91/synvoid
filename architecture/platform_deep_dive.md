@@ -205,29 +205,21 @@ run_master_mode()
 ├── setup_panic_handler()
 ├── ConfigManager::load_main()
 ├── Tokio multi-thread runtime
+├── Post-quantum TLS initialization
+├── Site discovery and loading
 ├── BlockStore initialization
-├── RuleFeedManager (if enabled)
+├── RuleFeedManager (if threat intel enabled)
 ├── ProcessManager::new()
 ├── IpcListener bind
-├── spawn_unified_server_workers()
+├── Worker spawning (UnifiedServerWorker)
+├── StaticWorker spawning
 ├── setup_signal_handlers()
 ├── start_health_monitor()
 ├── start_admin_server()
 └── event_rx loop
 ```
 
-### Critical Architecture Requirements (from `startup/master.rs`)
-
-**Master MUST NOT**:
-- Run UnifiedServer inline for request handling
-- Accept HTTP/TCP/UDP/QUIC/WebSocket requests
-- Handle external network traffic
-
-**Master ONLY**:
-- Runs admin panel API
-- Orchestrates threat intelligence
-- Manages worker processes
-- Handles IPC communications
+**Note:** The Master MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Master ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
 
 ---
 

@@ -1,22 +1,45 @@
 # Process Lifecycle & Execution Model
 
-SynVoid uses a "Shared-Nothing Architecture" to achieve maximum performance, linear scalability, and robust security isolation. The model follows a two-tier **Supervisor → Worker** pattern, managed via a gRPC-based Control Plane.
+SynVoid uses a "Shared-Nothing Architecture" to achieve maximum performance, linear scalability, and robust security isolation. The model follows a three-tier hierarchy for maximum flexibility, with Supervisor consolidating legacy Overseer + Master responsibilities.
 
 ## The Hierarchy
 
-### 1. Supervisor (The Control Plane)
-The Supervisor is the long-lived entry point process. It merges the responsibilities of the legacy Overseer and Master processes into a single, high-performance orchestration engine.
+### 1. Overseer (Legacy - Parent Process)
+The Overseer is the top-level orchestrator that spawns and monitors the Master process and Mesh Agent. It handles system-wide health monitoring, recovery orchestration, and upgrade coordination.
 
 - **Responsibilities:**
+  - **Process Spawning:** Spawns the Master process and Mesh Agent at startup.
+  - **Health Monitoring:** Monitors child process heartbeats and restarts failed processes.
+  - **Recovery Orchestration:** Handles system recovery when faults occur.
+  - **Upgrade Coordination:** Coordinates zero-downtime upgrades across the system.
+- **Key Logic:** `src/overseer/`.
+
+### 2. Master (Legacy - Mid-tier Process)
+The Master runs as a child of Overseer and provides process management, admin API, block store, and IPC coordination for workers.
+
+- **Responsibilities:**
+  - **Process Management:** Spawns and monitors Worker processes via ProcessManager.
+  - **Admin API:** Hosts the management interface.
+  - **Block Store:** Manages persistent IP blocklists.
+  - **IPC Coordination:** Broadcasts configuration and threat intelligence to workers.
+- **Key Logic:** `src/startup/master.rs`, `src/master/`.
+
+### 3. Supervisor (Consolidated Control Plane)
+The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master responsibilities into a single process for simpler deployments.
+
+- **Modes:**
+  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly.
+  - **Legacy Mode:** Overseer spawns Master which spawns workers (still supported for backward compatibility).
+- **Responsibilities:**
   - **Process Management:** Spawning and monitoring Worker processes.
-  - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads of the Supervisor itself.
-  - **Control Plane Relegation:** Handles heavy coordination protocols, including Raft consensus, DHT routing, and Mesh transport.
-  - **Configuration:** Loads and validates configuration using the `synvoid-config` crate. Distributes config to workers via high-speed IPC.
-  - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management and CLI interactions.
-- **Key Logic:** `src/supervisor/`, `src/control_plane/`.
+  - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
+  - **Control Plane Coordination:** Handles Raft consensus, DHT routing, and Mesh transport.
+  - **Configuration:** Loads and validates configuration using the `synvoid-config` crate.
+  - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management.
+- **Key Logic:** `src/supervisor/`.
 - **IPC Role:** Acts as the central hub for worker coordination.
 
-### 2. Worker (The Data Plane)
+### 4. Worker (The Data Plane)
 Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment.
 
 - **Isolation:** Each worker process is completely independent.
@@ -31,7 +54,7 @@ Workers are lightweight, "dumb" request-handling engines that operate in a share
 
 SynVoid utilizes a tiered communication strategy:
 
-1.  **External Management (gRPC):** The CLI (`CommandClient`) and remote managers communicate with the Supervisor via gRPC over TLS.
+1.  **External Management (gRPC):** The CLI (`CommandClient`) and remote managers communicate with the Supervisor via gRPC (localhost only for local IPC).
 2.  **Internal Coordination (IPC):** The Supervisor communicates with Workers using a high-speed, binary IPC protocol over Unix domain sockets or Windows named pipes.
 3.  **Mesh Network:** Supervisors communicate with other Supervisors via the Mesh transport (QUIC) to maintain global state (Raft/DHT).
 
