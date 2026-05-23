@@ -55,5 +55,5 @@ The mesh allows nodes to share behavioral fingerprints of suspected bots.
 ## Security & Integrity
 
 - **Peer Authentication:** All nodes must have a valid certificate signed by an authorized Organization Key.
-- **Audit Logs:** The mesh includes a distributed auditing system (`audit.rs`) to track network events and detect malicious or misconfigured peers.
+- **Audit Logs:** The mesh includes a distributed auditing system (`src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
 - **Access Control:** Fine-grained policies control which nodes can proxy which services.
