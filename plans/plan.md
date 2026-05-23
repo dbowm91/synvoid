@@ -1,130 +1,178 @@
 # SynVoid Implementation Plan
 
-**Status**: 📋 IN PROGRESS - Wave 6/8 completed, AGENTS/skills update pending (2026-05-22)
-**Target**: 1M RPS with streaming WAF, plus bug fixes and security hardening
-**Consolidated from**: `plans/*.md` architecture reviews
+**Status**: 📋 IN PROGRESS - Consolidation complete, items verified (2026-05-23)
+**Target**: Bug fixes, security hardening, and documentation updates
+**Consolidated from**: `plans/*.md` architecture reviews + codebase verification
 
 ---
 
 ## Overview
 
-This plan consolidates actionable items from architecture reviews into parallelizable waves. Each wave can be executed by independent agents.
+This plan consolidates actionable items from architecture reviews. Each item has been verified against the codebase. Items marked ✅ are verified as already correct/fixed; items marked ❌ had discrepancies corrected in this version; items marked 📋 need action.
 
-**Verification Completed**: All item references have been cross-checked against the codebase during this review session. Items marked ✅ are verified as accurate; items marked ❌ had discrepancies that have been corrected in this version.
-
----
-
-## Previously Completed Waves (1-5)
-
-**Status**: ✅ ALL PREVIOUSLY COMPLETE (2026-05-06)
-
-### Wave 1: Critical Security & Compile Fixes
-### Wave 2: IPC & Process Lifecycle Hardening  
-### Wave 3: WAF Core Streaming Optimization
-### Wave 4: Remaining High/Medium Priority Fixes
-### Wave 5: Validation & Benchmarking
-
-See end of document for completed items reference.
+**Key Corrections Made in This Version:**
+- SEC-1 (DNS DS digest): ALREADY FIXED - uses `ct_eq()`
+- PLUGIN-4 (mesh_check_threat): NOT A BUG - properly implemented
+- M1 (overseer mesh agent): ALREADY FIXED - has `running.is_running()` check
+- H2 (dead code reference): NOT A BUG - function exists
+- SAFE_HEADERS count: 28 headers (not 27 or 29)
+- SUP-1 (gRPC no TLS): Working as designed for localhost IPC
 
 ---
 
-## Wave 6: Critical Security & Mesh Issues (NEW)
+## Wave 1: Plugin System Fixes
 
 *Can execute in parallel — no interdependencies*
 
-### CRITICAL Priority
-
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| MESH-11 ✅ | Race Condition in Quorum Manager | `src/mesh/dht/quorum.rs:337-381` | FIXED: Changed oneshot to send actual Result, track raft_write_completed/raft_write_success in QuorumRequest, treat failed Raft writes as timeout in check_quorum_completion | Done |
-| MESH-15 📋 | Quorum Deadlock Risk During Partition | `src/mesh/dht/quorum.rs:249` | DHT-based 2/3 quorum dangerous during partition without consensus leader; Raft implementation incomplete per TODO at `instance.rs:214`. Known architectural limitation - documented in architecture/deep_dive_review.md as requiring future Raft migration. | Deferred |
-| SUP-1 📋 | gRPC Control Plane TLS | `src/supervisor/api.rs:114-129` | gRPC server binds to localhost only (127.0.0.1:50051) for local IPC between Supervisor and Master processes. TLS not required for localhost-only access. This is intentional for local process communication. | Working As Designed |
-| APP-14 ✅ | Spin Framework Integration | `src/spin/` | ALREADY IMPLEMENTED: SpinHandler with find_route() for component mapping, SpinAppsManager for runtime management, SpinHttpHandler for request dispatch. No action needed. | Done |
-| APP-17 ✅ | Pip Install Without Hash Verification | `src/app_server/granian.rs:491-508` | FIXED: Added require_hashes field to GranianConfig, SiteAppServerConfig, and site/mod.rs mapping. The pip install logic already uses --require-hashes when configured. | Done |
+| PLUGIN-1 / BUG-1 | Spin `find_route()` returns first match only (no longest-prefix-match) | `src/spin/runtime.rs:271-285` | Implement longest-prefix-match: collect all matching routes, return longest prefix | 📋 TODO |
+| BUG-2 | `body_receiver` not reset in `prepare_for_request()` - causes streaming failures on pooled instances | `src/plugin/instance_pool.rs:152-164` | Add `self.store.data_mut().body_receiver = None;` to reset | 📋 TODO |
+| BUG-3 | `warmup()` doesn't link all required functions - DHT/env functions unavailable on warm instances | `src/plugin/instance_pool.rs:79-148` | Link all 5 functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` | 📋 TODO |
+| BUG-4 | Idle eviction timeout hardcoded to 300s, not configurable | `src/spin/runtime.rs:319-338` | Add `idle_timeout_seconds: u64` to `SpinRuntimeConfig`, default 300 | 📋 TODO |
 
 ---
 
-## Wave 7: High Priority Improvements (NEW)
+## Wave 2: WAF Improvements
 
-*Can execute in parallel with Wave 6*
-
-### HIGH Priority
+*Can execute in parallel with Wave 1*
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| TL-1 ✅ | Global Cache Resource Governor | `src/proxy/governor.rs` | ALREADY IMPLEMENTED: `GlobalCacheGovernor` with `try_reserve()`/`release()` limits TeeBody buffering to 512MB. No action needed. | Done |
-| TL-3 ✅ | Unified Host Routing Index | `src/router.rs:489-509` | ALREADY IMPLEMENTED: `is_host_valid_for_site()` already uses efficient HashMap lookups with O(1) site_id lookup + O(domains) iteration. The plan's claim of "O(Sites × Domains)" is inaccurate - each lookup is O(1) HashMap lookup. Function is only called when `reject_unknown_hosts` is true (security feature), not hot path. No action needed. | Done |
-| TL-4 ✅ | Secure-by-Default Cache Whitelisting | `src/proxy/cache.rs:97-126` | ALREADY IMPLEMENTED: Uses `SAFE_HEADERS` whitelist (29 headers). No action needed. | Done |
-| TL-5 ✅ | Worker Liveness Heartbeat for Stale Detection | `src/upstream/shared_state.rs:93-115` | ALREADY IMPLEMENTED: `sum_active_connections()` at line 93 already uses heartbeat timestamp to filter stale workers: `if now.saturating_sub(last_h) <= timeout_secs` at line 107. Stale workers (heartbeat >5s old) are excluded from connection counts. No action needed. | Done |
-| TL-9 ✅ | Architectural Pressure Valve | `src/waf/mod.rs` + `src/proxy/streaming.rs:30` | ALREADY IMPLEMENTED: `SystemHealthMonitor` with `AtomicU8` state (0=Normal, 1=Warning, 2=Critical) exists at `src/metrics/health.rs:26`. Warning bypasses TeeBody, Critical bypasses behavioral WAF per `proxy/streaming.rs:42-46`. No action needed. | Done |
-| MESH-14 📋 | No Source Node ID Binding Validation in All Ingress Paths | `src/mesh/dht/signed.rs:42-48` | DHT ingress validation gaps documented at signed.rs:42-48. These are known architectural limitations requiring fundamental changes to bind node_id to TLS/cert identity. Currently from_node (peer_id) is used for trust decisions but not strictly bound to message node_id. | Deferred - Architectural |
+| REC-2 | Flood protector NOT integrated into request pipeline (exists at TCP level only) | `src/waf/mod.rs:438-508` | Integrate flood protector into `check_request_full()` pipeline | 📋 TODO |
+| REC-3 | Streaming WAF `get_block_status` always returns 403 for all attack types | `src/waf/attack_detection/streaming.rs:356-365` | Make block status configurable per attack type | 📋 TODO |
+| REC-5 | Request smuggling NOT included in fast-path checks - security bypass vulnerability | `src/waf/attack_detection/mod.rs:425-435` | Add smuggling indicators to fast_path_patterns OR remove early return | 📋 TODO |
+| REC-1 | Fast-path pre-screening patterns incomplete (13 patterns, missing most SQLi, command injection, SSRF, XXE, etc.) | `src/waf/attack_detection/mod.rs:156-171` | Expand fast_path_patterns to include critical patterns from each category | 📋 TODO |
+
+### WAF Bugs to Fix
+
+| ID | Issue | File:Line | Action | Status |
+|----|-------|-----------|--------|--------|
+| BUG-5 | Double UTF-8 lossy conversion in body handling | `src/waf/attack_detection/mod.rs:890-892` | Investigate and fix double conversion | 📋 TODO |
+| REC-6 | FloodBackend Display missing Ebpf variant | `src/waf/flood/mod.rs:66-72` | Add Ebpf variant to Display impl | 📋 TODO |
+| REC-7 | `block_scrapers` hardcoded to true, ignores parameter | `src/waf/bot.rs:91` | Make configurable via parameter | 📋 TODO |
 
 ---
 
-## Wave 8: Medium Priority Fixes (NEW)
+## Wave 3: Mesh/Networking
 
-*Can execute in parallel with Wave 6/7*
-
-### MEDIUM Priority
+*Can execute in parallel with Wave 1/2*
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| TL-2 ✅ | Fast-Path WAF Pre-Screening | `src/waf/attack_detection/mod.rs:156-225` | ALREADY IMPLEMENTED: `fast_path_patterns` with `RegexSet` exists at line 171, `is_fast_path_safe()` method at lines 209-225. No action needed. | Done |
-| TL-6 ✅ | Deduplicated Background Revalidation | `src/proxy/cache.rs` | ALREADY IMPLEMENTED: `inflight_revalidations: Arc<DashMap<CacheKey, ()>>` exists at `proxy_cache/store.rs:154`. Thundering herd prevention via `contains_key()` check at line 294 and `insert()` at line 297. No action needed. | Done |
-| TL-7 ✅ | Fragment-Aware Multipart Parsing | `src/waf/attack_detection/streaming.rs:34-63` | ALREADY IMPLEMENTED: `StreamingState` contains `trailing_window: PooledBuf` at line 40 and `field_trailing_window: PooledBuf` at line 43. These sliding window buffers are used to catch boundary-splitting exploits via `trailing_window.as_slice()` checks at lines 119, 142 and `field_trailing_window.as_slice()` at lines 206, 235. No action needed. | Done |
-| TL-8 ✅ | End-to-End Protocol Mirroring | `src/http_client/` | ALPN `h2` selection and HTTP/2 pooling is handled automatically by hyper/rustls. The plan's requirement to "select H2 streams for ALPN `h2` upstreams" is implicit in the TLS stack. No explicit action found needed. | Done - Implicit in TLS stack |
-| APP-15 📋 | FastCGI Response NOT Truly Streamed | `src/fastcgi/mod.rs:132-164` | `parse_response()` receives `stdout: Option<Vec<u8>>` - buffers entire stdout before parsing. True streaming would require refactoring to async read patterns. This is a known limitation of the FastCGI implementation - it works correctly but doesn't support true streaming responses. | Deferred - Requires Architectural Change |
-| MESH-12 ✅ | Memory Leak in Pending Membership Changes | `src/mesh/transport.rs:797-875` | ALREADY IMPLEMENTED: `pending_membership_changes` Vec is properly managed. `process_pending_membership_changes()` at line 877 drains via `pending_changes.drain(..)` at line 903. Duplicate entries are prevented by `retain()` at lines 823, 831. Failed changes added to `remaining` but not leaked. No action needed. | Done |
-| MESH-13 ✅ | Missing Validation for HybridSignature Ed25519 Only Mode | `src/mesh/hybrid_signature.rs:39-46` | ALREADY IMPLEMENTED: `ed25519_only()` is a constructor, not verification. Actual validation is in `verify_hybrid()` at `protocol.rs:127` which calls `verify_ed25519_internal()` at line 156, checking `signature.len() != 64 || public_key.len() != 32` at line 157 BEFORE verification. No action needed. | Done |
-| MESH-16 ✅ | Role Validation Code Duplication | `src/mesh/peer_auth.rs:275-347` | FIXED: Removed duplicate GLOBAL_EDGE validation block at lines 318-347. The first block at lines 275-304 already handles this case and returns early, making the second block unreachable dead code. | Done |
-| MESH-17 📋 | Session Establishment Failure Silently Ignored | `src/mesh/ml_kem_key_exchange.rs:143-148` | `session_manager.establish()` error at line 143 is logged but execution continues. This appears intentional - the offer is created regardless of session state (lines 150-163). Session establishment is for bidirectional communication, but the offer itself doesn't depend on successful session establishment. | Working As Designed |
+| N1 | Hierarchical routing dead code - `#[allow(dead_code)]` since file is unused | `src/mesh/hierarchical_routing.rs` | Implement or remove - decide based on multi-region roadmap | 📋 TODO |
+| N4 | Test assertion message claims bug that appears to be fixed | `src/mesh/dht/signed.rs:1803-1806` | Update assertion message to reflect current behavior | 📋 TODO |
+| N5 | Missing integration test for Regional Quorum | `src/mesh/dht/quorum.rs` | Add test: 50-node cluster, latency-based selection, fallback behavior | 📋 TODO |
 
-### LOW Priority
+### Mesh Low Priority
 
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| APP-16 ✅ | Minification "Background Worker" | `src/static_files/minifier.rs:701-797` + `src/worker/mod.rs:527` | ALREADY IMPLEMENTED: Minification runs in dedicated `StaticWorker` process (see `handle_minify_client_connection` at `worker/mod.rs:527`). The `StaticWorker` handles `MinifyRequest` messages via IPC. `AsyncMinifierClient` at `client.rs:225` provides async interface. This is not synchronous inline - it uses a dedicated worker process. | Done |
+| N6 | Add more descriptive metrics | `src/mesh/dht/quorum.rs`, `src/mesh/dht/record_store_message.rs` | Metrics: regional vs full quorum, verification failures, Raft write failure rates | 📋 TODO |
+| N7 | Document PQC feature flag | `src/mesh/config.rs`, `architecture/networking_deep_dive.md` | Document ML-KEM/ML-DSA via `post-quantum` feature flag | 📋 TODO |
 
 ---
 
-## Wave 9: Documentation Fixes (NEW)
+## Wave 4: Documentation Fixes
 
 *Can execute in parallel with other waves*
 
-### HIGH Priority
-
 | ID | Issue | File:Line | Action | Status |
 |----|-------|-----------|--------|--------|
-| DOC-DNS-1 ✅ | DNS Subsystem Missing from Main Body | `architecture/overview.md` | ALREADY DONE: DNS is documented at line 229 under "### DNS (Optional - `dns` feature)" which is part of the main narrative (not just Module Index). The claim it was "missing from main body" was inaccurate. | Done |
-| DOC-OVERVIEW-1 ✅ | Missing Deep Dive References | `architecture/overview.md:291-303` | ALREADY DONE: Both `layer_3_5_deep_dive.md` and `deep_dive_review.md` are already listed in the Deep Dive Index at lines 301-302. No action needed. | Done |
-
-### MEDIUM Priority
-
-| ID | Issue | File:Line | Action | Status |
-|----|-------|-----------|--------|--------|
-| DOC-MESH-1 📋 | DHT Ingress Verification Gaps Not Documented | `src/mesh/dht/signed.rs:42-48` | The DHT ingress verification gaps are documented in code at `signed.rs:42-48` (the identity hierarchy comment). Adding this to architecture docs would require documenting the full identity/trust model which is a larger architectural task. This is related to MESH-14 which is also deferred. | Deferred - Architectural |
-| DOC-MESH-2 ✅ | Streaming Snapshots Format Not Documented | `src/mesh/AGENTS.override.md:42` | ALREADY DONE: Streaming snapshots format with magic number `0x53524D53` is documented at line 42. Format: `[MAGIC u32 0x53524D53][COUNT u64][LEN u32][postcard entry]...`. No action needed. | Done |
+| H1 | Update architecture docs to reflect three-tier hierarchy (Overseer→Master→Worker) | `architecture/process_lifecycle.md`, `architecture/platform_deep_dive.md` | Documentation claims 2-tier but code has 3-tier | 📋 TODO |
+| H3 | Update `process_lifecycle.md` to remove non-existent `src/control_plane/` reference | `architecture/process_lifecycle.md:16` | Module `src/control_plane/` does not exist | 📋 TODO |
+| M2 | Expand startup flow documentation in `platform_deep_dive.md` to match actual complexity | `architecture/platform_deep_dive.md:201-217` | Actual flow has 15+ phases vs documented 11 steps | 📋 TODO |
+| M3 | Add Overseer row to process hierarchy table | `architecture/platform_deep_dive.md:113-121` | Missing Overseer in hierarchy table | 📋 TODO |
+| N3 | Update `mesh_deep_dive.md` accuracy | `architecture/mesh_deep_dive.md` | 1) Hierarchical routing "reserved for future" not "uses" 2) Audit system not centralized 3) Collective defense features "partial/experimental" | 📋 TODO |
+| C1 | Update `deep_dive_review.md:15` - Remove "protected by TLS" from gRPC description | `architecture/deep_dive_review.md:15` | gRPC has no TLS, intentional for localhost IPC | 📋 TODO |
+| C2 | Update `architecture/overview.md:202` - Clarify Spin support status | `architecture/overview.md:202`, `src/http/server.rs:2469-2481` | Spin requires manual app registration via Admin API | 📋 TODO |
+| C3 | Clarify Master process status in `architecture/overview.md` | `architecture/overview.md:56-58`, `src/main.rs:529-537` | `--master` flag still exists; Master not fully deprecated | 📋 TODO |
+| C4 | Create centralized errata section in `architecture/overview.md` | `architecture/overview.md` | Reference AGENTS.md for known path corrections | 📋 TODO |
 
 ---
 
-## Testing Gaps (Updated)
+## Wave 5: Config/Admin
 
-| Area | Files | Missing Tests |
-|------|-------|---------------|
-| PID spoofing detection | `src/master/ipc.rs` | Integration tests for PID validation on all message types |
-| Status file population | `src/overseer/process.rs` | Tests for worker status collection and file writing |
-| Concurrent drain completion | `src/worker/drain_state.rs` | Tests for multiple `mark_drain_complete` calls |
-| Recovery state machine | `src/overseer/state.rs` | Tests for RecoveryNeeded → apply transition |
-| Split-chunk attacks | `src/waf/attack_detection/` | Verification tests for trailing_window boundary cases |
-| ~~Quorum Manager race~~ | `src/mesh/dht/quorum.rs` | Tests for Raft delegated write failure scenarios - MESH-11 ✅ FIXED |
-| **NEW: HybridSignature validation** | `src/mesh/hybrid_signature.rs` | Tests for Ed25519-only mode with invalid lengths |
-| **NEW: gRPC TLS** | `src/supervisor/api.rs` | Verify TLS is actually configured on gRPC endpoint |
+*Can execute in parallel*
+
+| ID | Issue | File:Line | Action | Status |
+|----|-------|-----------|--------|--------|
+| ISSUE-1 | Missing `src/config/AGENTS.override.md` | N/A | Create documenting: feature-gating conventions, config propagation patterns, validation patterns, hot reload support | 📋 TODO |
+| DOC-1 | TunnelMessage types incomplete (missing AuthFailure, KeepAlive, PortData, etc.) | `src/tunnel/quic/messages.rs:7-106` | Update `dns_deep_dive.md` | 📋 TODO |
+| DOC-2 | WireGuard implementation wrong - uses `defguard-boringtun`, not `wireguard-kit` | `src/tunnel/wireguard/userspace.rs:136` | Fix documentation | 📋 TODO |
+| DOC-3 | VPN client `VpnClientBuilder` is method on VpnClient, not separate struct | `src/vpn_client/mod.rs:65-76` | Update documentation | 📋 TODO |
+| DOC-4 | Missing undocumented DNS modules (hsm.rs, cookie.rs, update.rs, transfer.rs, etc.) | Various | Add to key files table | 📋 TODO |
+| DOC-5 | DNSSEC manual wire format limitation not documented | `src/dns/dnssec.rs:1-9` | Add note about limitation | 📋 TODO |
+
+### Config/Admin Low Priority (Optional)
+
+| ID | Issue | File:Line | Action | Status |
+|----|-------|-----------|--------|--------|
+| ISSUE-3 | `SESSION_COOKIE_NAME` defined in two places | `src/admin/handlers/auth.rs:12`, `src/admin/middleware.rs:54` | Consolidate constant | 📋 TODO |
+| ISSUE-4 | YARA rate limiter cleanup task not auto-started | `src/admin/state.rs:86-143` | Ensure task auto-starts on admin state creation | 📋 TODO |
+| ISSUE-5 | Handler count is 28, should be 29 (missing `behavioral_intel`) | `architecture/admin_deep_dive.md:120` | Update handler count | 📋 TODO |
+
+---
+
+## Wave 6: Plugin Documentation/Enhancements
+
+*Can execute in parallel*
+
+| ID | Issue | File:Line | Action | Status |
+|----|-------|-----------|--------|--------|
+| PLUGIN-2 | No `load_plugin_from_memory_with_priority` method | `src/plugin/wasm_runtime.rs:162-177` | Add for mesh plugin distribution | 📋 TODO |
+| PLUGIN-3 | Mesh-only features not documented | `src/serverless/manager.rs:145-171` | Add feature-gate documentation for serverless mesh integration | 📋 TODO |
+| PLUGIN-5 | `load_component()` is stub - loads but never uses | `src/plugin/wasm_runtime.rs:184-210` | Either implement fully or remove dead code | 📋 TODO |
+| PLUGIN-6 | Missing `memory_budget_mb` field in documentation | `architecture/plugin_deep_dive.md:33` | Update documentation | 📋 TODO |
+
+---
+
+## Deferred Items (Architectural/Large Effort)
+
+| ID | Issue | Reason | Status |
+|----|-------|--------|--------|
+| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | DHT ingress validation gaps require fundamental changes to bind node_id to TLS/cert identity | Deferred - Architectural |
+| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete per TODO at `instance.rs:214`. Requires Raft migration. | Deferred - Requires Raft |
+| MESH-17 | Session Establishment Failure Silently Ignored | Intentional - offer doesn't depend on session state for bidirectional communication | Working As Designed |
+| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation - buffers entire stdout. True streaming requires architectural refactor. | Deferred - Architectural |
+| SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC between Supervisor and Master processes | Working As Designed |
+| DOC-MESH-1 | DHT Ingress Verification Gaps Not Documented | Requires documenting full identity/trust model - larger architectural task | Deferred |
+
+---
+
+## Already Verified As Correct
+
+| Item | Source | Verification |
+|------|--------|--------------|
+| SEC-1 (DNS DS digest) | `src/dns/dnssec_validation.rs:273` | Uses `ct_eq()` - FIXED |
+| PLUGIN-4 (mesh_check_threat) | `src/plugin/wasm_runtime.rs:946-960` | Properly implemented with DHT integration - NOT A BUG |
+| M1 (overseer mesh agent spawn) | `src/overseer/process.rs:412` | Has `running.is_running()` check - FIXED |
+| H2 (dead code reference) | `src/supervisor/process.rs:161` | Function exists at `master/ipc.rs:320` - NOT A BUG |
+| SAFE_HEADERS count | `src/proxy/cache.rs:97-126` | 28 headers (not 27 or 29) |
+| MESH-11 (Quorum Manager race) | `src/mesh/dht/quorum.rs:337-381` | FIXED - uses oneshot with Result tracking |
+| MESH-16 (Role validation duplication) | `src/mesh/peer_auth.rs:275-304` | FIXED - duplicate block removed |
+| APP-17 (pip install hashes) | `src/app_server/granian.rs:491-508` | FIXED - require_hashes field added |
 
 ---
 
 ## Verification Commands
 
 ```bash
+# Check Spin find_route implementation
+grep -n "fn find_route" src/spin/runtime.rs
+
+# Check Plugin instance pool prepare_for_request
+grep -n "body_receiver" src/plugin/instance_pool.rs
+
+# Check WAF fast-path patterns
+grep -n "fast_path_patterns" src/waf/attack_detection/mod.rs
+
+# Check flood protector integration
+grep -n "flood_protector" src/waf/mod.rs
+
+# Check hierarchical routing
+grep -n "allow(dead_code)" src/mesh/hierarchical_routing.rs
+
 # Core profile check
 cargo check --no-default-features
 
@@ -133,15 +181,6 @@ cargo check --no-default-features --features mesh
 
 # Full profile check
 cargo check --no-default-features --features mesh,dns
-
-# Overseer module tests
-cargo test --lib -- overseer
-
-# Worker drain state tests
-cargo test --lib -- worker::drain_state
-
-# Master IPC tests
-cargo test --lib -- master::ipc
 
 # Format and lint
 cargo fmt && cargo clippy --lib -- -D warnings
@@ -156,106 +195,41 @@ cargo test --lib --no-run
 
 | Wave | Items | Focus | Status |
 |------|-------|-------|--------|
-| 1-5 | ~71 | Previously completed | ✅ Complete |
-| 6 | 5 | Critical Security & Mesh | MESH-11, APP-17 ✅ Done; MESH-15 Deferred; SUP-1 Working As Designed |
-| 7 | 4 | High Priority Improvements | All already implemented |
-| 8 | 8 | Medium/Low Priority Fixes | MESH-16 ✅ Done; MESH-17 Working As Designed; APP-15 Deferred |
-| 9 | 4 | Documentation Fixes | All already done |
-| **Remaining** | **2** | MESH-15 (Deferred), APP-15 (Deferred) | Architectural/Large effort |
+| 1 | 4 | Plugin System Fixes | 📋 TODO |
+| 2 | 7 | WAF Improvements | 📋 TODO |
+| 3 | 5 | Mesh/Networking | 📋 TODO |
+| 4 | 9 | Documentation Fixes | 📋 TODO |
+| 5 | 9 | Config/Admin | 📋 TODO |
+| 6 | 4 | Plugin Doc/Enhancements | 📋 TODO |
+| **Total** | **38** | **Action items** | |
+
+| Category | Count |
+|----------|-------|
+| Security (Critical) | 0 |
+| High Priority | 5 (BUG-1, BUG-2, BUG-3, REC-2, REC-5) |
+| Medium Priority | 18 |
+| Low Priority | 15 |
+| Deferred | 6 |
 
 ---
 
-## Wave Execution Guidance (New Items)
+## Implementation Order Recommendation
 
-### Wave 6 Items - Status: Mostly Complete
-1. ~~MESH-11~~ ✅ FIXED, ~~MESH-15~~ Deferred (Raft incomplete)
-2. ~~SUP-1~~ Working As Designed (localhost IPC)
-3. ~~APP-14~~ Already implemented, ~~APP-17~~ ✅ FIXED
+### Phase 1 (Parallel - Independent)
+- Wave 1: Plugin fixes (BUG-1, BUG-2, BUG-3, BUG-4) - 4 items
+- Wave 6: Plugin documentation (PLUGIN-2, PLUGIN-3, PLUGIN-5, PLUGIN-6) - 4 items
 
-### Wave 7 Items - Status: All Done
-All items (TL-1, TL-3, TL-4, TL-5, TL-9, MESH-14) already implemented or deferred.
+### Phase 2 (Parallel - After Phase 1)
+- Wave 2: WAF improvements - 7 items
+- Wave 3: Mesh/Networking - 5 items
 
-### Wave 8 Items - Status: Mostly Complete
-1. TL-6, TL-7, TL-8 all done
-2. ~~APP-15~~ Deferred (needs architectural change), ~~MESH-12~~ Done, ~~MESH-13~~ Done, ~~MESH-16~~ ✅ FIXED, ~~MESH-17~~ Working As Designed
-3. ~~APP-16~~ Already implemented
+### Phase 3 (Documentation - Can run parallel)
+- Wave 4: Documentation fixes - 9 items
 
-### Wave 9 Items - Status: All Done
-All documentation items already done.
+### Phase 4 (Lower priority)
+- Wave 5: Config/Admin - 9 items
 
 ---
 
-## Previously Completed Items Reference
-
-### Wave 1: Critical Security & Compile Fixes (Completed 2026-05-06)
-- APP-2: Fixed Granian socket URL from `http://unix:{}:{}` to `http://unix:{}{}` format
-- Verified all other items (WAF-1, WAF-2, MESH-1/2/3, NET-1/6, APP-3/4, ROUT-1/2, IPC-1/2) were already correct
-
-### Wave 2: IPC & Process Lifecycle Hardening (Completed 2026-05-06)
-- IPC-4: Fixed TokenBucket refill precision using separate elapsed_secs and fractional_ms calculation
-- PL-4: Fixed drain metrics - changed from `fetch_add(active, SeqCst)` where active=0 to `fetch_add(1, SeqCst)`
-- Verified all other items (IPC-3/5/6/7/8, PL-1/2/3/5/6/7/8) were already correct
-
-### Wave 3: WAF Core Streaming Optimization (Completed 2026-05-06)
-- WSTREAM-4: Fixed `reset()` to use `.clear()` instead of `BufferPool::acquire(0)`
-- Verified all other items (WSTREAM-1/2/3/5/6/7/8) were already implemented
-
-### Wave 4: Remaining High/Medium Priority Fixes (Completed 2026-05-06)
-- WAF-8: Fixed hex_chars_to_u32 overflow by adding length check > 8
-- Verified all other items (NET-2/3/4, WAF-4/9, etc.) were already correct
-
-### AGENTS and Skills Updates (Completed 2026-05-06)
-- Updated WAF AGENTS.override.md with IPC-4 and PL-4 fix documentation
-- Updated streaming_waf.md skill with .clear() vs BufferPool::acquire(0) guidance
-
----
-
-## Reference Files (Verified During Review)
-
-| File | Purpose |
-|------|---------|
-| `src/waf/attack_detection/streaming.rs` | Core streaming WAF logic, BufferPool usage |
-| `src/waf/attack_detection/normalizer.rs` | NORMALIZE_BUFFER thread-local, hex_chars_to_u32 |
-| `src/waf/attack_detection/mod.rs:156-225` | Fast-path WAF pre-screening with RegexSet (already implemented) |
-| `src/http/server.rs:4530-4537` | `collect_body_with_chunk_waf` function (NOT in shared_handler.rs) |
-| `src/http/server.rs` | Main HTTP/1/2 request handler, SECTION 10 around line 4525+ |
-| `src/http3/server.rs` | Main HTTP/3 request handler, line 518 for cookies, 978 for zero-copy threshold |
-| `src/proxy/mod.rs` | Proxy forwarding logic, line 956 for retry, 1131 for response buffering |
-| `src/proxy/governor.rs` | GlobalCacheGovernor (already implements 512MB limit for TeeBody) |
-| `src/proxy/cache.rs:97-126` | SAFE_HEADERS whitelist (already implemented, 29 headers) |
-| `crates/synvoid-utils/src/buffer/pool.rs:203` | Jumbo tier hardcoded 256KB |
-| `src/process/ipc_signed.rs` | IPC signing and key management, lines 113-120 for nonce cache, 206/645 for key file deletion |
-| `src/mesh/dht/signed.rs:42-48` | DHT ingress verification gaps documentation |
-| `src/mesh/dht/signed.rs:860-934` | Quorum verification (NOT in state_machine.rs:166-172) |
-| `src/mesh/dht/quorum.rs:339-386` | Quorum manager race condition - MESH-11 ✅ FIXED |
-| `src/mesh/dht/record_store_message.rs:1319-1345` | Raft write failure handling in check_quorum_completion - MESH-11 ✅ FIXED |
-| `src/mesh/security_challenge.rs:196` | Simple `!=` comparison (DO NOT change to constant-time) |
-| `src/supervisor/api.rs:114-129` | gRPC server without TLS - SUP-1 |
-| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - APP-15 |
-| `src/mesh/transport.rs:797-875` | Pending membership memory leak - MESH-12 |
-| `src/mesh/hybrid_signature.rs:39-46` | HybridSignature validation gap - MESH-13 |
-| `src/mesh/peer_auth.rs:275-304` | Role validation code (duplicate removed) - MESH-16 ✅ FIXED |
-| `src/mesh/ml_kem_key_exchange.rs:143-148` | Session establishment ignored - MESH-17 |
-| `src/router.rs:489-509` | O(n*m) routing bottleneck - TL-3 |
-| `src/upstream/shared_state.rs` | SharedConnectionTable heartbeat mechanism - TL-5 |
-| `src/static_files/minifier.rs:701-797` | Synchronous minifier (not background worker) - APP-16 |
-| `src/app_server/granian.rs:188,491-508` | pip install with require_hashes support - APP-17 ✅ FIXED |
-| `src/spin/` | Spin framework files exist but routing integration missing - APP-14 |
-
----
-
-## Key Corrections From Original Plan Files
-
-1. `src/http/shared_handler.rs` does NOT contain `collect_body_with_chunk_waf` — it's in `src/http/server.rs:4530-4537`
-2. `src/mesh/raft/state_machine.rs:166-172` does NOT contain quorum verification — it's in `src/mesh/dht/signed.rs:860-934`
-3. `src/spin/` EXISTS with manifest.rs, runtime.rs, handler.rs, kv_store.rs — Spin files are present but routing integration is incomplete
-4. `src/config/site/misc.rs:37` is NOT transport config — correct path is `crates/synvoid-config/src/site/misc.rs:37` for edge_only field
-5. TL-1 (Global Cache Governor) is ALREADY IMPLEMENTED with GlobalCacheGovernor
-6. TL-2 (Fast-Path WAF Pre-Screening) is ALREADY IMPLEMENTED with RegexSet in mod.rs
-7. TL-4 (SAFE_HEADERS whitelist) is ALREADY IMPLEMENTED in proxy/cache.rs
-
----
-
-**Last Updated**: 2026-05-22
-**Verification Status**: ✅ Wave 6/8 COMPLETED - MESH-11, APP-17, MESH-16 fixed. Remaining deferred: MESH-15, APP-15, MESH-14, DOC-MESH-1, SUP-1, MESH-17
-**Plan Pruning**: This plan will be pruned after AGENTS/skills updates to remove completed items.
+**Last Updated**: 2026-05-23
+**Verification Status**: ✅ All items verified against codebase. 38 action items, 6 deferred, 16 already correct/working as designed.
