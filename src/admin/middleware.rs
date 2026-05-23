@@ -46,12 +46,12 @@ use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::LazyLock;
 
+use crate::admin::SESSION_COOKIE_NAME;
+
 #[derive(Clone, Debug)]
 pub struct ClientIp(pub String);
 
 static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
-
-const SESSION_COOKIE_NAME: &str = "synvoid_session";
 
 pub fn set_trusted_proxies(proxies: Vec<String>) {
     let mut guard = TRUSTED_PROXIES.write();

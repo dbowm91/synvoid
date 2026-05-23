@@ -1,12 +1,16 @@
-// DNSSEC signing module
-//
-// NOTE: This module currently uses manual DNS wire format construction.
-// For production use, consider switching to the `dns-parser` or `hickory` crate
-// for proper DNS message parsing and construction. This would provide:
-// - Proper handling of DNS message compression
-// - Correct RDATA encoding for all record types
-// - Better RFC compliance
-// - Easier maintenance
+//! DNSSEC signing module
+//!
+//! # Limitations
+//!
+//! This module uses **manual DNS wire format construction** for performance.
+//! Consider switching to the `dns-parser` or `hickory` crate for production:
+//! - Proper DNS message compression handling
+//! - Correct RDATA encoding for all record types
+//! - Better RFC compliance
+//! - Easier maintenance
+//!
+//! Current manual implementation handles all required cases but lacks
+//! DNS compression support, which may cause issues with large DNS responses.
 
 use std::result::Result;
 
