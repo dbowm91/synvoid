@@ -174,9 +174,11 @@ impl RateLimiterManager {
         };
 
         let global_limiter = Arc::new(GlobalRateLimiter::new(core_global_config));
-        
+
         // Use shared rate limit table if available (Phase 1 Improvement)
-        let slotted_ip_limiter = if let Some(table) = crate::upstream::shared_state::SharedRateLimitTable::get_global() {
+        let slotted_ip_limiter = if let Some(table) =
+            crate::upstream::shared_state::SharedRateLimitTable::get_global()
+        {
             tracing::info!("Using shared memory for IP rate limiting");
             Arc::new(SlottedIpRateLimiter::new_shared(
                 core_ip_config,

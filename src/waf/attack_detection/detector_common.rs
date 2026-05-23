@@ -311,7 +311,8 @@ pub trait PatternDetector: Send + Sync {
                     if let Some(norm) = normalizer {
                         let normalized = norm.normalize(value_str);
                         if normalized.as_str() != value_str {
-                            if let Some(result) = self.detect(normalized.as_str(), location.clone()) {
+                            if let Some(result) = self.detect(normalized.as_str(), location.clone())
+                            {
                                 return Some(result);
                             }
                         }
@@ -351,7 +352,8 @@ pub trait PatternDetector: Send + Sync {
                     if let Some(norm) = normalizer {
                         let normalized = norm.normalize(value_str);
                         if normalized.as_str() != value_str {
-                            if let Some(result) = self.detect(normalized.as_str(), location.clone()) {
+                            if let Some(result) = self.detect(normalized.as_str(), location.clone())
+                            {
                                 return Some(result);
                             }
                         }

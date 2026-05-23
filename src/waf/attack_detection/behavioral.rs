@@ -1,8 +1,8 @@
+use moka::sync::Cache;
+use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use parking_lot::RwLock;
-use moka::sync::Cache;
 
 #[derive(Debug, Clone)]
 pub struct IpBehavioralStats {
@@ -38,7 +38,8 @@ impl IpBehavioralStats {
             let delta = interval - self.avg_interval_ms;
             self.avg_interval_ms += alpha * delta;
             // Online variance estimation (Welford-like with EWMA)
-            self.timing_variance_ms = (1.0 - alpha) * (self.timing_variance_ms + alpha * delta * delta);
+            self.timing_variance_ms =
+                (1.0 - alpha) * (self.timing_variance_ms + alpha * delta * delta);
         }
 
         interval as u32
@@ -75,14 +76,18 @@ impl BehavioralEngine {
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
     ) -> StandaloneRequestFeatures {
-        let stats_lock = self.ip_stats_cache.get_with(ip, || {
-            Arc::new(RwLock::new(IpBehavioralStats::new()))
-        });
-        
+        let stats_lock = self
+            .ip_stats_cache
+            .get_with(ip, || Arc::new(RwLock::new(IpBehavioralStats::new())));
+
         let (inter_request_timing_ms, avg_interval_ms, timing_variance_ms) = {
             let mut stats = stats_lock.write();
             let interval = stats.record_request();
-            (interval, stats.get_avg_interval(), stats.get_timing_variance())
+            (
+                interval,
+                stats.get_avg_interval(),
+                stats.get_timing_variance(),
+            )
         };
 
         let url = if let Some(qs) = query_string {

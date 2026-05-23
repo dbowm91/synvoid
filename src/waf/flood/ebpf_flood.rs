@@ -320,20 +320,28 @@ impl EbpfSynFloodProtector {
                     .map("IP_BLOCKLIST_V4")
                     .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V4".to_string()))?
                     .try_into()
-                    .map_err(|e| EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V4: {}", e)))?;
-                
+                    .map_err(|e| {
+                        EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V4: {}", e))
+                    })?;
+
                 let key = maps::Ipv4Key { addr: v4.into() };
-                blocklist.insert(key, 1, 0).map_err(|e| EbpfFloodError::MapError(format!("Failed to block IPv4: {}", e)))?;
+                blocklist.insert(key, 1, 0).map_err(|e| {
+                    EbpfFloodError::MapError(format!("Failed to block IPv4: {}", e))
+                })?;
             }
             IpAddr::V6(v6) => {
                 let mut blocklist: HashMap<_, maps::Ipv6Key, u8> = ebpf
                     .map("IP_BLOCKLIST_V6")
                     .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V6".to_string()))?
                     .try_into()
-                    .map_err(|e| EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V6: {}", e)))?;
-                
+                    .map_err(|e| {
+                        EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V6: {}", e))
+                    })?;
+
                 let key = maps::Ipv6Key { addr: v6.octets() };
-                blocklist.insert(key, 1, 0).map_err(|e| EbpfFloodError::MapError(format!("Failed to block IPv6: {}", e)))?;
+                blocklist.insert(key, 1, 0).map_err(|e| {
+                    EbpfFloodError::MapError(format!("Failed to block IPv6: {}", e))
+                })?;
             }
         }
 
@@ -352,20 +360,28 @@ impl EbpfSynFloodProtector {
                     .map("IP_BLOCKLIST_V4")
                     .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V4".to_string()))?
                     .try_into()
-                    .map_err(|e| EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V4: {}", e)))?;
-                
+                    .map_err(|e| {
+                        EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V4: {}", e))
+                    })?;
+
                 let key = maps::Ipv4Key { addr: v4.into() };
-                blocklist.remove(&key).map_err(|e| EbpfFloodError::MapError(format!("Failed to unblock IPv4: {}", e)))?;
+                blocklist.remove(&key).map_err(|e| {
+                    EbpfFloodError::MapError(format!("Failed to unblock IPv4: {}", e))
+                })?;
             }
             IpAddr::V6(v6) => {
                 let mut blocklist: HashMap<_, maps::Ipv6Key, u8> = ebpf
                     .map("IP_BLOCKLIST_V6")
                     .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V6".to_string()))?
                     .try_into()
-                    .map_err(|e| EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V6: {}", e)))?;
-                
+                    .map_err(|e| {
+                        EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V6: {}", e))
+                    })?;
+
                 let key = maps::Ipv6Key { addr: v6.octets() };
-                blocklist.remove(&key).map_err(|e| EbpfFloodError::MapError(format!("Failed to unblock IPv6: {}", e)))?;
+                blocklist.remove(&key).map_err(|e| {
+                    EbpfFloodError::MapError(format!("Failed to unblock IPv6: {}", e))
+                })?;
             }
         }
 

@@ -154,19 +154,45 @@ impl AttackDetector {
         ));
 
         let fast_path_patterns = vec![
-            r#"['";]--"#,          // SQL comment/injection
-            r#"(?i)union\s+select"#, // SQL union
-            r#"(?i)select\s+.*\s+from"#,
-            r#"<script"#,          // XSS
+            r#"['";]--"#,                           // SQL comment/injection
+            r#"(?i)union\s+select"#,                // SQL union
+            r#"(?i)select\s+.*\s+from"#,            // SQL select from
+            r#"(?i)drop\s+(table|database|index)"#, // SQL drop
+            r#"(?i)insert\s+into"#,                 // SQL insert
+            r#"(?i)update\s+.*\s+set"#,             // SQL update
+            r#"(?i)exec\s*\(|execute\s*\("#,        // SQL exec/execute
+            r#"<script"#,                           // XSS
             r#"javascript:"#,
             r#"onload="#,
             r#"onerror="#,
-            r#"\.\./\.\./"#,       // Path traversal
+            r#"onclick="#,
+            r#"<iframe"#,
+            r#"\.\./\.\./"#, // Path traversal
             r#"/etc/passwd"#,
             r#"/windows/system32"#,
-            r#"<\?php"#,           // PHP tags
-            r#"\$\{"#,             // Expression injection
-            r#"\{\{"#,             // Template injection
+            r#"/proc/self"#,
+            r#";\s*(cat|ls|curl|wget|ping|sh|bash)"#, // Command injection separators
+            r#"\|\s*(cat|ls|curl|wget|ping|sh|bash)"#, // Pipe command injection
+            r#"\&\&\s*(cat|ls|curl|wget|ping|sh|bash)"#, // And command injection
+            r#";\s*\$\("#,                            // Command substitution
+            r#"\$\(\s*\("#,                           // Nested command substitution
+            r#"<\?php"#,                              // PHP tags
+            r#"<%="#,                                 // ASP tags
+            r#"\$\{"#,                                // Expression injection (SSTI)
+            r#"\{\{"#,                                // Template injection
+            r#"\{\%\s*"#,                             // Template block
+            r#"%00"#,                                 // Null byte
+            r#"%2f"#,                                 // Path encoding
+            r#"%0a"#,                                 // Line feed encoding
+            r#"\bcurl\s+"#,                           // Curl command
+            r#"\bwget\s+"#,                           // Wget command
+            r#"file://"#,                             // Local file inclusion
+            r#"php://"#,                              // PHP wrapper
+            r#"expect://"#,                           // Expect wrapper
+            r#"smuggle"#,                             // Smuggling indicators
+            r#"transfer-encoding"#,                   // HTTP smuggling header
+            r#"chunked"#,                             // Chunked encoding
+            r#"content-length\s*:"#,                  // CL header variation
         ];
         let fast_path_detector = regex::RegexSet::new(fast_path_patterns).ok();
 
@@ -242,13 +268,9 @@ impl AttackDetector {
         let anomaly_enabled = self.config.anomaly_scoring.enabled;
 
         // Standalone Behavioral Check
-        let standalone_features = self.behavioral_engine.extract_features(
-            client_ip,
-            path,
-            query_string,
-            headers,
-            body,
-        );
+        let standalone_features =
+            self.behavioral_engine
+                .extract_features(client_ip, path, query_string, headers, body);
 
         if standalone_features.url_entropy > 5.0 || standalone_features.timing_variance_ms < 5 {
             total_score += 20;
@@ -276,7 +298,7 @@ impl AttackDetector {
                 url_entropy: standalone_features.url_entropy,
                 body_to_header_ratio: standalone_features.body_to_header_ratio,
             };
-            
+
             if let Some(fingerprint) = behavioral_intel.analyze_request(&mesh_features) {
                 if fingerprint.severity_score >= 70 {
                     let result = AttackDetectionResult {
@@ -362,7 +384,8 @@ impl AttackDetector {
             let headers = headers.clone();
             let body = body.map(|b| b.to_vec());
             join_set.spawn(async move {
-                detector.check_headers(&headers)
+                detector
+                    .check_headers(&headers)
                     .or_else(|| detector.check_http2_smuggling(&headers, &[], body.as_deref()))
                     .or_else(|| body.as_deref().and_then(|b| detector.check_body(b)))
                     .map(|r| (r, 50))
@@ -382,7 +405,9 @@ impl AttackDetector {
 
                 if let Some(qs) = query_string {
                     let normalized = normalizer.normalize(&qs);
-                    if let Some(result) = detector.detect(normalized.as_str(), InputLocation::QueryString) {
+                    if let Some(result) =
+                        detector.detect(normalized.as_str(), InputLocation::QueryString)
+                    {
                         return Some((result, 40));
                     }
                 }
@@ -390,7 +415,9 @@ impl AttackDetector {
                 if let Some(b) = body {
                     let s = String::from_utf8_lossy(&b);
                     let normalized = normalizer.normalize(&s);
-                    if let Some(result) = detector.detect(normalized.as_str(), InputLocation::PostBody) {
+                    if let Some(result) =
+                        detector.detect(normalized.as_str(), InputLocation::PostBody)
+                    {
                         return Some((result, 40));
                     }
                 }
@@ -425,9 +452,14 @@ impl AttackDetector {
             // Fast-Path Pre-Screening: Skip heavy detectors if no risky signatures are found
             // Or if system health is Critical (graceful degradation)
             let health = crate::metrics::health::SystemHealthMonitor::get_state();
-            if self.is_fast_path_safe(&inputs) || health == crate::metrics::health::HealthState::Critical {
+            if self.is_fast_path_safe(&inputs)
+                || health == crate::metrics::health::HealthState::Critical
+            {
                 if health == crate::metrics::health::HealthState::Critical {
-                    tracing::debug!("Critical health state: skipping heavy WAF checks for request from {}", client_ip);
+                    tracing::debug!(
+                        "Critical health state: skipping heavy WAF checks for request from {}",
+                        client_ip
+                    );
                 } else {
                     tracing::debug!("Fast-path safe for request from {}", client_ip);
                 }
@@ -933,19 +965,19 @@ impl AttackDetector {
         }
 
         if self.config.sqli.enabled {
-            if let Some(result) = self.sqli_detector.detect(
-                normalized.as_bytes(),
-                InputLocation::PostBody,
-            ) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect(normalized.as_bytes(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
 
         if self.config.xss.enabled {
-            if let Some(result) = self.xss_detector.detect(
-                normalized.as_bytes(),
-                InputLocation::PostBody,
-            ) {
+            if let Some(result) = self
+                .xss_detector
+                .detect(normalized.as_bytes(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -1087,19 +1119,19 @@ impl AttackDetector {
         }
 
         if self.config.sqli.enabled {
-            if let Some(result) = self.sqli_detector.detect(
-                normalized.as_bytes(),
-                InputLocation::PostBody,
-            ) {
+            if let Some(result) = self
+                .sqli_detector
+                .detect(normalized.as_bytes(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
 
         if self.config.xss.enabled {
-            if let Some(result) = self.xss_detector.detect(
-                normalized.as_bytes(),
-                InputLocation::PostBody,
-            ) {
+            if let Some(result) = self
+                .xss_detector
+                .detect(normalized.as_bytes(), InputLocation::PostBody)
+            {
                 return Some(result);
             }
         }
@@ -1204,7 +1236,10 @@ impl AttackDetector {
         StreamingWafCore::new(self)
     }
 
-    fn check_strict_normalization(&self, inputs: &NormalizedInputs) -> Option<AttackDetectionResult> {
+    fn check_strict_normalization(
+        &self,
+        inputs: &NormalizedInputs,
+    ) -> Option<AttackDetectionResult> {
         let risky_flags = NormalizationFlags::NULL_BYTE | NormalizationFlags::ZERO_WIDTH;
 
         // Check path
