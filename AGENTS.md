@@ -187,7 +187,7 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 6. **Plugin instance pool bugs** - `src/plugin/instance_pool.rs` has two bugs:
    - `BUG-2`: `prepare_for_request()` (lines 152-164) doesn't reset `body_receiver` - causes streaming failures on pooled instances. Fix: add `self.store.data_mut().body_receiver = None;`
-   - `BUG-3`: `warmup()` (lines 79-148) only links `abort` and `check_timeout` - missing `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`
+   - `BUG-3`: `warmup()` (lines 79-148) only links `abort` and `check_timeout` - missing `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`. Note: `mesh_check_threat` IS properly implemented at `wasm_runtime.rs:946-960` with DHT integration, but it's unavailable on warm instances because `warmup()` doesn't link it.
 
 7. **Spin find_route bug** - `src/spin/runtime.rs:271-285` returns first match only, not longest-prefix-match. More specific routes can be shadowed by less specific ones if defined earlier in manifest.
 
@@ -196,6 +196,8 @@ Large plans should be organized into **waves** that can execute in parallel:
 9. **Flood protector not integrated** - `src/waf/mod.rs:438-508` flood_protector exists but is NOT called during request pipeline. It only operates at TCP level.
 
 10. **DHT ingress verification gaps** - `src/mesh/dht/signed.rs:42-48` documents unverified paths: DhtSyncRequest, DhtAntiEntropyRequest, DhtRecordPush, DhtRecordCommit, QuorumStoreRequest, QuorumSignatureResp. Known architectural limitation.
+
+11. **Spin routing IS integrated** - Contrary to earlier AGENTS.md claims, Spin routing IS integrated into HTTP dispatch at `src/http/server.rs:2417-2489`. When `BackendType::Spin` is configured, requests go through `SpinHttpHandler`. Spin requires manual app registration via Admin API.
 
 ## Skills Reference
 

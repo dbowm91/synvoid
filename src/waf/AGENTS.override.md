@@ -50,6 +50,12 @@ let body_str = std::str::from_utf8(body).unwrap_or("");
 let body_str = String::from_utf8_lossy(body);
 ```
 
+### Behavioral Analysis Mesh-Only Limitation
+
+The `BehavioralIntelligenceManager` in `src/waf/attack_detection/mod.rs:263-314` is only available when the `mesh` feature is enabled. Without `mesh`, the standalone `BehavioralEngine` is used, which lacks DHT-based collaborative threat intelligence.
+
+This limitation is **undocumented** in the source code. When adding behavioral analysis features, document whether they require the `mesh` feature.
+
 ### Security Challenge Constant-Time Comparison
 
 **DO NOT use constant-time comparison for puzzle verification** in `src/mesh/security_challenge.rs:196`. This is CORRECT as written:
