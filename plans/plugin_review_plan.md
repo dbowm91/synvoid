@@ -1,231 +1,166 @@
-# Plugin Architecture Document Review - Improvement Plan
+# Plugin/WASM Module Architecture Review Plan
 
-## Document: `architecture/plugin_deep_dive.md`
+## Overview
 
-**Review Date:** 2026-05-23
-**Reviewer:** AI Agent
-**Cross-Referenced:** AGENTS.md, src/plugin/AGENTS.override.md
-
----
-
-## Summary
-
-The document provides a good overview of the plugin architecture but contains several outdated claims, particularly regarding Spin routing and WASM plugin execution in the HTTP pipeline. Some file path references need verification.
+This document reviews the claims made in `architecture/plugin_deep_dive.md` against the actual
+implementation in `src/plugin/`, `src/spin/`, and `src/serverless/`.
 
 ---
 
-## Verified Correct Items
+## 1. Claims Verified / Not Verified
 
-| Item | Location | Notes |
-|------|----------|-------|
-| WASM Plugin Key Files table | Lines 17-26 | All file names and responsibilities match actual codebase |
-| `WasmInstancePool` uses `VecDeque` protected by `parking_lot::Mutex` | `instance_pool.rs:11-12` | Correct |
-| Guest ABI host functions list | Lines 55-62 | All 6 functions correctly listed |
-| Plugin loading flow (Step 1-2) | Lines 37-44 | Matches `wasm_runtime.rs` implementation |
-| `WasmResourceLimits` struct fields | Lines 33-34 | Matches `wasm_runtime.rs:51-75` |
-| `RequestContext` struct fields | Line 36 | Matches `wasm_runtime.rs:508-516` |
-| `prepare_for_request()` resets state | Line 69 | Matches `instance_pool.rs:213-226` |
-| Spin `SpinHttpHandler` and `SpinAppsManager` | `spin/handler.rs:117-175, 177-234` | Correct |
-| Spin `SpinRuntimeConfig` and `SpinAppInstance` | `spin/runtime.rs:17-66` | Correct |
-| Serverless `ServerlessManager` mesh integration | Lines 183-187 | Correct |
-| Serverless `InstancePool` autoscaling (10s tick, 50%/30% thresholds) | Lines 153-156 | Matches `instance_pool.rs` |
-| WAF Integration table (WASM part) | Lines 197-199 | Correct |
+### 1.1 WASM Plugin Runtime (`src/plugin/`)
 
----
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| `PluginManager` provides WASM + Axum plugin loading/unloading | VERIFIED | `src/plugin/mod.rs:41-107` | `load_wasm_plugin`, `load_axum_plugin` present |
+| `PluginManagerLifecycle` provides hot-reload, directory watching | VERIFIED | `src/plugin/mod.rs:199-424` | `enable_hot_reload`, `load_plugins_from_dir` present |
+| `WasmRuntime` uses `wasmtime` engine | VERIFIED | `src/plugin/wasm_runtime.rs` | Uses `wasmtime::{Engine, Module, Linker, Store}` |
+| `WasmRuntime` validates exports (`filter_request`, `transform_response`, `handle_request`) | VERIFIED | `wasm_runtime.rs:573-580`, `645-650` | Warns if none present, allows pass-through |
+| `WasmInstancePool` uses `VecDeque` protected by `parking_lot::Mutex` | VERIFIED | `src/plugin/instance_pool.rs:11-12` | `Arc<Mutex<VecDeque<WasmPooledInstance>>` |
+| Pool `get()` pops from back, `return_instance()` pushes to back | VERIFIED | `instance_pool.rs:34-37, 39-44` | `pop_back()`, `push_back()` confirmed |
+| Warmup pre-populates pool via `warmup(modules)` with stub host functions | VERIFIED | `instance_pool.rs:79-209` | Creates instances with all 7 stub functions |
+| DHT prefix restrictions enforced via `allowed_dht_prefixes` | VERIFIED | `wasm_runtime.rs:840-863` | Sensitive prefix check at call time |
+| Default deny when `allowed_dht_prefixes` is empty | VERIFIED | `wasm_runtime.rs:850-863` | If not explicitly allowed, blocked |
+| `WasmResourceLimits` includes `max_memory_mb`, `memory_budget_mb`, `max_table_elements`, `max_cpu_fuel`, `timeout_seconds`, `max_instances`, `wasi_enabled`, `allowed_dht_prefixes` | VERIFIED | `wasm_runtime.rs:51-60` | All fields present |
+| Guest ABI: `check_timeout()`, `get_env()`, `mesh_query_dht()`, `mesh_check_threat()`, `mesh_emit_event()`, `synvoid_read_body_chunk()` | PARTIAL | `wasm_runtime.rs` | All present but stub implementations return empty/canned values |
+| `filter_request()` returns `WasmFilterResult::Pass`, `Block`, or `Challenge` | VERIFIED | `wasm_runtime.rs:1375-1409` | Return codes 0, 1, 2 map correctly |
+| Response transforms via `apply_wasm_response_transforms()` | VERIFIED | `src/plugin/mod.rs:159-165` | Present |
+| `GlobalPluginManager` and `GlobalWasmMemoryBudget` singletons | VERIFIED | `src/plugin/global.rs` | `GLOBAL_PLUGIN_MANAGER` lazy static present |
+| `wasm_metrics.rs` provides atomic metrics (fuel, duration, decisions) | VERIFIED | `src/plugin/wasm_metrics.rs` | All metrics tracked via `LazyLock<Mutex<HashMap>>` |
+| MAX_WASM_DATA_SIZE = 1MB | VERIFIED | `wasm_runtime.rs:25` | `1024 * 1024` confirmed |
+| Memory growth respects `max_memory_mb` limit | VERIFIED | `wasm_runtime.rs:1154-1166` | Pages checked against max before growing |
 
-## Discrepancies Found
+**HOST ABI STUB ISSUE**: The `link_host_functions` in `wasm_runtime.rs:215-346` provides stub implementations for ALL host functions. Functions like `get-header`, `set-header`, `get-method`, `get-uri`, `get-body`, `set-body`, `set-status` return canned values (None, "GET", "/", empty vec). This is by design for the linker setup, but the actual runtime calls in `create_linker` (lines 684-1004) correctly link real functions. **VERIFIED**.
 
-### 1. [MEDIUM] Spin Routing Status - Document Outdated
+### 1.2 Spin Framework Runtime (`src/spin/`)
 
-**Document says (line 102):**
-> "Spin routing NOT implemented — Component-to-URL routing is defined in manifests but not wired into HTTP request routing"
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| Spin routing uses longest-prefix-match | VERIFIED | `src/spin/runtime.rs:273-291` | `max_by_key(|m| m.2)` on route length |
+| Manual app registration required | VERIFIED | `handler.rs:188-199` | `register()` method, no auto-discovery |
+| KV store is local-only | VERIFIED | `kv_store.rs` | In-memory `HashMap` with TTL |
+| No WASI socket support | VERIFIED | `runtime.rs:184-193` | `wasi_enabled: true` but no actual WASI bindings |
+| `SpinRuntime` owns `wasmtime::Engine`, optional manifest, `HashMap<String, SpinAppInstance>` | VERIFIED | `runtime.rs:115-122` | All fields present |
+| `SpinAppInstance` wraps `WasmRuntime` (delegate) | VERIFIED | `runtime.rs:42-51` | Contains `Arc<WasmRuntime>` |
+| Idle eviction via `run_supervisor()` every 10s | VERIFIED | `runtime.rs:304-321` | 10s sleep interval in `tokio::select!` |
+| `handle_http_request()` dispatches via manifest routing | VERIFIED | `runtime.rs:235-271` | Present |
+| `SpinAppsManager` global registry | VERIFIED | `handler.rs:177-241` | `SPIN_APPS_MANAGER` lazy static |
+| Spin manifest parsing (TOML) | NOT FULLY VERIFIED | `manifest.rs` | Only 4 lines in mod.rs; manifest.rs not read in detail |
 
-**Actual Code:**
-`src/spin/runtime.rs:273-291` implements `find_route()` with longest-prefix-match:
-```rust
-fn find_route(&self, manifest: &Manifest, path: &str) -> Result<(String, String), SpinRuntimeError> {
-    let mut matches = Vec::new();
-    for component in &manifest.components {
-        if let Some(ref route) = component.url {
-            let normalized_route = route.trim_end_matches('/');
-            if path == normalized_route || path.starts_with(&format!("{}/", normalized_route)) {
-                matches.push((component.id.clone(), route.clone(), normalized_route.len()));
-            }
-        }
-    }
-    matches
-        .into_iter()
-        .max_by_key(|m| m.2)
-        .map(|(id, route, _)| (id, route))
-        .ok_or_else(|| SpinRuntimeError::RouteNotFound(path.to_string()))
-}
-```
+### 1.3 Serverless (`src/serverless/`)
 
-**AGENTS.md confirms (line 192):**
-> "Spin find_route bug - `src/spin/runtime.rs:271-285` returned first match only, not longest-prefix-match. **FIXED**: Now collects all matches and returns longest prefix."
-
-**Fix Required:** Update line 102 to indicate routing IS implemented with longest-prefix matching.
-
----
-
-### 2. [MEDIUM] WASM Plugin Execution in HTTP Server - Line Reference Inaccurate
-
-**Document says (line 201):**
-> "WASM plugin execution in HTTP server (`http/server.rs:3043-3086`)"
-
-**Actual Code:**
-The WASM plugin execution occurs at `src/http/server.rs:3043-3060`:
-```rust
-pm.apply_wasm_filters_with_plugins(
-    filter_req,
-    &target.wasm_plugins,
-    std::collections::HashMap::new()
-);
-```
-Line 3043 is approximately where this code resides, but the exact line numbers vary. The document should reference a range or approximate location rather than precise line numbers that shift during development.
-
-**Fix Required:** Change line reference to `src/http/server.rs:3043-3060` (approximate) or `src/http/server.rs` around line 3040.
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| `ServerlessManager` owns `HashMap<String, ServerlessFunction>`, `HashMap<String, Arc<InstancePool>>`, routes, config | VERIFIED | `manager.rs:96-115` | All fields present |
+| `InstancePool` with `min_instances`, `max_instances`, `idle_timeout_seconds`, `scale_up_threshold`, `scale_down_threshold`, `pre_warm_instances` | VERIFIED | `instance_pool.rs:10-20` | All config fields present |
+| Dedicated autoscaler task every 10s | VERIFIED | `instance_pool.rs:400-438` | `run_autoscaler()` with 10s interval |
+| Scale up 50%, scale down 30% | VERIFIED | `instance_pool.rs:416-427` | `current * 0.5`, `current * 0.3` confirmed |
+| `max_scale_up_per_tick` cap | VERIFIED | `instance_pool.rs:416` | `.min(scale_up_budget)` |
+| `InstancePoolMode` with Pool, Direct, Hybrid | VERIFIED | `instance_pool.rs:81-86` | All three modes present |
+| `ServerlessRoute` supporting Exact, Prefix, Suffix, Regex, Glob | VERIFIED | `routing.rs:6-14` | All match types present |
+| `MethodMatch::Any`, `Specific`, `Multiple` | VERIFIED | `routing.rs:95-99` | Present |
+| Priority sorting (lower = higher precedence) | VERIFIED | `routing.rs:213` | `sort_by_key(|r| r.priority)` |
+| Async compilation with state machine (Pending -> Compiling -> Ready/Failed) | VERIFIED | `async_compilation.rs` | State machine present |
+| DHT registration via `store_and_announce()` | VERIFIED | `manager.rs:475-496` | Uses `DhtKey::serverless_function()` |
+| Hierarchical routing as `serverless_function:{name}` | VERIFIED | `manager.rs:501` | `format!("serverless_function:{}", ...)` |
+| `verify_caller_permission()` checks revocation, trusted caller, allowed_callers, allowed_orgs, min_tier_level | VERIFIED | `manager.rs:265-357` | All checks present |
+| Tier claim validation | VERIFIED | `manager.rs:340-353` | Present |
 
 ---
 
-### 3. [MEDIUM] Warmup Creates Stubs, Not Real Implementations
+## 2. Improvement Plan
 
-**Document says (line 70):**
-> "Warmup pre-populates pool via `warmup(modules)` which instantiates modules in parallel"
+### HIGH Priority
 
-**Actual Code:**
-`src/plugin/instance_pool.rs:79-209` - The `warmup()` function creates a NEW `Linker` and links stub implementations:
-- `check_timeout` returns `0` (line 114)
-- `get_env` returns `0` (line 127)
-- `synvoid_read_body_chunk` returns `0` (line 138)
-- `mesh_query_dht` returns `0` (line 152)
-- `mesh_check_threat` returns `0` (line 163)
-- `mesh_emit_event` returns `0` (line 176)
+1. **Plugin Warmup Creates Instances With STUB Host Functions**
+   - **Issue**: `WasmInstancePool::warmup()` (instance_pool.rs:79-209) creates instances using stub host functions that return empty/canned values (0, empty string, empty vec).
+   - **Problem**: When a warmed instance is later reused via `pool.get()`, the `resolve_exports_from_instance()` correctly resolves actual function pointers, but `prepare_for_request()` does NOT reset the linker - meaning the stub functions should be replaced by real ones on subsequent instantiation.
+   - **Current flow**: When `filter_request()` gets a pooled instance (instance_pool.rs:1279), it calls `resolve_exports_from_instance()` on the **already instantiated** instance, which gets the actual guest exports. This is correct.
+   - **But**: The warmup creates instances with stub linker, then `prepare_for_request()` only resets env/timeout/DHT prefixes. **The issue is that the Store is created fresh in warmup with a stub linker**, so if a plugin relies on host functions, warmup creates non-functional instances.
+   - **Impact**: Warmup may create non-functional instances. The workaround is that actual requests will re-instantiate if needed.
+   - **Fix**: Either remove warmup (simpler) or change warmup to use the full linker path.
 
-The REAL implementations are in `WasmRuntime::create_linker()` at `wasm_runtime.rs:684-1004` with actual DHT integration, threat checking, etc.
+2. **Spin `handle_http_request()` Ignores Body on POST/PUT**
+   - **Issue**: `runtime.rs:251` calls `instantiate_app()` which creates a NEW `SpinAppInstance` for each request, then uses `invoke_handler()` with `body_vec`.
+   - **But**: The `SpinAppInstance` is created fresh per request - there's no pooling, defeating the purpose of instance reuse.
+   - **Impact**: High cold-start overhead for every Spin request.
+   - **Location**: `runtime.rs:251`
 
-**Implication:** Warm instances work but use stub implementations. This may be intentional (for quick instance creation) but the document doesn't clarify this distinction.
+### MEDIUM Priority
 
-**Fix Required:** Add note that warmup creates instances with stub implementations for fast pool population. Real host functions are linked on first actual request.
+3. **Serverless `InstancePool::new()` Re-Creates WASM Runtime**
+   - **Issue**: `instance_pool.rs:165` calls `WasmPluginManager::new().load_plugin_with_limits()` which creates a fresh `Engine` per `InstancePool`.
+   - **Problem**: A new `Engine` is created for every function's pool, meaning no sharing across serverless functions. This defeats wasmtime's optimization for compiled modules.
+   - **Fix**: Should use a shared `WasmPluginManager` or at minimum, share the `Engine`.
 
----
+4. **DHT Prefix Restrictions Hardcoded List in `mesh_query_dht`**
+   - **Issue**: `wasm_runtime.rs:840-848` hardcodes sensitive prefixes array: `["threat_indicator:", "yara_rule:", ...]`.
+   - **Problem**: Adding new sensitive prefixes requires code changes. Should be configurable.
+   - **Fix**: Move to a global config or use the `allowed_dht_prefixes` list consistently.
 
-### 4. [LOW] Document Says `WasmPluginManager` Has `filter_request()` Method
+5. **Spin `find_route()` Does NOT Sort by Priority**
+   - **Issue**: `runtime.rs:287-291` returns `max_by_key(|m| m.2)` on `normalized_route.len()` - length-based matching.
+   - **Problem**: The document claims "longest-prefix-match" which is what it does, BUT this is by route string length, NOT by explicit priority. This is correct behavior for Spin but could be misleading.
+   - **No actual bug**: Works as documented.
 
-**Document says (line 29):**
-> "Provides `filter_request()`, `transform_response()` methods"
+### LOW Priority
 
-**Actual Code:**
-`WasmPluginManager` has `filter_request()` at `wasm_runtime.rs:436-449` but it's on `WasmRuntime`, not `WasmPluginManager`. The public API is:
-- `PluginManager::apply_wasm_filters()` at `mod.rs:141-147`
-- `PluginManager::apply_wasm_response_transforms()` at `mod.rs:159-165`
+6. **Metrics Use `Mutex` Instead of Atomic Operations**
+   - **Issue**: `wasm_metrics.rs:7-20` uses `LazyLock<Mutex<HashMap<String, AtomicU64>>>` - all accesses serialize through a mutex.
+   - **Problem**: High contention under load.
+   - **Fix**: Consider using `DashMap` for concurrent access without mutex.
 
-The document correctly shows the flow through `WasmPluginManager` internally, but the public API is via `PluginManager`.
+7. **Serverless `invoke_handler_streaming()` Body EOF Detection**
+   - **Issue**: `wasm_runtime.rs:1660-1666` detects body EOF by scanning for null bytes - fragile.
+   - **Problem**: If body legitimately contains null bytes, early termination.
+   - **Fix**: Use explicit length return from guest or a sentinel value.
 
-**Fix Required:** Clarify that `filter_request()` is on `WasmRuntime` and called through `WasmPluginManager` which owns the runtimes.
-
----
-
-### 5. [LOW] Feature Comparison Table - Mesh Integration
-
-**Document says (line 217):**
-> "Mesh integration | DHT queries | No | DHT + hierarchical routing"
-
-**Actual:** The `spin` module DOES have mesh integration - `SpinRuntimeConfig` has `allowed_dht_prefixes` and WASM plugins can call mesh functions. However, Spin doesn't do DHT registration Announcements like serverless does.
-
-**Fix Required:** Change "No" to "Limited (via WASM host functions)" for Spin column.
-
----
-
-## Bugs Identified
-
-### BUG-2: body_receiver Reset - Status: FIXED
-
-**Document references:** Line 69 ("resets timeout, fuel, and env") does NOT mention body_receiver.
-
-**AGENTS.md states (line 188-189):**
-> "BUG-2: `prepare_for_request()` didn't reset `body_receiver`... **FIXED**: Added `self.store.data_mut().body_receiver = None;`"
-
-**Code confirms fix at `instance_pool.rs:221`:**
-```rust
-self.store.data_mut().body_receiver = None;
-```
-
-**Action:** Update line 69 to mention body_receiver reset: "resets timeout, fuel, env, and body_receiver"
+8. **Spin Runtime `handle_http_request()` Always Creates New Instance**
+   - **Issue**: `runtime.rs:251` creates `instantiate_app(&route.0)` per request with no caching/reuse.
+   - **Problem**: Each request pays full WASM instantiation cost.
+   - **Fix**: Cache instantiated `SpinAppInstance` by component_id.
 
 ---
 
-### BUG-3: warmup() Missing Functions - Status: FIXED
+## 3. Bug Reports
 
-**Document says (line 70):**
-> "Warmup pre-populates pool via `warmup(modules)` which instantiates modules in parallel"
+### Critical
 
-**AGENTS.md states (line 188-190):**
-> "BUG-3: `warmup()` only linked `abort` and `check_timeout`... **FIXED**: All 5 functions now linked in warmup()"
+1. **`allowed_dht_prefixes` Not Propagated to Pooled Instances**
+   - **Location**: `instance_pool.rs:213-226` (`prepare_for_request`)
+   - **Issue**: `WasmPooledInstance` has `default_allowed_dht_prefixes` field, but `prepare_for_request()` resets `allowed_dht_prefixes` to `self.default_allowed_dht_prefixes.clone()` which is always empty (`Vec::new()` per instance_pool.rs:186).
+   - **Root cause**: When warmup creates `WasmPooledInstance`, it sets `default_allowed_dht_prefixes: Vec::new()` (line 186). The actual allowed prefixes from `WasmResourceLimits` are stored in the `Store` (via `RequestContext`) but `default_allowed_dht_prefixes` is never set from the runtime's limits.
+   - **Impact**: DHT prefix restrictions MAY NOT be enforced correctly for pooled instances because the per-instance `default_allowed_dht_prefixes` is always empty.
+   - **Severity**: Security-relevant. If a plugin has configured `allowed_dht_prefixes: ["route:", "cert:"]`, pooled instances may still query all prefixes.
+   - **Note**: The `Store` itself is created fresh for pooled instances (via `create_store()` on cache miss at wasm_runtime.rs:1290), but for pooled instances, `prepare_for_request()` is called which resets env but NOT `allowed_dht_prefixes` from runtime limits. Actually, looking more closely: `prepare_for_request()` sets `self.store.data_mut().allowed_dht_prefixes = self.default_allowed_dht_prefixes.clone()` (instance_pool.rs:222). If `default_allowed_dht_prefixes` is always empty, this resets to empty every request, overwriting any limits that were set at pool creation time.
+   - **Code path**: `WasmRuntime::filter_request()` -> `pool.get()` -> `prepare_for_request()` -> `store.data_mut().allowed_dht_prefixes = self.default_allowed_dht_prefixes.clone()` (always `Vec::new()` from warmup).
 
-**Code confirms at `instance_pool.rs:79-209`:** All 7 functions (abort, check_timeout, get_env, synvoid_read_body_chunk, mesh_query_dht, mesh_check_threat, mesh_emit_event) are now linked.
+### Minor
 
-**Action:** Document is partially correct but should clarify these are stubs (see discrepancy #3 above).
+2. **`transform_response` Always Records Pass Decision**
+   - **Location**: `wasm_runtime.rs:1505`
+   - **Issue**: `record_wasm_decision_pass(plugin_name)` always called even when transform returns error.
+   - **Impact**: Metrics may show pass when actual outcome was error.
 
----
+3. **`handle_request` in `invoke_handler_streaming` Uses Fragile EOF Detection**
+   - **Location**: `wasm_runtime.rs:1660-1666`
+   - **Issue**: Scans for null byte to find body length - breaks if body contains embedded nulls.
+   - **Impact**: Streaming response body may be truncated incorrectly.
 
-## Improvement Suggestions
-
-### 1. Add Architecture Diagram
-
-The document would benefit from a simple ASCII diagram showing:
-- PluginManager → WasmPluginManager → WasmRuntime → WasmInstancePool
-- HTTP Server → WAF pipeline → PluginManager
-- Spin routing flow
-
-### 2. Clarify Stub vs Real Implementation for Warm Instances
-
-Since warm instances use stubs and real implementations come from `WasmRuntime::create_linker()`, the document should clarify when real implementations are bound.
-
-### 3. Add Security Model Section
-
-Document the DHT prefix restrictions and sensitive key protection in `mesh_query_dht` (documented at `wasm_runtime.rs:840-863`).
-
-### 4. Update Line References to Be Approximate
-
-Instead of precise line numbers like `http/server.rs:3043-3086`, use approximate references like `http/server.rs:around line 3040` or `http/server.rs:3040-3060`.
+4. **`prepare_for_request` Does NOT Reset `body_receiver` Correctly**
+   - **Location**: `instance_pool.rs:221`
+   - **Issue**: Sets `body_receiver = None` on pooled instance, but the streaming body receiver is set later in `invoke_handler_streaming()` (wasm_runtime.rs:1569). This is fine for non-streaming, but the `prepare_for_request` is called on pooled instances before non-streaming calls too.
+   - **Impact**: Minor - only affects pooled instance reuse across streaming/non-streaming requests.
 
 ---
 
-## Priority Summary
+## 4. Summary
 
-| Priority | Item | Action |
-|----------|------|--------|
-| **HIGH** | Spin routing claim outdated | Update line 102 to reflect longest-prefix-match is implemented |
-| **HIGH** | Warmup stub vs real distinction | Add clarification at line 70 about stub implementations |
-| **MEDIUM** | body_receiver reset missing from docs | Update line 69 to include body_receiver |
-| **MEDIUM** | Line reference accuracy | Change precise line numbers to approximate ranges |
-| **LOW** | Mesh integration for Spin | Update feature comparison table |
-| **LOW** | Public API clarification | Distinguish between PluginManager and WasmRuntime methods |
+The architecture document is largely accurate. Key verified facts:
+- WASM plugin architecture with instance pooling is correctly implemented
+- DHT prefix restrictions are implemented but have a propagation bug for pooled instances (Critical)
+- Spin framework is functional but lacks instance reuse (high overhead per request)
+- Serverless has sophisticated pooling, autoscaling, and routing
+- Metrics collection is comprehensive but uses mutex-based concurrency
 
----
-
-## Files Referenced
-
-| File | Line(s) | Status |
-|------|---------|--------|
-| `src/plugin/mod.rs` | 141-165 | Correct - public API matches |
-| `src/plugin/wasm_runtime.rs` | 436-449 | Correct - filter_request exists |
-| `src/plugin/instance_pool.rs` | 11-12 | Correct - VecDeque with Mutex |
-| `src/plugin/instance_pool.rs` | 79-209 | Correct - warmup implementation |
-| `src/plugin/instance_pool.rs` | 213-226 | Correct - prepare_for_request |
-| `src/spin/runtime.rs` | 273-291 | Correct - find_route with LPM |
-| `src/spin/handler.rs` | 117-175 | Correct - SpinHttpHandler |
-| `src/http/server.rs` | 3050, 3056 | Approximate - exact lines vary |
-
----
-
-## Conclusion
-
-The document is mostly accurate but needs updates to reflect:
-1. Spin routing IS implemented (not "NOT implemented")
-2. Warmup creates stub implementations, not real ones
-3. Body receiver reset is implemented (BUG-2 is FIXED)
-4. Line references should be approximate, not precise
-
-All identified bugs (BUG-2, BUG-3, Spin find_route) are marked as FIXED in AGENTS.md and confirmed in code.

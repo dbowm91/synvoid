@@ -1,241 +1,158 @@
-# WAF Architecture Review - Improvement Plan
+# WAF Architecture Review Plan
 
-**Document Reviewed:** `architecture/waf_deep_dive.md`
-**Review Date:** 2026-05-23
-**Cross-Reference:** `AGENTS.md`, `src/waf/AGENTS.override.md`
+## Executive Summary
+
+Reviewed `architecture/waf_deep_dive.md` against source code in `src/waf/`, `src/challenge/`, `crates/synvoid-utils/src/buffer/`, and `src/wasm_pow/`. Found several claims that need correction, one critical bug, and multiple improvements needed.
 
 ---
 
-## 1. VERIFIED CORRECT ITEMS
+## Claims Verification
 
-### 1.1 Flood Protection Integration
-**Status:** ✅ VERIFIED CORRECT
+### 1. Flood Protection Layer
 
-The document states flood protection is part of the WAF pipeline. Code confirms:
-- `src/waf/mod.rs:474-482` — `flood_protector.check_tcp_connection(ip)` is called in `check_request_full()`
-- AGENTS.md Lesson #9 confirms: "Flood protector existed but was NOT called during request pipeline. **FIXED**: Integrated into `check_request_full()` pipeline."
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| SYN Flood Protection with default 50 SYNs/sec per IP | VERIFIED | `src/waf/flood/mod.rs:43-44` | Default values match |
+| Global SYN rate 10,000 SYNs/sec | VERIFIED | `src/waf/flood/mod.rs:44` | Default matches |
+| eBPF backend for Linux only | VERIFIED | `src/waf/flood/mod.rs:5-6` | Conditional compilation confirmed |
+| ConnectionLimiter with 20,000 global limit | VERIFIED | `src/waf/flood/mod.rs:46` | `connection_rate_global: 20000` |
+| Per-IP limit 100 connections | VERIFIED | `src/waf/flood/mod.rs:45` | `connection_rate_per_ip: 100` |
+| Burst tokens default 10 | **NOT VERIFIED** | `src/waf/traffic_shaper/limiter.rs:96` | Uses `config.connection_burst` not hardcoded 10 |
+| Queue system 1000 size, 5000ms timeout | VERIFIED | `src/waf/traffic_shaper/limiter.rs:176-183` | Config-based |
+| TokenBucket rate limiting | VERIFIED | `src/waf/traffic_shaper/bucket.rs:5-111` | Full implementation found |
+| UDP flood protection 1000/sec per IP | VERIFIED | `src/waf/flood/udp_flood.rs:29` | `per_ip_rate: 1000` |
+| Global UDP limit 100,000/sec | VERIFIED | `src/waf/flood/udp_flood.rs:30` | `global_rate: 100000` |
+| ASN & GeoIP blocking | VERIFIED | `src/waf/asn_tracker.rs` | Full implementation but GeoIP blocking incomplete |
 
-### 1.2 Request Smuggling Detection
-**Status:** ✅ VERIFIED CORRECT
+**Issue Found**: Document says "GeoIP blocking not fully implemented" - this is accurate. See `src/waf/asn_tracker.rs` only does ASN-based detection, not GeoIP country blocking.
 
-The document mentions detection of inconsistent `Content-Length` and `Transfer-Encoding` headers.
-- `src/waf/attack_detection/request_smuggling.rs` — Comprehensive implementation with:
-  - Duplicate CL/TE headers detection (lines 78-108)
-  - CL+TE conflict detection (lines 113-133)
-  - Obfuscated TE detection (lines 151-164)
-  - Large CL detection (lines 168-198)
-  - CRLF injection in headers (lines 200-224)
-  - HTTP/2 smuggling detection (lines 229-556)
+### 2. Protocol Layer (Request Sanitization)
 
-### 1.3 Fast-Path Bypass Fix
-**Status:** ✅ VERIFIED CORRECT
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| HTTP Validation | VERIFIED | `src/waf/attack_detection/mod.rs:136-139` | `HeaderValidator` exists |
+| Header Sanitization | VERIFIED | `src/waf/request_sanitization.rs` | `RequestSanitizer` found |
+| Request Smuggling Detection | VERIFIED | `src/waf/attack_detection/mod.rs:132` | `RequestSmugglingDetector` exists |
 
-AGENTS.md Lesson #8 states: "WAF fast-path bypass — `src/waf/attack_detection/mod.rs:425-435` had early return when fast-path was safe, but request smuggling patterns were NOT in fast_path_patterns. **FIXED**: Added smuggling indicators (`transfer-encoding`, `content-length`) to fast_path_patterns."
+### 3. Request Layer (Attack Detection)
 
-Code at `src/waf/attack_detection/mod.rs:195-196` confirms:
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| SQL Injection with libinjection | VERIFIED | `src/waf/attack_detection/libinjection.rs` | Full implementation |
+| XSS detection | VERIFIED | `src/waf/attack_detection/xss.rs` | Full implementation |
+| Path Traversal | VERIFIED | `src/waf/attack_detection/path_traversal.rs` | Full implementation |
+| SSRF & RFI | VERIFIED | `src/waf/attack_detection/ssrf.rs`, `src/waf/attack_detection/rfi.rs` | Both found |
+| PatternDetector trait | VERIFIED | `src/waf/attack_detection/detector_common.rs:264` | `PatternDetector` trait confirmed |
+| Aho-Corasick multi-pattern matching | VERIFIED | `src/waf/attack_detection/detector_common.rs:534-539` | `AhoCorasick::builder()` confirmed |
+| SstiDetector, LdapInjectionDetector, XPathInjectionDetector, OpenRedirectDetector, XxeDetector, CmdInjectionDetector, PathTraversalDetector, RfiDetector, SsrfDetector | VERIFIED | All found in `src/waf/attack_detection/` | All implemented |
+
+### 4. Bot Detection Layer
+
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| CSS Challenge via CssManager | VERIFIED | `src/challenge/css.rs` | Full implementation confirmed |
+| Valid CSS rules with aspect ratios | VERIFIED | `src/challenge/css.rs:126-138` | Uses `min-aspect-ratio` and `max-aspect-ratio` |
+| Invalid CSS rules with impossible ratios | VERIFIED | `src/challenge/css.rs:141-158` | Uses negative/zero denominators |
+| HoneypotTracker | VERIFIED | `src/challenge/honeypot.rs` | Full implementation |
+| Hidden links with CSS | VERIFIED | `src/challenge/honeypot.rs:137` | `display:none;visibility:hidden...` confirmed |
+| Per-IP trap paths with TTL | VERIFIED | `src/challenge/honeypot.rs:76-111` | `generate_for_ip` and `get_or_generate` confirmed |
+| JS Challenge | **NOT VERIFIED** | `src/challenge/` | No `js.rs` found. Only `css.rs`, `honeypot.rs`, `pow.rs`, `mesh_pow.rs` |
+| Proof of Work (PoW) | VERIFIED | `src/wasm_pow/src/lib.rs` | WASM PoW found |
+| Behavioral Analysis | VERIFIED | `src/waf/attack_detection/behavioral.rs` | `BehavioralEngine` found |
+
+**Issue Found**: Document claims JS Challenge at `src/challenge/js.rs` but file does not exist. Actual location is `src/challenge/pow.rs` (Proof of Work).
+
+### 5. Streaming WAF
+
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| StreamingWafCore | VERIFIED | `src/waf/attack_detection/streaming.rs` | Full implementation |
+| Default chunk size 4096 bytes | VERIFIED | `src/waf/attack_detection/streaming.rs:8` | `DEFAULT_CHUNK_SIZE: usize = 4096` |
+| Trailing window 512 bytes | VERIFIED | `src/waf/attack_detection/streaming.rs:46` | `const TRAILING_WINDOW_SIZE: usize = 512;` |
+| max_buffered_bytes default 2MB | VERIFIED | `src/waf/attack_detection/streaming.rs:9` | `DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024` |
+| Multipart state machine | VERIFIED | `src/waf/attack_detection/streaming.rs:26-32` | States confirmed |
+| File content scanning skipped | VERIFIED | `src/waf/attack_detection/streaming.rs:177-178` | Skips files with `filename=` |
+
+### 6. BufferPool Architecture
+
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| Four buffer tiers (4KB, 64KB, 256KB, 256KB+) | VERIFIED | `crates/synvoid-utils/src/buffer/pool.rs:7-9` | Confirmed |
+| 8 shards | VERIFIED | `crates/synvoid-utils/src/buffer/pool.rs:16` | `const NUM_SHARDS: usize = 8;` |
+| TLS cache 16 buffers per tier | VERIFIED | `crates/synvoid-utils/src/buffer/pool.rs:17` | `const TLS_CACHE_SIZE: usize = 16;` |
+| PooledBuf lifecycle | VERIFIED | `crates/synvoid-utils/src/buffer/pool.rs:645-660` | `Drop` implementation confirmed |
+
+### 7. Async WAF Pipeline
+
+| Claim | Status | Code Location | Notes |
+|-------|--------|---------------|-------|
+| Pipeline at `src/waf/mod.rs:484-512` | **NOT VERIFIED** | `src/waf/mod.rs:484-512` | Pipeline logic exists but line numbers differ slightly (484-515) |
+| Parallel Attack Detection via async | VERIFIED | `src/waf/mod.rs:489-491` | `ad.check_request(...).await` confirmed |
+
+---
+
+## Bug Report
+
+### Critical: StreamingWafCore trailing window logic incorrect
+
+**File**: `src/waf/attack_detection/streaming.rs:129-134`
+
+**Issue**: When updating the trailing window for regular (non-multipart) chunks, the code does:
 ```rust
-r#"transfer-encoding"#,       // Request smuggling
-r#"content-length"#,          // Request smuggling
+self.state.trailing_window.clear();
+let window_start = chunk.len().saturating_sub(TRAILING_WINDOW_SIZE);
+self.state.trailing_window.extend_from_slice(&chunk[window_start..]);
 ```
 
-Fast-path patterns expanded from 13 to 38 patterns (lines 156-197).
+This copies only the LAST 512 bytes of the CURRENT chunk into the trailing window. But for attack detection spanning chunk boundaries, the trailing window should contain the END of the PREVIOUS chunk + beginning of CURRENT chunk.
 
-### 1.4 Behavioral Analysis Mesh-Only
-**Status:** ✅ VERIFIED CORRECT
+**Impact**: Attacks like `1' OR '1'='1'` split across chunks may not be detected properly if the split point is not at the chunk boundary.
 
-Document states behavioral analysis is "Mesh mode only." Code confirms:
-- `src/waf/attack_detection/mod.rs:218` — `#[cfg(feature = "mesh")]`
-- `src/waf/AGENTS.override.md:53-57` — Documents the mesh-only limitation
+**Fix Needed**: The trailing window should be a sliding window that accumulates:
+1. The previous trailing window (up to TRAILING_WINDOW_SIZE bytes)
+2. As much of the current chunk as fits in TRAILING_WINDOW_SIZE
 
----
-
-## 2. DISCREPANCIES FOUND
-
-### 2.1 Missing Rate Limiting / Flood Protection Description
-**Priority:** MEDIUM
-
-**Discrepancy:** The document lists "Rate Limiting" under Connection Layer (Section 1), but the implementation details are sparse.
-
-**Actual Implementation:**
-- `src/waf/flood/mod.rs:225-367` — `FloodProtector` struct handles SYN/UDP/connection flood
-- `src/waf/ratelimit.rs` and `src/waf/ratelimit/core.rs` — Rate limiting for WAF decisions
-- `src/waf/traffic_shaper/` — Traffic shaping with TokenBucket implementation
-
-**Issue:** Document claims "Per-IP and global rate limits" but doesn't mention:
-1. TokenBucket-based rate limiting with precise refill (IPC-4 fix in `src/process/ipc_rate_limit.rs:132-141`)
-2. Per-IP connection limiting via `ConnectionLimiter`
-3. SYN flood protection with half-open connection tracking
-
-**Suggested Fix:** Add subsection describing the rate limiting architecture:
-- SYN flood protection (half-open tracking)
-- Per-IP connection rate limiting
-- Global connection limits
-- TokenBucket-based request rate limiting
-
-### 2.2 Bot Detection - Missing CSS Honeypot
-**Priority:** MEDIUM
-
-**Discrepancy:** Document mentions "Honeypots: Hidden CSS links and trap endpoints that only bots will follow" (Section 3), but doesn't mention CSS-based honeypot challenges.
-
-**Actual Implementation:**
-- `src/http/server.rs:931` — `enable_css_honeypot` in site bot config
-- `src/challenge/css.rs` — CSS challenge implementation
-- Config field: `SiteBotConfig.enable_js_challenge` in `crates/synvoid-config/src/site/defensive.rs:13`
-
-**Issue:** Document is missing CSS honeypot details and JS challenge integration.
-
-**Suggested Fix:** Update Section 3 to mention:
-- CSS honeypot challenges (hidden links that flag bots)
-- JS challenge for browser verification
-- CAPTCHAs and PoW as additional challenge options
+Or alternatively, when scanning, combine `[previous_trailing, current_chunk]` as the scan region.
 
 ---
 
-## 3. BUGS IDENTIFIED
+## Improvement Plan
 
-### 3.1 Document Lists Non-Existent Attack Types
-**Priority:** LOW (Documentation Issue)
+### High Priority
 
-**Finding:** Document mentions "JWT & XXE Detection" as attack types. While XXE is implemented (`src/waf/attack_detection/xxe.rs`), JWT is not a standalone detector.
+| ID | Issue | Location | Recommendation |
+|----|-------|----------|----------------|
+| IMP-1 | Document claims `src/challenge/js.rs` for JS Challenge but file doesn't exist | `architecture/waf_deep_dive.md:72` | Update document to reference `src/challenge/pow.rs` or clarify that "JS Challenge" refers to PoW in WASM |
+| IMP-2 | GeoIP blocking documented as "not fully implemented" - this is correct | `src/waf/asn_tracker.rs` | Consider completing GeoIP country blocking implementation |
+| IMP-3 | Behavioral analysis is Mesh-only but documentation doesn't emphasize this | `src/waf/attack_detection/mod.rs:77-79` | Add feature-gate comments in code; update docs to clearly state "Mesh mode only" |
 
-**Actual:**
-- `src/waf/attack_detection/jwt.rs` exists but is NOT a detector—it's a JWT validation module
-- No `JwtAttackDetector` exists in the codebase
+### Medium Priority
 
-**Issue:** The document implies JWT attacks are detected as attack types, but JWT handling is for validation (not attack detection).
+| ID | Issue | Location | Recommendation |
+|----|-------|----------|----------------|
+| IMP-4 | `check_body_fragments()` in streaming WAF should be documented as zero-copy | `src/waf/attack_detection/streaming.rs:118` | Add code comments explaining the fragmented scan approach |
+| IMP-5 | FloodConfig has many hardcoded defaults that should be configurable | `src/waf/flood/mod.rs:40-56` | Consider moving more defaults to config structs |
+| IMP-6 | `ConnectionLimiter` uses `connection_burst` from config but doc says "default 10" | `src/waf/traffic_shaper/limiter.rs:96` | Document should say "configurable burst tokens" instead of hardcoded value |
 
-**Suggested Fix:** Remove "JWT & XXE Detection" from attack detection list, or clarify that JWT module is for token validation.
+### Low Priority
 
-### 3.2 Aho-Corasick Mentioned But Not Used
-**Priority:** LOW (Documentation Accuracy)
-
-**Finding:** Document states "Aho-Corasick & Regex: High-performance pattern matching engines are used for rule evaluation" (Section 4).
-
-**Actual:**
-- `src/waf/attack_detection/detector_common.rs:264` — Trait exists for Aho-Corasick
-- However, no detector actually uses Aho-Corasick in the current codebase
-- All detectors use regex or libinjection
-
-**Issue:** Document overstates the use of Aho-Corasick.
-
-**Suggested Fix:** Remove "Aho-Corasick" from the performance section, or implement Aho-Corasick for high-volume pattern matching.
+| ID | Issue | Location | Recommendation |
+|----|-------|----------|----------------|
+| IMP-7 | Some detector names in doc don't match file naming convention | `architecture/waf_deep_dive.md:51` | Consider standardizing: e.g., "SSTI Detector" vs "SstiDetector" |
+| IMP-8 | Test coverage for streaming WAF multipart boundary crossing | `src/waf/attack_detection/streaming.rs:484-509` | Tests exist but could add more edge cases |
+| IMP-9 | `FloodProtector` has `enter_blackhole`/`exit_blackhole` but doc doesn't describe blackhole behavior | `src/waf/flood/mod.rs:311-327` | Document the blackhole mechanism more explicitly |
 
 ---
 
-## 4. IMPROVEMENT SUGGESTIONS
+## Summary
 
-### 4.1 Add Streaming WAF Documentation
-**Priority:** HIGH
+**Verified Claims**: ~80% of documented features match source code
+**Critical Bug**: 1 (StreamingWafCore trailing window logic)
+**High Priority Improvements**: 3
+**Medium Priority Improvements**: 3
+**Low Priority Improvements**: 3
 
-**Finding:** Document doesn't mention streaming WAF capability.
-
-**Actual:**
-- `src/waf/attack_detection/streaming.rs` — Full streaming WAF implementation exists
-- Handles chunked processing, multipart parsing, trailing window
-- `StreamingWafCore` for true streaming attack detection
-
-**Suggestion:** Add new section "Streaming WAF" documenting:
-- Chunk-based processing for 1M+ RPS
-- Multipart boundary detection
-- Trailing window for cross-chunk attack detection
-- Max buffered bytes limit (2MB default)
-
-### 4.2 Document Zero-Copy Inspection Details
-**Priority:** MEDIUM
-
-**Finding:** Document mentions "Zero-Copy Inspection" but provides no details.
-
-**Actual:**
-- `src/waf/attack_detection/streaming.rs` uses `BufferPool` for zero-copy buffer management
-- `PooledBuf` type for zero-copy buffer reuse
-
-**Suggestion:** Add implementation details about buffer pooling and zero-copy semantics.
-
-### 4.3 Add Parallel Processing Documentation
-**Priority:** MEDIUM
-
-**Finding:** Document mentions "Parallel Processing" but provides no details.
-
-**Actual:** `src/waf/mod.rs:484-512` shows parallel attack detection via `ad.check_request()`.
-
-**Suggestion:** Document that attack detection runs in parallel with other WAF checks and how the async pipeline works.
-
-### 4.4 Missing eBPF Documentation
-**Priority:** MEDIUM
-
-**Finding:** Document mentions "eBPF Integration" for flood protection but doesn't detail availability.
-
-**Actual:**
-- `src/waf/flood/mod.rs:5-6` — Feature-gated: `#[cfg(all(target_os = "linux", feature = "flood-ebpf"))]`
-- `src/waf/flood/ebpf_flood.rs` — eBPF implementation (Linux only)
-
-**Suggestion:** Add note about Linux-only eBPF availability and the fallback to userspace.
-
-### 4.5 ASN & GeoIP Blocking Not Implemented
-**Priority:** LOW
-
-**Finding:** Document mentions "ASN & GeoIP Blocking" (Section 1).
-
-**Actual:** `src/waf/asn_tracker.rs` exists for ASN tracking, but no GeoIP blocking in WAF.
-
-**Suggestion:** Clarify current state or mark as planned feature.
-
----
-
-## 5. UNVERIFIED CLAIMS (Need Code Investigation)
-
-### 5.1 Distributed Intelligence
-**Claim:** "In a Mesh deployment, WAF nodes share blocked IP addresses and threat signatures in real-time"
-
-**Status:** UNVERIFIED — Requires mesh feature testing
-
-**Files to verify:**
-- `src/mesh/threat_intel.rs` — Threat intelligence sharing
-- `src/waf/ip_feed.rs` — IP feed integration
-
-### 5.2 Anomaly Scoring
-**Claim:** "Anomaly Scoring: Optionally combines multiple low-severity signals to block sophisticated attacks"
-
-**Status:** UNVERIFIED — Requires configuration investigation
-
-**Files to verify:**
-- `src/waf/threat_level/` — Threat level scoring system
-
----
-
-## 6. SUMMARY TABLE
-
-| Category | Item | Status | Priority |
-|----------|------|--------|----------|
-| Flood Protection | Integration in check_request_full | ✅ VERIFIED | - |
-| Request Smuggling | CL/TE detection | ✅ VERIFIED | - |
-| Fast-Path Bypass | Smuggling patterns added | ✅ VERIFIED | - |
-| Behavioral Analysis | Mesh-only | ✅ VERIFIED | - |
-| Rate Limiting | Missing detailed description | ⚠️ DISCREPANCY | MEDIUM |
-| Bot Detection | CSS honeypot missing | ⚠️ DISCREPANCY | MEDIUM |
-| JWT Detection | Not a detector | 🐛 BUG | LOW |
-| Aho-Corasick | Not actually used | 🐛 BUG | LOW |
-| Streaming WAF | Not documented | 📝 IMPROVEMENT | HIGH |
-| Zero-Copy | Missing details | 📝 IMPROVEMENT | MEDIUM |
-| Parallel Processing | Missing details | 📝 IMPROVEMENT | MEDIUM |
-| eBPF | Linux-only note missing | 📝 IMPROVEMENT | MEDIUM |
-| Distributed Intel | Unverified | ❓ UNVERIFIED | - |
-| Anomaly Scoring | Unverified | ❓ UNVERIFIED | - |
-
----
-
-## 7. RECOMMENDED ACTIONS
-
-### HIGH PRIORITY
-1. **Add Streaming WAF documentation** — Major feature missing from doc
-2. **Clarify rate limiting architecture** — Section 1 is sparse on implementation details
-
-### MEDIUM PRIORITY
-3. **Document bot detection fully** — CSS honeypot and JS challenge missing
-4. **Add eBPF availability note** — Linux-only feature should be documented
-5. **Document parallel processing** — How async WAF pipeline works
-
-### LOW PRIORITY
-6. **Remove JWT from attack detection list** — It's validation, not detection
-7. **Remove Aho-Corasick claim** — Not actually used in current implementation
-8. **Add GeoIP clarification** — Feature not fully implemented
+The WAF module is generally well-implemented and matches the architecture document well. The main issues are:
+1. A documentation error about JS Challenge location
+2. The trailing window bug in streaming WAF
+3. Missing feature-gate documentation for mesh-only features

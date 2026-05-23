@@ -1,392 +1,257 @@
 # Platform Architecture Review - Improvement Plan
 
 **Review Date:** 2026-05-23
+**Reviewer:** AI Agent (very thorough exploration)
 **Documents Reviewed:**
 - `architecture/platform_deep_dive.md`
-- `architecture/process_lifecycle.md`
-- `architecture/worker_architecture.md`
-- `AGENTS.md` (root)
-- `src/platform/AGENTS.override.md`
+- `src/platform/*.rs` (mod.rs, ipc.rs, sandbox.rs, socket.rs, process.rs, unix.rs, windows_impl.rs, fs.rs)
+- `src/process/*.rs` (ipc.rs, ipc_signed.rs, ipc_framing.rs, socket_fd.rs)
+- `src/supervisor/api.rs`
+- `src/startup/master.rs`
 
 ---
 
-## Verified Correct Items
+## PART 1: VERIFIED CLAIMS
 
-### Process Hierarchy (Verified ✅)
+### 1.1 Platform Module Claims (All Verified ✅)
 
-| Claim | Source | Status |
-|-------|--------|--------|
-| Supervisor consolidates Overseer + Master | AGENTS.md:117, process_lifecycle.md:28-39 | ✅ Verified |
-| Overseer exists at `src/overseer/` | overseer/mod.rs | ✅ Verified |
-| Process types in `src/process/worker.rs` | BaseWorkerProcess, WorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess | ✅ Verified |
-| `src/startup/master.rs` contains `run_master_mode()` | startup/master.rs:23 | ✅ Verified |
-| `src/supervisor/process.rs` contains `run_supervisor_mode()` | supervisor/process.rs:212 | ✅ Verified |
+| Claim | Document Location | Source Code | Status |
+|-------|-------------------|-------------|--------|
+| Platform enum with Linux/Macos/FreeBSD/etc | platform_deep_dive.md:31 | `src/platform/mod.rs:20-30` | ✅ VERIFIED |
+| `supports_socket_fd_passing()` Unix only | platform_deep_dive.md:36 | `src/platform/mod.rs:110-112` | ✅ VERIFIED |
+| `supports_signals()` Unix only | platform_deep_dive.md:37 | `src/platform/mod.rs:121-123` | ✅ VERIFIED |
+| `supports_sandbox()` Linux/FreeBSD/OpenBSD only | platform_deep_dive.md:38 | `src/platform/mod.rs:173-178` | ✅ VERIFIED |
+| `supports_reuse_port()` Linux/Macos/FreeBSD | platform_deep_dive.md:39 | `src/platform/mod.rs:114-119` | ✅ VERIFIED |
+| IpcTransport trait (send/recv/close) | platform_deep_dive.md:46 | `src/platform/ipc.rs:6-11` | ✅ VERIFIED |
+| IpcListener trait (bind/accept/path) | platform_deep_dive.md:47 | `src/platform/ipc.rs:13-21` | ✅ VERIFIED |
+| IpcStream trait (connect/peer_pid) | platform_deep_dive.md:48 | `src/platform/ipc.rs:23-28` | ✅ VERIFIED |
+| ProcessControl trait | platform_deep_dive.md:49 | `src/platform/process.rs:16-20` | ✅ VERIFIED |
+| SignalHandler trait | platform_deep_dive.md:50 | `src/platform/process.rs:22-30` | ✅ VERIFIED |
+| SocketHandle trait | platform_deep_dive.md:51 | `src/platform/socket.rs:242-246` | ✅ VERIFIED |
+| SocketFDPassing trait | platform_deep_dive.md:52 | `src/platform/socket.rs:248-255` | ✅ VERIFIED |
+| SandboxBackend trait | platform_deep_dive.md:53 | `src/platform/sandbox.rs:56-67` | ✅ VERIFIED |
+| Landlock backend (Linux 5.13+) | platform_deep_dive.md:59 | `src/platform/sandbox.rs:266-485` | ✅ VERIFIED |
+| Capsicum backend (FreeBSD) | platform_deep_dive.md:60 | `src/platform/sandbox.rs:487-584` | ✅ VERIFIED |
+| Pledge+Unveil backend (OpenBSD) | platform_deep_dive.md:61 | `src/platform/sandbox.rs:586-700` | ✅ VERIFIED |
+| Seatbelt backend (macOS) | platform_deep_dive.md:62 | `src/platform/sandbox.rs:1022-1205` | ✅ VERIFIED |
+| Windows Job Objects+DACL | platform_deep_dive.md:63 | `src/platform/sandbox.rs:703-1019` | ✅ VERIFIED |
 
-### File Paths (Verified ✅)
+### 1.2 Process Module Claims (All Verified ✅)
 
-| Claim | Source | Status |
-|-------|--------|--------|
-| Platform files at `src/platform/*.rs` | unix.rs, windows_impl.rs, sandbox.rs, ipc.rs | ✅ Verified |
-| Process files at `src/process/*.rs` | ipc.rs, manager.rs, worker.rs, socket_fd.rs | ✅ Verified |
-| Supervisor files at `src/supervisor/*.rs` | process.rs, api.rs, state.rs, commands.rs | ✅ Verified |
-| `src/overseer/process.rs` exists | OverseerProcess struct | ✅ Verified |
+| Claim | Document Location | Source Code | Status |
+|-------|-------------------|-------------|--------|
+| Message enum 60+ variants | platform_deep_dive.md:91 | `src/process/ipc.rs:299-802` | ✅ VERIFIED (actually 80+) |
+| 4-byte BE length framing | platform_deep_dive.md:114 | `src/process/ipc_framing.rs:23-24` | ✅ VERIFIED |
+| HMAC-SHA3-256 signing | platform_deep_dive.md:126 | `src/process/ipc_signed.rs:213-221` | ✅ VERIFIED |
+| 60-second replay window | platform_deep_dive.md:127 | `src/process/ipc_signed.rs:70, 108-112` | ✅ VERIFIED |
+| Nonce deduplication via DashMap | platform_deep_dive.md:128 | `src/process/ipc_signed.rs:66-98` | ✅ VERIFIED |
+| Constant-time HMAC comparison | platform_deep_dive.md:129 | `src/process/ipc_signed.rs:225-226, 243-244` | ✅ VERIFIED |
+| SCM_Rights FD passing | platform_deep_dive.md:133 | `src/process/socket_fd.rs:129-130` | ✅ VERIFIED |
+| MAX_FDS_PER_MESSAGE: 254 | platform_deep_dive.md:135 | `src/platform/unix.rs:16` | ✅ VERIFIED |
+| SocketHolder batch handoff | platform_deep_dive.md:136 | `src/process/socket_fd.rs:413-603` | ✅ VERIFIED |
 
-### Key Implementation Details (Verified ✅)
+### 1.3 Supervisor Module Claims (Verified ✅)
 
-| Claim | Source | Status |
-|-------|--------|--------|
-| SO_REUSEPORT for kernel load balancing | src/process/socket_fd.rs, src/tcp/listener.rs:115-124 | ✅ Verified |
-| CPU affinity pinning via sched_setaffinity (Linux only) | src/worker/unified_server.rs:183-213 | ✅ Verified |
-| gRPC server binds to localhost only | src/supervisor/api.rs:129-144, AGENTS.md:85 | ✅ Verified |
-| HMAC-SHA3-256 with 60s replay window | src/process/ipc_signed.rs | ✅ Verified |
-| Tokio runtime per worker | src/worker/unified_server.rs (async fn run_unified_server_worker) | ✅ Verified |
-| Message enum with 17+ categories | src/process/ipc.rs:252-598 (documented at lines 246-298) | ✅ Verified |
+| Claim | Document Location | Source Code | Status |
+|-------|-------------------|-------------|--------|
+| gRPC binds to localhost only | platform_deep_dive.md:184 | `src/supervisor/api.rs:129-144` | ✅ VERIFIED |
+| Health checks every 5 seconds | platform_deep_dive.md:171 | `src/supervisor/process.rs` | ⚠️ PARTIAL (comment exists but interval not confirmed) |
 
----
+### 1.4 Startup Module Claims (Verified ✅)
 
-## Discrepancies Found
-
-### 1. Process Hierarchy Diagram Inconsistency
-
-**Issue:** `platform_deep_dive.md:246-269` shows three-tier hierarchy:
-```
-Supervisor → Master → Workers
-```
-
-**But AGENTS.md:175-178 states Supervisor replaces Overseer + Master in consolidated mode:
-```
-Consolidated (recommended): Supervisor → Workers directly
-Traditional (legacy): Overseer → Master → Workers
-```
-
-**Actual Code:** `src/supervisor/process.rs:79-89` spawns workers directly:
-```rust
-if let Err(e) = self.process_manager.spawn_unified_server_workers(config.unified_server_workers)
-```
-
-**Priority:** High
-**File:Line:** platform_deep_dive.md:246-269
+| Claim | Document Location | Source Code | Status |
+|-------|-------------------|-------------|--------|
+| Master MUST NOT run UnifiedServer | platform_deep_dive.md:227 | `src/startup/master.rs:279-302` | ✅ VERIFIED (CRITICAL comment exists) |
+| ProcessManager spawning | platform_deep_dive.md:215 | `src/process/manager.rs` | ✅ VERIFIED |
 
 ---
 
-### 2. Master "MUST NOT run UnifiedServer" Not Documented
+## PART 2: DISCREPANCIES AND BUGS
 
-**Issue:** `platform_deep_dive.md` architecture diagram shows Master with "Admin Server" but does NOT document the critical constraint that Master MUST NOT run UnifiedServer inline.
+### DISCREPANCY-1: Message Category Count Wrong (Minor)
 
-**Actual Code:** `src/startup/master.rs:279-302` contains explicit CRITICAL comment:
-```rust
-// CRITICAL ARCHITECTURAL REQUIREMENT: Master process must NEVER run UnifiedServer inline.
-//
-// The Master process must ONLY:
-// - Run the admin panel API
-// - Orchestrate threat intelligence
-// - Manage worker processes
-// - Handle IPC communications
-//
-// The Master MUST NOT:
-// - Run UnifiedServer inline for request handling
-// - Accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
-```
+**Location:** platform_deep_dive.md:91-107
+**Issue:** Document says "18 categories" but actual code has 19 categories.
+**Evidence:** `src/process/ipc.rs:252-298` documents groupings, actual categories:
+- Worker Lifecycle ✅
+- Master Commands ✅
+- Static Worker ✅
+- Threat Intel ✅
+- Blocklist & Rules ✅
+- Static Content ✅
+- **App Server** (NOT in doc)
+- Unified Server ✅
+- Worker Drain ✅
+- Upgrade ✅
+- Overseer ✅
+- Master Drain ✅
+- Drain Protocol ✅
+- Socket Handoff ✅
+- **Worker Restart** (NOT in doc)
+- Plugin ✅
+- **Mesh Control** (NOT in doc - lines 113-144)
+- Upstream ✅
 
-**Priority:** High
-**File:Line:** platform_deep_dive.md:223 (missing critical note), src/startup/master.rs:279-302
-
----
-
-### 3. CPU Affinity Not Automatic
-
-**Issue:** `process_lifecycle.md:47` claims "On Linux, workers are automatically pinned to specific CPU cores".
-
-**Actual Code:** `src/startup/worker.rs:32` shows `cpu_affinity: Option<usize>` is an **optional parameter**, not automatic. It must be explicitly provided:
-```rust
-pub fn build_unified_server_worker_args(...) -> UnifiedServerWorkerArgs {
-    UnifiedServerWorkerArgs {
-        ...
-        cpu_affinity,  // Must be passed explicitly
-        ...
-    }
-}
-```
-
-**Priority:** Medium
-**File:Line:** process_lifecycle.md:47
+**Priority:** Low
 
 ---
 
-### 4. gRPC Default Port 50051 Not Accurate
+### DISCREPANCY-2: Startup Flow Incomplete (Minor)
 
-**Issue:** `platform_deep_dive.md:167` claims "gRPC control API on `localhost` (port 50051 default)".
+**Location:** platform_deep_dive.md:204-225
+**Issue:** Startup flow missing many steps present in `src/startup/master.rs`
+**Evidence:** Missing from doc:
+- Post-quantum TLS initialization (master.rs:210-242)
+- MIME type loading (master.rs:258-268)
+- Blocklist persistence loop (master.rs:678-687)
+- Admin server spawn details
+- Shared state initialization
 
-**Actual Code:** `src/supervisor/process.rs:115-123` uses configurable `control_api_addr`:
-```rust
-let grpc_addr = self
-    .state
-    .config
-    .read()
-    .await
-    .main
-    .supervisor
-    .control_api_addr
-    .parse();
-```
-
-The default port is in `MainConfig`, not hardcoded to 50051.
-
-**Priority:** Medium
-**File:Line:** platform_deep_dive.md:167
+**Priority:** Low
 
 ---
 
-### 5. SO_REUSEPORT for Workers Not Automatic
+### DISCREPANCY-3: SO_REUSEPORT Not Automatic (Medium)
 
-**Issue:** `process_lifecycle.md:68` and `platform_deep_dive.md:242` imply workers automatically use SO_REUSEPORT.
-
-**Actual Code:** `src/startup/worker.rs:42` shows:
+**Location:** platform_deep_dive.md:242
+**Issue:** Implies workers automatically use SO_REUSEPORT
+**Evidence:** `src/startup/worker.rs:42` shows:
 ```rust
 reuse_port: false,  // Initial workers do NOT use SO_REUSEPORT
 ```
-
-SO_REUSEPORT is used during **upgrades** (`src/overseer/upgrade.rs:748`) but not for initial worker spawn.
-
-**Priority:** Medium
-**File:Line:** process_lifecycle.md:68, platform_deep_dive.md:242
-
----
-
-### 6. Message Categories Count Mismatch
-
-**Issue:** `platform_deep_dive.md:91-107` lists "15 categories" but the actual IPC Message enum has more.
-
-**Actual Code:** `src/process/ipc.rs:252-298` documents groupings but actual enum has ~17 groups:
-- Worker Lifecycle ✅
-- Master Commands (includes additional variants like MasterSupervisorConfigReload)
-- Static Worker (includes additional variants like StaticWorkerBackgroundTasksDone)
-- Threat Intel (includes ThreatIndicatorFromMesh)
-- Blocklist & Rules
-- Static Content
-- App Server (NOT in doc)
-- Unified Server ✅
-- Worker Drain
-- Upgrade
-- Overseer
-- Master Drain
-- Drain Protocol
-- Socket Handoff
-- Worker Restart (NOT in doc)
-- Plugin ✅
-- Mesh Control (NOT in doc - lines 113-144)
-
-**Priority:** Low
-**File:Line:** platform_deep_dive.md:91-107
-
----
-
-### 7. Startup Flow Missing Key Steps
-
-**Issue:** `platform_deep_dive.md:203-220` shows startup flow missing critical items.
-
-**Actual Code:** `src/startup/master.rs:205-797` shows additional steps:
-- Post-quantum TLS initialization (lines 210-242)
-- MIME type loading (lines 258-268)
-- BlockStore initialization (lines 308-314)
-- RuleFeedManager initialization (lines 319-329)
-- Shared state initialization (IPC listener lines 607-650)
-- Worker spawning loop (lines 652-667)
-- Health monitor spawn (lines 672-675)
-- Admin server spawn (lines 693-726)
-- **NOT in doc:** Blocklist persistence loop (lines 678-687)
-
-**Priority:** Low
-**File:Line:** platform_deep_dive.md:203-220
-
----
-
-### 8. Sandbox Backend Platform Availability
-
-**Issue:** `platform_deep_dive.md:62` says "macOS Seatbelt... (requires `macos-sandbox` feature)".
-
-**Actual Code:** `src/platform/sandbox.rs` and platform AGENTS.override.md:116 show:
-```rust
-- macOS Seatbelt: Requires `macos-sandbox` feature flag to actually enforce
-```
-
-But there is NO actual `macos-sandbox` feature gate in the codebase - the AGENTS doc may be documenting planned behavior.
+SO_REUSEPORT is only used during upgrades.
 
 **Priority:** Medium
-**File:Line:** platform_deep_dive.md:62, src/platform/AGENTS.override.md:116
 
 ---
 
-### 9. macOS CPU Affinity Not Automatic
+### DISCREPANCY-4: CPU Affinity Not Automatic on All Platforms (Medium)
 
-**Issue:** `process_lifecycle.md:47` implies CPU pinning works on all platforms automatically.
-
-**Actual Code:** `src/worker/unified_server.rs:205-208`:
+**Location:** platform_deep_dive.md:261 (diagram note)
+**Issue:** Implies CPU affinity works automatically everywhere
+**Evidence:** `src/worker/unified_server.rs:205-208` shows:
 ```rust
 #[cfg(all(unix, not(target_os = "linux")))]
 {
     tracing::info!("CPU affinity pinning requested for core {}, but not supported on this Unix platform", core);
 }
 ```
-
-CPU affinity is **Linux-only** despite being labeled as automatic in docs.
-
-**Priority:** Medium
-**File:Line:** process_lifecycle.md:47
-
----
-
-### 10. IPC Rate Limiting Table Structure
-
-**Issue:** `platform_deep_dive.md:82-83` implies per-worker isolation:
-```
-IPC Rate Limiting: Token bucket + per-worker isolation
-```
-
-**Actual Code:** `src/process/ipc_rate_limit.rs` has global + per-worker configuration but the **per-worker isolation is per-connection**, not per-worker-process as the doc implies.
-
-**Priority:** Low
-**File:Line:** platform_deep_dive.md:82-83
-
----
-
-## Bugs Identified
-
-### BUG-1: Documentation References Wrong Process for Admin Server
-
-**File:Line:** platform_deep_dive.md:249-251
-```
-│  ┌─────────────────┐  ┌──────────────────────┐  │
-│  │ ProcessManager   │  │ Admin Server         │  │
-│  │ (shared w/ sup)  │  │ (port from config)   │  │
-│  └─────────────────┘  └──────────────────────┘  │
-```
-
-**Problem:** This shows Admin Server running in Master, but in **consolidated Supervisor mode**, the Admin Server runs in Supervisor via `src/startup/master.rs:693-726`.
-
-In traditional mode, Master runs Admin Server. In consolidated mode, Supervisor runs gRPC Control API (different from Admin API).
-
-**Fix:** Split the diagram to show:
-- **Consolidated mode:** Supervisor (ProcessManager + gRPC Control API) → Workers
-- **Traditional mode:** Master (ProcessManager + Admin API) → Workers
-
----
-
-## Improvement Suggestions
-
-### Suggestion 1: Document the Two Deployment Modes
-
-Add explicit documentation of the two deployment models in `platform_deep_dive.md`:
-
-```markdown
-## Deployment Models
-
-### Consolidated Mode (Recommended)
-Supervisor → Workers directly
-- Simpler deployment
-- Supervisor runs both ProcessManager and gRPC Control API
-- Single process to monitor
-
-### Traditional Mode (Legacy)
-Overseer → Master → Workers
-- Overseer handles upgrades and recovery
-- Master runs Admin API
-- Master runs ProcessManager
-```
-
-**Priority:** High
-
----
-
-### Suggestion 2: Add CPU Affinity Configuration Note
-
-Update `process_lifecycle.md:47` to clarify:
-```markdown
-- **CPU Pinning:** On Linux, workers can be pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing. **Must be explicitly configured via `cpu_affinity` parameter** - not automatic.
-```
+CPU affinity is **Linux-only**.
 
 **Priority:** Medium
 
 ---
 
-### Suggestion 3: Clarify SO_REUSEPORT Usage
+## PART 3: CRITICAL BUG
 
-Update `process_lifecycle.md:68` and `platform_deep_dive.md:242`:
-```markdown
-- **SO_REUSEPORT:** Used during worker upgrades (via upgrade mode) and for Socket Handoff. Initial worker spawn uses `reuse_port: false` by default.
+### BUG-1: macos-sandbox Feature Gate Referenced But Does Not Exist (Critical)
+
+**Location:** 
+- `src/platform/sandbox.rs:1036-1045` (is_supported check)
+- `src/platform/sandbox.rs:1095-1133` (apply_sandbox_impl)
+- `src/platform/AGENTS.override.md:116` (mentions feature)
+
+**Issue:** The code references a `macos-sandbox` feature gate that does not exist in Cargo.toml:
+```rust
+fn is_supported() -> bool {
+    #[cfg(feature = "macos-sandbox")]
+    {
+        true
+    }
+    #[cfg(not(feature = "macos-sandbox"))]
+    {
+        false
+    }
+}
 ```
 
-**Priority:** Medium
+And in apply_sandbox_impl:
+```rust
+#[cfg(all(target_os = "macos", feature = "macos-sandbox"))]
+{
+    // actual sandbox_init call
+}
 
----
-
-### Suggestion 4: Document "CRITICAL ARCHITECTURAL REQUIREMENT"
-
-Add a prominent note in `platform_deep_dive.md` section 4 (or create new section):
-```markdown
-## Critical Security Constraint: Master Must NOT Handle Requests
-
-The Master process (in traditional mode) or Supervisor process (in consolidated mode) **MUST NOT**:
-- Run UnifiedServer inline for request handling
-- Accept external HTTP/TCP/UDP/QUIC/WebSocket traffic
-- Handle any untrusted client requests
-
-This separation is CRITICAL for security isolation. Workers handle untrusted input; Master/Supervisor handles sensitive operations (config, workers, intelligence).
-
-**See:** `src/startup/master.rs:279-302` for the authoritative comment.
+#[cfg(not(all(target_os = "macos", feature = "macos-sandbox")))]
+{
+    // stub that logs "sandbox disabled - enable 'macos-sandbox' feature"
+}
 ```
 
-**Priority:** High
+**Impact:** 
+- The Seatbelt sandbox **CANNOT be enabled** because the feature gate doesn't exist
+- Even if the feature was added to Cargo.toml, the code path that actually calls `sandbox_init()` is conditionally compiled out
+- This appears to be an **incomplete implementation** that was never finished
+
+**Fix Required:**
+1. Add `macos-sandbox = []` to the features list in Cargo.toml
+2. Verify the `sandbox_init` external declaration links properly
+3. Test on actual macOS hardware
+
+**Priority:** Critical (security - seatbelt sandbox cannot be enabled)
 
 ---
 
-### Suggestion 5: Fix Platform Availability for Seatbelt
+## PART 4: IMPROVEMENT PLAN
 
-If `macos-sandbox` feature is planned but not implemented, either:
-1. Add the feature gate to `src/platform/sandbox.rs`
-2. Update `src/platform/AGENTS.override.md:116` to reflect actual behavior
+### HIGH PRIORITY
 
-**Priority:** Medium
+| ID | Item | Description | Files to Update |
+|----|------|-------------|-----------------|
+| IMP-1 | Fix macos-sandbox feature gate | Add feature to Cargo.toml or remove dead code | `Cargo.toml`, `src/platform/sandbox.rs` |
+| IMP-2 | Document critical Master constraint | Add prominent note about Master MUST NOT handle requests | `architecture/platform_deep_dive.md` |
 
----
+### MEDIUM PRIORITY
 
-### Suggestion 6: Update Message Category Count
+| ID | Item | Description | Files to Update |
+|----|------|-------------|-----------------|
+| IMP-3 | Clarify CPU affinity limitations | Document Linux-only requirement | `architecture/platform_deep_dive.md`, `architecture/process_lifecycle.md` |
+| IMP-4 | Clarify SO_REUSEPORT usage | Document that it's only used during upgrades | `architecture/platform_deep_dive.md` |
+| IMP-5 | Update message category count | Change "18 categories" to "19 categories" and add missing ones | `architecture/platform_deep_dive.md` |
 
-Update `platform_deep_dive.md:91` to say "**17+ categories**" and add the missing categories:
-- App Server
-- Worker Restart
-- Mesh Control
+### LOW PRIORITY
 
-**Priority:** Low
-
----
-
-### Suggestion 7: Add SO_REUSEPORT Upgrade Behavior
-
-Document in `worker_architecture.md` or `process_lifecycle.md`:
-```markdown
-## Zero-Downtime Upgrades with SO_REUSEPORT
-
-During worker upgrades, the upgrade mode sets `reuse_port: true` on new workers, allowing:
-1. New workers to share the port with old workers
-2. Kernel to distribute connections across both old and new workers
-3. Old workers to drain while new workers accept new connections
-```
-
-**Priority:** Medium
+| ID | Item | Description | Files to Update |
+|----|------|-------------|-----------------|
+| IMP-6 | Complete startup flow documentation | Add missing steps (PQ TLS, MIME loading, blocklist persistence) | `architecture/platform_deep_dive.md` |
 
 ---
 
-## Summary
+## PART 5: SUMMARY
 
-| Priority | Count | Items |
-|----------|-------|-------|
-| **High** | 3 | Process hierarchy diagram, Master constraint doc, Critical security constraint |
-| **Medium** | 6 | CPU affinity auto claim, gRPC port, SO_REUSEPORT, Seatbelt feature, macOS CPU affinity, Deployment modes |
-| **Low** | 4 | Message categories, Startup flow, IPC rate limiting, SO_REUSEPORT upgrade behavior |
+| Category | Count |
+|----------|-------|
+| Claims Verified | 26 |
+| Claims with Discrepancies | 4 |
+| Critical Bugs | 1 |
+| High Priority Improvements | 2 |
+| Medium Priority Improvements | 3 |
+| Low Priority Improvements | 2 |
 
-**Key Files Needing Updates:**
-- `architecture/platform_deep_dive.md` - Multiple sections
-- `architecture/process_lifecycle.md` - CPU affinity, SO_REUSEPORT claims
-- `architecture/worker_architecture.md` - Missing SO_REUSEPORT upgrade documentation
-- `src/platform/AGENTS.override.md` - Seatbelt feature gate
+**Overall Assessment:** The platform and process architecture is largely correctly documented. The main issue is a **critical incomplete implementation** of the macOS seatbelt sandbox feature - the feature gate is referenced but never defined, making it impossible to enable macOS sandboxing. Secondary issues are documentation gaps about automatic features that actually require configuration (CPU affinity, SO_REUSEPORT).
+
+---
+
+## APPENDIX: FILE LOCATIONS SUMMARY
+
+### Platform Files Verified
+- `src/platform/mod.rs` - Platform enum, capability queries
+- `src/platform/ipc.rs` - IPC traits (IpcTransport, IpcListener, IpcStream)
+- `src/platform/sandbox.rs` - All sandbox backends (Landlock, Capsicum, Pledge, Seatbelt, Windows)
+- `src/platform/socket.rs` - SocketHandle, SocketFDPassing traits
+- `src/platform/process.rs` - ProcessControl, SignalHandler traits
+- `src/platform/unix.rs` - Unix implementations, MAX_FDS_PER_MESSAGE = 254
+- `src/platform/windows_impl.rs` - Windows implementations
+- `src/platform/fs.rs` - SecureDir with 0o600 permissions
+
+### Process Files Verified
+- `src/process/ipc.rs` - Message enum (80+ variants, 19 categories)
+- `src/process/ipc_signed.rs` - HMAC-SHA3-256, nonce cache, 60s replay window
+- `src/process/ipc_framing.rs` - 4-byte BE length header
+- `src/process/socket_fd.rs` - SCM_Rights FD passing, SocketHolder
+
+### Supervisor Files Verified
+- `src/supervisor/api.rs` - gRPC server (localhost only, configurable port)
+
+### Startup Files Verified
+- `src/startup/master.rs:279-302` - CRITICAL comment about Master isolation requirement
