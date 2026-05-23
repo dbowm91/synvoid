@@ -137,13 +137,28 @@ Tunnel module provides **VPN tunnel protocols** for site-to-site and client conn
 **Message Types**:
 ```rust
 TunnelMessage::Hello { client_id, auth_token, mappings, supports_datagrams }
-TunnelMessage::HelloAck { server_session_id, server_mappings, supports_datagrams, ... }
+TunnelMessage::HelloAck { server_session_id, server_mappings, supports_datagrams, max_datagram_size, access_level }
+TunnelMessage::AuthFailure { reason }
+TunnelMessage::KeepAlive
+TunnelMessage::KeepAliveAck
 TunnelMessage::PortOpen { identifier, port, protocol }
 TunnelMessage::PortClose { identifier }
+TunnelMessage::PortData { identifier }
+TunnelMessage::RequestProxy { identifier, target_host, target_port }
+TunnelMessage::ProxyResponse { identifier, success, message }
+TunnelMessage::PeerHello { peer_id, auth_token, supports_datagrams }
+TunnelMessage::PeerHelloAck { session_id, supports_datagrams, max_datagram_size }
+TunnelMessage::Error { code, message }
 TunnelMessage::DataChunk { identifier, sequence, data, fin }
+TunnelMessage::DataAck { identifier, sequence }
+TunnelMessage::StreamOpen { identifier, port, protocol, tls_passthrough }
+TunnelMessage::StreamOpenAck { identifier, success, message }
+TunnelMessage::StreamClose { identifier }
 TunnelMessage::UdpTunnelOpen { identifier, port }
+TunnelMessage::UdpTunnelOpenAck { identifier, success, message }
 TunnelMessage::UdpTunnelClose { identifier }
 TunnelMessage::UdpData { identifier, data }
+TunnelMessage::UdpClose { identifier }
 ```
 
 **Features**:
@@ -157,8 +172,7 @@ TunnelMessage::UdpData { identifier, data }
 
 ### WireGuard
 
-- Kernel WireGuard via `wireguard-kit` (if available)
-- Userspace implementation via `boringtun`
+- Userspace implementation via `boringtun` (defguard/boringtun)
 - Peer session management with keepalive
 - Key pair generation (Curve25519)
 - Persistent keepalive configuration

@@ -8,8 +8,7 @@ use std::sync::Arc;
 
 use super::super::state::AdminState;
 use super::common::StatusResponse;
-
-const SESSION_COOKIE_NAME: &str = "synvoid_session";
+use crate::admin::SESSION_COOKIE_NAME;
 
 pub async fn create_session(
     State(state): State<Arc<AdminState>>,

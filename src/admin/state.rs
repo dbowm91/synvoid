@@ -2,6 +2,8 @@ use super::alerting::AlertManager;
 use super::audit::{AuditState, ConfigVersionManager};
 use super::ws::broadcaster::Broadcaster;
 use crate::config::ConfigManager;
+
+pub const SESSION_COOKIE_NAME: &str = "synvoid_session";
 #[cfg(feature = "mesh")]
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::SiteMetricsPayload;

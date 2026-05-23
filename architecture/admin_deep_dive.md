@@ -117,7 +117,7 @@ Request
 
 ## Admin API Structure
 
-### API Organization (28 handlers)
+### API Organization (29 handlers)
 
 **Location:** `src/admin/handlers/`
 

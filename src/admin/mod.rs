@@ -30,7 +30,7 @@ use axum::{
 pub use metrics::start_metrics_publisher;
 pub use state::{
     get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
-    AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter,
+    AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter, SESSION_COOKIE_NAME,
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use utoipa::OpenApi;

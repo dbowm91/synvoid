@@ -62,6 +62,14 @@ pub struct VpnSession {
     pub access_level: String,
 }
 
+/// Builder for VpnClient instances.
+///
+/// # Example
+/// ```ignore
+/// let client = VpnClientBuilder::new(config)
+///     .build()
+///     .await?;
+/// ```
 pub struct VpnClientBuilder {
     config: VpnClientConfig,
 }
