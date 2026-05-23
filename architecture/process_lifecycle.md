@@ -43,8 +43,8 @@ The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master
 Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment.
 
 - **Isolation:** Each worker process is completely independent.
-- **Kernel Load Balancing:** Uses `SO_REUSEPORT` to allow the kernel to distribute incoming connections across workers with zero coordination overhead.
-- **CPU Pinning:** On Linux, workers are automatically pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing.
+- **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false`. See `src/overseer/upgrade.rs:748`.
+- **CPU Pinning:** On Linux, workers can be pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing. **Must be explicitly configured via `cpu_affinity` parameter** - not automatic. Not supported on macOS/BSD.
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
 

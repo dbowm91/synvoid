@@ -59,7 +59,7 @@ platform().supports_reuse_port()         // Linux/Macos/FreeBSD
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
-| macOS | **Seatbelt** | Sandboxed profile compilation (requires `macos-sandbox` feature) |
+| macOS | **Seatbelt** | Sandboxed profile compilation (planned feature, not yet implemented) |
 | Windows | **Job Objects + DACL** | Process memory limits, file security descriptors |
 
 ---
