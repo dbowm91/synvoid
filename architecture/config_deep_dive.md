@@ -69,6 +69,7 @@ MainConfig (top-level, server-wide)
 
 ```
 SiteConfig (per-domain)
+├── site_id: String                    # Derived from site.domains.first() (used as HashMap key in ConfigManager)
 ├── site: SiteInfo
 │   ├── domains: Vec<String>           # Primary and alias domains
 │   ├── listen: Vec<SiteListenConfig>  # Port, SSL, HTTP2/3, proxy protocol
