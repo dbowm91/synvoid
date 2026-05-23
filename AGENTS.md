@@ -155,7 +155,6 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| `current_depth()` doesn't exist | `src/location_matcher.rs:191-195` | Only `is_empty()` and `len()` exist - documentation error |
 | `allowed_dht_prefixes` hardcoded empty | `src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186` | DHT restrictions not enforced for pooled instances |
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3302` | ErasedHttpClient never used - Phase 9 incomplete |
 | HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false` - infrastructure exists but unused |
@@ -165,6 +164,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 ### Verified "Already Fixed" Items
 
 These items were identified in reviews but have been fixed:
+- LocationMatcher `current_depth()` stub removed (`src/location_matcher.rs:191-195` - only `is_empty()` and `len()` exist; no stub was ever present)
 - Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
 - StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
 - gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
