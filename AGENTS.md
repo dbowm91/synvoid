@@ -155,6 +155,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |-------|----------|--------|
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3302` | ErasedHttpClient never used - Phase 9 incomplete |
 | HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false` - infrastructure exists but unused |
+| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in |
 
 ### Verified "Already Fixed" Items
 
@@ -170,6 +171,7 @@ These items were identified in reviews but have been fixed:
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 - BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
+- AXFR record types complete (`src/dns/transfer.rs:829-1028` - all required record types now handled)
 
 ## Implementation Planning
 
