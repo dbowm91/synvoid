@@ -88,7 +88,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 
 ### Message Types (IPC)
 
-The `Message` enum is organized into **15 categories**:
+The `Message` enum is organized into **18 categories**:
 
 1. **WorkerLifecycle**: `WorkerStarted`, `WorkerReady`, `WorkerHeartbeat`, `WorkerError`
 2. **MasterCommand**: `MasterShutdown`, `MasterConfigReload`, `MasterHealthCheck`
@@ -96,15 +96,18 @@ The `Message` enum is organized into **15 categories**:
 4. **ThreatIntel**: `ThreatIndicatorAnnounce`, `ThreatSyncRequest/Response`
 5. **BlocklistRules**: `BlocklistUpdate`, `RulePatternsUpdate`
 6. **StaticContent**: `MinifyRequest/Response`, `PoisonImageRequest/Response`
-7. **UnifiedServer**: `UnifiedServerWorkerStarted/Ready/Drain`
-8. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
-9. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
-10. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
-11. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
-12. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
-13. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
-14. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
-15. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
+7. **AppServer**: `AppServerStart/Ready/Drain`
+8. **UnifiedServer**: `UnifiedServerWorkerStarted/Ready/Drain`
+9. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
+10. **WorkerRestart**: `WorkerRestartRequest`, `WorkerRestartAck`
+11. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
+12. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
+13. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
+14. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
+15. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
+16. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
+17. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
+18. **Upstream**: `UpstreamPoolStats`, `UpstreamBackendHealth`
 
 ### IPC Framing Protocol
 

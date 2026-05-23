@@ -208,12 +208,15 @@ SynVoid supports multiple backend types natively.
 | **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading |
 | **Static Worker** | `src/worker/` | CSS/JS minification, compression |
 
+<sup>1. All mesh networking components (DHT, Raft, Transport, Threat Intel, YARA Rules, MeshBackend, MeshProxy) require the `mesh` feature flag to compile.</sup>
+
 ### App Handler Documentation
 
 | Document | Description |
 |----------|-------------|
 | [Application Handlers](app_handlers.md) | Static files, PHP-FPM, FastCGI, Python, WASM, Spin |
 | [Plugin & Serverless Deep Dive](plugin_deep_dive.md) | WASM plugin runtime, Spin, serverless execution |
+| [Routing Deep Dive](routing_deep_dive.md) | BackendType routing, load balancing, health checking |
 
 ---
 

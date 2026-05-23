@@ -48,10 +48,7 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Cross-Site Scripting (XSS):** Identifies malicious scripts in paths, queries, headers, and bodies.
 - **Path Traversal:** Blocks attempts to access files outside the intended directory.
 - **SSRF & RFI:** Prevents Server-Side Request Forgery and Remote File Inclusion by validating URLs.
-- **Command Injection:** Detects shell commands and metacharacters.
-- **JWT Validation:** JWT tokens are validated for signature and claims via `src/waf/attack_detection/jwt.rs` (not an attack detector).
-- **XXE Detection:** XML External Entity injection detection via `src/waf/attack_detection/xxe.rs`.
-- **Anomaly Scoring:** Optionally combines multiple low-severity signals to block sophisticated attacks.
+- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`src/waf/attack_detection/detector_common.rs:264`) for efficient bulk pattern matching. Implementations include `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`, and `BasePatternDetector`.
 
 ### 4. Bot Detection Layer
 
