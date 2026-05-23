@@ -228,7 +228,8 @@ SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and t
 | **Transport** | `src/mesh/transport/` | QUIC/WireGuard transport layer |
 | **Threat Intel** | `src/mesh/` | Distributed threat intelligence |
 | **YARA Rules** | `src/mesh/` | Rule distribution and sync |
-| **Mesh Backend** | `src/mesh/` | Backend routing via mesh |
+| **Mesh Backend** | `src/mesh/backend.rs` | Backend routing via mesh |
+| **MeshProxy** | `src/mesh/proxy.rs` | Peer selection, policy enforcement |
 
 ### Node Roles
 
@@ -336,28 +337,36 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/admin/` | Admin API & UI |
 | `src/app_server/` | Application server integration |
 | `src/auth/` | Authentication & sessions |
+| `src/bin/` | Binary crate |
 | `src/block_store.rs` | IP blocklist storage |
+| `src/captcha/` | CAPTCHA generation |
 | `src/cgi/` | CGI script support |
 | `src/challenge/` | PoW/CSS challenges |
+| `src/common/` | Common/shared utilities |
 | `src/config/` | Configuration loading |
 | `src/dns/` | DNS server (DNSSEC) |
+| `src/drain/` | Graceful drain handling |
 | `src/fastcgi/` | FastCGI client |
 | `src/filter/` | Protocol filtering |
 | `src/geoip/` | GeoIP lookup |
 | `src/honeypot_port/` | Honeypot ports |
+| `src/honeypot_unified/` | Unified honeypot handler |
 | `src/http/` | HTTP server |
 | `src/http3/` | HTTP/3 QUIC |
 | `src/http_client/` | Upstream HTTP client |
 | `src/icmp_filter/` | ICMP filtering |
+| `src/integrity/` | Integrity verification |
 | `src/listener/` | Socket listening |
 | `src/logging/` | Access logging |
 | `src/master/` | Master process |
 | `src/mesh/` | Mesh networking |
 | `src/metrics/` | Metrics collection |
+| `src/mime/` | MIME type detection |
 | `src/overseer/` | Overseer process |
 | `src/php/` | PHP-FPM support |
 | `src/plugin/` | Plugin system |
 | `src/process/` | IPC primitives |
+| `src/protocol/` | Protocol handling |
 | `src/proxy/` | Reverse proxy |
 | `src/proxy_cache/` | Response caching |
 | `src/router.rs` | Request routing |
@@ -366,18 +375,22 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/spin/` | Spin framework |
 | `src/startup/` | Bootstrap & startup |
 | `src/static_files/` | Static file serving |
+| `src/streaming/` | Streaming primitives |
 | `src/supervisor/` | Process supervisor |
 | `src/tarpit/` | Bot tar pit |
 | `src/tcp/` | TCP proxy |
+| `src/theme/` | Theme rendering |
 | `src/tls/` | TLS termination |
 | `src/tunnel/` | Tunnel management |
 | `src/udp/` | UDP proxy |
 | `src/upstream/` | Backend management |
+| `src/upload/` | Upload handling |
 | `src/utils/` | Utilities |
 | `src/vpn_client/` | VPN client |
 | `src/waf/` | WAF engine |
 | `src/wasm_pow/` | WASM PoW |
 | `src/worker/` | Worker process |
+| `src/worker_pool/` | Worker pool management |
 | `crates/synvoid-config/` | Configuration crate |
 | `crates/synvoid-utils/` | Utilities crate |
 
