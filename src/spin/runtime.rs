@@ -22,6 +22,7 @@ pub struct SpinRuntimeConfig {
     pub max_instances: usize,
     pub default_timeout_seconds: u64,
     pub kv_store: Option<Arc<SpinKvStore>>,
+    pub idle_timeout_seconds: u64,
 }
 
 impl Default for SpinRuntimeConfig {
@@ -33,6 +34,7 @@ impl Default for SpinRuntimeConfig {
             max_instances: 10,
             default_timeout_seconds: 30,
             kv_store: None,
+            idle_timeout_seconds: 300,
         }
     }
 }
@@ -273,15 +275,20 @@ impl SpinRuntime {
         manifest: &Manifest,
         path: &str,
     ) -> Result<(String, String), SpinRuntimeError> {
+        let mut matches = Vec::new();
         for component in &manifest.components {
             if let Some(ref route) = component.url {
                 let normalized_route = route.trim_end_matches('/');
                 if path == normalized_route || path.starts_with(&format!("{}/", normalized_route)) {
-                    return Ok((component.id.clone(), route.clone()));
+                    matches.push((component.id.clone(), route.clone(), normalized_route.len()));
                 }
             }
         }
-        Err(SpinRuntimeError::RouteNotFound(path.to_string()))
+        matches
+            .into_iter()
+            .max_by_key(|m| m.2)
+            .map(|(id, route, _)| (id, route))
+            .ok_or_else(|| SpinRuntimeError::RouteNotFound(path.to_string()))
     }
 
     fn serialize_headers_spin(headers: &HeaderMap) -> String {
@@ -317,7 +324,7 @@ impl SpinRuntime {
     }
 
     async fn evict_idle_instances(&self) {
-        let idle_timeout = Duration::from_secs(300);
+        let idle_timeout = Duration::from_secs(self.config.idle_timeout_seconds);
         let to_evict: Vec<String> = {
             let instances = self.instances.read();
             instances

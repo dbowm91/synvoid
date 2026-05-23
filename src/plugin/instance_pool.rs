@@ -115,6 +115,67 @@ impl WasmInstancePool {
                 )
                 .ok();
 
+            linker
+                .func_wrap(
+                    "env",
+                    "get_env",
+                    |_caller: wasmtime::Caller<'_, RequestContext>,
+                     _key_ptr: i32,
+                     _key_len: i32,
+                     _out_ptr: i32,
+                     _out_max: i32|
+                     -> i32 { 0 },
+                )
+                .ok();
+
+            linker
+                .func_wrap(
+                    "env",
+                    "synvoid_read_body_chunk",
+                    |_caller: wasmtime::Caller<'_, RequestContext>,
+                     _out_ptr: i32,
+                     _out_max: i32|
+                     -> i32 { 0 },
+                )
+                .ok();
+
+            linker
+                .func_wrap(
+                    "env",
+                    "mesh_query_dht",
+                    |_caller: wasmtime::Caller<'_, RequestContext>,
+                     _key_ptr: i32,
+                     _key_len: i32,
+                     _out_ptr: i32,
+                     _out_max: i32|
+                     -> i32 { 0 },
+                )
+                .ok();
+
+            linker
+                .func_wrap(
+                    "env",
+                    "mesh_check_threat",
+                    |_caller: wasmtime::Caller<'_, RequestContext>,
+                     _ip_ptr: i32,
+                     _ip_len: i32|
+                     -> i32 { 0 },
+                )
+                .ok();
+
+            linker
+                .func_wrap(
+                    "env",
+                    "mesh_emit_event",
+                    |_caller: wasmtime::Caller<'_, RequestContext>,
+                     _topic_ptr: i32,
+                     _topic_len: i32,
+                     _data_ptr: i32,
+                     _data_len: i32|
+                     -> i32 { 0 },
+                )
+                .ok();
+
             match linker.instantiate(&mut store, module) {
                 Ok(instance) => {
                     warm_instances.push_back(WasmPooledInstance {
@@ -157,6 +218,7 @@ impl WasmPooledInstance {
         self.store.data_mut().start = Instant::now();
         self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
         self.store.data_mut().env = env;
+        self.store.data_mut().body_receiver = None;
         self.store.data_mut().allowed_dht_prefixes = self.default_allowed_dht_prefixes.clone();
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
