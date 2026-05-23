@@ -12,7 +12,7 @@ Highly secure. The architecture strictly isolates the control plane from the dat
 1.  **Authentication:** Supervisor-to-Worker IPC messages are cryptographically signed using an HMAC session key.
 2.  **Key Distribution:** Session keys are distributed to workers via highly restricted temporary files (0600 permissions) rather than command-line arguments, preventing exposure via `ps`.
 3.  **Anti-Spoofing:** On Unix, the Supervisor uses `SO_PEERCRED` to verify that the PID claimed by a worker in its initial handshake strictly matches the actual PID of the socket peer, preventing malicious local processes from spoofing WAF workers.
-4.  **Control Plane gRPC:** The management interface is a formal gRPC API (`proto/control.proto`) binding to localhost only (127.0.0.1:50051) for local IPC between Supervisor and Master processes. TLS is not required for localhost-only access.
+4.  **Control Plane gRPC:** The management interface is now a formal gRPC API (`proto/control.proto`) for local IPC, providing a robust and typed interface for remote management. Note: gRPC binds to localhost only — TLS is not required for local process communication.
 
 **Architectural Soundness:**
 The two-tier hierarchy (Supervisor → Worker) simplifies process management while maintaining strong security boundaries. By relegating heavy control plane logic (Raft, DHT, Mesh) to the Supervisor, Workers remain lightweight and performant. Even if a zero-day vulnerability in the WAF engine compromises a Worker, the attacker is confined to an isolated, unprivileged data plane process without access to the global control state or management credentials.

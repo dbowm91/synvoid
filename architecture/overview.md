@@ -54,21 +54,19 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 | Process | Binary Flag | Purpose | Count |
 |---------|-------------|---------|-------|
 | **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane, zero-downtime upgrades | 1 |
-| **Master** | `--master` | Legacy process manager (managed by Overseer in traditional deployments) | 1 |
+| **Master** | `--master` | Legacy mid-tier process manager (spawned by Overseer) | 1 |
+| **Overseer** | `--overseer` | Legacy parent process (health monitoring, upgrade coordination) | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | N |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | N |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination | N |
 
-### Process Hierarchy
+### Legacy Overseer & Master (Deprecated)
 
-The codebase supports **two deployment models**:
+The legacy **Overseer** process (`src/overseer/`) and **Master** process (`src/master/`) have been **deprecated** in favor of the consolidated Supervisor. These modules remain in the codebase for backward compatibility but are not invoked when using the default Supervisor mode.
 
-| Model | Processes | Use Case |
-|-------|-----------|----------|
-| **Consolidated (Recommended)** | Supervisor → Workers | Simplified deployment, Supervisor directly spawns workers |
-| **Traditional (Legacy)** | Overseer → Master → Workers | Full process hierarchy with separate Master process |
-
-**Note:** The `--master` flag still exists in `src/main.rs` and is handled by the Overseer module. The Supervisor consolidates Overseer+Master for simpler deployments but Master still exists for backward compatibility.
+- **Old model:** Overseer → Master → Worker (three-tier hierarchy)
+- **Current model:** Supervisor → Worker (consolidated two-tier for simpler deployments)
+- **Note:** The `--master` and `--overseer` flags still exist for environments requiring the legacy hierarchy.
 
 **Note:** The UnifiedServerWorker uses a single Tokio runtime with `worker_threads` equal to CPU cores. Adding more worker processes does NOT increase throughput—it only adds process isolation overhead.
 
@@ -382,6 +380,19 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/worker/` | Worker process |
 | `crates/synvoid-config/` | Configuration crate |
 | `crates/synvoid-utils/` | Utilities crate |
+
+---
+
+## Errata & Known Corrections
+
+The following corrections were made to address discrepancies between documentation and implementation:
+
+| Item | Correction |
+|------|------------|
+| **Process Hierarchy** | SynVoid uses a three-tier hierarchy (Overseer → Master → Worker) for legacy deployments, with Supervisor consolidating Overseer + Master responsibilities for simpler deployments. See [Process Lifecycle](process_lifecycle.md) for details. |
+| **gRPC Control Plane** | The gRPC API binds to localhost only — TLS is not required for local IPC between processes. See [Platform Deep Dive](platform_deep_dive.md). |
+| **Spin Framework** | Spin support (`src/spin/`) requires manual app registration via Admin API. Routing integration and component mapping are not fully automated. |
+| **File Path Corrections** | Several file path references in deep dive docs were corrected in AGENTS.md. Key corrections: `collect_body_with_chunk_waf` is in `src/http/server.rs:4661` (not `shared_handler.rs`), quorum verification is in `src/mesh/dht/signed.rs:860-934` (not `state_machine.rs:166-172`). |
 
 ---
 
