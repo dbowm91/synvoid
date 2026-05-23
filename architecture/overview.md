@@ -54,16 +54,21 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 | Process | Binary Flag | Purpose | Count |
 |---------|-------------|---------|-------|
 | **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane, zero-downtime upgrades | 1 |
+| **Master** | `--master` | Legacy process manager (managed by Overseer in traditional deployments) | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | N |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | N |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination | N |
 
-### Legacy Overseer (Deprecated)
+### Process Hierarchy
 
-The legacy **Overseer** process (`src/overseer/`) has been **deprecated** and replaced by the Supervisor. The Overseer module remains in the codebase for backward compatibility but is not invoked in the current execution path.
+The codebase supports **two deployment models**:
 
-- **Old model:** Overseer → Master → Worker
-- **Current model:** Supervisor → Worker (consolidated)
+| Model | Processes | Use Case |
+|-------|-----------|----------|
+| **Consolidated (Recommended)** | Supervisor → Workers | Simplified deployment, Supervisor directly spawns workers |
+| **Traditional (Legacy)** | Overseer → Master → Workers | Full process hierarchy with separate Master process |
+
+**Note:** The `--master` flag still exists in `src/main.rs` and is handled by the Overseer module. The Supervisor consolidates Overseer+Master for simpler deployments but Master still exists for backward compatibility.
 
 **Note:** The UnifiedServerWorker uses a single Tokio runtime with `worker_threads` equal to CPU cores. Adding more worker processes does NOT increase throughput—it only adds process isolation overhead.
 
@@ -199,7 +204,7 @@ SynVoid supports multiple backend types natively.
 | **FastCGI** | `src/fastcgi/` | Generic FastCGI backend support |
 | **CGI** | `src/cgi/` | CGI script execution |
 | **Serverless** | `src/serverless/` | WASM runtime with instance pooling |
-| **Spin** | `src/spin/` | Fermyon Spin framework support |
+| **Spin** | `src/spin/` | Fermyon Spin framework support (requires manual app registration via Admin API) |
 | **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading |
 | **Static Worker** | `src/worker/` | CSS/JS minification, compression |
 

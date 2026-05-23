@@ -322,7 +322,8 @@ impl OverseerProcess {
     }
 
     pub fn spawn_mesh_agent(&mut self) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
-        let config = SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::MeshAgent);
+        let config =
+            SpawnConfig::for_current_binary(self.config_path.clone(), ProcessMode::MeshAgent);
 
         let child = spawn_and_log(&config, "mesh-agent")?;
         let pid = child.id();
@@ -393,19 +394,24 @@ impl OverseerProcess {
             }
 
             // Monitor Mesh Agent
-            if let Some(ref mut child) = self.mesh_agent_child {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        tracing::warn!("Mesh Agent process exited with status: {}. Restarting...", status);
-                        let _ = self.spawn_mesh_agent();
+            if self.running.is_running() {
+                if let Some(ref mut child) = self.mesh_agent_child {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            tracing::warn!(
+                                "Mesh Agent process exited with status: {}. Restarting...",
+                                status
+                            );
+                            let _ = self.spawn_mesh_agent();
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::error!("Failed to check mesh agent: {}", e);
+                        }
                     }
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::error!("Failed to check mesh agent: {}", e);
-                    }
+                } else if self.running.is_running() {
+                    let _ = self.spawn_mesh_agent();
                 }
-            } else {
-                let _ = self.spawn_mesh_agent();
             }
 
             // Periodically write status file

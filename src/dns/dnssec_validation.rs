@@ -1,6 +1,7 @@
 // DNSSEC validation: signature verification, chain of trust, NSEC3 hashing, DS records
 
 use sha2::{Digest, Sha256, Sha384};
+use subtle::ConstantTimeEq;
 
 use super::dnssec::{DsDigestType, ZoneSigningKey};
 
@@ -269,7 +270,7 @@ pub fn verify_ds_digest(
     expected_digest: &[u8],
 ) -> Result<bool, String> {
     let computed = compute_ds_digest(digest_type, flags, protocol, algorithm, public_key)?;
-    Ok(computed == expected_digest)
+    Ok(bool::from(computed.ct_eq(expected_digest)))
 }
 
 pub fn create_ds_record(
