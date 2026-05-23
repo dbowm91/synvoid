@@ -12,6 +12,7 @@ pub struct WasmInstancePool {
     pool: Arc<Mutex<VecDeque<WasmPooledInstance>>>,
     engine: Arc<Engine>,
     max_size: usize,
+    default_allowed_dht_prefixes: Vec<String>,
 }
 
 pub(crate) struct WasmPooledInstance {
@@ -23,11 +24,12 @@ pub(crate) struct WasmPooledInstance {
 }
 
 impl WasmInstancePool {
-    pub fn new(engine: Arc<Engine>, max_size: usize) -> Self {
+    pub fn new(engine: Arc<Engine>, max_size: usize, default_allowed_dht_prefixes: Vec<String>) -> Self {
         Self {
             pool: Arc::new(Mutex::new(VecDeque::new())),
             engine,
             max_size,
+            default_allowed_dht_prefixes,
         }
     }
 
@@ -86,7 +88,7 @@ impl WasmInstancePool {
                     start: Instant::now(),
                     timeout: Duration::from_secs(30),
                     env: std::collections::HashMap::new(),
-                    allowed_dht_prefixes: Vec::new(),
+                    allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
                     max_memory: 64 * 1024 * 1024,
                     max_table_elements: 1024 * 1024,
                     body_receiver: None,
@@ -183,7 +185,7 @@ impl WasmInstancePool {
                         store,
                         filter_name: filter_name.clone(),
                         max_cpu_fuel: 0,
-                        default_allowed_dht_prefixes: Vec::new(),
+                        default_allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
                     });
                 }
                 Err(e) => {
@@ -243,7 +245,7 @@ impl WasmPool for WasmInstancePool {
             store: instance.store,
             filter_name: instance.filter_name,
             max_cpu_fuel: instance.max_cpu_fuel,
-            default_allowed_dht_prefixes: Vec::new(),
+            default_allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
         })
     }
 
