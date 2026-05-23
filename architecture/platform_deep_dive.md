@@ -221,53 +221,99 @@ run_master_mode()
 
 **Note:** The Master MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Master ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
 
+> **Source:** `src/startup/master.rs:279-302`
+
 ---
 
 ## Architecture Diagram
 
+SynVoid supports two deployment modes:
+
+### Consolidated Mode (Recommended)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Supervisor Process                          │
-│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────┐  │
-│  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API   │  │
-│  │  - Config     │  │  - Workers[]   │  │  (localhost:50051)   │  │
-│  │  - BlockStore│  │  - Unified[]   │  │                      │  │
-│  │  - Trackers  │  │  - Static      │  │                      │  │
-│  └──────────────┘  └─────────────────┘  └───────────────────────┘  │
-│         │                    │                      │              │
-│         │         ┌──────────┴──────────┐            │              │
-│         │         │   IPC Listener      │            │              │
-│         │         │ (Unix Domain Socket)│            │              │
-│         │         └─────────────────────┘            │              │
-└─────────┼─────────────────────────────────────────────┼──────────────┘
+│                         Supervisor Process                           │
+│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────┐   │
+│  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API    │   │
+│  │  - Config     │  │  - Workers[]   │  │  (localhost:50051)    │   │
+│  │  - BlockStore│  │  - Unified[]   │  │                      │   │
+│  │  - Trackers  │  │  - Static      │  │                      │   │
+│  └──────────────┘  └─────────────────┘  └───────────────────────┘   │
+│         │                    │                      │                │
+│         │         ┌──────────┴──────────┐            │                │
+│         │         │   IPC Listener      │            │                │
+│         │         │ (Unix Domain Socket)│            │                │
+│         └─────────┼─────────────────────┼────────────┘                │
+│                   │                     │                             │
+│                   └──────────┬──────────┘                             │
+│                              │                                        │
+│     ┌────────────────────────▼────────────────────────┐             │
+│     │              Worker Processes                     │             │
+│     │  ┌─────────────────────────────────────────────┐  │             │
+│     │  │ UnifiedServerWorker                         │  │             │
+│     │  │ (HTTP/HTTPS/HTTP3 + WAF + Proxy)           │  │             │
+│     │  │ (tokio async loop, CPU-affinity pinned)     │  │             │
+│     │  └─────────────────────────────────────────────┘  │             │
+│     │  ┌─────────────────────────────────────────────┐  │             │
+│     │  │ StaticWorker                                │  │             │
+│     │  │ (CSS/JS minification, compression)          │  │             │
+│     │  └─────────────────────────────────────────────┘  │             │
+│     └─────────────────────────────────────────────────────┘             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Legend:** Supervisor spawns Workers directly. No Master process. Use this for single-host deployments.
+
+### Traditional Mode (Legacy)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Supervisor Process                           │
+│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────┐   │
+│  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API    │   │
+│  │  - Config     │  │  - Workers[]   │  │  (localhost:50051)    │   │
+│  │  - BlockStore│  │  - Unified[]   │  │                      │   │
+│  │  - Trackers  │  │  - Static      │  │                      │   │
+│  └──────────────┘  └─────────────────┘  └───────────────────────┘   │
+│         │                    │                      │                │
+│         │         ┌──────────┴──────────┐            │                │
+│         │         │   IPC Listener      │            │                │
+│         │         │ (Unix Domain Socket)│            │                │
+│         │         └─────────────────────┘            │                │
+└─────────┼─────────────────────────────────────────────┼────────────────┘
           │                                             │
           │         ┌─────────────────────────────────┘
           │         │
-    ┌─────▼───────▼──────────────────────────────────┐
-    │               Master Process                      │
-    │  ┌─────────────────┐  ┌──────────────────────┐  │
-    │  │ ProcessManager   │  │ Admin Server         │  │
-    │  │ (shared w/ sup)  │  │ (port from config)   │  │
-    │  └─────────────────┘  └──────────────────────┘  │
-    │           │                                     │
-    └───────────┼─────────────────────────────────────┘
-                │
-    ┌───────────▼───────────────┐
-    │   IPC Socket (signing)     │
-    └───────────▲───────────────┘
-                │
-    ┌───────────┴───────────────┐
-    │   Worker Processes        │
-    │  ┌─────────────────────┐  │
-    │  │ UnifiedServerWorker │  │  (HTTP/HTTPS/HTTP3 + WAF)
-    │  │ (tokio async loop)   │  │
-    │  └─────────────────────┘  │
-    │  ┌─────────────────────┐  │
-    │  │ StaticWorker        │  │  (CSS/JS minification)
-    │  │ (std thread pool)   │  │
-    │  └─────────────────────┘  │
-    └───────────────────────────┘
+     ┌────▼─────────▼──────────────────────────────────┐
+     │               Master Process                       │
+     │  ┌─────────────────┐  ┌──────────────────────┐   │
+     │  │ ProcessManager  │  │ Admin Server         │   │
+     │  │ (shared w/ sup) │  │ (port from config)   │   │
+     │  │                 │  │                      │   │
+     │  │ ⚠️ MUST NOT     │  │                      │   │
+     │  │ handle requests │  │                      │   │
+     │  └─────────────────┘  └──────────────────────┘   │
+     │           │                                      │
+     └───────────┼──────────────────────────────────────┘
+                 │
+     ┌───────────▼───────────────┐
+     │   IPC Socket (signing)    │
+     └───────────▲───────────────┘
+                 │
+     ┌───────────┴───────────────┐
+     │   Worker Processes        │
+     │  ┌─────────────────────┐  │
+     │  │ UnifiedServerWorker │  │  (HTTP/HTTPS/HTTP3 + WAF)
+     │  │ (tokio async loop)   │  │
+     │  └─────────────────────┘  │
+     │  ┌─────────────────────┐  │
+     │  │ StaticWorker        │  │  (CSS/JS minification)
+     │  └─────────────────────┘  │
+     └───────────────────────────┘
 ```
+
+**Legend:** Supervisor → Master → Workers. Master handles admin API only. Use this for multi-host orchestration.
 
 ---
 
@@ -284,6 +330,42 @@ run_master_mode()
 | **IPC Rate Limiting** | Token bucket + per-worker isolation |
 | **FD Passing** | Unix-only SCM_Rights, max 254 FDs |
 | **Message Validation** | String length limits, path traversal checks |
+
+---
+
+## Critical Security Constraint: Master/Supervisor Isolation
+
+### Requirement
+
+**Master and Supervisor processes MUST NOT accept external traffic or handle untrusted client requests.**
+
+### Architecture
+
+| Process | Role | External Traffic |
+|---------|------|------------------|
+| **Supervisor** | Lifecycle management, health monitoring, upgrade coordination | No - localhost IPC only |
+| **Master** | Admin API, worker orchestration, threat intelligence | No - localhost admin API only |
+| **UnifiedServerWorker** | HTTP/HTTPS/HTTP3 request handling, WAF, proxy | **Yes - all client traffic** |
+
+### Security Model
+
+1. **Least Privilege**: Master/Supervisor handle sensitive operations (config management, worker orchestration, threat intelligence aggregation). Workers handle untrusted client input (HTTP requests, uploads, etc.)
+
+2. **Process Isolation**: If a CVE exists in request handling code (UnifiedServerWorker), the Master/Supervisor processes are protected because they run in separate processes. An attacker cannot escalate from a compromised Worker to Master.
+
+3. **Crash Isolation**: When a Worker crashes (OOM, segfault, panic), the Master continues running and can restart the Worker. The admin panel remains accessible even during Worker failures.
+
+4. **gRPC Binding**: The Supervisor's gRPC control API binds to `localhost:50051` only (`src/supervisor/api.rs:114-129`). TLS is not required for localhost IPC.
+
+### Enforcement
+
+- `src/startup/master.rs:279-302`: Master MUST NOT run UnifiedServer inline for request handling
+- Master MUST NOT accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
+- Master MUST NOT handle any external network traffic for proxying
+
+### macOS Seatbelt Sandboxing
+
+Seatbelt sandbox for macOS is **planned but not yet implemented** (`src/platform/sandbox.rs`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
 
 ---
 
