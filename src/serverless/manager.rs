@@ -150,6 +150,7 @@ impl ServerlessManager {
     /// - `set_org_manager()` - Sets the organization manager for tenant isolation
     /// - `set_revocation_list()` - Configures the global node revocation list for security
     /// - `set_transport()` - Sets the mesh transport for peer-to-peer communication
+    /// - `verify_caller_permission()` - DHT-based permission verification for function calls
     ///
     /// These features are only available when building with `--features mesh` and allow
     /// serverless functions to participate in the mesh distributed hash table.

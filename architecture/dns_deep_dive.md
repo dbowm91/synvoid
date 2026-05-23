@@ -34,6 +34,10 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `recursive.rs` | Recursive DNS resolver using hickory-resolver |
 | `recursive_cache.rs` | Cache for recursive resolver responses |
 | `trust_anchor.rs` | RFC 5011 trust anchor management |
+| `hsm.rs` | HSM-based key storage and signing |
+| `cookie.rs` | RFC 8905 DNS cookies for client authentication |
+| `update.rs` | Dynamic DNS updates (RFC 2136) |
+| `transfer.rs` | Zone transfers (AXFR/IXFR) |
 | `doh.rs` | DNS-over-HTTPS server |
 | `dot.rs` | DNS-over-TLS server |
 | `doq.rs` | DNS-over-QUIC server |
@@ -219,7 +223,7 @@ VPN client for connecting to SynVoid VPN servers. Supports **QUIC transport** (p
 VpnClient                    - Main VPN client with transport abstraction
 VpnSession                   - Active session (QUIC connection, datagram caps)
 VpnClientConfig              - Client configuration (server, auth, port mappings)
-VpnClientBuilder             - Builder for VpnClient
+VpnClientBuilder (struct)    - Builder pattern for VpnClient construction
 VpnConnection (enum)         - Quic { session }, WireGuard
 ClientPortMapping            - Local to remote port mapping
 ReconnectConfig              - Auto-reconnect settings

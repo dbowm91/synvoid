@@ -117,7 +117,7 @@ Request
 
 ## Admin API Structure
 
-### API Organization (29 handlers)
+### API Organization (28 handlers)
 
 **Location:** `src/admin/handlers/`
 
@@ -126,6 +126,7 @@ Request
 | `alerting` | Alert configuration and webhook testing |
 | `api_discovery` | API self-discovery |
 | `auth` | Session/CSRF management |
+| `behavioral_intel` | Behavioral intelligence for anomaly detection (mesh feature) |
 | `common` | Shared types, pagination, auth utilities |
 | `config` | All configuration endpoints (40+ sub-endpoints) |
 | `honeypot` | Honeypot port management |
