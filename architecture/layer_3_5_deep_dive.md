@@ -54,5 +54,34 @@ SynVoid anticipates malicious origins and protects against them:
 2.  **Sybil / DoS Attacks:** Edge nodes joining the network must compute a **Proof of Work (PoW)** (`validate_edge_node_pow`). This makes it computationally expensive for an attacker to spin up thousands of fake Origin/Edge nodes to exhaust QUIC connection pools.
 3.  **Threat Feed Isolation:** Threat feeds require strict Ed25519 signatures from the Global tier. A compromised Origin node cannot inject fake blocked IPs into the global `ThreatIntelligenceManager`.
 
+## 6. Half-TCP (Layer 3.5) Implementation
+
+Beyond HTTP/HTTPS proxying, SynVoid supports a **Half-TCP** mode for non-HTTP protocols via `BackendProtocol::Tcp` in the upstream pool system.
+
+### Tunnel Backend
+
+The `TunnelBackend` (`src/tunnel/upstream.rs`) provides half-TCP proxy functionality:
+
+```rust
+pub fn to_backend(&self) -> Backend {
+    Backend::new(format!("tcp:127.0.0.1:{}", self.port))
+        .with_protocol(BackendProtocol::Tcp)
+}
+```
+
+### Connection Pool Behavior
+
+When `BackendProtocol::Tcp` is used:
+- **No HTTP Parsing:** Raw TCP stream, not parsed as HTTP
+- **Pool Key:** Uses authority (host:port) for connection reuse
+- **Keep-Alive:** Connections kept alive in pool for reuse
+- **Protocol Name:** Logged as "TCP" in metrics
+
+This enables proxying for SSH, databases (PostgreSQL, MySQL), custom TCP protocols, and QUIC tunnel traffic.
+
+### Integration with Mesh
+
+In mesh mode, half-TCP connections can be routed through the DHT to remote peers.
+
 ## Summary
 SynVoid’s Layer 3 and 5 are highly advanced, leveraging state-of-the-art PQC and robust cryptographic trust chains. However, the decision to build a bespoke Kademlia-based state synchronization engine for the control plane introduces severe operational complexity. Long-term maintenance would benefit significantly from migrating the Global tier to a standard Raft consensus model.

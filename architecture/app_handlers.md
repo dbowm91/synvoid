@@ -43,3 +43,20 @@ SynVoid also supports the **Fermyon Spin** framework, allowing for the execution
 
 - **Metadata Parsing:** Automatically parses Spin application manifests (`spin.toml`) to determine routes and configurations.
 - **Request Mapping:** Maps incoming HTTP requests to specific Spin components and triggers their execution.
+
+### Spin vs Generic WASM Edge Functions
+
+Spin is **not** the same as generic WASM edge functions. Key distinctions:
+
+| Aspect | Generic WASM Edge Functions | Spin |
+|--------|---------------------------|------|
+| **Runtime** | Wasmtime with custom resource limits | Custom Spin Runtime (`SpinRuntime`) |
+| **Routing** | Longest-prefix-match on configured routes | Spin manifest (`spin.toml`) with built-in trigger system |
+| **Manifest** | Configuration-driven routes | `spin.toml` parsed via `src/spin/manifest.rs` |
+| **Registration** | Part of site configuration | Manual registration via Admin API |
+| **Components** | Single WASM module per route | Multiple named components in manifest |
+| **HTTP Dispatch** | `WasmHandler` in server pipeline | `SpinHttpHandler` at `src/http/server.rs:2423` |
+
+Spin apps are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
+
+**Integration Point:** When `BackendType::Spin` is configured, the HTTP server creates a `SpinHttpHandler` that routes requests through the Spin runtime to the appropriate component based on the Spin manifest.
