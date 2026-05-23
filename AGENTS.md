@@ -199,6 +199,12 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 11. **Spin routing IS integrated** - Contrary to earlier AGENTS.md claims, Spin routing IS integrated into HTTP dispatch at `src/http/server.rs:2417-2489`. When `BackendType::Spin` is configured, requests go through `SpinHttpHandler`. Spin requires manual app registration via Admin API.
 
+12. **Admin CSRF uses constant-time comparison** - `src/admin/state.rs:736` now uses `subtle::ConstantTimeEq` for session hash comparison in `validate_csrf()`. Previously used simple `==` comparison.
+
+13. **CPU affinity pinning is Linux-only, not automatic** - `src/worker/unified_server.rs:205-208` shows CPU affinity only works on Linux. On macOS/BSD it logs a warning but does nothing. Must be explicitly configured via `cpu_affinity` parameter, not automatic.
+
+14. **macOS Seatbelt sandbox is planned, not implemented** - `src/platform/sandbox.rs` does not have a `macos-sandbox` feature gate. The seatbelt implementation is planned but not yet implemented.
+
 ## Skills Reference
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
