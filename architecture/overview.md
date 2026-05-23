@@ -349,12 +349,10 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/fastcgi/` | FastCGI client |
 | `src/filter/` | Protocol filtering |
 | `src/geoip/` | GeoIP lookup |
-| `src/honeypot_port/` | Honeypot ports |
+| `src/honeypot_port/` | Port honeypot with AI responders, protocol detection, threat intelligence, and mesh integration |
 | `src/honeypot_unified/` | Unified honeypot handler |
 | `src/http/` | HTTP server |
-| `src/http3/` | HTTP/3 QUIC |
-| `src/http_client/` | Upstream HTTP client |
-| `src/icmp_filter/` | ICMP filtering |
+| `src/icmp_filter/` | ICMP packet filtering via platform-specific backends (nftables, pf, winfw, wfp, ebpf) |
 | `src/integrity/` | Integrity verification |
 | `src/listener/` | Socket listening |
 | `src/logging/` | Access logging |
@@ -364,20 +362,20 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/mime/` | MIME type detection |
 | `src/overseer/` | Overseer process |
 | `src/php/` | PHP-FPM support |
-| `src/plugin/` | Plugin system |
+| `src/plugin/` | WASM plugin runtime with instance pooling, hot-reloading, and Axum integration |
 | `src/process/` | IPC primitives |
 | `src/protocol/` | Protocol handling |
 | `src/proxy/` | Reverse proxy |
 | `src/proxy_cache/` | Response caching |
 | `src/router.rs` | Request routing |
-| `src/sandbox/` | Process sandboxing |
-| `src/serverless/` | Serverless/WASM |
-| `src/spin/` | Spin framework |
+| `src/sandbox/` | Process sandboxing for WASM/YARA execution with restricted child processes (jail model) |
+| `src/serverless/` | Serverless function management with async compilation, instance pooling, and registry |
+| `src/spin/` | Spin framework runtime with WASM support, KV store, and manifest parsing |
 | `src/startup/` | Bootstrap & startup |
 | `src/static_files/` | Static file serving |
 | `src/streaming/` | Streaming primitives |
 | `src/supervisor/` | Process supervisor |
-| `src/tarpit/` | Bot tar pit |
+| `src/tarpit/` | Bot tar pit with Markov chain HTML generation to waste scraper/bot resources |
 | `src/tcp/` | TCP proxy |
 | `src/theme/` | Theme rendering |
 | `src/tls/` | TLS termination |
@@ -388,7 +386,7 @@ This overview serves as an index for detailed documentation. Each link below pro
 | `src/utils/` | Utilities |
 | `src/vpn_client/` | VPN client |
 | `src/waf/` | WAF engine |
-| `src/wasm_pow/` | WASM PoW |
+| `src/wasm_pow/` | WASM-based proof-of-work challenge solver with PQC key exchange |
 | `src/worker/` | Worker process |
 | `src/worker_pool/` | Worker pool management |
 | `crates/synvoid-config/` | Configuration crate |
