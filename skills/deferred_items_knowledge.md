@@ -2,23 +2,34 @@
 
 Implementation plan remaining items are documented in `plans/plan.md`.
 
-## Current Status (2026-05-22)
+## Current Status (2026-05-23)
 
-Wave 6 and Wave 8 have been completed:
-- MESH-11: Quorum Manager race condition ✅ FIXED
-- APP-17: pip install hash verification ✅ FIXED
-- MESH-16: dead code removal ✅ FIXED
+All implementation waves completed. Remaining items are deferred due to architectural complexity.
 
-## Remaining Deferred Items
+## Recently Completed (2026-05-23)
 
-| ID | Issue | Reason |
-|----|-------|--------|
-| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete per TODO at `instance.rs:214` |
-| APP-15 | FastCGI Response NOT Truly Streamed | Requires architectural change to async streaming |
-| MESH-14 | No Source Node ID Binding Validation | Fundamental identity model changes needed |
-| DOC-MESH-1 | DHT Ingress Verification Gaps Not Documented | Related to MESH-14 |
-| SUP-1 | gRPC Control Plane TLS | Working As Designed - localhost IPC doesn't need TLS |
-| MESH-17 | Session Establishment Failure Silently Ignored | Working As Designed - session is optional for key offers |
+During the 2026-05-23 plan verification, these fixes were completed:
+
+| ID | Fix | Verification |
+|----|-----|--------------|
+| REC-1 | Fast-path patterns expanded from 13 to 38 | `src/waf/attack_detection/mod.rs:156-170` |
+| REC-3 | Block status configurable via `block_status` field | `src/waf/attack_detection/config.rs:181-186` |
+| REC-5 | Request smuggling indicators added to fast_path | Added `transfer-encoding`, `content-length` patterns |
+| DOC-3 | VpnClientBuilder documentation corrected | `architecture/dns_deep_dive.md:222` |
+| DOC-4 | DNS modules added to docs | `hsm.rs`, `cookie.rs`, `update.rs`, `transfer.rs` |
+| ISSUE-5 | Handler count corrected to 28 | Added `behavioral_intel` handler |
+| PLUGIN-3 | verify_caller_permission documented | `src/serverless/manager.rs:145-157` |
+
+## Deferred Items
+
+| ID | Issue | Reason | Status |
+|----|-------|--------|--------|
+| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | DHT ingress validation gaps require fundamental changes | Deferred - Architectural |
+| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete per TODO at `instance.rs:214` | Deferred - Requires Raft |
+| MESH-17 | Session Establishment Failure Silently Ignored | Intentional - offer doesn't depend on session state | Working As Designed |
+| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation - buffers entire stdout | Deferred - Architectural |
+| SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS | Working As Designed |
+| DOC-MESH-1 | DHT Ingress Verification Gaps Not Documented | Related to MESH-14 | Deferred |
 
 ## Architecture Documents
 
@@ -42,11 +53,10 @@ cargo test --test security_regression
 
 ## Previously Completed Items
 
-- All 4 implementation waves (W1-W5) - completed 2026-05-06
+- All 6 implementation waves (W1-W6) - completed 2026-05-23
 - All architecture profiles compile
 - All security hardening items
 - All buffer pool refactoring
 - All IPC consolidation
 - PID file lock ordering fix
 - Profile compilation fixes (mesh, dns, full)
-- Wave 6/8 fixes (MESH-11, APP-17, MESH-16) - completed 2026-05-22

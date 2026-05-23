@@ -191,7 +191,7 @@ Large plans should be organized into **waves** that can execute in parallel:
 
 7. **Spin find_route bug** - `src/spin/runtime.rs:271-285` returned first match only, not longest-prefix-match. **FIXED**: Now collects all matches and returns longest prefix.
 
-8. **WAF fast-path bypass** - `src/waf/attack_detection/mod.rs:425-435` had early return when fast-path was safe, but request smuggling patterns were NOT in fast_path_patterns. **FIXED**: Added smuggling indicators to fast_path_patterns and expanded patterns from 13 to 34.
+8. **WAF fast-path bypass** - `src/waf/attack_detection/mod.rs:425-435` had early return when fast-path was safe, but request smuggling patterns were NOT in fast_path_patterns. **FIXED**: Added smuggling indicators (`transfer-encoding`, `content-length`) to fast_path_patterns and expanded patterns from 13 to 38.
 
 9. **Flood protector not integrated** - `src/waf/mod.rs:438-508` flood_protector existed but was NOT called during request pipeline. **FIXED**: Integrated into `check_request_full()` pipeline.
 
