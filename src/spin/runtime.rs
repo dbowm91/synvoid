@@ -196,14 +196,10 @@ impl SpinRuntime {
                     wasi_enabled: true,
                     allowed_dht_prefixes: Vec::new(),
                 };
-
-                let runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)
+                let new_runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)
                     .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))?;
-
-                let runtime = Arc::new(runtime);
-                self.compiled_runtimes
-                    .write()
-                    .insert(component_id.to_string(), runtime.clone());
+                let runtime = Arc::new(new_runtime);
+                self.compiled_runtimes.write().insert(component_id.to_string(), runtime.clone());
                 runtime
             }
         };
@@ -214,8 +210,12 @@ impl SpinRuntime {
             .clone()
             .unwrap_or_else(|| Arc::new(SpinKvStore::new()));
 
-        let instance =
-            SpinAppInstance::new(manifest, wasm_runtime, component_id.to_string(), kv_store);
+        let instance = SpinAppInstance::new(
+            manifest,
+            Arc::new(wasm_runtime),
+            component_id.to_string(),
+            kv_store,
+        );
 
         let instance_id = uuid::Uuid::new_v4().to_string();
         self.instances.write().insert(instance_id, instance.clone());
