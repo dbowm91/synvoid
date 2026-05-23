@@ -29,3 +29,4 @@ This directory contains detailed documentation for various subsystems.
 | `extension_runtime.md` | ExtensionRuntime trait and registry for worker lifecycle management |
 | `quorum_manager_fix.md` | Quorum Manager race condition fix with Raft oneshot completion |
 | `supply_chain_hashes.md` | Supply chain security with pip --require-hashes |
+| `erased_http_client.md` | ErasedHttpClient Phase 9 incomplete integration |
