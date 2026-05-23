@@ -101,9 +101,13 @@ Integration into `http/server.rs` proxy path is pending:
 - Requires adding `ErasedHttpClient` to `HttpServer` struct
 ```
 
-**Status:** As of 2026-05-06, integration is marked complete but the `proxy/mod.rs:73-94` shows `ProxyServer` has `erased_client: ErasedHttpClient` field, suggesting it may be integrated.
+**Status:** VERIFIED INCOMPLETE (2026-05-23). Code analysis shows:
+- `ErasedHttpClient` IS added to `HttpServer` struct (`server.rs:357,401`)
+- BUT `use_erased_client` is hardcoded to `false` at `server.rs:3302`
+- The streaming path uses `StreamingHttpClient` from `UpstreamClientRegistry.get_or_create_streaming()` instead
+- `ErasedHttpClient` is never actually used in request path
 
-**Verification needed:** Whether `BodyBufferingPolicy::Streaming` actually uses `ErasedHttpClient` in the request path.
+**Action Required:** Change line 3302 from `let use_erased_client = false` to proper conditional logic to enable `ErasedHttpClient` for streaming.
 
 **Severity:** Medium
 **Action:** Verify streaming policy integration in `src/http/server.rs`
