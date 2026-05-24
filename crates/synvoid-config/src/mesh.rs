@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-#[cfg(feature = "mesh")]
 use utoipa::ToSchema;
 
 pub(crate) const POW_CACHE_TTL_SECS: u64 = 3600;

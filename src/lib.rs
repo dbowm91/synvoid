@@ -38,12 +38,10 @@
     clippy::unnecessary_cast
 )]
 
-#[cfg(feature = "mesh")]
 pub mod admin;
 pub mod app_server;
 pub mod auth;
 pub mod block_store;
-#[cfg(feature = "buffer")]
 pub mod buffer {
     pub use synvoid_utils::buffer::pool;
     pub use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};

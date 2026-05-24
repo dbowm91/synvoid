@@ -1,6 +1,5 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "mesh")]
 use utoipa::ToSchema;
 
 use super::validation::ConfigValidationError;

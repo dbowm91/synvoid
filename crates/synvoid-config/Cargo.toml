@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 schemars = "0.8"
-utoipa = { version = "5", features = ["axum_extras", "chrono"], optional = true }
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 toml = "0.8"
 bytes = "1"
 http = "1"
@@ -33,5 +33,5 @@ pqc = { path = "../../pqc" }
 [features]
 dns = []
 icmp-filter = []
-mesh = ["dep:ed25519-dalek", "dep:utoipa"]
+mesh = ["dep:ed25519-dalek"]
 rkyv = []

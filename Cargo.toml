@@ -19,7 +19,7 @@ name = "server"
 path = "src/bin/server.rs"
 
 [features]
-default = ["socket-handoff", "mesh", "dns", "erased_pool"]
+default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
 dns = ["dep:hickory-proto", "dep:hickory-resolver", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
 wireguard = ["dep:defguard_boringtun"]
@@ -30,13 +30,14 @@ audit = []
 post-quantum = ["dep:rustls-post-quantum"]
 verify-pq = []
 tun-rs = []
-mesh = ["synvoid-config", "synvoid-config/mesh", "buffer", "dep:ed25519-dalek", "dep:openraft"]
+mesh = ["synvoid-config/mesh", "dep:openraft"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
 pqc-mesh = []  # Post-quantum mesh signatures (ML-DSA-44 for mesh messages)
 macos-sandbox = []  # Enable macOS sandbox enforcement
 test-utils = []
+swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [patch.crates-io]
 # Patch wasmtime from yara-x transitive dependency (RUSTSEC-2026-0096, RUSTSEC-2026-0086, etc.)
@@ -112,7 +113,7 @@ unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 bloomfilter = "2"
 serde_bytes = "0.11"
-synvoid-config = { path = "crates/synvoid-config", optional = true }
+synvoid-config = { path = "crates/synvoid-config" }
 
 # DNS support
 hickory-proto = { version = "0.26", features = ["dnssec-ring"], optional = true }
@@ -188,10 +189,7 @@ libloading = "0.8"
 # eBPF support (Linux-only - aya uses netlink APIs not available on other platforms)
 aya = { version = "0.13", optional = true }
 
-synvoid-utils = { path = "crates/synvoid-utils" }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-aya = { version = "0.13", optional = true }
+synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }
@@ -217,7 +215,7 @@ log = "0.4"
 # OpenAPI / Swagger UI
 schemars = "0.8"
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 prost = "0.14"
 prost-build = "0.14"
 lru_time_cache = "0.11"
@@ -229,7 +227,7 @@ aes-gcm = "0.10"
 async-trait = "0.1"
 daemonize2 = "0.6"
 digest = "0.10"
-ed25519-dalek = { version = "2", optional = true }
+ed25519-dalek = { version = "2" }
 rsa = "0.9"
 rand_core_06 = { package = "rand_core", version = "0.6" }
 hkdf = "0.12"
@@ -252,6 +250,9 @@ openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true 
 openraft-legacy = "0.10.0-alpha.18"
 async-stream = "0.3.6"
 bincode = "1.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.13", optional = true }
 
 [build-dependencies]
 tonic-prost-build = "0.14"

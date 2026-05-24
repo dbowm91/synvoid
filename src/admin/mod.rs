@@ -34,6 +34,7 @@ pub use state::{
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::config::{AdminCorsConfig, ConfigManager};
@@ -786,13 +787,19 @@ fn build_router_from_state(
         middleware::yara_rate_limit::yara_rate_limit_middleware,
     );
 
-    Router::new()
+    let mut router = Router::new()
         .nest("/api", api_routes)
-        .route("/api/openapi.json", get(openapi::get_openapi_json))
-        .merge(
+        .route("/api/openapi.json", get(openapi::get_openapi_json));
+
+    #[cfg(feature = "swagger-ui")]
+    {
+        router = router.merge(
             SwaggerUi::new("/api/docs")
                 .url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
-        )
+        );
+    }
+
+    router
         .route("/health", get(health_check))
         .fallback_service(ServeDir::new("admin-ui/dist"))
         .layer(create_cors_layer(&admin_cors_config))

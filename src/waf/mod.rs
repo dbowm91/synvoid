@@ -51,6 +51,7 @@ pub use request_sanitization::RequestSanitizer;
 pub use flood::{FloodConfig, FloodDecision, FloodProtector};
 pub use ratelimit::{RateLimitResult, RateLimiterManager};
 
+#[cfg(feature = "mesh")]
 // YaraRulesManager is actually in mesh module
 pub use crate::mesh::yara_rules::YaraRulesManager;
 
@@ -806,11 +807,18 @@ impl WafCore {
         }
     }
 
+    #[cfg(feature = "mesh")]
     pub fn check_dht_threat_lookup(
         &self,
         _ip: IpAddr,
         _threat_intel: Option<&Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
     ) -> Option<WafDecision> {
+        // Placeholder for DHT lookup
+        None
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    pub fn check_dht_threat_lookup(&self, _ip: IpAddr, _threat_intel: Option<&Arc<()>>) -> Option<WafDecision> {
         // Placeholder for DHT lookup
         None
     }
@@ -829,9 +837,16 @@ impl WafCore {
         // Placeholder
     }
 
+    #[cfg(feature = "mesh")]
     pub fn get_threat_intel(
         &self,
     ) -> Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>> {
+        // Phase 3: Relegated to Control Plane (Supervisor).
+        None
+    }
+
+    #[cfg(not(feature = "mesh"))]
+    pub fn get_threat_intel(&self) -> Option<Arc<()>> {
         // Phase 3: Relegated to Control Plane (Supervisor).
         None
     }
@@ -885,14 +900,32 @@ pub fn set_upload_validator(validator: Arc<crate::upload::UploadValidator>) {
     let _ = UPLOAD_VALIDATOR.set(validator);
 }
 
+#[cfg(feature = "mesh")]
 pub fn set_threat_intel(_intel: Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>) {
     // Relegated to Control Plane (Supervisor)
 }
 
+#[cfg(not(feature = "mesh"))]
+pub fn set_threat_intel(_intel: Arc<()>) {
+    // Relegated to Control Plane (Supervisor)
+}
+
+#[cfg(feature = "mesh")]
 pub fn set_yara_rules(_rules: Arc<crate::mesh::YaraRulesManager>) {
     // Relegated to Control Plane (Supervisor)
 }
 
+#[cfg(not(feature = "mesh"))]
+pub fn set_yara_rules(_rules: Arc<()>) {
+    // Relegated to Control Plane (Supervisor)
+}
+
+#[cfg(feature = "mesh")]
 pub fn get_yara_rules() -> Option<Arc<crate::mesh::YaraRulesManager>> {
+    None
+}
+
+#[cfg(not(feature = "mesh"))]
+pub fn get_yara_rules() -> Option<Arc<()>> {
     None
 }
