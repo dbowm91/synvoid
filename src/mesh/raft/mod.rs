@@ -34,7 +34,7 @@ pub use network::MeshRaftNetwork;
 pub use network::MeshRaftNetworkFactory;
 pub use state_machine::{
     GlobalNodeRevocationList, GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage,
-    GlobalRegistryStateMachine, GlobalRegistryTypeConfig, Namespace, NodeId, OrgPublicKey,
+    GlobalRegistryStateMachine, Namespace, NodeId, OrgPublicKey,
     RaftCommand, StateMachineValue, ThreatIntel,
 };
 

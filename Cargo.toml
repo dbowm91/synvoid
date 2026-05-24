@@ -30,7 +30,7 @@ audit = []
 post-quantum = ["dep:rustls-post-quantum"]
 verify-pq = []
 tun-rs = []
-mesh = ["synvoid-config", "synvoid-config/mesh", "buffer", "dep:ed25519-dalek", "dep:openraft", "dep:tonic", "dep:utoipa", "dep:utoipa-swagger-ui"]
+mesh = ["synvoid-config", "synvoid-config/mesh", "buffer", "dep:ed25519-dalek", "dep:openraft"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
@@ -188,10 +188,10 @@ libloading = "0.8"
 # eBPF support (Linux-only - aya uses netlink APIs not available on other platforms)
 aya = { version = "0.13", optional = true }
 
+synvoid-utils = { path = "crates/synvoid-utils" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.13", optional = true }
-
-synvoid-utils = { path = "crates/synvoid-utils" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }
@@ -216,8 +216,8 @@ log = "0.4"
 
 # OpenAPI / Swagger UI
 schemars = "0.8"
-utoipa = { version = "5", optional = true }
-utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 prost = "0.14"
 prost-build = "0.14"
 lru_time_cache = "0.11"
@@ -243,7 +243,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 base32 = "0.5"
 libc = "0.2"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Console", "Win32_Networking_WinSock", "Win32_Security"] }
-tonic = { version = "0.14", features = ["gzip", "transport"], optional = true }
+tonic = { version = "0.14", features = ["gzip", "transport"] }
 tonic-reflection = "0.14"
 tonic-prost = "0.14"
 

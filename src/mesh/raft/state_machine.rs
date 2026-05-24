@@ -350,7 +350,7 @@ impl AsyncSeek for RaftSnapshotData {
 }
 
 openraft::declare_raft_types!(
-    pub GlobalRegistryTypeConfig:
+    pub GlobalRegistryConfig:
         D = RaftCommand,
         R = (),
         NodeId = u64,
@@ -363,7 +363,7 @@ openraft::declare_raft_types!(
 );
 
 type CommittedLeaderIdOfConfig =
-    openraft::type_config::alias::CommittedLeaderIdOf<GlobalRegistryTypeConfig>;
+    openraft::type_config::alias::CommittedLeaderIdOf<GlobalRegistryConfig>;
 
 const STREAMING_SNAPSHOT_MAGIC: u32 = 0x53524D53;
 
@@ -549,7 +549,7 @@ impl GlobalRegistryStateMachine {
         }
     }
 
-    pub fn get_applied_membership(&self) -> Option<StoredMembershipOf<GlobalRegistryTypeConfig>> {
+    pub fn get_applied_membership(&self) -> Option<StoredMembershipOf<GlobalRegistryConfig>> {
         self.get_membership_raw()
             .and_then(|m| serde_json::from_str(&m).ok())
     }
@@ -977,11 +977,11 @@ impl GlobalRegistryLogReader {
     }
 }
 
-impl RaftLogReader<GlobalRegistryTypeConfig> for GlobalRegistryLogReader {
+impl RaftLogReader<GlobalRegistryConfig> for GlobalRegistryLogReader {
     async fn try_get_log_entries<RB: std::ops::RangeBounds<u64> + Clone + Debug + OptionalSend>(
         &mut self,
         range: RB,
-    ) -> std::io::Result<Vec<EntryOf<GlobalRegistryTypeConfig>>> {
+    ) -> std::io::Result<Vec<EntryOf<GlobalRegistryConfig>>> {
         let start = match range.start_bound() {
             std::ops::Bound::Included(x) => *x,
             std::ops::Bound::Excluded(x) => x + 1,
@@ -1003,7 +1003,7 @@ impl RaftLogReader<GlobalRegistryTypeConfig> for GlobalRegistryLogReader {
                     openraft::log_id::LogId::new(CommittedLeaderIdOfConfig::new(_term, 0), index);
                 let payload_parsed: EntryPayload<RaftCommand, NodeId, ()> =
                     postcard::from_bytes(&payload).unwrap_or(EntryPayload::Blank);
-                let entry = EntryOf::<GlobalRegistryTypeConfig>::new(log_id, payload_parsed);
+                let entry = EntryOf::<GlobalRegistryConfig>::new(log_id, payload_parsed);
                 result.push(entry);
             }
         }
@@ -1011,10 +1011,10 @@ impl RaftLogReader<GlobalRegistryTypeConfig> for GlobalRegistryLogReader {
         Ok(result)
     }
 
-    async fn read_vote(&mut self) -> std::io::Result<Option<VoteOf<GlobalRegistryTypeConfig>>> {
+    async fn read_vote(&mut self) -> std::io::Result<Option<VoteOf<GlobalRegistryConfig>>> {
         match self.storage.get_vote() {
             Some(v) => {
-                let vote: VoteOf<GlobalRegistryTypeConfig> = postcard::from_bytes(&v)
+                let vote: VoteOf<GlobalRegistryConfig> = postcard::from_bytes(&v)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 Ok(Some(vote))
             }
@@ -1033,8 +1033,8 @@ impl GlobalRegistrySnapshotBuilder {
     }
 }
 
-impl RaftSnapshotBuilder<GlobalRegistryTypeConfig> for GlobalRegistrySnapshotBuilder {
-    async fn build_snapshot(&mut self) -> std::io::Result<SnapshotOf<GlobalRegistryTypeConfig>> {
+impl RaftSnapshotBuilder<GlobalRegistryConfig> for GlobalRegistrySnapshotBuilder {
+    async fn build_snapshot(&mut self) -> std::io::Result<SnapshotOf<GlobalRegistryConfig>> {
         let snapshot_data = self.state_machine.streaming_serialize().await?;
 
         let last_applied = self.state_machine.get_last_applied_log_id().unwrap_or(0);
@@ -1048,23 +1048,23 @@ impl RaftSnapshotBuilder<GlobalRegistryTypeConfig> for GlobalRegistrySnapshotBui
             .get_applied_membership()
             .unwrap_or_else(openraft::StoredMembership::default);
 
-        let meta = SnapshotMetaOf::<GlobalRegistryTypeConfig> {
+        let meta = SnapshotMetaOf::<GlobalRegistryConfig> {
             snapshot_id: format!("snapshot-{}-{}", last_applied, uuid::Uuid::new_v4()),
             last_log_id: Some(log_id),
             last_membership,
         };
 
-        Ok(SnapshotOf::<GlobalRegistryTypeConfig> {
+        Ok(SnapshotOf::<GlobalRegistryConfig> {
             meta,
             snapshot: snapshot_data,
         })
     }
 }
 
-impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
+impl RaftLogStorage<GlobalRegistryConfig> for GlobalRegistryLogStorage {
     type LogReader = GlobalRegistryLogReader;
 
-    async fn get_log_state(&mut self) -> std::io::Result<LogState<GlobalRegistryTypeConfig>> {
+    async fn get_log_state(&mut self) -> std::io::Result<LogState<GlobalRegistryConfig>> {
         let first_id = self.get_first_id();
         let last_id = self.get_last_id();
 
@@ -1092,7 +1092,7 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
 
     async fn save_vote(
         &mut self,
-        vote: &<GlobalRegistryTypeConfig as RaftTypeConfig>::Vote,
+        vote: &<GlobalRegistryConfig as RaftTypeConfig>::Vote,
     ) -> std::io::Result<()> {
         let vote_bytes = postcard::to_stdvec(vote).map_err(std::io::Error::other)?;
         self.save_vote_to_storage(&vote_bytes)
@@ -1102,10 +1102,10 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
     async fn append<I>(
         &mut self,
         entries: I,
-        _callback: IOFlushed<GlobalRegistryTypeConfig>,
+        _callback: IOFlushed<GlobalRegistryConfig>,
     ) -> std::io::Result<()>
     where
-        I: IntoIterator<Item = EntryOf<GlobalRegistryTypeConfig>> + OptionalSend,
+        I: IntoIterator<Item = EntryOf<GlobalRegistryConfig>> + OptionalSend,
         I::IntoIter: OptionalSend,
     {
         for entry in entries {
@@ -1120,7 +1120,7 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
 
     async fn truncate_after(
         &mut self,
-        last_log_id: Option<LogIdOf<GlobalRegistryTypeConfig>>,
+        last_log_id: Option<LogIdOf<GlobalRegistryConfig>>,
     ) -> std::io::Result<()> {
         match last_log_id {
             Some(id) => {
@@ -1132,20 +1132,20 @@ impl RaftLogStorage<GlobalRegistryTypeConfig> for GlobalRegistryLogStorage {
         }
     }
 
-    async fn purge(&mut self, log_id: LogIdOf<GlobalRegistryTypeConfig>) -> std::io::Result<()> {
+    async fn purge(&mut self, log_id: LogIdOf<GlobalRegistryConfig>) -> std::io::Result<()> {
         self.delete_range(0, log_id.index + 1)
             .map_err(std::io::Error::other)
     }
 }
 
-impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
+impl RaftStateMachine<GlobalRegistryConfig> for GlobalRegistryStateMachine {
     type SnapshotBuilder = GlobalRegistrySnapshotBuilder;
 
     async fn applied_state(
         &mut self,
     ) -> std::io::Result<(
-        Option<LogIdOf<GlobalRegistryTypeConfig>>,
-        StoredMembershipOf<GlobalRegistryTypeConfig>,
+        Option<LogIdOf<GlobalRegistryConfig>>,
+        StoredMembershipOf<GlobalRegistryConfig>,
     )> {
         let last_applied = self.get_last_applied_log_id().map(|index| {
             let last_log_term = self.get_last_log_term().unwrap_or(0);
@@ -1162,7 +1162,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
 
     async fn apply<Strm>(&mut self, entries: Strm) -> std::io::Result<()>
     where
-        Strm: futures::Stream<Item = Result<EntryResponder<GlobalRegistryTypeConfig>, std::io::Error>>
+        Strm: futures::Stream<Item = Result<EntryResponder<GlobalRegistryConfig>, std::io::Error>>
             + Unpin
             + OptionalSend,
     {
@@ -1220,7 +1220,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
 
     async fn install_snapshot(
         &mut self,
-        meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>,
+        meta: &SnapshotMetaOf<GlobalRegistryConfig>,
         snapshot: RaftSnapshotData,
     ) -> std::io::Result<()> {
         self.streaming_deserialize_and_apply(snapshot).await?;
@@ -1247,7 +1247,7 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
 
     async fn get_current_snapshot(
         &mut self,
-    ) -> std::io::Result<Option<SnapshotOf<GlobalRegistryTypeConfig>>> {
+    ) -> std::io::Result<Option<SnapshotOf<GlobalRegistryConfig>>> {
         let count: u64 = {
             let db_guard = self.db.lock().unwrap();
             db_guard
@@ -1271,13 +1271,13 @@ impl RaftStateMachine<GlobalRegistryTypeConfig> for GlobalRegistryStateMachine {
             .get_applied_membership()
             .unwrap_or_else(openraft::StoredMembership::default);
 
-        let meta = SnapshotMetaOf::<GlobalRegistryTypeConfig> {
+        let meta = SnapshotMetaOf::<GlobalRegistryConfig> {
             snapshot_id: format!("snapshot-{}-{}", last_applied, uuid::Uuid::new_v4()),
             last_log_id: Some(log_id),
             last_membership,
         };
 
-        Ok(Some(SnapshotOf::<GlobalRegistryTypeConfig> {
+        Ok(Some(SnapshotOf::<GlobalRegistryConfig> {
             meta,
             snapshot: snapshot_data,
         }))

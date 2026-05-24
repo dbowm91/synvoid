@@ -13,7 +13,7 @@ use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::raft::network::MeshRaftNetworkFactory;
 use crate::mesh::raft::state_machine::{
     GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage, GlobalRegistryStateMachine,
-    GlobalRegistryTypeConfig, Namespace, RaftCommand, RaftSnapshotData,
+    Namespace, RaftCommand, RaftSnapshotData,
 };
 use crate::mesh::MeshProxy;
 
@@ -29,7 +29,7 @@ pub struct RaftInitConfig {
 }
 
 pub struct RaftInstance {
-    pub raft: Arc<Raft<GlobalRegistryTypeConfig, GlobalRegistryStateMachine>>,
+    pub raft: Arc<Raft<GlobalRegistryConfig, GlobalRegistryStateMachine>>,
     pub registry: GlobalRegistry,
     pub network_factory: MeshRaftNetworkFactory,
     node_id: u64,
@@ -145,9 +145,9 @@ impl RaftInstance {
 
     pub async fn raft_append_entries(
         &self,
-        rpc: openraft::raft::AppendEntriesRequest<GlobalRegistryTypeConfig>,
+        rpc: openraft::raft::AppendEntriesRequest<GlobalRegistryConfig>,
     ) -> Result<
-        openraft::raft::AppendEntriesResponse<GlobalRegistryTypeConfig>,
+        openraft::raft::AppendEntriesResponse<GlobalRegistryConfig>,
         Box<dyn std::error::Error + Send + Sync>,
     > {
         let resp = self.raft.append_entries(rpc).await?;
@@ -156,9 +156,9 @@ impl RaftInstance {
 
     pub async fn raft_vote(
         &self,
-        rpc: openraft::raft::VoteRequest<GlobalRegistryTypeConfig>,
+        rpc: openraft::raft::VoteRequest<GlobalRegistryConfig>,
     ) -> Result<
-        openraft::raft::VoteResponse<GlobalRegistryTypeConfig>,
+        openraft::raft::VoteResponse<GlobalRegistryConfig>,
         Box<dyn std::error::Error + Send + Sync>,
     > {
         let resp = self.raft.vote(rpc).await?;
@@ -272,13 +272,13 @@ impl RaftInstance {
         &self.observer_tags
     }
 
-    pub fn get_applied_membership(&self) -> Option<StoredMembershipOf<GlobalRegistryTypeConfig>> {
+    pub fn get_applied_membership(&self) -> Option<StoredMembershipOf<GlobalRegistryConfig>> {
         self.registry.state_machine().get_applied_membership()
     }
 
     pub async fn install_snapshot(
         &self,
-        meta: &SnapshotMetaOf<GlobalRegistryTypeConfig>,
+        meta: &SnapshotMetaOf<GlobalRegistryConfig>,
         snapshot: Bytes,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use openraft::storage::RaftStateMachine;

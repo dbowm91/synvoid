@@ -98,16 +98,16 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
     }
 }
 
-impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
-    for MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
+impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryConfig>
+    for MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryConfig>
 {
     async fn append_entries(
         &mut self,
-        rpc: AppendEntriesRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        rpc: AppendEntriesRequest<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
         _option: RPCOption,
     ) -> Result<
-        AppendEntriesResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
-        RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        AppendEntriesResponse<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
+        RPCError<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
     > {
         let data =
             postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
@@ -119,11 +119,11 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
 
     async fn vote(
         &mut self,
-        rpc: VoteRequest<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        rpc: VoteRequest<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
         _option: RPCOption,
     ) -> Result<
-        VoteResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
-        RPCError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        VoteResponse<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
+        RPCError<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
     > {
         let data =
             postcard::to_stdvec(&rpc).map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
@@ -135,13 +135,13 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
 
     async fn full_snapshot(
         &mut self,
-        vote: VoteOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
-        snapshot: SnapshotOf<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        vote: VoteOf<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
+        snapshot: SnapshotOf<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
         _cancel: impl Future<Output = openraft::errors::ReplicationClosed> + OptionalSend + 'static,
         _option: RPCOption,
     ) -> Result<
-        SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
-        StreamingError<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>,
+        SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
+        StreamingError<crate::mesh::raft::state_machine::GlobalRegistryConfig>,
     > {
         let transport_arc = self.proxy.get_transport();
         let transport = {
@@ -262,7 +262,7 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>
                 )))
             })?;
 
-        let response: SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig> =
+        let response: SnapshotResponse<crate::mesh::raft::state_machine::GlobalRegistryConfig> =
             postcard::from_bytes(&response_data)
                 .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
 
@@ -298,15 +298,15 @@ impl MeshRaftNetworkFactory {
 
 impl
     openraft::network::RaftNetworkFactory<
-        crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+        crate::mesh::raft::state_machine::GlobalRegistryConfig,
     > for MeshRaftNetworkFactory
 {
-    type Network = MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig>;
+    type Network = MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryConfig>;
 
     async fn new_client(
         &mut self,
-        target: <crate::mesh::raft::state_machine::GlobalRegistryTypeConfig as openraft::RaftTypeConfig>::NodeId,
-        _node: &<crate::mesh::raft::state_machine::GlobalRegistryTypeConfig as openraft::RaftTypeConfig>::Node,
+        target: <crate::mesh::raft::state_machine::GlobalRegistryConfig as openraft::RaftTypeConfig>::NodeId,
+        _node: &<crate::mesh::raft::state_machine::GlobalRegistryConfig as openraft::RaftTypeConfig>::Node,
     ) -> Self::Network {
         tracing::debug!(
             "Creating Raft network client for target: {} with observer_tags: {:?}",

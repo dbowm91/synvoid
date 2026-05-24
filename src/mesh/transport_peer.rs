@@ -1,7 +1,7 @@
 #![allow(dead_code, clippy::redundant_locals)] // Reserved for future peer communication handling
 
 use crate::mesh::raft::state_machine::{
-    ClientProposalPayload, CommandKind, GlobalRegistryTypeConfig, RaftCommand,
+    ClientProposalPayload, CommandKind, GlobalRegistryConfig, RaftCommand,
 };
 use crate::mesh::transport::{
     MeshTransport, MeshTransportError, MAX_BATCH_KEYS, MAX_BLOCK_DURATION_SECS, MAX_MESSAGE_SIZE,
@@ -1104,7 +1104,7 @@ impl MeshTransport {
                 value,
                 ttl_seconds,
                 origin_node_id,
-                origin_signature: _,
+                origin_signature,
                 action: _,
             } => {
                 if self
@@ -3043,7 +3043,7 @@ impl MeshTransport {
             crate::mesh::protocol::RaftMsgType::AppendEntries => {
                 let _request_id = payload.request_id.clone();
                 let rpc: openraft::raft::AppendEntriesRequest<
-                    crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+                    crate::mesh::raft::state_machine::GlobalRegistryConfig,
                 > = match postcard::from_bytes(&payload.data) {
                     Ok(r) => r,
                     Err(e) => {
@@ -3073,7 +3073,7 @@ impl MeshTransport {
             crate::mesh::protocol::RaftMsgType::VoteRequest => {
                 let _request_id = payload.request_id.clone();
                 let rpc: openraft::raft::VoteRequest<
-                    crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+                    crate::mesh::raft::state_machine::GlobalRegistryConfig,
                 > = match postcard::from_bytes(&payload.data) {
                     Ok(r) => r,
                     Err(e) => {
@@ -3155,7 +3155,7 @@ impl MeshTransport {
                                 let mut pending = self.pending_snapshot_transfers.lock().await;
                                 let completed = pending.remove(&request_id);
                                 if let Some(snapshot) = completed {
-                                    let vote: VoteOf<GlobalRegistryTypeConfig> =
+                                    let vote: VoteOf<GlobalRegistryConfig> =
                                         match postcard::from_bytes(&snapshot.vote) {
                                             Ok(v) => v,
                                             Err(e) => {
@@ -3164,7 +3164,7 @@ impl MeshTransport {
                                             }
                                         };
                                     let meta: SnapshotMetaOf<
-                                        crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+                                        crate::mesh::raft::state_machine::GlobalRegistryConfig,
                                     > = match postcard::from_bytes(&snapshot.meta) {
                                         Ok(m) => m,
                                         Err(e) => {
@@ -3183,7 +3183,7 @@ impl MeshTransport {
                                         } else {
                                             tracing::info!("Snapshot installed successfully");
                                             let response =
-                                                SnapshotResponse::<GlobalRegistryTypeConfig> {
+                                                SnapshotResponse::<GlobalRegistryConfig> {
                                                     vote,
                                                 };
                                             let encoded =
@@ -3284,7 +3284,7 @@ impl MeshTransport {
                                 let mut pending = self.pending_snapshot_transfers.lock().await;
                                 let completed = pending.remove(&request_id);
                                 if let Some(snapshot) = completed {
-                                    let vote: VoteOf<GlobalRegistryTypeConfig> =
+                                    let vote: VoteOf<GlobalRegistryConfig> =
                                         match postcard::from_bytes(&snapshot.vote) {
                                             Ok(v) => v,
                                             Err(e) => {
@@ -3293,7 +3293,7 @@ impl MeshTransport {
                                             }
                                         };
                                     let meta: SnapshotMetaOf<
-                                        crate::mesh::raft::state_machine::GlobalRegistryTypeConfig,
+                                        crate::mesh::raft::state_machine::GlobalRegistryConfig,
                                     > = match postcard::from_bytes(&snapshot.meta) {
                                         Ok(m) => m,
                                         Err(e) => {
@@ -3312,7 +3312,7 @@ impl MeshTransport {
                                         } else {
                                             tracing::info!("Snapshot installed successfully");
                                             let response =
-                                                SnapshotResponse::<GlobalRegistryTypeConfig> {
+                                                SnapshotResponse::<GlobalRegistryConfig> {
                                                     vote,
                                                 };
                                             let encoded =
