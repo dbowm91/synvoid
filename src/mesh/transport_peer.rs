@@ -633,7 +633,7 @@ impl MeshTransport {
                         source_node_id,
                         peer_id
                     );
-                    return;
+                    return Ok(());
                 }
                 self.handle_dht_record_announce(peer_id, &source_node_id, records)
                     .await;
@@ -698,7 +698,7 @@ impl MeshTransport {
                         node_id,
                         peer_id
                     );
-                    return;
+                    return Ok(());
                 }
                 self.handle_dht_sync_request(peer_id, &request_id, &node_id, from_version)
                     .await;
@@ -739,7 +739,7 @@ impl MeshTransport {
                         node_id,
                         peer_id
                     );
-                    return;
+                    return Ok(());
                 }
                 self.handle_dht_anti_entropy_request(
                     peer_id,
@@ -1116,7 +1116,7 @@ impl MeshTransport {
                         origin_node_id,
                         peer_id
                     );
-                    return;
+                    return Ok(());
                 }
                 if let Some(ref record_store) = self.record_store {
                     let record = crate::mesh::protocol::DhtRecord {
@@ -1211,7 +1211,7 @@ impl MeshTransport {
                         source_node_id,
                         peer_id
                     );
-                    return;
+                    return Ok(());
                 }
                 if let Some(ref record_store) = self.record_store {
                     record_store.handle_record_commit(record, quorum_signatures, &source_node_id);

@@ -893,12 +893,12 @@ impl GlobalRegistryLogStorage {
     }
 }
 
-pub struct GlobalRegistryConfig {
+pub struct GlobalRegistryRuntimeConfig {
     pub node_id: NodeId,
     pub db_path: PathBuf,
 }
 
-impl Clone for GlobalRegistryConfig {
+impl Clone for GlobalRegistryRuntimeConfig {
     fn clone(&self) -> Self {
         Self {
             node_id: self.node_id,
@@ -908,7 +908,7 @@ impl Clone for GlobalRegistryConfig {
 }
 
 pub struct GlobalRegistry {
-    config: GlobalRegistryConfig,
+    config: GlobalRegistryRuntimeConfig,
     state_machine: GlobalRegistryStateMachine,
     log_storage: GlobalRegistryLogStorage,
     voting_nodes: std::sync::RwLock<Vec<NodeId>>,
@@ -926,7 +926,7 @@ impl Clone for GlobalRegistry {
 }
 
 impl GlobalRegistry {
-    pub fn new(config: GlobalRegistryConfig) -> Result<Self, rusqlite::Error> {
+    pub fn new(config: GlobalRegistryRuntimeConfig) -> Result<Self, rusqlite::Error> {
         let state_machine = GlobalRegistryStateMachine::new(config.db_path.clone())?;
         let log_storage = GlobalRegistryLogStorage::new(config.db_path.join("raft_log.db"))?;
         Ok(Self {
@@ -939,6 +939,10 @@ impl GlobalRegistry {
 
     pub fn state_machine(&self) -> &GlobalRegistryStateMachine {
         &self.state_machine
+    }
+
+    pub fn log_storage(&self) -> &GlobalRegistryLogStorage {
+        &self.log_storage
     }
 
     pub fn get_voting_nodes(&self) -> Vec<NodeId> {

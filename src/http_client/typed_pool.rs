@@ -129,11 +129,11 @@ fn create_typed_client(
         .build()
         .expect("failed to build WebPkiServerVerifier");
 
-    let config = builder
+    let mut config = builder
         .dangerous()
         .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth()
-        .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
     let mut http_connector = HttpConnector::new();
     http_connector.set_connect_timeout(Some(std::time::Duration::from_secs(5)));

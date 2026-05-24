@@ -315,7 +315,8 @@ impl QuorumRequest {
 
 pub struct QuorumManager {
     pending_requests: Arc<RwLock<HashMap<String, QuorumRequest>>>,
-    pending_raft_requests: Arc<RwLock<HashMap<String, oneshot::Receiver<()>>>>,
+    pending_raft_requests:
+        Arc<RwLock<HashMap<String, oneshot::Receiver<Result<(), crate::mesh::raft::client::RaftAwareClientError>>>>>,
     veto_history: Arc<RwLock<HashMap<String, Vec<RejectedClaim>>>>,
     verification_enabled: bool,
     raft_client: Arc<RwLock<Option<Arc<crate::mesh::raft::client::RaftAwareClient>>>>,
@@ -535,12 +536,9 @@ impl QuorumManager {
         pending.retain(|_, r| now - r.created_at < max_age_seconds);
 
         let mut pending_raft = self.pending_raft_requests.write().await;
-        pending_raft.retain(|request_id, rx| {
-            if rx.is_closed() {
-                false
-            } else {
-                pending.contains_key(request_id)
-            }
+        pending_raft.retain(|request_id, rx| match rx.try_recv() {
+            Ok(_) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => pending.contains_key(request_id),
         });
 
         let mut history = self.veto_history.write().await;

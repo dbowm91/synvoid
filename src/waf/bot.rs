@@ -43,6 +43,7 @@ impl BotDetector {
             ai_crawlers_block,
             scraper_patterns,
             block_ai_crawlers,
+            true,
             known_bot_ja3_hashes,
             Vec::new(),
         )

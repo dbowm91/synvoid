@@ -228,6 +228,16 @@ pub struct ErasedConnectionPool {
     connect_timeout: std::time::Duration,
 }
 
+impl Clone for ErasedConnectionPool {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            max_idle_per_host: self.max_idle_per_host,
+            connect_timeout: self.connect_timeout,
+        }
+    }
+}
+
 impl ErasedConnectionPool {
     pub fn new(max_idle_per_host: usize) -> Self {
         Self {
@@ -297,6 +307,22 @@ impl ErasedConnectionPool {
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
         Ok(conn)
+    }
+
+    pub async fn checkin(&self, key: PoolKey, conn: Http1PooledConnection) {
+        if !conn.is_connected() {
+            return;
+        }
+        let mut pool = self.inner.lock().await;
+        let conns = pool.entry(key).or_default();
+        if conns.len() < self.max_idle_per_host {
+            conns.push_back(conn);
+        }
+    }
+
+    pub async fn idle_count(&self, key: &PoolKey) -> usize {
+        let pool = self.inner.lock().await;
+        pool.get(key).map(|v| v.len()).unwrap_or(0)
     }
 }
 

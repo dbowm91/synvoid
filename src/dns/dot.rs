@@ -141,6 +141,7 @@ impl DotServer {
                 dns64_translator: None,
                 #[cfg(feature = "dns")]
                 acme_dns_challenges: acme_dns_challenges.as_ref(),
+                cookie_server: None,
             };
 
             let response = if let Some(c) = &ctx.cache {

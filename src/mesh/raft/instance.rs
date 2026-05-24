@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use openraft::raft::ReadPolicy;
+use openraft::storage::RaftLogStorage;
 use openraft::type_config::alias::{SnapshotMetaOf, StoredMembershipOf};
 use openraft::Raft;
 use tokio::sync::broadcast;
@@ -12,8 +13,8 @@ use tokio::sync::broadcast;
 use crate::mesh::backend::MeshBackendPool;
 use crate::mesh::raft::network::MeshRaftNetworkFactory;
 use crate::mesh::raft::state_machine::{
-    GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage, GlobalRegistryStateMachine,
-    Namespace, RaftCommand, RaftSnapshotData,
+    GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage, GlobalRegistryRuntimeConfig,
+    GlobalRegistryStateMachine, Namespace, RaftCommand, RaftSnapshotData,
 };
 use crate::mesh::MeshProxy;
 
@@ -47,7 +48,7 @@ impl RaftInstance {
         is_observer: bool,
         observer_tags: Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let config = GlobalRegistryConfig {
+        let config = GlobalRegistryRuntimeConfig {
             node_id,
             db_path: db_path.clone(),
         };
@@ -211,7 +212,7 @@ impl RaftInstance {
     }
 
     pub async fn get_last_log_index(&self) -> u64 {
-        let mut log_storage = self.registry.log_storage.clone();
+        let mut log_storage = self.registry.log_storage().clone();
         match log_storage.get_log_state().await {
             Ok(state) => state.last_log_id.map(|id| id.index).unwrap_or(0),
             Err(e) => {

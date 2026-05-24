@@ -510,11 +510,11 @@ fn build_tls_config(
         let verifier_reason = skip_verify_reason.unwrap_or("not specified");
         let verifier = HostnameSkippingVerifier::new(inner, verifier_reason.to_string());
 
-        let config = builder
+        let mut config = builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth()
-            .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         return config;
     }
 
@@ -555,10 +555,11 @@ fn build_tls_config(
         }
     }
 
-    builder
+    let mut config = builder
         .with_root_certificates(root_store)
-        .with_no_client_auth()
-        .with_alpn_protocols(vec![b"h2".to_vec(), b"http/1.1".to_vec()])
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config
 }
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};

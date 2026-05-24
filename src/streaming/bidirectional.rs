@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::buffer::BufferPool;
 use crate::waf::attack_detection::streaming::StreamingWafCore;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::Mutex;
 
 pub type ProxyResult = Result<(), ProxyError>;
 
@@ -42,7 +43,7 @@ pub struct ProxyConfig {
     pub write_buffer_threshold: usize,
     pub flush_interval_bytes: usize,
     pub use_native_copy: bool,
-    pub waf_scanner: Option<Arc<StreamingWafCore>>,
+    pub waf_scanner: Option<Arc<Mutex<StreamingWafCore>>>,
 }
 
 impl std::fmt::Debug for ProxyConfig {
@@ -70,7 +71,7 @@ impl Default for ProxyConfig {
 }
 
 impl ProxyConfig {
-    pub fn with_waf_scanner(scanner: Arc<StreamingWafCore>) -> Self {
+    pub fn with_waf_scanner(scanner: Arc<Mutex<StreamingWafCore>>) -> Self {
         Self {
             waf_scanner: Some(scanner),
             ..Default::default()
@@ -143,6 +144,7 @@ where
 
                     if let Some(ref scanner) = waf_scanner {
                         let chunk = &buf.as_slice()[..n];
+                        let mut scanner = scanner.lock().await;
                         match scanner.scan_chunk(chunk) {
                             crate::waf::attack_detection::streaming::StreamingWafDecision::Block(status, reason) => {
                                 return Err(ProxyError::WafBlock(status, reason));
@@ -220,6 +222,7 @@ where
 
                     if let Some(ref scanner) = waf_scanner {
                         let chunk = &buf.as_slice()[..n];
+                        let mut scanner = scanner.lock().await;
                         match scanner.scan_chunk(chunk) {
                             crate::waf::attack_detection::streaming::StreamingWafDecision::Block(status, reason) => {
                                 return Err(ProxyError::WafBlock(status, reason));

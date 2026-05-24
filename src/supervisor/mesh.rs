@@ -238,6 +238,7 @@ pub async fn init_mesh_control_plane(
         yara_rules_out = Some(yara_manager);
     }
 
+    #[cfg(feature = "dns")]
     if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
         &mesh_config,
         transport_manager.clone(),
@@ -248,6 +249,21 @@ pub async fn init_mesh_control_plane(
         ))),
         None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
         None::<Arc<crate::dns::MeshDnsRegistry>>,
+    )
+    .await
+    {
+        tracing::warn!("Supervisor Mesh transport initialization failed: {}", e);
+    }
+
+    #[cfg(not(feature = "dns"))]
+    if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
+        &mesh_config,
+        transport_manager.clone(),
+        backend_pool.clone(),
+        Some(threat_intel.clone()),
+        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
+            signer_key,
+        ))),
     )
     .await
     {

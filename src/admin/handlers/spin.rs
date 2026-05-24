@@ -154,6 +154,7 @@ pub async fn create_spin_app(
         max_instances: req.max_instances.unwrap_or(10),
         default_timeout_seconds: req.timeout_seconds.unwrap_or(30),
         kv_store: None,
+        idle_timeout_seconds: 300,
     };
 
     let runtime = SpinRuntime::new(config).map_err(|e| {

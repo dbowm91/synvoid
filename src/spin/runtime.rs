@@ -214,7 +214,7 @@ impl SpinRuntime {
 
         let instance = SpinAppInstance::new(
             manifest,
-            Arc::new(wasm_runtime),
+            wasm_runtime,
             component_id.to_string(),
             kv_store,
         );
@@ -310,6 +310,11 @@ impl SpinRuntime {
             }
         }
         serde_json::to_string(&map).unwrap_or_default()
+    }
+
+    pub fn shutdown(&self) {
+        self.instances.write().clear();
+        self.compiled_runtimes.write().clear();
     }
 }
 

@@ -269,8 +269,10 @@ impl RaftNetworkV2<crate::mesh::raft::state_machine::GlobalRegistryConfig>
         Ok(response)
     }
 
-    fn backoff(&self) -> Backoff {
-        Backoff::new(std::iter::repeat(std::time::Duration::from_millis(200)))
+    fn backoff(&self) -> Option<Backoff> {
+        Some(Backoff::new(std::iter::repeat(
+            std::time::Duration::from_millis(200),
+        )))
     }
 }
 

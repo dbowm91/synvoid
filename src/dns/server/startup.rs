@@ -422,6 +422,7 @@ impl DnsServer {
         let anycast_mgr_tcp = anycast_manager.clone();
         #[cfg(feature = "dns")]
         let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
+        let cookie_server_tcp = self.cookie_server.clone();
 
         let tcp_state = state;
         let mesh_registry_tcp = mesh_registry;
@@ -449,6 +450,7 @@ impl DnsServer {
                 query_coalescer: query_coalescer_tcp,
                 #[cfg(feature = "dns")]
                     acme_dns_challenges: _acme_dns_challenges_tcp,
+                cookie_server: _cookie_server_tcp,
             } = tcp_state;
             loop {
                 tokio::select! {
@@ -497,6 +499,7 @@ impl DnsServer {
                                 let query_coalescer_clone = query_coalescer_tcp.clone();
                                 #[cfg(feature = "dns")]
                                 let acme_dns_challenges_clone = acme_dns_challenges_tcp.clone();
+                                let cookie_server_clone = cookie_server_tcp.clone();
 
                                 tokio::spawn(async move {
                                     let max_idle_time = Some(std::time::Duration::from_secs(
@@ -528,6 +531,7 @@ impl DnsServer {
                                         dns64_translator: None,
                                         #[cfg(feature = "dns")]
                                         acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
+                                        cookie_server: cookie_server_clone.as_ref(),
                                     };
                                     if let Err(e) = Self::handle_tcp_query(conn.stream, ctx).await {
                                         tracing::debug!("Anycast TCP DNS error: {}", e);
@@ -655,6 +659,7 @@ impl DnsServer {
                 dns64_translator: None,
                 #[cfg(feature = "dns")]
                 acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
+                cookie_server: cookie_server_udp.as_ref(),
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -799,6 +804,7 @@ impl DnsServer {
         let tcp_buffer_size = self.config.limits.udp_buffer_size;
         #[cfg(feature = "dns")]
         let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
+        let cookie_server_tcp = self.cookie_server.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -822,6 +828,7 @@ impl DnsServer {
                 query_coalescer: query_coalescer_tcp,
                 #[cfg(feature = "dns")]
                     acme_dns_challenges: _acme_dns_challenges_tcp,
+                cookie_server: _cookie_server_tcp,
             } = tcp_state;
             let _buf = vec![0u8; tcp_buffer_size];
 
@@ -871,6 +878,7 @@ impl DnsServer {
                                 let query_coalescer_clone = query_coalescer_tcp.clone();
                                 #[cfg(feature = "dns")]
                                 let acme_dns_challenges_clone = acme_dns_challenges_tcp.clone();
+                                let cookie_server_clone = cookie_server_tcp.clone();
 
                                 tokio::spawn(async move {
                                     let max_idle_time = Some(std::time::Duration::from_secs(
@@ -901,6 +909,7 @@ impl DnsServer {
                                         dns64_translator: None,
                                         #[cfg(feature = "dns")]
                                         acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
+                                        cookie_server: cookie_server_clone.as_ref(),
                                     };
                                     if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
                                         tracing::debug!("TCP DNS error: {}", e);

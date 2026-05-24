@@ -181,7 +181,7 @@ impl StaticFileHandler {
                 site_id,
                 minified_cache_dir,
                 enable_zero_copy: false,
-                mesh_image_protection,
+                mesh_image_protection: mesh_image_protection.clone(),
                 mesh_compression,
                 mesh_minification,
                 theme_config,
@@ -255,7 +255,7 @@ impl StaticFileHandler {
             site_id,
             minified_cache_dir,
             enable_zero_copy: cfg!(unix),
-            mesh_image_protection,
+            mesh_image_protection: mesh_image_protection.clone(),
             mesh_compression,
             mesh_minification,
             theme_config,
@@ -642,7 +642,7 @@ impl StaticFileHandler {
                         Some(encoding),
                     ) {
                         Ok(result) => {
-                            if result.content_len > 0 {
+                            if !result.content.is_empty() {
                                 histogram!("synvoid.static.served_minified").record(1.0);
                                 counter!("synvoid.static.minification_served", "site" => self.site_id.clone()).increment(1);
 

@@ -293,6 +293,7 @@ impl DnsServer {
             dns64_translator: self.dns64_translator.as_ref(),
             #[cfg(feature = "dns")]
             acme_dns_challenges: self.acme_dns_challenges.as_ref(),
+            cookie_server: self.cookie_server.as_ref(),
         }
     }
 

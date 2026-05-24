@@ -374,13 +374,24 @@ impl Backend {
     }
 }
 
-#[derive(Clone)]
 pub struct UpstreamPool {
     backends: Arc<RwLock<Vec<Backend>>>,
     algorithm: LoadBalanceAlgorithm,
     round_robin_index: Arc<std::sync::atomic::AtomicUsize>,
     health_check_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
-    health_check_config: Option<HealthCheckConfig>,
+    health_check_config: RwLock<Option<HealthCheckConfig>>,
+}
+
+impl Clone for UpstreamPool {
+    fn clone(&self) -> Self {
+        Self {
+            backends: self.backends.clone(),
+            algorithm: self.algorithm.clone(),
+            round_robin_index: self.round_robin_index.clone(),
+            health_check_task: RwLock::new(None),
+            health_check_config: RwLock::new(self.health_check_config.read().clone()),
+        }
+    }
 }
 
 impl UpstreamPool {
@@ -392,7 +403,7 @@ impl UpstreamPool {
             algorithm,
             round_robin_index: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             health_check_task: RwLock::new(None),
-            health_check_config: None,
+            health_check_config: RwLock::new(None),
         }
     }
 
@@ -412,7 +423,7 @@ impl UpstreamPool {
             algorithm,
             round_robin_index: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             health_check_task: RwLock::new(None),
-            health_check_config: None,
+            health_check_config: RwLock::new(None),
         }
     }
 
