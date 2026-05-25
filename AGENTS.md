@@ -157,6 +157,23 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false` - infrastructure exists but unused |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in |
 
+### Dependency Vulnerability Status
+
+**Last Updated: 2026-05-25**
+
+| Dependency | Version | Vulnerabilities | Status |
+|------------|---------|-----------------|--------|
+| **wasmtime** (direct) | 42.0.2 (patched) | 2 CRITICAL sandbox escapes, 8 MODERATE | ✅ Patched via `[patch.crates-io]` |
+| **wasmtime** (via yara-x) | 40.0.4 | 2 CRITICAL, 8 MODERATE | ⚠️ Manageable - yara-x uses wasmtime for YARA compilation, not wasm sandbox |
+| **yara-x** | 1.15.0 | None directly | ⚠️ Update blocked by minify-html/bumpalo conflict |
+| **hickory-proto** | 0.26.1 | NSEC3 DoS, O(n²) compression | ✅ Patched (>=0.26.1) |
+| **libcrux-ml-dsa** | 0.0.9 | AVX2 signature verification edge case | ✅ Patched (>=0.0.9) |
+
+**Notes:**
+- yara-x 1.16.0 is available but cannot be updated due to `bumpalo` version conflict between `wasmtime@43.0.1` (yara-x dep) and `oxc_allocator@0.95.0` (minify-html dep)
+- The wasmtime vulnerabilities require aarch64 + Spectre mitigations disabled to exploit - default config is safe
+- yara-x's wasmtime is used for YARA pattern compilation, NOT wasm sandbox execution, reducing attack surface
+
 ### Verified "Already Fixed" Items
 
 These items were identified in reviews but have been fixed:
