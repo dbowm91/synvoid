@@ -9,8 +9,8 @@ Yes, SynVoid is exceptionally forward-looking in its PQC implementation. It achi
 
 *   **Layer 3 (TLS & Proxy):** Uses the `rustls` crate with the `aws-lc-rs` backend and the `prefer-post-quantum` configuration flag. This enables hybrid key exchange algorithms (e.g., X25519MLKEM768) during TLS 1.3 handshakes for incoming client traffic.
 *   **Layer 5 (Mesh Control Plane):** 
-    *   **Key Exchange (KEM):** Implements ML-KEM-768 for securing QUIC tunnels between mesh nodes (`MlKemKeyExchangeService`).
-    *   **Authentication (DSA):** Uses `libcrux` for ML-DSA-44. Crucially, it employs a **Hybrid Signature Scheme** (`MeshHybridSigner`) with struct fields `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), `ed25519_public_key`, and `ml_dsa_public_key`. This fail-safe approach ensures that if the new PQC algorithm is broken mathematically, the classical Ed25519 signature still holds.
+     *   **Key Exchange (KEM):** Implements ML-KEM-768 for securing QUIC tunnels between mesh nodes (`MlKemKeyExchangeService`).
+     *   **Authentication (DSA):** Uses the `pqc` crate for ML-DSA-44 (which internally uses `libcrux-ml-dsa` from the `pqc` workspace). Crucially, it employs a **Hybrid Signature Scheme** (`MeshHybridSigner`) with struct fields `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), `ed25519_public_key`, and `ml_dsa_public_key`. This fail-safe approach ensures that if the new PQC algorithm is broken mathematically, the classical Ed25519 signature still holds.
 
 ## 2. Dependency Alignment & Safety
 
@@ -51,7 +51,7 @@ Yes. The `validate_peer_role` function strictly enforces role boundaries. An Ori
 **Can malicious origin nodes attack the system? What protections exist?**
 SynVoid anticipates malicious origins and protects against them:
 1.  **DHT Poisoning:** The `DhtAccessControl` layer restricts what Origin nodes can write. They cannot overwrite `verified_upstream:` routes, `tier_claim:` roles, or Global threat intelligence feeds. They are restricted to writing their own localized telemetry.
-2.  **Sybil / DoS Attacks:** Edge nodes joining the network must compute a **Proof of Work (PoW)** (`validate_edge_node_pow`). This makes it computationally expensive for an attacker to spin up thousands of fake Origin/Edge nodes to exhaust QUIC connection pools.
+2.  **Sybil / DoS Attacks:** Edge nodes joining the network must compute a **Proof of Work (PoW)** (`validate_edge_node_pow` - see `src/mesh/peer_auth.rs:540-564` for implementation). This makes it computationally expensive for an attacker to spin up thousands of fake Origin/Edge nodes to exhaust QUIC connection pools.
 3.  **Threat Feed Isolation:** Threat feeds require strict Ed25519 signatures from the Global tier. A compromised Origin node cannot inject fake blocked IPs into the global `ThreatIntelligenceManager`.
 
 ## 6. Half-TCP (Layer 3.5) Implementation
@@ -60,7 +60,7 @@ Beyond HTTP/HTTPS proxying, SynVoid supports a **Half-TCP** mode for non-HTTP pr
 
 ### Tunnel Backend
 
-The `TunnelBackend` (`src/tunnel/upstream.rs`) provides half-TCP proxy functionality:
+The `TunnelBackend` (`src/tunnel/upstream.rs:105`) - note: `TunnelRouter` at `src/tunnel/router.rs:194` also references `TunnelBackend` as a variant - provides half-TCP proxy functionality:
 
 ```rust
 pub fn to_backend(&self) -> Backend {
@@ -85,3 +85,19 @@ In mesh mode, half-TCP connections can be routed through the DHT to remote peers
 
 ## Summary
 SynVoid’s Layer 3 and 5 are highly advanced, leveraging state-of-the-art PQC and robust cryptographic trust chains. However, the decision to build a bespoke Kademlia-based state synchronization engine for the control plane introduces severe operational complexity. Long-term maintenance would benefit significantly from migrating the Global tier to a standard Raft consensus model.
+
+## Implementation Reference Map
+
+| Document Concept | File Location |
+|-----------------|---------------|
+| MlKemKeyExchangeService | src/mesh/ml_kem_key_exchange.rs:35 |
+| MeshHybridSigner | src/mesh/ml_dsa.rs:122 |
+| HybridSignature | src/mesh/hybrid_signature.rs:17 |
+| validate_peer_role | src/mesh/peer_auth.rs:248 |
+| validate_edge_node_pow | src/mesh/peer_auth.rs:540 |
+| DhtAccessControl | src/mesh/dht/mod.rs:689 |
+| ThreatIntelligenceManager | src/mesh/threat_intel.rs:191 |
+| GlobalNodeRevocationList | src/mesh/peer_auth.rs:21 |
+| ShardedRecordStore | src/mesh/dht/record_store.rs:40 |
+| Raft cluster | src/mesh/raft/mod.rs |
+| TunnelBackend | src/tunnel/upstream.rs:105 |
