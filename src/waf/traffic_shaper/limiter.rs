@@ -9,13 +9,6 @@ use tokio::time::timeout;
 
 use crate::config::ConnectionLimitsConfig;
 
-/// Global connection limiter for enforcing per-IP and global connection limits.
-///
-/// Provides:
-/// - Global connection limit enforcement
-/// - Per-IP connection limits with burst tokens
-/// - Per-site connection limits (see [`SiteConnectionLimiter`] at line 313)
-/// - Connection queuing with timeout
 pub struct ConnectionLimiter {
     config: ConnectionLimitsConfig,
     total_connections: AtomicU32,
@@ -310,12 +303,6 @@ impl std::fmt::Display for ConnectionLimitError {
 
 impl std::error::Error for ConnectionLimitError {}
 
-/// Per-site connection limiter wrapping a global [`ConnectionLimiter`].
-///
-/// Located at: `src/waf/traffic_shaper/limiter.rs:319`
-///
-/// This struct is created by [`ConnectionLimiter`] via `site_connection_limiter()`.
-/// Use `try_acquire()` or `acquire_with_queue()` to acquire connection tokens.
 pub struct SiteConnectionLimiter {
     site_id: String,
     limiter: Arc<ConnectionLimiter>,

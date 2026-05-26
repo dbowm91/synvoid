@@ -2,8 +2,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::DnsConfigError;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsRpzConfig {
@@ -35,28 +33,6 @@ pub struct DnsRpzConfig {
     pub default_action: String,
 }
 
-impl DnsRpzConfig {
-    pub fn validate(&self) -> Result<(), DnsConfigError> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        if self.primary_zone.is_empty() {
-            return Err(DnsConfigError::InvalidRpz(
-                "primary_zone cannot be empty when RPZ is enabled".to_string(),
-            ));
-        }
-
-        if self.min_ttl > self.max_ttl {
-            return Err(DnsConfigError::InvalidRpz(
-                "min_ttl cannot be greater than max_ttl".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct Dns64Config {
@@ -81,22 +57,6 @@ impl Default for Dns64Config {
             prefix: default_dns64_prefix(),
             exclude_aaaa_synthesis: false,
         }
-    }
-}
-
-impl Dns64Config {
-    pub fn validate(&self) -> Result<(), DnsConfigError> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        if self.prefix.is_empty() {
-            return Err(DnsConfigError::InvalidDns64(
-                "prefix cannot be empty when DNS64 is enabled".to_string(),
-            ));
-        }
-
-        Ok(())
     }
 }
 
@@ -136,33 +96,5 @@ impl Default for DnsPrefetchConfig {
             prefetch_ttl_threshold: default_prefetch_ttl_threshold(),
             max_prefetched_names: default_max_prefetch_names(),
         }
-    }
-}
-
-impl DnsPrefetchConfig {
-    pub fn validate(&self) -> Result<(), DnsConfigError> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        if self.min_query_count == 0 {
-            return Err(DnsConfigError::InvalidPrefetch(
-                "min_query_count must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.prefetch_ttl_threshold == 0 {
-            return Err(DnsConfigError::InvalidPrefetch(
-                "prefetch_ttl_threshold must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.max_prefetched_names == 0 {
-            return Err(DnsConfigError::InvalidPrefetch(
-                "max_prefetched_names must be greater than zero".to_string(),
-            ));
-        }
-
-        Ok(())
     }
 }

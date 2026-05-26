@@ -81,7 +81,6 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
 | `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
-| `src/waf/detector_common.rs` | `src/waf/attack_detection/detector_common.rs` (PatternDetector trait at line 293) |
 
 ## Modular Agent Guidance
 
@@ -158,8 +157,8 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
-| DNS Cookie `_enable` parameter ignored | `src/dns/cookie.rs:40-42` | `with_validation(_enable)` always returns self; validation is always enabled regardless of parameter | Known - intentional API design |
-| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | Not a bug - documented but intentionally not implemented |
+| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | ✅ FIXED |
+| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive` validate() not called | ✅ FIXED |
 | DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Documentation showed wrong prefixes | ✅ FIXED |
 
 ### Dependency Vulnerability Status
@@ -186,7 +185,7 @@ These items were identified in reviews but have been fixed:
 - Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
 - StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
 - gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
-- CSRF validation constant-time comparison (`src/admin/state.rs:728` - uses `ct_eq()`)
+- CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
 - macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
 - BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - now returns true when ML-DSA absent, fail-safe behavior confirmed)
 - BUG-PL-1 Master mode CLI flag (`src/main.rs:27` - --master flag now functional for legacy Overseer->Master hierarchy)
@@ -214,6 +213,48 @@ Large plans should be organized into **waves** that can execute in parallel:
 2. **Verify file references** before adding to plan — subagents catch discrepancies
 3. **Use explore agents** for codebase verification tasks
 4. **Cross-reference** with actual code when discrepancies found
+
+### Key Discrepancies to Watch For
+
+| Planned Reference | Actual Location | Issue |
+|-------------------|-----------------|-------|
+| `src/http/shared_handler.rs` | `src/http/server.rs:4532` | Function is in server.rs, not shared_handler |
+| `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs:860-934` | Quorum verification is in signed.rs, not state_machine |
+| `architecture/mesh_deep_dive.md:30` | Already correct | Bloom filter purpose already documented correctly |
+| `architecture/config_deep_dive.md:64-67` | `architecture/config_deep_dive.md:86` | Sites HashMap is at line 86, not 64-67 |
+| `src/waf/mod.rs:484-512` | `src/waf/mod.rs:442-517` | Async WAF pipeline entry point `check_request_full` is at 442-517 |
+| `SpinHttpHandler` reference | `src/spin/handler.rs:117` | Handler struct is in spin/handler.rs, not http/server.rs |
+| `app_server.rs:5` utoipa import | Not present | Issue was already fixed in original cleanup plan |
+
+## Known Deferred Items
+
+Some items are intentionally deferred due to architectural complexity:
+
+| ID | Issue | Reason |
+|----|-------|--------|
+| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
+| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete, requires Raft migration |
+| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation, buffers entire stdout |
+
+Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
+
+## Codebase Quick Reference
+
+### Critical Security Functions
+- **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for secrets
+- **File permissions**: Set `0o600` on private key files
+- **CSRF validation**: Uses `ct_eq()` at `src/admin/state.rs:736`
+
+### Module Key Facts
+- **MeshProxy**: `src/mesh/proxy.rs:63` (1994 lines) - key routing component not in overview
+- **BackendType**: `src/router.rs:65-77` has 11 variants
+- **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
+- **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
+
+### Process Architecture
+- **Supervisor** manages lifecycle, consolidates Overseer + Master
+- **UnifiedServerWorker** uses single Tokio event loop (NOT process-per-tenant)
+- **CPU affinity** is Linux-only, logs warning on other platforms
 
 ## Skills Directory
 

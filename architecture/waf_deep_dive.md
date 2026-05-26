@@ -21,15 +21,15 @@ The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connectio
 - **Global connection limit:** Default 20,000 concurrent connections
 - **Per-IP limits:** Default 100 connections per IP
 - **Burst tokens:** IP burst allowance (default 10) enables short-term bursts
-- **Site-level tracking:** Per-site connection counting via `SiteConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs:306`)
+- **Site-level tracking:** Per-site connection counting via `SiteConnectionLimiter`
 - **Queue system:** When limits are hit, connections can queue (default 1000 queue size, 5000ms timeout)
 
 #### TokenBucket Rate Limiting
 The `TokenBucket` (`src/waf/traffic_shaper/bucket.rs`) provides precise rate-based limiting:
 - **Capacity-based refilling:** Tokens refill at configurable rate (bytes/sec)
-- **GlobalTrafficShaper** (`src/waf/traffic_shaper/global.rs`): Enforces ingress/egress bandwidth limits with burst allowance
+- **GlobalTrafficShaper:** Enforces ingress/egress bandwidth limits with burst allowance
 - **SiteTrafficShaper:** Per-site bandwidth limits that can override global settings
-- **AsyncTokenBucket** (`src/waf/traffic_shaper/async_bucket.rs`): Async-compatible version for request processing
+- **AsyncTokenBucket:** Async-compatible version for request processing
 
 #### Volumetric Mitigation
 - **UDP Flood Protection:** `UdpFloodProtector` with per-IP (1000/sec) and global (100,000/sec) limits
@@ -48,7 +48,7 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Cross-Site Scripting (XSS):** Identifies malicious scripts in paths, queries, headers, and bodies.
 - **Path Traversal:** Blocks attempts to access files outside the intended directory.
 - **SSRF & RFI:** Prevents Server-Side Request Forgery and Remote File Inclusion by validating URLs.
-- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`src/waf/attack_detection/detector_common.rs:293`) for efficient bulk pattern matching. Implementations include `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`, and `BasePatternDetector`.
+- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`src/waf/attack_detection/detector_common.rs:264`) for efficient bulk pattern matching. Implementations include `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`, and `BasePatternDetector`.
 
 ### 4. Bot Detection Layer
 

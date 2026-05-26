@@ -2,20 +2,9 @@
 
 Specialized guidance for DNS server, DNSSEC, and TSIG.
 
-## Trust Anchor State Transitions
+## DNSSEC RFC 5011 Trust Anchor States
 
-The `TrustAnchorState` enum (`src/dns/trust_anchor.rs:30-43`) has 6 variants in this order:
-
-```rust
-pub enum TrustAnchorState {
-    Valid,    // Key is fully trusted and actively used for validation
-    Seen,     // Key observed in DNSKEY RRset but not yet validated via CDS/CDNSKEY (RFC 5011 Section 3)
-    Pending,  // Key validated via CDS/CDNSKEY, awaiting 30-day observation period (RFC 5011 Section 3.2)
-    Revoked,  // Key has REVOKE bit set (RFC 5011 Section 4)
-    Removed,  // Key was removed from zone, waiting for confirmation period
-    Missing,  // Key was configured but never observed
-}
-```
+Keys transition through states: **Seen → Pending → Valid → Revoked → Removed → Missing**
 
 Only keys that were **previously Valid** (`trust_point != 0`) can auto-restore via `observe_dnskey_at_root()`. Keys never Valid (`trust_point == 0`) must go through digest verification via `trust_anchor_check()`.
 
@@ -25,26 +14,23 @@ Only keys that were **previously Valid** (`trust_point != 0`) can auto-restore v
 
 Always use `subtle::ConstantTimeEq` for comparing secrets, tokens, keys, MACs:
 
-**Locations requiring constant-time comparison**:
-- DNS TSIG MAC verification (`src/dns/tsig.rs`) - already uses `ConstantTimeEq` at line 238
-- DNS cookie MAC verification (`src/dns/cookie.rs`)
-
-### NSEC3 SHA-1 Fallback
-
-When NSEC3 encounters an unsupported algorithm, it logs a warning and falls back to SHA-1:
-
 ```rust
-tracing::warn!(
-    "Unsupported NSEC3 algorithm {}, falling back to SHA-1",
-    config.algorithm
-);
+use subtle::ConstantTimeEq;
+
+// BEFORE (timing attack vulnerable)
+let mut diff = 0u8;
+for (a, b) in computed.iter().zip(original.iter()) {
+    diff |= a ^ b;
+}
+if diff == 0 { ... }
+
+// AFTER (constant-time)
+if bool::from(computed.ct_eq(&original)) { ... }
 ```
 
-This is informational - the fallback is RFC-compliant but may indicate a need to upgrade NSEC3 algorithm support.
-
-### Cookie Validation Toggle (API Note)
-
-The `with_validation(_enable: bool)` method at `src/dns/cookie.rs:40-42` ignores the `_enable` parameter - cookie validation is always enabled regardless of what value is passed. This is an intentional API design.
+**Locations requiring constant-time comparison**:
+- DNS TSIG MAC verification (`src/dns/tsig.rs`)
+- DNS cookie MAC verification (`src/dns/cookie.rs`)
 
 ### Edge Node PoW Authentication
 

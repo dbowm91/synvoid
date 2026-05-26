@@ -19,8 +19,6 @@ type HmacSha384 = Hmac<Sha384>;
 type HmacSha512 = Hmac<Sha512>;
 
 const TSIG_REPLAY_CACHE_TTL_SECS: u64 = 300;
-// NOTE: MAX_REPLAY_CACHE_SIZE (10K) may cause premature eviction under high TSIG traffic.
-// Monitor tsig_replay_cache_evictions metric and increase limit if needed.
 const MAX_REPLAY_CACHE_SIZE: usize = 10000;
 
 struct ReplayCacheEntry {

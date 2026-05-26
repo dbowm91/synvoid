@@ -1,13 +1,6 @@
 use crate::utils::now_ms;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Async-compatible token bucket for rate limiting in asynchronous contexts.
-///
-/// Located at: `src/waf/traffic_shaper/async_bucket.rs:4`
-///
-/// Uses atomic operations for lock-free token consumption, suitable for
-/// high-concurrency scenarios. Tokens represent bytes or units that are
-/// consumed per request and refilled over time.
 pub struct AsyncTokenBucket {
     capacity: u64,
     available: AtomicU64,

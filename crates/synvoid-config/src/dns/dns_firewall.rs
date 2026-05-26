@@ -2,8 +2,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::DnsConfigError;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct DnsLimitsConfig {
@@ -33,60 +31,6 @@ pub struct DnsLimitsConfig {
 
     #[serde(default)]
     pub enable_graceful_degradation: bool,
-}
-
-impl DnsLimitsConfig {
-    pub fn validate(&self) -> Result<(), DnsConfigError> {
-        if self.max_tcp_connections == 0 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_tcp_connections must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.max_concurrent_queries == 0 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_concurrent_queries must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.max_query_size == 0 || self.max_query_size > 65535 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_query_size must be between 1 and 65535".to_string(),
-            ));
-        }
-
-        if self.max_response_size == 0 || self.max_response_size > 65535 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_response_size must be between 1 and 65535".to_string(),
-            ));
-        }
-
-        if self.max_records_per_response == 0 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_records_per_response must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.max_tcp_idle_time_secs == 0 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_tcp_idle_time_secs must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.max_tcp_query_time_secs == 0 {
-            return Err(DnsConfigError::InvalidLimits(
-                "max_tcp_query_time_secs must be greater than zero".to_string(),
-            ));
-        }
-
-        if self.udp_buffer_size == 0 {
-            return Err(DnsConfigError::InvalidLimits(
-                "udp_buffer_size must be greater than zero".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
 }
 
 fn default_max_tcp_connections() -> usize {

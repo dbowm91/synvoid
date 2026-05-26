@@ -97,33 +97,22 @@ SiteConfig (per-domain)
 │   ├── domains: Vec<String>           # Primary and alias domains
 │   ├── listen: Vec<SiteListenConfig>  # Port, SSL, HTTP2/3, proxy protocol
 │   └── upstream: UpstreamConfig        # Default + path-based routing, tunnel mappings
+├── app_server: SiteAppServerConfig     # Python ASGI/RSGI/WSGI (optional)
 ├── ratelimit: SiteRateLimitConfig      # Per-site rate limits
-├── blocked: SiteBlockedConfig          # Blocked paths
-├── bot: SiteBotConfig                  # Bot detection/tarpit
-├── honeypot_probe: SiteProbeConfig    # Honeypot probe detection
-├── error_pages: SiteErrorPagesConfig
-├── css_challenge: SiteCssChallengeConfig
-├── whitelist: SiteWhitelistConfig     # IP whitelist
-├── worker_pool: SiteWorkerPoolConfig   # Worker pool settings
-├── logging: SiteLoggingConfig          # Per-site logging
-├── proxy: SiteProxyConfig              # Caching, headers, buffering
-├── tcp: SiteTcpConfig                  # TCP proxy settings
-├── udp: SiteUdpConfig                  # UDP proxy settings
-├── tarpit: SiteTarpitConfig
-├── attack_detection: SiteAttackDetectionConfig
-├── upload: SiteUploadConfig
-├── auth: SiteAuthConfig
-├── r#static: SiteStaticConfig          # Static file serving
 ├── security: SiteSecurityConfig        # Auth, whitelist, geoip
 ├── security_headers: SiteSecurityHeadersConfig
+├── attack_detection: SiteAttackDetectionConfig
+├── proxy: SiteProxyConfig              # Caching, headers, buffering
+├── r#static: SiteStaticConfig          # Static file serving
+├── upload: SiteUploadConfig
 ├── traffic_shaping: SiteTrafficShapingConfig
 ├── grpc: SiteGrpcConfig
 ├── websocket: SiteWebSocketConfig
 ├── tunnel: SiteTunnelConfig
-├── app_server: SiteAppServerConfig     # Python ASGI/RSGI/WSGI (optional)
-├── serverless: Option<ServerlessConfig>
-├── serverless_only: bool
-├── image_poison: SiteImagePoisonConfig
+├── bot: SiteBotConfig
+├── honeypot_probe: SiteProbeConfig
+├── css_challenge: SiteCssChallengeConfig
+├── error_pages: SiteErrorPagesConfig
 └── file_manager: SiteFileManagerConfig
 ```
 
@@ -254,8 +243,6 @@ Provides abstraction over serialization with **postcard** as the primary backend
 | `deserialize_rkyv()` | Zero-copy rkyv access (requires `rkyv` feature) |
 | `serialize_bincode()` / `deserialize_bincode()` | Legacy compatibility wrappers |
 | `serialized_size()` | Get serialized byte length |
-| `serialize_checked()` | postcard to `Vec<u8>` for untrusted data (QUIC mesh) |
-| `deserialize_checked()` | postcard from `&[u8]` for untrusted data |
 
 **Why Postcard over bincode?**
 - Actively maintained
@@ -280,8 +267,6 @@ Provides abstraction over serialization with **postcard** as the primary backend
 2. **Feature-Gated Compilation**: Large subsystems (DNS, Mesh) compile only when features enabled, but core HTTP server always compiles.
 
 3. **Validator Pattern**: Each config has a `validate()` method returning `Result<(), ConfigValidationError>`.
-
-   > **Note**: `DnsConfig::validate()` calls validate() on ratelimit, rrl, settings, dnssec, recursive, mesh (when Mesh mode), and anycast. However, zones, limits, dot, doh, doq, rpz, dns64, prefetch, and trust_anchors validation is not yet implemented.
 
 4. **Hot Reload**: ConfigManager supports `reload_site()` / `reload_all()` for configuration changes without restart.
 

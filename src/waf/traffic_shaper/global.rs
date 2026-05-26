@@ -6,14 +6,6 @@ use std::sync::Arc;
 
 use super::async_bucket::AsyncTokenBucket;
 
-/// Global traffic shaper for enforcing bandwidth limits across all sites.
-///
-/// Located at: `src/waf/traffic_shaper/global.rs:10`
-///
-/// Uses token bucket algorithm for ingress/egress rate limiting with:
-/// - Configurable ingress/egress rates (MB/s)
-/// - Burst allowance support
-/// - Threat-level based dynamic throttling
 #[derive(Clone)]
 pub struct GlobalTrafficShaper {
     config: GlobalTrafficShapingConfig,
@@ -187,12 +179,6 @@ pub struct BandwidthStatus {
     pub is_over_limit: (bool, bool),
 }
 
-/// Site-specific traffic shaper that can override global bandwidth limits.
-///
-/// Located at: `src/waf/traffic_shaper/global.rs:190`
-///
-/// Each site can have custom ingress/egress rates that override the global
-/// settings when explicitly configured. Falls back to global settings otherwise.
 pub struct SiteTrafficShaper {
     site_id: String,
     ingress_bucket: Arc<AsyncTokenBucket>,

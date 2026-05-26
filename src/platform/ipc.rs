@@ -24,11 +24,6 @@ pub trait IpcStream: IpcTransport {
     fn connect(path: &Path) -> Result<Self, PlatformError>
     where
         Self: Sized;
-    /// Returns the peer's process ID.
-    ///
-    /// Note: PID authentication is not used for IPC security.
-    /// Instead, HMAC-based message signing is used ([`IpcStreamSigner`]).
-    /// This method returns [`None`] for most implementations.
     fn peer_pid(&self) -> Option<u32>;
 }
 

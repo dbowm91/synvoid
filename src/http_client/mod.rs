@@ -868,10 +868,6 @@ where
     Ok(response)
 }
 
-/// Sends an HTTP request using the erased client with streaming body.
-/// HTTP/2 is preferred when available, but `.http2_only(false)` on all upstream
-/// clients allows HTTP/1.1 fallback when the server doesn't support HTTP/2.
-/// The `is_http2=true` flag requests h2 negotiation; the server determines final protocol.
 pub async fn send_request_erased_streaming(
     client: &ErasedHttpClient,
     method: Method,

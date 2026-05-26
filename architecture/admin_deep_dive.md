@@ -95,8 +95,8 @@ SynVoid supports two fundamentally different authentication systems that serve d
 5. Session expires after 1 hour (3600 seconds), configurable
 
 **Key Files:**
-- `src/admin/state.rs:796-828` - `create_session()` and session data storage
-- `src/admin/state.rs:830-852` - `validate_session()` with sliding window expiration
+- `src/admin/state.rs:788-820` - `create_session()` and session data storage
+- `src/admin/state.rs:822-844` - `validate_session()` with sliding window expiration
 - `src/admin/handlers/auth.rs:14-58` - Session creation endpoint
 
 ### Brute-Force Protection
@@ -125,8 +125,8 @@ SynVoid supports two fundamentally different authentication systems that serve d
 4. Check token not expired
 
 **Key Files:**
-- `src/admin/state.rs:728-749` - `validate_csrf()`
-- `src/admin/state.rs:751-779` - `generate_csrf_token()`
+- `src/admin/state.rs:725-741` - `validate_csrf()`
+- `src/admin/state.rs:743-771` - `generate_csrf_token()`
 - `src/admin/middleware.rs:185-266` - `csrf_middleware()`
 
 ### CSRF Middleware Logic
@@ -273,8 +273,6 @@ pub struct AdminState {
 ```
 
 ### SecurityState
-
-**Location:** `src/admin/state.rs:211-217`
 
 ```rust
 pub struct SecurityState {

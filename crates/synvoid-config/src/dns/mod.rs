@@ -194,15 +194,6 @@ impl DnsConfig {
         self.settings.validate()?;
         self.dnssec.validate()?;
         self.recursive.validate()?;
-        self.zones.validate()?;
-        self.limits.validate()?;
-        self.dot.validate()?;
-        self.doh.validate()?;
-        self.doq.validate()?;
-        self.rpz.validate()?;
-        self.dns64.validate()?;
-        self.prefetch.validate()?;
-        self.trust_anchors.validate()?;
 
         if let DnsMode::Mesh = self.mode {
             self.mesh.validate()?;
@@ -225,15 +216,6 @@ pub enum DnsConfigError {
     InvalidMesh(String),
     InvalidAnycast(String),
     InvalidRecursive(String),
-    InvalidZones(String),
-    InvalidLimits(String),
-    InvalidDot(String),
-    InvalidDoh(String),
-    InvalidDoq(String),
-    InvalidRpz(String),
-    InvalidDns64(String),
-    InvalidPrefetch(String),
-    InvalidTrustAnchor(String),
 }
 
 impl std::fmt::Display for DnsConfigError {
@@ -248,15 +230,6 @@ impl std::fmt::Display for DnsConfigError {
             DnsConfigError::InvalidMesh(msg) => write!(f, "Invalid mesh: {}", msg),
             DnsConfigError::InvalidAnycast(msg) => write!(f, "Invalid anycast: {}", msg),
             DnsConfigError::InvalidRecursive(msg) => write!(f, "Invalid recursive DNS: {}", msg),
-            DnsConfigError::InvalidZones(msg) => write!(f, "Invalid zones: {}", msg),
-            DnsConfigError::InvalidLimits(msg) => write!(f, "Invalid limits: {}", msg),
-            DnsConfigError::InvalidDot(msg) => write!(f, "Invalid DOT: {}", msg),
-            DnsConfigError::InvalidDoh(msg) => write!(f, "Invalid DOH: {}", msg),
-            DnsConfigError::InvalidDoq(msg) => write!(f, "Invalid DOQ: {}", msg),
-            DnsConfigError::InvalidRpz(msg) => write!(f, "Invalid RPZ: {}", msg),
-            DnsConfigError::InvalidDns64(msg) => write!(f, "Invalid DNS64: {}", msg),
-            DnsConfigError::InvalidPrefetch(msg) => write!(f, "Invalid prefetch: {}", msg),
-            DnsConfigError::InvalidTrustAnchor(msg) => write!(f, "Invalid trust anchor: {}", msg),
         }
     }
 }

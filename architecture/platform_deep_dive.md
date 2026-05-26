@@ -46,7 +46,7 @@ platform().supports_reuse_port()         // Linux/Macos/FreeBSD
 |-------|---------|
 | `IpcTransport` | Send/recv/close semantics for byte streams |
 | `IpcListener` | Binding and accepting connections |
-| `IpcStream` | Client-side connect with peer PID detection (currently returns `None` - HMAC authentication used instead) |
+| `IpcStream` | Client-side connect with peer PID detection |
 | `ProcessControl` | Signal sending, daemonization |
 | `SignalHandler` | Async signal registration |
 | `SocketHandle` | TCP listener/stream conversion |
@@ -60,7 +60,7 @@ platform().supports_reuse_port()         // Linux/Macos/FreeBSD
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
-| macOS | **Seatbelt** | Implemented via `macos-sandbox` feature flag; compiles sandbox profile at runtime |
+| macOS | **Seatbelt** | Sandboxed profile compilation (planned feature, not yet implemented) |
 | Windows | **Job Objects + DACL** | Process memory limits, file security descriptors |
 
 ---
@@ -91,12 +91,12 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 
 ### Message Types (IPC)
 
-The `Message` enum is organized into **18 categories**:
+The `Message` enum is organized into **17 categories**:
 
 1. **WorkerLifecycle**: `WorkerStarted`, `WorkerReady`, `WorkerHeartbeat`, `WorkerError`
 2. **MasterCommand**: `MasterShutdown`, `MasterConfigReload`, `MasterHealthCheck`
 3. **StaticWorker**: `StaticWorkerStarted`, `StaticWorkerReady`, `StaticWorkerDrain`
-4. **Upstream**: `UpstreamGlobalStats`, `GlobalUpstreamStatsBroadcast`
+4. **ThreatIntel**: `ThreatIndicatorAnnounce`, `ThreatSyncRequest/Response`
 5. **BlocklistRules**: `BlocklistUpdate`, `RulePatternsUpdate`
 6. **StaticContent**: `MinifyRequest/Response`, `PoisonImageRequest/Response`
 7. **AppServer**: `AppServerRequest`, `AppServerResponse`, `AppServerChunk`, `AppServerUpgrade`
@@ -106,7 +106,7 @@ The `Message` enum is organized into **18 categories**:
 11. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
 12. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
 13. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
-14. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete`, `WindowsSocketInfo`, `SocketHandoffActiveConnection`, `WorkerConnectionHandoff`, `WorkerConnectionAdopted` (Windows uses WSADuplicateSocket via port-swap upgrade, not SCM_Rights)
+14. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
 15. **WorkerRestart**: `WorkerRestartRequest`, `WorkerRestartAck`
 16. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
 17. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
@@ -370,7 +370,7 @@ SynVoid supports two deployment modes:
 
 ### macOS Seatbelt Sandboxing
 
-Seatbelt sandbox for macOS is **implemented via `macos-sandbox` feature flag** (`src/platform/sandbox.rs`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
+Seatbelt sandbox for macOS is **planned but not yet implemented** (`src/platform/sandbox.rs`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
 
 ---
 

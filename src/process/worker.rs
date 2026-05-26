@@ -8,10 +8,6 @@ use std::time::Instant;
 
 use super::ipc::{WorkerId, WorkerMetricsPayload, WorkerStatus};
 
-/// Base trait that all worker process types implement.
-///
-/// Provides common access to the underlying [`BaseWorkerProcess`] for all
-/// specialized worker types (e.g., [`UnifiedServerWorker`], [`StaticWorker`]).
 pub trait WorkerProcessBase {
     fn base(&self) -> &BaseWorkerProcess;
     fn base_mut(&mut self) -> &mut BaseWorkerProcess;

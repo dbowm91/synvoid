@@ -32,8 +32,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `dnssec_validation.rs` | Signature verification, chain of trust, DS record handling |
 | `dnssec_key_mgmt.rs` | DNSSEC key lifecycle management |
 | `tsig.rs` | TSIG authentication for dynamic updates and zone transfers |
-| `recursive.rs` | Recursive DNS server wrapper (async) |
-| `resolver.rs` | HickoryResolver/HickoryRecursor (actual resolution) |
+| `recursive.rs` | Recursive DNS resolver using `hickory_resolver::TokioResolver` |
 | `recursive_cache.rs` | Cache for recursive resolver responses |
 | `trust_anchor.rs` | RFC 5011 trust anchor management |
 | `hsm.rs` | HSM-based key storage and signing |
@@ -48,13 +47,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `wire.rs` | DNS wire format parsing/building |
 | `messages.rs` | Mesh sync messages for distributed DNS |
 | `anycast.rs` | Anycast socket management |
-| `mesh_sync/mod.rs` | Mesh sync coordinator |
-| `mesh_sync/dht.rs` | DHT integration |
-| `mesh_sync/query.rs` | Query handling |
-| `mesh_sync/registry.rs` | Zone registry |
-| `mesh_sync/registration.rs` | Registration handling |
-| `mesh_sync/verification.rs` | Signature verification |
-| `mesh_sync/health.rs` | Health monitoring |
+| `anycast_sync.rs` | Mesh-based zone synchronization |
 | `qname.rs` | DNS query name parsing and normalization |
 | `zone_manager.rs` | Zone lifecycle management, loading, and persistence |
 | `zone_file.rs` | Zone file parsing and serialization |
@@ -106,7 +99,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 
 **Trust Anchors** (`trust_anchor.rs`):
 - RFC 5011 automated trust anchor updates
-- States: `Missing → Seen → Pending → Valid → Revoked → Removed` (not strictly sequential, event-driven transitions)
+- States: `Seen → Pending → Valid → Revoked → Removed → Missing`
 
 ### TSIG (Feature-Gated)
 
@@ -159,12 +152,56 @@ Tunnel module provides **VPN tunnel protocols** for site-to-site and client conn
 | `wireguard/kernel.rs` | Kernel WireGuard integration |
 | `wireguard/userspace.rs` | Userspace WireGuard implementation |
 | `wireguard/config.rs` | Key generation, key parsing |
-| `router.rs` | `TunnelRouter` (tunnel routing) |
+| `router.rs` | Tunnel routing, `TunnelRouter` |
 | `tun.rs` | TUN device abstraction |
 
-### Tunnel Transport Trait
+### QUIC Tunnel Protocol
 
-The `TunnelTransport` trait is defined in `src/tunnel/mod.rs:62-79` (not in a router file). The `TunnelRouter` struct lives in `src/tunnel/router.rs`.
+**Message Types**:
+```rust
+TunnelMessage::Hello { client_id, auth_token, mappings, supports_datagrams }
+TunnelMessage::HelloAck { server_session_id, server_mappings, supports_datagrams, max_datagram_size, access_level }
+TunnelMessage::AuthFailure { reason }
+TunnelMessage::KeepAlive
+TunnelMessage::KeepAliveAck
+TunnelMessage::PortOpen { identifier, port, protocol }
+TunnelMessage::PortClose { identifier }
+TunnelMessage::PortData { identifier }
+TunnelMessage::RequestProxy { identifier, target_host, target_port }
+TunnelMessage::ProxyResponse { identifier, success, message }
+TunnelMessage::PeerHello { peer_id, auth_token, supports_datagrams }
+TunnelMessage::PeerHelloAck { session_id, supports_datagrams, max_datagram_size }
+TunnelMessage::Error { code, message }
+TunnelMessage::DataChunk { identifier, sequence, data, fin }
+TunnelMessage::DataAck { identifier, sequence }
+TunnelMessage::StreamOpen { identifier, port, protocol, tls_passthrough }
+TunnelMessage::StreamOpenAck { identifier, success, message }
+TunnelMessage::StreamClose { identifier }
+TunnelMessage::UdpTunnelOpen { identifier, port }
+TunnelMessage::UdpTunnelOpenAck { identifier, success, message }
+TunnelMessage::UdpTunnelClose { identifier }
+TunnelMessage::UdpData { identifier, data }
+TunnelMessage::UdpClose { identifier }
+```
+
+**Features**:
+- Stream-based tunnel protocol over QUIC
+- Bidirectional streams for port mappings
+- Datagram support for UDP emulation
+- TLS-secured transport
+- Automatic certificate generation
+- Health monitoring with jittered backoff reconnection
+- Fragmentation for large datagrams (max 1200 bytes per payload)
+
+### WireGuard
+
+- Userspace implementation via `boringtun` (defguard/boringtun)
+- Peer session management with keepalive
+- Key pair generation (Curve25519)
+- Persistent keepalive configuration
+- AllowedIPs routing
+
+### Tunnel Transport Trait
 
 ```rust
 #[async_trait]

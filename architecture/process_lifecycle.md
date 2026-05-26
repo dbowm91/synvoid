@@ -12,7 +12,7 @@ The Overseer is the top-level orchestrator that spawns and monitors the Master p
   - **Health Monitoring:** Monitors child process heartbeats and restarts failed processes.
   - **Recovery Orchestration:** Handles system recovery when faults occur.
   - **Upgrade Coordination:** Coordinates zero-downtime upgrades across the system.
-- **Key Logic:** Overseer is invoked via `--master` flag in legacy mode (`src/startup/master.rs:89` calls `run_overseer_mode()` which starts the Overseer process that spawns Master).
+- **Key Logic:** `src/overseer/`.
 
 ### 2. Master (Legacy - Mid-tier Process)
 The Master runs as a child of Overseer and provides process management, admin API, block store, and IPC coordination for workers.
@@ -28,8 +28,8 @@ The Master runs as a child of Overseer and provides process management, admin AP
 The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master responsibilities into a single process for simpler deployments.
 
 - **Modes:**
-  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly.
-  - **Legacy Mode:** Overseer spawns Master which spawns workers. Invoked via `--master` flag which calls `run_overseer_mode()` (`src/startup/master.rs:89`). CLI flow: No flag -> Supervisor. `--master` -> Master. `--mesh-agent` -> MeshAgent.
+  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly. This is the ONLY functional mode - no CLI flag exists to select Legacy Mode.
+  - **Legacy Mode (code only, not selectable):** Overseer spawns Master which spawns workers. The code exists (`run_overseer_mode()` in `src/startup/master.rs`) but cannot be invoked - there's no CLI flag to enable it. This is legacy code preserved for reference.
 - **Responsibilities:**
   - **Process Management:** Spawning and monitoring Worker processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
@@ -44,10 +44,10 @@ Workers are lightweight, "dumb" request-handling engines that operate in a share
 
 - **UnifiedServerWorker:** Primary worker handling HTTP/HTTPS/HTTP3 + WAF + proxy via a single Tokio async event loop. Handles all site routing and security enforcement.
 - **StaticWorker:** Dedicated worker for background tasks like CSS/JS minification and image compression. Communicates with the unified server via IPC.
-- **Legacy Worker (BaseWorkerProcess):** Deprecated raw TCP/UDP proxy worker. Unused for HTTP traffic; spawned via `--worker` flag (defined at line 43-44 in `main.rs`); requires further investigation to determine if it should be removed.
+- **Legacy Worker (BaseWorkerProcess):** Deprecated raw TCP/UDP proxy worker. Unused for HTTP traffic; requires further investigation to determine if it should be removed.
 
 - **Isolation:** Each worker process is completely independent.
-- **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/overseer/spawn.rs:30-48` (`SpawnConfig::for_current_binary`).
+- **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/overseer/spawn.rs:43`.
 - **CPU Pinning:** On Linux, workers are automatically assigned CPU affinity based on worker ID via `sched_setaffinity`. Not supported on macOS/BSD (logs warning).
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
