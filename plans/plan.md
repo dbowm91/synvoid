@@ -48,7 +48,7 @@ This plan consolidates findings from architecture reviews across all SynVoid mod
 - **File:** `src/process/ipc.rs` or referenced documentation
 - **Issue:** Document says "17 categories" but should be 18
 - **Action:** Update count from 17 to 18 at line 94
-- **Verification:** Count actual Message enum variants
+- **Verification:** Count actual Message enum variants - 18 categories confirmed at lines 1384-1526
 
 ---
 
@@ -168,11 +168,16 @@ This plan consolidates findings from architecture reviews across all SynVoid mod
   - Document what specifically is missing (if anything)
 - **Verification:** `rg "is_http2|http2_only" src/http_client/`
 
-### 3.4 UDP Amplification Protection Status (Networking)
-- **File:** `src/udp/` (or wherever implemented)
-- **Issue:** Document claims UDP amplification protection but no implementation found
-- **Action:** Either add implementation or remove claim from documentation
-- **Verification:** `rg "amplification|udp" src/udp/`
+### 3.4 UDP Amplification Protection (Networking)
+- **File:** `src/waf/flood/udp_flood.rs:171-211`
+- **Status:** Already implemented via `UdpFloodProtector::check_amplification()`
+- **No action needed** - Verification:
+  - `UdpFloodProtector` struct at `src/waf/flood/udp_flood.rs:42-62`
+  - `check_amplification()` method tracks response/request ratio per source IP
+  - Default threshold 5.0x amplification limit
+  - Integrated into UDP listener via `FloodProtector` at `src/udp/listener.rs:146-148`
+  - Also implemented at `src/udp/filter.rs:250-256` via `UdpProtocolFilter::check_amplification_risk()`
+- **Verification:** `rg "check_amplification|UdpFloodProtector" src/waf/flood/ src/udp/`
 
 ---
 
@@ -242,9 +247,9 @@ This plan consolidates findings from architecture reviews across all SynVoid mod
 - **Verification:** `rg "HickoryResolver|HickoryRecursor" src/dns/`
 
 ### 5.3 Fix TrustAnchorState Sequence
-- **File:** `src/dns/dnssec_validation.rs` or related
-- **Issue:** Doc shows "Seen → Pending → Valid" but enum is "Missing → Seen → Pending → Valid → Revoked → Removed"
-- **Action:** Update documentation to match enum order
+- **File:** `src/dns/trust_anchor.rs:30-43`
+- **Issue:** Plan claimed doc shows "Seen → Pending → Valid" but actual enum has 6 variants in order: `Valid → Seen → Pending → Revoked → Removed → Missing`
+- **Action:** Update documentation to match actual enum order (6 variants, not just 3)
 - **Verification:** `rg "TrustAnchorState" src/dns/`
 
 ### 5.4 Document DNSSEC Signing Validity
@@ -356,4 +361,4 @@ cargo test --test security_regression
 
 ---
 
-*Plan consolidated 2026-05-26 from individual review plans*
+*This is the single source of truth for architecture review fixes. No need to reference other plan files.*

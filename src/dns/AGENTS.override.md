@@ -2,9 +2,20 @@
 
 Specialized guidance for DNS server, DNSSEC, and TSIG.
 
-## DNSSEC RFC 5011 Trust Anchor States
+## Trust Anchor State Transitions
 
-Keys transition through states: **Valid → Seen → Pending → Revoked → Removed → Missing**
+The `TrustAnchorState` enum (`src/dns/trust_anchor.rs:30-43`) has 6 variants in this order:
+
+```rust
+pub enum TrustAnchorState {
+    Valid,    // Key is fully trusted and actively used for validation
+    Seen,     // Key observed in DNSKEY RRset but not yet validated via CDS/CDNSKEY (RFC 5011 Section 3)
+    Pending,  // Key validated via CDS/CDNSKEY, awaiting 30-day observation period (RFC 5011 Section 3.2)
+    Revoked,  // Key has REVOKE bit set (RFC 5011 Section 4)
+    Removed,  // Key was removed from zone, waiting for confirmation period
+    Missing,  // Key was configured but never observed
+}
+```
 
 Only keys that were **previously Valid** (`trust_point != 0`) can auto-restore via `observe_dnskey_at_root()`. Keys never Valid (`trust_point == 0`) must go through digest verification via `trust_anchor_check()`.
 
@@ -33,7 +44,7 @@ This is informational - the fallback is RFC-compliant but may indicate a need to
 
 ### Cookie Validation Toggle (API Note)
 
-The `with_validation(_enable: bool)` method in `src/dns/cookie.rs:40-42` ignores the enable parameter - cookie validation is always enabled. This is an intentional API design.
+The `with_validation(_enable: bool)` method at `src/dns/cookie.rs:40-42` ignores the `_enable` parameter - cookie validation is always enabled regardless of what value is passed. This is an intentional API design.
 
 ### Edge Node PoW Authentication
 

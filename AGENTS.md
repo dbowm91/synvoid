@@ -158,8 +158,8 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
+| DNS Cookie `_enable` parameter ignored | `src/dns/cookie.rs:40-42` | `with_validation(_enable)` always returns self; validation is always enabled regardless of parameter | Known - intentional API design |
 | SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | Not a bug - documented but intentionally not implemented |
-| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:175-205` | Missing validate() on zones, limits, dot, doh, doq, rpz, dns64, prefetch, trust_anchors | ✅ FIXED (all sub-components now validated) |
 | DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Documentation showed wrong prefixes | ✅ FIXED |
 
 ### Dependency Vulnerability Status
@@ -186,7 +186,7 @@ These items were identified in reviews but have been fixed:
 - Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
 - StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
 - gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
-- CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
+- CSRF validation constant-time comparison (`src/admin/state.rs:728` - uses `ct_eq()`)
 - macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
 - BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - now returns true when ML-DSA absent, fail-safe behavior confirmed)
 - BUG-PL-1 Master mode CLI flag (`src/main.rs:27` - --master flag now functional for legacy Overseer->Master hierarchy)
