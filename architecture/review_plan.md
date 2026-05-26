@@ -64,7 +64,7 @@ The following stale items were identified across architecture documents. Items m
 | app_handlers.md | "WasmHandler" doesn't exist (SpinHttpHandler is at that line) | ✅ Fixed |
 | app_handlers.md | Generic WASM mesh distribution claim unverified | ✅ Fixed |
 | config_deep_dive.md | ConfigManager line numbers incorrect | ✅ Fixed |
-| config_deep_dive.md | Type naming mismatches | ⚠️ Deferred |
+| config_deep_dive.md | Type naming mismatches (IpFeedConfig vs MainIpFeedConfig) | ✅ Verified correct as-is - field is IpFeedConfig, alias is internal |
 | dns_deep_dive.md | AXFR "Missing record types" section is WRONG | ✅ Fixed |
 | dns_deep_dive.md | DnsCookieServer created but not integrated | ⚠️ Known deferred - DNS-COOKIE |
 | dns_deep_dive.md | Query coalescing line references wrong | ✅ Fixed |
