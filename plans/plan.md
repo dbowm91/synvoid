@@ -1,8 +1,8 @@
 # SynVoid Consolidated Action Plan
 
 **Generated:** 2026-05-26
-**Status:** PLANNED
-**Last Updated:** 2026-05-26 (verification corrections applied)
+**Status:** IN PROGRESS - Waves 1-5 largely complete
+**Last Updated:** 2026-05-26
 
 ---
 
@@ -10,12 +10,12 @@
 
 This document consolidates all action items from four batches of architecture review plans. The items are organized into **5 parallel work waves** plus the **sequential Supervisor Migration** (the longest critical path). All waves 1-5 can execute in parallel and complete before or after migration; only the migration removal phase depends on prior wave completion.
 
-| Category | Items | Priority |
-|----------|-------|----------|
-| Documentation Corrections | 35 | Mixed P1-P3 |
-| Code Quality/Bugs | 12 | P0-P2 |
-| Architecture Documentation | 15 | P1-P2 |
-| Supervisor Migration | 1 epic (6 sub-waves) | P0 |
+| Category | Items | Priority | Status |
+|----------|-------|----------|--------|
+| Documentation Corrections | 35 | Mixed P1-P3 | ~80% Done |
+| Code Quality/Bugs | 12 | P0-P2 | ~90% Done |
+| Architecture Documentation | 15 | P1-P2 | ~70% Done |
+| Supervisor Migration | 1 epic (6 sub-waves) | P0 | Not Started |
 
 ---
 
@@ -25,9 +25,13 @@ This plan is designed for parallel execution by multiple sub-agents. Each wave c
 
 **For future agents:** Each item includes the file path, line numbers, and specific action to take. Read the referenced source code before making changes to ensure you understand the context. Run `cargo check` after each file modification.
 
+**Note:** Items marked [VERIFIED-DONE] have been verified as completed. Items marked [DEFERRED] require significant work and have been deferred.
+
 ---
 
-## Wave 1: P0-P1 Critical Fixes (Can Execute in Parallel)
+## Wave 1: P0-P1 Critical Fixes (Can Execute in Parallel) - DONE ✓
+
+### 1.1 [P0] Fix DnsConfig.validate() Not Called - [VERIFIED-DONE]
 
 ### 1.1 [P0] Fix DnsConfig.validate() Not Called
 - **File:** `crates/synvoid-config/src/main_config.rs:181-209`
@@ -35,30 +39,30 @@ This plan is designed for parallel execution by multiple sub-agents. Each wave c
 - **Action:** Add `self.dns.validate()` call in `MainConfig::validate()` when DNS feature is enabled. See `crates/synvoid-config/src/dns/mod.rs:174-205` for the validate() implementation.
 - **Verification:** `grep -n "validate" crates/synvoid-config/src/main_config.rs`
 
-### 1.2 [P1] Document BUG-L1 Fail-Safe Behavior
+### 1.2 [P1] Document BUG-L1 Fail-Safe Behavior - [VERIFIED-DONE]
 - **File:** `architecture/layer_3_5_deep_dive.md`
 - **Action:** Document that `verify_hybrid()` at `src/mesh/ml_dsa.rs:206-218` returns `true` when a signature lacks ML-DSA data. This is intentional fail-safe behavior.
 - **Code:** When `signature.has_ml_dsa()` is false, the function returns `true` (treating as valid).
 - **Why:** If PQC algorithm is broken or unavailable, fail-safe allows the system to operate on classical signatures alone.
 
-### 1.3 [P1] Document BUG-L3 ML-KEM Proof-of-Possession
+### 1.3 [P1] Document BUG-L3 ML-KEM Proof-of-Possession - [VERIFIED-DONE]
 - **File:** `architecture/layer_3_5_deep_dive.md`
 - **Action:** Document ML-KEM key exchange proof-of-possession verification at `src/mesh/ml_kem_key_exchange.rs:204-264`.
 - **Code:** The `confirm_key` method at line 241 verifies client public key matches stored session public key, then calls `MlKem768::decapsulate()` to confirm the client can actually use the shared secret.
 - **Why:** This prevents a rogue server from successfully completing key exchange without the client being able to decapsulate.
 
-### 1.4 [P1] Fix macOS Seatbelt Sandbox Status
+### 1.4 [P1] Fix macOS Seatbelt Sandbox Status - [VERIFIED-DONE]
 - **File:** `architecture/platform_deep_dive.md:373`
 - **Action:** Change "planned but not yet implemented" to "implemented but disabled by default - requires `macos-sandbox` Cargo feature"
 - **Code:** `src/platform/sandbox.rs:1036-1044` - `SeatbeltSandbox::is_supported()` exists. Feature gate is at line 1037: `#[cfg(feature = "macos-sandbox")]`
 - **Verification:** `rg "macos-sandbox" Cargo.toml`
 
-### 1.5 [P1] Remove "No CORS Middleware" Claim
+### 1.5 [P1] Remove "No CORS Middleware" Claim - [VERIFIED-DONE]
 - **File:** `architecture/admin_deep_dive.md:154-156`
 - **Action:** CORS is fully implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97`. Remove any claim that CORS is missing.
 - **Code:** The CORS layer is created and added to the router in the admin API setup.
 
-### 1.6 [P1] Remove "Legacy Overseer" Designation
+### 1.6 [P1] Remove "Legacy Overseer" Designation - [VERIFIED-DONE]
 - **File:** `architecture/admin_deep_dive.md:231`
 - **Action:** Overseer endpoints are fully functional at multiple locations in the codebase:
   - `src/admin/mod.rs:242, 607`
@@ -66,7 +70,7 @@ This plan is designed for parallel execution by multiple sub-agents. Each wave c
   - `src/admin/handlers/system.rs:566`
 - **Clarification:** The overseer code is legacy from an architecture perspective (will be removed in migration), but the admin API endpoints themselves are functional and used.
 
-### 1.7 [P1] Update Process Hierarchy (Default is Supervisor)
+### 1.7 [P1] Update Process Hierarchy (Default is Supervisor) - [VERIFIED-DONE]
 - **File:** `architecture/process_lifecycle.md:5-41`
 - **Action:** Revise to reflect actual process flow:
   - DEFAULT is `run_supervisor_mode` (lines 538-547 in main.rs)
@@ -74,7 +78,7 @@ This plan is designed for parallel execution by multiple sub-agents. Each wave c
   - `run_overseer_mode` exists but is NOT the default entry point
 - **Key Point:** Documentation currently implies overseer is the primary mode - it should say supervisor is the default.
 
-### 1.8 [P0] Granian IS Integrated - ADD Documentation (NOT Remove)
+### 1.8 [P0] Granian IS Integrated - ADD Documentation (NOT Remove) - [VERIFIED-DONE]
 - **File:** `architecture/app_handlers.md`
 - **Action:** This is a CRITICAL documentation error. Granian IS fully integrated with extensive implementation at `src/app_server/granian.rs` (1047 lines).
 - **Evidence:**
@@ -89,30 +93,30 @@ This plan is designed for parallel execution by multiple sub-agents. Each wave c
 
 ---
 
-## Wave 2: P1 Documentation Corrections (Can Execute in Parallel)
+## Wave 2: P1 Documentation Corrections (Can Execute in Parallel) - DONE ✓
 
-### 2.1 [P1] Fix Cookie RFC Reference
+### 2.1 [P1] Fix Cookie RFC Reference - [VERIFIED-DONE]
 - **File:** `architecture/dns_deep_dive.md`, Line 39
 - **Action:** Change RFC 8905 to RFC 8905/RFC 7873 - cookies via EDNS option
 - **Reason:** Code at `src/dns/cookie.rs:47-48` cites RFC 7873. RFC 8905 is "The DNS Cookie AD RR" (EDNS option), RFC 7873 is "Domain Names over (TLS) Transport" (cookies for DoT).
 
-### 2.2 [P1] Remove DnsServerQueryHandler Reference
+### 2.2 [P1] Remove DnsServerQueryHandler Reference - [VERIFIED-DONE]
 - **File:** `architecture/dns_deep_dive.md`, Line 69
 - **Action:** Change `DnsServerQueryHandler` to `QueryContext` - this struct does not exist
 - **Actual:** `QueryContext` at `src/dns/server/mod.rs:419-445`
 
-### 2.3 [P1] Add DNSSEC Limitations Note
+### 2.3 [P1] Add DNSSEC Limitations Note - [VERIFIED-DONE]
 - **File:** `architecture/dns_deep_dive.md`
 - **Action:** Add note about manual wire format construction and lacking compression support
 - **Code:** `src/dns/dnssec.rs:1-13` - Module doc explicitly states these limitations.
 
-### 2.4 [P1] Fix HTTP/2 Status in Worker Architecture
+### 2.4 [P1] Fix HTTP/2 Status in Worker Architecture - [VERIFIED-DONE]
 - **File:** `architecture/worker_architecture.md`, Line 13
 - **Action:** Change "Currently disabled (`is_http2 = false`)" to "Enabled via ALPN negotiation"
 - **Reason:** Server-side HTTP/2 negotiation at `src/tls/server.rs:411-487` uses ALPN: `let is_http2 = alpn_protocol.map(|p| p == ALPN_HTTP2).unwrap_or(false);`
 - **Note:** This is separate from the upstream hardcoded `is_http2 = true` at `src/http_client/mod.rs:893`.
 
-### 2.5 [P1] ErasedHttpClient Phase 9 Incomplete
+### 2.5 [P1] ErasedHttpClient Phase 9 Incomplete - [VERIFIED-DONE]
 - **Location:** `src/http/server.rs:3305`
 - **Action:** Change `use_erased_client = false` hardcoded to conditional logic based on streaming body detection
 - **Bug ID:** Known Issue - ErasedHttpClient is infrastructure ready but never used
@@ -138,9 +142,9 @@ This plan is designed for parallel execution by multiple sub-agents. Each wave c
 
 ---
 
-## Wave 3: P2 Medium Priority (Can Execute in Parallel)
+## Wave 3: P2 Medium Priority (Can Execute in Parallel) - MOSTLY DONE ✓
 
-### 3.1 [P2] Correct WAF Pipeline Stage Order
+### 3.1 [P2] Correct WAF Pipeline Stage Order - [VERIFIED-DONE]
 - **File:** `architecture/worker_architecture.md`, Lines 29-35
 - **Action:** Swap stages 6 and 7:
   - **Current (WRONG):** 6. Attack Detection, 7. Flood Protection
@@ -419,11 +423,13 @@ These items require code investigation to determine if issues are by design or n
 
 ---
 
-## Supervisor Migration (Critical Path - Sequential)
+## Supervisor Migration (Critical Path - Sequential) - [NOT STARTED]
+
+**NOTE:** `plans/migration.md` does not exist. Detailed migration plan needs to be created.
 
 The migration consolidates Overseer/Master into a single Supervisor process. This is the longest critical path and must be executed sequentially.
 
-**See detailed migration plan at:** `plans/migration.md`
+**See detailed migration plan at:** `plans/migration.md` (DOES NOT EXIST - needs to be created)
 
 ### Migration Summary
 
@@ -439,6 +445,8 @@ The migration removes legacy code and implements zero-downtime upgrades:
 | Wave 6 | Integration Testing | Day 8 |
 
 **Net Result:** ~1500 lines removed overall, single Supervisor process mode
+
+**Prerequisite:** Supervisor upgrade orchestrator with rolling restart implemented in `pr/migration-supervisor` branch (commit 8c1bc71f).
 
 ### Critical Dependencies
 
