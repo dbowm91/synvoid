@@ -312,7 +312,7 @@ impl std::error::Error for ConnectionLimitError {}
 
 /// Per-site connection limiter wrapping a global [`ConnectionLimiter`].
 ///
-/// Located at: `src/waf/traffic_shaper/limiter.rs:313`
+/// Located at: `src/waf/traffic_shaper/limiter.rs:319`
 ///
 /// This struct is created by [`ConnectionLimiter`] via `site_connection_limiter()`.
 /// Use `try_acquire()` or `acquire_with_queue()` to acquire connection tokens.
