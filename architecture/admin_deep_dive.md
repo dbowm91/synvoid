@@ -227,8 +227,7 @@ All admin clients are expected to set appropriate Authorization headers.
 **System/Process** (`/system/*`):
 - `/system/info` - System information
 - `/system/workers` - Worker process management
-- `/system/master` - Master status
-- `/system/overseer` - Supervisor status (legacy endpoint; Supervisor consolidated mode is default)
+- `/system/supervisor` - Supervisor status and upgrade management
 
 **Stats/Metrics** (`/stats/*`):
 - `/stats/summary` - Aggregated metrics

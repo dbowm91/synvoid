@@ -5,8 +5,9 @@ use clap::Parser;
 #[cfg(feature = "mesh")]
 use synvoid::master::handle_export_threat_feed;
 use synvoid::master::{
-    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
-    handle_stop,
+    handle_apply_upgrade, handle_configtest, handle_generatenewtoken, handle_generatetoken,
+    handle_rehash, handle_rollback_upgrade, handle_stage_binary, handle_status,
+    handle_stop, handle_upgrade_status,
 };
 use synvoid::worker::{
     run_static_worker, run_unified_server_worker, setup_unified_server_panic_handler,
@@ -197,6 +198,18 @@ struct Args {
         help = "Show current node information (node ID, public key, genesis status)"
     )]
     show_node_info: bool,
+
+    #[arg(long, value_name = "PATH", help = "Stage a binary for rolling upgrade")]
+    upgrade_stage: Option<PathBuf>,
+
+    #[arg(long, help = "Apply staged binary with rolling restart")]
+    upgrade_apply: bool,
+
+    #[arg(long, help = "Get current upgrade status")]
+    upgrade_status: bool,
+
+    #[arg(long, help = "Rollback current upgrade")]
+    upgrade_rollback: bool,
 }
 
 fn main() {
@@ -393,6 +406,38 @@ fn main() {
     if args.status {
         if let Err(e) = handle_status(args.control_addr) {
             eprintln!("Status check failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if args.upgrade_status {
+        if let Err(e) = handle_upgrade_status(args.control_addr) {
+            eprintln!("Upgrade status failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if args.upgrade_apply {
+        if let Err(e) = handle_apply_upgrade(args.control_addr) {
+            eprintln!("Apply upgrade failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if args.upgrade_rollback {
+        if let Err(e) = handle_rollback_upgrade(args.control_addr) {
+            eprintln!("Rollback upgrade failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if let Some(binary_path) = args.upgrade_stage {
+        if let Err(e) = handle_stage_binary(args.control_addr, binary_path) {
+            eprintln!("Stage binary failed: {}", e);
             std::process::exit(1);
         }
         std::process::exit(0);

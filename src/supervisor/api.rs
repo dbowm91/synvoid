@@ -11,8 +11,10 @@ pub mod proto {
 
 use proto::control_plane_server::{ControlPlane, ControlPlaneServer};
 use proto::{
-    BlockRequest, BlockResponse, ReloadRequest, ReloadResponse, Stats, StatusRequest,
-    StatusResponse, StopRequest, StopResponse, UnblockRequest, UnblockResponse, WorkerInfo,
+    ApplyUpgradeRequest, ApplyUpgradeResponse, BlockRequest, BlockResponse, ReloadRequest,
+    ReloadResponse, StageBinaryRequest, StageBinaryResponse, Stats, StatusRequest,
+    StatusResponse, StopRequest, StopResponse, UnblockRequest, UnblockResponse,
+    UpgradeStatusRequest, UpgradeStatusResponse, WorkerInfo,
 };
 
 pub struct ControlPlaneService {
@@ -123,6 +125,71 @@ impl ControlPlane for ControlPlaneService {
         self.state.block_store.unblock_ip(&ip, &req.scope);
 
         Ok(Response::new(UnblockResponse { success: true }))
+    }
+
+    async fn stage_binary(
+        &self,
+        request: Request<StageBinaryRequest>,
+    ) -> Result<Response<StageBinaryResponse>, Status> {
+        let req = request.into_inner();
+        let orchestrator = self.state.upgrade_orchestrator.clone()
+            .ok_or_else(|| Status::internal("Upgrade orchestrator not initialized"))?;
+
+        match orchestrator.stage(std::path::PathBuf::from(req.binary_path)).await {
+            Ok(staged) => Ok(Response::new(StageBinaryResponse {
+                success: true,
+                checksum: staged.checksum.iter().map(|b| format!("{:02x}", b)).collect(),
+                message: format!("Binary staged successfully"),
+            })),
+            Err(e) => Ok(Response::new(StageBinaryResponse {
+                success: false,
+                checksum: String::new(),
+                message: e.to_string(),
+            })),
+        }
+    }
+
+    async fn apply_upgrade(
+        &self,
+        _request: Request<ApplyUpgradeRequest>,
+    ) -> Result<Response<ApplyUpgradeResponse>, Status> {
+        let orchestrator = self.state.upgrade_orchestrator.clone()
+            .ok_or_else(|| Status::internal("Upgrade orchestrator not initialized"))?;
+
+        match orchestrator.apply().await {
+            Ok(upgraded) => Ok(Response::new(ApplyUpgradeResponse {
+                success: true,
+                message: "Rolling upgrade completed".to_string(),
+                upgraded_count: upgraded as u32,
+                failed_count: 0,
+            })),
+            Err(e) => Ok(Response::new(ApplyUpgradeResponse {
+                success: false,
+                message: e.to_string(),
+                upgraded_count: 0,
+                failed_count: 1,
+            })),
+        }
+    }
+
+    async fn get_upgrade_status(
+        &self,
+        _request: Request<UpgradeStatusRequest>,
+    ) -> Result<Response<UpgradeStatusResponse>, Status> {
+        let orchestrator = self.state.upgrade_orchestrator.clone()
+            .ok_or_else(|| Status::internal("Upgrade orchestrator not initialized"))?;
+
+        let state = orchestrator.get_state().await;
+
+        Ok(Response::new(UpgradeStatusResponse {
+            state: format!("{:?}", state.state),
+            staged_binary_path: state.staged_binary.as_ref().map(|b| b.path.to_string_lossy().to_string()).unwrap_or_default(),
+            staged_binary_checksum: state.staged_binary.as_ref().map(|b| b.checksum.iter().map(|byte| format!("{:02x}", byte)).collect()).unwrap_or_default(),
+            staged_at: state.staged_binary.as_ref().map(|b| b.staged_at).unwrap_or(0),
+            upgraded_count: state.upgraded_count as u32,
+            remaining_count: state.remaining_count as u32,
+            rollback_reason: state.rollback_reason.unwrap_or_default(),
+        }))
     }
 }
 

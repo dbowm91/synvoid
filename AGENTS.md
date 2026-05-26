@@ -110,11 +110,21 @@ SynVoid uses a multi-process architecture designed for **high scalability (1M+ R
 
 | Process | Flag | Purpose | Default Count |
 |---------|------|---------|---------------|
-| **Supervisor** | (default) | Manages master lifecycle, upgrades, health monitoring; consolidates legacy Overseer and Master | 1 |
-| **Master** | `--master` | Spawns/manages workers, handles IPC, runs admin API | 1 |
+| **Supervisor** | (default) | Manages lifecycle, upgrades, health monitoring; spawns and coordinates workers | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | Handles HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | 1 |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated, unused for HTTP) | configurable |
+
+### Supervisor Process
+
+The Supervisor is the single parent process that:
+- Spawns and monitors worker processes
+- Handles IPC coordination between processes
+- Provides the admin API and gRPC control plane
+- Manages zero-downtime upgrades via rolling restart
+- Coordinates health monitoring and automatic rollback on failures
+
+All worker types (UnifiedServerWorker, StaticWorker) are children of the Supervisor.
 
 ### UnifiedServerWorker: Single Process for HTTP/HTTPS/HTTP3
 
@@ -187,7 +197,7 @@ These items were identified in reviews but have been fixed:
 - CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
 - macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
 - BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - now returns true when ML-DSA absent, fail-safe behavior confirmed)
-- BUG-PL-1 Master mode CLI flag (`src/main.rs:27` - --master flag now functional for legacy Overseer->Master hierarchy)
+- BUG-PL-1 Master mode CLI flag (`src/main.rs:27` - --master flag functional for legacy mode)
 - BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)

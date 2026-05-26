@@ -72,7 +72,10 @@ impl CommandClient {
 
         rt.block_on(async {
             use crate::supervisor::api::proto::control_plane_client::ControlPlaneClient;
-            use crate::supervisor::api::proto::{ReloadRequest, StatusRequest, StopRequest};
+            use crate::supervisor::api::proto::{
+                ApplyUpgradeRequest, ReloadRequest, StageBinaryRequest, StatusRequest, StopRequest,
+                UpgradeStatusRequest,
+            };
 
             let mut client = ControlPlaneClient::connect(format!("http://{}", addr))
                 .await
@@ -106,6 +109,45 @@ impl CommandClient {
                         .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok("true".to_string())
+                }
+                MasterCommand::StageBinary { binary_path } => {
+                    let response = client
+                        .stage_binary(StageBinaryRequest {
+                            binary_path: binary_path.to_string_lossy().to_string(),
+                        })
+                        .await
+                        .map_err(|e| CommandError::ServerError(e.to_string()))?;
+                    let resp = response.into_inner();
+                    if resp.success {
+                        Ok(format!("Binary staged: checksum={}", resp.checksum))
+                    } else {
+                        Ok(format!("Stage failed: {}", resp.message))
+                    }
+                }
+                MasterCommand::ApplyUpgrade => {
+                    let response = client
+                        .apply_upgrade(ApplyUpgradeRequest {})
+                        .await
+                        .map_err(|e| CommandError::ServerError(e.to_string()))?;
+                    let resp = response.into_inner();
+                    if resp.success {
+                        Ok(format!(
+                            "Upgrade applied: {} upgraded, {} failed",
+                            resp.upgraded_count, resp.failed_count
+                        ))
+                    } else {
+                        Ok(format!("Apply failed: {}", resp.message))
+                    }
+                }
+                MasterCommand::GetUpgradeStatus => {
+                    let response = client
+                        .get_upgrade_status(UpgradeStatusRequest {})
+                        .await
+                        .map_err(|e| CommandError::ServerError(e.to_string()))?;
+                    Ok(serde_json::to_string_pretty(&response.into_inner()).unwrap_or_default())
+                }
+                MasterCommand::RollbackUpgrade => {
+                    Ok("Rollback not implemented via gRPC".to_string())
                 }
             }
         })
@@ -205,6 +247,14 @@ impl CommandClient {
                 MasterCommand::ReloadConfig => Signal::SIGHUP,
                 MasterCommand::HealthCheck => Signal::SIGUSR1,
                 MasterCommand::Status => Signal::SIGUSR2,
+                MasterCommand::StageBinary { .. }
+                | MasterCommand::ApplyUpgrade
+                | MasterCommand::GetUpgradeStatus
+                | MasterCommand::RollbackUpgrade => {
+                    return Err(CommandError::NotSupported(
+                        "Upgrade commands not supported via signal".to_string(),
+                    ));
+                }
             };
 
             let pid = Pid::from_raw(pid as i32);

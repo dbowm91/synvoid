@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(unix)]
@@ -25,6 +26,10 @@ pub enum MasterCommand {
     ReloadConfig,
     Status,
     HealthCheck,
+    StageBinary { binary_path: PathBuf },
+    ApplyUpgrade,
+    GetUpgradeStatus,
+    RollbackUpgrade,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

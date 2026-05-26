@@ -10,7 +10,7 @@ SynVoid is a high-performance, multi-tenant Web Application Firewall (WAF) and r
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           Supervisor (Control Plane)                         │
 │  Process management, gRPC API, Raft consensus, DHT routing, config loading  │
-│  (Consolidated from legacy Overseer + Master hierarchy)                     │
+│  (Replaces legacy Overseer + Master hierarchy)                               │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                     ┌─────────────────┼─────────────────┐
@@ -204,7 +204,7 @@ Each module has a dedicated deep dive document for detailed exploration:
 
 | Category | Document | Coverage |
 |----------|----------|----------|
-| **Process Model** | [Process Lifecycle](process_lifecycle.md) | Overseer, Supervisor, Worker hierarchy, drain coordination |
+| **Process Model** | [Process Lifecycle](process_lifecycle.md) | Supervisor, Worker hierarchy, drain coordination |
 | **Worker Architecture** | [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
 | **HTTP Stack** | [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
 | **Request Routing** | [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
@@ -297,9 +297,7 @@ Each module has a dedicated deep dive document for detailed exploration:
 | `src/auth/` | User auth, sessions, bcrypt, brute-force protection |
 | `src/platform/` | Cross-platform abstractions, sandboxing |
 | `src/process/` | IPC primitives, worker lifecycle management |
-| `src/supervisor/` | Process supervisor, gRPC control plane |
-| `src/overseer/` | Legacy overseer (health monitoring, upgrades) |
-| `src/master/` | Legacy master process (IPC with workers) |
+| `src/supervisor/` | Process supervisor, gRPC control plane, zero-downtime upgrades |
 | `src/metrics/` | Prometheus metrics, bandwidth tracking |
 | `src/logging/` | Dynamic log levels, access logging |
 

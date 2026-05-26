@@ -131,21 +131,19 @@ let api_routes = Router::new()
     // ...
 ```
 
-## Overseer Status Pattern
+## Supervisor Status Pattern
 
-### Writing Status (Overseer Process)
+### Writing Status (Supervisor Process)
 
-The Overseer writes status to a file periodically:
+The Supervisor writes status to a file periodically:
 
 ```rust
-// In src/overseer/process.rs
-const OVERSEER_STATUS_FILE: &str = "overseer_status.json";
+// In src/supervisor/process.rs
+const SUPERVISOR_STATUS_FILE: &str = "supervisor_status.json";
 
-struct OverseerStatusFile {
+struct SupervisorStatusFile {
     running: bool,
     pid: Option<u32>,
-    master_pid: Option<u32>,
-    master_status: String,
     uptime_secs: u64,
     upgrade_mode: String,
     drain_status: String,
@@ -154,11 +152,11 @@ struct OverseerStatusFile {
     last_updated: u64,
 }
 
-impl OverseerProcess {
+impl SupervisorProcess {
     async fn write_status_file(&self) {
         let status = self.collect_status();
         let json = serde_json::to_string_pretty(&status).unwrap();
-        let path = self.runtime_dir.join(OVERSESEER_STATUS_FILE);
+        let path = self.runtime_dir.join(SUPERVISOR_STATUS_FILE);
         // Write atomically via temp file
         tokio::fs::write(&temp_path, json).await;
         tokio::fs::rename(&temp_path, &path).await;
@@ -170,31 +168,31 @@ impl OverseerProcess {
 
 ```rust
 // In src/admin/handlers/system.rs
-fn get_overseer_status_file_path() -> PathBuf {
+fn get_supervisor_status_file_path() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/var/run"))
         .join("synvoid")
-        .join("overseer_status.json")
+        .join("supervisor_status.json")
 }
 
-pub async fn get_overseer(
+pub async fn get_supervisor(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<OverseerStatusResponse>, StatusCode> {
-    let path = get_overseer_status_file_path();
-    
+) -> Result<Json<SupervisorStatusResponse>, StatusCode> {
+    let path = get_supervisor_status_file_path();
+
     if path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&path).await {
             if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                return Ok(Json(OverseerStatusResponse {
+                return Ok(Json(SupervisorStatusResponse {
                     running: json.get("running").and_then(|v| v.as_bool()).unwrap_or(false),
                     // ... map other fields
                 }));
             }
         }
     }
-    
+
     // Fallback to ProcessManager state
     // ...
 }

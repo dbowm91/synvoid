@@ -79,7 +79,7 @@ ConfigManager (root container)
 │   ├── mimes: MimesConfig
 │   ├── dns: DnsConfig              # [feature=dns]
 │   ├── mesh: Option<MeshConfig>     # [feature=mesh]
-│   ├── overseer: OverseerConfig    # Legacy process supervisor
+│   ├── overseer: OverseerConfig      # Legacy (reserved for future removal; Supervisor uses upgrade config instead)
 │   ├── process_manager: ProcessManagerConfig
 │   ├── supervisor: SupervisorConfig
 │   └── honeypot_port: HoneypotPortConfig

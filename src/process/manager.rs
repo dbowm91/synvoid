@@ -829,6 +829,95 @@ impl ProcessManager {
             .filter_map(|w| w.ipc.clone())
             .collect()
     }
+    pub async fn spawn_upgrade_unified_server_worker(&self) -> std::io::Result<WorkerId> {
+        let id = self.allocate_worker_id();
+        let worker_binary = self.find_worker_binary()?;
+
+        let pending_threads = *self.pending_thread_count.read();
+        let worker_threads = pending_threads.unwrap_or(2) as usize;
+        let mut cmd = self.build_worker_command(&worker_binary);
+        cmd.arg("--unified-server-worker")
+            .arg("--worker-id")
+            .arg(id.as_usize().to_string())
+            .arg("--worker-threads")
+            .arg(worker_threads.to_string())
+            .arg("--reuse-port")
+            .arg("--upgrade-mode");
+
+        let core = id.as_usize() % self.cpu_count;
+        cmd.arg("--cpu-affinity").arg(core.to_string());
+
+        let total_workers = self.config.unified_server_workers;
+        cmd.arg("--total-workers").arg(total_workers.to_string());
+
+        let default_port = self.unified_server_port.read().unwrap_or(self.config.worker_port_base);
+        let child = cmd.spawn().map_err(|e| {
+            tracing::error!("Failed to spawn upgrade unified server worker: {}", e);
+            e
+        })?;
+
+        let pid = child.id();
+        let unified_worker_process = UnifiedServerWorkerProcess::new(id, pid, child);
+        {
+            let mut unified_server_workers = self.unified_server_workers.write();
+            unified_server_workers.insert(id.as_usize(), unified_worker_process);
+        }
+
+        self.record_spawn(
+            &id,
+            pid,
+            Some(default_port),
+            ProcessEvent::UnifiedServerWorkerStarted(id, pid),
+        );
+        tracing::info!(
+            "Spawned upgrade unified server worker {} with PID {} on port {}",
+            id,
+            pid,
+            default_port
+        );
+        Ok(id)
+    }
+
+    pub fn get_unified_server_worker_ids(&self) -> Vec<WorkerId> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers.keys().map(|&id| WorkerId(id)).collect()
+    }
+
+    pub fn get_unified_server_worker_port(&self, worker_id: WorkerId) -> Option<u16> {
+        let base = self.config.worker_port_base;
+        let unified_port = *self.unified_server_port.read();
+        if unified_port.is_some() {
+            unified_port
+        } else {
+            Some(base + worker_id.as_usize() as u16)
+        }
+    }
+
+    pub async fn stop_unified_server_worker(&self, worker_id: WorkerId) -> Result<(), String> {
+        {
+            let mut unified_server_workers = self.unified_server_workers.write();
+            if let Some(mut worker) = unified_server_workers.remove(&worker_id.as_usize()) {
+                let _ = worker.ipc.take();
+                if let Some(mut child) = worker.child_mut().take() {
+                    let _ = child.kill();
+                }
+            }
+        }
+        let _ = self.event_tx.blocking_send(ProcessEvent::UnifiedServerWorkerStopped(worker_id));
+        Ok(())
+    }
+
+    pub async fn stop_all_unified_server_workers(&self) -> Result<(), String> {
+        let worker_ids: Vec<_> = {
+            let unified_server_workers = self.unified_server_workers.read();
+            unified_server_workers.keys().copied().collect()
+        };
+        for id in worker_ids {
+            self.stop_unified_server_worker(WorkerId(id)).await.ok();
+        }
+        Ok(())
+    }
+
 
     pub async fn drain_unified_server_worker_async(
         &self,

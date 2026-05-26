@@ -84,7 +84,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `socket_fd.rs` | Unix FD passing via `SCM_Rights`, `SocketHolder` for batch handoff |
 | `manager.rs` | `ProcessManager` - spawn/monitor/restart workers |
 | `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
-| `pidfile.rs` | PID file management, overseer lock file |
+| `pidfile.rs` | PID file management, supervisor lock file |
 | `command.rs` | Command client/response types |
 | `ipc_windows.rs` | Windows IPC via named pipes (Server side, pipe server implementation) |
 | `socket_path.rs` | Master socket path resolution and versioning for upgrades |
@@ -102,9 +102,9 @@ The `Message` enum is organized into **17 categories**:
 7. **AppServer**: `AppServerRequest`, `AppServerResponse`, `AppServerChunk`, `AppServerUpgrade`
 8. **UnifiedServer**: `UnifiedServerWorkerStarted/Ready/Drain`
 9. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
-10. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
-11. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
-12. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
+10. **Upgrade**: `UpgradeReady`, `SupervisorUpgradePrepare/Commit/Rollback`
+11. **Supervisor**: `SupervisorDrainWorkers`, `SupervisorGetStatus`
+12. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
 13. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
 14. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
 15. **WorkerRestart**: `WorkerRestartRequest`, `WorkerRestartAck`

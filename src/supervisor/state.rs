@@ -13,6 +13,8 @@ use crate::mesh::threat_intel::ThreatIntelligenceManager;
 #[cfg(feature = "mesh")]
 use crate::waf::YaraRulesManager;
 
+use super::upgrade::UpgradeOrchestrator;
+
 #[derive(Clone)]
 pub struct SupervisorState {
     pub config: Arc<RwLock<ConfigManager>>,
@@ -32,6 +34,7 @@ pub struct SupervisorState {
     pub mesh_transport_manager: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
     pub org_key_manager: Option<Arc<crate::mesh::org_key_manager::OrgKeyManager>>,
+    pub upgrade_orchestrator: Option<Arc<UpgradeOrchestrator>>,
 }
 
 #[derive(Clone, Default)]
@@ -75,6 +78,7 @@ impl SupervisorState {
             mesh_transport_manager: trackers.mesh_transport_manager,
             #[cfg(feature = "mesh")]
             org_key_manager: None,
+            upgrade_orchestrator: None,
         }
     }
 
@@ -84,5 +88,10 @@ impl SupervisorState {
 
     pub async fn shutdown(&self) {
         let _ = self.shutdown_tx.send(());
+    }
+
+    pub fn with_upgrade_orchestrator(mut self, orchestrator: Arc<UpgradeOrchestrator>) -> Self {
+        self.upgrade_orchestrator = Some(orchestrator);
+        self
     }
 }

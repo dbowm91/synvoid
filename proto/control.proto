@@ -5,18 +5,27 @@ package synvoid.control;
 service ControlPlane {
   // Get the current status of the supervisor and workers
   rpc GetStatus (StatusRequest) returns (StatusResponse);
-  
+
   // Reload the configuration and propagate to workers
   rpc ReloadConfig (ReloadRequest) returns (ReloadResponse);
-  
+
   // Gracefully stop the supervisor and all workers
   rpc Stop (StopRequest) returns (StopResponse);
-  
+
   // Manually block an IP address
   rpc BlockIp (BlockRequest) returns (BlockResponse);
-  
+
   // Manually unblock an IP address
   rpc UnblockIp (UnblockRequest) returns (UnblockResponse);
+
+  // Stage a binary for rolling upgrade
+  rpc StageBinary (StageBinaryRequest) returns (StageBinaryResponse);
+
+  // Apply staged binary with rolling restart
+  rpc ApplyUpgrade (ApplyUpgradeRequest) returns (ApplyUpgradeResponse);
+
+  // Get upgrade status
+  rpc GetUpgradeStatus (UpgradeStatusRequest) returns (UpgradeStatusResponse);
 }
 
 message StatusRequest {}
@@ -74,4 +83,35 @@ message UnblockRequest {
 }
 message UnblockResponse {
   bool success = 1;
+}
+
+// Stage binary for upgrade
+message StageBinaryRequest {
+  string binary_path = 1;
+}
+message StageBinaryResponse {
+  bool success = 1;
+  string checksum = 2;
+  string message = 3;
+}
+
+// Apply staged binary (rolling restart)
+message ApplyUpgradeRequest {}
+message ApplyUpgradeResponse {
+  bool success = 1;
+  string message = 2;
+  uint32 upgraded_count = 3;
+  uint32 failed_count = 4;
+}
+
+// Get upgrade status
+message UpgradeStatusRequest {}
+message UpgradeStatusResponse {
+  string state = 1;
+  string staged_binary_path = 2;
+  string staged_binary_checksum = 3;
+  uint64 staged_at = 4;
+  uint32 upgraded_count = 5;
+  uint32 remaining_count = 6;
+  string rollback_reason = 7;
 }

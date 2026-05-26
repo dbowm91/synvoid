@@ -15,6 +15,8 @@ use crate::waf::RuleFeedManagerForWaf;
 use crate::RunningFlag;
 
 use super::state::{SupervisorState, SupervisorStateTrackers};
+use super::upgrade_state::UpgradeConfig;
+use super::upgrade::UpgradeOrchestrator;
 
 pub struct SupervisorProcess {
     state: SupervisorState,
@@ -26,11 +28,29 @@ pub struct SupervisorProcess {
 
 impl SupervisorProcess {
     pub async fn new(
-        state: SupervisorState,
+        mut state: SupervisorState,
         pm_config: ProcessManagerConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let (process_manager, event_rx) =
-            ProcessManager::new(pm_config, Some(state.block_store.clone()));
+        let (pm, event_rx) = ProcessManager::new(
+            pm_config.clone(),
+            Some(state.block_store.clone()),
+        );
+        let pm = Arc::new(pm);
+
+        let upgrade_config = UpgradeConfig {
+            rolling_window_size: 1,
+            health_check_timeout_secs: 30,
+            health_check_retries: 5,
+            health_check_interval_secs: 2,
+            drain_timeout_secs: 60,
+            max_retries: 3,
+            rollback_on_health_failure: true,
+        };
+        let orchestrator = Arc::new(UpgradeOrchestrator::new(
+            pm.clone(),
+            upgrade_config,
+        ));
+        state = state.with_upgrade_orchestrator(orchestrator);
 
         // Initialize IPC listener (consolidated master + command socket)
         let endpoint = IpcEndpoint::master();
@@ -38,7 +58,7 @@ impl SupervisorProcess {
 
         Ok(Self {
             state,
-            process_manager: Arc::new(process_manager),
+            process_manager: pm,
             event_rx,
             running: RunningFlag::new(),
             ipc_listener: Some(ipc_listener),

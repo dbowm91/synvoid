@@ -540,11 +540,11 @@ pub fn generate_global_node_auth(
 
 ## IPC Message Signing
 
-### Overseer-Worker Communication
+### Supervisor-Worker Communication
 
-**Location**: `src/process/ipc.rs`, `src/overseer/ipc_client.rs`, `src/process/ipc_signed.rs`
+**Location**: `src/process/ipc.rs`, `src/process/ipc_signed.rs`
 
-**Issue**: IPC messages between overseer and workers were unsigned.
+**Issue**: IPC messages between Supervisor and workers were unsigned.
 
 **Fix**: Added HMAC-signed message support:
 
@@ -929,7 +929,7 @@ fn refresh_sparse_buckets(&self) {
 | `src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
 | `src/process/ipc.rs` | IPC signing with HMAC |
 | `src/process/ipc_signed.rs` | Signed message deserialization |
-| `src/overseer/ipc_client.rs` | Signed overseer IPC |
+| `src/overseer/ipc_client.rs` | Legacy IPC client (used when running legacy Overseer mode) |
 | `src/mesh/config_identity.rs` | 0o600 key permissions, multi-genesis keys |
 | `src/mesh/threat_intel.rs` | Composite DHT keys |
 | `src/mesh/transport_global.rs` | Distributed revocation |
@@ -943,7 +943,7 @@ fn refresh_sparse_buckets(&self) {
 
 ### SAFETY_REASON Comments for Intentional Dead Code
 
-**Location**: Throughout codebase, primarily `src/mesh/`, `src/overseer/`, `src/waf/`
+**Location**: Throughout codebase, primarily `src/mesh/`, `src/waf/`, `src/process/`
 
 **Pattern**: Use `// SAFETY_REASON: ...` comments to document intentional `#[allow(dead_code)]` suppressions:
 
@@ -960,7 +960,7 @@ pub struct UpgradeConfig { ... }
 **Categories of intentional suppressions**:
 - Reserved protocol handlers (transport_dns.rs, transport_org.rs, etc.)
 - HSM support (dns/server/mod.rs:503)
-- Serde deserialization fields (overseer/upgrade.rs)
+- Serde deserialization fields (`supervisor/upgrade_state.rs`)
 - Debug/introspection fields (stored but not read)
 - Future use items
 

@@ -10,8 +10,6 @@ pub async fn handle_supervisor_command(
     pm: Arc<ProcessManager>,
     state: SupervisorState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Attempt to receive a MasterCommand.
-    // Since AsyncIpcStream::recv_with_timeout is generic, we can use it here.
     match ipc.recv_with_timeout::<MasterCommand>(5000).await {
         Ok(Some(command)) => {
             match command {
@@ -19,7 +17,7 @@ pub async fn handle_supervisor_command(
                     let pm_stats = pm.get_status();
                     let status = MasterStatus {
                         master_pid: std::process::id(),
-                        started_at: 0, // TODO: Track start time
+                        started_at: 0,
                         uptime_secs: 0,
                         version: env!("CARGO_PKG_VERSION").to_string(),
                         workers: pm_stats.workers,
@@ -56,6 +54,36 @@ pub async fn handle_supervisor_command(
                 }
                 MasterCommand::HealthCheck => {
                     ipc.send(&CommandResponse::Ok("true".to_string())).await?;
+                }
+                MasterCommand::StageBinary { .. } => {
+                    ipc.send(&CommandResponse::Error(
+                        "Use gRPC for StageBinary command".to_string(),
+                    ))
+                    .await?;
+                }
+                MasterCommand::ApplyUpgrade => {
+                    ipc.send(&CommandResponse::Error(
+                        "Use gRPC for ApplyUpgrade command".to_string(),
+                    ))
+                    .await?;
+                }
+                MasterCommand::GetUpgradeStatus => {
+                    if let Some(ref orchestrator) = state.upgrade_orchestrator {
+                        let upgrade_state = orchestrator.get_state().await;
+                        let json = serde_json::to_string(&upgrade_state).unwrap_or_default();
+                        ipc.send(&CommandResponse::Ok(json)).await?;
+                    } else {
+                        ipc.send(&CommandResponse::Ok(
+                            "Upgrade orchestrator not initialized".to_string(),
+                        ))
+                        .await?;
+                    }
+                }
+                MasterCommand::RollbackUpgrade => {
+                    ipc.send(&CommandResponse::Error(
+                        "Use gRPC for RollbackUpgrade command".to_string(),
+                    ))
+                    .await?;
                 }
             }
         }

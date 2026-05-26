@@ -598,7 +598,7 @@ impl NonceCache {
 
 ### Atomic Connection Tracker Updates
 
-**Location**: `src/overseer/connection_tracker.rs:79-98`
+**Location**: `src/overseer/connection_tracker.rs:79-98` (legacy code, Supervisor uses `src/process/manager.rs` instead)
 
 **Issue**: Non-atomic update of worker counts and totals.
 

@@ -198,6 +198,103 @@ pub fn handle_configtest(config_path: &Option<PathBuf>) -> Result<(), Box<dyn st
     }
 }
 
+pub fn handle_stage_binary(
+    control_addr: Option<String>,
+    binary_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pid_manager = PidFileManager::new();
+
+    if let Some(_content) = pid_manager.read_pid() {
+        if pid_manager.is_running() {
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+
+            match client.send_command(MasterCommand::StageBinary { binary_path }) {
+                Ok(msg) => {
+                    println!("Stage binary: {}", msg);
+                }
+                Err(e) => {
+                    println!("Failed to stage binary: {}", e);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    println!("synvoid is not running");
+    Ok(())
+}
+
+pub fn handle_apply_upgrade(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let pid_manager = PidFileManager::new();
+
+    if let Some(_content) = pid_manager.read_pid() {
+        if pid_manager.is_running() {
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+
+            match client.send_command(MasterCommand::ApplyUpgrade) {
+                Ok(msg) => {
+                    println!("Apply upgrade: {}", msg);
+                }
+                Err(e) => {
+                    println!("Failed to apply upgrade: {}", e);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    println!("synvoid is not running");
+    Ok(())
+}
+
+pub fn handle_upgrade_status(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let pid_manager = PidFileManager::new();
+
+    if let Some(_content) = pid_manager.read_pid() {
+        if pid_manager.is_running() {
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+
+            match client.send_command(MasterCommand::GetUpgradeStatus) {
+                Ok(msg) => {
+                    println!("Upgrade Status");
+                    println!("==============");
+                    println!("{}", msg);
+                }
+                Err(e) => {
+                    println!("Failed to get upgrade status: {}", e);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    println!("synvoid is not running");
+    Ok(())
+}
+
+pub fn handle_rollback_upgrade(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let pid_manager = PidFileManager::new();
+
+    if let Some(_content) = pid_manager.read_pid() {
+        if pid_manager.is_running() {
+            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+
+            match client.send_command(MasterCommand::RollbackUpgrade) {
+                Ok(msg) => {
+                    println!("Rollback: {}", msg);
+                }
+                Err(e) => {
+                    println!("Failed to rollback: {}", e);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    println!("synvoid is not running");
+    Ok(())
+}
+
 pub fn generate_token_hex() -> String {
     use rand::Rng;
     let mut rng = rand::rng();

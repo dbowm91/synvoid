@@ -2014,7 +2014,7 @@ Trust Score = 0.4×behavior + 0.20×uptime + 0.25×consistency + 0.15×identity
 
 ## 12. System Architecture
 
-### 12.1 Overseer > Master > Worker Model
+### 12.1 Supervisor > Worker Model
 
 SynVoid uses a hierarchical process model designed for high availability, horizontal scalability, and zero-downtime operation.
 
@@ -2024,46 +2024,53 @@ SynVoid uses a hierarchical process model designed for high availability, horizo
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│                        Overseer                              │
+│                        Supervisor                            │
 │  • Global health monitoring                                  │
 │  • Traffic distribution orchestration                        │
-│  • Leader election (Raft consensus)                         │
-│  • Configuration synchronization                             │
-│  • Zero-downtime upgrade handling                           │
+│  • Leader election (Raft consensus)                           │
+│  • Configuration synchronization                              │
+│  • Zero-downtime upgrade handling                             │
+│  • Worker spawn/monitor/restart                               │
 └─────────────────────────────────────────────────────────────┘
               │                           │
               ▼                           ▼
     ┌─────────────────┐         ┌─────────────────┐
-    │   Master Node   │         │   Master Node   │
-    │  ┌───────────┐  │         │  ┌───────────┐  │
-    │  │  Worker   │  │         │  │  Worker   │  │
-    │  │  Pool     │  │         │  │  Pool     │  │
-    │  └───────────┘  │         │  └───────────┘  │
+    │  UnifiedServer  │         │  UnifiedServer  │
+    │    Worker       │         │    Worker       │
+    │  (HTTP/HTTPS/   │         │  (HTTP/HTTPS/   │
+    │   HTTP3 + WAF)  │         │   HTTP3 + WAF)  │
+    └─────────────────┘         └─────────────────┘
+              │                           │
+              ▼                           ▼
+    ┌─────────────────┐         ┌─────────────────┐
+    │     Static      │         │     Static      │
+    │     Worker      │         │     Worker      │
+    │  (CSS/JS Minify)│         │  (CSS/JS Minify)│
     └─────────────────┘         └─────────────────┘
 ```
 
-#### The Overseer
+#### The Supervisor
 
-The overseer is the root process that ensures system reliability:
+The Supervisor is the root process that ensures system reliability:
 
 **Health Monitoring**:
-- Continuously monitors all master processes
+- Continuously monitors all worker processes
 - Detects hangs, crashes, or unresponsive states
-- Triggers automatic restart of failed masters
+- Triggers automatic restart of failed workers
 
 **Configuration Synchronization**:
 - Receives configuration updates from API or file
-- Propagates changes to all masters with consistency guarantees
+- Propagates changes to all workers with consistency guarantees
 - Ensures all nodes run identical configurations
 
 **Leader Election (Raft Consensus)**:
-When multiple overseers run (for high availability), they use Raft consensus:
+When multiple Supervisors run (for high availability), they use Raft consensus:
 
 ```
 Raft Leader Election:
 
 ┌──────────┐     ┌──────────┐     ┌──────────┐
-│ Overseer  │     │ Overseer │     │ Overseer │
+│Supervisor│     │Supervisor│     │Supervisor│
 │   (A)     │     │   (B)    │     │   (C)    │
 └─────┬─────┘     └────┬─────┘     └────┬─────┘
       │               │                 │
@@ -2080,7 +2087,7 @@ Raft Leader Election:
 ```
 
 **How Raft Works in SynVoid**:
-1. **Leader Election**: On startup or leader failure, overseers request votes
+1. **Leader Election**: On startup or leader failure, Supervisors request votes
 2. **Log Replication**: Leader broadcasts configuration changes to followers
 3. **Commitment**: Changes commit when majority acknowledge receipt
 4. **Failure Detection**: Followers detect leader absence via heartbeat timeout
@@ -2089,42 +2096,30 @@ Raft Leader Election:
 This ensures configuration consistency even if some nodes fail.
 
 **Zero-Downtime Upgrades**:
-The overseer manages rolling updates:
-1. New binary deployed alongside existing
-2. Overseer spawns new master with new binary
-3. New master reports healthy
-4. Old master gracefully drained
-5. Old master exits
-6. Repeat for all masters
+The Supervisor manages rolling updates via UpgradeOrchestrator:
+1. Binary staged and validated via preflight checks
+2. New workers spawned with new binary
+3. New workers pass health check
+4. Old workers gracefully drained
+5. Old workers exit
+6. Repeat until all workers upgraded
 
-#### The Master Process
-
-The master acts as coordinator between overseer and workers:
-
-**Site Configuration**:
-- Each site has independent configuration
-- Master manages routing rules, upstream pools, SSL certificates
-- Changes to site config don't require restart
-
-**Worker Management**:
-- Spawns worker processes at startup
-- Monitors worker health
-- Distributes work across worker pools
-
-**Health Reporting**:
-- Reports metrics to overseer (connection counts, throughput, errors)
-- Triggers failover if becoming unhealthy
+**Process Management**:
+- Spawns and monitors UnifiedServerWorker and StaticWorker processes
+- Provides gRPC control plane API for remote management
+- Manages admin API, block store, and IPC coordination
 
 #### Workers
 
 Workers perform actual request processing:
 
-**Unified Request Workers**:
+**UnifiedServerWorker**:
 - Handle all HTTP/HTTPS/HTTP3 traffic
 - Run in Tokio's multi-threaded runtime
 - Each worker can process thousands of concurrent connections
+- Execute WAF pipeline, proxying, and security enforcement
 
-**Minifier Workers**:
+**StaticWorker**:
 - Background workers that optimize static content
 - Minify HTML, CSS, JavaScript
 - Generate compressed variants (gzip, brotli)
@@ -2421,7 +2416,7 @@ While still experimental, MaluNet offers a compelling vision: a world where orga
 | **Flood Protection** | SYN Proxy, Token Bucket Rate Limiting, Connection Rate Limiting, UDP Flood Protection (O(1) Slotted Counters), Blackhole Mode |
 | **Bot Mitigation** | AI Crawler Blocking (isbot integration), CSS Challenges, JavaScript Challenges (Navigator APIs, Canvas Fingerprinting), Proof-of-Work Challenges (Hashcash), Honeypot Endpoints |
 | **Upload Security** | MIME Type Validation (whitelist/blacklist), Magic Byte Detection, File Size Limits, YARA Malware Scanning, Quarantine Workflow, Threat Intelligence Integration |
-| **Architecture** | Overseer > Master > Worker Model, Raft Consensus (Leader Election), Zero-Downtime Upgrades (Socket FD Passing), Unix Sockets IPC, Shared Memory |
+| **Architecture** | Supervisor > Worker Model, Raft Consensus (Leader Election), Zero-Downtime Upgrades (Rolling Restart), Unix Sockets IPC, Shared Memory |
 | **Transport** | HTTP/1.1, HTTP/2, HTTP/3 (QUIC) |
 | **Protocols** | FastCGI, PHP-FPM, Granian (WSGI/ASGI/RSGI), WebSocket |
 | **Security** | TLS 1.3, Post-Quantum Ready (Kyber/ML-KEM), YARA Scanning, Content Signing, Pass-Over Keypass |

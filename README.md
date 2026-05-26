@@ -14,7 +14,7 @@ SynVoid has recently undergone a major architectural evolution to meet the deman
 Workers are now completely isolated processes (or threads) that own their network stack. Using `SO_REUSEPORT`, the kernel handles load balancing at the socket level, eliminating the bottleneck of a single "acceptor" process.
 
 ### 2. Unified Supervisor Model
-The legacy Overseer and Master processes have been unified into a single **Supervisor**. The Supervisor centralizes the Control Plane (Raft consensus, DHT routing, and Mesh transport) while relegating the high-performance request handling to the Workers.
+The Overseer and Master processes have been unified into a single **Supervisor**. The Supervisor centralizes the Control Plane (Raft consensus, DHT routing, and Mesh transport) while relegating the high-performance request handling to the Workers.
 
 ### 3. gRPC Control Plane
 Instance management is now formalized via a high-performance **gRPC API**. Status reporting, configuration reloads, and manual blocking are handled through a strongly-typed interface, enabling robust remote orchestration.
