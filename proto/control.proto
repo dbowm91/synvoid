@@ -2,6 +2,10 @@ syntax = "proto3";
 
 package synvoid.control;
 
+// gRPC API for SynVoid Supervisor control plane.
+// This proto file is located at proto/control.proto and defines the formal
+// Control Plane API for remote management of the Supervisor and its workers.
+
 service ControlPlane {
   // Get the current status of the supervisor and workers
   rpc GetStatus (StatusRequest) returns (StatusResponse);
