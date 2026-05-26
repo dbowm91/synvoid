@@ -16,15 +16,17 @@ Specialized guidance for WASM plugin runtime.
 - Instance pooling reduces instantiation overhead
 - Memory buffers should be reused across invocations
 
-## Known Bugs (Still Present as of 2026-05-23)
+## Known Bugs
 
-### Spin Cold-Start Bug (UNFIXED)
+### Spin Cold-Start Bug (FIXED 2026-05-26)
 
-`src/spin/runtime.rs:251` creates new `SpinAppInstance` per request via `instantiate_app()`. No instance reuse is implemented, causing significant cold-start overhead on every request.
+`src/spin/runtime.rs:251` created new `SpinAppInstance` per request via `instantiate_app()`. No instance reuse was implemented, causing significant cold-start overhead on every request.
 
-Workaround: Consider caching SpinAppInstance by component_id for reuse across requests.
+**Fix**: `SpinRuntime` now has `cached_instances` field (line 123) and `get_or_create_instance()` method (lines 288-295) that caches and reuses `SpinAppInstance` by component_id with 5-minute idle timeout. The `reuse()` method on `SpinAppInstance` (lines 103-105) updates request timestamps without creating new instances.
 
-**Note**: DHT prefix propagation bug (previously noted) has been FIXED - allowed_dht_prefixes now correctly propagated to pooled instances.
+### DHT Prefix Propagation (FIXED previously)
+
+`allowed_dht_prefixes` now correctly propagated to pooled instances.
 
 ## Skills Reference
 
