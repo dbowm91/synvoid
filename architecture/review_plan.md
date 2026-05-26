@@ -154,7 +154,7 @@ After Phase 2 audit, the following documents have been identified for potential 
 - [x] Phase 2 stale content audit completed
 - [x] Stale items list populated
 - [x] List of documents to prune identified (none needed)
-- [ ] Review plan committed to main
+- [x] Review plan committed to main (multiple commits for incremental fixes)
 - [x] BUG-DNS-1: DnsConfig.validate() - fix missing sub-component validation
 - [x] BUG-WAF-1: SiteConnectionLimiter unused parameters - confirmed not a bug
 - [x] Fix stale line number references in admin_deep_dive.md
@@ -166,8 +166,8 @@ After Phase 2 audit, the following documents have been identified for potential 
 - [x] Fix stale references in platform_deep_dive.md
 - [x] Fix stale references in process_lifecycle.md
 - [x] Fix stale references in routing_deep_dive.md
-- [ ] Pending: Fix stale items in app_handlers, mesh_deep_dive, plugin_deep_dive, proxy_deep_dive, worker_architecture (no saved plans)
-- [ ] Update AGENTS.md and add skills as needed
+- [x] AGENTS.md updated with bug fixes and status corrections
+- [ ] Pending: Fix stale items in app_handlers, mesh_deep_dive, plugin_deep_dive, proxy_deep_dive, worker_architecture (no saved review plans)
 
 ---
 
