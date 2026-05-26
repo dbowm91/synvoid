@@ -76,9 +76,9 @@ cargo check --no-default-features --features mesh,dns
 | Wrong Path | Correct Path |
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
-| `src/http/shared_handler.rs` | `src/http/server.rs:4532` (contains `collect_body_with_chunk_waf` and `stream_body_with_waf`) |
+| `src/http/shared_handler.rs` | `src/http/server.rs:4662` (contains `collect_body_with_chunk_waf` and `stream_body_with_waf`) |
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
-| `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
+| `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:874-1092` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
 
 ## Modular Agent Guidance
@@ -157,9 +157,6 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
 | Capsicum `limit_fd()` dead code | `src/platform/sandbox.rs:516-528` | Method defined but never called in `apply()` - FD rights limiting not active | Known |
-| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | ✅ FIXED |
-| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive` validate() not called | ✅ FIXED |
-| DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Documentation showed wrong prefixes | ✅ FIXED |
 
 ### Dependency Vulnerability Status
 
@@ -180,20 +177,21 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 ### Verified "Already Fixed" Items
 
-These items were identified in reviews but have been fixed:
+These items were identified in reviews and have been fixed:
 - LocationMatcher `current_depth()` stub removed (`src/location_matcher.rs:191-195` - only `is_empty()` and `len()` exist; no stub was ever present)
 - Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
 - StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
 - gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
 - CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
 - macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
-- BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - now returns true when ML-DSA absent, fail-safe behavior confirmed)
+- BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - returns true when ML-DSA absent, fail-safe behavior confirmed)
 - BUG-PL-1 Master mode CLI flag (`src/main.rs:27` - --master flag now functional for legacy Overseer->Master hierarchy)
 - BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 - BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
-- AXFR record types complete (`src/dns/transfer.rs:829-1028` - all required record types now handled)
+- SiteConnectionLimiter unused params (`src/waf/traffic_shaper/limiter.rs:312-323` - `_max_connections` etc. never used) - **NOTE:** This bug still exists and needs fixing - see `plans/plan.md`
+- DnsConfig.validate() incomplete (`crates/synvoid-config/src/dns/mod.rs:174-205`) - **NOTE:** Bug still exists - see `plans/plan.md` Wave 1 item 1.1
 
 ## Known Deferred Items
 
@@ -228,7 +226,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **Default entry point** is `run_supervisor_mode()` via `src/main.rs:538-547`; `--master` flag routes to `run_master_mode()`
 
 ### Granian Integration
-- **Granian IS integrated** - `src/app_server/granian.rs` (959 lines) with full process management, auto-install, admin API
+- **Granian IS integrated** - `src/app_server/granian.rs` (1047 lines) with full process management, auto-install, admin API
 - NOT a separate process type - runs within the Supervisor/Master architecture
 
 ### Supervisor Migration (Planned)
