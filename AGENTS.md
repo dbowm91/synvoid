@@ -80,7 +80,6 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:860-934` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
-| `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
 
 ## Modular Agent Guidance
 
@@ -223,8 +222,6 @@ Large plans should be organized into **waves** that can execute in parallel:
 | `architecture/mesh_deep_dive.md:30` | Already correct | Bloom filter purpose already documented correctly |
 | `architecture/config_deep_dive.md:64-67` | `architecture/config_deep_dive.md:86` | Sites HashMap is at line 86, not 64-67 |
 | `src/waf/mod.rs:484-512` | `src/waf/mod.rs:442-517` | Async WAF pipeline entry point `check_request_full` is at 442-517 |
-| `SpinHttpHandler` reference | `src/spin/handler.rs:117` | Handler struct is in spin/handler.rs, not http/server.rs |
-| `app_server.rs:5` utoipa import | Not present | Issue was already fixed in original cleanup plan |
 
 ## Known Deferred Items
 
@@ -234,7 +231,8 @@ Some items are intentionally deferred due to architectural complexity:
 |----|-------|--------|
 | MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
 | MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete, requires Raft migration |
-| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation, buffers entire stdout |
+| APP-15 | FastCGI Response NOT Truly Streamed | Buffers entire stdout; architectural change needed |
+| SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 

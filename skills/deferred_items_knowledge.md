@@ -6,12 +6,9 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 
 **Architecture Review Plan: COMPLETED**
 
-All items from the 2026-05-26 architecture review plan have been verified and completed:
-- Wave 1: Critical Bugs (BUG-ROUTER-1, BUG-PLUGIN-1) - All Fixed
-- Wave 2: Configuration Consistency (SiteConnectionLimiter, DnsConfig.validate) - All Fixed
-- Wave 3: Documentation Fixes - All 12 subsections completed
-- Wave 4: Completeness & Improvements - All completed
-- Wave 5: Compilation Cleanup - Clippy/formatting completed (tests DEFERRED)
+All items from the 2026-05-26 architecture review plan have been verified and completed.
+
+---
 
 ## Deferred Items (Architectural Complexity)
 
@@ -21,7 +18,10 @@ These items are intentionally deferred due to architectural complexity:
 |----|-------|--------|
 | MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
 | MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete, requires Raft migration |
-| APP-15 | FastCGI Response NOT Truly Streamed | Known limitation - buffers entire stdout |
+| APP-15 | FastCGI Response NOT Truly Streamed | Buffers entire stdout, architectural change needed for true streaming |
+| SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
+
+---
 
 ## Known Incomplete Items (Working As Designed)
 
@@ -29,12 +29,14 @@ These are known limitations, not bugs:
 
 | Item | Location | Issue |
 |------|----------|-------|
-| ErasedHttpClient Phase 9 | `server.rs:3305` | `use_erased_client` hardcoded to `false` - Phase 9 never completed |
-| HTTP/2 available but not enforced | `http_client/mod.rs:893` | `is_http2 = true` hardcoded, uses `http2_only(false)`allowing protocol negotiation |
-| DNS Cookie Server not integrated | `dns/cookie.rs`, `dns/server/mod.rs` | Complete implementation exists but not wired in |
-| Minification unused | `static_files/mod.rs:134-136` | `new_with_minifier()` accepts minifier params but silently ignored |
-| Spin instance reuse | `spin/runtime.rs:260` | Only compiled_runtimes cached, not SpinAppInstance - per-request overhead |
-| GOST DS digest | `dnssec_validation.rs:260` | Returns error - requires gost94 crate |
+| ErasedHttpClient Phase 9 | `src/http/server.rs:3305` | `use_erased_client` hardcoded to `false` - Phase 9 never completed |
+| HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded, uses `http2_only(false)` allowing protocol negotiation |
+| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in |
+| Minification unused | `src/static_files/mod.rs:134-136` | `new_with_minifier()` accepts minifier params but silently ignored |
+| Spin instance reuse | `src/spin/runtime.rs:260` | Only compiled_runtimes cached, not SpinAppInstance - per-request overhead |
+| GOST DS digest | `src/dns/dnssec_validation.rs:260` | Returns error - requires gost94 crate |
+
+---
 
 ## Architecture Documents
 
