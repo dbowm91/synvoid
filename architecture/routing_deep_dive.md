@@ -38,8 +38,12 @@ The Radix tree provides O(k) lookup where k is the domain part count (typically 
 The router resolves the request to one of several **Backend Types**:
 - **Upstream:** Standard reverse proxy to an external HTTP/HTTPS server.
 - **FastCGI / PHP:** Direct connection to a FastCGI process (like PHP-FPM).
+- **Php:** PHP via php-cgi executable (separate from FastCGI).
+- **Cgi:** Generic CGI execution.
 - **Static:** The request is handled by the internal `StaticFileHandler`.
-- **AppServer (Granian):** Built-in support for Python ASGI/WSGI applications.
+- **AppServer:** Generic application server backend.
+- **AxumDynamic:** Dynamic axum-based handler for plugin-based routing.
+- **Spin:** Fermyon Spin framework WASM execution.
 - **Serverless (WASM):** Execution of a WASM function.
 - **Mesh:** Routing the request through the WAF Mesh to a remote peer.
 - **QuicTunnel:** Proxying through a specialized QUIC tunnel.
@@ -57,6 +61,7 @@ SynVoid supports multiple load balancing algorithms to distribute traffic across
 - **Weighted Round Robin:** Distribution based on configured backend weights.
 - **Least Connections:** Routes to the backend with the fewest active requests.
 - **Random:** Randomized selection.
+- **PeakEwma:** Cost-based selection using exponential weighted moving average of latency `(conn + 1) * (latency + 1)`.
 - **IP Hash:** Ensures session persistence by hashing the client IP to a specific backend.
 
 ### Health Monitoring & Resilience
@@ -71,7 +76,7 @@ SynVoid supports multiple load balancing algorithms to distribute traffic across
 ## Connection Lifecycle
 
 1.  **Target Resolution:** The Router identifies the upstream pool and specific backend.
-2.  **Lease:** A connection is requested from the pool (enforcing limits).
+2.  **Connection Request:** A connection is requested from the pool (enforcing limits via `increment_connections()`).
 3.  **Protocol Negotiation:** The handler establishes or reuses a connection (HTTP/1.1 keep-alive, H2 multiplexing).
 4.  **Execution:** The request is proxied, and the response is streamed back.
-5.  **Release:** The connection is returned to the pool or closed.
+5.  **Release:** The connection is returned to the pool (`decrement_connections()`) or closed.

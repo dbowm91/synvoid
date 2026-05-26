@@ -72,17 +72,8 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 
 ### Zone Transfers (AXFR/IXFR) (`transfer.rs`)
 
-**AXFR** (`build_axfr_record()`, lines 829-878):
-- **Supported record types**: A, AAAA, CNAME, NS, SOA, TXT, MX
-- **Missing record types** (require implementation per RFC):
-  - **SRV** (RFC 2782) - Service locator
-  - **PTR** (RFC 1035) - Domain pointer
-  - **DNSKEY** (RFC 4034) - DNSSEC signing key
-  - **RRSIG** (RFC 4034) - DNSSEC signature
-  - **NSEC** (RFC 4034) - Next secure record (proof of nonexistence)
-  - **NSEC3** (RFC 5153) - NSEC with cryptographic hashes
-  - **DS** (RFC 4034) - Delegation signer
-  - **CAA** (RFC 8659) - Certification authority authorization
+**AXFR** (`build_axfr_record()`, lines 829-1028):
+- **Supported record types**: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA (all per RFC implementations)
 
 **IXFR** (RFC 1995) - Incremental zone transfer
 **TSIG** (RFC 2845) - Transaction signature authentication for zone transfers
