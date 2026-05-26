@@ -34,7 +34,7 @@ The `TokenBucket` (`src/waf/traffic_shaper/bucket.rs`) provides precise rate-bas
 #### Volumetric Mitigation
 - **UDP Flood Protection:** `UdpFloodProtector` with per-IP (1000/sec) and global (100,000/sec) limits
 - **Blackhole mode:** When attack detected, enters blackhole for configurable duration (default 60s)
-- **ASN & GeoIP Blocking:** ASN tracking via `src/waf/asn_tracker.rs` (GeoIP blocking not fully implemented)
+- **ASN & GeoIP Blocking:** ASN lookup via GeoIP (used in `src/waf/asn_tracker.rs`); GeoIP is used for country-based blocking and ASN lookups
 
 ### 2. Protocol Layer (Request Sanitization)
 - **HTTP Validation:** Ensures requests adhere to protocol standards (method validation, header size limits, URI length).
