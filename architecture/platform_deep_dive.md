@@ -370,7 +370,7 @@ SynVoid supports two deployment modes:
 
 ### macOS Seatbelt Sandboxing
 
-Seatbelt sandbox for macOS is **planned but not yet implemented** (`src/platform/sandbox.rs`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
+Seatbelt sandbox for macOS is **implemented via `macos-sandbox` feature flag** (`src/platform/sandbox.rs`). Other platforms use Landlock (Linux), Capsicum (FreeBSD), or Pledge+Unveil (OpenBSD).
 
 ---
 
