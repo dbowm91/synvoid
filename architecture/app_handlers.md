@@ -18,7 +18,7 @@ SynVoid handles dynamic PHP applications by interfacing directly with PHP-FPM (o
 
 - **Unix Socket & TCP Support:** Can connect to PHP-FPM via local Unix domain sockets for maximum performance or over TCP for remote backends.
 - **Environment Management:** Automatically populates FastCGI environment variables (e.g., `SCRIPT_FILENAME`, `QUERY_STRING`) required for PHP execution.
-- **Response Streaming:** Efficiently streams large responses from the FastCGI backend to the client.
+- **Response Streaming:** Efficiently streams responses from the FastCGI backend. Note: Known limitation - buffers entire stdout before sending; true streaming requires architectural change (APP-15).
 
 ## 3. Python (Granian)
 
@@ -35,7 +35,7 @@ For high-performance, sandboxed edge computing, SynVoid integrates a WebAssembly
 - **Wasmtime Integration:** Uses the industry-standard `wasmtime` engine for executing WASM modules.
 - **Instance Pooling:** Maintains a pool of pre-initialized WASM instances to eliminate cold start latency.
 - **Resource Isolation:** Enforces strict limits on CPU time, memory usage, and syscall access for every WASM execution.
-- **Mesh Distribution:** (Mesh mode only) WASM modules can be distributed globally across the mesh and executed on the Edge node closest to the user.
+- **Mesh Distribution:** (Mesh mode only) WASM modules can potentially be distributed globally across the mesh; full distribution mechanism requires verification
 
 ## 5. Spin Application Support
 
@@ -55,7 +55,7 @@ Spin is **not** the same as the generic WASM edge functions described above. Key
 | **Manifest** | Configuration-driven routes | `spin.toml` parsed via `src/spin/manifest.rs` |
 | **Registration** | Part of site configuration | Manual registration via Admin API |
 | **Components** | Single WASM module per route | Multiple named components in manifest |
-| **HTTP Dispatch** | `WasmHandler` in server pipeline | `SpinHttpHandler` at `src/http/server.rs:2423` |
+| **HTTP Dispatch** | `WasmiHandler` (generic WASM) in server pipeline | `SpinHttpHandler` at `src/http/server.rs:2417` |
 
 Spin applications are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps the `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
 

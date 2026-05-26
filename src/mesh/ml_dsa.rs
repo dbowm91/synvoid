@@ -214,7 +214,7 @@ impl MeshHybridSigner {
                 false
             }
         } else {
-            false
+            true
         }
     }
 

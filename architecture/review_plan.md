@@ -3,7 +3,20 @@
 Generated: 2026-05-26
 Purpose: Review each architecture document, verify claims against code, identify improvements and bugs, and prune stale content.
 
-**Status**: SUBAGENTS COMPLETED - Review plans written to plans/ directory
+**Status**: IN PROGRESS - Working through waves
+
+## In Progress
+
+| # | Item | Module | Status |
+|---|------|--------|--------|
+| 1 | Fix DOC-SEC-1: DHT prefix examples in plugin_deep_dive.md | Plugin | ✅ Completed |
+| 2 | Fix BUG-L1: verify_hybrid() fail-safe in ml_dsa.rs | Layer 3.5 | ✅ Completed |
+| 3 | Fix BUG-PL-1: add --master CLI flag in main.rs | Process | ✅ Completed |
+| 4 | Fix X25519Kyber768Draft00 → X25519MLKEM768 | Layer 3.5 | ✅ Completed |
+| 5 | Update Overseer terminology in admin_deep_dive.md | Admin | ✅ Completed |
+| 6 | Update process_lifecycle.md (CPU affinity, reuse_port refs) | Process | ✅ Completed |
+| 7 | Fix WasmHandler → SpinHttpHandler in app_handlers.md | App Handlers | ✅ Completed |
+| 8 | Fix FastCGI streaming claim in app_handlers.md | App Handlers | ✅ Completed |
 
 ## Excluded Documents
 - `review_plan.md` - This file (generated fresh)

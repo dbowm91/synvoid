@@ -28,8 +28,8 @@ The Master runs as a child of Overseer and provides process management, admin AP
 The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master responsibilities into a single process for simpler deployments.
 
 - **Modes:**
-  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly.
-  - **Legacy Mode:** Overseer spawns Master which spawns workers (still supported for backward compatibility).
+  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly. This is the ONLY functional mode - no CLI flag exists to select Legacy Mode.
+  - **Legacy Mode (code only, not selectable):** Overseer spawns Master which spawns workers. The code exists (`run_overseer_mode()` in `src/startup/master.rs`) but cannot be invoked - there's no CLI flag to enable it. This is legacy code preserved for reference.
 - **Responsibilities:**
   - **Process Management:** Spawning and monitoring Worker processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
@@ -43,8 +43,8 @@ The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master
 Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment.
 
 - **Isolation:** Each worker process is completely independent.
-- **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false`. See `src/overseer/upgrade.rs:748`.
-- **CPU Pinning:** On Linux, workers can be pinned to specific CPU cores via `sched_setaffinity`, eliminating jitter and cache thrashing. **Must be explicitly configured via `cpu_affinity` parameter** - not automatic. Not supported on macOS/BSD.
+- **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/overseer/spawn.rs:43`.
+- **CPU Pinning:** On Linux, workers can be pinned to specific CPU cores via `sched_setaffinity`. CPU affinity is automatically assigned based on worker ID (not manually configured). Not supported on macOS/BSD (logs warning).
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
 

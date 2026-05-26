@@ -17,6 +17,8 @@ use synvoid::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use synvoid::startup::daemon::acquire_pid_file;
 use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
 use synvoid::supervisor::run_supervisor_mode;
+#[cfg(feature = "mesh")]
+use synvoid::startup::master::{run_master_mode, run_overseer_mode};
 
 #[derive(Parser, Debug)]
 #[command(name = "synvoid")]
@@ -25,6 +27,9 @@ use synvoid::supervisor::run_supervisor_mode;
 struct Args {
     #[arg(long, help = "Run as mesh agent process (control plane)")]
     mesh_agent: bool,
+
+    #[arg(long, help = "Run as master process (legacy mode - managed by Overseer)")]
+    master: bool,
 
     #[arg(long, help = "Run as WASM plugin execution jail")]
     wasm_jail: bool,
@@ -518,6 +523,9 @@ fn main() {
         init_logging_simple();
         let config_path = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
         synvoid::supervisor::run_mesh_agent_mode(Some(config_path), args.foreground);
+    } else if args.master {
+        init_logging_simple();
+        run_master_mode(args.config_path, args.log_level);
     } else if args.wasm_jail {
         init_logging_simple();
         synvoid::sandbox::run_wasm_jail_mode();

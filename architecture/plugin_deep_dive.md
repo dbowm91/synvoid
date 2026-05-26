@@ -84,18 +84,19 @@ WASM plugins can query the DHT via `mesh_query_dht()` but **sensitive prefix res
 - **`allowed_dht_prefixes`**: Each plugin's `WasmResourceLimits` defines a whitelist of permitted DHT key prefixes
 - **Default deny**: If no prefixes are configured (`allowed_dht_prefixes` is empty), all DHT queries are blocked
 - **Prefix validation**: At `mesh_query_dht()` invocation, the requested key must match a configured prefix
-- **Example prefixes**: `route:`, `cert:`, `config:`, `serverless:` — plugins cannot query arbitrary mesh data
+- **Example sensitive prefixes**: `threat_indicator:`, `yara_rule:`, `yara_rules_manifest:`, `edge_attestation:`, `dns_zone:`, `dns_record:`, `dns_domain_reg:` — plugins cannot query arbitrary mesh data
 - **Per-runtime enforcement**: Each `WasmRuntime` instance enforces its own `allowed_dht_prefixes` independently
+- **Audit logging**: Unauthorized DHT queries attempt returns `-2` and is logged as a warning (indicates potential exfiltration attempt)
 
 ```
 WasmRuntime (plugin A)
-    └── allowed_dht_prefixes: ["route:", "cert:"]
-            └── mesh_query_dht("route:example")  ✓ allowed
-            └── mesh_query_dht("secret:key")     ✗ blocked
+    └── allowed_dht_prefixes: ["threat_indicator:", "yara_rule:"]
+            └── mesh_query_dht("threat_indicator:malware")  ✓ allowed
+            └── mesh_query_dht("secret:key")               ✗ blocked
 
 WasmRuntime (plugin B)
     └── allowed_dht_prefixes: []
-            └── mesh_query_dht("route:example")  ✗ blocked (default deny)
+            └── mesh_query_dht("threat_indicator:malware")  ✗ blocked (default deny)
 ```
 
 ### Instance Pooling
@@ -103,8 +104,8 @@ WasmRuntime (plugin B)
 - **`WasmInstancePool`** uses a `VecDeque<WasmPooledInstance>` protected by `parking_lot::Mutex`
 - `get()` pops from back, `return_instance()` pushes to back (if under `max_size`)
 - Pooled instances retain their `Store` and instantiated `Instance`
-- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes
-- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (all 7 host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`); real host functions are linked on first actual request
+- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes (via `WasmPooledInstance::prepare_for_request`); the generic `PooledInstance::prepare_for_request` in `pool.rs` does not reset body_receiver or DHT prefixes
+- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (7 host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`); real host functions are linked on first actual request. Note: `guest_alloc`/`guest_free` are linked as real functions (not stubs) via `create_linker`.
 
 ---
 

@@ -7,7 +7,7 @@ This document provides an in-depth review of SynVoid's Layer 3 (Proxy & Routing)
 **Are we supporting PQC fully?**
 Yes, SynVoid is exceptionally forward-looking in its PQC implementation. It achieves "Quantum-Ready" status across both the data plane (Layer 3) and the control plane (Layer 5):
 
-*   **Layer 3 (TLS & Proxy):** Uses the `rustls` crate with the `aws-lc-rs` backend and the `prefer-post-quantum` configuration flag. This enables hybrid key exchange algorithms (e.g., X25519Kyber768Draft00 or X25519MLKEM768) during TLS 1.3 handshakes for incoming client traffic.
+*   **Layer 3 (TLS & Proxy):** Uses the `rustls` crate with the `aws-lc-rs` backend and the `prefer-post-quantum` configuration flag. This enables hybrid key exchange algorithms (e.g., X25519MLKEM768) during TLS 1.3 handshakes for incoming client traffic.
 *   **Layer 5 (Mesh Control Plane):** 
     *   **Key Exchange (KEM):** Implements ML-KEM-768 for securing QUIC tunnels between mesh nodes (`MlKemKeyExchangeService`).
     *   **Authentication (DSA):** Uses `libcrux` for ML-DSA-44. Crucially, it employs a **Hybrid Signature Scheme** (`MeshHybridSigner`) that concatenates an Ed25519 signature (64 bytes) with an ML-DSA-44 signature (2420 bytes). This fail-safe approach ensures that if the new PQC algorithm is broken mathematically, the classical Ed25519 signature still holds.
