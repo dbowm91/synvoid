@@ -1,154 +1,99 @@
 # Architecture Review Plan
 
-Generated: 2026-05-23
-Purpose: Review each architecture document, verify claims against code, and identify improvements and bugs.
+Generated: 2026-05-26
+Purpose: Review each architecture document, verify claims against code, identify improvements and bugs, and prune stale content.
 
-**Status**: INCOMPLETE - Iterative improvement in progress
-
-## Wave Progress
-
-| Wave | Description | Status |
-|------|-------------|--------|
-| 1 | Fix CRITICAL bugs from review plans | ✅ COMPLETED |
-| 2 | Fix HIGH priority improvements | ✅ COMPLETED |
-| 3 | Fix MEDIUM priority items | ✅ COMPLETED |
-| 4 | Fix LOW priority items and doc updates | ✅ COMPLETED |
-| 5 | Update AGENTS.override.md and skills | ✅ COMPLETED |
-
-### Completed Fixes (Wave 1 - CRITICAL Bugs)
-
-- ✅ Audit log file permissions (`src/admin/audit.rs`)
-- ✅ WAF trailing window logic (`src/waf/attack_detection/streaming.rs`)
-- ✅ Proxy retry config propagation (`src/proxy/mod.rs`)
-- ✅ LocationMatcher current_depth() stub removed
-- ✅ Plugin DHT prefix propagation (pooled instances)
-
-### Completed Fixes (Wave 2 - HIGH Priority)
-
-- ✅ CORS middleware documentation fixed (no layer exists - intentional)
-- ✅ Proxy TypedConnectionPool plaintext consistency
-- ✅ Mesh 0-RTT documentation corrected
-- ✅ Mesh DHT verification gaps documented
-- ✅ Config sites hierarchy fixed
-- ✅ WAF JS Challenge documentation fixed
-
-### Completed Fixes (Wave 3 - MEDIUM Priority)
-
-- ✅ Session timing normalization for admin auth
-- ✅ ConfigManager domain lookup and reload fixes
-- ✅ Serverless WASM Engine pooling
-- ✅ Health check TCP mode URL parsing
-- ✅ ML-KEM key freshness tracking
-- ✅ Spin supervisor dead code removed
-
-### Completed Fixes (Wave 4 - LOW Priority)
-
-- ✅ Platform startup flow documentation
-- ✅ gRPC uptime_secs tracking
-- ✅ Routing reverse-domain documentation
-- ✅ ACME DNS-01 documentation
-- ✅ Upstream TypedConnectionPool plaintext consistency
-- ✅ Various other documentation updates
+**Status**: SUBAGENTS COMPLETED - Review plans written to plans/ directory
 
 ## Excluded Documents
 - `review_plan.md` - This file (generated fresh)
 - `deep_dive_review.md` - General review methodology (not module-specific)
 - `overview.md` - General overview (not a discrete module)
 
-## Modules to Review
+## Modules Reviewed
 
-| # | Document | Module | Subagent |
-|---|----------|--------|----------|
-| 1 | `admin_deep_dive.md` | Admin API | admin_review |
-| 2 | `app_handlers.md` | App Handlers | app_handlers_review |
-| 3 | `config_deep_dive.md` | Configuration | config_review |
-| 4 | `dns_deep_dive.md` | DNS | dns_review |
-| 5 | `layer_3_5_deep_dive.md` | Layer 3.5 | layer_3_5_review |
-| 6 | `mesh_deep_dive.md` | Mesh Networking | mesh_review |
-| 7 | `networking_deep_dive.md` | Networking | networking_review |
-| 8 | `platform_deep_dive.md` | Platform | platform_review |
-| 9 | `plugin_deep_dive.md` | Plugin/WASM | plugin_review |
-| 10 | `process_lifecycle.md` | Process Lifecycle | process_lifecycle_review |
-| 11 | `proxy_deep_dive.md` | Proxy | proxy_review |
-| 12 | `routing_deep_dive.md` | Routing | routing_review |
-| 13 | `waf_deep_dive.md` | WAF | waf_review |
-| 14 | `worker_architecture.md` | Worker Architecture | worker_review |
-
----
-
-## Review Instructions for Subagents
-
-Each subagent should:
-
-1. **Read the architecture document** fully
-2. **Identify claims** - statements about how the system works, data structures, protocols, etc.
-3. **Verify claims against code** - locate the relevant source files and confirm the claims are accurate
-4. **Interrogate for improvements** - look for:
-   - Suboptimal implementations
-   - Missing features described in docs but not implemented
-   - Performance concerns
-   - Security issues
-   - Race conditions or concurrency bugs
-5. **Interrogate for bugs** - look for:
-   - Edge cases not handled
-   - Error handling gaps
-   - Memory leaks or resource exhaustion
-   - Protocol violations
-   - API contract violations
-
-## Output Format
-
-Each subagent writes their findings to `plans/<module_name>_review_plan.md` with this structure:
-
-```markdown
-# <Module> Architecture Review Plan
-
-## Document
-- Source: architecture/<module>_deep_dive.md (or appropriate filename)
-
-## Claims Verified ✓ / Issues Found ✗
-
-### Claim 1: [description]
-- **Status**: Verified / Not Verified / Partially Verified
-- **Code Location**: path/to/file.rs:line
-- **Finding**: [details]
-
-## Improvement Plan
-
-### High Priority
-1. [issue and recommended fix]
-
-### Medium Priority
-1. [issue and recommended fix]
-
-## Bug Report
-
-### Critical
-1. [bug description and location]
-
-### Minor
-1. [bug description and location]
-```
+| # | Document | Module | Status | Output File |
+|---|----------|--------|--------|-------------|
+| 1 | `admin_deep_dive.md` | Admin API | ✅ Complete | plans/admin_review_plan.md |
+| 2 | `app_handlers.md` | App Handlers | ✅ Complete | plans/app_handlers_review_plan.md |
+| 3 | `config_deep_dive.md` | Configuration | ✅ Complete | plans/config_review_plan.md |
+| 4 | `dns_deep_dive.md` | DNS | ✅ Complete | plans/dns_review_plan.md |
+| 5 | `layer_3_5_deep_dive.md` | Layer 3.5 | ✅ Complete | plans/layer_3_5_review_plan.md |
+| 6 | `mesh_deep_dive.md` | Mesh Networking | ✅ Complete | plans/mesh_review_plan.md |
+| 7 | `networking_deep_dive.md` | Networking | ✅ Complete | plans/networking_review_plan.md |
+| 8 | `platform_deep_dive.md` | Platform | ✅ Complete | plans/platform_review_plan.md |
+| 9 | `plugin_deep_dive.md` | Plugin/WASM | ✅ Complete | plans/plugin_review_plan.md |
+| 10 | `process_lifecycle.md` | Process Lifecycle | ✅ Complete | plans/process_lifecycle_review_plan.md |
+| 11 | `proxy_deep_dive.md` | Proxy | ✅ Complete | plans/proxy_review_plan.md |
+| 12 | `routing_deep_dive.md` | Routing | ✅ Complete | plans/routing_review_plan.md |
+| 13 | `waf_deep_dive.md` | WAF | ✅ Complete | plans/waf_review_plan.md |
+| 14 | `worker_architecture.md` | Worker Architecture | ✅ Complete | plans/worker_review_plan.md |
 
 ---
 
-## Subagent Launch Commands
+## Stale Items Summary (Cross-Module)
 
-The following subagents will be launched in parallel:
+The following stale items were identified across architecture documents:
 
-```
-admin_review:         Review admin_deep_dive.md
-app_handlers_review:  Review app_handlers.md
-config_review:        Review config_deep_dive.md
-dns_review:           Review dns_deep_dive.md
-layer_3_5_review:     Review layer_3_5_deep_dive.md
-mesh_review:          Review mesh_deep_dive.md
-networking_review:    Review networking_deep_dive.md
-platform_review:      Review platform_deep_dive.md
-plugin_review:        Review plugin_deep_dive.md
-process_review:       Review process_lifecycle.md
-proxy_review:         Review proxy_deep_dive.md
-routing_review:      Review routing_deep_dive.md
-waf_review:          Review waf_deep_dive.md
-worker_review:       Review worker_architecture.md
-```
+| Document | Stale Item | Action Required |
+|----------|------------|-----------------|
+| admin_deep_dive.md | Overseer references should be "Supervisor" | Update terminology |
+| admin_deep_dive.md | Line number references off by 3-10 lines | Fix line refs |
+| app_handlers.md | FastCGI "response streaming" claim contradicts APP-15 | Remove/update claim |
+| app_handlers.md | "WasmHandler" doesn't exist (SpinHttpHandler is at that line) | Fix reference |
+| app_handlers.md | Generic WASM mesh distribution claim unverified | Clarify scope |
+| config_deep_dive.md | ConfigManager line numbers incorrect (113-233 vs 113-241) | Fix line refs |
+| config_deep_dive.md | Type naming mismatches (IpFeedConfig vs MainIpFeedConfig) | Unify naming |
+| dns_deep_dive.md | AXFR "Missing record types" section is WRONG - all implemented | Remove section |
+| dns_deep_dive.md | DnsCookieServer created but not integrated | Document as deferred |
+| dns_deep_dive.md | Query coalescing line references wrong | Fix line refs |
+| layer_3_5_deep_dive.md | X25519Kyber768Draft00 mentioned but only X25519MLKEM768 exists | Fix algorithm name |
+| layer_3_5_deep_dive.md | verify_hybrid() returns false without ML-DSA (BUG-L1) | Code fix needed |
+| mesh_deep_dive.md | quorum verification reference wrong file (state_machine vs signed.rs) | Fix file ref |
+| networking_deep_dive.md | "Shared Handler" claim inaccurate (separate implementations) | Clarify |
+| networking_deep_dive.md | HTTP/2 client configuration inconsistent | Document as known issue |
+| platform_deep_dive.md | fs.rs missing from module table | Add to docs |
+| platform_deep_dive.md | Several process module files undocumented | Add to docs |
+| plugin_deep_dive.md | DHT prefix examples completely wrong (87-88) | FIX IMMEDIATELY |
+| plugin_deep_dive.md | Warmup stub function description misleading | Clarify |
+| process_lifecycle.md | Overseer Cannot Spawn Master (--master flag missing) | Document as legacy |
+| process_lifecycle.md | CPU affinity documentation wrong (it's automatic, not manual) | Fix claim |
+| proxy_deep_dive.md | HTTP/2 connection multiplexing not implemented | Document as known issue |
+| proxy_deep_dive.md | ErasedHttpClient Phase 9 incomplete | Document as deferred |
+| routing_deep_dive.md | "Lease" concept doesn't exist | Remove terminology |
+| routing_deep_dive.md | Missing BackendType variants (AxumDynamic, Spin, Cgi) | Add to docs |
+| waf_deep_dive.md | Line references off by ~50 lines | Fix line refs |
+| waf_deep_dive.md | GeoIP "not fully implemented" misleading (ASN lookup uses it) | Clarify |
+| worker_architecture.md | WAF pipeline "Challenge" stage not separate (inline in bot protection) | Clarify flow |
+| worker_architecture.md | Health monitoring overstated (primarily passive) | Clarify |
+
+---
+
+## Critical Bugs Identified
+
+| Bug ID | Module | Description | Location |
+|--------|--------|-------------|----------|
+| BUG-L1 | Layer 3.5 | verify_hybrid() returns false without ML-DSA, not fail-safe | src/mesh/ml_dsa.rs:217 |
+| BUG-PL-1 | Process | Overseer cannot spawn Master (--master flag missing in main.rs) | src/main.rs, src/overseer/spawn.rs:84 |
+| BUG-PL-2 | Process | Legacy mode not selectable (only Supervisor mode functional) | main.rs |
+| DOC-SEC-1 | Plugin | DHT prefix examples completely wrong (security misconfig risk) | architecture/plugin_deep_dive.md:87-88 |
+
+---
+
+## Known Issues Deferred
+
+| Issue | Module | Description |
+|-------|--------|-------------|
+| APP-15 | FastCGI | Response NOT truly streamed (buffers entire stdout) |
+| DNS-COOKIE | DNS | DNS Cookie Server not integrated |
+| HTTP2-DISABLED | HTTP Client | HTTP/2 infrastructure exists but disabled |
+| PQC-PHASE9 | HTTP Server | ErasedHttpClient Phase 9 incomplete |
+
+---
+
+## Next Steps
+
+1. **Immediate**: Fix critical documentation error in plugin_deep_dive.md (DHT prefix examples)
+2. **High Priority**: Address BUG-L1 (verify_hybrid fail-safe) and BUG-PL-1 (Overseer spawn issue)
+3. **Medium Priority**: Update stale line references and terminology across docs
+4. **Low Priority**: Add missing module files to documentation tables
