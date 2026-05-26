@@ -33,15 +33,15 @@ SynVoid is a high-performance, multi-tenant Web Application Firewall (WAF) and r
 │  Process management, gRPC API, Raft consensus, DHT routing, config loading  │
 │  (Consolidated from legacy Overseer + Master hierarchy)                     │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                     ┌─────────────────┼─────────────────┐
-                     ▼                 ▼                 ▼
-          ┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
-          │ UnifiedServer    │ │   Static     │ │    Mesh Agent    │
-          │ Worker (HTTP/    │ │   Worker     │ │    (optional     │
-          │ HTTPS/HTTP3)     │ │   (CSS/JS    │ │    control       │
-          │                  │ │   minify)    │ │    plane)        │
-          └──────────────────┘ └──────────────┘ └──────────────────┘
+                                        │
+                      ┌─────────────────┼─────────────────┐
+                      ▼                 ▼                 ▼
+           ┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+           │ UnifiedServer    │ │   Static     │ │    Mesh Agent    │
+           │ Worker (HTTP/    │ │   Worker     │ │    (optional     │
+           │ HTTPS/HTTP3)     │ │   (CSS/JS    │ │    control       │
+           │                  │ │   minify)    │ │    plane)        │
+           └──────────────────┘ └──────────────┘ └──────────────────┘
 ```
 
 **Key Design Decisions:**
@@ -68,6 +68,8 @@ SynVoid employs a hierarchical process model:
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated) |
+
+> **Detailed Process Architecture:** See [Process Lifecycle](process_lifecycle.md)
 
 ---
 
@@ -135,6 +137,8 @@ The WAF subsystem provides comprehensive attack detection, rate limiting, bot mi
 | `waf/traffic_shaper` | Bandwidth limiting and quotas |
 | `waf/violation_tracker` | Violation tracking and escalation |
 
+> **Detailed WAF Pipeline:** See [WAF Deep Dive](waf_deep_dive.md)
+
 ---
 
 ### Proxy & Routing
@@ -161,6 +165,8 @@ The proxy subsystem handles request forwarding, load balancing, and caching.
 | `proxy/retry` | Retry logic with backoff |
 | `proxy/streaming` | Streaming response handling |
 
+> **Detailed Proxy Architecture:** See [Proxy Deep Dive](proxy_deep_dive.md) and [Routing Deep Dive](routing_deep_dive.md)
+
 ---
 
 ### Application Handlers
@@ -176,6 +182,8 @@ Application handlers process requests for various backend types.
 | **Serverless** | [`src/serverless/`](plugin_deep_dive.md) | WASM runtime with instance pooling | [Plugin Deep Dive](plugin_deep_dive.md) |
 | **Spin** | [`src/spin/`](plugin_deep_dive.md) | Fermyon Spin framework support | [Plugin Deep Dive](plugin_deep_dive.md) |
 | **Plugin** | [`src/plugin/`](plugin_deep_dive.md) | Dynamic WASM/native plugin loading | [Plugin Deep Dive](plugin_deep_dive.md) |
+
+> **Detailed Application Handlers:** See [App Handlers](app_handlers.md)
 
 ---
 
@@ -212,6 +220,8 @@ DNS and tunnel modules provide optional connectivity features.
 | `dns/tsig` | Transaction signatures |
 | `dns/update` | Dynamic updates |
 | `dns/zone_file` | Zone file parsing |
+
+> **Detailed DNS & Tunnel Architecture:** See [DNS Deep Dive](dns_deep_dive.md)
 
 ---
 
@@ -274,6 +284,8 @@ The mesh subsystem provides peer-to-peer connectivity, DHT-based service discove
 | `mesh/wasm_dist` | WASM distribution |
 | `mesh/yara_rules` | YARA rule management |
 
+> **Detailed Mesh Architecture:** See [Mesh Deep Dive](mesh_deep_dive.md)
+
 ---
 
 ### TLS & Cryptography
@@ -295,6 +307,8 @@ TLS and cryptographic modules handle encryption and certificate management.
 | `tls/config` | TLS configuration |
 | `tls/server` | TLS server implementation |
 | `tls/sni_peek` | SNI-based routing |
+
+> **Detailed TLS & Crypto Architecture:** See [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md)
 
 ---
 
@@ -336,6 +350,9 @@ Admin and platform modules provide management, monitoring, and system integratio
 |-----------|---------|
 | `platform/service` | Service management |
 | `platform/sandbox` | OS sandboxing |
+
+> **Detailed Admin API:** See [Admin Deep Dive](admin_deep_dive.md)
+> **Detailed Platform Architecture:** See [Platform Deep Dive](platform_deep_dive.md)
 
 ---
 
@@ -409,12 +426,12 @@ Client Request
     │         │        │         │         │        │
     ▼         ▼        ▼        ▼         ▼        ▼
  HTTP      FastCGI  File    WASM      Spin     WASM
- Client   Client   System  Runtime   Runtime  Plugin
+ Client   Client   System  Runtime  Runtime  Plugin
                                │
-            ┌──────────────────┼──────────────┐
-            ▼              ▼              ▼
-       Upstream       Upstream        Upstream
-       Pool           Pool            Pool
+          ┌────────────────────┼──────────────┐
+          ▼              ▼              ▼
+     Upstream       Upstream        Upstream
+        Pool           Pool            Pool
 ```
 
 ---
