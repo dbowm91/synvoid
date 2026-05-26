@@ -25,17 +25,17 @@ The Unified Server is designed to handle multiple protocols and transport layers
 
 ### 2. WAF Pipeline
  Every request passing through the Unified Server is processed by the **WAF Pipeline**. This pipeline is modular and executes in stages (verified order in `WafCore::check_request_full`):
-1.  **Block Store Check:** IP/CIDR block list lookup from threat intelligence.
-2.  **Rate Limits:** IP-based rate limiting, CIDR filtering, and flood protection.
-3.  **Endpoint Block:** Block specific endpoints/paths.
-4.  **Honeypot Detection:** Hidden link matching and trap endpoints.
-5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting.
-6.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
-7.  **Challenge:** Issue challenges (PoW, CSS) if threat level requires.
+ 1.  **Block Store Check:** IP/CIDR block list lookup from threat intelligence.
+ 2.  **Rate Limits:** IP-based rate limiting, CIDR filtering, and flood protection.
+ 3.  **Endpoint Block:** Block specific endpoints/paths.
+ 4.  **Honeypot Detection:** Hidden link matching and trap endpoints.
+ 5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting. Challenges are issued **inline** within bot protection, not as a separate pipeline stage.
+ 6.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
+ 7.  **Flood Protection:** TCP connection tracking and rate limiting (via `FloodProtector`).
 
 ### 3. Upstream Management
 - **Connection Pooling:** Maintains persistent connections to backend servers (PHP-FPM, Granian, etc.) to reduce latency.
-- **Health Monitoring:** Actively and passively monitors backend health to ensure reliable routing.
+- **Health Monitoring:** Primarily **passive** - monitors backend responses for failures/successes. Active health checks (periodic HTTP GET/TCP connect) are configurable but not the primary mechanism.
 - **Load Balancing:** Supports multiple algorithms for distributing traffic across upstream pools.
 
 ---
