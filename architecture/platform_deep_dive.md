@@ -24,6 +24,8 @@ Cross-platform abstractions providing OS-level functionality for Unix and Window
 | `unix.rs` | Unix-specific implementations (UnixDomain sockets, signals, daemonization) |
 | `windows_impl.rs` | Windows-specific IPC via named pipes |
 | `fs.rs` | Filesystem operations with sandbox integration (path resolution, traversal prevention) |
+| `service/` | Windows service integration (service control manager, installation, running as service) |
+| `windows/` | Windows-specific implementations (firewall, interface resolver, Wintun VPN) |
 
 ### Platform Abstraction Pattern
 

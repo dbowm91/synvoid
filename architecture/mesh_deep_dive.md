@@ -29,6 +29,13 @@ Peer and service discovery are handled via a Kademlia-based **Distributed Hash T
 - **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT.
 - **Hierarchical Routing:** Uses Bloom filters and regional hubs to enable memory-efficient route announcement checking in large-scale networks, not to minimize DHT discovery latency. Bloom filters check if a route advertisement has been seen before (via `MeshBloomFilter` in `src/mesh/hierarchical_routing.rs:66`), reducing redundant route propagation.
 
+### 4. Raft Consensus
+Global nodes use Raft consensus (`src/mesh/raft/*.rs`) for state consistency:
+- **Leader Election:** Global nodes elect a leader to coordinate state changes
+- **Log Replication:** State changes are replicated across Global nodes via Raft log
+- **Quorum Requirements:** Write operations require quorum (2/3) of Global nodes
+- **Note:** Quorum deadlock risk during network partition (see MESH-15)
+
 ---
 
 ## Collective Defense Features
