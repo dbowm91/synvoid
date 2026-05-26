@@ -137,7 +137,7 @@ impl UserspaceWireGuard {
         use defguard_boringtun::noise::{Tunn, TunnResult};
         use defguard_boringtun::x25519::StaticSecret;
 
-        tracing::info!("Starting boringtun userspace WireGuard");
+        tracing::info!("Starting defguard_boringtun userspace WireGuard");
 
         let private_key = self.decode_private_key()?;
         let secret = StaticSecret::from(private_key);
@@ -181,7 +181,7 @@ impl UserspaceWireGuard {
         gauge!("synvoid.tunnel.wireguard.running").set(1.0);
 
         tracing::info!(
-            "boringtun WireGuard started with {} peers",
+            "defguard_boringtun WireGuard started with {} peers",
             self.config.peers.len()
         );
 

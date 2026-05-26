@@ -8,13 +8,20 @@ use std::sync::Arc;
 
 /// RFC 5011 Trust Anchor States
 ///
-/// RFC 5011 defines a state machine for trust anchor management:
-/// - Keys start as Unknown (never observed)
-/// - When first seen in DNSKEY RRset: Unknown -> Seen
-/// - When validated via CDS/CDNSKEY: Seen -> Pending (30-day observation)
-/// - After observation period: Pending -> Valid (trusted)
-/// - When REVOKE bit observed: Valid -> Revoked
-/// - After 30-day absence: Revoked -> Removed
+/// RFC 5011 defines a state machine for trust anchor management with 6 states:
+/// - Missing: Key was configured but never observed
+/// - Seen: Key observed in DNSKEY RRset but not yet validated via CDS/CDNSKEY
+/// - Pending: Key validated via CDS/CDNSKEY, awaiting 30-day observation period
+/// - Valid: Key is fully trusted and actively used for validation (after observation)
+/// - Revoked: Key has REVOKE bit set
+/// - Removed: Key was removed from zone, waiting for confirmation period
+///
+/// State transitions:
+/// Missing -> Seen (first observation in DNSKEY)
+/// Seen -> Pending (via CDS/CDNSKEY validation)
+/// Pending -> Valid (after 30-day observation period)
+/// Valid -> Revoked (REVOKE bit observed)
+/// Revoked -> Removed (after 30-day absence from zone)
 #[derive(
     Debug,
     Clone,

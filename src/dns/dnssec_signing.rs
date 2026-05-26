@@ -50,6 +50,7 @@ pub fn create_rrsig_record(
     rrsig.extend_from_slice(&original_ttl.to_be_bytes());
 
     let now = current_timestamp();
+    // RRSIG validity is fixed at ±1 day/7 days per RFC 5011 (non-configurable)
     let sig_expire = now + (7 * 86400);
     let sig_inception = now - (86400);
 
