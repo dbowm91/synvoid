@@ -512,21 +512,6 @@ pub mod capsicum {
             }
             Ok(())
         }
-
-        fn limit_fd(&self, fd: i32, rights: &[libc::c_char]) -> Result<(), SandboxError> {
-            let result = unsafe { libc::cap_rights_init(std::ptr::null_mut(), rights.as_ptr()) };
-
-            if result.is_null() {
-                return Err(SandboxError::Syscall("cap_rights_init failed".into()));
-            }
-
-            let limit_result = unsafe { libc::cap_rights_limit(fd, result) };
-            if limit_result < 0 {
-                return Err(SandboxError::Syscall("cap_rights_limit failed".into()));
-            }
-
-            Ok(())
-        }
     }
 
     impl SandboxBackend for CapsicumSandbox {
