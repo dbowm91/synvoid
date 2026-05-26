@@ -70,12 +70,13 @@ PluginManager
 
 | Function | Purpose |
 |----------|---------|
-| `check_timeout()` | Wall-clock timeout enforcement |
-| `get_env(key)` | Environment variable access |
-| `mesh_query_dht(key)` | DHT lookups (with sensitive prefix restrictions) |
-| `mesh_check_threat(ip)` | Threat intelligence lookups |
-| `mesh_emit_event(topic, data)` | Event publishing |
-| `synvoid_read_body_chunk()` | Streaming body reading |
+| `guest_alloc()` | Memory allocation for WASM guest (writes results into linear memory) |
+| `check_timeout()` | Wall-clock timeout enforcement (stub in warmup, real impl in `create_linker`) |
+| `get_env(key)` | Environment variable access (stub in warmup, real impl in `create_linker`) |
+| `mesh_query_dht(key)` | DHT lookups (with sensitive prefix restrictions) (stub in warmup, real impl in `create_linker`) |
+| `mesh_check_threat(ip)` | Threat intelligence lookups (stub in warmup, real impl in `create_linker`) |
+| `mesh_emit_event(topic, data)` | Event publishing (stub in warmup, real impl in `create_linker`) |
+| `synvoid_read_body_chunk()` | Streaming body reading (stub in warmup, real impl in `create_linker`) |
 
 ### Security Model: DHT Prefix Restrictions
 
@@ -104,8 +105,8 @@ WasmRuntime (plugin B)
 - **`WasmInstancePool`** uses a `VecDeque<WasmPooledInstance>` protected by `parking_lot::Mutex`
 - `get()` pops from back, `return_instance()` pushes to back (if under `max_size`)
 - Pooled instances retain their `Store` and instantiated `Instance`
-- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes (via `WasmPooledInstance::prepare_for_request`); the generic `PooledInstance::prepare_for_request` in `pool.rs` does not reset body_receiver or DHT prefixes
-- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (7 host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`); real host functions are linked on first actual request. Note: `guest_alloc`/`guest_free` are linked as real functions (not stubs) via `create_linker`.
+- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes. `WasmPooledInstance::prepare_for_request` (in `instance_pool.rs:219-233`) resets body_receiver and DHT prefixes; the generic `PooledInstance::prepare_for_request` (in `pool.rs:15-26`) does NOT reset body_receiver or DHT prefixes.
+- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (6 stub host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`). These stubs are replaced with real implementations on first actual request. Note: `guest_alloc`/`guest_free` are linked as real functions (not stubs) during actual request handling via `create_linker`.
 
 ---
 

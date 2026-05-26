@@ -4,7 +4,7 @@ Specialized guidance for configuration management in `crates/synvoid-config/`.
 
 ## ConfigManager Location
 
-`ConfigManager` is defined in `crates/synvoid-config/src/lib.rs:113-233`, NOT in `main_config.rs`. `MainConfig` is in `main_config.rs` but `ConfigManager` is a separate struct that wraps it.
+`ConfigManager` is defined in `crates/synvoid-config/src/lib.rs:113-241`, NOT in `main_config.rs`. `MainConfig` is in `main_config.rs` but `ConfigManager` is a separate struct that wraps it.
 
 ## Feature-Gated Compilation
 

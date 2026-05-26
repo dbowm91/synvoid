@@ -251,3 +251,25 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 - [Overview](overview.md) - Bird's eye view of SynVoid architecture
 - [WAF Deep Dive](waf_deep_dive.md) - WAF integration with proxy
 - [Networking Deep Dive](networking_deep_dive.md) - HTTP client networking details
+
+---
+
+## Implementation Decisions (Wave 4.2)
+
+// Decision: HTTP/2 remains disabled. While HTTP/2 infrastructure exists (Http2PooledConnection,
+TypedConnectionPool http2 branches), the code path is not wired for production use.
+is_http2=true is hardcoded in send_request_erased_streaming (http_client/mod.rs:893)
+but upstream HTTP/2 pooling is not implemented. This decision avoids complexity and
+maintains HTTP/1.1 connection reuse which is sufficient for current performance targets.
+
+// Decision: UpstreamClientRegistry is integrated but not used in ProxyServer::send_single_request.
+// The registry exists at src/proxy/client_registry.rs and is instantiated in http/server.rs,
+// http3/server.rs, and tls/server.rs for streaming client management. The ProxyServer flow
+// uses ErasedHttpClient directly via send_request_erased_streaming. The registry remains
+// available for future typed client management but is not currently required.
+
+// Decision: ProxyHeadersConfig (proxy_headers field) is not passed through send_single_request
+// at proxy/mod.rs:1225-1238. The forward_headers are cloned from the incoming request headers.
+// Custom proxy headers per upstream are not currently supported; this can be addressed in a
+// future enhancement by extending send_request_erased_streaming to accept a ProxyHeadersConfig
+// parameter.

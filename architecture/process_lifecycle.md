@@ -40,11 +40,15 @@ The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master
 - **IPC Role:** Acts as the central hub for worker coordination.
 
 ### 4. Worker (The Data Plane)
-Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment.
+Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment. SynVoid uses three worker types:
+
+- **UnifiedServerWorker:** Primary worker handling HTTP/HTTPS/HTTP3 + WAF + proxy via a single Tokio async event loop. Handles all site routing and security enforcement.
+- **StaticWorker:** Dedicated worker for background tasks like CSS/JS minification and image compression. Communicates with the unified server via IPC.
+- **Legacy Worker (BaseWorkerProcess):** Deprecated raw TCP/UDP proxy worker. Unused for HTTP traffic; requires further investigation to determine if it should be removed.
 
 - **Isolation:** Each worker process is completely independent.
 - **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/overseer/spawn.rs:43`.
-- **CPU Pinning:** On Linux, workers can be pinned to specific CPU cores via `sched_setaffinity`. CPU affinity is automatically assigned based on worker ID (not manually configured). Not supported on macOS/BSD (logs warning).
+- **CPU Pinning:** On Linux, workers are automatically assigned CPU affinity based on worker ID via `sched_setaffinity`. Not supported on macOS/BSD (logs warning).
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
 

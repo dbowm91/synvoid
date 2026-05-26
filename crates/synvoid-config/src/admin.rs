@@ -192,11 +192,13 @@ fn default_admin_token() -> String {
     let mut rng = rand::rng();
     let token: String = (0..32)
         .map(|_| {
-            let idx = rng.random_range(0..36);
+            let idx = rng.random_range(0..62);
             if idx < 10 {
                 (b'0' + idx) as char
+            } else if idx < 36 {
+                (b'A' + idx - 10) as char
             } else {
-                (b'a' + idx - 10) as char
+                (b'a' + idx - 36) as char
             }
         })
         .collect();

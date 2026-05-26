@@ -38,7 +38,7 @@ SynVoid supports **DNS-01** challenges for ACME certificate issuance, enabling c
 **Challenge Flow:**
 1. ACME server delivers a `dns-01` challenge with a key authorization
 2. SynVoid computes `SHA-256(key_authorization)` and base64url-encodes it
-3. The challenge value is stored in `AcmeDnsChallenge` (`src/tls/acme_dns.rs:25-44`)
+3. The challenge value is stored in `AcmeDnsChallenge` (`src/tls/acme_dns.rs:11-64`)
 4. DNS server serves the value via `_acme-challenge.<domain>` TXT records (`src/dns/server/query.rs:679-698`)
 5. ACME server validates by querying the TXT record
 6. On success, the challenge is cleaned up automatically

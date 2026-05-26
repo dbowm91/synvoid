@@ -178,7 +178,7 @@ All admin clients are expected to set appropriate Authorization headers.
 
 ### API Organization (28 handlers)
 
-**Location:** `src/admin/handlers/`
+**Location:** `src/admin/handlers/` (26 handlers + up to 4 mesh-gated handlers)
 
 | Handler | Purpose |
 |---------|---------|
@@ -228,7 +228,7 @@ All admin clients are expected to set appropriate Authorization headers.
 - `/system/info` - System information
 - `/system/workers` - Worker process management
 - `/system/master` - Master status
-- `/system/overseer` - Overseer status (legacy endpoint; Supervisor consolidated mode is default)
+- `/system/overseer` - Supervisor status (legacy endpoint; Supervisor consolidated mode is default)
 
 **Stats/Metrics** (`/stats/*`):
 - `/stats/summary` - Aggregated metrics
@@ -256,7 +256,7 @@ All admin clients are expected to set appropriate Authorization headers.
 
 ### AdminState
 
-**Location:** `src/admin/state.rs:256-267` (AdminState struct definition)
+**Location:** `src/admin/state.rs:257-267` (AdminState struct definition)
 
 ```rust
 pub struct AdminState {

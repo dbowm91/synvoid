@@ -20,6 +20,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 
 | File | Responsibility |
 |------|----------------|
+| `store.rs` | Zone storage interface and implementation |
 | `server/mod.rs` | Core DNS server, query handling, zone management, protocol handlers |
 | `server/startup.rs` | Server initialization, listener spawning, protocol server startup (DoT/DoH/DoQ) |
 | `server/query.rs` | Query processing logic, response building |
@@ -71,9 +72,6 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 9. **Response**: Wire format response sent to client
 
 ### Zone Transfers (AXFR/IXFR) (`transfer.rs`)
-
-**AXFR** (`build_axfr_record()`, lines 829-1028):
-- **Supported record types**: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA (all per RFC implementations)
 
 **IXFR** (RFC 1995) - Incremental zone transfer
 **TSIG** (RFC 2845) - Transaction signature authentication for zone transfers

@@ -193,6 +193,7 @@ impl DnsConfig {
         self.rrl.validate()?;
         self.settings.validate()?;
         self.dnssec.validate()?;
+        self.recursive.validate()?;
 
         if let DnsMode::Mesh = self.mode {
             self.mesh.validate()?;

@@ -15,10 +15,10 @@ use synvoid::worker::{
 
 use synvoid::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use synvoid::startup::daemon::acquire_pid_file;
-use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
-use synvoid::supervisor::run_supervisor_mode;
 #[cfg(feature = "mesh")]
 use synvoid::startup::master::{run_master_mode, run_overseer_mode};
+use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
+use synvoid::supervisor::run_supervisor_mode;
 
 #[derive(Parser, Debug)]
 #[command(name = "synvoid")]
@@ -28,7 +28,10 @@ struct Args {
     #[arg(long, help = "Run as mesh agent process (control plane)")]
     mesh_agent: bool,
 
-    #[arg(long, help = "Run as master process (legacy mode - managed by Overseer)")]
+    #[arg(
+        long,
+        help = "Run as master process (legacy mode - managed by Overseer)"
+    )]
     master: bool,
 
     #[arg(long, help = "Run as WASM plugin execution jail")]

@@ -309,14 +309,7 @@ pub struct SiteConnectionLimiter {
 }
 
 impl SiteConnectionLimiter {
-    pub fn new(
-        site_id: String,
-        global_limiter: Arc<ConnectionLimiter>,
-        _max_connections: Option<u32>,
-        _max_connections_per_ip: Option<u32>,
-        _queue_size: Option<u32>,
-        _burst: Option<u32>,
-    ) -> Self {
+    pub fn new(site_id: String, global_limiter: Arc<ConnectionLimiter>) -> Self {
         Self {
             site_id,
             limiter: global_limiter,

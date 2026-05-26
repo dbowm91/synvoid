@@ -46,6 +46,7 @@ pub struct Router {
     cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>>,
     location_matchers: HashMap<String, LocationMatcher>,
     site_map: HashMap<String, Arc<SiteConfig>>,
+    server_port: u16,
 }
 
 type SiteMaps = (
@@ -146,6 +147,7 @@ impl Router {
             cleaned_site_domain_suffixes,
             location_matchers,
             site_map,
+            server_port: main_config.server.port,
         };
 
         Self::log_configuration(&listen_map, &router.default_servers);
@@ -1218,7 +1220,7 @@ impl Router {
         }
     }
 
-    pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>) {
+    pub fn update_sites(&mut self, sites: HashMap<String, SiteConfig>, server_port: u16) {
         self.domain_map.clear();
         let mut wildcard_domain_router = MatchRouter::new();
         self.static_handlers.clear();
@@ -1315,7 +1317,7 @@ impl Router {
 
             if !config_arc.site.listen.is_empty() {
                 for listen_config in &config_arc.site.listen {
-                    if let Some(addr) = listen_config.to_socket_addr(80) {
+                    if let Some(addr) = listen_config.to_socket_addr(server_port) {
                         let bind_addr = if let Some(p) = listen_config.port {
                             SocketAddr::new(addr.ip(), p)
                         } else {
@@ -1415,6 +1417,7 @@ impl Default for Router {
             cleaned_site_domain_suffixes: HashMap::new(),
             location_matchers: HashMap::new(),
             site_map: HashMap::new(),
+            server_port: 80,
         }
     }
 }

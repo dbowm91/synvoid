@@ -86,11 +86,12 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
 | `pidfile.rs` | PID file management, overseer lock file |
 | `command.rs` | Command client/response types |
+| `ipc_windows.rs` | Windows IPC via named pipes (Server side, pipe server implementation) |
 | `socket_path.rs` | Master socket path resolution and versioning for upgrades |
 
 ### Message Types (IPC)
 
-The `Message` enum is organized into **15 categories**:
+The `Message` enum is organized into **17 categories**:
 
 1. **WorkerLifecycle**: `WorkerStarted`, `WorkerReady`, `WorkerHeartbeat`, `WorkerError`
 2. **MasterCommand**: `MasterShutdown`, `MasterConfigReload`, `MasterHealthCheck`
@@ -98,15 +99,17 @@ The `Message` enum is organized into **15 categories**:
 4. **ThreatIntel**: `ThreatIndicatorAnnounce`, `ThreatSyncRequest/Response`
 5. **BlocklistRules**: `BlocklistUpdate`, `RulePatternsUpdate`
 6. **StaticContent**: `MinifyRequest/Response`, `PoisonImageRequest/Response`
-7. **UnifiedServer**: `UnifiedServerWorkerStarted/Ready/Drain`
-8. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
-9. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
-10. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
-11. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
-12. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
-13. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
-14. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
-15. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
+7. **AppServer**: `AppServerRequest`, `AppServerResponse`, `AppServerChunk`, `AppServerUpgrade`
+8. **UnifiedServer**: `UnifiedServerWorkerStarted/Ready/Drain`
+9. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
+10. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
+11. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
+12. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
+13. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
+14. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
+15. **WorkerRestart**: `WorkerRestartRequest`, `WorkerRestartAck`
+16. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
+17. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
 
 ### IPC Framing Protocol
 
@@ -223,7 +226,7 @@ run_master_mode()
 
 **Note:** The Master MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Master ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
 
-> **Source:** `src/startup/master.rs:279-302`
+> **Source:** `src/startup/master.rs:278-302`
 
 ---
 
@@ -361,7 +364,7 @@ SynVoid supports two deployment modes:
 
 ### Enforcement
 
-- `src/startup/master.rs:279-302`: Master MUST NOT run UnifiedServer inline for request handling
+- `src/startup/master.rs:278-302`: Master MUST NOT run UnifiedServer inline for request handling
 - Master MUST NOT accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
 - Master MUST NOT handle any external network traffic for proxying
 

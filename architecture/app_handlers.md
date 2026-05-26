@@ -10,7 +10,7 @@ The `StaticFileHandler` is a high-performance engine for serving static assets. 
 - **Path Normalization:** Protects against path traversal attacks by resolving and validating paths before access.
 - **MIME Type Mapping:** Automatic content-type detection based on file extensions.
 - **Caching & Compression:** Supports `gzip` and `brotli` pre-compression and integrates with the internal proxy cache.
-- **Built-in Minification:** An experimental feature that can automatically minify CSS and JavaScript on the fly using a specialized background worker.
+- **IPC Delegation:** Heavy operations (CSS/JS minification, image compression) are delegated to the `StaticWorker` via IPC for background processing.
 
 ## 2. FastCGI & PHP-FPM
 
@@ -33,9 +33,9 @@ SynVoid includes built-in support for Python ASGI/WSGI applications using the **
 For high-performance, sandboxed edge computing, SynVoid integrates a WebAssembly (WASM) runtime.
 
 - **Wasmtime Integration:** Uses the industry-standard `wasmtime` engine for executing WASM modules.
-- **Instance Pooling:** Maintains a pool of pre-initialized WASM instances to eliminate cold start latency.
+- **Instance Pooling:** Maintains a pool of pre-initialized WASM instances to eliminate cold start latency. (Note: Instance pooling is supported for WAF plugins; the Spin runtime does not use instance pooling.)
 - **Resource Isolation:** Enforces strict limits on CPU time, memory usage, and syscall access for every WASM execution.
-- **Mesh Distribution:** (Mesh mode only) WASM modules can potentially be distributed globally across the mesh; full distribution mechanism requires verification
+- **Mesh Distribution:** (Mesh mode only) WASM modules can be distributed globally across the mesh for the serverless WASM backend. Generic WASM distribution is not implemented.
 
 ## 5. Spin Application Support
 
@@ -55,7 +55,7 @@ Spin is **not** the same as the generic WASM edge functions described above. Key
 | **Manifest** | Configuration-driven routes | `spin.toml` parsed via `src/spin/manifest.rs` |
 | **Registration** | Part of site configuration | Manual registration via Admin API |
 | **Components** | Single WASM module per route | Multiple named components in manifest |
-| **HTTP Dispatch** | `WasmiHandler` (generic WASM) in server pipeline | `SpinHttpHandler` at `src/http/server.rs:2417` |
+| **HTTP Dispatch** | `WasmiHandler` (generic WASM) in server pipeline | `SpinHttpHandler` at `src/spin/handler.rs:117` |
 
 Spin applications are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps the `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
 
