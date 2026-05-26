@@ -151,9 +151,7 @@ Request
   └── Admin Rate Limit Layer (requests per minute/second)
 ```
 
-**Note:** No CORS middleware is implemented. The Admin API uses bearer tokens and
-session cookies (not browser-based access), so CORS headers are not applicable.
-All admin clients are expected to set appropriate Authorization headers.
+**CORS Support:** CORS is fully implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97`. The CORS layer is created and added to the router in the admin API setup.
 
 **Key File:** `src/admin/middleware.rs`
 
@@ -228,7 +226,7 @@ All admin clients are expected to set appropriate Authorization headers.
 - `/system/info` - System information
 - `/system/workers` - Worker process management
 - `/system/master` - Master status
-- `/system/overseer` - Supervisor status (legacy endpoint; Supervisor consolidated mode is default)
+- `/system/overseer` - Overseer status (functional endpoint; overseer code is legacy, will be removed in Supervisor migration)
 
 **Stats/Metrics** (`/stats/*`):
 - `/stats/summary` - Aggregated metrics

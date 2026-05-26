@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::validation::ConfigValidationError;
+
 mod dns_anycast;
 mod dns_dnssec;
 mod dns_encrypted;
@@ -235,3 +237,21 @@ impl std::fmt::Display for DnsConfigError {
 }
 
 impl std::error::Error for DnsConfigError {}
+
+impl From<DnsConfigError> for ConfigValidationError {
+    fn from(err: DnsConfigError) -> Self {
+        let message = err.to_string();
+        let field = match err {
+            DnsConfigError::InvalidPort(_) => "dns.port".to_string(),
+            DnsConfigError::InvalidBindAddress(_) => "dns.bind_address".to_string(),
+            DnsConfigError::InvalidRateLimit(_) => "dns.ratelimit".to_string(),
+            DnsConfigError::InvalidRrl(_) => "dns.rrl".to_string(),
+            DnsConfigError::InvalidSettings(_) => "dns.settings".to_string(),
+            DnsConfigError::InvalidDnsSec(_) => "dns.dnssec".to_string(),
+            DnsConfigError::InvalidMesh(_) => "dns.mesh".to_string(),
+            DnsConfigError::InvalidAnycast(_) => "dns.anycast".to_string(),
+            DnsConfigError::InvalidRecursive(_) => "dns.recursive".to_string(),
+        };
+        ConfigValidationError { field, message }
+    }
+}

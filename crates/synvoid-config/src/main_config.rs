@@ -190,11 +190,16 @@ impl MainConfig {
         self.tunnel.validate()?;
 
         #[cfg(feature = "dns")]
-        if self.dns.enabled && !cfg!(feature = "dns") {
-            return Err(ConfigValidationError {
-                field: "dns.enabled".to_string(),
-                message: "DNS server configured but binary built without `dns` feature. Rebuild with `--features dns`.".to_string(),
-            });
+        {
+            if self.dns.enabled && !cfg!(feature = "dns") {
+                return Err(ConfigValidationError {
+                    field: "dns.enabled".to_string(),
+                    message: "DNS server configured but binary built without `dns` feature. Rebuild with `--features dns`.".to_string(),
+                });
+            }
+            if self.dns.enabled {
+                self.dns.validate()?;
+            }
         }
 
         #[cfg(feature = "mesh")]

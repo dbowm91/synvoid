@@ -28,8 +28,8 @@ The Master runs as a child of Overseer and provides process management, admin AP
 The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master responsibilities into a single process for simpler deployments.
 
 - **Modes:**
-  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly. This is the ONLY functional mode - no CLI flag exists to select Legacy Mode.
-  - **Legacy Mode (code only, not selectable):** Overseer spawns Master which spawns workers. The code exists (`run_overseer_mode()` in `src/startup/master.rs`) but cannot be invoked - there's no CLI flag to enable it. This is legacy code preserved for reference.
+  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly via `run_supervisor_mode()` (`src/main.rs:538-547`).
+  - **Legacy Mode:** Invoked via `--master` flag which calls `run_master_mode()` (`src/main.rs:529`). The Master process handles process management, admin API, and IPC coordination for workers.
 - **Responsibilities:**
   - **Process Management:** Spawning and monitoring Worker processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.

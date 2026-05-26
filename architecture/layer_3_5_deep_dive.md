@@ -8,9 +8,28 @@ This document provides an in-depth review of SynVoid's Layer 3 (Proxy & Routing)
 Yes, SynVoid is exceptionally forward-looking in its PQC implementation. It achieves "Quantum-Ready" status across both the data plane (Layer 3) and the control plane (Layer 5):
 
 *   **Layer 3 (TLS & Proxy):** Uses the `rustls` crate with the `aws-lc-rs` backend and the `prefer-post-quantum` configuration flag. This enables hybrid key exchange algorithms (e.g., X25519MLKEM768) during TLS 1.3 handshakes for incoming client traffic.
-*   **Layer 5 (Mesh Control Plane):** 
+*   **Layer 5 (Mesh Control Plane):**
     *   **Key Exchange (KEM):** Implements ML-KEM-768 for securing QUIC tunnels between mesh nodes (`MlKemKeyExchangeService`).
-    *   **Authentication (DSA):** Uses `libcrux` for ML-DSA-44. Crucially, it employs a **Hybrid Signature Scheme** (`MeshHybridSigner`) with struct fields `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), `ed25519_public_key`, and `ml_dsa_public_key`. This fail-safe approach ensures that if the new PQC algorithm is broken mathematically, the classical Ed25519 signature still holds.
+    *   **Authentication (DSA):** Uses `libcrux` for ML-DSA-44. Crucially, it employs a **Hybrid Signature Scheme** (`MeshHybridSigner`) with struct fields `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), `ed25519_public_key`, and `ml_dsa_public_key`.
+
+### Hybrid Signature Verification (BUG-L1)
+
+The `verify_hybrid()` function at `src/mesh/ml_dsa.rs:189-219` implements fail-safe hybrid signature verification:
+
+1. **Ed25519 First:** Always verifies the classical Ed25519 signature first
+2. **ML-DSA Optional:** If `signature.has_ml_dsa()` is true, verifies the ML-DSA signature
+3. **Fail-Safe Behavior:** If ML-DSA data is absent (`has_ml_dsa()` returns false), the function returns `true` (treating as valid)
+
+This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `src/mesh/ml_dsa.rs:206-218`.
+
+### ML-KEM Proof-of-Possession (BUG-L3)
+
+The ML-KEM key exchange includes proof-of-possession verification at `src/mesh/ml_kem_key_exchange.rs:204-264`. The `confirm_key` method:
+
+1. **Verifies Client Public Key:** Confirms the client public key matches the stored session public key
+2. **Decapsulation Test:** Calls `MlKem768::decapsulate()` with the client's key to confirm the client can actually use the shared secret
+
+This prevents a rogue server from successfully completing key exchange without the client being able to decapsulate. See `confirm_key()` at `src/mesh/ml_kem_key_exchange.rs:241`.
 
 ## 2. Dependency Alignment & Safety
 
