@@ -4,7 +4,7 @@ Specialized guidance for DNS server, DNSSEC, and TSIG.
 
 ## DNSSEC RFC 5011 Trust Anchor States
 
-Keys transition through states: **Seen → Pending → Valid → Revoked → Removed → Missing**
+Keys transition through states: **Valid → Seen → Pending → Revoked → Removed → Missing**
 
 Only keys that were **previously Valid** (`trust_point != 0`) can auto-restore via `observe_dnskey_at_root()`. Keys never Valid (`trust_point == 0`) must go through digest verification via `trust_anchor_check()`.
 
@@ -14,23 +14,26 @@ Only keys that were **previously Valid** (`trust_point != 0`) can auto-restore v
 
 Always use `subtle::ConstantTimeEq` for comparing secrets, tokens, keys, MACs:
 
+**Locations requiring constant-time comparison**:
+- DNS TSIG MAC verification (`src/dns/tsig.rs`) - already uses `ConstantTimeEq` at line 238
+- DNS cookie MAC verification (`src/dns/cookie.rs`)
+
+### NSEC3 SHA-1 Fallback
+
+When NSEC3 encounters an unsupported algorithm, it logs a warning and falls back to SHA-1:
+
 ```rust
-use subtle::ConstantTimeEq;
-
-// BEFORE (timing attack vulnerable)
-let mut diff = 0u8;
-for (a, b) in computed.iter().zip(original.iter()) {
-    diff |= a ^ b;
-}
-if diff == 0 { ... }
-
-// AFTER (constant-time)
-if bool::from(computed.ct_eq(&original)) { ... }
+tracing::warn!(
+    "Unsupported NSEC3 algorithm {}, falling back to SHA-1",
+    config.algorithm
+);
 ```
 
-**Locations requiring constant-time comparison**:
-- DNS TSIG MAC verification (`src/dns/tsig.rs`)
-- DNS cookie MAC verification (`src/dns/cookie.rs`)
+This is informational - the fallback is RFC-compliant but may indicate a need to upgrade NSEC3 algorithm support.
+
+### Cookie Validation Toggle (API Note)
+
+The `with_validation(_enable: bool)` method in `src/dns/cookie.rs:40-42` ignores the enable parameter - cookie validation is always enabled. This is an intentional API design.
 
 ### Edge Node PoW Authentication
 

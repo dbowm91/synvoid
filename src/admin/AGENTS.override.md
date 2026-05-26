@@ -12,7 +12,21 @@ Always use `subtle::ConstantTimeEq` for comparing secrets, tokens, keys, MACs:
 - Session ID comparison (`src/admin/state.rs`)
 - Cache purge token comparison
 
-### Session Timing Normalization (2026-05-23)
+### CSRF Functions
+
+CSRF token functions in `src/admin/state.rs`:
+- `generate_csrf_token()` at line 751
+- `validate_csrf()` at line 728 (uses `ct_eq()` for constant-time comparison)
+
+### Session Functions
+
+Session management functions in `src/admin/state.rs`:
+- `create_session()` at line 796
+- `validate_session()` at line 830
+- `invalidate_session()` at line 854
+- `cleanup_expired_sessions()` at line 859
+
+**Note**: There is no `refresh()` function - use `validate_session()` to check and extend a session.
 
 Admin auth now includes timing normalization to prevent session enumeration attacks:
 
