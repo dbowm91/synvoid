@@ -86,6 +86,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
 | `pidfile.rs` | PID file management, overseer lock file |
 | `command.rs` | Command client/response types |
+| `socket_path.rs` | Master socket path resolution and versioning for upgrades |
 
 ### Message Types (IPC)
 

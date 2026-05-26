@@ -59,7 +59,7 @@ The following stale items were identified across architecture documents. Items m
 | Document | Stale Item | Status |
 |----------|------------|--------|
 | admin_deep_dive.md | Overseer references should be "Supervisor" | ✅ Fixed |
-| admin_deep_dive.md | Line number references off by 3-10 lines | ⚠️ Deferred - minor cosmetic |
+| admin_deep_dive.md | Line number references off by 3-10 lines | ✅ Fixed |
 | app_handlers.md | FastCGI "response streaming" claim contradicts APP-15 | ✅ Fixed |
 | app_handlers.md | "WasmHandler" doesn't exist (SpinHttpHandler is at that line) | ✅ Fixed |
 | app_handlers.md | Generic WASM mesh distribution claim unverified | ✅ Fixed |
@@ -74,7 +74,7 @@ The following stale items were identified across architecture documents. Items m
 | networking_deep_dive.md | "Shared Handler" claim inaccurate | ✅ Fixed |
 | networking_deep_dive.md | HTTP/2 client configuration inconsistent | ✅ Fixed |
 | platform_deep_dive.md | fs.rs missing from module table | ✅ Fixed |
-| platform_deep_dive.md | Several process module files undocumented | ⚠️ Deferred |
+| platform_deep_dive.md | Several process module files undocumented | ✅ Fixed |
 | plugin_deep_dive.md | DHT prefix examples completely wrong (87-88) | ✅ Fixed |
 | plugin_deep_dive.md | Warmup stub function description misleading | ✅ Fixed |
 | process_lifecycle.md | Overseer Cannot Spawn Master (--master flag missing) | ✅ Fixed (flag added) |
