@@ -176,7 +176,7 @@ All admin clients are expected to set appropriate Authorization headers.
 
 ## Admin API Structure
 
-### API Organization (28 handlers)
+### API Organization (26+ handlers)
 
 **Location:** `src/admin/handlers/` (26 handlers + up to 4 mesh-gated handlers)
 
