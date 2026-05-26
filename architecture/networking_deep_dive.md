@@ -8,7 +8,7 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
 - **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:893` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. This is a known limitation.
-- **Shared Handler:** Both H1 and H2 have similar request processing patterns, but use separate handler implementations (`handle_request` in `http/server.rs` for H1, `handle_request_with_cache` in `tls/server.rs` for H2).
+- **Shared Handler:** Both H1 and H2 have similar request processing patterns, but use separate handler implementations (`handle_request` in `http/server.rs` for H1, `handle_request_with_cache` in `tls/server.rs:606` for H2 and `src/proxy/mod.rs:608` for upstream proxy - same method name but different signatures).
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
@@ -21,7 +21,7 @@ SynVoid features native HTTP/3 support via the **Quinn** library.
 Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
 - **TCP Listener:** Uses `src/listener/mod.rs` with `ListenerInstance` for connection management; actual TCP listener implementation in `src/tcp/listener.rs`.
 - **UDP Handling:** Built-in protections against amplification attacks.
-- **Listener Configuration:** `src/listener/common.rs` defines `ListenerConfigBase`, `ListenerInstance`, `ConnectionContext` for connection handling.
+- **Listener Configuration:** `src/listener/common.rs` defines `ListenerConfigBase`, `ListenerInstance`, `ConnectionContext` for connection handling. The `SocketOptionsBase` struct provides reusable socket options (reuse_port, send_buffer_size, recv_buffer_size).
 
 ---
 
@@ -65,7 +65,7 @@ SynVoid is at the forefront of post-quantum security:
 - Configuration: `global_node.ml_dsa_private_key_base64` in `GlobalNodeConfig`.
 
 **Feature Flags:**
-- `post-quantum` — Enables TLS hybrid key exchange (ML-KEM) for incoming HTTPS connections. Enables `X25519MLKEM768Draft00` in rustls for TLS 1.3 handshakes. Can be used independently for post-quantum key exchange without mesh signatures.
+- `post-quantum` — Enables TLS hybrid key exchange (ML-KEM) for incoming HTTPS connections. Enables `X25519MLKEM768` in rustls for TLS 1.3 handshakes. Can be used independently for post-quantum key exchange without mesh signatures.
 - `pqc-mesh` — Enables post-quantum mesh message signatures (ML-DSA-44) for inter-node communication. When enabled, Global nodes sign DHT records and threat intel messages with hybrid Ed25519+ML-DSA signatures. Requires `post-quantum` to be enabled as well for full PQC protection.
 - `verify-pq` — Enables verification of post-quantum key exchange proofs during mesh connection establishment. Ensures that hybrid key exchange properly validates both the classical and post-quantum components. Typically used in production mesh deployments.
 

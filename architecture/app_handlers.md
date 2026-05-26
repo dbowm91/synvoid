@@ -4,7 +4,7 @@ SynVoid provides built-in, optimized handlers for various application types, all
 
 ## 1. Static File Handler
 
-The `StaticFileHandler` is a high-performance engine for serving static assets. It includes features typically found in standalone web servers:
+The `StaticFileHandler` (`src/static_files/mod.rs:42`) is a high-performance engine for serving static assets. It includes features typically found in standalone web servers:
 
 - **Directory Listings:** Automatically generates index pages for directories with configurable themes.
 - **Path Normalization:** Protects against path traversal attacks by resolving and validating paths before access.

@@ -63,7 +63,7 @@ platform().supports_reuse_port()         // Linux/Macos/FreeBSD
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
 | macOS | **Seatbelt** | Sandboxed profile compilation (planned feature, not yet implemented) |
-| Windows | **Job Objects + DACL** | Process memory limits, file security descriptors |
+| Windows | **Job Objects + DACL** | Process memory limits, file security descriptors; DEP (Data Execution Prevention) and ASLR (Address Space Layout Randomization) mitigation policies |
 
 ---
 
@@ -260,7 +260,7 @@ SynVoid supports two deployment modes:
 │     │  ┌─────────────────────────────────────────────┐  │             │
 │     │  │ UnifiedServerWorker                         │  │             │
 │     │  │ (HTTP/HTTPS/HTTP3 + WAF + Proxy)           │  │             │
-│     │  │ (tokio async loop, CPU-affinity pinned)     │  │             │
+│     │  │ (tokio async loop, CPU-affinity pinned, Linux-only)     │  │             │
 │     │  └─────────────────────────────────────────────┘  │             │
 │     │  ┌─────────────────────────────────────────────┐  │             │
 │     │  │ StaticWorker                                │  │             │

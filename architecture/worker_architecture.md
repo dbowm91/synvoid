@@ -30,7 +30,7 @@ The Unified Server is designed to handle multiple protocols and transport layers
  2.  **Rate Limits:** IP-based rate limiting, CIDR filtering, and flood protection.
  3.  **Endpoint Block:** Block specific endpoints/paths.
  4.  **Honeypot Detection:** Hidden link matching and trap endpoints.
- 5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting. Challenges are issued **inline** within bot protection, not as a separate pipeline stage.
+ 5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting. Challenges are issued **inline** within bot protection via `challenge_manager.generate_challenge_page()` within `check_bot_protection()`, not as a separate pipeline stage.
   6.  **Flood Protection:** TCP connection tracking and rate limiting (via `FloodProtector`).
   7.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
 

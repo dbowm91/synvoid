@@ -48,7 +48,7 @@ The `AttackDetector` is responsible for deep packet inspection. It normalizes in
 - **Cross-Site Scripting (XSS):** Identifies malicious scripts in paths, queries, headers, and bodies.
 - **Path Traversal:** Blocks attempts to access files outside the intended directory.
 - **SSRF & RFI:** Prevents Server-Side Request Forgery and Remote File Inclusion by validating URLs.
-- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`src/waf/attack_detection/detector_common.rs:264`) for efficient bulk pattern matching. Implementations include `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`, and `BasePatternDetector`.
+- **Pattern Detection:** Uses Aho-Corasick multi-pattern matching via `PatternDetector` trait (`src/waf/attack_detection/detector_common.rs:293`) for efficient bulk pattern matching. Implementations include `SstiDetector`, `LdapInjectionDetector`, `XPathInjectionDetector`, `OpenRedirectDetector`, `XxeDetector`, `CmdInjectionDetector`, `PathTraversalDetector`, `RfiDetector`, `SsrfDetector`, and `BasePatternDetector`.
 
 ### 4. Bot Detection Layer
 
@@ -116,6 +116,7 @@ The WAF can take several actions based on its findings:
 - **Pass:** The request is allowed through to the upstream.
 - **Block:** Returns a configurable error page (e.g., 403 Forbidden).
 - **Challenge:** Intercepts the request and serves a challenge (JS/CAPTCHA/PoW).
+- **ChallengeWithCookie:** Like Challenge but includes a session cookie for bot verification via CSS challenge.
 - **Tarpit:** Artificially delays the response to slow down the attacker.
 - **Stall:** Silent stalling that wastes attacker time without sending a response.
 - **Drop:** Immediately closes the connection.

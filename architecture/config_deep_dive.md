@@ -249,6 +249,7 @@ Provides abstraction over serialization with **postcard** as the primary backend
 - 30% smaller serialized output
 - `no_std` compatible
 - Better for embedded/mesh use cases
+- **Canonical codebase standard:** Postcard is the preferred serialization format throughout SynVoid for distributed state (DHT, Mesh, persistence), binary signatures, and any network communication.
 
 ---
 
