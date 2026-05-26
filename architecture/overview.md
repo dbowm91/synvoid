@@ -2,6 +2,8 @@
 
 SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant reverse proxy written in Rust, designed for **1M+ RPS** with **millions of tenants**. It uses a multi-process architecture with a unified async event loop for maximum efficiency.
 
+---
+
 ## Table of Contents
 
 - [System Architecture](#system-architecture)
@@ -10,9 +12,10 @@ SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant re
 - [Security & WAF](#security--waf)
 - [Proxy & Upstream](#proxy--upstream)
 - [Application Handlers](#application-handlers)
-- [TLS & Cryptography](#tls--cryptography)
 - [DNS Server](#dns-server)
 - [Mesh Networking](#mesh-networking)
+- [TLS & Cryptography](#tls--cryptography)
+- [Admin & Auth](#admin--auth)
 - [Platform & Infrastructure](#platform--infrastructure)
 - [Deep Dive Index](#deep-dive-index)
 
@@ -23,18 +26,18 @@ SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant re
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Supervisor (Control Plane)                       │
-│  Process management, gRPC API, Raft consensus, DHT routing, config loading  │
-│  (Consolidated from legacy Overseer + Master hierarchy)                      │
+│  Process management, gRPC API, Raft consensus, DHT routing, config loading │
+│  (Consolidated from legacy Overseer + Master hierarchy)                    │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     │
-                     ┌───────────────┼───────────────┐
-                     ▼               ▼               ▼
-          ┌──────────────────┐ ┌──────────┐ ┌───────────────┐
-          │ UnifiedServer    │ │  Static  │ │  Mesh Agent   │
-          │ Worker (HTTP/    │ │  Worker  │ │  (optional    │
-          │ HTTPS/HTTP3)     │ │  (CSS/JS │ │   control     │
-          │                  │ │  minify) │ │   plane)      │
-          └──────────────────┘ └──────────┘ └───────────────┘
+                                      │
+                      ┌───────────────┼───────────────┐
+                      ▼               ▼               ▼
+           ┌──────────────────┐ ┌──────────┐ ┌───────────────┐
+           │ UnifiedServer   │ │  Static  │ │  Mesh Agent   │
+           │ Worker (HTTP/   │ │  Worker  │ │  (optional    │
+           │ HTTPS/HTTP3)    │ │  (CSS/JS │ │   control     │
+           │                 │ │  minify) │ │   plane)      │
+           └─────────────────┘ └──────────┘ └───────────────┘
 ```
 
 ### Key Architectural Decisions
@@ -44,8 +47,9 @@ SynVoid is a high-performance Web Application Firewall (WAF) and multi-tenant re
 | **Single async event loop** | Tokio's cooperative scheduling handles all cores efficiently |
 | **Shared-nothing workers** | Linear scalability, no mutex contention |
 | **SO_REUSEPORT** | Kernel-level load balancing across workers |
-| **Postcard serialization** | Zero-copy alternative to JSON for IPC |
+| **Postcard/Rkyv serialization** | Zero-copy alternative to JSON for IPC and mesh |
 | **Domain-based routing O(1)** | Millions of tenants without performance degradation |
+| **Pure Rust crypto** | aws-lc-rs for TLS, libcrux for post-quantum signatures |
 
 ---
 
@@ -56,136 +60,124 @@ SynVoid employs a hierarchical process model for high availability and zero-down
 | Process | Binary Flag | Purpose | Count |
 |---------|-------------|---------|-------|
 | **Supervisor** | (default) | Worker spawn/manage, IPC, gRPC control plane, zero-downtime upgrades | 1 |
-| **Master** | `--master` | Legacy mid-tier process manager (spawned by Overseer) | 1 |
-| **Overseer** | `--overseer` | Legacy parent process (health monitoring, upgrade coordination) | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | N |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | N |
 | **MeshAgent** | `--mesh-agent` | Distributed control plane coordination | N |
+| **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated) | configurable |
 
-### Legacy Overseer & Master (Deprecated)
+### Documentation
 
-The legacy **Overseer** process (`src/overseer/`) and **Master** process (`src/master/`) have been **deprecated** in favor of the consolidated Supervisor. These modules remain in the codebase for backward compatibility but are not invoked when using the default Supervisor mode.
-
-- **Old model:** Overseer → Master → Worker (three-tier hierarchy)
-- **Current model:** Supervisor → Worker (consolidated two-tier for simpler deployments)
-- **Note:** The `--master` and `--overseer` flags still exist for environments requiring the legacy hierarchy.
-
-**Note:** The UnifiedServerWorker uses a single Tokio runtime with `worker_threads` equal to CPU cores. Adding more worker processes does NOT increase throughput—it only adds process isolation overhead.
-
-### Process Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Process Lifecycle](process_lifecycle.md) | Supervisor-Worker hierarchy, zero-downtime upgrades |
-| [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
-| [Platform & Process Deep Dive](platform_deep_dive.md) | IPC, sandboxing, platform abstraction |
+- [Process Lifecycle](process_lifecycle.md) - Worker hierarchy, drain coordination, zero-downtime upgrades
+- [Worker Architecture](worker_architecture.md) - Unified server, listener pools, request flow
+- [Platform Deep Dive](platform_deep_dive.md) - IPC, sandboxing, platform abstraction
 
 ---
 
 ## HTTP Stack
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **HTTP Server** | `src/http/` | HTTP/1.1, HTTP/2 server, request parsing, routing, response handling, WebDAV |
-| **HTTP/3** | `src/http3/` | HTTP/3 QUIC handling, h3 protocol implementation |
-| **HTTP Client** | `src/http_client/` | Upstream proxy connections, connection pooling, streaming |
-| **Listener** | `src/listener/` | Socket binding, accepting, connection limiting |
-| **Protocol** | `src/protocol/` | Protocol detection and handling |
+The HTTP stack handles all incoming client connections with support for HTTP/1.1, HTTP/2, and HTTP/3.
 
-### HTTP Documentation
+| Module | Path | Purpose | Deep Dive |
+|--------|------|---------|-----------|
+| **HTTP Server** | `src/http/` | HTTP/1.1 + HTTP/2 server, request parsing, routing, WebDAV | [networking_deep_dive.md](networking_deep_dive.md) |
+| **HTTP/3** | `src/http3/` | HTTP/3 QUIC handling via quinn/h3 | [networking_deep_dive.md](networking_deep_dive.md) |
+| **HTTP Client** | `src/http_client/` | Upstream proxy, connection pooling, streaming | [networking_deep_dive.md](networking_deep_dive.md) |
+| **Listener** | `src/listener/` | Socket binding, accepting, connection limiting | [networking_deep_dive.md](networking_deep_dive.md) |
+| **Protocol** | `src/protocol/` | Protocol detection (WebSocket, gRPC, DNS) | [networking_deep_dive.md](networking_deep_dive.md) |
 
-| Document | Description |
-|----------|-------------|
-| [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
+### Key HTTP Components
 
----
+**HTTP Server (`src/http/server.rs`)**
+- `HttpServer` struct with router, WAF, HTTP client integration
+- `HttpConnection` wraps TCP stream with protocol validation
+- `StreamingWafBody` for WAF scanning during streaming
+- WebSocket upgrades via `hyper::upgrade::on()`
+- Flood protection via `FloodProtector`
 
-## TLS & Cryptography
+**HTTP/3 (`src/http3/server.rs`)**
+- `Http3Server` using `quinn` for QUIC transport
+- Uses `h3` for HTTP/3 protocol handling
+- Shares infrastructure with HTTP/1.1 server
+- Max 100 concurrent bidirectional streams, 60s idle timeout
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **TLS** | `src/tls/` | TLS termination, ACME/Let's Encrypt certificate management, SNI peeking |
-| **WASM PoW** | `src/wasm_pow/` | WASM-based proof-of-work with post-quantum key exchange |
+**HTTP Client (`src/http_client/mod.rs`)**
+- `HttpClient`, `StreamingHttpClient`, `UnixHttpClient` variants
+- `ErasedHttpClient` type-erased pooling for 1M+ RPS
+- Connection pooling via `moka` cache
+- `StreamingWafBody<B>` for per-chunk WAF scanning
 
-### Cryptographic Standards
-
-| Feature | Purpose |
-|---------|---------|
-| **Post-Quantum TLS** | ML-KEM-768 (Kyber) hybrid key exchange via `post-quantum` feature |
-| **Post-Quantum Mesh** | ML-DSA-44 signatures for mesh messages via `pqc-mesh` feature |
-| **Hashing** |Blake3 for fast checksums, SHA-3 for HMAC |
-
-### TLS Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Networking Deep Dive](networking_deep_dive.md) | TLS termination, certificate management |
-| [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Post-quantum crypto, trust models |
-
----
-
-## Proxy & Upstream
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Proxy** | `src/proxy/` | Reverse proxy, upstream pool, load balancing, caching, retry logic |
-| **Proxy Cache** | `src/proxy_cache/` | Response caching layer |
-| **Upstream** | `src/upstream/` | Backend address management, health checks, load balancing |
-| **Router** | `src/router.rs` | Domain-based routing to sites, Host header matching, wildcards |
-
-### Proxy Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Proxy & Upstream Deep Dive](proxy_deep_dive.md) | Proxy server, connection pooling, retry logic, cache governor |
-| [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
+**Protocol Detection (`src/protocol/`)**
+- `ProtocolHandler` trait for extensible protocol handling
+- `WebSocketHandler` with frame parsing and masking
+- `GrpcHandler` for gRPC protocol
 
 ---
 
 ## Security & WAF
 
-The WAF provides multi-layered protection against threats.
+Multi-layered protection against threats with coordinated attack detection and bot mitigation.
 
-### WAF Pipeline
+| Module | Path | Purpose | Deep Dive |
+|--------|------|---------|-----------|
+| **WAF Core** | `src/waf/` | Request filtering, decision engine (Pass/Block/Drop/Stall/Tarpit/Challenge) | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Attack Detection** | `src/waf/attack_detection/` | SQLi, XSS, path traversal, RFI, SSRF, SSTI, cmd injection, XXE, LDAP, XPath, open redirect | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Bot Detection** | `src/waf/bot.rs` | JA3/JA4 fingerprinting, UA analysis via `isbot` crate | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Rate Limiting** | `src/waf/ratelimit/` | IP/global rate limiting with sliding window | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Threat Level** | `src/waf/threat_level/` | Adaptive threat scoring with SQLite persistence | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Flood Protection** | `src/waf/flood/` | SYN flood, UDP flood, connection limiting; eBPF on Linux | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Filter** | `src/filter/` | TCP/UDP protocol filtering framework | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Challenge** | `src/challenge/` | PoW, CSS, Mesh-PoW challenges | [waf_deep_dive.md](waf_deep_dive.md) |
+| **GeoIP** | `src/geoip/` | MaxMind GeoIP lookup, country/ASN blocking | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Block Store** | `src/block_store.rs` | Persistent 64-shard blocklist with LRU eviction | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Tarpit** | `src/tarpit/` | Markov chain bot trap for scrapers | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Honeypot Ports** | `src/honeypot_port/` | Port honeypot with AI responders, protocol detection | [waf_deep_dive.md](waf_deep_dive.md) |
+| **Auth** | `src/auth/` | User auth, session management, bcrypt, brute-force protection | [admin_deep_dive.md](admin_deep_dive.md) |
+| **TCP Proxy** | `src/tcp/` | TCP proxy with protocol detection | [waf_deep_dive.md](waf_deep_dive.md) |
+| **UDP Proxy** | `src/udp/` | UDP proxy with flood protection | [waf_deep_dive.md](waf_deep_dive.md) |
+
+### WAF Pipeline Flow
 
 ```
 Request → Rate Limiting → Bot Detection → Attack Detection → Challenge → Proxy
           (IP/Global)    (JA3/JA4)      (YARA rules)       (PoW/CSS)
 ```
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **WAF Core** | `src/waf/` | Request sanitization, decision engine (Pass/Block/Drop/Stall/Tarpit/Challenge) |
-| **Filter** | `src/filter/` | Protocol filtering framework (TCP/UDP) |
-| **Challenge** | `src/challenge/` | PoW, CSS, Mesh-PoW challenges for bot mitigation |
-| **WASM PoW** | `src/wasm_pow/` | Browser-based WebAssembly proof-of-work |
-| **GeoIP** | `src/geoip/` | Country/ASN lookup, geographic blocking |
-| **Block Store** | `src/block_store.rs` | Persistent IP blocklists with LRU eviction |
+### Key WAF Structs
 
-### Authentication & Session Management
+- **`WafCore`** (`src/waf/mod.rs`): Central orchestrator
+- **`WafDecision`** enum: `Pass`, `Block`, `Drop`, `Stall`, `Tarpit`, `Challenge`
+- **`AttackDetector`** (`src/waf/attack_detection/mod.rs`): 12+ attack type detectors
+- **`StreamingWafCore`** (`src/waf/attack_detection/streaming.rs`): Sliding window body inspection
+- **`ThreatLevelManager`** (`src/waf/threat_level/mod.rs`): Adaptive scoring with baseline learning
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Auth** | `src/auth/` | User auth, session management, bcrypt, brute-force protection |
-| **Admin API** | `src/admin/` | Management interface (Axum-based), OpenAPI docs |
+---
 
-### Threat Mitigation
+## Proxy & Upstream
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Tarpit** | `src/tarpit/` | Markov chain-based bot trap with fake HTML content |
-| **Honeypot Ports** | `src/honeypot_port/` | Port scanning detection, protocol honeypots |
-| **ICMP Filter** | `src/icmp_filter/` | ICMP filtering/flood protection (eBPF) |
-| **TCP Proxy** | `src/tcp/` | TCP proxy with protocol detection |
-| **UDP Proxy** | `src/udp/` | UDP proxy with flood protection |
+| Module | Path | Purpose | Deep Dive |
+|--------|------|---------|-----------|
+| **Proxy** | `src/proxy/` | Reverse proxy, upstream dispatch, retry logic | [proxy_deep_dive.md](proxy_deep_dive.md) |
+| **Proxy Cache** | `src/proxy_cache/` | LRU response caching with TTL, SWR, SIE | [proxy_deep_dive.md](proxy_deep_dive.md) |
+| **Upstream** | `src/upstream/` | Backend pools, load balancing, health checks | [routing_deep_dive.md](routing_deep_dive.md) |
+| **Router** | `src/router.rs` | Domain-based routing, Host header matching, wildcards | [routing_deep_dive.md](routing_deep_dive.md) |
 
-### Security Documentation
+### Load Balancing Algorithms
 
-| Document | Description |
-|----------|-------------|
-| [WAF Security Pipeline](waf_deep_dive.md) | WAF engine, attack detection, bot mitigation |
-| [Admin & Auth Deep Dive](admin_deep_dive.md) | Admin API, session management, CSRF protection |
-| [Layer 3.5 Deep Dive](layer_3_5_deep_dive.md) | Post-quantum crypto, trust models |
+| Algorithm | Description |
+|-----------|-------------|
+| **RoundRobin** | Default, cycles through backends |
+| **Random** | Random selection |
+| **LeastConnections** | Backend with lowest composite load |
+| **PeakEwma** | Cost-based: `(connections + 1) * (latency + 1)` |
+| **WeightedRoundRobin** | Weight-based rotation |
+| **IpHash** | Consistent hashing by client IP |
+
+### Key Proxy Structs
+
+- **`ProxyServer`** (`src/proxy/mod.rs`): Core proxy with upstream pool, cache, retry config
+- **`UpstreamPool`** (`src/upstream/pool.rs`): Pool management and backend selection
+- **`Backend`** (`src/upstream/pool.rs`): Individual backend with connection count and health
+- **`CacheKey`** (`proxy_cache/key.rs`): Cache key with Vary header support
 
 ---
 
@@ -193,112 +185,175 @@ Request → Rate Limiting → Bot Detection → Attack Detection → Challenge �
 
 SynVoid supports multiple backend types natively.
 
-| Handler | Path | Purpose |
-|---------|------|---------|
-| **Static Files** | `src/static_files/` | File serving, caching, compression, minification, directory listing |
-| **PHP** | `src/php/` | PHP-FPM via FastCGI |
-| **FastCGI** | `src/fastcgi/` | Generic FastCGI backend support |
-| **CGI** | `src/cgi/` | CGI script execution |
-| **Serverless** | `src/serverless/` | WASM runtime with instance pooling |
-| **Spin** | `src/spin/` | Fermyon Spin framework support |
+| Handler | Path | Purpose | Deep Dive |
+|---------|------|---------|-----------|
+| **Static Files** | `src/static_files/` | File serving, caching, compression, minification | [app_handlers.md](app_handlers.md) |
+| **PHP** | `src/php/` | PHP-FPM via FastCGI | [app_handlers.md](app_handlers.md) |
+| **FastCGI** | `src/fastcgi/` | Generic FastCGI backend with connection pooling | [app_handlers.md](app_handlers.md) |
+| **CGI** | `src/cgi/` | CGI script execution (Perl, Python, Ruby, etc.) | [app_handlers.md](app_handlers.md) |
+| **Serverless** | `src/serverless/` | WASM runtime with instance pooling | [plugin_deep_dive.md](plugin_deep_dive.md) |
+| **Spin** | `src/spin/` | Fermyon Spin framework support | [plugin_deep_dive.md](plugin_deep_dive.md) |
+| **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading | [plugin_deep_dive.md](plugin_deep_dive.md) |
 
-> **Note:** Spin requires manual app registration via the Admin API before use. See [Application Handlers](app_handlers.md) for setup instructions.
-| **Plugin** | `src/plugin/` | Dynamic WASM/native plugin loading |
-| **Static Worker** | `src/worker/` | CSS/JS minification, compression |
+### BackendType Enum Variants
 
-<sup>1. All mesh networking components (DHT, Raft, Transport, Threat Intel, YARA Rules, MeshBackend, MeshProxy) require the `mesh` feature flag to compile.</sup>
-
-### App Handler Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Application Handlers](app_handlers.md) | Static files, PHP-FPM, FastCGI, Python, WASM, Spin |
-| [Plugin & Serverless Deep Dive](plugin_deep_dive.md) | WASM plugin runtime, Spin, serverless execution |
-| [Routing Deep Dive](routing_deep_dive.md) | BackendType routing, load balancing, health checking |
+`src/router.rs` defines 11 backend variants:
+- `Upstream`, `FastCgi`, `Php`, `Cgi`, `AxumDynamic`, `AppServer`, `Static`, `QuicTunnel`, `Serverless`, `Mesh`, `Spin`
 
 ---
 
 ## DNS Server (Optional - `dns` feature)
 
-| Component | Path | Purpose |
-|-----------|------|---------|
-| **DNS Server** | `src/dns/` | Authoritative DNS server with DNSSEC signing |
-| **Recursive Resolver** | `src/dns/` | Recursive resolution with cache |
-| **TSIG** | `src/dns/` | Transaction signature authentication for dynamic updates |
-| **Zone Transfer** | `src/dns/transfer.rs` | AXFR/IXFR zone transfers (partial implementation) |
-| **DNSSEC** | `src/dns/dnssec*.rs` | Signing, validation, key management |
-| **Encrypted DNS** | `src/dns/doh.rs`, `dot.rs`, `doq.rs` | DNS-over-HTTPS, DNS-over-TLS, DNS-over-QUIC |
+| Component | Path | Purpose | Deep Dive |
+|-----------|------|---------|-----------|
+| **DNS Server** | `src/dns/` | Authoritative DNS with zone management | [dns_deep_dive.md](dns_deep_dive.md) |
+| **Recursive Resolver** | `src/dns/recursive.rs` | Full recursive resolver with caching | [dns_deep_dive.md](dns_deep_dive.md) |
+| **DNSSEC** | `src/dns/dnssec*.rs` | Signing, validation, key management (NSEC/NSEC3) | [dns_deep_dive.md](dns_deep_dive.md) |
+| **TSIG** | `src/dns/tsig.rs` | Transaction signature for dynamic updates | [dns_deep_dive.md](dns_deep_dive.md) |
+| **Zone Transfer** | `src/dns/transfer.rs` | AXFR/IXFR zone transfers | [dns_deep_dive.md](dns_deep_dive.md) |
+| **Encrypted DNS** | `src/dns/doh.rs`, `dot.rs`, `doq.rs` | DNS-over-HTTPS, DNS-over-TLS, DNS-over-QUIC | [dns_deep_dive.md](dns_deep_dive.md) |
+| **Tunnel** | `src/tunnel/` | QUIC tunnel, WireGuard VPN | [dns_deep_dive.md](dns_deep_dive.md) |
+| **VPN Client** | `src/vpn_client/` | VPN client functionality | [dns_deep_dive.md](dns_deep_dive.md) |
 
-### Tunnel & VPN
+### DNS Key Files
 
-| Component | Path | Purpose |
-|-----------|------|---------|
-| **Tunnel** | `src/tunnel/` | QUIC tunnel, WireGuard VPN |
-| **VPN Client** | `src/vpn_client/` | VPN client functionality |
+- **`DnsServer`** (`src/dns/server/mod.rs`): Core authoritative server
+- **`ZoneStore`** (`src/dns/store.rs`): SQLite-backed zone persistence
+- **`TrustAnchorManager`** (`src/dns/trust_anchor.rs`): RFC 5011 trust anchor management
+- **`ZoneSigningKey`** (`src/dns/dnssec.rs`): DNSSEC key lifecycle
 
-### DNS Documentation
+---
 
-| Document | Description |
-|----------|-------------|
-| [DNS & Tunnel Deep Dive](dns_deep_dive.md) | DNS server, DNSSEC, TSIG, tunnel protocols, VPN client |
+## Mesh Networking (Optional - `mesh` feature)
+
+Distributed peer-to-peer networking for DDoS defense, threat intelligence, and coordination.
+
+| Component | Path | Purpose | Deep Dive |
+|-----------|------|---------|-----------|
+| **DHT** | `src/mesh/dht/` | Distributed hash table, Kademlia routing | [mesh_deep_dive.md](mesh_deep_dive.md) |
+| **Raft** | `src/mesh/raft/` | Consensus for global control plane | [mesh_deep_dive.md](mesh_deep_dive.md) |
+| **Transport** | `src/mesh/transport.rs` | QUIC-based encrypted transport | [mesh_deep_dive.md](mesh_deep_dive.md) |
+| **MeshProxy** | `src/mesh/proxy.rs` | HTTP proxy routing through mesh | [mesh_deep_dive.md](mesh_deep_dive.md) |
+| **MeshBackend** | `src/mesh/backend.rs` | DHT-backed backend factory | [mesh_deep_dive.md](mesh_deep_dive.md) |
+| **Threat Intel** | `src/mesh/threat_intel.rs` | Distributed threat intelligence | [mesh_deep_dive.md](mesh_deep_dive.md) |
+| **Peer Auth** | `src/deputy_auth.rs` | Peer authentication | [mesh_deep_dive.md](mesh_deep_dive.md) |
+
+### Mesh Node Roles
+
+| Role | Description |
+|------|-------------|
+| **Global Node** | Full mesh participant, Raft consensus, DNSSEC signing |
+| **Edge Node** | PoW enforcement, geographic distribution |
+| **Origin Node** | Backend origin announcing routes through mesh |
+
+### DHT Submodules
+
+```
+mesh/dht/
+├── mod.rs              # Core DHT types
+├── signed.rs           # Record signing, quorum verification
+├── quorum.rs           # Quorum consensus
+├── record_store.rs     # Sharded in-memory store (64 shards)
+├── keys.rs             # DhtKey enum (50+ key variants)
+├── routing/            # K-bucket routing
+│   ├── table.rs       # RoutingTable with 256 K-buckets
+│   └── manager.rs      # DhtRoutingManager
+└── merkle.rs           # Merkle tree digests
+```
+
+---
+
+## TLS & Cryptography
+
+| Module | Path | Purpose | Deep Dive |
+|--------|------|---------|-----------|
+| **TLS** | `src/tls/` | TLS termination, ACME/Let's Encrypt, SNI peeking | [layer_3_5_deep_dive.md](layer_3_5_deep_dive.md) |
+| **WASM PoW** | `src/wasm_pow/` | Browser WASM proof-of-work with PQC key exchange | [layer_3_5_deep_dive.md](layer_3_5_deep_dive.md) |
+
+### Cryptographic Standards
+
+| Feature | Implementation |
+|---------|----------------|
+| **TLS** | `rustls` with `aws-lc-rs` crypto provider |
+| **Post-Quantum TLS** | ML-KEM-768 hybrid key exchange via `libcrux-ml-dsa` |
+| **Post-Quantum Mesh** | ML-DSA-44 signatures |
+| **Hashing** | BLAKE3 for checksums, SHA-3 for HMAC |
+| **Signing** | Ed25519 + ML-DSA hybrid |
+
+### Key TLS Structs
+
+- **`CertResolver`** (`src/tls/cert_resolver.rs`): Multi-domain certificate resolution with hot-reload
+- **`AcmeManager`** (`src/tls/acme.rs`): Let's Encrypt automated provisioning
+- **`HttpsServer`** (`src/tls/server.rs`): TLS acceptor server
+
+---
+
+## Admin & Auth
+
+| Module | Component | Deep Dive |
+|--------|-----------|-----------|
+| **Admin API** | Axum-based HTTP/HTTPS management interface, WebSocket broadcasting | [admin_deep_dive.md](admin_deep_dive.md) |
+| **Auth** | Session management, bcrypt password hashing, brute-force protection | [admin_deep_dive.md](admin_deep_dive.md) |
+| **Overseer** | Legacy parent process (health monitoring, upgrade coordination) | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Master** | Legacy mid-tier process manager | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Metrics** | Prometheus exporter, site/worker metrics | [platform_deep_dive.md](platform_deep_dive.md) |
+
+### Key Admin Components
+
+- **`AdminState`** (`src/admin/state.rs`): Central admin state with config and trackers
+- **`AuditLog`** (`src/admin/audit.rs`): Config change audit trail
+- **`Broadcaster`** (`src/admin/ws/`): WebSocket event broadcasting
+- **`AuthManager`** (`src/auth/mod.rs`): Session and authentication management
 
 ---
 
 ## Platform & Infrastructure
 
-### Observability
+| Module | Path | Purpose | Deep Dive |
+|--------|------|---------|-----------|
+| **Platform** | `src/platform/` | Cross-platform abstractions (Linux, macOS, BSD, Windows) | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Sandbox** | `src/platform/sandbox.rs` | OS sandboxing (Landlock, Capsicum, Pledge, Windows Job Objects) | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Process** | `src/process/` | IPC primitives, worker lifecycle, message framing | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Supervisor** | `src/supervisor/` | Process supervision, health monitoring | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Metrics** | `src/metrics/` | Prometheus metrics, bandwidth tracking | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Logging** | `src/logging/` | Access logging, syslog, dynamic log levels | [platform_deep_dive.md](platform_deep_dive.md) |
+| **Config Crate** | `crates/synvoid-config/` | Strongly-typed configuration, TOML loading | [config_deep_dive.md](config_deep_dive.md) |
+| **Utils Crate** | `crates/synvoid-utils/` | Buffer pooling, serialization | [config_deep_dive.md](config_deep_dive.md) |
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Metrics** | `src/metrics/` | Prometheus metrics, site/worker metrics |
-| **Logging** | `src/logging/` | Access logging, syslog, structured JSON |
+### Platform Sandboxing
 
-### Configuration
+| OS | Backend | Level |
+|----|---------|-------|
+| Linux 5.13+ | Landlock | Basic/Strict |
+| FreeBSD | Capsicum | Basic/Strict |
+| OpenBSD | Pledge | Basic/Strict |
+| macOS | Seatbelt (feature-gated) | Basic/Strict |
+| Windows | Job Objects + DEP/ASLR | Basic/Strict |
 
-| Component | Path | Purpose |
-|-----------|------|---------|
-| **Config Crate** | `crates/synvoid-config/` | Strongly-typed configuration structs, validation |
-| **Utils Crate** | `crates/synvoid-utils/` | Buffer pooling with `synvoid_utils::buffer::pool`, serialization |
+### Buffer Pool Architecture
 
-### Platform Abstraction
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Platform** | `src/platform/` | Cross-platform abstractions (Linux, macOS, BSD, Windows) |
-| **Process** | `src/process/` | IPC, Unix domain sockets, named pipes, message framing |
-| **Supervisor** | `src/supervisor/` | Process supervision, health monitoring, zero-downtime upgrades |
-
-### Utilities
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| **Utils** | `src/utils/` | Misc utilities, IP hashing, duration parsing |
-| **Serialization** | `src/serialization_rkyv.rs` | rkyv zero-copy serialization |
-| **Integrity** | `src/integrity/` | Merkle tree, content integrity |
-
-### Infrastructure Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Platform & Process Deep Dive](platform_deep_dive.md) | IPC, sandboxing, platform abstraction |
-| [Config & Utils Deep Dive](config_deep_dive.md) | Configuration hierarchy, buffer pool |
+`crates/synvoid-utils/src/buffer/pool.rs`:
+- 4-tier architecture: Small (4KB), Medium (64KB), Large (256KB), Jumbo (256KB+)
+- 8 shards with lock-free TLS cache (16 buffers/tier)
+- Global memory limit enforcement
+- ABA-safe lock-free implementation
 
 ---
 
 ## Deep Dive Index
 
-This overview serves as an index for detailed documentation. Each link below provides an in-depth exploration of the respective subsystem.
+This overview serves as an index for detailed documentation. Each link provides an in-depth exploration of the respective subsystem.
 
 | Category | Document | Coverage |
 |----------|----------|----------|
-| **Process Model** | [Process Lifecycle](process_lifecycle.md) | Overseer, Supervisor, Worker hierarchy, zero-downtime upgrades |
+| **Process Model** | [Process Lifecycle](process_lifecycle.md) | Overseer, Supervisor, Worker hierarchy, drain coordination |
 | **Worker Architecture** | [Worker Architecture](worker_architecture.md) | Unified server, listener pools, request flow |
 | **HTTP Stack** | [Networking Deep Dive](networking_deep_dive.md) | HTTP/1, HTTP/2, HTTP/3, TLS, QUIC, connection handling |
 | **Request Routing** | [Routing Deep Dive](routing_deep_dive.md) | Router, upstream pools, load balancing, health monitoring |
 | **Proxy & Upstream** | [Proxy & Upstream Deep Dive](proxy_deep_dive.md) | Proxy server, connection pooling, retry logic, cache governor |
 | **Security/WAF** | [WAF Deep Dive](waf_deep_dive.md) | WAF pipeline, attack detection, bot mitigation, challenges |
 | **Admin & Auth** | [Admin & Auth Deep Dive](admin_deep_dive.md) | Admin API, session management, CSRF, rate limiting |
-| **Application Handlers** | [App Handlers](app_handlers.md) | Static files, PHP-FPM, FastCGI, Python, WASM, Spin |
+| **Application Handlers** | [App Handlers](app_handlers.md) | Static files, PHP-FPM, FastCGI, CGI, WASM, Spin |
 | **Plugin & Serverless** | [Plugin & Serverless Deep Dive](plugin_deep_dive.md) | WASM plugin runtime, Spin, serverless instance pooling |
 | **Mesh Networking** | [Mesh Deep Dive](mesh_deep_dive.md) | DHT, Raft consensus, QUIC transport, threat intelligence |
 | **DNS & Tunnel** | [DNS & Tunnel Deep Dive](dns_deep_dive.md) | DNS server, DNSSEC, TSIG, tunnel protocols, VPN client |
@@ -309,143 +364,60 @@ This overview serves as an index for detailed documentation. Each link below pro
 
 ---
 
-## Mesh Networking (Optional - `mesh` feature)
-
-SynVoid supports peer-to-peer mesh networking for distributed DDoS defense and threat intelligence sharing.
-
-| Component | Path | Purpose |
-|-----------|------|---------|
-| **DHT** | `src/mesh/dht/` | Distributed hash table for peer discovery, Kademlia routing |
-| **Raft** | `src/mesh/raft/` | Consensus for global node state, leader election |
-| **Transport** | `src/mesh/transport/` | QUIC-based transport with TLS 1.3 |
-| **Threat Intel** | `src/mesh/` | Distributed threat intelligence sharing |
-| **YARA Rules** | `src/mesh/` | Rule distribution and synchronization |
-| **MeshBackend** | `src/mesh/backend.rs` | Backend routing via mesh network |
-| **MeshProxy** | `src/mesh/proxy.rs` | Backend routing via mesh (1996 lines, key routing component) |
-| **Peer Auth** | `src/mesh/peer_auth.rs` | Peer authentication with edge/global node verification |
-| **Protocol** | `src/mesh/protocol.rs` | Mesh protocol messages and encoding |
-
-### Key Mesh Submodules (`src/mesh/`)
-
-```
-mesh/
-├── dht/                    # Distributed Hash Table
-│   ├── mod.rs
-│   ├── bucket.rs           # K-bucket maintenance
-│   ├── capability_access.rs # Capability-based access control
-│   ├── hierarchical_routing.rs # Bloom filter routing
-│   └── signed.rs          # Signed DHT entries, quorum verification
-├── raft/                   # Raft consensus (incomplete)
-│   ├── log.rs
-│   ├── state_machine.rs
-│   └── types.rs
-├── transport/              # Transport layer
-│   ├── mod.rs
-│   ├── peer.rs             # Peer-to-peer transport
-│   ├── org.rs              # Organization-level transport
-│   ├── global.rs           # Global node transport
-│   └── dns.rs              # DNS transport
-├── proxy.rs                # Mesh proxy routing (key routing component)
-├── backend.rs              # Mesh backend
-├── protocol.rs             # Protocol message definitions
-├── threat_intel.rs         # Threat intelligence handling
-├── peer_auth.rs            # Peer authentication
-├── audit.rs                # Distributed audit logging
-├── certificate.rs          # Certificate management
-└── signed.rs               # Signing utilities
-```
-
-### Mesh Node Roles
-
-| Role | Description |
-|------|-------------|
-| **Global Node** | Full mesh participant, Raft consensus, DNSSEC signing, threat intel authority |
-| **Edge Node** | PoW enforcement, geographic distribution, WAF enforcement |
-| **Origin Node** | Backend origin, announces routes through mesh |
-| **Composite Roles** | Global+Edge, Global+Origin, Edge+Origin combinations |
-
-### Mesh Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Mesh Deep Dive](mesh_deep_dive.md) | DHT, Raft consensus, QUIC transport, threat intelligence |
-
----
-
 ## Module Index by Source Path
 
 | Path | Primary Purpose |
 |------|----------------|
-| `src/admin/` | Admin API & UI |
-| `src/app_server/` | Application server integration |
-| `src/auth/` | Authentication & sessions |
-| `src/bin/` | Binary crate |
-| `src/block_store.rs` | IP blocklist storage |
-| `src/captcha/` | CAPTCHA generation |
-| `src/cgi/` | CGI script support |
-| `src/challenge/` | PoW/CSS challenges |
-| `src/common/` | Common/shared utilities |
-| `src/config/` | Configuration loading |
-| `src/dns/` | DNS server (DNSSEC) |
-| `src/drain/` | Graceful drain handling |
-| `src/fastcgi/` | FastCGI client |
-| `src/filter/` | Protocol filtering |
-| `src/geoip/` | GeoIP lookup |
-| `src/honeypot_port/` | Port honeypot with AI responders, protocol detection, threat intelligence, and mesh integration |
-| `src/honeypot_unified/` | Unified honeypot handler |
-| `src/http/` | HTTP server |
-| `src/icmp_filter/` | ICMP packet filtering via platform-specific backends (nftables, pf, winfw, wfp, ebpf) |
-| `src/integrity/` | Integrity verification |
-| `src/listener/` | Socket listening |
-| `src/logging/` | Access logging |
-| `src/master/` | Master process |
-| `src/mesh/` | Mesh networking |
-| `src/metrics/` | Metrics collection |
-| `src/mime/` | MIME type detection |
-| `src/overseer/` | Overseer process |
-| `src/php/` | PHP-FPM support |
-| `src/plugin/` | WASM plugin runtime with instance pooling, hot-reloading, and Axum integration |
-| `src/process/` | IPC primitives |
-| `src/protocol/` | Protocol handling |
-| `src/proxy/` | Reverse proxy |
-| `src/proxy_cache/` | Response caching |
-| `src/router.rs` | Request routing |
-| `src/sandbox/` | Process sandboxing for WASM/YARA execution with restricted child processes (jail model) |
-| `src/serverless/` | Serverless function management with async compilation, instance pooling, and registry |
-| `src/spin/` | Spin framework runtime with WASM support, KV store, and manifest parsing |
-| `src/startup/` | Bootstrap & startup |
-| `src/static_files/` | Static file serving |
-| `src/streaming/` | Streaming primitives |
-| `src/supervisor/` | Process supervisor |
-| `src/tarpit/` | Bot tar pit with Markov chain HTML generation to waste scraper/bot resources |
-| `src/tcp/` | TCP proxy |
-| `src/theme/` | Theme rendering |
-| `src/tls/` | TLS termination |
-| `src/tunnel/` | Tunnel management |
-| `src/udp/` | UDP proxy |
-| `src/upstream/` | Backend management |
-| `src/upload/` | Upload handling |
-| `src/utils/` | Utilities |
-| `src/vpn_client/` | VPN client |
-| `src/waf/` | WAF engine |
-| `src/wasm_pow/` | WASM-based proof-of-work challenge solver with PQC key exchange |
-| `src/worker/` | Worker process |
+| `src/admin/` | Admin API, WebSocket broadcasting, audit logging |
+| `src/auth/` | User auth, sessions, bcrypt, brute-force protection |
+| `src/block_store.rs` | Persistent 64-shard IP blocklist with LRU eviction |
+| `src/cgi/` | CGI script execution (Perl, Python, Ruby, Shell, Lua) |
+| `src/challenge/` | PoW, CSS, Mesh-PoW anti-bot challenges |
+| `src/config/` | Configuration loading (delegates to `crates/synvoid-config/`) |
+| `src/dns/` | Authoritative DNS server, DNSSEC, recursive resolver |
+| `src/drain/` | Graceful drain coordination types |
+| `src/fastcgi/` | FastCGI protocol client with connection pooling |
+| `src/filter/` | Protocol filtering framework for TCP/UDP |
+| `src/geoip/` | MaxMind GeoIP lookup, country/ASN blocking |
+| `src/honeypot_port/` | Port honeypot with AI responders |
+| `src/http/` | HTTP/1.1 + HTTP/2 server |
+| `src/http3/` | HTTP/3 QUIC server via quinn/h3 |
+| `src/http_client/` | Upstream proxy client with connection pooling |
+| `src/icmp_filter/` | ICMP filtering via nftables/pf/winfw/ebpf |
+| `src/integrity/` | Merkle tree, content integrity verification |
+| `src/listener/` | Socket configuration, connection context |
+| `src/logging/` | Dynamic log levels, access logging |
+| `src/master/` | Legacy master process (IPC with workers) |
+| `src/mesh/` | Mesh networking: DHT, Raft, QUIC transport |
+| `src/metrics/` | Prometheus metrics, bandwidth tracking |
+| `src/overseer/` | Legacy overseer (health monitoring, upgrades) |
+| `src/php/` | PHP-FPM integration via FastCGI |
+| `src/plugin/` | WASM plugin runtime with instance pooling |
+| `src/process/` | IPC primitives, worker lifecycle management |
+| `src/proxy/` | Reverse proxy, header filtering, retries |
+| `src/proxy_cache/` | LRU response caching |
+| `src/protocol/` | Protocol detection (WebSocket, gRPC) |
+| `src/router.rs` | Domain-based routing to backends |
+| `src/sandbox/` | Process sandboxing for WASM/YARA execution |
+| `src/serverless/` | WASM serverless with instance pooling |
+| `src/spin/` | Fermyon Spin framework support |
+| `src/startup/` | Bootstrap, daemonization, signal handling |
+| `src/static_files/` | Static file serving with caching/compression |
+| `src/supervisor/` | Process supervisor, gRPC control plane |
+| `src/tarpit/` | Markov chain bot trap for scrapers |
+| `src/tcp/` | TCP proxy with protocol detection |
+| `src/tls/` | TLS termination, ACME, SNI peeking |
+| `src/tunnel/` | QUIC tunnel, WireGuard VPN |
+| `src/udp/` | UDP proxy with flood protection |
+| `src/upstream/` | Backend pools, load balancing, health checks |
+| `src/utils.rs` | Misc utilities (time, parsing, hashing, regex) |
+| `src/vpn_client/` | VPN client for tunnel connections |
+| `src/waf/` | Web Application Firewall engine |
+| `src/wasm_pow/` | Browser-side WASM proof-of-work |
+| `src/worker/` | Worker process implementation |
 | `src/worker_pool/` | Worker pool management |
-| `crates/synvoid-config/` | Configuration crate |
-| `crates/synvoid-utils/` | Utilities crate |
-
----
-
-## Errata & Known Corrections
-
-The following corrections were made to address discrepancies between documentation and implementation:
-
-| Item | Correction |
-|------|------------|
-| **Process Hierarchy** | SynVoid uses a three-tier hierarchy (Overseer → Master → Worker) for legacy deployments, with Supervisor consolidating Overseer + Master responsibilities for simpler deployments. See [Process Lifecycle](process_lifecycle.md) for details. |
-| **gRPC Control Plane** | The gRPC API binds to localhost only — TLS is not required for local IPC between processes. See [Platform Deep Dive](platform_deep_dive.md). |
-| **Spin Framework** | Spin support (`src/spin/`) requires manual app registration via Admin API. Routing integration and component mapping are not fully automated. |
-| **File Path Corrections** | Several file path references in deep dive docs were corrected in AGENTS.md. Key corrections: `collect_body_with_chunk_waf` is in `src/http/server.rs:4661` (not `shared_handler.rs`), quorum verification is in `src/mesh/dht/signed.rs:860-934` (not `state_machine.rs:166-172`). |
+| `crates/synvoid-config/` | Strongly-typed configuration structs |
+| `crates/synvoid-utils/` | Buffer pool, serialization utilities |
 
 ---
 
@@ -453,18 +425,39 @@ The following corrections were made to address discrepancies between documentati
 
 | Feature | Purpose |
 |---------|---------|
-| `dns` | DNS server with DNSSEC |
+| `dns` | DNS server with DNSSEC, encrypted DNS |
 | `mesh` | Mesh networking, DHT, Raft |
-| `socket-handoff` | Socket transfer between processes |
-| `wireguard` | WireGuard VPN |
-| `icmp-filter` | ICMP filtering |
-| `flood-ebpf` | eBPF flood protection |
-| `post-quantum` | Post-quantum TLS |
+| `socket-handoff` | Socket transfer between processes (Unix sendmsg/recvmsg) |
+| `wireguard` | WireGuard VPN support |
+| `icmp-filter` | ICMP packet filtering |
+| `flood-ebpf` | eBPF-based flood protection (Linux) |
+| `post-quantum` | Post-quantum TLS (ML-KEM-768) |
 | `pqc-mesh` | Post-quantum mesh signatures (ML-DSA-44) |
-| `macos-sandbox` | macOS sandbox enforcement |
-| `erased_pool` | Type-erased connection pool |
-| `rkyv` | Rkyv serialization |
+| `macos-sandbox` | macOS Seatbelt sandbox |
+| `erased_pool` | Type-erased HTTP connection pool |
+| `rkyv` | Rkyv zero-copy serialization |
 
 ---
 
-*This overview provides a bird's eye view of SynVoid's architecture. For detailed exploration of any subsystem, refer to the linked documents above.*
+## Key Architectural Patterns
+
+### Constant-Time Comparison
+Always use `subtle::ConstantTimeEq` for secrets: keys, MACs, auth tokens, passwords.
+Simple `!=` comparison is acceptable for publicly-known values (puzzle solutions).
+
+### IPC Message Signing
+Messages between processes are signed via `AES-GCM` + `HMAC-SHA256` with session keys.
+Session key passed via temp file with `create_new=true` to prevent symlink attacks.
+
+### Sharded Storage
+High-contention structures use sharding: `BlockStore` (64 shards), `ShardedRecordStore` (64 shards).
+
+### Streaming WAF
+`StreamingWafBody<B>` wraps upstream bodies for per-chunk WAF scanning without buffering entire request.
+
+### Post-Quantum Hybrid Signatures
+Mesh messages support `HybridSignature` combining Ed25519 + ML-DSA for post-quantum security.
+
+---
+
+*This overview provides a bird's eye view of SynVoid's architecture. For detailed exploration of any subsystem, refer to the linked deep dive documents.*
