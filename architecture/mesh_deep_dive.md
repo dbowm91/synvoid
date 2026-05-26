@@ -50,6 +50,22 @@ The mesh allows nodes to share behavioral fingerprints of suspected bots.
 
 ---
 
+## MeshProxy Component
+
+The `MeshProxy` (`src/mesh/proxy.rs:62-78`, 1994 lines total) is the central routing component for mesh proxying:
+
+- **Proxy Cache:** Caches proxy decisions to reduce latency for repeated requests to the same destination
+- **Connection Management:** Tracks active connections via `active_connections: DashMap<String, MeshConnection>`
+- **Policy Caching:** Uses `Cache<String, CachedPolicy>` for routing policy decisions
+- **Failed Provider Tracking:** Tracks failed providers to avoid routing to unhealthy nodes
+- **Provider Statistics:** Maintains per-provider stats via `DashMap<String, ProviderStats>`
+- **Organization Management:** `OrganizationManager` handles org-level configuration and policies
+- **Transform Cache:** `TieredTransformCache` for efficient data transformation
+
+MeshProxy is the critical routing component that coordinates mesh traffic between Edge nodes and Origin nodes.
+
+---
+
 ## Security & Integrity
 
 - **Peer Authentication:** All nodes must have a valid certificate signed by an authorized Organization Key (see [`validate_member_certificate`](src/mesh/peer_auth.rs:141) in `src/mesh/peer_auth.rs`).

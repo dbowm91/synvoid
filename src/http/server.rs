@@ -3300,9 +3300,13 @@ impl HttpServer {
 
                 let streaming_threshold = target.site_config.proxy.streaming_threshold_bytes;
                 // Request body is already fully buffered at this point (`full_body_arc`).
-                // Do not route through "streaming" request APIs with `Full<Bytes>`, which adds
-                // boxing/cloning overhead without preserving ingress streaming semantics.
-                let use_erased_client = false;
+                // Use ErasedHttpClient when body_buffering_policy is Streaming.
+                let use_erased_client = target
+                    .site_config
+                    .proxy
+                    .body_buffering_policy
+                    .map(|p| p.should_stream(full_body_arc.len() as u64, streaming_threshold))
+                    .unwrap_or(false);
 
                 if use_erased_client {
                     let forward_header_map = build_forward_headers(

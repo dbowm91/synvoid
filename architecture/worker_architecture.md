@@ -10,7 +10,7 @@ The Unified Server is designed to handle multiple protocols and transport layers
 
 - **Protocol Support:**
   - **HTTP/1.1:** Fully supported.
-  - **HTTP/2:** Currently disabled (`is_http2 = false`); infrastructure exists but inactive.
+  - **HTTP/2:** Enabled via ALPN negotiation on server side (`src/tls/server.rs:411-487`). Client-side has hardcoded `is_http2 = true` in `src/http_client/mod.rs:893`.
   - **HTTP/3 (QUIC):** Handled via `Quinn`, providing 0-RTT handshakes and improved performance on lossy networks.
   - **TCP & UDP Proxying:** Generic stream and packet proxying with WAF protections.
 - **Unified Event Loop:** A single `tokio::select!` based loop (or multiple spawned tasks) manages all incoming connections across all listeners.

@@ -36,7 +36,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `recursive_cache.rs` | Cache for recursive resolver responses |
 | `trust_anchor.rs` | RFC 5011 trust anchor management |
 | `hsm.rs` | HSM-based key storage and signing |
-| `cookie.rs` | RFC 8905 DNS cookies - client authentication via cookie exchange |
+| `cookie.rs` | RFC 8905/RFC 7873 DNS cookies - client authentication via EDNS cookie exchange |
 | `update.rs` | Dynamic DNS updates (RFC 2136) |
 | `transfer.rs` | Zone transfers (AXFR/IXFR) |
 | `doh.rs` | DNS-over-HTTPS server |
@@ -66,7 +66,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
    - Implemented at `src/dns/query_coalesce.rs`
    - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
    - `QueryCoalescer::with_config()` created in `DnsServer::new()` at `src/dns/server/mod.rs:634-644`
-   - Passed to query handler via `DnsServerQueryHandler` context at `src/dns/server/mod.rs:517`
+   - Passed to query handler via `QueryContext` at `src/dns/server/mod.rs:419-445`
 7. **Zone Resolution**: `ShardedZoneStore` looks up zone, builds response
 8. **DNSSEC Signing**: If zone signed, RRSIG records added
 9. **Response**: Wire format response sent to client
@@ -100,6 +100,10 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 **Trust Anchors** (`trust_anchor.rs`):
 - RFC 5011 automated trust anchor updates
 - States: `Seen → Pending → Valid → Revoked → Removed → Missing`
+
+**DNSSEC Limitations** (`dnssec.rs:1-13`):
+- Manual wire format construction - no built-in compression support
+- All DNSSEC record building is done manually
 
 ### TSIG (Feature-Gated)
 
