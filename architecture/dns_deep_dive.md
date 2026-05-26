@@ -76,6 +76,14 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 **IXFR** (RFC 1995) - Incremental zone transfer
 **TSIG** (RFC 2845) - Transaction signature authentication for zone transfers
 
+**AXFR Record Type Coverage:** The AXFR implementation at `src/dns/transfer.rs:829-1029` handles the following record types: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA. The following record types are **not handled** (fall through with `_ => continue`):
+- **NAPTR** (35) - Naming Authority Pointer
+- **CERT** (37) - Certificate record
+- **SMMEA** (48) - Simple Mail Messaging Exchange Authority
+- **DNAME** (39) - Delegation Name
+
+**Note:** AXFR requests for unsupported record types will return no records of that type in the response.
+
 ### DNSSEC Signing/Validation
 
 **Signing** (`dnssec_signing.rs`):
@@ -88,7 +96,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 **Validation** (`dnssec_validation.rs`):
 - `calculate_key_tag()` - DNSKEY key tag per RFC 4034
 - `compute_dnskey_canonical()` - Canonical DNSKEY wire format
-- `compute_ds_digest()` - DS record digest (SHA-1 [type 1], SHA-256 [type 2], SHA-384 [type 4]). GOST (type 3) not implemented.
+- `compute_ds_digest()` - DS record digest (SHA-1 [type 1], SHA-256 [type 2], SHA-384 [type 4]). GOST R 34.11-94 (type 3) **not supported** - returns error at `src/dns/dnssec_validation.rs:260`.
 - `verify_ds_digest()` - Validates DS against DNSKEY
 - Chain of trust: DS → DNSKEY → RRSIG → Zone data
 
