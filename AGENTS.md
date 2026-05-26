@@ -82,14 +82,6 @@ cargo check --no-default-features --features mesh,dns
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
 | `src/fastcgi/mod.rs:132-164` | FastCGI buffered response - known limitation, true streaming requires architectural change |
 
-### New Findings (2026-05-26 Session)
-
-| Finding | Location | Notes |
-|---------|----------|-------|
-| Hardcoded port 80 | `src/router.rs:1318` | `to_socket_addr(80)` uses hardcoded default |
-| ConnectionLimiter method default | `src/waf/traffic_shaper/limiter.rs:65` | 10000 is local method default, not struct default |
-| Clippy items remaining | `cloak/src/jpeg_transcoder/header.rs:290`, `crates/synvoid-config/src/mesh.rs:656` | Only 2 confirmed items need fixing |
-
 ## Modular Agent Guidance
 
 Agent guidance is **modularized** to reduce context pollution. Each module has its own `AGENTS.override.md` that contains specialized handling for that subsystem.
@@ -161,11 +153,12 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3302` | ErasedHttpClient never used - Phase 9 incomplete |
-| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false` - infrastructure exists but unused |
+| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete |
+| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false`, infrastructure exists but unused |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in |
 | SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used |
-| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive.validate()` not called |
+| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `zones`, `settings`, `dnssec`, `recursive` validate() not called |
+| DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Shows `route:`, `cert:` but actual code uses `threat_indicator:`, etc. |
 
 ### Dependency Vulnerability Status
 
@@ -228,6 +221,9 @@ Large plans should be organized into **waves** that can execute in parallel:
 | `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs:860-934` | Quorum verification is in signed.rs, not state_machine |
 | `architecture/mesh_deep_dive.md:30` | Already correct | Bloom filter purpose already documented correctly |
 | `architecture/config_deep_dive.md:64-67` | `architecture/config_deep_dive.md:86` | Sites HashMap is at line 86, not 64-67 |
+| `src/waf/mod.rs:484-512` | `src/waf/mod.rs:442-517` | Async WAF pipeline entry point `check_request_full` is at 442-517 |
+| `SpinHttpHandler` reference | `src/spin/handler.rs:117` | Handler struct is in spin/handler.rs, not http/server.rs |
+| `app_server.rs:5` utoipa import | Not present | Issue was already fixed in original cleanup plan |
 
 ## Known Deferred Items
 

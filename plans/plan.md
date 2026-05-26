@@ -1,7 +1,7 @@
 # SynVoid Architecture Review - Consolidated Implementation Plan
 
 **Generated:** 2026-05-26
-**Source:** 4 batches covering 16 modules (app_handlers, dns, worker, process_lifecycle, networking, routing, plugin, waf, layer_3_5, mesh, admin, proxy, platform, config, cleanup)
+**Source:** Consolidated from 16 module review plans (app_handlers, dns, worker, process_lifecycle, networking, routing, plugin, waf, layer_3_5, mesh, admin, proxy, platform, config, cleanup)
 
 ---
 
@@ -9,36 +9,41 @@
 
 This plan consolidates findings from architecture reviews across all SynVoid modules. It identifies critical bugs, documentation fixes, and implementation improvements organized into logical waves for parallel execution.
 
-### Critical Bugs (Fix First - Wave 1)
+### Critical Bugs Summary
 
-| ID | Module | Issue | Location | Severity |
-|----|--------|-------|----------|----------|
-| BUG-PL-1 | Process Lifecycle | Missing `--master` CLI flag - Overseer cannot spawn Master | `src/main.rs:21-192` | **CRITICAL** |
-| BUG-ROUTER-1 | Routing | Hardcoded port 80 instead of configured port | `src/router.rs:1318` | **CRITICAL** |
-| BUG-PLUGIN-1 | Plugin/WASM | DHT prefix examples completely wrong (security risk) | `architecture/plugin_deep_dive.md:87-88` | **CRITICAL** |
-| BUG-L1 | Layer 3.5 | `verify_hybrid()` returns false when ML-DSA absent | `src/mesh/ml_dsa.rs:206-218` | **CRITICAL** |
-
----
-
-## Wave 1: Critical Bugs
-
-### 1.1 BUG-PL-1: Missing --master CLI Flag
-**STATUS: ALREADY FIXED** (verified 2026-05-26)
-
-The `--master` flag is properly implemented at `src/main.rs:526-528`:
-- `Args` struct has `#[arg(long)] master: bool` field
-- `run_master_mode()` is correctly wired at line 528
+| ID | Module | Issue | Location | Status |
+|----|--------|-------|----------|--------|
+| BUG-ROUTER-1 | Routing | Hardcoded port 80 instead of configured port | `src/router.rs:1318` | **NEEDS FIX** |
+| BUG-PLUGIN-1 | Plugin/WASM | DHT prefix examples completely wrong (security risk) | `architecture/plugin_deep_dive.md:87-88` | **NEEDS FIX** |
+| BUG-PL-1 | Process Lifecycle | Missing `--master` CLI flag | `src/main.rs` | ✅ ALREADY FIXED |
+| BUG-L1 | Layer 3.5 | `verify_hybrid()` fail-safe | `src/mesh/ml_dsa.rs:217` | ✅ ALREADY FIXED |
 
 ---
 
-### 1.2 BUG-ROUTER-1: Hardcoded Port 80
+## Wave 1: Critical Bugs (Only Remaining Issue)
+
+### 1.1 BUG-ROUTER-1: Hardcoded Port 80
 
 **Issue:** `update_sites` uses hardcoded `80` instead of configured port.
 
 **Location:** `src/router.rs:1318`
 
+```rust
+if let Some(addr) = listen_config.to_socket_addr(80) {
+```
+
 **Fix Required:**
 - Replace hardcoded `80` with `main_config.server.port`
+- The `listen_config.port` field already exists and should be used
+
+**Implementation Detail:**
+```rust
+// Current (WRONG):
+if let Some(addr) = listen_config.to_socket_addr(80) {
+
+// Fix:
+if let Some(addr) = listen_config.to_socket_addr(main_config.server.port) {
+```
 
 **Verification:**
 ```bash
@@ -47,85 +52,64 @@ grep -n "to_socket_addr(80)" src/router.rs
 
 ---
 
-### 1.2 BUG-ROUTER-1: Hardcoded Port 80
+### 1.2 BUG-PLUGIN-1: DHT Prefix Examples Wrong (SECURITY CRITICAL)
 
-**Issue:** `update_sites` uses hardcoded `80` instead of configured port.
-
-**Location:** `src/router.rs:1318`
-
-**Fix Required:**
-- Replace hardcoded `80` with `main_config.server.port`
-
-**Verification:**
-```bash
-grep -n "update_sites" src/router.rs
-```
-
----
-
-### 1.3 BUG-PLUGIN-1: DHT Prefix Examples Wrong
-
-**Issue:** Document shows `route:`, `cert:`, `config:`, `serverless:` but actual code uses `threat_indicator:`, `yara_rule:`, `yara_rules_manifest:`, `edge_attestation:`, `dns_zone:`, `dns_record:`, `dns_domain_reg:`.
+**Issue:** Document shows `route:`, `cert:`, `config:`, `serverless:` but actual code uses:
+- `threat_indicator:`
+- `yara_rule:`
+- `yara_rules_manifest:`
+- `edge_attestation:`
+- `dns_zone:`
+- `dns_record:`
+- `dns_domain_reg:`
 
 **Location:** `architecture/plugin_deep_dive.md:87-88`
 
 **Fix Required:**
-- Update DHT prefix examples to match actual implementation in `src/plugin/instance_pool.rs` and `src/serverless/instance_pool.rs`
+- Update DHT prefix examples to match actual implementation in `src/plugin/wasm_runtime.rs:849-857`
+- This is a SECURITY-CRITICAL documentation error - wrong prefixes could lead to misconfiguration
 
----
-
-### 1.4 BUG-L1: verify_hybrid() Fail-Safe Design
-**STATUS: ALREADY FIXED** (verified 2026-05-26)
-
-At `src/mesh/ml_dsa.rs:206-218`, the function correctly returns `true` when `signature.has_ml_dsa()` is false (line 217), providing fail-safe behavior.
-
-AGENTS.md already correctly notes this as "FIXED".
+**Code Reference:**
+```rust
+// src/plugin/wasm_runtime.rs:849-857
+let sensitive_prefixes = [
+    "threat_indicator:",
+    "yara_rule:",
+    "yara_rules_manifest:",
+    "edge_attestation:",
+    "dns_zone:",
+    "dns_record:",
+    "dns_domain_reg:",
+];
+```
 
 ---
 
 ## Wave 2: Configuration Consistency
 
-### 2.1 WAF: ConnectionLimiter Default Inconsistency
-**STATUS: Clarification Needed**
+### 2.1 WAF: SiteConnectionLimiter Unused Parameters
 
-At `src/waf/traffic_shaper/limiter.rs:65`: `effective_max_per_site.unwrap_or(10000)` - this is a local method default, not the struct default.
-
-Actual `ConnectionLimitsConfig` defaults (from `crates/synvoid-config/src/traffic.rs:167-176`):
-- `max_connections`: 1000
-- `max_connections_per_ip`: 10
-- `connection_queue_size`: 100
-- `connection_burst`: 5
-
-**Clarification:** The 10000 may be an intentional override for site-level limits. Verify if this is correct or needs adjustment.
-
----
-
-### 2.2 WAF: SiteConnectionLimiter Unused Parameters
-
-**Issue:** `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` are unused.
+**Issue:** `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` are unused in `SiteConnectionLimiter::new()`.
 
 **Location:** `src/waf/traffic_shaper/limiter.rs:312-323`
 
-**Fix Required:**
-- Either implement these parameters or remove them
+**Fix Required:** Either implement these parameters or remove them as dead code
 
 ---
 
-### 2.3 DNS: Cookie Server Not Integrated
-**STATUS: Already documented in Known Incomplete Items (see below)**
+### 2.2 DNS: DnsConfig.validate() Incomplete
 
-The DNS Cookie Server implementation exists but is not integrated. See "Known Incomplete Items" section below.
-
----
-
-### 2.4 DNS: DnsConfig.validate() Incomplete
-
-**Issue:** Missing calls to `zones.validate()`, `settings.validate()`, `dnssec.validate()`, `recursive.validate()`.
+**Issue:** Missing calls to sub-config `validate()` methods.
 
 **Location:** `crates/synvoid-config/src/dns/mod.rs:174-205`
 
-**Fix Required:**
-- Add missing sub-config validation calls
+**Fix Required:** Add missing calls:
+```rust
+self.zones.validate()?;    // MISSING
+self.settings.validate()?; // MISSING (only called on error path)
+self.dnssec.validate()?;   // MISSING
+self.recursive.validate()?;// MISSING
+```
 
 ---
 
@@ -136,10 +120,15 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
 | 1 | CPU affinity is automatic, not explicit | `architecture/process_lifecycle.md:47` | Update to state it's automatic based on worker ID |
-| 2 | Wrong reuse_port line reference | `architecture/process_lifecycle.md:46` | Reference correct location |
+| 2 | Wrong reuse_port line reference | `architecture/process_lifecycle.md:46` | Reference correct location at `src/overseer/spawn.rs:43` |
 | 3 | Worker types undocumented | `architecture/process_lifecycle.md` | Document UnifiedServerWorker, StaticWorker, legacy Worker |
 
-**Location:** `src/process/manager.rs:666-668` (CPU affinity auto behavior)
+**CPU Affinity Code Reference:** `src/process/manager.rs:666-668`
+```rust
+// Assign CPU affinity based on worker ID
+let core = id.as_usize() % self.cpu_count;
+cmd.arg("--cpu-affinity").arg(core.to_string());
+```
 
 ---
 
@@ -147,11 +136,11 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | WasmHandler doesn't exist | `architecture/app_handlers.md:58` | Replace with `SpinHttpHandler` |
-| 2 | FastCGI "streaming" claim is false | `architecture/app_handlers.md` | Remove streaming claim; document buffering |
+| 1 | WasmHandler doesn't exist | `architecture/app_handlers.md:58` | Replace with `SpinHttpHandler` at `src/spin/handler.rs:117` |
+| 2 | FastCGI "streaming" claim is false | `architecture/app_handlers.md` | Remove streaming claim; document buffering (APP-15 known limitation) |
 | 3 | Static File Handler misleading | `architecture/app_handlers.md` | Clarify delegation to StaticWorker via IPC |
-| 4 | Generic WASM "Instance Pooling" vague | `architecture/app_handlers.md` | Specify which backends support pooling |
-| 5 | Generic WASM "Mesh Distribution" unverified | `architecture/app_handlers.md` | Clarify scope (Serverless, not generic WASM) |
+| 4 | Generic WASM "Instance Pooling" vague | `architecture/app_handlers.md` | Specify only WAF plugins support pooling, NOT Spin runtime |
+| 5 | Generic WASM "Mesh Distribution" unverified | `architecture/app_handlers.md` | Clarify scope: Serverless backend only, not generic WASM |
 
 ---
 
@@ -159,7 +148,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | AXFR "Missing record types" section wrong | `architecture/dns_deep_dive.md:77-85` | Remove incorrect section (ALL types implemented at `src/dns/transfer.rs:829-1028`) |
+| 1 | AXFR "Missing record types" section wrong | `architecture/dns_deep_dive.md:77-85` | REMOVE ENTIRE SECTION - ALL record types implemented at `src/dns/transfer.rs:829-1028` |
 | 2 | Query Flow Reference Error | `architecture/dns_deep_dive.md` | Replace `from_config` with `new()` constructor |
 | 3 | Missing store.rs in Key Files table | `architecture/dns_deep_dive.md` | Add `store.rs` to table |
 
@@ -171,7 +160,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 |---|-------|----------|-----|
 | 1 | WAF Pipeline "Challenge" stage not separate | `architecture/worker_architecture.md:27-34` | Update to reflect inline challenge logic |
 | 2 | Health monitoring overstated | `architecture/worker_architecture.md` | Correct to passive-first approach |
-| 3 | HTTP/2 disabled but documented as supported | `src/http_client/mod.rs:890` | Update to reflect disabled state |
+| 3 | HTTP/2 disabled but documented as supported | `src/http_client/mod.rs:890` | Update to reflect disabled state (`is_http2 = false`) |
 
 ---
 
@@ -179,7 +168,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | Stale reference to X25519Kyber768Draft00 | `architecture/layer_3_5_deep_dive.md:10` | Update to only mention X25519MLKEM768 |
+| 1 | Stale reference to X25519Kyber768Draft00 | `architecture/layer_3_5_deep_dive.md:10` | Update to only mention X25519MLKEM768 (only algorithm used) |
 | 2 | HybridSignature byte layout wrong | `src/mesh/hybrid_signature.rs:17` | Update doc from "concatenation" to struct fields |
 
 ---
@@ -197,7 +186,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
 | 1 | Overseer→Supervisor rename | `architecture/admin_deep_dive.md:231,753` | Replace all "Overseer" with "Supervisor" |
-| 2 | Handler count wrong | `architecture/admin_deep_dive.md:179` | Change "28 handlers" → "26+ handlers" |
+| 2 | Handler count wrong | `architecture/admin_deep_dive.md:179` | Change "28 handlers" → "26+ handlers (up to 30 with mesh)" |
 | 3 | Line number reference wrong | `architecture/admin_deep_dive.md:259` | Change `src/admin/state.rs:254-264` → `src/admin/state.rs:257-267` |
 
 ---
@@ -206,7 +195,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | Multiple line reference errors | `src/waf/mod.rs:264→293`, `src/waf/attack_detection/detector_common.rs:484-512→442-517` | Update references |
+| 1 | Multiple line reference errors | `src/waf/mod.rs:264→293`, `src/waf/attack_detection/detector_common.rs:484-512→442-517` | Update references to actual locations |
 
 ---
 
@@ -214,9 +203,9 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | HTTP/2 client config inconsistency | `src/http_client/mod.rs:374,420,644,893` | Clarify `is_http2 = true` vs `.http2_only(false)` |
-| 2 | AcmeDnsChallenge line reference wrong | `architecture/networking_deep_dive.md:40` | Update reference |
-| 3 | Shared Handler claim needs clarification | `architecture/networking_deep_dive.md:11` | Explain H1/H2 have separate implementations |
+| 1 | HTTP/2 client config inconsistency | `src/http_client/mod.rs:374,420,644,893` | Clarify `is_http2 = true` vs `.http2_only(false)` behavior |
+| 2 | AcmeDnsChallenge line reference wrong | `architecture/networking_deep_dive.md:40` | Update from `src/tls/acme_dns.rs:25-44` to `src/tls/acme_dns.rs:11-64` |
+| 3 | Shared Handler claim needs clarification | `architecture/networking_deep_dive.md:11` | Explain H1/H2 have separate handler implementations |
 
 ---
 
@@ -227,7 +216,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 | 1 | PeakEwma missing from docs | `architecture/routing_deep_dive.md:55` | Document algorithm at `src/upstream/pool.rs:48-57` |
 | 2 | AxumDynamic backend type undocumented | `architecture/routing_deep_dive.md:38-46` | Add to backend types list |
 | 3 | QuicTunnel URL parsing inconsistent | `src/router.rs:556-570 vs 858-872` | Unify parsing between location and site levels |
-| 4 | "(Granian)" branding outdated | `src/router.rs:71` | Remove or clarify |
+| 4 | "(Granian)" branding outdated | `src/router.rs:71` | Remove or clarify AppServer variant |
 | 5 | Spin backend type undocumented | `src/router.rs:76` | Document Spin backend |
 
 ---
@@ -236,10 +225,10 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | Missing fs.rs in Platform Module Table | `architecture/platform_deep_dive.md:17-25` | Add entry |
+| 1 | Missing fs.rs in Platform Module Table | `architecture/platform_deep_dive.md:17-25` | Add `fs.rs` entry |
 | 2 | Message Category Documentation incomplete | `architecture/platform_deep_dive.md:89-108` | Add AppServer variants, correct names |
 | 3 | Process Module Table missing files | `architecture/platform_deep_dive.md:73-87` | Add `ipc_transport.rs`, `ipc_pool.rs`, `ipc_rate_limit.rs`, `socket_path.rs`, `ipc_windows.rs` |
-| 4 | RuleFeedManager reference stale | `architecture/platform_deep_dive.md:201-220` | Likely renamed to `ThreatFeedManager` |
+| 4 | RuleFeedManager reference stale | `architecture/platform_deep_dive.md:201-220` | Likely renamed to `ThreatFeedManager` - verify and update |
 | 5 | Line offset error | `architecture/platform_deep_dive.md:224` | Change `279-302` → `278-302` |
 
 ---
@@ -260,9 +249,9 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | Warmup stub functions claim wrong | `architecture/plugin_deep_dive.md:107` | `guest_alloc` is NOT a stub - rewrite "all 7" claim |
-| 2 | PooledInstance::prepare_for_request mismatch | `architecture/plugin_deep_dive.md:106` | Only `WasmPooledInstance` resets body_receiver |
-| 3 | Missing guest_alloc in Host Functions Table | `architecture/plugin_deep_dive.md:71-78` | Add to table |
+| 1 | Warmup stub functions claim wrong | `architecture/plugin_deep_dive.md:107` | `guest_alloc` is NOT a stub - rewrite "all 7" claim; it's linked as a real function |
+| 2 | PooledInstance::prepare_for_request mismatch | `architecture/plugin_deep_dive.md:106` | Only `WasmPooledInstance` resets body_receiver, generic `PooledInstance` does NOT |
+| 3 | Missing guest_alloc in Host Functions Table | `architecture/plugin_deep_dive.md:71-78` | Add `guest_alloc` to table |
 
 ---
 
@@ -270,7 +259,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | HTTP/2 dead code - decision needed | `http_client/mod.rs:890`, `http_client/erased_pool.rs:199-215` | Either implement HTTP/2 pooling or confirm removal |
+| 1 | HTTP/2 dead code | `http_client/mod.rs:890`, `http_client/erased_pool.rs:199-215` | Decision: implement HTTP/2 pooling OR set `is_http2 = false` |
 | 2 | UpstreamClientRegistry unused | `proxy/client_registry.rs` | Either integrate into `ProxyServer` or deprecate |
 | 3 | Missing ProxyHeadersConfig in send_single_request | `proxy/mod.rs:1225` | Pass custom proxy headers config |
 
@@ -280,9 +269,9 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| 1 | Edge Node PoW Authentication undocumented | `src/mesh/peer_auth.rs:355-368` | Document PoW alternative to Org Key certs |
+| 1 | Edge Node PoW Authentication undocumented | `src/mesh/peer_auth.rs:355-368` | Document PoW alternative to Org Key certs for edge nodes |
 | 2 | Hierarchical Routing module unused | `src/mesh/hierarchical_routing.rs:2-9` | Add "[RESERVED - Not Active]" indicator |
-| 3 | Raft scope namespace list missing | `src/mesh/raft/mod.rs:13-14` | Add explicit namespace list |
+| 3 | Raft scope namespace list missing | `src/mesh/raft/mod.rs:13-14` | Add explicit namespace list: OrgPublicKey, ThreatIntel, Revocation |
 
 ---
 
@@ -292,24 +281,33 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 |---|-------|----------|-----|
 | 1 | Field type mismatches | `main_config.rs:51-53`, `lib.rs:76-78` | Should use `MainIpFeedConfig`, `MainRuleFeedConfig`, `MainYaraRuleFeedConfig` |
 | 2 | Feature-gated fields undocumented | `crates/synvoid-config/src/lib.rs` | Add `#[cfg(feature = "...")]` annotations |
-| 3 | Admin token generation weak | `crates/synvoid-config/src/admin.rs:190-204` | Add uppercase characters |
+| 3 | Admin token generation weak | `crates/synvoid-config/src/admin.rs:190-204` | Add uppercase characters for stronger randomness |
 
 ---
 
 ## Wave 5: Compilation Cleanup
 
-### 5.1 Wave 5.1: Clippy -D Warnings (2 items confirmed)
+### 5.1 Wave 5.1: Clippy -D Warnings (2 items)
 
 | # | Crate | Issue | Location | Fix |
 |---|-------|-------|----------|-----|
 | 1 | cloakrs | collapsible match | `cloak/src/jpeg_transcoder/header.rs:290` | Remove braces from `0xDD` match arm |
 | 2 | synvoid-config | needless borrow | `crates/synvoid-config/src/mesh.rs:656` | Change `ref genesis_config` to `genesis_config` |
 
-**Already Fixed:**
-- `app_server.rs:5` - No `utoipa::ToSchema` import present
-- `mesh.rs:12` - `POW_CACHE_TTL_SECS` constant not present in this crate
-- `icmp_filter.rs:88-92` - `#[derive(Default)]` already correct
-- `http/server.rs:3302` - Already simplified to `let use_erased_client = false;`
+**Fix Detail (cloakrs):**
+```rust
+// Before:
+0xDD => {
+    if segment_data.len() >= 2 {
+        header.restart_interval = ...;
+    }
+}
+
+// After:
+0xDD => if segment_data.len() >= 2 {
+    header.restart_interval = ...;
+}
+```
 
 ---
 
@@ -330,7 +328,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 |----------|-------|---------------|
 | Unused imports | ~40 | `src/admin/handlers/alerting.rs`, `src/http/server.rs`, `src/proxy/executor.rs`, etc. |
 | Dead code | ~15 | `admin/handlers/config.rs`, `http/server.rs`, `Http2PooledConnection`, etc. |
-| Deprecated API | 5 | `Nonce::from_slice` → `Nonce::from_bytes` |
+| Deprecated API | 5 | `Nonce::from_slice` → `Nonce::from_bytes` in `cert_dist.rs`, `config_identity.rs` |
 
 ---
 
@@ -342,7 +340,7 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 ---
 
-## Deferred Items (Preserved from Previous Plan)
+## Deferred Items (Preserved)
 
 | ID | Issue | Location | Reason |
 |----|-------|----------|--------|
@@ -355,43 +353,39 @@ The DNS Cookie Server implementation exists but is not integrated. See "Known In
 
 | Item | Location | Issue |
 |------|----------|-------|
-| ErasedHttpClient Phase 9 | `src/http/server.rs:3302` | `use_erased_client` hardcoded to `false` |
+| ErasedHttpClient Phase 9 | `src/http/server.rs:3305` | `use_erased_client` hardcoded to `false` |
 | HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false`, infrastructure exists but unused |
 | Minification unused | `src/static_files/mod.rs:134-136` | Params silently ignored |
 | Spin instance reuse | `src/spin/runtime.rs:260` | Per-request instantiation overhead |
 | GOST DS digest | `src/dns/dnssec_validation.rs:260` | Returns error "not yet supported" |
+| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in |
 
 ---
 
-## Dependencies & Parallelization
+## Wave Execution & Parallelization Strategy
 
-### Critical Bugs (Wave 1) - BUG-ROUTER-1 Only Remains
+### Critical Path
 ```
-BUG-ROUTER-1 (hardcoded port 80) --> Wave 2, 3, 4, 5
+Wave 1 (BUG-ROUTER-1) --> All other waves can proceed
 ```
-**BUG-PL-1** and **BUG-L1** are already fixed.
+BUG-PL-1 and BUG-L1 are already fixed and don't block anything.
 
-### Wave 2-5: Can Execute in Parallel
-All waves 2-5 can execute **in parallel** since they are independent:
-- Wave 2: Config consistency (WAF, DNS)
-- Wave 3: Documentation fixes (multiple docs)
-- Wave 4: Completeness improvements (plugin, proxy, mesh, config)
-- Wave 5: Compilation cleanup (clippy, warnings, formatting)
+### Parallel Execution
+Waves 2-5 are independent and can execute **in parallel** across module groups.
 
-### Sub-Agent Parallelization Strategy
-Within each wave, items can be parallelized by module:
+### Sub-Agent Module Assignment (7 parallel agents)
 
-| Module Group | Items | Sub-Agent Tasks |
-|-------------|-------|-----------------|
-| **Config/DNS** | 2.2, 2.4, 3.3, 3.12 | 1 agent |
-| **WAF** | 2.1, 2.2, 3.8 | 1 agent |
-| **Process/App/Worker** | 3.1, 3.2, 3.4 | 1 agent |
-| **Layer 3.5/Mesh** | 3.5, 3.6, 4.3 | 1 agent |
-| **Admin/Routing** | 3.7, 3.10, 4.2 | 1 agent |
-| **Platform/Plugin** | 3.11, 4.1 | 1 agent |
-| **Cleanup** | Wave 5 | 1 agent |
+| Agent | Module Group | Wave Items | Focus Areas |
+|-------|-------------|------------|-------------|
+| Agent 1 | Config/DNS | 2.2, 2.4, 3.3, 3.12 | DnsConfig validation, AXFR docs, config docs |
+| Agent 2 | WAF | 2.1, 3.8 | SiteConnectionLimiter, WAF line refs |
+| Agent 3 | Process/App/Worker | 3.1, 3.2, 3.4 | CPU affinity, app handlers, worker docs |
+| Agent 4 | Layer 3.5/Mesh | 3.5, 3.6, 4.3 | KEM docs, quorum refs, edge auth docs |
+| Agent 5 | Admin/Routing | 3.7, 3.10, 4.2 | Overseer→Supervisor, routing docs, proxy decisions |
+| Agent 6 | Platform/Plugin | 3.11, 4.1, 1.2 | Platform docs, DHT prefix SECURITY fix |
+| Agent 7 | Compilation | Wave 5 | Clippy, test compilation, warnings, formatting |
 
-**Total: 7 sub-agents can work in parallel**
+**Critical:** Agent 6 must fix BUG-PLUGIN-1 (DHT prefix security issue) first.
 
 ---
 
@@ -416,29 +410,29 @@ cargo test --test security_regression
 
 ---
 
-## Appendix A: File Changes Summary
+## Appendix: File Changes Summary
 
 | File | Changes Needed | Status |
 |------|----------------|--------|
-| `src/router.rs` | Fix hardcoded port 80, unify QuicTunnel parsing | **NEEDS FIX** |
+| `src/router.rs` | Fix hardcoded port 80 at line 1318 | **NEEDS FIX** |
+| `architecture/plugin_deep_dive.md` | Fix DHT prefix examples (SECURITY) at lines 87-88 | **NEEDS FIX** |
+| `src/waf/traffic_shaper/limiter.rs` | Remove dead params at lines 312-323 | **NEEDS FIX** |
+| `crates/synvoid-config/src/dns/mod.rs` | Add missing validate() calls | **NEEDS FIX** |
+| `architecture/process_lifecycle.md` | CPU affinity, worker types, Overseer→Supervisor | Needs fix |
+| `architecture/app_handlers.md` | SpinHttpHandler, FastCGI, WASM pooling scope | Needs fix |
+| `architecture/dns_deep_dive.md` | Remove incorrect AXFR section at lines 77-85 | Needs fix |
+| `architecture/worker_architecture.md` | WAF pipeline, health monitoring, HTTP/2 status | Needs fix |
+| `architecture/layer_3_5_deep_dive.md` | KEM algorithm (only X25519MLKEM768), HybridSignature struct | Needs fix |
+| `architecture/mesh_deep_dive.md` | Quorum verification reference | Needs fix |
+| `architecture/admin_deep_dive.md` | Overseer→Supervisor rename, handler count | Needs fix |
+| `architecture/networking_deep_dive.md` | HTTP/2 clarification, AcmeDnsChallenge ref | Needs fix |
+| `architecture/routing_deep_dive.md` | PeakEwma, AxumDynamic, Spin backend | Needs fix |
+| `architecture/platform_deep_dive.md` | Missing files, message categories | Needs fix |
+| `architecture/config_deep_dive.md` | ConfigManager lines (113-241), process hierarchy | Needs fix |
+| `cloak/src/jpeg_transcoder/header.rs` | Remove braces from 0xDD match at line 290 | **NEEDS FIX** |
+| `crates/synvoid-config/src/mesh.rs` | Remove needless borrow at line 656 | **NEEDS FIX** |
 | `src/main.rs` | --master CLI flag | ✅ Already fixed |
 | `src/mesh/ml_dsa.rs` | verify_hybrid fail-safe | ✅ Already fixed |
-| `architecture/plugin_deep_dive.md` | Fix DHT prefix examples (SECURITY) | **NEEDS FIX** |
-| `architecture/process_lifecycle.md` | CPU affinity, worker types, Overseer→Supervisor | Needs fix |
-| `architecture/app_handlers.md` | SpinHttpHandler, FastCGI, WASM | Needs fix |
-| `architecture/dns_deep_dive.md` | Remove incorrect AXFR section | Needs fix |
-| `architecture/worker_architecture.md` | WAF pipeline, health monitoring | Needs fix |
-| `architecture/layer_3_5_deep_dive.md` | KEM algorithm, HybridSignature | Needs fix |
-| `architecture/mesh_deep_dive.md` | Quorum verification reference | Needs fix |
-| `architecture/admin_deep_dive.md` | Overseer→Supervisor rename | Needs fix |
-| `architecture/networking_deep_dive.md` | HTTP/2, AcmeDnsChallenge | Needs fix |
-| `architecture/routing_deep_dive.md` | PeakEwma, AxumDynamic, Spin | Needs fix |
-| `architecture/platform_deep_dive.md` | Missing files, message categories | Needs fix |
-| `architecture/config_deep_dive.md` | ConfigManager lines, process hierarchy | Needs fix |
-| `src/waf/traffic_shaper/limiter.rs` | ConnectionLimiter defaults, unused params | Clarification |
-| `crates/synvoid-config/src/dns/mod.rs` | DnsConfig.validate() - add recursive | Needs fix |
-| `cloak/src/jpeg_transcoder/header.rs` | Remove braces from 0xDD match | Needs fix |
-| `crates/synvoid-config/src/mesh.rs` | Remove needless borrow | Needs fix |
 
 ---
 
