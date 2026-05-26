@@ -46,8 +46,8 @@ use subtle::ConstantTimeEq;
 
 use crate::config::site::{BufferingConfig, ProxyCacheConfig, RetryConfig};
 use crate::http_client::{
-    create_http_client_with_config, create_upstream_client, BoxErasedBody, ErasedBody,
-    ErasedHttpClient, HttpClient, UpstreamTlsConfig,
+    create_http_client_with_config, create_upstream_client, BoxErasedBody, ErasedHttpClient,
+    HttpClient, UpstreamTlsConfig,
 };
 
 use crate::metrics::{record_proxy_cache_hit, record_proxy_cache_miss};
@@ -906,6 +906,7 @@ impl ProxyServer {
         false
     }
 
+    #[allow(dead_code)]
     fn is_response_cacheable(
         &self,
         response: &Response<bytes::Bytes>,

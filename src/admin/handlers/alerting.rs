@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use crate::admin::alerting::{AlertConfig, AlertConfigError, AlertEvent, AlertManager};
 use crate::admin::handlers::common::OptionalAuth;
 use crate::admin::state::AdminState;

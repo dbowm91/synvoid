@@ -1918,11 +1918,13 @@ pub async fn update_bot_detection_config(
 
 // --- Mesh config ---
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MeshConfigResponse {
     pub config: serde_json::Value,
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "mesh")]
 pub async fn get_mesh_config(
     State(state): State<Arc<AdminState>>,
@@ -1951,11 +1953,13 @@ pub async fn update_mesh_config(
     Err(StatusCode::NOT_FOUND)
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMeshConfigRequest {
     pub config: serde_json::Value,
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "mesh")]
 pub async fn update_mesh_config(
     State(state): State<Arc<AdminState>>,

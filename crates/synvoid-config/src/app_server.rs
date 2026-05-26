@@ -2,7 +2,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use utoipa::ToSchema;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AppServerConfig {

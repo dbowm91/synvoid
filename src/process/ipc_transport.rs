@@ -11,13 +11,14 @@ use tokio::net::{UnixListener, UnixStream};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 
+#[allow(unused_imports)]
 use super::ipc_framing::{
     endpoint_to_socket_path, read_message, read_message_with_timeout, write_message,
     DEFAULT_BUFFER_SIZE,
 };
 use super::ipc_signed::IpcSigner;
 
-pub trait AsyncIpcTransport: AsyncRead + AsyncWrite + Unpin + Send + Sync {
+pub trait AsyncIpcTransport: AsyncRead + AsyncWrite + Unpin + Send + Sync + std::any::Any {
     fn peer_pid(&self) -> Option<u32>;
     #[cfg(unix)]
     fn as_raw_fd(&self) -> io::Result<std::os::unix::io::RawFd>;
@@ -41,8 +42,8 @@ impl AsyncIpcTransport for UnixStream {
             gid: libc::gid_t,
         }
 
-        let mut cred: UCred = unsafe { std::mem::zeroed() };
-        let mut cred_len = size_of::<UCred>() as libc::socklen_t;
+        let cred: UCred = unsafe { std::mem::zeroed() };
+        let cred_len = size_of::<UCred>() as libc::socklen_t;
 
         #[cfg(target_os = "linux")]
         {
@@ -459,6 +460,16 @@ impl IpcStream {
 
     pub fn into_inner(self) -> Box<dyn AsyncIpcTransport> {
         self.inner
+    }
+
+    #[cfg(unix)]
+    pub fn with_signer(self, signer: Arc<IpcSigner>) -> Self {
+        Self {
+            inner: self.inner,
+            read_buffer: self.read_buffer,
+            signer: Some(signer),
+            enforce_signing: true,
+        }
     }
 
     pub fn is_signed(&self) -> bool {

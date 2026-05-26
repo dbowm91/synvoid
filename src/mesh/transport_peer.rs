@@ -3183,9 +3183,7 @@ impl MeshTransport {
                                         } else {
                                             tracing::info!("Snapshot installed successfully");
                                             let response =
-                                                SnapshotResponse::<GlobalRegistryConfig> {
-                                                    vote,
-                                                };
+                                                SnapshotResponse::<GlobalRegistryConfig> { vote };
                                             let encoded =
                                                 postcard::to_stdvec(&response).map_err(|e| {
                                                     MeshTransportError::SendFailed(format!(
@@ -3312,9 +3310,7 @@ impl MeshTransport {
                                         } else {
                                             tracing::info!("Snapshot installed successfully");
                                             let response =
-                                                SnapshotResponse::<GlobalRegistryConfig> {
-                                                    vote,
-                                                };
+                                                SnapshotResponse::<GlobalRegistryConfig> { vote };
                                             let encoded =
                                                 postcard::to_stdvec(&response).map_err(|e| {
                                                     MeshTransportError::SendFailed(format!(

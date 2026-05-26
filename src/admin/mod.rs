@@ -33,6 +33,7 @@ pub use state::{
     AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter, SESSION_COOKIE_NAME,
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
+#[allow(unused_imports)]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;

@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[allow(unused_imports)]
 use std::sync::LazyLock;
 
 /// Global governor for memory-intensive proxy operations.

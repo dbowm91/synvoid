@@ -25,6 +25,7 @@ use crate::metrics::bandwidth::{
 };
 use crate::metrics::WorkerMetrics;
 use crate::proxy::client_registry::UpstreamClientRegistry;
+#[allow(unused_imports)]
 use crate::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers_buf,
     ForwardedProtocol, PreparedUpstreamTarget, WafDecision,
@@ -705,7 +706,7 @@ impl Http3Server {
                         return Ok(());
                     }
 
-                    let mut chunk_bytes = chunk.copy_to_bytes(chunk_len);
+                    let chunk_bytes = chunk.copy_to_bytes(chunk_len);
 
                     streamed_body_len += chunk_bytes.len();
                     if tx.send(Ok(chunk_bytes)).await.is_err() {

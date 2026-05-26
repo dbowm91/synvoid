@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+#[allow(unused_imports)]
 use sha2::Digest;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -2325,7 +2326,7 @@ mod tests {
             timestamp,
             indicators: feed_indicators,
             signature: String::new(),
-            signer_public_key: String::new(),
+            signer_public_key: None,
         };
 
         let feed_client_content =

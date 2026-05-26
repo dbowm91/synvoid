@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
-
 use crate::buffer::{BufferPool, PooledBuf};
 use crate::waf::attack_detection::{AttackDetectionResult, AttackDetector};
 

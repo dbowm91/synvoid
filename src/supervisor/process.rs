@@ -5,11 +5,11 @@ use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 
 use crate::block_store::BlockStore;
-use crate::config::{ConfigManager, MainConfig};
+use crate::config::ConfigManager;
 use crate::platform::fs::PlatformPaths;
 use crate::process::{
-    IpcEndpoint, IpcListener, IpcStream, MasterCommand, Message, PidFileManager, ProcessEvent,
-    ProcessManager, ProcessManagerConfig,
+    IpcEndpoint, IpcListener, Message, PidFileManager, ProcessEvent, ProcessManager,
+    ProcessManagerConfig,
 };
 use crate::waf::RuleFeedManagerForWaf;
 use crate::RunningFlag;

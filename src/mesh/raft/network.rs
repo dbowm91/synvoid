@@ -298,10 +298,8 @@ impl MeshRaftNetworkFactory {
     }
 }
 
-impl
-    openraft::network::RaftNetworkFactory<
-        crate::mesh::raft::state_machine::GlobalRegistryConfig,
-    > for MeshRaftNetworkFactory
+impl openraft::network::RaftNetworkFactory<crate::mesh::raft::state_machine::GlobalRegistryConfig>
+    for MeshRaftNetworkFactory
 {
     type Network = MeshRaftNetwork<crate::mesh::raft::state_machine::GlobalRegistryConfig>;
 

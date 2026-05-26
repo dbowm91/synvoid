@@ -114,7 +114,7 @@ impl InputNormalizer {
                         };
                         let mut buffer = buf_cell.borrow_mut();
                         let mut chars = chars_cell.borrow_mut();
-                        let mut ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
+                        let ni = self.normalize_internal(&input_str, &mut buffer, &mut chars);
                         let normalized_data = match ni.normalized {
                             NormalizedData::Borrowed(s) => {
                                 let mut pooled = BufferPool::acquire(s.len());

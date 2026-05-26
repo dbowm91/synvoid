@@ -30,6 +30,7 @@ use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+#[allow(unused_imports)]
 use crate::http::shared_handler::SharedRequestHandler;
 use crate::http_client::ErasedHttpClient;
 
@@ -109,10 +110,12 @@ use crate::challenge::HONEYPOT_PREFIX;
 use crate::config::site::{ProxyHeadersConfig, SiteWebSocketConfig};
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
+#[allow(unused_imports)]
 use crate::http::headers;
 use crate::http::internal_handlers;
-use crate::http::response_helpers::{self, build_websocket_response};
+use crate::http::response_helpers::build_websocket_response;
 use crate::http::validation_helpers::validate_websocket_upgrade;
+#[allow(unused_imports)]
 use crate::http_client::{
     create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
     send_request_with_body_and_timeout, ErasedBodyImpl, HttpClient, StreamingWafBody,
@@ -3299,12 +3302,7 @@ impl HttpServer {
                 // Request body is already fully buffered at this point (`full_body_arc`).
                 // Do not route through "streaming" request APIs with `Full<Bytes>`, which adds
                 // boxing/cloning overhead without preserving ingress streaming semantics.
-                let use_erased_client = false
-                    && !needs_body_transform
-                    && !crate::http_client::is_quictunnel_url(&target.upstream)
-                    && target.site_config.proxy.body_buffering_policy
-                        == Some(crate::config::site::BodyBufferingPolicy::Streaming)
-                    && request_body_size > streaming_threshold.unwrap_or(0) as u64;
+                let use_erased_client = false;
 
                 if use_erased_client {
                     let forward_header_map = build_forward_headers(
@@ -4397,6 +4395,7 @@ impl HttpServer {
         validate_websocket_upgrade(headers)
     }
 
+    #[allow(dead_code)]
     fn compute_websocket_accept_key(key: &str) -> String {
         crate::http::headers::compute_websocket_accept_key(key)
     }

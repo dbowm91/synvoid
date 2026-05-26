@@ -5,16 +5,14 @@
 //! over many requests, vs 1M times/second for per-request boxing.
 
 use bytes::Bytes;
-use http::{Request, Response};
 use http_body::Body as HttpBody;
+#[allow(unused_imports)]
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Frame, Incoming, SizeHint};
 use hyper::client::conn::http1 as http1_client;
 use hyper_util::rt::TokioIo;
-use std::error::Error;
 use std::fmt;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 
 /// Implement `http_body::Body` for `Box<dyn ErasedBody>` so it can be used
@@ -39,6 +37,7 @@ impl http_body::Body for Box<dyn ErasedBody> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpProtocol {
     Http1,
@@ -99,6 +98,7 @@ where
 
 pub type BoxErasedBody = Box<dyn ErasedBody>;
 
+#[allow(dead_code)]
 pub trait PooledConnection: Send + Sync + 'static {
     fn protocol(&self) -> HttpProtocol;
     fn is_available(&self) -> bool;
@@ -114,12 +114,14 @@ pub struct PoolKey {
     pub is_http2: bool,
 }
 
+#[derive(Debug)]
 pub struct Http1PooledConnection {
     io: Option<TokioIo<tokio::net::TcpStream>>,
     authority: http::uri::Authority,
     sender: Option<http1_client::SendRequest<BoxErasedBody>>,
 }
 
+#[allow(dead_code)]
 pub struct Http2PooledConnection {
     authority: http::uri::Authority,
 }
@@ -213,6 +215,7 @@ impl PooledConnection for Http2PooledConnection {
 }
 
 impl Http2PooledConnection {
+    #[allow(dead_code)]
     pub fn new(authority: http::uri::Authority) -> Self {
         Self { authority }
     }

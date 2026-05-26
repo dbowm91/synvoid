@@ -337,7 +337,7 @@ impl Drop for LockGuard {
 mod kill {
     #[cfg(unix)]
     pub fn process(pid: i32) -> std::io::Result<()> {
-        use nix::sys::signal::{kill, Signal};
+        use nix::sys::signal::kill;
         use nix::unistd::Pid;
 
         match kill(Pid::from_raw(pid), None) {

@@ -4,6 +4,7 @@
 //! to avoid hyper's type complexity while maintaining connection reuse.
 
 use bytes::Bytes;
+#[allow(unused_imports)]
 use http_body::Body as HttpBody;
 use http_body_util::Full;
 use hyper::body::Incoming;
@@ -12,7 +13,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use moka::sync::Cache;
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;

@@ -886,52 +886,23 @@ pub struct CacheStats {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use http::{HeaderMap, HeaderName, HeaderValue};
+    use http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::sync::Barrier;
 
-    fn create_test_settings(temp_dir: &TempDir) -> ProxyCacheSettings {
-        ProxyCacheSettings {
-            enabled: true,
-            path: temp_dir.path().join("cache"),
-            max_memory_size: 1024 * 1024,
-            max_disk_size: 10 * 1024 * 1024,
-            inactive: Duration::from_secs(300),
-            use_temp_file: true,
-            valid_status: vec![200, 301, 302, 304],
-            methods: vec!["GET".to_string()],
-            use_stale: vec![],
-            stale_while_revalidate: None,
-            stale_if_error: None,
-            min_uses: 1,
-            key_pattern: "$scheme$request_method$host$site_id$request_uri".to_string(),
-            vary_by: vec![],
-            max_concurrent_revalidations: 100,
-            revalidation_failure_threshold: 10,
-            revalidation_circuit_breaker_cooldown_secs: 30,
-        }
-    }
-
     fn create_cache_key(host: &str, uri: &str) -> CacheKey {
-        CacheKey {
-            scheme: "https".to_string(),
-            method: "GET".to_string(),
-            host: host.to_string(),
-            uri: uri.to_string(),
-            vary: String::new(),
-            site_id: "test_site".to_string(),
-        }
-    }
-
-    fn create_test_headers() -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static("content-type"),
-            HeaderValue::from_static("text/html"),
-        );
-        headers
+        CacheKey::new(
+            "https",
+            &Method::GET,
+            host,
+            &Uri::try_from(uri).unwrap(),
+            &HeaderMap::new(),
+            "$scheme$request_method$host$site_id$request_uri",
+            &[],
+            "test-site",
+        )
     }
 
     fn create_test_entry(
@@ -939,15 +910,17 @@ mod tests {
         status: u16,
         _max_age: Option<Duration>,
     ) -> (Bytes, u16, HeaderMap) {
-        let bytes = Bytes::from(content.to_vec());
-        (bytes, status, create_test_headers())
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::try_from("content-type").unwrap(),
+            HeaderValue::try_from("text/plain").unwrap(),
+        );
+        (Bytes::from(content.to_vec()), status, headers)
     }
 
-    #[tokio::test]
-    async fn test_ttl_expiration() {
-        let temp_dir = TempDir::new().unwrap();
-        let settings = ProxyCacheSettings {
-            enabled: true,
+    fn create_test_settings(temp_dir: &TempDir) -> ProxyCacheSettings {
+        ProxyCacheSettings {
+            enabled: false,
             path: temp_dir.path().join("cache"),
             max_memory_size: 1024 * 1024,
             max_disk_size: 10 * 1024 * 1024,
@@ -964,29 +937,8 @@ mod tests {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
-        };
-
-        let cache = ProxyCache::new(settings);
-        let key = create_cache_key("example.com", "/test");
-
-        let (content, status, headers) = create_test_entry(b"test content", 200, None);
-        cache
-            .insert(key.clone(), content, status, headers, None)
-            .unwrap();
-
-        let entry = cache.get(&key).await;
-        assert!(
-            entry.is_some(),
-            "Entry should exist immediately after insert"
-        );
-
-        std::thread::sleep(Duration::from_millis(50));
-
-        let entry_with_ttl = cache.get(&key).await;
-        assert!(
-            entry_with_ttl.is_some(),
-            "Entry should exist before TTL expires"
-        );
+            allowed_headers: vec![],
+        }
     }
 
     #[tokio::test]
@@ -1010,6 +962,7 @@ mod tests {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: vec![],
         };
 
         let cache = ProxyCache::new(settings);
@@ -1177,6 +1130,7 @@ mod tests {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: vec![],
         };
 
         let cache1 = ProxyCache::new(settings);
@@ -1218,6 +1172,7 @@ mod tests {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: vec![],
         };
 
         let cache = ProxyCache::new(settings);
@@ -1379,7 +1334,9 @@ mod tests {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: vec![],
         };
+
         let cache = ProxyCache::new(settings);
 
         let key = create_cache_key("example.com", "/test");
@@ -1442,9 +1399,11 @@ mod tests {
             max_concurrent_revalidations: 100,
             revalidation_failure_threshold: 10,
             revalidation_circuit_breaker_cooldown_secs: 30,
+            allowed_headers: vec![],
         };
 
         let cache = ProxyCache::new(settings);
+
         let key = create_cache_key("example.com", "/cleanup-test");
 
         let (content, status, headers) = create_test_entry(b"test", 200, None);

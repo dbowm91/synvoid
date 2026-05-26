@@ -53,10 +53,10 @@ impl CertDistManager {
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         rand::fill(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::clone_from_slice(&nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt(nonce, key_pem)
+            .encrypt(&nonce, key_pem)
             .map_err(|e| CertDistError::Encryption(e.to_string()))?;
 
         let encrypted_key = ciphertext;
@@ -95,10 +95,10 @@ impl CertDistManager {
             )));
         }
 
-        let nonce = Nonce::from_slice(&encrypted.nonce);
+        let nonce = Nonce::clone_from_slice(&encrypted.nonce);
 
         let key_pem = cipher
-            .decrypt(nonce, encrypted.encrypted_key.as_ref())
+            .decrypt(&nonce, encrypted.encrypted_key.as_ref())
             .map_err(|e| CertDistError::Decryption(e.to_string()))?;
 
         let cert = DecryptedCert {
@@ -169,10 +169,10 @@ impl CertDistManager {
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         rand::fill(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::clone_from_slice(&nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt(nonce, key_pem)
+            .encrypt(&nonce, key_pem)
             .map_err(|e| CertDistError::Encryption(e.to_string()))?;
 
         Ok(EncryptedCertData {

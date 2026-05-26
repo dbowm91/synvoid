@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use http::{header, HeaderMap, Method, Request, Response, StatusCode, Uri};
+use http::{HeaderMap, Method, Response};
 use http_body_util::Full;
 use hyper::body::Incoming;
 use std::sync::Arc;

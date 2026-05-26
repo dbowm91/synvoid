@@ -1905,6 +1905,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn handle_pong(&self, from_peer: &str, _request_id: &str, node_id: &str) {
         tracing::debug!("Received Pong from {}", from_peer);
 

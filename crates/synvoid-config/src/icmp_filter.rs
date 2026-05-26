@@ -78,17 +78,12 @@ pub enum Direction {
     Outbound,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ToSchema, Default)]
 #[serde(untagged)]
 pub enum InterfaceSpec {
+    #[default]
     All,
     Specific(Vec<String>),
-}
-
-impl Default for InterfaceSpec {
-    fn default() -> Self {
-        InterfaceSpec::All
-    }
 }
 
 impl InterfaceSpec {

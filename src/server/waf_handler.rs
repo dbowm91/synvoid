@@ -1,7 +1,7 @@
 use crate::proxy::ForwardedProtocol;
 use crate::waf::WafDecision;
 use bytes::Bytes;
-use http::{HeaderMap, Method, Response, Uri};
+use http::{HeaderMap, Method, Response};
 use http_body_util::Full;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};

@@ -264,21 +264,21 @@ mod tests {
 
     #[test]
     fn test_pool_creation() {
-        let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4);
+        let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4, vec![]);
         assert_eq!(pool.max_size, 4);
     }
 
     #[tokio::test]
     async fn test_pool_warmup_empty() {
         let engine = Arc::new(Engine::default());
-        let pool = WasmInstancePool::new(engine, 4);
+        let pool = WasmInstancePool::new(engine, 4, vec![]);
 
         pool.warmup(&[]).await;
     }
 
     #[test]
     fn test_pool_get_empty() {
-        let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4);
+        let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4, vec![]);
         let engine = pool.engine.clone();
 
         let module_result = Module::from_file(&*engine, std::path::Path::new("/nonexistent.wasm"));

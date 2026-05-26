@@ -212,12 +212,8 @@ impl SpinRuntime {
             .clone()
             .unwrap_or_else(|| Arc::new(SpinKvStore::new()));
 
-        let instance = SpinAppInstance::new(
-            manifest,
-            wasm_runtime,
-            component_id.to_string(),
-            kv_store,
-        );
+        let instance =
+            SpinAppInstance::new(manifest, wasm_runtime, component_id.to_string(), kv_store);
 
         let instance_id = uuid::Uuid::new_v4().to_string();
         self.instances.write().insert(instance_id, instance.clone());

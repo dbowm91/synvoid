@@ -1889,6 +1889,8 @@ mod tests {
             upgrade_mode: true,
             reuse_port: false,
             worker_threads: 8,
+            cpu_affinity: None,
+            total_workers: 1,
         };
 
         let cloned = args.clone();
@@ -1912,6 +1914,8 @@ mod tests {
             upgrade_mode: false,
             reuse_port: true,
             worker_threads: 2,
+            cpu_affinity: None,
+            total_workers: 1,
         };
 
         assert!(args.log_level.is_some());
@@ -1928,6 +1932,8 @@ mod tests {
             upgrade_mode: false,
             reuse_port: true,
             worker_threads: 1,
+            cpu_affinity: None,
+            total_workers: 1,
         };
 
         let multi_thread = UnifiedServerWorkerArgs {
@@ -1938,6 +1944,8 @@ mod tests {
             upgrade_mode: false,
             reuse_port: true,
             worker_threads: 16,
+            cpu_affinity: None,
+            total_workers: 4,
         };
 
         assert_eq!(single_thread.worker_threads, 1);

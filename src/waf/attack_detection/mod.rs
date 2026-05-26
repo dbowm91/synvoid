@@ -20,17 +20,22 @@ pub mod xpath_injection;
 pub mod xss;
 pub mod xxe;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+#[allow(unused_imports)]
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+#[allow(unused_imports)]
 use std::time::{Duration, Instant};
 
+#[allow(unused_imports)]
 use arc_swap::ArcSwapOption;
+#[allow(unused_imports)]
 use parking_lot::RwLock;
 
+#[allow(unused_imports)]
 use crate::waf::attack_detection::behavioral::{BehavioralEngine, StandaloneRequestFeatures};
 use crate::waf::attack_detection::normalizer::{
-    InputNormalizer, NormalizationFlags, NormalizedData, NormalizedInput, NormalizedInputs,
+    InputNormalizer, NormalizationFlags, NormalizedInputs,
 };
 
 pub use cmd_injection::CmdInjectionDetector;
@@ -1235,6 +1240,14 @@ impl AttackDetector {
 
     pub fn streaming(self: Arc<Self>) -> StreamingWafCore {
         StreamingWafCore::new(self)
+    }
+
+    pub fn streaming_with_config(
+        self: Arc<Self>,
+        chunk_size: usize,
+        max_buffered_bytes: usize,
+    ) -> StreamingWafCore {
+        StreamingWafCore::with_config(self, chunk_size, max_buffered_bytes)
     }
 
     fn check_strict_normalization(

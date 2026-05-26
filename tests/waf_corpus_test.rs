@@ -17,7 +17,8 @@ mod waf_corpus_tests {
         AttackDetectionConfig::default()
     }
 
-    fn run_detection(
+    async fn run_detection(
+        client_ip: std::net::IpAddr,
         detector: &AttackDetector,
         method: &http::Method,
         path: &str,
@@ -26,7 +27,8 @@ mod waf_corpus_tests {
         body: Option<&[u8]>,
     ) -> Option<synvoid::waf::attack_detection::AttackDetectionResult> {
         detector
-            .check_request(method, path, query_string, headers, body)
+            .check_request(client_ip, method, path, query_string, headers, body)
+            .await
             .0
     }
 
@@ -40,8 +42,8 @@ mod waf_corpus_tests {
         }
     }
 
-    #[test]
-    fn test_waf_corpus_trusted_proxy_xff() {
+    #[tokio::test]
+    async fn test_waf_corpus_trusted_proxy_xff() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
         let xff_fixtures: Vec<_> = fixtures
             .iter()
@@ -56,13 +58,15 @@ mod waf_corpus_tests {
             let headers = fixture.build_headers(&fixtures_dir());
 
             let result = run_detection(
+                std::net::IpAddr::from([127, 0, 0, 1]),
                 &detector,
                 &method,
                 &fixture.request.path,
                 fixture.request.query_string.as_deref(),
                 &headers,
                 fixture.body_bytes(&fixtures_dir()).as_deref(),
-            );
+            )
+            .await;
 
             let matches = check_result_matches_expected(result.as_ref(), fixture.expected_result);
             assert!(
@@ -73,8 +77,8 @@ mod waf_corpus_tests {
         }
     }
 
-    #[test]
-    fn test_waf_corpus_serverless_bypass() {
+    #[tokio::test]
+    async fn test_waf_corpus_serverless_bypass() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -87,12 +91,19 @@ mod waf_corpus_tests {
         let headers = fixture.build_headers(&fixtures_dir());
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &headers,
             fixture.body_bytes(&fixtures_dir()).as_deref(),
+        )
+        .await;
+        assert!(
+            result.is_none(),
+            "Serverless bypass NOT detected (known bypass case): {}",
+            fixture.request.path
         );
 
         assert!(
@@ -102,8 +113,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_sqli_with_invalid_utf8() {
+    #[tokio::test]
+    async fn test_waf_corpus_sqli_with_invalid_utf8() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -115,13 +126,15 @@ mod waf_corpus_tests {
         let method = http::Method::from_bytes(fixture.request.method.as_bytes()).unwrap();
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &HeaderMap::new(),
             None,
-        );
+        )
+        .await;
 
         assert!(
             result.is_some(),
@@ -129,8 +142,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_xss_invalid_utf8() {
+    #[tokio::test]
+    async fn test_waf_corpus_xss_invalid_utf8() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -142,13 +155,15 @@ mod waf_corpus_tests {
         let method = http::Method::from_bytes(fixture.request.method.as_bytes()).unwrap();
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             None,
             &HeaderMap::new(),
             None,
-        );
+        )
+        .await;
 
         assert!(
             result.is_some(),
@@ -156,8 +171,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_multipart_field_attack() {
+    #[tokio::test]
+    async fn test_waf_corpus_multipart_field_attack() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -171,13 +186,15 @@ mod waf_corpus_tests {
         let body = fixture.body_bytes(&fixtures_dir());
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &headers,
             body.as_deref(),
-        );
+        )
+        .await;
 
         assert!(
             result.is_none(),
@@ -185,8 +202,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_chunk_boundary_split() {
+    #[tokio::test]
+    async fn test_waf_corpus_chunk_boundary_split() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -200,13 +217,15 @@ mod waf_corpus_tests {
         let body = fixture.body_bytes(&fixtures_dir());
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &headers,
             body.as_deref(),
-        );
+        )
+        .await;
 
         assert!(
             result.is_none(),
@@ -214,8 +233,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_raw_cl_te_smuggling() {
+    #[tokio::test]
+    async fn test_waf_corpus_raw_cl_te_smuggling() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -229,19 +248,21 @@ mod waf_corpus_tests {
         let body = fixture.body_bytes(&fixtures_dir());
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &headers,
             body.as_deref(),
-        );
+        )
+        .await;
 
         assert!(result.is_some(), "Raw CL/TE smuggling should be detected");
     }
 
-    #[test]
-    fn test_waf_corpus_query_string_proxy_path() {
+    #[tokio::test]
+    async fn test_waf_corpus_query_string_proxy_path() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -253,13 +274,15 @@ mod waf_corpus_tests {
         let method = http::Method::from_bytes(fixture.request.method.as_bytes()).unwrap();
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &HeaderMap::new(),
             None,
-        );
+        )
+        .await;
 
         assert!(
             result.is_some(),
@@ -267,8 +290,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_cache_purge_auth() {
+    #[tokio::test]
+    async fn test_waf_corpus_cache_purge_auth() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let fixture = fixtures
@@ -281,13 +304,15 @@ mod waf_corpus_tests {
         let headers = fixture.build_headers(&fixtures_dir());
 
         let result = run_detection(
+            std::net::IpAddr::from([127, 0, 0, 1]),
             &detector,
             &method,
             &fixture.request.path,
             fixture.request.query_string.as_deref(),
             &headers,
             None,
-        );
+        )
+        .await;
 
         assert!(
             result.is_none(),
@@ -295,8 +320,8 @@ mod waf_corpus_tests {
         );
     }
 
-    #[test]
-    fn test_waf_corpus_ssrf_encoded_private_ip() {
+    #[tokio::test]
+    async fn test_waf_corpus_ssrf_encoded_private_ip() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let ssrf_fixtures: Vec<_> = fixtures
@@ -311,13 +336,15 @@ mod waf_corpus_tests {
             let method = http::Method::from_bytes(fixture.request.method.as_bytes()).unwrap();
 
             let result = run_detection(
+                std::net::IpAddr::from([127, 0, 0, 1]),
                 &detector,
                 &method,
                 &fixture.request.path,
                 fixture.request.query_string.as_deref(),
                 &HeaderMap::new(),
                 None,
-            );
+            )
+            .await;
 
             let matches = check_result_matches_expected(result.as_ref(), fixture.expected_result);
             assert!(
@@ -328,8 +355,8 @@ mod waf_corpus_tests {
         }
     }
 
-    #[test]
-    fn test_waf_corpus_negative_controls() {
+    #[tokio::test]
+    async fn test_waf_corpus_negative_controls() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let negative_fixtures: Vec<_> = fixtures
@@ -349,13 +376,15 @@ mod waf_corpus_tests {
             let body = fixture.body_bytes(&fixtures_dir());
 
             let result = run_detection(
+                std::net::IpAddr::from([127, 0, 0, 1]),
                 &detector,
                 &method,
                 &fixture.request.path,
                 fixture.request.query_string.as_deref(),
                 &headers,
                 body.as_deref(),
-            );
+            )
+            .await;
 
             assert!(
                 result.is_none(),
@@ -428,12 +457,14 @@ mod waf_corpus_tests {
 
             let result = detector
                 .check_request(
+                    std::net::IpAddr::from([127, 0, 0, 1]),
                     &method,
                     &fixture.request.path,
                     fixture.request.query_string.as_deref(),
                     &headers,
                     body.as_deref(),
                 )
+                .await
                 .0;
 
             match fixture.expected_result {
@@ -456,8 +487,8 @@ mod waf_corpus_tests {
         }
     }
 
-    #[test]
-    fn test_waf_corpus_request_smuggling_coverage() {
+    #[tokio::test]
+    async fn test_waf_corpus_request_smuggling_coverage() {
         let fixtures = RequestFixture::load_all(&fixtures_dir());
 
         let smuggling_fixtures: Vec<_> = fixtures
@@ -477,13 +508,15 @@ mod waf_corpus_tests {
             let body = fixture.body_bytes(&fixtures_dir());
 
             let result = run_detection(
+                std::net::IpAddr::from([127, 0, 0, 1]),
                 &detector,
                 &method,
                 &fixture.request.path,
                 fixture.request.query_string.as_deref(),
                 &headers,
                 body.as_deref(),
-            );
+            )
+            .await;
 
             match fixture.expected_result {
                 ExpectedResult::Detect => {

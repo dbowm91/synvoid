@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bytes::Bytes;
 use http::header::HeaderName;
@@ -8,8 +8,8 @@ use http::{HeaderMap, Method, Request, Response};
 
 use crate::config::site::SiteProxyConfig;
 use crate::config::SiteSecurityHeadersConfig;
-use crate::http_client::{HttpClient, HttpResponse};
-use crate::proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache, ProxyCacheEntry};
+use crate::http_client::HttpClient;
+use crate::proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache};
 use crate::utils;
 
 use super::cache::{build_cached_response, filter_cacheable_headers, get_cache_max_age_static};

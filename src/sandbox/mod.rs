@@ -3,6 +3,7 @@
 //! This module implements the "Jail" process model where highly restricted
 //! child processes are used to execute potentially dangerous code.
 
+#[allow(unused_imports)]
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 

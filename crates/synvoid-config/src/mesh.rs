@@ -9,8 +9,6 @@ use std::fmt;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
-pub(crate) const POW_CACHE_TTL_SECS: u64 = 3600;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct NodeIdentityConfig {
     #[serde(default)]
@@ -653,7 +651,7 @@ impl MeshConfig {
             let signing_key = SigningKey::from_bytes(&genesis_key);
             let public_key = signing_key.verifying_key().to_bytes();
 
-            let public_key_b64 = URL_SAFE_NO_PAD.encode(&public_key);
+            let public_key_b64 = URL_SAFE_NO_PAD.encode(public_key);
 
             if let Some(ref genesis_config) = self.genesis_key {
                 if !genesis_config.is_genesis_key_authorized(&public_key_b64) {

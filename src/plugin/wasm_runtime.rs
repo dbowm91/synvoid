@@ -9,6 +9,7 @@ use bytes::Bytes;
 use http::{HeaderMap, Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use parking_lot::RwLock;
+#[allow(unused_imports)]
 use wasmtime::component::{Component, Linker as ComponentLinker};
 use wasmtime::{
     Config, Engine, Instance, Linker, Memory, Module, OptLevel, ResourceLimiter, Store, TypedFunc,
@@ -190,6 +191,7 @@ impl WasmPluginManager {
         Ok(arc)
     }
 
+    #[allow(dead_code)]
     fn create_component_store(
         engine: &Engine,
         limits: &WasmResourceLimits,
@@ -216,6 +218,7 @@ impl WasmPluginManager {
         store
     }
 
+    #[allow(dead_code)]
     fn link_host_functions(
         linker: &mut ComponentLinker<RequestContext>,
     ) -> Result<(), WasmPluginError> {

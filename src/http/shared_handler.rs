@@ -1,4 +1,4 @@
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use http::{Response, StatusCode};
 use http_body::{Body, Frame};
 use http_body_util::combinators::BoxBody;

@@ -4,6 +4,7 @@
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+#[allow(unused_imports)]
 use rand::Rng;
 use sha2::{Digest, Sha256};
 

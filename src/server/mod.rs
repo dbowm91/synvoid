@@ -305,7 +305,13 @@ impl UnifiedServer {
 
             if !dns_cfg.enabled {
                 (None, None, None, None)
-            } else if cfg.main.tunnel.mesh.as_ref().map(|m| m.enabled).unwrap_or(false)
+            } else if cfg
+                .main
+                .tunnel
+                .mesh
+                .as_ref()
+                .map(|m| m.enabled)
+                .unwrap_or(false)
                 && !cfg
                     .main
                     .tunnel
@@ -1308,6 +1314,7 @@ impl UnifiedServer {
     }
 }
 
+#[allow(dead_code)]
 fn parse_challenge_priority(priority: &str) -> crate::challenge::ChallengePriority {
     match priority.to_lowercase().as_str() {
         "pow_then_css" => crate::challenge::ChallengePriority::PowThenCss,

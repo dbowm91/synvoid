@@ -425,10 +425,10 @@ impl NodeIdentityConfig {
 
                 let mut nonce_bytes = [0u8; 12];
                 rand::rng().fill_bytes(&mut nonce_bytes);
-                let nonce = Nonce::from_slice(&nonce_bytes);
+                let nonce = Nonce::clone_from_slice(&nonce_bytes);
 
                 let ciphertext = cipher
-                    .encrypt(nonce, plaintext)
+                    .encrypt(&nonce, plaintext)
                     .map_err(|e| format!("Encryption failed: {}", e))?;
 
                 let mut result = Vec::with_capacity(12 + 16 + ciphertext.len());
@@ -457,7 +457,7 @@ impl NodeIdentityConfig {
                     return Err("Ciphertext too short".to_string());
                 }
 
-                let nonce = Nonce::from_slice(&ciphertext[..12]);
+                let nonce = Nonce::clone_from_slice(&ciphertext[..12]);
                 let salt = &ciphertext[12..28];
                 let ciphertext_only = &ciphertext[28..];
 
@@ -465,7 +465,7 @@ impl NodeIdentityConfig {
                 let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
 
                 cipher
-                    .decrypt(nonce, ciphertext_only)
+                    .decrypt(&nonce, ciphertext_only)
                     .map_err(|e| format!("Decryption failed: {}", e))
             }
             _ => Ok(ciphertext.to_vec()),

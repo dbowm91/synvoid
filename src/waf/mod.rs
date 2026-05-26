@@ -41,6 +41,7 @@ use crate::geoip::GeoIpManager;
 use crate::waf::asn_tracker::AsnTracker;
 use crate::waf::attack_detection::AttackDetector;
 use crate::waf::bot::{BotDetectionResult, BotDetector};
+#[allow(unused_imports)]
 use crate::waf::endpoints::{
     EndpointBlocker, EndpointBlockerManager, EndpointCheckResult, ErrorPageManager,
     SensitiveEndpointManager,
@@ -818,7 +819,11 @@ impl WafCore {
     }
 
     #[cfg(not(feature = "mesh"))]
-    pub fn check_dht_threat_lookup(&self, _ip: IpAddr, _threat_intel: Option<&Arc<()>>) -> Option<WafDecision> {
+    pub fn check_dht_threat_lookup(
+        &self,
+        _ip: IpAddr,
+        _threat_intel: Option<&Arc<()>>,
+    ) -> Option<WafDecision> {
         // Placeholder for DHT lookup
         None
     }

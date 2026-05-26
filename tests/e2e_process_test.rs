@@ -50,10 +50,7 @@ mod e2e_process_tests {
             tokio::spawn(async move { endpoint.connect_with_signer(signer_clone).await.unwrap() });
 
         let server_stream = listener.accept().await.unwrap();
-        let mut server_stream = IpcStream::from_unix_stream_with_signer(
-            server_stream.into_inner().unix,
-            server_signer.clone(),
-        );
+        let server_stream = server_stream.with_signer(server_signer.clone());
         let client_stream = connect_handle.await.unwrap();
 
         assert!(server_stream.is_signed());

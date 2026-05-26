@@ -2,7 +2,6 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
 use crate::upstream::health::{HealthCheckConfig, HealthChecker};
 use crate::RunningFlag;
