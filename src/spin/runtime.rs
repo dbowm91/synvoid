@@ -102,6 +102,11 @@ impl SpinAppInstance {
         *self.request_count.write() += 1;
     }
 
+    pub fn reuse(&self) {
+        *self.last_request.write() = Instant::now();
+        *self.request_count.write() += 1;
+    }
+
     pub fn uptime(&self) -> Duration {
         self.started_at.elapsed()
     }
@@ -115,6 +120,7 @@ pub struct SpinRuntime {
     pub config: SpinRuntimeConfig,
     manifest: RwLock<Option<Manifest>>,
     instances: RwLock<HashMap<String, SpinAppInstance>>,
+    cached_instances: RwLock<HashMap<String, SpinAppInstance>>,
     compiled_runtimes: RwLock<HashMap<String, Arc<WasmRuntime>>>,
     #[allow(dead_code)]
     engine: Engine,
@@ -142,6 +148,7 @@ impl SpinRuntime {
             config,
             manifest: RwLock::new(manifest),
             instances: RwLock::new(HashMap::new()),
+            cached_instances: RwLock::new(HashMap::new()),
             compiled_runtimes: RwLock::new(HashMap::new()),
             engine,
         })
@@ -255,9 +262,9 @@ impl SpinRuntime {
 
         let route = self.find_route(&manifest, path)?;
 
-        let instance = self.instantiate_app(&route.0)?;
+        let instance = self.get_or_create_instance(&route.0)?;
 
-        instance.record_request();
+        instance.reuse();
 
         let headers_json = Self::serialize_headers_spin(headers);
         let body_vec = body.map(|b| b.to_vec()).unwrap_or_default();
@@ -275,6 +282,17 @@ impl SpinRuntime {
             .wasm_runtime
             .invoke_handler(method, path, &headers_json, &body_vec, full_env)
             .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))
+    }
+
+    fn get_or_create_instance(&self, component_id: &str) -> Result<SpinAppInstance, SpinRuntimeError> {
+        if let Some(instance) = self.cached_instances.read().get(component_id).cloned() {
+            if !instance.is_idle(Duration::from_secs(300)) {
+                return Ok(instance);
+            }
+        }
+        let instance = self.instantiate_app(component_id)?;
+        self.cached_instances.write().insert(component_id.to_string(), instance.clone());
+        Ok(instance)
     }
 
     fn find_route(

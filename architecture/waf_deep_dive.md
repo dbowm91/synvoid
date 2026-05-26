@@ -18,11 +18,11 @@ The `FloodProtector` (`src/waf/flood/mod.rs:225-367`) provides comprehensive flo
 
 #### Per-IP Connection Limiting
 The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connection limits:
-- **Global connection limit:** Default 20,000 concurrent connections
-- **Per-IP limits:** Default 100 connections per IP
-- **Burst tokens:** IP burst allowance (default 10) enables short-term bursts
-- **Site-level tracking:** Per-site connection counting via `SiteConnectionLimiter`
-- **Queue system:** When limits are hit, connections can queue (default 1000 queue size, 5000ms timeout)
+- **Global connection limit:** Default 1,000 concurrent connections
+- **Per-IP limits:** Default 10 connections per IP
+- **Burst tokens:** IP burst allowance (default 5) enables short-term bursts
+- **Site-level tracking:** Per-site connection counting via `SiteConnectionLimiter` (struct defined but not instantiated - limits applied via `try_acquire_with_limits()` directly)
+- **Queue system:** When limits are hit, connections can queue (default 100 queue size, 60000ms timeout)
 
 #### TokenBucket Rate Limiting
 The `TokenBucket` (`src/waf/traffic_shaper/bucket.rs`) provides precise rate-based limiting:
