@@ -7,8 +7,8 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 ### 1. HTTP/1.1 & HTTP/2
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
-- **HTTP/2:** Fully multiplexed streams over a single TCP connection, reducing latency for complex web pages.
-- **Shared Handler:** Both H1 and H2 share a common request processing pipeline, ensuring consistent security and routing behavior.
+- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:893` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. This is a known limitation.
+- **Shared Handler:** Both H1 and H2 have similar request processing patterns, but use separate handler implementations (`handle_request` in `http/server.rs` for H1, `handle_request_with_cache` in `tls/server.rs` for H2).
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
@@ -19,8 +19,9 @@ SynVoid features native HTTP/3 support via the **Quinn** library.
 
 ### 3. TCP & UDP Listeners
 Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
-- **TCP Pool:** Manages multiple TCP listeners with auto-tuned worker pools.
-- **UDP Pool:** Optimized for high-throughput UDP packet handling, with built-in protections against amplification attacks.
+- **TCP Listener:** Uses `src/listener/mod.rs` with `ListenerInstance` for connection management; actual TCP listener implementation in `src/tcp/listener.rs`.
+- **UDP Handling:** Built-in protections against amplification attacks.
+- **Listener Configuration:** `src/listener/common.rs` defines `ListenerConfigBase`, `ListenerInstance`, `ConnectionContext` for connection handling.
 
 ---
 
