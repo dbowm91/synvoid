@@ -7,11 +7,13 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 ### 1. HTTP/1.1 & HTTP/2
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
-- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:893` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. This is a known limitation.
+- **HTTP/2:** Infrastructure exists and is available via the `is_http2` parameter in `send_request` (`src/http_client/mod.rs:893`). All client builders use `.http2_only(false)`, allowing HTTP/1.1 fallback but preferring HTTP/2 when available.
 - **Shared Handler:** Both H1 and H2 have similar request processing patterns, but use separate handler implementations (`handle_request` in `http/server.rs` for H1, `handle_request_with_cache` in `tls/server.rs` for H2).
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
+- **Implementation:** `Http3Server` in `src/http3/server.rs`
+- **QUIC Runtime:** `src/tunnel/quic/runtime.rs` provides Quinn integration
 - **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections.
 - **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte.
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
@@ -19,9 +21,12 @@ SynVoid features native HTTP/3 support via the **Quinn** library.
 
 ### 3. TCP & UDP Listeners
 Beyond HTTP, SynVoid can act as a generic proxy for any TCP or UDP service.
-- **TCP Listener:** Uses `src/listener/mod.rs` with `ListenerInstance` for connection management; actual TCP listener implementation in `src/tcp/listener.rs`.
-- **UDP Handling:** Built-in protections against amplification attacks.
-- **Listener Configuration:** `src/listener/common.rs` defines `ListenerConfigBase`, `ListenerInstance`, `ConnectionContext` for connection handling.
+- **TCP Listener:** Uses a `TcpListenerPool` (`src/tcp/listener.rs:192`) for connection management. The pool implements connection limiting, protocol detection, and rate limiting.
+- **Listener Types:** `src/listener/common.rs` defines generic listener structures:
+  - `ListenerInstance<C>`: Generic wrapper pairing config with socket address
+  - `ListenerConfigBase`: Base configuration for listeners
+  - `ConnectionContext`: Metadata carrier (client_ip, server_name, port, protocol)
+- **UDP Handling:** Built-in protections against amplification attacks (implemented in DNS server module).
 
 ---
 
