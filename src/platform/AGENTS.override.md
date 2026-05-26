@@ -112,7 +112,7 @@ cargo fmt && cargo clippy --lib -- -D warnings
 
 ## Known Limitations
 
-- FreeBSD Capsicum: `is_capsicum_available()` checks `cap_getmode()` first - does not call `cap_enter()` unless sandbox is explicitly applied. Note: `limit_fd()` method exists at `sandbox.rs:516-528` but is NOT called in `apply()` - FD rights limiting is not active.
+- FreeBSD Capsicum: `is_capsicum_available()` checks `cap_getmode()` first - does not call `cap_enter()` unless sandbox is explicitly applied. Note: `limit_fd()` method was **removed** - it was dead code never called in `apply()`.
 - macOS Seatbelt: Implemented at `sandbox.rs:1022-1205` but **disabled by default** - requires `macos-sandbox` Cargo feature to be enabled at compile time (feature gate at line 1037).
 - Windows sandbox: Filesystem restrictions NOT enforced (only process limits). DEP/ASLR mitigation via `SetProcessMitigationPolicy` at `sandbox.rs:925-958`.
 - Non-Unix platforms: Socket FD passing not supported, returns `NotSupported`
