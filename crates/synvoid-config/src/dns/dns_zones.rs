@@ -2,10 +2,25 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::DnsConfigError;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 pub struct DnsZonesConfig {
     #[serde(default)]
     pub items: Vec<DnsZoneEntry>,
+}
+
+impl DnsZonesConfig {
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        for zone in &self.items {
+            if zone.zone.is_empty() {
+                return Err(DnsConfigError::InvalidZones(
+                    "Zone name cannot be empty".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]

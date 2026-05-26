@@ -306,3 +306,25 @@ impl Default for TrustAnchorConfig {
         }
     }
 }
+
+impl TrustAnchorConfig {
+    pub fn validate(&self) -> Result<(), DnsConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.refresh_interval_secs == 0 {
+            return Err(DnsConfigError::InvalidTrustAnchor(
+                "refresh_interval_secs must be greater than zero".to_string(),
+            ));
+        }
+
+        if self.trust_anchor_retention_days == 0 {
+            return Err(DnsConfigError::InvalidTrustAnchor(
+                "trust_anchor_retention_days must be greater than zero".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+}

@@ -157,8 +157,8 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
-| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | ✅ FIXED |
-| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive` validate() not called | ✅ FIXED |
+| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | Not a bug - documented but intentionally not implemented |
+| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:175-205` | Missing validate() on zones, limits, dot, doh, doq, rpz, dns64, prefetch, trust_anchors | ✅ FIXED (all sub-components now validated) |
 | DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Documentation showed wrong prefixes | ✅ FIXED |
 
 ### Dependency Vulnerability Status
