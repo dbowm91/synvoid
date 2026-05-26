@@ -18,17 +18,13 @@ Specialized guidance for WASM plugin runtime.
 
 ## Known Bugs (Still Present as of 2026-05-23)
 
-### DHT Prefix Propagation Bug (UNFIXED)
-
-Both `src/serverless/instance_pool.rs:186` and `src/plugin/instance_pool.rs:186` set `allowed_dht_prefixes: Vec::new()` during warmup, ignoring configured values. This is a **known bug** that affects pooled WASM instances.
-
-Fix requires setting `allowed_dht_prefixes` from `WasmResourceLimits` during warmup (instance_pool.rs:79-209 warmup flow).
-
 ### Spin Cold-Start Bug (UNFIXED)
 
 `src/spin/runtime.rs:251` creates new `SpinAppInstance` per request via `instantiate_app()`. No instance reuse is implemented, causing significant cold-start overhead on every request.
 
 Workaround: Consider caching SpinAppInstance by component_id for reuse across requests.
+
+**Note**: DHT prefix propagation bug (previously noted) has been FIXED - allowed_dht_prefixes now correctly propagated to pooled instances.
 
 ## Skills Reference
 

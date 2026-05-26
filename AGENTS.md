@@ -156,6 +156,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
+| Capsicum `limit_fd()` dead code | `src/platform/sandbox.rs:516-528` | Method defined but never called in `apply()` - FD rights limiting not active | Known |
 | SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | ✅ FIXED |
 | DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive` validate() not called | ✅ FIXED |
 | DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Documentation showed wrong prefixes | ✅ FIXED |
@@ -194,35 +195,6 @@ These items were identified in reviews but have been fixed:
 - BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
 - AXFR record types complete (`src/dns/transfer.rs:829-1028` - all required record types now handled)
 
-## Implementation Planning
-
-When working on large implementation plans:
-
-### Wave-Based Execution
-
-Large plans should be organized into **waves** that can execute in parallel:
-- **Wave 1**: Critical items with no dependencies (security fixes, compile blockers)
-- **Wave 2**: Items depending on Wave 1 completion
-- **Wave 3**: Items that can run parallel to other waves (e.g., WAF streaming optimization)
-- **Wave 4+**: Remaining items organized by priority
-
-### Verification Approach
-
-1. **Batch file reads** with subagents to preserve context window (4-5 files per agent)
-2. **Verify file references** before adding to plan — subagents catch discrepancies
-3. **Use explore agents** for codebase verification tasks
-4. **Cross-reference** with actual code when discrepancies found
-
-### Key Discrepancies to Watch For
-
-| Planned Reference | Actual Location | Issue |
-|-------------------|-----------------|-------|
-| `src/http/shared_handler.rs` | `src/http/server.rs:4532` | Function is in server.rs, not shared_handler |
-| `src/mesh/raft/state_machine.rs:166-172` | `src/mesh/dht/signed.rs:860-934` | Quorum verification is in signed.rs, not state_machine |
-| `architecture/mesh_deep_dive.md:30` | Already correct | Bloom filter purpose already documented correctly |
-| `architecture/config_deep_dive.md:64-67` | `architecture/config_deep_dive.md:86` | Sites HashMap is at line 86, not 64-67 |
-| `src/waf/mod.rs:484-512` | `src/waf/mod.rs:442-517` | Async WAF pipeline entry point `check_request_full` is at 442-517 |
-
 ## Known Deferred Items
 
 Some items are intentionally deferred due to architectural complexity:
@@ -253,6 +225,16 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **Supervisor** manages lifecycle, consolidates Overseer + Master
 - **UnifiedServerWorker** uses single Tokio event loop (NOT process-per-tenant)
 - **CPU affinity** is Linux-only, logs warning on other platforms
+- **Default entry point** is `run_supervisor_mode()` via `src/main.rs:538-547`; `--master` flag routes to `run_master_mode()`
+
+### Granian Integration
+- **Granian IS integrated** - `src/app_server/granian.rs` (959 lines) with full process management, auto-install, admin API
+- NOT a separate process type - runs within the Supervisor/Master architecture
+
+### Supervisor Migration (Planned)
+- See `plans/plan.md` for consolidated action plan
+- Migration to consolidate Overseer/Master into Supervisor (~8 days sequential work)
+- All other plan items can be executed in parallel with migration waves
 
 ## Skills Directory
 
