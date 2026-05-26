@@ -153,7 +153,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Issue | Location | Impact | Status |
 |-------|----------|--------|--------|
-| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
+| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient now uses conditional logic based on `body_buffering_policy.should_stream()` | FIXED |
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
 | Capsicum `limit_fd()` dead code | `src/platform/sandbox.rs:516-528` | Method defined but never called in `apply()` - FD rights limiting not active | Known |
@@ -191,7 +191,7 @@ These items were identified in reviews and have been fixed:
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 - BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
 - SiteConnectionLimiter unused params (`src/waf/traffic_shaper/limiter.rs:312-323` - `_max_connections` etc. never used) - **NOTE:** This bug still exists and needs fixing - see `plans/plan.md`
-- DnsConfig.validate() incomplete (`crates/synvoid-config/src/dns/mod.rs:174-205`) - **NOTE:** Bug still exists - see `plans/plan.md` Wave 1 item 1.1
+- DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`) - **FIXED**
 
 ## Known Deferred Items
 
