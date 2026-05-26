@@ -22,6 +22,32 @@ The `verify_hybrid()` function at `src/mesh/ml_dsa.rs:189-219` implements fail-s
 
 This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `src/mesh/ml_dsa.rs:206-218`.
 
+### Post-Quantum TLS Provider Installation
+
+When the `post-quantum` feature is enabled, the post-quantum TLS provider is installed at `src/startup/master.rs:210-234`:
+
+```rust
+#[cfg(feature = "post-quantum")]
+{
+    use rustls_post_quantum::provider;
+    if let Err(e) = provider().install_default() {
+        tracing::warn!("Failed to install post-quantum TLS provider: {:?}. Using default.", e);
+    } else {
+        tracing::info!("Post-quantum TLS (X25519MLKEM768) enabled");
+        // Verify PQ is actually available by checking supported key exchange groups
+        use rustls::crypto::CryptoProvider;
+        let provider = CryptoProvider::get_default();
+        // ... logs group count and sample groups
+    }
+}
+```
+
+This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
+
+### Async Hybrid Verification
+
+The `verify_hybrid_async()` function (`src/mesh/protocol.rs:197-232`) uses `CryptoVerificationPool` for parallel ML-DSA signature verification.
+
 ### ML-KEM Proof-of-Possession (BUG-L3)
 
 The ML-KEM key exchange includes proof-of-possession verification at `src/mesh/ml_kem_key_exchange.rs:204-264`. The `confirm_key` method:
@@ -59,7 +85,7 @@ The trust model follows a robust, SPIFFE-like hierarchical chain:
 
 *   **Strengths:** This is cryptographically sound. An attacker cannot forge an `OrgKey` without compromising 2/3 of the Global nodes.
 *   **Potential Flaws:** 
-    *   **Quorum Deadlock:** The reliance on a `2/3 Quorum` of Global nodes to sign new `OrgPublicKey` records is dangerous in a purely DHT-based system without a consensus leader. If the network experiences a temporary partition, or if exactly 1/3 of the global nodes go offline, the entire network loses the ability to onboard new organizations or rotate keys.
+    *   **Quorum Deadlock (MESH-15):** The reliance on a `2/3 Quorum` of Global nodes to sign new `OrgPublicKey` records is dangerous in a purely DHT-based system without a consensus leader. If the network experiences a temporary partition, or if exactly 1/3 of the global nodes go offline, the entire network loses the ability to onboard new organizations or rotate keys.
     *   **Certificate Revocation:** While a `GlobalNodeRevocationList` exists, distributing revocation lists reliably across a Kademlia DHT during an active attack is a known hard problem.
 
 ## 5. Origin Node Protections & Isolation
