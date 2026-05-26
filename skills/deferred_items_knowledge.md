@@ -6,7 +6,16 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 
 **Architecture Review Plan: COMPLETED**
 
-All items from the 2026-05-26 architecture review plan have been verified and completed.
+All items from the 2026-05-26 architecture review plan have been verified and completed:
+- **Wave 1-5**: All complete
+- **Supervisor Migration**: Pending (see `plans/plan.md`)
+
+### Notable Fixes Applied
+
+| Item | Fix |
+|------|-----|
+| Capsicum `limit_fd()` dead code | Removed unused method from `src/platform/sandbox.rs` |
+| SiteConnectionLimiter | Confirmed as dead code but not blocking - HTTP path works via `try_acquire_with_limits()` |
 
 ---
 
