@@ -156,7 +156,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient now uses conditional logic based on `body_buffering_policy.should_stream()` | FIXED |
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
-| Capsicum `limit_fd()` dead code | `src/platform/sandbox.rs:516-528` → FIXED | Method removed - dead code eliminated | FIXED |
+| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - not blocking |
 
 ### Dependency Vulnerability Status
 
