@@ -114,7 +114,7 @@ WasmRuntime (plugin B)
 
 ### Purpose
 
-Implements a Spin framework runtime for executing Spin-compatible WASM modules. Manifest parsing and longest-prefix-match routing are implemented; requests are dispatched via `SpinHttpHandler` at `src/http/server.rs:2417-2489`.
+Implements a Spin framework runtime for executing Spin-compatible WASM modules. Manifest parsing and longest-prefix-match routing are implemented; requests are dispatched via `SpinHttpHandler` at `src/http/server.rs:2420-2503`.
 
 ### Key Files
 
@@ -138,7 +138,7 @@ Implements a Spin framework runtime for executing Spin-compatible WASM modules. 
 
 ### Known Limitations
 
-1. **Spin routing uses longest-prefix-match** — Component-to-URL routing is implemented via `find_route()` in `src/spin/runtime.rs:273-291` which selects the longest matching prefix
+1. **Spin routing uses longest-prefix-match** — Component-to-URL routing is implemented via `find_route()` in `src/spin/runtime.rs:280-299` which selects the longest matching prefix
 2. **Manual app registration required** — Spin apps must be registered via Admin API; no automatic discovery
 3. **KV store is local-only** — No distribution via mesh/DHT
 4. **No WASI socket support** — Only in-memory KV store; no outbound HTTP capability
@@ -237,7 +237,7 @@ Flexible `ServerlessRoute` matching supporting:
 | `src/serverless/` | Serverless runs AFTER WAF; can optionally disable WAF per-route (`waf_mode=off`) |
 | `src/spin/` | No WAF integration exists |
 
-WASM plugin execution in HTTP server (`http/server.rs:3043-3060`):
+WASM plugin execution in HTTP server (`http/server.rs:3050-3060`):
 1. Request enters WAF pipeline
 2. If site has `wasm_plugins` configured, `PluginManager::apply_wasm_filters()` is called
 3. Each plugin returns `WasmFilterResult::Pass`, `Block`, or `Challenge`

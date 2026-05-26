@@ -31,8 +31,8 @@ The Unified Server is designed to handle multiple protocols and transport layers
  3.  **Endpoint Block:** Block specific endpoints/paths.
  4.  **Honeypot Detection:** Hidden link matching and trap endpoints.
  5.  **Bot Protection:** Challenges (JS/CAPTCHA), behavioral analysis, JA3/JA4 fingerprinting. Challenges are issued **inline** within bot protection, not as a separate pipeline stage.
- 6.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
- 7.  **Flood Protection:** TCP connection tracking and rate limiting (via `FloodProtector`).
+  6.  **Flood Protection:** TCP connection tracking and rate limiting (via `FloodProtector`).
+  7.  **Attack Detection:** Deep packet inspection for SQLi, XSS, SSRF, etc. (using `WafCore` and `AttackDetector`).
 
 ### 3. Upstream Management
 - **Connection Pooling:** Maintains persistent connections to backend servers (PHP-FPM, Granian, etc.) to reduce latency.
