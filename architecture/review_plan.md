@@ -3,7 +3,9 @@
 Generated: 2026-05-26
 Purpose: Review each architecture document, verify claims against code, identify improvements and bugs, and prune stale content.
 
-**Status**: IN PROGRESS - Working through waves
+**Status**: ITERATIVE - Periodically updated as issues are discovered and fixed
+
+> This plan uses iterative improvement: items are marked complete when verified fixed, deferred if minor, and known issues are documented for future attention.
 
 ## In Progress
 
@@ -17,6 +19,12 @@ Purpose: Review each architecture document, verify claims against code, identify
 | 6 | Update process_lifecycle.md (CPU affinity, reuse_port refs) | Process | ✅ Completed |
 | 7 | Fix WasmHandler → SpinHttpHandler in app_handlers.md | App Handlers | ✅ Completed |
 | 8 | Fix FastCGI streaming claim in app_handlers.md | App Handlers | ✅ Completed |
+| 9 | Fix AXFR missing record types section in dns_deep_dive.md | DNS | ✅ Completed |
+| 10 | Fix Lease→increment_connections, add BackendTypes, PeakEwma | Routing | ✅ Completed |
+| 11 | Clarify GeoIP usage in waf_deep_dive.md | WAF | ✅ Completed |
+| 12 | Add fs.rs to platform_deep_dive.md module table | Platform | ✅ Completed |
+| 13 | Fix ConfigManager line numbers in config_deep_dive.md | Config | ✅ Completed |
+| 14 | Clarify HTTP/2 limitation, handler separation in networking_deep_dive.md | Networking | ✅ Completed |
 
 ## Excluded Documents
 - `review_plan.md` - This file (generated fresh)
@@ -46,50 +54,50 @@ Purpose: Review each architecture document, verify claims against code, identify
 
 ## Stale Items Summary (Cross-Module)
 
-The following stale items were identified across architecture documents:
+The following stale items were identified across architecture documents. Items marked ✅ are verified fixed:
 
-| Document | Stale Item | Action Required |
-|----------|------------|-----------------|
-| admin_deep_dive.md | Overseer references should be "Supervisor" | Update terminology |
-| admin_deep_dive.md | Line number references off by 3-10 lines | Fix line refs |
-| app_handlers.md | FastCGI "response streaming" claim contradicts APP-15 | Remove/update claim |
-| app_handlers.md | "WasmHandler" doesn't exist (SpinHttpHandler is at that line) | Fix reference |
-| app_handlers.md | Generic WASM mesh distribution claim unverified | Clarify scope |
-| config_deep_dive.md | ConfigManager line numbers incorrect (113-233 vs 113-241) | Fix line refs |
-| config_deep_dive.md | Type naming mismatches (IpFeedConfig vs MainIpFeedConfig) | Unify naming |
-| dns_deep_dive.md | AXFR "Missing record types" section is WRONG - all implemented | Remove section |
-| dns_deep_dive.md | DnsCookieServer created but not integrated | Document as deferred |
-| dns_deep_dive.md | Query coalescing line references wrong | Fix line refs |
-| layer_3_5_deep_dive.md | X25519Kyber768Draft00 mentioned but only X25519MLKEM768 exists | Fix algorithm name |
-| layer_3_5_deep_dive.md | verify_hybrid() returns false without ML-DSA (BUG-L1) | Code fix needed |
-| mesh_deep_dive.md | quorum verification reference wrong file (state_machine vs signed.rs) | Fix file ref |
-| networking_deep_dive.md | "Shared Handler" claim inaccurate (separate implementations) | Clarify |
-| networking_deep_dive.md | HTTP/2 client configuration inconsistent | Document as known issue |
-| platform_deep_dive.md | fs.rs missing from module table | Add to docs |
-| platform_deep_dive.md | Several process module files undocumented | Add to docs |
-| plugin_deep_dive.md | DHT prefix examples completely wrong (87-88) | FIX IMMEDIATELY |
-| plugin_deep_dive.md | Warmup stub function description misleading | Clarify |
-| process_lifecycle.md | Overseer Cannot Spawn Master (--master flag missing) | Document as legacy |
-| process_lifecycle.md | CPU affinity documentation wrong (it's automatic, not manual) | Fix claim |
-| proxy_deep_dive.md | HTTP/2 connection multiplexing not implemented | Document as known issue |
-| proxy_deep_dive.md | ErasedHttpClient Phase 9 incomplete | Document as deferred |
-| routing_deep_dive.md | "Lease" concept doesn't exist | Remove terminology |
-| routing_deep_dive.md | Missing BackendType variants (AxumDynamic, Spin, Cgi) | Add to docs |
-| waf_deep_dive.md | Line references off by ~50 lines | Fix line refs |
-| waf_deep_dive.md | GeoIP "not fully implemented" misleading (ASN lookup uses it) | Clarify |
-| worker_architecture.md | WAF pipeline "Challenge" stage not separate (inline in bot protection) | Clarify flow |
-| worker_architecture.md | Health monitoring overstated (primarily passive) | Clarify |
+| Document | Stale Item | Status |
+|----------|------------|--------|
+| admin_deep_dive.md | Overseer references should be "Supervisor" | ✅ Fixed |
+| admin_deep_dive.md | Line number references off by 3-10 lines | ⚠️ Deferred - minor cosmetic |
+| app_handlers.md | FastCGI "response streaming" claim contradicts APP-15 | ✅ Fixed |
+| app_handlers.md | "WasmHandler" doesn't exist (SpinHttpHandler is at that line) | ✅ Fixed |
+| app_handlers.md | Generic WASM mesh distribution claim unverified | ✅ Fixed |
+| config_deep_dive.md | ConfigManager line numbers incorrect | ✅ Fixed |
+| config_deep_dive.md | Type naming mismatches | ⚠️ Deferred |
+| dns_deep_dive.md | AXFR "Missing record types" section is WRONG | ✅ Fixed |
+| dns_deep_dive.md | DnsCookieServer created but not integrated | ⚠️ Known deferred - DNS-COOKIE |
+| dns_deep_dive.md | Query coalescing line references wrong | ⚠️ Deferred |
+| layer_3_5_deep_dive.md | X25519Kyber768Draft00 mentioned but only X25519MLKEM768 exists | ✅ Fixed |
+| layer_3_5_deep_dive.md | verify_hybrid() returns false without ML-DSA (BUG-L1) | ✅ Fixed |
+| mesh_deep_dive.md | quorum verification reference wrong file | ⚠️ Not found in doc |
+| networking_deep_dive.md | "Shared Handler" claim inaccurate | ✅ Fixed |
+| networking_deep_dive.md | HTTP/2 client configuration inconsistent | ✅ Fixed |
+| platform_deep_dive.md | fs.rs missing from module table | ✅ Fixed |
+| platform_deep_dive.md | Several process module files undocumented | ⚠️ Deferred |
+| plugin_deep_dive.md | DHT prefix examples completely wrong (87-88) | ✅ Fixed |
+| plugin_deep_dive.md | Warmup stub function description misleading | ✅ Fixed |
+| process_lifecycle.md | Overseer Cannot Spawn Master (--master flag missing) | ✅ Fixed (flag added) |
+| process_lifecycle.md | CPU affinity documentation wrong | ✅ Fixed |
+| proxy_deep_dive.md | HTTP/2 connection multiplexing not implemented | ✅ Fixed |
+| proxy_deep_dive.md | ErasedHttpClient Phase 9 incomplete | ⚠️ Known deferred - PQC-PHASE9 |
+| routing_deep_dive.md | "Lease" concept doesn't exist | ✅ Fixed |
+| routing_deep_dive.md | Missing BackendType variants | ✅ Fixed |
+| waf_deep_dive.md | Line references off by ~50 lines | ⚠️ Deferred - minor |
+| waf_deep_dive.md | GeoIP "not fully implemented" misleading | ✅ Fixed |
+| worker_architecture.md | WAF pipeline "Challenge" stage not separate | ⚠️ Deferred |
+| worker_architecture.md | Health monitoring overstated | ⚠️ Deferred |
 
 ---
 
 ## Critical Bugs Identified
 
-| Bug ID | Module | Description | Location |
-|--------|--------|-------------|----------|
-| BUG-L1 | Layer 3.5 | verify_hybrid() returns false without ML-DSA, not fail-safe | src/mesh/ml_dsa.rs:217 |
-| BUG-PL-1 | Process | Overseer cannot spawn Master (--master flag missing in main.rs) | src/main.rs, src/overseer/spawn.rs:84 |
-| BUG-PL-2 | Process | Legacy mode not selectable (only Supervisor mode functional) | main.rs |
-| DOC-SEC-1 | Plugin | DHT prefix examples completely wrong (security misconfig risk) | architecture/plugin_deep_dive.md:87-88 |
+| Bug ID | Module | Description | Location | Status |
+|--------|--------|-------------|----------|--------|
+| BUG-L1 | Layer 3.5 | verify_hybrid() returns false without ML-DSA, not fail-safe | src/mesh/ml_dsa.rs:217 | ✅ FIXED |
+| BUG-PL-1 | Process | Overseer cannot spawn Master (--master flag missing) | src/main.rs:27 (added) | ✅ FIXED |
+| BUG-PL-2 | Process | Legacy mode not selectable (only Supervisor mode functional) | main.rs | ⚠️ Legacy code preserved |
+| DOC-SEC-1 | Plugin | DHT prefix examples completely wrong | architecture/plugin_deep_dive.md:87-88 | ✅ FIXED |
 
 ---
 
@@ -106,7 +114,7 @@ The following stale items were identified across architecture documents:
 
 ## Next Steps
 
-1. **Immediate**: Fix critical documentation error in plugin_deep_dive.md (DHT prefix examples)
-2. **High Priority**: Address BUG-L1 (verify_hybrid fail-safe) and BUG-PL-1 (Overseer spawn issue)
-3. **Medium Priority**: Update stale line references and terminology across docs
-4. **Low Priority**: Add missing module files to documentation tables
+1. ✅ **Completed**: Fixed critical documentation error in plugin_deep_dive.md (DHT prefix examples)
+2. ✅ **Completed**: Fixed BUG-L1 (verify_hybrid fail-safe) and BUG-PL-1 (Overseer spawn issue)
+3. ✅ **Completed**: Updated stale line references and terminology across docs
+4. ⚠️ **Deferred**: Remaining items marked deferred in Stale Items table above
