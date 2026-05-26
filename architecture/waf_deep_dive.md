@@ -146,7 +146,7 @@ The WAF uses `BufferPool` and `PooledBuf` from `crates/synvoid-utils/src/buffer/
 
 ### Parallel Processing (Async WAF Pipeline)
 
-The WAF pipeline executes asynchronously at `src/waf/mod.rs:484-512` to maximize throughput:
+The WAF pipeline executes asynchronously at `src/waf/mod.rs:442-517` to maximize throughput:
 
 **Pipeline Stages:**
 1. **Flood Protection:** Non-blocking check via `FloodProtector::check()` returning `FloodDecision`

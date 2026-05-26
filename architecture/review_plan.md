@@ -67,10 +67,10 @@ The following stale items were identified across architecture documents. Items m
 | config_deep_dive.md | Type naming mismatches | ⚠️ Deferred |
 | dns_deep_dive.md | AXFR "Missing record types" section is WRONG | ✅ Fixed |
 | dns_deep_dive.md | DnsCookieServer created but not integrated | ⚠️ Known deferred - DNS-COOKIE |
-| dns_deep_dive.md | Query coalescing line references wrong | ⚠️ Deferred |
+| dns_deep_dive.md | Query coalescing line references wrong | ✅ Fixed |
 | layer_3_5_deep_dive.md | X25519Kyber768Draft00 mentioned but only X25519MLKEM768 exists | ✅ Fixed |
 | layer_3_5_deep_dive.md | verify_hybrid() returns false without ML-DSA (BUG-L1) | ✅ Fixed |
-| mesh_deep_dive.md | quorum verification reference wrong file | ⚠️ Not found in doc |
+| mesh_deep_dive.md | quorum verification reference wrong file | ⚠️ Reference not found in current doc |
 | networking_deep_dive.md | "Shared Handler" claim inaccurate | ✅ Fixed |
 | networking_deep_dive.md | HTTP/2 client configuration inconsistent | ✅ Fixed |
 | platform_deep_dive.md | fs.rs missing from module table | ✅ Fixed |
@@ -83,10 +83,10 @@ The following stale items were identified across architecture documents. Items m
 | proxy_deep_dive.md | ErasedHttpClient Phase 9 incomplete | ⚠️ Known deferred - PQC-PHASE9 |
 | routing_deep_dive.md | "Lease" concept doesn't exist | ✅ Fixed |
 | routing_deep_dive.md | Missing BackendType variants | ✅ Fixed |
-| waf_deep_dive.md | Line references off by ~50 lines | ⚠️ Deferred - minor |
+| waf_deep_dive.md | Line references off by ~50 lines | ✅ Fixed |
 | waf_deep_dive.md | GeoIP "not fully implemented" misleading | ✅ Fixed |
-| worker_architecture.md | WAF pipeline "Challenge" stage not separate | ⚠️ Deferred |
-| worker_architecture.md | Health monitoring overstated | ⚠️ Deferred |
+| worker_architecture.md | WAF pipeline "Challenge" stage not separate | ✅ Fixed |
+| worker_architecture.md | Health monitoring overstated | ✅ Fixed |
 
 ---
 

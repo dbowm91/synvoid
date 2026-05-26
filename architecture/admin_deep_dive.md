@@ -256,7 +256,7 @@ All admin clients are expected to set appropriate Authorization headers.
 
 ### AdminState
 
-**Location:** `src/admin/state.rs:254-264`
+**Location:** `src/admin/state.rs:256-267` (AdminState struct definition)
 
 ```rust
 pub struct AdminState {

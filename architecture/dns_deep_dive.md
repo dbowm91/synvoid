@@ -64,7 +64,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 6. **Query Coalescing**: `QueryCoalescer` collapses identical in-flight queries
    - Implemented at `src/dns/query_coalesce.rs`
    - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
-   - Created in `DnsServer::from_config()` at `src/dns/server/mod.rs:630-640`
+   - `QueryCoalescer::with_config()` created in `DnsServer::new()` at `src/dns/server/mod.rs:634-644`
    - Passed to query handler via `DnsServerQueryHandler` context at `src/dns/server/mod.rs:517`
 7. **Zone Resolution**: `ShardedZoneStore` looks up zone, builds response
 8. **DNSSEC Signing**: If zone signed, RRSIG records added
