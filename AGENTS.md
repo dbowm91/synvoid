@@ -148,17 +148,18 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
 | BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED |
+| BUG-ROUTER-1 | `src/router.rs:1318` | Hardcoded port 80 instead of configured port | FIXED |
 
 ### Known Implementation Issues
 
-| Issue | Location | Impact |
-|-------|----------|--------|
-| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete |
-| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false`, infrastructure exists but unused |
-| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in |
-| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used |
-| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `zones`, `settings`, `dnssec`, `recursive` validate() not called |
-| DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Shows `route:`, `cert:` but actual code uses `threat_indicator:`, etc. |
+| Issue | Location | Impact | Status |
+|-------|----------|--------|--------|
+| `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
+| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false`, infrastructure exists but unused | Known |
+| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
+| SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | ✅ FIXED |
+| DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive` validate() not called | ✅ FIXED |
+| DHT prefix examples wrong (SECURITY) | `architecture/plugin_deep_dive.md:87-88` | Documentation showed wrong prefixes | ✅ FIXED |
 
 ### Dependency Vulnerability Status
 
