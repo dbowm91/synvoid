@@ -213,7 +213,7 @@ run_master_mode()
 ├── Post-quantum TLS initialization
 ├── Site discovery and loading
 ├── BlockStore initialization
-├── RuleFeedManager (if threat intel enabled)
+├── RuleFeedManagerForWaf (if threat intel enabled)
 ├── ProcessManager::new()
 ├── IpcListener bind
 ├── Worker spawning (UnifiedServerWorker)

@@ -155,7 +155,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | Issue | Location | Impact | Status |
 |-------|----------|--------|--------|
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient never used - Phase 9 incomplete | Known |
-| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false`, infrastructure exists but unused | Known |
+| HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
 | SiteConnectionLimiter unused params | `src/waf/traffic_shaper/limiter.rs:312-323` | `_max_connections`, `_max_connections_per_ip`, `_queue_size`, `_burst` never used | ✅ FIXED |
 | DnsConfig.validate() incomplete | `crates/synvoid-config/src/dns/mod.rs:174-205` | `recursive` validate() not called | ✅ FIXED |

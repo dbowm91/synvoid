@@ -88,7 +88,7 @@ Documentation fixes applied to:
 
 ### 4.2 Proxy: Implementation Decisions ✅ DOCUMENTED
 
-- HTTP/2 remains disabled - infrastructure exists but not wired for production
+- HTTP/2 available but not enforced (is_http2 = true hardcoded at line 893, uses http2_only(false))
 - UpstreamClientRegistry documented as integrated in http/http3/tls servers for streaming
 - ProxyHeadersConfig deferred for future enhancement
 
@@ -424,7 +424,7 @@ cmd.arg("--cpu-affinity").arg(core.to_string());
 | Item | Location | Issue |
 |------|----------|-------|
 | ErasedHttpClient Phase 9 | `src/http/server.rs:3305` | `use_erased_client` hardcoded to `false` |
-| HTTP/2 disabled | `src/http_client/mod.rs:890` | `is_http2 = false`, infrastructure exists but unused |
+| HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | Minification unused | `src/static_files/mod.rs:134-136` | Params silently ignored |
 | Spin instance reuse | `src/spin/runtime.rs:260` | Per-request instantiation overhead |
 | GOST DS digest | `src/dns/dnssec_validation.rs:260` | Returns error "not yet supported" |
