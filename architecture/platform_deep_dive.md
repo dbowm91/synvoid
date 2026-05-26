@@ -23,6 +23,7 @@ Cross-platform abstractions providing OS-level functionality for Unix and Window
 | `process.rs` | Process control traits, signal handling |
 | `unix.rs` | Unix-specific implementations (UnixDomain sockets, signals, daemonization) |
 | `windows_impl.rs` | Windows-specific IPC via named pipes |
+| `fs.rs` | Filesystem operations with sandbox integration (path resolution, traversal prevention) |
 
 ### Platform Abstraction Pattern
 

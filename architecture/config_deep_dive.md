@@ -28,7 +28,7 @@ Features are additive - DNS, ICMP-filter, and Mesh modules compile only when res
 
 | File | Responsibility |
 |------|----------------|
-| `lib.rs` | ConfigManager at lines 113-233 |
+| `lib.rs` | ConfigManager struct at lines 113-119, impl at lines 121-241 |
 | `main_config.rs` | Root configuration container for the entire SynVoid server |
 | `site/mod.rs` | Site-level configuration (per-domain routing, upstream, listen) |
 | `site/app_server.rs` | Granian Python ASGI/RSGI/WSGI server site config |
