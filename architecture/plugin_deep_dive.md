@@ -108,6 +108,42 @@ WasmRuntime (plugin B)
 - Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes. `WasmPooledInstance::prepare_for_request` (in `instance_pool.rs:219-233`) resets body_receiver and DHT prefixes; the generic `PooledInstance::prepare_for_request` (in `pool.rs:15-26`) does NOT reset body_receiver or DHT prefixes.
 - Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (6 stub host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`). These stubs are replaced with real implementations on first actual request. Note: `guest_alloc`/`guest_free` are linked as real functions (not stubs) during actual request handling via `create_linker`.
 
+### PooledInstance Structure
+
+```rust
+// src/plugin/pool.rs
+pub struct PooledInstance {
+    pub instance: Instance,              // wasmtime Instance
+    pub store: Store<RequestContext>,    // Per-request context store
+    pub filter_name: String,             // Plugin name
+    pub max_cpu_fuel: u64,               // Fuel budget
+    pub allowed_dht_prefixes: Vec<String>, // DHT prefix restrictions
+}
+
+impl PooledInstance {
+    pub fn prepare_for_request(&mut self, env, timeout, allowed_dht_prefixes) {
+        // Reset per-request state before execution
+    }
+}
+```
+
+**Conversion Flow:**
+```
+WasmRuntime (per plugin)
+    └── WasmInstancePool (VecDeque<PooledInstance>)
+            └── PooledInstance {
+                    instance: wasmtime::Instance,
+                    store: Store<RequestContext>,
+                    filter_name: "my_filter",
+                    max_cpu_fuel: 1000000,
+                    allowed_dht_prefixes: [...]
+                }
+                    │
+                    ├── get() ──> Pop from pool back
+                    │
+                    └── return_instance() ──> Push to pool back (if under max_size)
+```
+
 ---
 
 ## 2. Spin Framework Runtime (`src/spin/`)

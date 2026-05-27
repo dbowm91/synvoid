@@ -25,6 +25,7 @@ The Serverless module provides a **WASM-based serverless function execution plat
 | `async_compilation.rs` | `AsyncCompilationHandle/Manager` - async WASM compilation tracking |
 | `registry.rs` | `ServerlessRegistry` - global function metadata and invocation statistics |
 | `routing.rs` | `ServerlessRoute` - route matching (exact, prefix, suffix, regex, glob) |
+| `scheduler.rs` | `ServerlessScheduler` - timer-based event scheduling for periodic function invocations |
 
 ### `plugin/` - WASM Plugin Runtime
 
@@ -160,6 +161,47 @@ pub struct ServerlessRoute {
     pub method: MethodMatch,
     pub priority: i32,       // Higher priority evaluated first
     pub function_name: String,
+}
+```
+
+### Registry Types
+
+```rust
+// src/serverless/registry.rs
+
+// Global registry singleton
+pub fn get_global_serverless_registry() -> Arc<ServerlessRegistry>;
+
+// Per-function metadata
+pub struct FunctionMetadata {
+    pub name: String,
+    pub description: Option<String>,
+    pub route_count: usize,
+    pub allowed_methods: Vec<String>,
+    pub memory_mb: Option<usize>,
+    pub timeout_seconds: Option<u64>,
+    pub registered_at: Instant,
+    pub last_invoked: Option<Instant>,
+    pub invocation_count: u64,
+    pub error_count: u64,
+}
+
+// Per-function statistics
+pub struct FunctionStats {
+    pub invocation_count: u64,
+    pub error_count: u64,
+    pub avg_errors_per_invocation: f64,
+}
+
+// Global registry API
+impl ServerlessRegistry {
+    pub fn register(&self, def: &FunctionDefinition);
+    pub fn unregister(&self, name: &str) -> bool;
+    pub fn get(&self, name: &str) -> Option<FunctionMetadata>;
+    pub fn list(&self) -> Vec<FunctionMetadata>;
+    pub fn record_invocation(&self, name: &str);
+    pub fn record_error(&self, name: &str);
+    pub fn get_stats(&self, name: &str) -> Option<FunctionStats>;
 }
 ```
 
@@ -299,10 +341,13 @@ impl ServerlessManager {
 }
 ```
 
-### handle_serverless_function (mesh entry point)
+### handle_serverless_function (mesh-only entry point)
+
+**Note:** This function is only exported when `#[cfg(feature = "mesh")]`.
 
 ```rust
 // src/serverless/manager.rs:1049
+#[cfg(feature = "mesh")]
 pub async fn handle_serverless_function(
     manager: &ServerlessManager,
     method: &Method,
@@ -312,6 +357,25 @@ pub async fn handle_serverless_function(
     caller: CallerContext,
 ) -> Result<Response<Bytes>, ServerlessError>;
 ```
+
+### Streaming Variant (handle_serverless_function_streaming)
+
+For streaming request bodies, use the streaming variant:
+
+```rust
+// src/serverless/manager.rs:1224
+#[cfg(feature = "mesh")]
+pub async fn handle_serverless_function_streaming(
+    manager: &ServerlessManager,
+    method: &Method,
+    path: &str,
+    headers: &HeaderMap,
+    body: Box<dyn ErasedBody>,
+    caller: CallerContext,
+) -> Result<Response<Bytes>, ServerlessError>;
+```
+
+This variant accepts a `Box<dyn ErasedBody>` for streaming body chunks via `synvoid_read_body_chunk()` host function.
 
 ### InstancePool (src/serverless/instance_pool.rs)
 
@@ -515,13 +579,20 @@ type GuestFreeFn = TypedFunc<(i32, i32), ()>;  // Free guest memory
 
 ### Header Serialization Format
 
-Headers are serialized to a compact binary format for passing to WASM:
+Headers are serialized to **JSON** for serverless/Spin WASM modules:
 
+```json
+{"header_name": "value", ...}
+```
+
+**Note**: Generic WASM plugins (via `WasmRuntime`) use a compact binary format:
 ```
 [header_count: u16]
 [for each header:]
   [name_len: u16][name bytes][value_len: u16][value bytes]
 ```
+
+This distinction exists because Spin and serverless use `SpinHttpHandler` which calls `SpinRuntime::serialize_headers_spin()` returning JSON, while generic WASM filters use `WasmRuntime::serialize_headers()` returning binary.
 
 ### Host Functions (WASM guest can call)
 
