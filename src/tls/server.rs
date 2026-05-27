@@ -1719,6 +1719,13 @@ impl HttpsServer {
                                 .as_ref()
                                 .and_then(|u| u.tls.as_ref())
                                 .and_then(crate::http_client::UpstreamTlsConfig::from_site_config);
+                            let http2_enabled = target
+                                .site_config
+                                .proxy
+                                .upstream
+                                .as_ref()
+                                .and_then(|u| u.http2)
+                                .unwrap_or(false);
                             let ps = ProxyServer::new_with_tls(
                                 target.upstream.to_string(),
                                 waf.clone(),
@@ -1727,7 +1734,8 @@ impl HttpsServer {
                                 site_id.clone(),
                                 tls_config.as_ref(),
                             )
-                            .with_cache(cache);
+                            .with_cache(cache)
+                            .with_http2(http2_enabled);
 
                             let ps = Arc::new(ps);
                             let mut proxy_servers_lock = proxy_servers.write().await;

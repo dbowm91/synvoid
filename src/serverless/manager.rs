@@ -466,7 +466,11 @@ impl ServerlessManager {
             let func_name_for_init = func_name.clone();
             tokio::spawn(async move {
                 if let Err(e) = pool_clone_for_init.initialize().await {
-                    tracing::error!("Failed to pre-warm instances for {}: {}", func_name_for_init, e);
+                    tracing::error!(
+                        "Failed to pre-warm instances for {}: {}",
+                        func_name_for_init,
+                        e
+                    );
                 }
             });
             tokio::spawn(async move {
