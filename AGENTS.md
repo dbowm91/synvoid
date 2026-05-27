@@ -148,8 +148,8 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |--------|----------|-------|--------|
 | BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED (shared secret comparison verified) |
 | BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
-| BUG-DNS-1 | `src/dns/resolver.rs:693-702` | HickoryRecursor DNSSEC policy always SecurityUnaware | Active - fix uses `ValidateWithStaticKey` |
-| BUG-DNS-4 | `src/dns/resolver.rs:420-429` | HickoryResolver (forwarder) always false; Recursor mode correct | Active - by design for forwarder mode (hickory-resolver API limitation) |
+| BUG-DNS-1 | `src/dns/resolver.rs:693-702` | HickoryRecursor DNSSEC policy always SecurityUnaware | ✅ FIXED (2026-05-27) - uses ValidateWithStaticKey |
+| BUG-DNS-4 | `src/dns/resolver.rs:420-429` | HickoryResolver (forwarder) always false; Recursor mode correct | ✅ DONE - by design, hickory-resolver API doesn't expose validation status |
 
 ### Known Implementation Issues
 
@@ -157,21 +157,23 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |-------|----------|--------|--------|
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method | FIXED 2026-05-27 |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs` | Complete implementation exists and is wired | FIXED 2026-05-27 |
-| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - remove or wire in |
+| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | ✅ FIXED 2026-05-27 - removed dead code |
 | Spin cold-start instance reuse | `src/spin/runtime.rs:289-303` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
 | PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Fixed - `allowed_dht_prefixes` and `body_receiver` now properly reset | FIXED 2026-05-27 |
 | WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Fixed - documentation corrected to match actual defaults | FIXED 2026-05-27 |
 | is_admin_required_for_tun stub | `src/platform/mod.rs:166-176` | Fixed - now returns `false` for Unix platforms, `true` for Windows | FIXED 2026-05-27 |
 | Username validation | `src/auth/mod.rs:305-318` | Validation exists (min 1, max 64, no control chars) | FIXED 2026-05-27 |
+| max_failed_attempts default mismatch | `src/waf/mod.rs:398-404` | WafCore used 5 but docs said 3 | ✅ FIXED 2026-05-27 - WafCore now uses 3 |
+| request_body_size double assignment | `src/http/server.rs:1517, 1579` | Benign but redundant | ✅ FIXED 2026-05-27 - removed duplicate assignment |
 
 ### Known High-Priority Issues (Requires Investigation/Fix)
 
 | Issue | Location | Severity | Description |
 |-------|----------|----------|-------------|
-| BUG-DNS-1 | DNS recursor | HIGH | HickoryRecursor DNSSEC policy always SecurityUnaware even when enable_dnssec=true |
-| BUG-DNS-4 | DNS resolver | MEDIUM | HickoryResolver (forwarder mode) always returns false - by design, hickory-resolver API doesn't expose validation status |
-| BUG-PL-3 | Windows | MEDIUM | WindowsSocketFDPassing returns NotSupported, port-swap mode default for Windows |
-| BUG-WAF-3 | WAF | MEDIUM | SiteConnectionLimiter not wired into WafCore - per-site limiting via ConnectionLimiter works |
+| BUG-DNS-1 | DNS recursor | HIGH | ✅ FIXED - HickoryRecursor now uses ValidateWithStaticKey with trust anchors |
+| BUG-DNS-4 | DNS resolver | MEDIUM | ✅ DONE - Documented as by design (hickory-resolver API limitation for forwarder mode) |
+| BUG-PL-3 | Windows | MEDIUM | Documented limitation - WindowsSocketFDPassing returns NotSupported, port-swap mode default |
+| BUG-WAF-3 | WAF | MEDIUM | ✅ FIXED - SiteConnectionLimiter dead code removed |
 
 ### Dependency Vulnerability Status
 
