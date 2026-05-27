@@ -148,6 +148,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |--------|----------|-------|--------|
 | BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED |
 | BUG-ROUTER-1 | `src/router.rs:1318` | Hardcoded port 80 instead of configured port | FIXED |
+| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS configuration read but not applied to admin API routes | Known - fix pending |
 
 ### Known Implementation Issues
 
@@ -157,7 +158,11 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
 | Capsicum `limit_fd()` dead code | `src/platform/sandbox.rs:516-528` → FIXED | Method removed - dead code eliminated | FIXED |
-| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - not blocking |
+| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - see plan.md |
+| TunnelBackend hardcoded 127.0.0.1 | `src/tunnel/upstream.rs:121` | Always routes to localhost regardless of tunnel endpoint | Known - see plan.md |
+| Spin cold-start instance reuse | `src/spin/runtime.rs:258` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
+| PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Generic trait impl missing resets; concrete `WasmPooledInstance` correct | Known - see plan.md |
+| Supervisor lacks DrainManager | `src/supervisor/process.rs` | Overseer has drain_manager.rs, Supervisor does not | Known - see plan.md |
 
 ### Dependency Vulnerability Status
 
@@ -219,6 +224,9 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **BackendType**: `src/router.rs:65-77` has 11 variants
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
+- **DhtSyncRequest**: `src/mesh/transport_peer.rs:687-704` - authentication gap, no signature verification
+- **DNS Cookie Server**: `src/dns/cookie.rs` - exists but not wired into query validation
+- **TunnelBackend**: `src/tunnel/upstream.rs:121` - hardcodes `127.0.0.1`
 
 ### Process Architecture
 - **Supervisor** manages lifecycle, consolidates Overseer + Master

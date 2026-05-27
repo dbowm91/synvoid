@@ -30,6 +30,16 @@ The Admin API middleware stack (in order):
 
 **Note**: No CORS layer - intentional design since Admin API uses bearer/session tokens, not browser-based access.
 
+### CORS Configuration Bug (BUG-CORS-1)
+
+`src/admin/mod.rs:860` — CORS config is read but **never applied**:
+
+```rust
+let _cors_config = cfg.cors.clone();  // underscore = dropped!
+```
+
+The `_cors_config` is never used. CORS layer is only applied to outer router (line 806), not to nested `/api` routes (lines 179-189). **Fix needed** in `create_admin_router_with_state()`.
+
 ## Skills Reference
 
 See `skills/admin_api.md` for Admin API patterns.

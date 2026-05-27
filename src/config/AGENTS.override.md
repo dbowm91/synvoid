@@ -49,3 +49,16 @@ Config validation happens at multiple levels:
 ## Hot Reload
 
 Site configurations support hot reload via `ConfigManager::reload_site()` and `reload_all()`. Changes to site configs are detected and applied without restart.
+
+## Known Config Bugs
+
+### AppServerConfig Default Port
+
+`crates/synvoid-config/src/site/app_server.rs:49` — `AppServerConfig::default()`:
+
+```rust
+port: Some(8000),
+host: Some("127.0.0.1".to_string()),
+```
+
+**Issue**: Default port is 8000 on localhost - may not match production expectations. This may be intentional for dev mode but should be documented if not.
