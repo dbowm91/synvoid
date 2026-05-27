@@ -51,8 +51,10 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
     }
 
     async fn send_raw(&self, msg_type: RaftMsgType, data: Vec<u8>) -> Result<Vec<u8>, RPCError<C>> {
-        let request_id = uuid::Uuid::new_v4().to_string();
+        const MAX_RETRIES: u32 = 3;
+        const BASE_BACKOFF_MS: u64 = 100;
 
+        let request_id = uuid::Uuid::new_v4().to_string();
         let payload = MeshRaftPayload {
             msg_type,
             data,
@@ -82,12 +84,37 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
             }
         };
 
-        let response_data = transport
-            .send_message_to_peer_with_response(&self.target, &raft_msg)
-            .await
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+        let mut last_error = None;
+        for attempt in 0..=MAX_RETRIES {
+            match transport
+                .send_message_to_peer_with_response(&self.target, &raft_msg)
+                .await
+            {
+                Ok(response_data) => return Ok(response_data),
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < MAX_RETRIES {
+                        let backoff_ms = BASE_BACKOFF_MS * 2u64.pow(attempt);
+                        tracing::warn!(
+                            "Raft send_raw attempt {} failed for target {}, retrying in {}ms: {}",
+                            attempt + 1,
+                            self.target,
+                            backoff_ms,
+                            last_error.as_ref().unwrap()
+                        );
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    }
+                }
+            }
+        }
 
-        Ok(response_data)
+        tracing::error!(
+            "Raft send_raw failed after {} attempts for target {}: potential network partition",
+            MAX_RETRIES + 1,
+            self.target
+        );
+        let err = last_error.unwrap();
+        Err(RPCError::Unreachable(Unreachable::new(&err)))
     }
 
     pub async fn handle_response(&self, request_id: &str, data: Vec<u8>) {
