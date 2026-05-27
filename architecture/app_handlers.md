@@ -92,7 +92,7 @@ The `BackendType` enum at `src/router.rs:66-78` defines all backend variants:
 | `Mesh` | `src/http/server.rs:2872` | Mesh routing backend |
 | `Spin` | `src/http/server.rs:2421` | Spin framework WASM |
 
-### Mesh Distribution for WASM (APP-6)
+### Mesh Distribution for WASM (APP-6) ✅
 
 Serverless WASM functions can be distributed across the mesh:
 - Enabled via `mesh` feature flag
