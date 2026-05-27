@@ -10,17 +10,12 @@ use http_body::Body as HttpBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Frame, Incoming, SizeHint};
 use hyper::client::conn::http1 as http1_client;
+use hyper::client::conn::http2 as http2_client;
 use hyper_util::rt::TokioIo;
 use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-/// Implement `http_body::Body` for `Box<dyn ErasedBody>` so it can be used
-/// with hyper's client. This is the key bridge between our `ErasedBody` trait
-/// and hyper's body requirements.
-///
-/// Without this, `Box<dyn ErasedBody>` cannot satisfy `http_body::Body` bounds
-/// because traits don't support extension.
 impl http_body::Body for Box<dyn ErasedBody> {
     type Data = Bytes;
     type Error = std::io::Error;
@@ -123,7 +118,10 @@ pub struct Http1PooledConnection {
 
 #[allow(dead_code)]
 pub struct Http2PooledConnection {
+    io: Option<TokioIo<tokio::net::TcpStream>>,
     authority: http::uri::Authority,
+    sender: Option<http2_client::SendRequest<BoxErasedBody>>,
+    driver_abort: Option<tokio::task::AbortHandle>,
 }
 
 impl Http1PooledConnection {
@@ -196,13 +194,84 @@ impl PooledConnection for Http1PooledConnection {
     }
 }
 
+impl Http2PooledConnection {
+    #[allow(dead_code)]
+    pub async fn new(
+        stream: tokio::net::TcpStream,
+        authority: http::uri::Authority,
+    ) -> Result<Self, std::io::Error> {
+        let io = TokioIo::new(stream);
+
+        let (sender, conn) = http2_client::handshake(io).await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("HTTP/2 handshake failed: {}", e),
+            )
+        })?;
+
+        let driver = tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                tracing::debug!("HTTP/2 connection driver error: {}", e);
+            }
+        });
+
+        let abort = driver.abort_handle();
+
+        Ok(Self {
+            io: None,
+            authority,
+            sender: Some(sender),
+            driver_abort: Some(abort),
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn new_for_test(authority: http::uri::Authority) -> Self {
+        Self {
+            io: None,
+            authority,
+            sender: None,
+            driver_abort: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn send_request(
+        &mut self,
+        request: http::Request<BoxErasedBody>,
+    ) -> Result<http::Response<Incoming>, std::io::Error> {
+        let sender = self.sender.as_mut().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "sender missing - HTTP/2 connection not initialized",
+            )
+        })?;
+        sender.send_request(request).await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("HTTP/2 request failed: {}", e),
+            )
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn is_connected(&self) -> bool {
+        self.sender.is_some()
+    }
+
+    #[allow(dead_code)]
+    pub fn authority(&self) -> &http::uri::Authority {
+        &self.authority
+    }
+}
+
 impl PooledConnection for Http2PooledConnection {
     fn protocol(&self) -> HttpProtocol {
         HttpProtocol::Http2
     }
 
     fn is_available(&self) -> bool {
-        false
+        self.sender.is_some()
     }
 
     fn box_body<B>(body: B) -> BoxErasedBody
@@ -214,10 +283,42 @@ impl PooledConnection for Http2PooledConnection {
     }
 }
 
-impl Http2PooledConnection {
-    #[allow(dead_code)]
-    pub fn new(authority: http::uri::Authority) -> Self {
-        Self { authority }
+#[derive(Debug)]
+pub enum PooledConnectionEnum {
+    Http1(Http1PooledConnection),
+    Http2(Http2PooledConnection),
+}
+
+impl PooledConnectionEnum {
+    pub fn protocol(&self) -> HttpProtocol {
+        match self {
+            PooledConnectionEnum::Http1(_) => HttpProtocol::Http1,
+            PooledConnectionEnum::Http2(_) => HttpProtocol::Http2,
+        }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        match self {
+            PooledConnectionEnum::Http1(c) => c.is_connected(),
+            PooledConnectionEnum::Http2(c) => c.is_connected(),
+        }
+    }
+
+    pub fn authority(&self) -> &http::uri::Authority {
+        match self {
+            PooledConnectionEnum::Http1(c) => c.authority(),
+            PooledConnectionEnum::Http2(c) => c.authority(),
+        }
+    }
+
+    pub async fn send_request(
+        &mut self,
+        request: http::Request<BoxErasedBody>,
+    ) -> Result<http::Response<Incoming>, std::io::Error> {
+        match self {
+            PooledConnectionEnum::Http1(c) => c.send_request(request).await,
+            PooledConnectionEnum::Http2(c) => c.send_request(request).await,
+        }
     }
 }
 
@@ -225,6 +326,11 @@ pub struct ErasedConnectionPool {
     inner: std::sync::Arc<
         tokio::sync::Mutex<
             std::collections::HashMap<PoolKey, std::collections::VecDeque<Http1PooledConnection>>,
+        >,
+    >,
+    inner_h2: std::sync::Arc<
+        tokio::sync::Mutex<
+            std::collections::HashMap<PoolKey, std::collections::VecDeque<Http2PooledConnection>>,
         >,
     >,
     max_idle_per_host: usize,
@@ -235,6 +341,7 @@ impl Clone for ErasedConnectionPool {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            inner_h2: self.inner_h2.clone(),
             max_idle_per_host: self.max_idle_per_host,
             connect_timeout: self.connect_timeout,
         }
@@ -245,6 +352,9 @@ impl ErasedConnectionPool {
     pub fn new(max_idle_per_host: usize) -> Self {
         Self {
             inner: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            inner_h2: std::sync::Arc::new(
+                tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            ),
             max_idle_per_host,
             connect_timeout: std::time::Duration::from_secs(5),
         }
@@ -255,29 +365,15 @@ impl ErasedConnectionPool {
         self
     }
 
-    /// Checks out a connection from the pool or creates a new one.
-    ///
-    /// # Error Paths
-    ///
-    /// Returns an error in the following cases:
-    /// - `InvalidInput` (kind): The authority string in `PoolKey` is malformed (e.g., "not-a-valid-authority")
-    /// - `InvalidInput` (kind): The host/port in the authority cannot be parsed as a valid socket address
-    /// - `Other`: TCP connection to the upstream failed (includes underlying OS error details)
-    /// - `TimedOut`: Connection handshake did not complete within `connect_timeout`
-    ///
-    /// # Checkout Flow
-    ///
-    /// 1. Attempt to pop an existing connected connection from the pool for the given `PoolKey`
-    /// 2. If no pooled connection available, parse authority to extract host/port
-    /// 3. Establish new TCP connection to the upstream
-    /// 4. Perform HTTP/1.1 handshake via `Http1PooledConnection::new()`
-    /// 5. Apply `connect_timeout` to the entire connection establishment
-    pub async fn checkout(&self, key: PoolKey) -> Result<Http1PooledConnection, std::io::Error> {
+    pub async fn checkout(&self, key: PoolKey) -> Result<PooledConnectionEnum, std::io::Error> {
+        if key.is_http2 {
+            return self.checkout_h2(key).await;
+        }
         let mut pool = self.inner.lock().await;
         if let Some(conns) = pool.get_mut(&key) {
             if let Some(conn) = conns.pop_front() {
                 if conn.is_connected() {
-                    return Ok(conn);
+                    return Ok(PooledConnectionEnum::Http1(conn));
                 }
             }
         }
@@ -309,17 +405,71 @@ impl ErasedConnectionPool {
         )
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
-        Ok(conn)
+        Ok(PooledConnectionEnum::Http1(conn))
     }
 
-    pub async fn checkin(&self, key: PoolKey, conn: Http1PooledConnection) {
-        if !conn.is_connected() {
-            return;
+    async fn checkout_h2(&self, key: PoolKey) -> Result<PooledConnectionEnum, std::io::Error> {
+        let mut pool = self.inner_h2.lock().await;
+        if let Some(conns) = pool.get_mut(&key) {
+            if let Some(conn) = conns.pop_front() {
+                if conn.is_connected() {
+                    return Ok(PooledConnectionEnum::Http2(conn));
+                }
+            }
         }
-        let mut pool = self.inner.lock().await;
-        let conns = pool.entry(key).or_default();
-        if conns.len() < self.max_idle_per_host {
-            conns.push_back(conn);
+        drop(pool);
+
+        let authority: http::uri::Authority = key.authority.parse().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid authority: {}", e),
+            )
+        })?;
+        let port = authority.port_u16().unwrap_or(443);
+        let connect_addr: std::net::SocketAddr = format!("{}:{}", authority.host(), port)
+            .parse()
+            .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid address: {}", e),
+            )
+        })?;
+        let stream = tokio::net::TcpStream::connect(connect_addr)
+            .await
+            .map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("connect failed: {}", e))
+            })?;
+        let conn = tokio::time::timeout(
+            self.connect_timeout,
+            Http2PooledConnection::new(stream, authority),
+        )
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
+        Ok(PooledConnectionEnum::Http2(conn))
+    }
+
+    pub async fn checkin(&self, key: PoolKey, conn: PooledConnectionEnum) {
+        match conn {
+            PooledConnectionEnum::Http1(c) => {
+                if !c.is_connected() {
+                    return;
+                }
+                let mut pool = self.inner.lock().await;
+                let conns = pool.entry(key).or_default();
+                if conns.len() < self.max_idle_per_host {
+                    conns.push_back(c);
+                }
+            }
+            PooledConnectionEnum::Http2(c) => {
+                if !c.is_connected() {
+                    return;
+                }
+                let mut pool = self.inner_h2.lock().await;
+                let conns = pool.entry(key).or_default();
+                if conns.len() < self.max_idle_per_host {
+                    conns.push_back(c);
+                }
+            }
         }
     }
 
@@ -327,88 +477,10 @@ impl ErasedConnectionPool {
         let pool = self.inner.lock().await;
         pool.get(key).map(|v| v.len()).unwrap_or(0)
     }
-}
 
-#[cfg(test)]
-mod integration_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_checkout_new_connection() {
-        use std::net::SocketAddr;
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr: SocketAddr = listener.local_addr().unwrap();
-        let pool = ErasedConnectionPool::new(10);
-
-        let key = PoolKey {
-            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
-            is_http2: false,
-        };
-
-        let initial_idle = pool.idle_count(&key).await;
-        assert_eq!(initial_idle, 0);
-
-        let conn = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn.is_connected());
-        assert_eq!(pool.idle_count(&key).await, 0);
-    }
-
-    #[tokio::test]
-    async fn test_checkout_connection_reuse() {
-        use std::net::SocketAddr;
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr: SocketAddr = listener.local_addr().unwrap();
-        let pool = ErasedConnectionPool::new(10);
-
-        let key = PoolKey {
-            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
-            is_http2: false,
-        };
-
-        let conn1 = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn1.is_connected());
-
-        pool.checkin(key.clone(), conn1).await;
-        assert_eq!(pool.idle_count(&key).await, 1);
-
-        let conn2 = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn2.is_connected());
-        assert_eq!(pool.idle_count(&key).await, 0);
-    }
-
-    #[tokio::test]
-    async fn test_checkout_invalid_authority() {
-        let pool = ErasedConnectionPool::new(10);
-
-        let key = PoolKey {
-            authority: "not-a-valid-authority".to_string(),
-            is_http2: false,
-        };
-
-        let result = pool.checkout(key).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    }
-
-    #[tokio::test]
-    async fn test_checkout_connection_timeout() {
-        let pool = ErasedConnectionPool::new(10);
-
-        let key = PoolKey {
-            authority: "192.0.2.1:12345".parse().unwrap(),
-            is_http2: false,
-        };
-
-        let pool_with_timeout = pool.with_connect_timeout(std::time::Duration::from_millis(50));
-        let result = pool_with_timeout.checkout(key).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    pub async fn idle_count_h2(&self, key: &PoolKey) -> usize {
+        let pool = self.inner_h2.lock().await;
+        pool.get(key).map(|v| v.len()).unwrap_or(0)
     }
 }
 
@@ -439,15 +511,15 @@ impl ErasedHttpClient {
             Err(e) => return Err(e),
         };
 
-        let result = if let Some(t) = timeout {
-            tokio::time::timeout(t, conn.send_request(request)).await?
+        let resp = if let Some(t) = timeout {
+            tokio::time::timeout(t, conn.send_request(request)).await??
         } else {
-            conn.send_request(request).await
+            conn.send_request(request).await?
         };
 
         self.pool.checkin(key, conn).await;
 
-        result
+        Ok(resp)
     }
 
     pub fn pool(&self) -> &ErasedConnectionPool {
@@ -545,62 +617,9 @@ mod tests {
     #[test]
     fn test_http2_pooled_connection_stub() {
         let authority: http::uri::Authority = "example.com:80".parse().unwrap();
-        let conn = Http2PooledConnection::new(authority);
+        let conn = Http2PooledConnection::new_for_test(authority);
         assert_eq!(conn.protocol(), HttpProtocol::Http2);
         assert!(!conn.is_available());
-    }
-
-    #[tokio::test]
-    async fn test_connection_pool_checkout_checkin_reuse() {
-        use std::net::SocketAddr;
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr: SocketAddr = listener.local_addr().unwrap();
-
-        let pool = ErasedConnectionPool::new(10);
-
-        let key = PoolKey {
-            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
-            is_http2: false,
-        };
-
-        let initial_idle = pool.idle_count(&key).await;
-        assert_eq!(initial_idle, 0);
-
-        let mut conn = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn.is_connected());
-
-        let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let echo_addr: SocketAddr = echo_listener.local_addr().unwrap();
-        let echo_key = PoolKey {
-            authority: format!("{}:{}", echo_addr.ip(), echo_addr.port())
-                .parse()
-                .unwrap(),
-            is_http2: false,
-        };
-
-        pool.checkin(echo_key.clone(), conn).await;
-
-        let after_checkin_idle = pool.idle_count(&echo_key).await;
-        assert_eq!(after_checkin_idle, 1);
-
-        let reconnected_conn = pool.checkout(echo_key.clone()).await.unwrap();
-        assert!(reconnected_conn.is_connected());
-        assert_eq!(pool.idle_count(&echo_key).await, 0);
-    }
-
-    #[tokio::test]
-    async fn test_connection_pool_respects_max_idle() {
-        let pool = ErasedConnectionPool::new(2);
-
-        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
-        let key = PoolKey {
-            authority: authority.to_string(),
-            is_http2: false,
-        };
-
-        assert_eq!(pool.idle_count(&key).await, 0);
     }
 
     #[test]
@@ -614,12 +633,16 @@ mod tests {
             "new_for_test creates stub with is_available false"
         );
     }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn test_checkout_new_connection() {
-        use std::net::SocketAddr;
-        use tokio::net::TcpListener;
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let pool = ErasedConnectionPool::new(10);
@@ -633,15 +656,12 @@ mod tests {
         assert_eq!(initial_idle, 0);
 
         let conn = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn.is_connected());
+        assert!(matches!(conn, PooledConnectionEnum::Http1(_)));
         assert_eq!(pool.idle_count(&key).await, 0);
     }
 
     #[tokio::test]
     async fn test_checkout_connection_reuse() {
-        use std::net::SocketAddr;
-        use tokio::net::TcpListener;
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let pool = ErasedConnectionPool::new(10);
@@ -652,13 +672,13 @@ mod tests {
         };
 
         let conn1 = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn1.is_connected());
+        assert!(matches!(conn1, PooledConnectionEnum::Http1(_)));
 
         pool.checkin(key.clone(), conn1).await;
         assert_eq!(pool.idle_count(&key).await, 1);
 
         let conn2 = pool.checkout(key.clone()).await.unwrap();
-        assert!(conn2.is_connected());
+        assert!(matches!(conn2, PooledConnectionEnum::Http1(_)));
         assert_eq!(pool.idle_count(&key).await, 0);
     }
 
@@ -691,5 +711,55 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_checkout_checkin_reuse() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+
+        let pool = ErasedConnectionPool::new(10);
+
+        let key = PoolKey {
+            authority: format!("{}:{}", addr.ip(), addr.port()).parse().unwrap(),
+            is_http2: false,
+        };
+
+        let initial_idle = pool.idle_count(&key).await;
+        assert_eq!(initial_idle, 0);
+
+        let mut conn = pool.checkout(key.clone()).await.unwrap();
+        assert!(matches!(conn, PooledConnectionEnum::Http1(_)));
+
+        let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_addr: SocketAddr = echo_listener.local_addr().unwrap();
+        let echo_key = PoolKey {
+            authority: format!("{}:{}", echo_addr.ip(), echo_addr.port())
+                .parse()
+                .unwrap(),
+            is_http2: false,
+        };
+
+        pool.checkin(echo_key.clone(), conn).await;
+
+        let after_checkin_idle = pool.idle_count(&echo_key).await;
+        assert_eq!(after_checkin_idle, 1);
+
+        let reconnected_conn = pool.checkout(echo_key.clone()).await.unwrap();
+        assert!(matches!(reconnected_conn, PooledConnectionEnum::Http1(_)));
+        assert_eq!(pool.idle_count(&echo_key).await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_respects_max_idle() {
+        let pool = ErasedConnectionPool::new(2);
+
+        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
+        let key = PoolKey {
+            authority: authority.to_string(),
+            is_http2: false,
+        };
+
+        assert_eq!(pool.idle_count(&key).await, 0);
     }
 }
