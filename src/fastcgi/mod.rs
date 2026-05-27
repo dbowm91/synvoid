@@ -1,4 +1,5 @@
 pub mod pool;
+pub mod streaming;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

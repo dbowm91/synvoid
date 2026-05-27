@@ -10,6 +10,7 @@ use tokio::time::timeout;
 use utoipa::ToSchema;
 
 use crate::config::site::FastCgiConfig;
+use crate::fastcgi::streaming::FastCgiResponseStream;
 use crate::fastcgi::{FastCgiClient, FastCgiError, FastCgiResponse};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -204,6 +205,36 @@ impl FastCgiPool {
         self.release_connection(connection);
 
         result
+    }
+
+    pub async fn execute_stream(
+        &self,
+        method: &Method,
+        uri: &Uri,
+        headers: &http::HeaderMap,
+        body: Bytes,
+        config: &FastCgiConfig,
+    ) -> Result<FastCgiResponseStream, FastCgiError> {
+        use crate::fastcgi::streaming::StreamingFastCgiClient;
+
+        if *self.closed.read() {
+            return Err(FastCgiError::ConnectionFailed("Pool is closed".to_string()));
+        }
+
+        let permit = timeout(self.config.connection_timeout, self.semaphore.acquire())
+            .await
+            .map_err(|_| FastCgiError::ConnectionFailed("Timeout acquiring permit".to_string()))?
+            .map_err(|_| FastCgiError::ConnectionFailed("Semaphore closed".to_string()))?;
+
+        drop(permit);
+
+        let client = StreamingFastCgiClient::new(self.config.socket.clone());
+        let params = client.build_params_from_request(method, uri, headers, config);
+
+        let body_vec = body.to_vec();
+        let body_cursor = std::io::Cursor::new(body_vec);
+
+        client.execute_stream(params, body_cursor, config).await
     }
 
     async fn get_connection(&self) -> Result<PooledConnection, FastCgiError> {
