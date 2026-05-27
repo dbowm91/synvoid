@@ -1,6 +1,6 @@
 # SynVoid Implementation Plan
 
-Consolidated from individual review plans (2026-05). Items marked with **[BUG]** require code fixes; **[DOC]** need documentation/accuracy updates; **[ARCH]** require architectural design.
+Consolidated implementation plan from architecture reviews (2026-05).
 
 ## Priority Key
 - **P0**: Critical security/regression bugs
@@ -18,13 +18,21 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 |----|----------|------|--------|--------------|
 | **BUG-CORS-1** | Bug | CORS Configuration Ignored in `create_admin_router_with_state` - CORS layer not applied to admin routes | admin_review | None |
 | **MR-4** | Security | Implement DhtSyncRequest verification - currently has no auth (security risk) | mesh_review | None |
-| ~~**PLUGIN-1**~~ | — | ~~Spin Creates New Instance Per Request~~ - **FIXED 2026-05-26** per `src/plugin/AGENTS.override.md` | plugin_review | None |
-| ~~**PLUGIN-6**~~ | — | ~~Spin instance caching by component_id~~ - **FIXED 2026-05-26** per `src/plugin/AGENTS.override.md` | plugin_review | None |
 
 ### Implementation Notes for Phase 1
 
-**BUG-CORS-1**: `src/admin/mod.rs:860` - CORS configuration is read with `_cors_config` but never applied. The router only has CORS on outer routes, not nested `/api` routes.
-**MR-4**: `DhtSyncRequest` at `src/mesh/transport_peer.rs:687-704` validates node_id against TLS identity but lacks signature verification
+**BUG-CORS-1** (`src/admin/mod.rs:860`):
+- CORS configuration is read with `let _cors_config = cfg.cors.clone();` but the underscore prefix means it's immediately dropped
+- The router only has CORS on outer routes via `build_router_from_state()` at line 806
+- Nested `/api` routes at lines 179-189 do NOT have CORS applied
+- **Fix**: Apply CORS layer in `create_admin_router_with_state()` similar to how it's done in `build_router_from_state()`
+- **Verification**: Search for `cors` in `src/admin/mod.rs` to understand the full flow
+
+**MR-4** (`src/mesh/transport_peer.rs:687-704`):
+- `DhtSyncRequest` handler validates node_id via `validate_peer_node_id_binding()` but has NO signature verification
+- This is a security gap - if TLS transport is compromised, anyone could send DhtSyncRequests
+- **Fix**: Add signature verification using `MeshMessageSigner` similar to other DHT messages
+- **Reference**: Other messages like `DhtRecordAnnounce` use `verify_for_ingress()` at `signed.rs`
 
 ---
 
@@ -34,37 +42,74 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 
 | ID | Category | Item | Source | Dependencies |
 |----|----------|------|--------|--------------|
-| **MR-6** | Arch | Add integration tests for source node ID binding validation in ingress paths (MESH-14) | mesh_review | Requires architectural design |
 | **DNS-1** | Bug | Wire DNS Cookie Server into Query Validation - exists but not integrated | dns_review | None |
 | **L35-1** | Bug | TunnelBackend hardcoded 127.0.0.1 - always routes to localhost | layer_3_5_review | None |
 | **WRK-BUG-1** | Bug | HTTP/2 Upstream Hardcoded - `is_http2 = true` at `http_client/mod.rs:893` | worker_review | None |
 | **PL-5** | Arch | Consider porting DrainManager to Supervisor for zero-downtime upgrades | process_lifecycle | PL-3 first |
 | **WR-1** | DOC | Update WAF connection limit defaults in documentation - actual: Global=1,000, Per-IP=10, Burst=5, Queue=100 | waf_review | None |
 | **PLAT-4** | Bug | `is_admin_required_for_tun()` returns true for ALL platforms (stub) | platform_review | None |
-| **PLUGIN-2** | Bug | PooledInstance generic trait impl does not reset DHT prefixes or body_receiver (concrete impl is correct) | plugin_review | PLUGIN-6 first (see note) |
+| **PLUGIN-2** | Bug | PooledInstance generic trait impl does not reset DHT prefixes or body_receiver | plugin_review | None |
 
 ### Implementation Notes for Phase 2
 
-**MR-6**: MESH-14 is a known deferred item (per AGENTS.md) - requires binding node_id to TLS identity
-**DNS-1**: Need to call `validate_cookie()` in `src/dns/server/query.rs` when `cookie_server.is_some()`
-**L35-1**: `TunnelBackend::Direct` hardcodes `127.0.0.1` at `src/tunnel/upstream.rs:121`
-**WRK-BUG-1**: Infrastructure exists - uses `http2_only(false)` but `is_http2 = true` needs configurable
-**PL-5**: Overseer has DrainManager, Supervisor does not - decision needed on consolidation direction
-**WR-1**: Actual defaults: Global=1,000 (not 20,000), Per-IP=10 (not 100), Burst=5 (not 10), Queue=100 (not 1,000)
-**PLAT-4**: `src/platform/mod.rs:166-171` - stub always returns true for all platforms
-**PLUGIN-2**: Generic `PooledInstance` trait impl at `src/plugin/pool.rs:15-26` missing resets, but concrete `WasmPooledInstance` at `src/serverless/instance_pool.rs:219` is correct
+**DNS-1**:
+- `DnsCookieServer` exists at `src/dns/cookie.rs:11-50` with `validate_cookie()` at lines 66-87
+- Server created at `src/dns/server/mod.rs:850` and passed to `QueryContext`
+- **Fix**: In `src/dns/server/query.rs`, call `validate_cookie()` when `cookie_server.is_some()` and query has cookie option
+- **Reference**: RFC 8905/RFC 7873 for cookie validation semantics
+
+**L35-1** (`src/tunnel/upstream.rs:121`):
+- `Backend::new(format!("tcp:127.0.0.1:{}", self.port))` always routes to localhost
+- Note: `TunnelBackend::Direct` variant at `src/tunnel/router.rs:147` accepts dynamic host but is not used
+- **Fix**: Use tunnel endpoint configuration instead of hardcoded localhost
+
+**WRK-BUG-1** (`src/http_client/mod.rs:893`):
+- `let is_http2 = true;` forces HTTP/2 for all upstream connections
+- Infrastructure exists: `enable_http2()`, `http2_only(false)`, `Http2PooledConnection`
+- **Fix**: Make `is_http2` configurable via `UpstreamPoolConfig` or similar
+- **Impact**: Cannot use HTTP/1.1 for older backends that don't support h2
+
+**PL-5**:
+- Overseer has `DrainManager` at `src/overseer/drain_manager.rs` for graceful connection draining
+- Supervisor at `src/supervisor/process.rs:1605` only sends SIGTERM without draining
+- **Decision needed**: Port DrainManager to Supervisor OR document limitation
+- **Dependency**: PL-3 must be resolved first (fate of Overseer)
+
+**WR-1** (WAF defaults documentation fix):
+- Current documentation claims: Global=20,000, Per-IP=100, Burst=10, Queue=1,000
+- Actual code at `crates/synvoid-config/src/traffic.rs:167-176`:
+  - `max_connections: 1000`
+  - `max_connections_per_ip: 10`
+  - `connection_burst: 5`
+  - `connection_queue_size: 100`
+- **Fix**: Update `architecture/waf_deep_dive.md` and any other docs
+
+**PLAT-4** (`src/platform/mod.rs:166-171`):
+- Stub implementation returns `true` for ALL platforms:
+```rust
+pub fn is_admin_required_for_tun(&self) -> bool {
+    match self {
+        Platform::Windows => true,
+        _ => true,
+    }
+}
+```
+- **Fix**: Implement proper per-platform check or document as incomplete
+
+**PLUGIN-2** (`src/plugin/pool.rs:15-26`):
+- Generic `PooledInstance` trait `prepare_for_request()` only resets: `start`, `timeout`, `env`, `fuel`
+- Missing resets for: `allowed_dht_prefixes`, `body_receiver`
+- Concrete `WasmPooledInstance` at `src/serverless/instance_pool.rs:219` correctly resets all fields
+- **Fix**: Add missing resets to trait default impl OR update trait to require these fields
 
 ---
 
-## Phase 3: Plugin/Spin Cold-Start Fix (Can run parallel to Phase 1-2)
-
-> **Note**: PLUGIN-1 (Spin cold-start) and PLUGIN-6 (Spin instance caching) were fixed as of 2026-05-26. The cache uses 5-minute idle timeout per component_id. Only PLUGIN-2 (PooledInstance trait reset gap) remains.
+## Phase 3: Plugin System Improvements (P1 - Can run parallel to Phase 1-2)
 
 ### P1 Items
 
 | ID | Category | Item | Source | Dependencies |
 |----|----------|------|--------|--------------|
-| **PLUGIN-2** | Bug | PooledInstance trait impl does not reset DHT prefixes or body_receiver (concrete WasmPooledInstance impl is correct) | plugin_review | None |
 | **PLUGIN-7** | Arch | `PooledInstance::prepare_for_request` should reset all fields | plugin_review | None |
 | **PLUGIN-8** | Arch | Serverless warmup consistency - call `InstancePool::initialize()` from ServerlessManager | plugin_review | None |
 | **PLUGIN-9** | Security | Validate Spin manifest exports `handle_request` | plugin_review | None |
@@ -73,14 +118,32 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 
 ### Implementation Notes for Phase 3
 
-**PLUGIN-2/7**: Pool leak in `src/plugin/pool.rs:15-26` - `PooledInstance` doesn't clear state between requests
-**PLUGIN-8**: Both `ServerlessManager::initialize()` at `src/serverless/mod.rs` and `InstancePool::initialize()` at `src/serverless/instance_pool.rs:11` need coordination
-**PLUGIN-9**: At least one component must export `handle_request` per Spin spec
-**PLUGIN-11**: WASI isolation should be per-component configurable, not global
+**PLUGIN-7**:
+- Same issue as PLUGIN-2 but from architectural perspective
+- `prepare_for_request` should accept optional DHT prefixes and body_receiver to match concrete impl
+
+**PLUGIN-8** (`src/serverless/instance_pool.rs:11` vs `src/serverless/mod.rs:96`):
+- `ServerlessManager` owns HashMap of functions, pools, routes, config
+- `InstancePool::initialize()` pre-warms `pre_warm_instances`
+- `ServerlessManager::initialize()` does NOT call `InstancePool::initialize()`
+- **Fix**: Add call to `instance_pool.initialize()` in `ServerlessManager::initialize()`
+
+**PLUGIN-9**:
+- Spin manifest parsing at `src/spin/manifest.rs` validates TOML but doesn't check for `handle_request` export
+- WASM modules without this export will fail at invocation with unclear error
+- **Fix**: Add validation that at least one component exports `handle_request`
+
+**PLUGIN-10** (`src/plugin/wasm_runtime.rs:871`):
+- Unauthorized DHT queries return `-2` but logging is at `warn` level
+- **Fix**: Elevate to `error` or create dedicated security event level for audit trail
+
+**PLUGIN-11** (`src/spin/runtime.rs:196`):
+- `wasi_enabled: true` is hardcoded for all Spin components
+- **Fix**: Make this configurable per-component in Spin manifest or runtime config
 
 ---
 
-## Phase 4: Documentation & Accuracy Fixes (P2 - Documentation)
+## Phase 4: Documentation & Accuracy Fixes (P2)
 
 ### P2 Documentation Items
 
@@ -200,7 +263,6 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 
 | ID | Item | Source | Dependencies |
 |----|------|--------|--------------|
-| **APP-1** | Minifier parameters silently ignored (`_minifier_cache`, `_async_minifier_client`) | app_handlers_review | None |
 | **APP-2** | Remove WasmiHandler reference - doesn't exist, use ServerlessRoute | app_handlers_review | None |
 | **APP-3** | Clarify serverless InstancePool (`src/serverless/instance_pool.rs:11`) | app_handlers_review | None |
 | **APP-4** | Add explicit line numbers to handler implementations | app_handlers_review | None |
@@ -243,8 +305,12 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 
 | ID | Category | Item | Source |
 |----|----------|------|--------|
-| **ADMIN-3** | Verify CORS Configuration in `create_admin_router_with_state()` | admin_review |
 | **APP-1** | Minifier parameters silently ignored | app_handlers_review |
+
+**APP-1** (`src/static_files/mod.rs:134-138`):
+- `new_with_minifier()` accepts `_minifier_cache` and `_async_minifier_client` (underscore = unused)
+- Parameters are silently ignored, minification not fully wired
+- Per `skills/deferred_items_knowledge.md:44` - known incomplete item
 
 ---
 
@@ -253,38 +319,87 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 1. **PL-3** (Overseer documentation) should precede **PL-5** (DrainManager porting) - decide fate of Overseer before investing in porting
 2. **NR-1** (SiteConnectionLimiter decision) should precede **WR-4** - either document dead code removal OR implement per-site tracking
 3. **PL-1** (drain coordination docs) should be done before **PL-5** - document the gap before designing fix
-4. **ADMIN-1** (CORS contradiction) should be resolved before **ADMIN-3** (verification)
+4. **ADMIN-1** (CORS contradiction) should be resolved before **ADMIN-3** (verification) - but note BUG-CORS-1 is the actual bug fix
 5. **MR-4 moved to P0** - DhtSyncRequest auth gap is a security issue
-6. **PLUGIN-2 note**: The generic `PooledInstance` trait impl is the issue, not the concrete `WasmPooledInstance`
 
 ---
 
 ## Parallelization Waves
 
-### Wave A: Independent Security/Config Fixes (Can run in parallel)
+### Wave A: Independent Documentation Fixes (Can run in parallel)
+All documentation items that have no cross-dependencies:
+
+**WAF Docs** (WR-*):
 - WR-1 (WAF defaults), WR-2, WR-3, WR-5, WR-6, WR-7
+
+**Config Docs** (CFG-*):
 - CFG-1 through CFG-6, CFG-BUG-1
-- PLAT-1 through PLAT-9, PLAT-4
+
+**Platform Docs** (PLAT-*):
+- PLAT-1 through PLAT-9 (except PLAT-4 which is a code fix)
+
+**Proxy/Networking Docs** (PR-*, NR-*):
 - PR-1 through PR-6
 - NR-1 through NR-5, RTR-1 through RTR-4
+
+**DNS Docs** (DNS-*):
 - DNS-2 through DNS-5
 
-### Wave B: Module-Specific Fixes (Can run in parallel)
-- Mesh: MR-1, MR-2, MR-3, MR-5, MR-7
-- Worker: WRK-1 through WRK-5, WRK-BUG-1
-- Layer 3.5: L35-2 through L35-10, L35-1
-- Admin: ADMIN-1, ADMIN-2, ADMIN-4, ADMIN-5, BUG-CORS-1
-- App: APP-1 through APP-6
+**Process Lifecycle Docs** (PL-*):
+- PL-1, PL-2, PL-3, PL-4
 
-### Wave C: Plugin System (Can run in parallel - PLUGIN-1/6 are FIXED)
-- PLUGIN-2, PLUGIN-7, PLUGIN-8 (warmup consistency and PooledInstance trait fix)
-- PLUGIN-3, PLUGIN-4, PLUGIN-5 (documentation)
+### Wave B: Module-Specific Code Fixes (Can run in parallel)
+Code fixes within a single module:
+
+**Admin API**:
+- BUG-CORS-1 (CORS fix)
+
+**Mesh/DHT**:
+- MR-4 (DhtSyncRequest auth)
+
+**DNS**:
+- DNS-1 (Cookie server wiring)
+
+**Worker/HTTP**:
+- WRK-BUG-1 (HTTP/2 configurable)
+
+**Platform**:
+- PLAT-4 (stub implementation)
+
+**Tunnel**:
+- L35-1 (hardcoded localhost)
+
+### Wave C: Plugin System (Can run in parallel)
+All plugin items are independent of Wave A/B:
+- PLUGIN-2, PLUGIN-7 (PooledInstance trait fixes)
+- PLUGIN-8 (warmup consistency)
 - PLUGIN-9, PLUGIN-10, PLUGIN-11 (security hardening)
+- PLUGIN-3, PLUGIN-4, PLUGIN-5 (documentation)
 
 ### Wave D: Architecture Decisions (May block other work)
-- MR-6 (MESH-14 - source node ID binding) - deferred per design needed
-- PL-5 (DrainManager porting) - depends on PL-3 decision
-- DNS-1 (Cookie server integration) - architectural wiring
+- **PL-5** (DrainManager porting) - depends on PL-3 decision
+- **MR-6** (MESH-14 - source node ID binding) - deferred per design needed
+
+### Wave E: Mesh Module Documentation (Can run in parallel with other waves)
+- MR-1, MR-2, MR-3, MR-5, MR-7
+
+### Wave F: Remaining Documentation (Can run in parallel)
+- Worker: WRK-1 through WRK-5
+- Layer 3.5: L35-2 through L35-10
+- Admin: ADMIN-1, ADMIN-2, ADMIN-4, ADMIN-5
+- App: APP-2 through APP-6
+- Plugin: PLUGIN-3, PLUGIN-4, PLUGIN-5
+
+---
+
+## Implementation Order Recommendation (for future agents)
+
+1. **Start**: Review AGENTS.md and relevant AGENTS.override.md for module context
+2. **Then**: Execute Wave B (P0/P1 code fixes) - these are the highest impact
+3. **Then**: Execute Wave A (documentation fixes) - many are independent, can parallelize
+4. **Then**: Execute Wave C (Plugin system) - independent of other waves
+5. **Then**: Execute Wave E and F (remaining documentation)
+6. **Then**: Address Wave D architectural items last
 
 ---
 
@@ -302,12 +417,10 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 ## Quick Reference: Bugs to Fix
 
 | Bug ID | Severity | Description | Location |
-|--------|----------|-------|---------|
-| BUG-CORS-1 | High | CORS Configuration Ignored | `src/admin/mod.rs:860` (not 157-171 as originally documented) |
-| ~~PLUGIN-1~~ | — | ~~Spin Creates New Instance Per Request~~ | FIXED 2026-05-26 |
+|--------|----------|-------------|----------|
+| BUG-CORS-1 | High | CORS Configuration Ignored | `src/admin/mod.rs:860` |
 | MR-4 | High | DhtSyncRequest has no auth | `src/mesh/transport_peer.rs:687-704` |
-| MR-4 | High | DhtSyncRequest has no auth | `src/mesh/transport.rs` |
-| DNS-1 | High | DNS Cookie Server not wired | `src/dns/server/mod.rs` |
+| DNS-1 | High | DNS Cookie Server not wired | `src/dns/server/query.rs` |
 | L35-1 | Medium | TunnelBackend hardcoded 127.0.0.1 | `src/tunnel/upstream.rs:121` |
 | PLUGIN-2 | Medium | PooledInstance DHT/Body leak | `src/plugin/pool.rs:15-26` |
 | WRK-BUG-1 | Medium | HTTP/2 hardcoded | `src/http_client/mod.rs:893` |
@@ -316,15 +429,16 @@ Consolidated from individual review plans (2026-05). Items marked with **[BUG]**
 
 ---
 
-## Implementation Order Recommendation (for future agents)
+## Fixed Items (For Reference)
 
-1. **Start**: Review AGENTS.md and relevant AGENTS.override.md for module context
-2. **Then**: Pick items from Wave A (docs) or Wave B (module fixes) based on expertise
-3. **Then**: Navigate cross-module dependencies (Mesh→DHT, Plugin→Serverless)
-4. **Then**: Handle Wave C (Plugin system) - now parallelizable since PLUGIN-1/6 are fixed
-5. **Then**: Address Wave D architectural items last
+The following items were identified in reviews and have been fixed:
+- ~~PLUGIN-1~~: Spin Creates New Instance Per Request - **FIXED 2026-05-26**
+- ~~PLUGIN-6~~: Spin instance caching by component_id - **FIXED 2026-05-26**
+- BUG-L3: ML-KEM key exchange proof-of-possession - **FIXED**
+- BUG-ROUTER-1: Hardcoded port 80 - **FIXED**
+- use_erased_client hardcoded to false - **FIXED**
+- Spin cold-start instance reuse - **FIXED 2026-05-26**
 
 ---
 
 *Last Updated: 2026-05-27*
-*Consolidated from: mesh_review_plan.md, networking_review_plan.md, proxy_review_plan.md, waf_review_plan.md, process_lifecycle_review_plan.md, dns_review_plan.md, config_review_plan.md, routing_review_plan.md, platform_review_plan.md, worker_review_plan.md, admin_review_plan.md, app_handlers_review_plan.md, plugin_review_plan.md, layer_3_5_review_plan.md*

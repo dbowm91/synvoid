@@ -28,17 +28,21 @@ The Admin API middleware stack (in order):
 3. CSRF Middleware (`src/admin/middleware.rs:185-266`)
 4. Admin Rate Limit Layer (`src/admin/rate_limit.rs`)
 
-**Note**: No CORS layer - intentional design since Admin API uses bearer/session tokens, not browser-based access.
+**Note**: Early comment said "No CORS layer" but CORS IS implemented. CORS layer is applied to outer router (line 806 in `build_router_from_state()`), but NOT to nested `/api` routes (lines 179-189). Since Admin API uses bearer/session tokens rather than browser-based access, CORS may not be needed for nested routes, but the inconsistency should be documented or fixed.
 
-### CORS Configuration Bug (BUG-CORS-1)
+### CORS Configuration Bug (BUG-CORS-1 - P0)
 
-`src/admin/mod.rs:860` — CORS config is read but **never applied**:
+`src/admin/mod.rs:860`:
 
 ```rust
 let _cors_config = cfg.cors.clone();  // underscore = dropped!
 ```
 
-The `_cors_config` is never used. CORS layer is only applied to outer router (line 806), not to nested `/api` routes (lines 179-189). **Fix needed** in `create_admin_router_with_state()`.
+**Problem**: The CORS config is cloned into `_cors_config`, but the underscore prefix means it is immediately dropped. The CORS layer is only applied to the outer router at line 806 in `build_router_from_state()`, but nested `/api` routes (lines 179-189) do NOT have CORS.
+
+**Impact**: Even when `cfg.cors` is configured, CORS headers may not be properly applied to nested routes if they use a different router builder.
+
+**Fix Direction**: Ensure `create_admin_router_with_state()` applies CORS layer consistently, or clarify whether CORS is intentionally not applied to nested routes.
 
 ## Skills Reference
 

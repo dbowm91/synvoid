@@ -57,3 +57,19 @@ fs::write(&temp_path, &key_data)?;
 fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
 fs::rename(&temp_path, path)?;
 ```
+
+## Known Integration Gaps
+
+### DNS Cookie Server Not Wired (DNS-1 - P1)
+
+`DnsCookieServer` is implemented at `src/dns/cookie.rs:11-50` with full RFC 8905/RFC 7873 support:
+- `validate_cookie()` at lines 66-87
+- `create_response_cookie()` at lines 89-118
+
+The server is created at `src/dns/server/mod.rs:850` and passed to `QueryContext`, but **`validate_cookie()` is NEVER CALLED** in `src/dns/server/query.rs`.
+
+**Fix needed**: Call `validate_cookie()` when `cookie_server.is_some()` and query contains EDNS cookie option. Set response cookies via `create_response_cookie()` in outgoing responses.
+
+### Query Coalescer max_wait_ms Unused (DNS-2 - P2)
+
+At `src/dns/query_coalesce.rs:117`, the parameter `_max_wait_ms` is marked as unused. The `get_or_wait()` method doesn't use this parameter to control broadcast timeout behavior.

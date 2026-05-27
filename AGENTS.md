@@ -155,14 +155,16 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | Issue | Location | Impact | Status |
 |-------|----------|--------|--------|
 | `use_erased_client` hardcoded to `false` | `src/http/server.rs:3305` | ErasedHttpClient now uses conditional logic based on `body_buffering_policy.should_stream()` | FIXED |
-| HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known |
-| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known |
+| HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | `is_http2 = true` hardcoded in `send_request_erased_streaming`, infrastructure exists and uses `http2_only(false)` allowing HTTP/2 | Known - see plan.md |
+| DNS Cookie Server not integrated | `src/dns/cookie.rs`, `src/dns/server/mod.rs` | Complete implementation exists but not wired in | Known - see plan.md |
 | Capsicum `limit_fd()` dead code | `src/platform/sandbox.rs:516-528` → FIXED | Method removed - dead code eliminated | FIXED |
 | SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - see plan.md |
 | TunnelBackend hardcoded 127.0.0.1 | `src/tunnel/upstream.rs:121` | Always routes to localhost regardless of tunnel endpoint | Known - see plan.md |
 | Spin cold-start instance reuse | `src/spin/runtime.rs:258` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
 | PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Generic trait impl missing resets; concrete `WasmPooledInstance` correct | Known - see plan.md |
 | Supervisor lacks DrainManager | `src/supervisor/process.rs` | Overseer has drain_manager.rs, Supervisor does not | Known - see plan.md |
+| WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Actual: Global=1,000, Per-IP=10, Burst=5, Queue=100. Docs claim 20x higher | Known - see plan.md (WR-1) |
+| is_admin_required_for_tun stub | `src/platform/mod.rs:166-171` | Returns `true` for ALL platforms - placeholder implementation | Known - see plan.md (PLAT-4) |
 
 ### Dependency Vulnerability Status
 
@@ -196,7 +198,6 @@ These items were identified in reviews and have been fixed:
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 - BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
-- SiteConnectionLimiter unused params (`src/waf/traffic_shaper/limiter.rs:312-323` - `_max_connections` etc. never used) - **NOTE:** This bug still exists and needs fixing - see `plans/plan.md`
 - DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`) - **FIXED**
 
 ## Known Deferred Items
