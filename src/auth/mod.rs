@@ -306,6 +306,17 @@ impl AuthManager {
             return Err(AuthError::InvalidUsername);
         }
 
+        let username_bytes = username.as_bytes();
+        if username_bytes.len() > 64 {
+            return Err(AuthError::InvalidUsername);
+        }
+
+        for (i, &byte) in username_bytes.iter().enumerate() {
+            if byte == b'\0' || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+                return Err(AuthError::InvalidUsername);
+            }
+        }
+
         let password_hash = hash(&password, DEFAULT_COST).map_err(|_| AuthError::HashingError)?;
 
         let mut store = self.store.write().await;

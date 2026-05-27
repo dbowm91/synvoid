@@ -87,8 +87,9 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 ### DNSSEC Signing/Validation
 
 **Signing** (`dnssec_signing.rs`):
-- Supported Algorithms: **Ed25519** (Algorithm 15), **ECDSAP256SHA256** (Algorithm 13), **ECDSAP384SHA384** (Algorithm 14), **RSA/SHA-256** (Algorithm 8)
-- `sign_data()` - Signs RDATA using Ed25519, ECDSA, or RSA private key
+- Supported Algorithms: **Ed25519** (Algorithm 15), **RSA/SHA-256** (Algorithm 8)
+- Note: ECDSAP256SHA256 (13) and ECDSAP384SHA384 (14) are **NOT implemented** - only Ed25519 and RSA are supported.
+- `sign_data()` - Signs RDATA using Ed25519 or RSA private key
 - `create_rrsig_record()` - Builds RRSIG with inception/expiration (7 days signed)
 - `create_nsec_record()` / `create_nsec3_record()` - Proof of nonexistence
 - **NSEC3 Algorithms**: Algorithm 1 (SHA-1) and Algorithm 2 (SHA-256) supported

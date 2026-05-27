@@ -112,20 +112,11 @@ cargo fmt && cargo clippy --lib -- -D warnings
 
 ### 8. TUN Device Administration Check
 
-`Platform::is_admin_required_for_tun()` at `src/platform/mod.rs:166-171` is a **stub that returns true for ALL platforms**:
+`Platform::is_admin_required_for_tun()` at `src/platform/mod.rs:166-176` correctly returns:
+- `false` for Unix platforms (Linux, macOS, BSD)
+- `true` for Windows and Unknown platforms
 
-```rust
-pub fn is_admin_required_for_tun(&self) -> bool {
-    match self {
-        Platform::Windows => true,
-        _ => true,  // Bug: returns true for Linux/macOS too
-    }
-}
-```
-
-**Issue**: Only Windows actually requires admin for TAP/TUN devices. Linux/macOS use `CAP_NET_ADMIN` capability which doesn't require root. The stub should be fixed to return false for Unix platforms.
-
-**Workaround**: For now, TUN operations work on Linux/macOS because they check `can_modify_nftables()` which correctly uses capability checks.
+This is intentional - Unix platforms use `CAP_NET_ADMIN` capability which doesn't require root. TUN operations work because `can_modify_nftables()` correctly uses capability checks.
 
 ## Known Limitations
 

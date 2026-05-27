@@ -290,15 +290,14 @@ impl SpinRuntime {
         &self,
         component_id: &str,
     ) -> Result<SpinAppInstance, SpinRuntimeError> {
-        if let Some(instance) = self.cached_instances.read().get(component_id).cloned() {
+        let mut guard = self.cached_instances.write();
+        if let Some(instance) = guard.get(component_id).cloned() {
             if !instance.is_idle(Duration::from_secs(300)) {
                 return Ok(instance);
             }
         }
         let instance = self.instantiate_app(component_id)?;
-        self.cached_instances
-            .write()
-            .insert(component_id.to_string(), instance.clone());
+        guard.insert(component_id.to_string(), instance.clone());
         Ok(instance)
     }
 
