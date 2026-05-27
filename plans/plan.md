@@ -171,48 +171,48 @@ All items completed as of 2026-05-27.
 ### Detailed Documentation Fixes
 
 #### Auth Module Documentation
-- [ ] Fix hardcoded constants (min_password_length: 8, session_refresh_threshold: 0.5) - these ARE hardcoded but docs imply configurability
-- [ ] Document update_password session invalidation behavior
-- [ ] Add password_last_changed_at tracking (optional enhancement)
+- [x] Fix hardcoded constants (min_password_length: 8, session_refresh_threshold: 0.5) - ✅ DONE (auth.md:174-179)
+- [x] Document update_password session invalidation behavior - ✅ Already documented in auth.md:185
+- [x] Add password_last_changed_at tracking (optional enhancement) - SKIP (optional enhancement)
 
 #### HTTP Server Documentation
-- [ ] Document `serve()` mesh-only limitation clearly
-- [ ] Add metrics for `collect_body_with_chunk_waf`
-- [ ] Standardize error responses for body collection failures
+- [x] Document `serve()` mesh-only limitation clearly - ✅ Already documented in http_server.md:340
+- [ ] Add metrics for `collect_body_with_chunk_waf` - SKIP (code work)
+- [ ] Standardize error responses for body collection failures - SKIP (code work)
 
 #### DNS Module Documentation
-- [ ] Clarify recursive DNSSEC limitation (security unaware)
-- [ ] Document algorithm gap (no ECDSA)
-- [ ] Add NAPTR/CERT/DNAME AXFR support note
-- [ ] Add TrustAnchorState unit tests for RFC 5011 transitions
+- [x] Clarify recursive DNSSEC limitation (security unaware) - ✅ Already done in skills/dns_dnssec.md
+- [x] Document algorithm gap (no ECDSA) - ✅ Already done in dns_deep_dive.md:90-91
+- [x] Add NAPTR/CERT/DNAME AXFR support note - ✅ Already done in dns_deep_dive.md:80-85
+- [ ] Add TrustAnchorState unit tests for RFC 5011 transitions - SKIP (code work)
 
 #### Spin Documentation
-- [ ] Fix line reference (289-303, not 258)
-- [ ] Document JSON header serialization for Spin vs binary for raw WASM
-- [ ] Fix module organization description
-- [ ] Document lock acquisition order consistency
+- [x] Fix line reference (289-303, not 258) - ✅ N/A (no incorrect reference found in current docs)
+- [x] Document JSON header serialization for Spin vs binary for raw WASM - ✅ DONE (serverless.md:580-596)
+- [x] Fix module organization description - ✅ DONE (added scheduler.rs to serverless.md:28)
+- [x] Document lock acquisition order consistency - ✅ Already documented
 
 #### Layer 3.5 Documentation
-- [ ] Update ACME DNS path (`architecture/layer_3_5_deep_dive.md:176` has wrong path)
+- [x] Update ACME DNS path (`architecture/layer_3_5_deep_dive.md:176` has wrong path) - ✅ DONE (fixed path to src/tls/acme_dns.rs)
 
 #### Serverless Documentation
-- [ ] Document `scheduler.rs` module
-- [ ] Add `mesh` feature gate notes to `handle_serverless_function`
-- [ ] Document event subscription system
-- [ ] Document streaming API
-- [ ] Fix `shutdown` method reference (exists on InstancePool, not ServerlessManager)
-- [ ] Add `get_global_serverless_registry` documentation
+- [x] Document `scheduler.rs` module - ✅ DONE (serverless.md:28)
+- [x] Add `mesh` feature gate notes to `handle_serverless_function` - ✅ DONE (serverless.md:305)
+- [x] Document event subscription system - ✅ Already documented (serverless.md:275-282)
+- [x] Document streaming API - ✅ DONE (serverless.md:320-334)
+- [x] Fix `shutdown` method reference (exists on InstancePool, not ServerlessManager) - ✅ Verified: shutdown() exists on ServerlessManager (manager.rs:792), docs correct
+- [x] Add `get_global_serverless_registry` documentation - ✅ DONE (serverless.md:167-198)
 
 #### Plugin Documentation
-- [ ] Document `invoke_handler_streaming` in deep dive
-- [ ] Add `ServerlessManager` compilation manager to deep dive
-- [ ] Add `PooledInstance` conversion diagram
-- [ ] Verify Spin v2 TOML support (may only support JSON)
-- [ ] Consider adding global metrics for serverless
-- [ ] Document `SERVERLESS_ENGINE_POOL` global static
+- [x] Document `invoke_handler_streaming` in deep dive - ✅ Already in plugin_wasm.md:345 and serverless.md:453
+- [x] Add `ServerlessManager` compilation manager to deep dive - ✅ AsyncCompilationManager in module table (serverless.md:25)
+- [x] Add `PooledInstance` conversion diagram - ✅ DONE (plugin_deep_dive.md:111-139)
+- [x] Verify Spin v2 TOML support (may only support JSON) - ✅ Already documented correctly (spin.md:77, plugin_deep_dive.md:125)
+- [ ] Consider adding global metrics for serverless - SKIP (BUG-PLUGIN-3 is separate item)
+- [x] Document `SERVERLESS_ENGINE_POOL` global static - ✅ Already in serverless.md:654
 
 #### Config Documentation
-- [ ] Fix "27 sections" → "28 sections" in config documentation
+- [x] Fix "27 sections" → "28 sections" in config documentation - ✅ DONE (config.md:378)
 
 ---
 
@@ -221,52 +221,52 @@ All items completed as of 2026-05-27.
 ### Serverless Module
 
 #### Missing Documentation (From serverless_review_plan.md)
-- [ ] Document `scheduler.rs` module (`ServerlessScheduler`, `TimerEntry`, `TimerPayload`)
-- [ ] Add `mesh` feature gate notes to `handle_serverless_function`
-- [ ] Document event subscription system
-- [ ] Document streaming API (`handle_serverless_function_streaming`)
-- [ ] Add missing return types to documented functions
-- [ ] Document Async Compilation API
-- [ ] Document `get_global_serverless_registry`
+- [x] Document `scheduler.rs` module (`ServerlessScheduler`, `TimerEntry`, `TimerPayload`) - ✅ DONE
+- [x] Add `mesh` feature gate notes to `handle_serverless_function` - ✅ DONE
+- [x] Document event subscription system - ✅ Already documented
+- [x] Document streaming API (`handle_serverless_function_streaming`) - ✅ DONE
+- [ ] Add missing return types to documented functions - SKIP
+- [ ] Document Async Compilation API - SKIP
+- [x] Document `get_global_serverless_registry` - ✅ DONE
 
 #### BUG-SL-1: handle_serverless_function feature-gated (Document)
 - Location: `src/serverless/mod.rs:13-18`
 - Issue: Function only exported when `#[cfg(feature = "mesh")]`
-- Fix: Document this limitation clearly
+- Fix: Document this limitation clearly - ✅ DONE (serverless.md:305)
 
 #### BUG-SL-3: Non-existent shutdown method documented (Fix)
 - Location: `architecture/serverless.md:284`
 - Issue: Documentation references `pub async fn shutdown(&self)` on ServerlessManager but it doesn't exist
-- Fix: Remove from docs or implement actual method (exists on InstancePool)
+- Fix: Remove from docs or implement actual method (exists on InstancePool) - ✅ Verified: shutdown() exists on ServerlessManager (manager.rs:792), docs correct
 
 ### Plugin Module
 
 #### Missing Documentation
-- [ ] Document `invoke_handler_streaming` in deep dive
-- [ ] Add `ServerlessManager` compilation manager to deep dive
-- [ ] Add `PooledInstance` conversion diagram
-- [ ] Verify Spin v2 TOML support (may only support JSON manifests)
-- [ ] Consider adding global metrics for serverless similar to `get_all_wasm_metrics()`
-- [ ] Document `SERVERLESS_ENGINE_POOL` global static
+- [x] Document `invoke_handler_streaming` in deep dive - ✅ Already documented
+- [x] Add `ServerlessManager` compilation manager to deep dive - ✅ Done
+- [x] Add `PooledInstance` conversion diagram - ✅ DONE
+- [x] Verify Spin v2 TOML support (may only support JSON manifests) - ✅ Already documented correctly
+- [ ] Consider adding global metrics for serverless similar to `get_all_wasm_metrics()` - SKIP (BUG-PLUGIN-3 is separate item)
+- [x] Document `SERVERLESS_ENGINE_POOL` global static - ✅ Already documented
 
 #### BUG-PLUGIN-3: No global metrics for serverless
 - Location: `src/serverless/instance_pool.rs`
 - Issue: No equivalent to `wasm_metrics.rs` global aggregation
-- Fix: Add `get_all_serverless_metrics()` function
+- Fix: Add `get_all_serverless_metrics()` function - SKIP (separate bug)
 
 ### App Handlers
 
 #### APP-15: Remove "Known limitation" note
 - Issue: FastCGI streaming marked as limitation but is FIXED (2026-05-27)
-- Fix: Update `app_handlers.md` and `plugin_deep_dive.md`
+- Fix: Update `app_handlers.md` and `plugin_deep_dive.md` - ✅ DONE (app_handlers.md:21)
 
 #### QuicTunnel reference fix
 - Issue: Doc says `src/tunnel/upstream.rs:120` but actual handling is via `UpstreamAddress::QuicTunnel`
-- Fix: Update to `src/upstream/address.rs:27`
+- Fix: Update to `src/upstream/address.rs:27` - ✅ DONE (app_handlers.md:90)
 
 #### Spin Instance Pooling Clarification
 - Issue: Doc conflates Spin `cached_instances` (5-min timeout) with Serverless `InstancePool`
-- Fix: Document difference clearly
+- Fix: Document difference clearly - ✅ DONE (spin.md:417-420)
 
 ---
 
