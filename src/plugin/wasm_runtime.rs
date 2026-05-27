@@ -864,7 +864,7 @@ impl WasmRuntime {
                         .any(|p| key.starts_with(p));
 
                     if is_sensitive && !is_explicitly_allowed {
-                        tracing::warn!(
+                        tracing::error!(
                             "WASM plugin attempted unauthorized DHT query: key='{}'",
                             key
                         );

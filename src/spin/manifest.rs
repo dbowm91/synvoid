@@ -29,6 +29,12 @@ pub struct TriggerConfig {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WasiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestComponent {
     pub id: String,
@@ -46,6 +52,8 @@ pub struct ManifestComponent {
     pub wasm: WasmConfig,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub wasi: Option<WasiConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +90,6 @@ impl Manifest {
     pub fn load(path: &Path) -> Result<Self, SpinManifestError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| SpinManifestError::IoError(format!("failed to read manifest: {}", e)))?;
-
         Self::parse(&content)
     }
 
@@ -97,7 +104,7 @@ impl Manifest {
             .cloned()
             .unwrap_or_else(|| "http".to_string());
 
-        let components = spin_manifest
+        let components: Vec<ManifestComponent> = spin_manifest
             .components
             .into_iter()
             .map(|c| ManifestComponent {
@@ -109,8 +116,13 @@ impl Manifest {
                 build: c.build,
                 wasm: c.wasm,
                 env: c.env,
+                wasi: c.wasi,
             })
             .collect();
+
+        if trigger_type == "http" && !components.iter().any(|c| c.url.is_some()) {
+            return Err(SpinManifestError::NoHttpRoutes);
+        }
 
         Ok(Manifest {
             name: spin_manifest.name,
@@ -140,6 +152,8 @@ pub enum SpinManifestError {
     ParseError(String),
     #[error("Missing required field: {0}")]
     MissingField(String),
+    #[error("HTTP trigger requires at least one component with a url route defined")]
+    NoHttpRoutes,
 }
 
 #[cfg(test)]
@@ -160,6 +174,7 @@ component = "main"
 [[components]]
 id = "main"
 source = "target/wasm32-wasi/release/my_app.wasm"
+url = "/"
 [components.wasm]
 module = "target/wasm32-wasi/release/my_app.wasm"
 [components.build]
@@ -189,9 +204,29 @@ FOO = "bar"
 
     #[test]
     fn test_get_routes() {
-        let mut manifest = Manifest::parse(SAMPLE_MANIFEST).unwrap();
-        manifest.components[0].url = Some("/hello".to_string());
+        let manifest = Manifest::parse(SAMPLE_MANIFEST).unwrap();
         let routes = manifest.get_routes();
-        assert_eq!(routes, vec![("main".to_string(), "/hello".to_string())]);
+        assert_eq!(routes, vec![("main".to_string(), "/".to_string())]);
+    }
+
+    const MANIFEST_NO_ROUTES: &str = r#"
+spin_version = "2"
+name = "my-app"
+version = "1.0.0"
+
+[triggers.http]
+route = "/"
+component = "main"
+
+[[components]]
+id = "main"
+source = "target/wasm32-wasi/release/my_app.wasm"
+[components.wasm]
+"#;
+
+    #[test]
+    fn test_http_trigger_requires_url() {
+        let result = Manifest::parse(MANIFEST_NO_ROUTES);
+        assert!(matches!(result, Err(SpinManifestError::NoHttpRoutes)));
     }
 }

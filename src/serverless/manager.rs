@@ -461,9 +461,16 @@ impl ServerlessManager {
                 InstancePool::new(pool_config, func_def_clone.clone())
                     .map_err(|e| ServerlessError::WasmError(e.to_string()))?,
             );
-            let pool_clone = pool.clone();
+            let pool_clone_for_init = pool.clone();
+            let pool_clone_for_autoscaler = pool.clone();
+            let func_name_for_init = func_name.clone();
             tokio::spawn(async move {
-                pool_clone.run_autoscaler().await;
+                if let Err(e) = pool_clone_for_init.initialize().await {
+                    tracing::error!("Failed to pre-warm instances for {}: {}", func_name_for_init, e);
+                }
+            });
+            tokio::spawn(async move {
+                pool_clone_for_autoscaler.run_autoscaler().await;
             });
             self.pools.write().insert(func_name.clone(), pool);
             self.compilation_manager.mark_compiling(&func_name);

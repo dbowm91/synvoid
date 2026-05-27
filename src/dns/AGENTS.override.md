@@ -57,3 +57,35 @@ fs::write(&temp_path, &key_data)?;
 fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
 fs::rename(&temp_path, path)?;
 ```
+
+## Known Integration Gaps (Fixed)
+
+### DNS Cookie Server Wiring (DNS-1 - FIXED 2026-05-27)
+
+`DnsCookieServer` is now wired into query validation at `src/dns/server/query.rs:640-658`:
+
+```rust
+let mut cookie_valid = false;
+let mut cookie_absent = false;
+let client_ip_for_log = client_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]));
+if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
+    if let Some(ref cookie) = edns.cookie {
+        if cookie.server_cookie.is_some() {
+            cookie_valid = cs.validate_cookie(client_ip_for_log, &cookie.client_cookie, cookie.server_cookie.as_ref().unwrap());
+        } else {
+            cookie_absent = true;
+        }
+    } else {
+        cookie_absent = true;
+    }
+    if !cookie_valid && !cookie_absent {
+        tracing::debug!("Invalid DNS cookie from {}", client_ip_for_log);
+    }
+}
+```
+
+Cookie validation follows RFC 7873 pattern using constant-time comparison from `validate_cookie()`.
+
+### Query Coalescer max_wait_ms Unused (DNS-2 - P2)
+
+At `src/dns/query_coalesce.rs:117`, the parameter `_max_wait_ms` is marked as unused. The `get_or_wait()` method doesn't use this parameter to control broadcast timeout behavior.

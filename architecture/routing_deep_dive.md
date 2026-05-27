@@ -8,11 +8,12 @@ The `Router` is responsible for determining the `RouteTarget` for every incoming
 
 ### Matching Hierarchy
 
-1.  **Listener-Level Default:** If a request arrives on a listener (IP:Port) that has a `default_server` configured, it may fallback to that site if no other matches are found.
-2.  **Exact Domain Matching:** The router first checks for an exact match of the `Host` header in the `domain_map`.
-3.  **Wildcard/Suffix Matching:** If no exact match is found, it uses a reversed-domain Radix tree to match wildcard patterns.
-4.  **Default Server Fallback:** If no domain matches, falls back to the listener's default server or the global default.
-5.  **Path-Based Matching (Locations):** Once a site is identified, the `LocationMatcher` evaluates the request path against defined `location` blocks (e.g., `/api`, `/static`).
+1.  **IP-Based Routing:** First, the router checks `ip_domain_map` (`src/router.rs:42`) for exact (SocketAddr, Host) matches, then `ip_wildcard_routers` (`src/router.rs:43`) for wildcard patterns on the bind address. This enables multi-tenant deployments where different sites share the same IP:port but serve different domains based on SNI or Host headers.
+2.  **Listener-Level Default:** If a request arrives on a listener (IP:Port) that has a `default_server` configured, it may fallback to that site if no other matches are found.
+3.  **Exact Domain Matching:** The router first checks for an exact match of the `Host` header in the `domain_map`.
+4.  **Wildcard/Suffix Matching:** If no exact match is found, it uses a reversed-domain Radix tree to match wildcard patterns.
+5.  **Default Server Fallback:** If no domain matches, falls back to the listener's default server or the global default.
+6.  **Path-Based Matching (Locations):** Once a site is identified, the `LocationMatcher` evaluates the request path against defined `location` blocks (e.g., `/api`, `/static`).
 
 ### Reverse-Domain Radix Tree for Wildcard/Suffix Matching
 
@@ -46,7 +47,7 @@ The router resolves the request to one of several **Backend Types**:
 - **Spin:** Fermyon Spin framework WASM execution.
 - **Serverless (WASM):** Execution of a WASM function.
 - **Mesh:** Routing the request through the WAF Mesh to a remote peer.
-- **QuicTunnel:** Proxying through a specialized QUIC tunnel. URL parsing is unified via [`Router::parse_quictunnel_url()`](https://github.com/synvoid/synvoid/blob/main/src/router.rs#L513-L532) at both location and site levels.
+- **QuicTunnel:** Proxying through a specialized QUIC tunnel. URL parsing is unified via [`Router::parse_quictunnel_url()`](https://github.com/synvoid/synvoid/blob/main/src/router.rs#L513) at both location and site levels.
 
 ---
 
@@ -61,13 +62,13 @@ SynVoid supports multiple load balancing algorithms to distribute traffic across
 - **Weighted Round Robin:** Distribution based on configured backend weights.
 - **Least Connections:** Routes to the backend with the fewest active requests.
 - **Random:** Randomized selection.
-- **PeakEwma:** Cost-based selection using exponential weighted moving average of latency `(conn + 1) * (latency + 1)` [`src/upstream/pool.rs:48-57`](https://github.com/synvoid/synvoid/blob/main/src/upstream/pool.rs#L48-L57).
+- **PeakEwma:** Cost-based selection using exponential weighted moving average of latency `(conn + 1) * (latency + 1)` [`src/upstream/pool.rs:520-528`](https://github.com/synvoid/synvoid/blob/main/src/upstream/pool.rs#L520-L528).
 - **IP Hash:** Ensures session persistence by hashing the client IP to a specific backend.
 
 ### Health Monitoring & Resilience
 
 - **Passive Health Checks:** The Supervisor and Workers monitor backend responses. Consecutive failures trigger a "down" state, while consecutive successes trigger a "healthy" state.
-- **Active Health Checks:** Periodic out-of-band requests (HTTP GET, TCP connect) to verify backend availability.
+- **Active Health Checks:** Periodic out-of-band requests (HTTP GET, TCP connect) to verify backend availability. Configurable via `HealthCheckConfig.max_load_percent` (default 80%) - backends with CPU/memory load exceeding this threshold are marked unhealthy. Metric labels: `backend`, `pool`, `check_type`.
 - **Connection Limits:** Prevents overwhelming backends by enforcing maximum concurrent connection limits.
 - **Backup Servers:** Configurable backends that only receive traffic if all primary servers in a pool are down.
 

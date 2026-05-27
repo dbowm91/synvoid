@@ -40,6 +40,7 @@ platform().supports_socket_fd_passing()  // Unix only
 platform().supports_signals()            // Unix only
 platform().supports_sandbox()            // Linux/FreeBSD/OpenBSD only
 platform().supports_reuse_port()         // Linux/Macos/FreeBSD
+platform().supports_seatbelt()           // macOS only (sandboxing)
 ```
 
 ### Key Traits
@@ -58,12 +59,14 @@ platform().supports_reuse_port()         // Linux/Macos/FreeBSD
 ### Sandbox Backends
 
 | Platform | Backend | Key Capabilities |
-|---------|---------|------------------|
+|---------|---------|-----------------|
 | Linux (5.13+) | **Landlock** | Read/write path allowlists, filesystem restrictions |
 | FreeBSD | **Capsicum** | FD rights limiting, process limits |
 | OpenBSD | **Pledge + Unveil** | Promise-based syscall filtering, path permissions |
-| macOS | **Seatbelt** | Sandboxed profile compilation (planned feature, not yet implemented) |
+| macOS | **Seatbelt** | Sandboxed profile compilation (query via `platform().supports_seatbelt()`) |
 | Windows | **Job Objects + DACL** | Process memory limits, file security descriptors; DEP (Data Execution Prevention) and ASLR (Address Space Layout Randomization) mitigation policies |
+
+**Note:** `supports_seatbelt()` is available for symmetry with other platform queries, but Seatbelt sandboxing is not yet fully implemented (macOS sandboxing requires additional code).
 
 ---
 
@@ -93,7 +96,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 
 ### Message Types (IPC)
 
-The `Message` enum is organized into **17 categories**:
+The `Message` enum is organized into **18 categories**:
 
 1. **WorkerLifecycle**: `WorkerStarted`, `WorkerReady`, `WorkerHeartbeat`, `WorkerError`
 2. **MasterCommand**: `MasterShutdown`, `MasterConfigReload`, `MasterHealthCheck`
@@ -112,6 +115,7 @@ The `Message` enum is organized into **17 categories**:
 15. **WorkerRestart**: `WorkerRestartRequest`, `WorkerRestartAck`
 16. **Plugin**: `PluginExecuteRequest/Response`, `ServerlessHandleRequest/Response`
 17. **MeshControl**: `MeshControlRequest/Response`, `MeshUpdateNotification`
+18. **Upstream**: `UpstreamHealthCheckRequest/Response`, `UpstreamMetricsRequest`
 
 ### IPC Framing Protocol
 
@@ -119,6 +123,13 @@ The `Message` enum is organized into **17 categories**:
 4-byte length (BE) + serialized Message
 MAX_MESSAGE_SIZE: 1 MiB
 ```
+
+**Unix IPC Transport Note:**
+The `UnixIpcStream` (`src/platform/unix.rs`) provides an explicit IPC transport implementation for Unix domain sockets. It wraps raw socket operations with the framing protocol and provides:
+- `send()` / `recv()` for message-based communication
+- `send_vectored()` / `recv_vectored()` for scatter-gather I/O
+- `peer_pid()` for peer process identification (see limitations above)
+- Integration with `IpcTransport` trait for generic IPC operations
 
 ### Signed IPC
 
@@ -131,6 +142,19 @@ MAX_MESSAGE_SIZE: 1 MiB
 - Timestamp validation (60-second replay window)
 - Nonce deduplication via `DashMap` sharded cache
 - Constant-time HMAC comparison via `subtle::ConstantTimeEq`
+
+### IpcStream Peer PID Detection
+
+On Unix platforms, `peer_pid()` can be used to detect the PID of the connected process. However, for Unix domain sockets using `SOCK_STREAM` (connection-oriented), **`peer_pid()` returns `None`** because the kernel does not provide peer PID for abstract Unix socket connections - only for `SOCK_DGRAM` (datagram) sockets where `SO_PEERCRED` works reliably.
+
+**Platform behavior:**
+| Platform | Unix Domain Socket | Named Pipes |
+|----------|-------------------|-------------|
+| Linux | `peer_pid()` returns `None` for SOCK_STREAM | N/A |
+| macOS | `peer_pid()` returns `None` for SOCK_STREAM | N/A |
+| Windows | N/A | `peer_pid()` works for named pipes |
+
+**Workaround:** For worker identification in connection-oriented IPC, use alternative identification mechanisms such as message-level worker IDs or sequence numbers.
 
 ### Socket FD Passing (Unix)
 
@@ -174,6 +198,9 @@ SupervisorProcess
 3. Runs gRPC control API on `localhost` (port 50051 default)
 4. Periodic health checks and zombie reaping (every 5 seconds)
 5. Shared state initialization (connection table, rate limit table)
+
+**IPC Handling Note:**
+The Supervisor handles both worker lifecycle messages AND admin commands via IPC. Worker messages (WorkerStarted, WorkerReady, WorkerHeartbeat, WorkerDrain) flow from workers to Supervisor. Admin commands (config reload, status queries) flow from the Admin API through Supervisor to workers.
 
 ### gRPC Control Plane API
 
@@ -229,6 +256,13 @@ run_master_mode()
 **Note:** The Master MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Master ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
 
 > **Source:** `src/startup/master.rs:278-302`
+
+**Startup Flow Enforcement in SupervisorProcess:**
+The supervisor enforces startup sequencing at `src/supervisor/process.rs`:
+- Config must be loaded before spawning workers
+- IPC listener must be bound before workers start accepting connections
+- Health monitor starts only after workers are spawned
+- Admin server starts last to ensure all worker state is initialized
 
 ---
 

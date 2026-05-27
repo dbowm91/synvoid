@@ -89,6 +89,24 @@ ErasedHttpClient is now integrated into `http/server.rs`:
 - Uses `target.site_config.proxy.body_buffering_policy.map(|p| p.should_stream(...)).unwrap_or(false)`
 - This allows the system to choose between ErasedHttpClient (for streaming) and regular client based on site configuration
 
+### HTTP/2 Configuration (WRK-BUG-1 - FIXED 2026-05-27)
+
+HTTP/2 for upstream connections is now configurable via the `is_http2` parameter in `send_request_erased_streaming()`:
+
+```rust
+pub async fn send_request_erased_streaming(
+    client: &ErasedHttpClient,
+    method: Method,
+    url: &str,
+    body: BoxErasedBody,
+    headers: http::HeaderMap,
+    timeout: Option<Duration>,
+    is_http2: bool,  // NEW: now configurable
+) -> Result<Response<Incoming>>
+```
+
+The underlying `ErasedHttpClient::send_request()` already supported `is_http2: bool` via `PoolKey`. The fix simply threads this parameter through to the call site.
+
 ## Verification Commands
 
 ```bash

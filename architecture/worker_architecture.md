@@ -1,6 +1,29 @@
 # Worker Architecture & Unified Server
 
-The Worker process is the data plane of SynVoid, responsible for high-performance request handling and security enforcement. The centerpiece of the worker is the **Unified Server**.
+The Worker process is the data plane of SynVoid, responsible for high-performance request handling and security enforcement. The centerpiece of the worker is the **UnifiedServerWorker** which runs within the Supervisor/Master process hierarchy.
+
+## The UnifiedServerWorker vs worker_pool Module
+
+The `worker_pool` configuration (`tcp.worker_pool_size`) controls the **number of connection-accepting threads** in the unified Tokio runtime, NOT separate worker processes. This is distinct from:
+
+| Component | Purpose | Configuration |
+|-----------|---------|---------------|
+| **UnifiedServerWorker** | Single process handling HTTP/HTTPS/HTTP3 + WAF + proxy via Tokio async runtime | `--unified-server-worker` flag |
+| **`tcp.worker_pool_size`** | Number of connection-accepting threads within the unified event loop | `tcp.worker_pool_size` config |
+| **`unified_server_workers`** | Number of Tokio runtime threads (defaults to CPU cores) | `tcp.unified_server_workers` config |
+
+**Scaling Guidance:**
+- For HTTP scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop
+- **Do NOT increase `unified_server_workers` for scaling purposes** — this only affects the number of Tokio runtime threads, not throughput
+- The unified worker uses a single Tokio runtime optimized for millions of tenants via O(1) domain-based routing
+
+### Buffer Pool Implementation
+
+The `BufferPool` is implemented at `crates/synvoid-utils/src/buffer/pool.rs:211`:
+- Sharded mutex design for ABA-safe concurrent access
+- Three tiers: small (4KB), medium (32KB), large (128KB) buffers
+- Global and thread-local acquisition variants
+- Configured via `BufferPoolConfig` at line 242
 
 ## The Unified Server
 
@@ -57,6 +80,30 @@ The Unified Server is designed to handle multiple protocols and transport layers
 
 ## Resource Management
 
-- **Buffer Pooling:** To minimize allocations and GC pressure, the worker uses a `BufferPool` for IO operations.
+- **Buffer Pooling:** To minimize allocations and GC pressure, the worker uses a `BufferPool` at `crates/synvoid-utils/src/buffer/pool.rs:211` for IO operations.
 - **Concurrency Control:** Semaphores and channels are used to limit the number of concurrent requests per site and globally, preventing resource exhaustion.
 - **Zero-Copy:** Where possible, SynVoid utilizes zero-copy techniques for moving data between network buffers and application handlers.
+
+---
+
+## Worker Startup Sequence
+
+```
+Supervisor Process
+  └── Master Process
+        └── UnifiedServerWorker (Tokio Runtime)
+              ├── Initialize ConfigManager
+              ├── Load site configurations
+              ├── Start TcpListenerPool (N threads based on worker_pool_size)
+              ├── Start UdpListenerPool
+              ├── Initialize WAF pipeline
+              ├── Start upstream connection pools
+              └── Begin accepting connections (cooperative multitasking)
+```
+
+### Health Check Integration
+
+Worker health status is exposed via:
+- `/health` endpoint at `src/admin/mod.rs:180` (returns basic status)
+- `/serverless/health` endpoint at `src/admin/handlers/serverless.rs:122` (serverless runtime status)
+- Internal `/__internal__/health` at `src/http/server.rs:286` (detailed worker status)

@@ -7,13 +7,13 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 ### 1. HTTP/1.1 & HTTP/2
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
-- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:893` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. This is a known limitation.
-- **Shared Handler:** Both H1 and H2 have similar request processing patterns, but use separate handler implementations (`handle_request` in `http/server.rs` for H1, `handle_request_with_cache` in `tls/server.rs:606` for H2 and `src/proxy/mod.rs:608` for upstream proxy - same method name but different signatures).
+- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:893` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The infrastructure (Http2PooledConnection, typed pool branches) is in place but not wired for production use. This is a known limitation.
+- **Protocol Detection:** At TLS handshake, protocol negotiation occurs via ALPN (`tls/server.rs:410-411`). The server extracts the ALPN protocol and determines if the connection should use HTTP/2 (`h2`) or HTTP/1.1. This detection happens during the TLS handshake callback before request processing begins.
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
-- **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections.
-- **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte.
+- **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections. When a client changes network interfaces (e.g., Wi-Fi to cellular), the connection persists using the same connection ID, enabling seamless migration.
+- **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte. **Security Tradeoff:** 0-RTT data is susceptible to replay attacks (RFC 9000). By default, 0-RTT is **disabled** (`mesh.config.quic.enable_0rtt = false`). When enabled, only idempotent requests should be sent early. Configuration: `mesh.quic.enable_0rtt` (default: false).
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
 - **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `src/tunnel/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
@@ -79,7 +79,7 @@ SynVoid leverages Rust's ownership model and a custom `BufferPool` to minimize d
 ### 2. Connection Limiting
 The `ConnectionLimiter` provides fine-grained control over concurrent connections at multiple levels:
 - **Global Limit:** Total connections the WAF instance will accept.
-- **Per-Site Limit:** `SiteConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs:306`) limits the impact of a surge in traffic to a single domain.
+- **Per-Site Limit:** `SiteConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs:306-346`) is **dead code** - the struct is defined but never instantiated. Per-site limiting is achieved via the global limiter's `try_acquire_with_limits()` method which applies limits by site_id internally. **Decision:** Either remove `SiteConnectionLimiter` or implement proper per-site tracking (see NR-1/WR-4 in `plans/plan.md`).
 - **Per-IP Limit:** Prevents connection exhaustion attacks from a single source.
 
 ### 3. Buffer Management

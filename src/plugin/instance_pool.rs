@@ -240,6 +240,7 @@ impl WasmPool for WasmInstancePool {
             store: inst.store,
             filter_name: inst.filter_name,
             max_cpu_fuel: inst.max_cpu_fuel,
+            allowed_dht_prefixes: inst.default_allowed_dht_prefixes.clone(),
         })
     }
 
@@ -249,7 +250,7 @@ impl WasmPool for WasmInstancePool {
             store: instance.store,
             filter_name: instance.filter_name,
             max_cpu_fuel: instance.max_cpu_fuel,
-            default_allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
+            default_allowed_dht_prefixes: instance.allowed_dht_prefixes,
         })
     }
 

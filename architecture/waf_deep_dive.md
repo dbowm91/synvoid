@@ -18,11 +18,22 @@ The `FloodProtector` (`src/waf/flood/mod.rs:225-367`) provides comprehensive flo
 
 #### Per-IP Connection Limiting
 The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connection limits:
-- **Global connection limit:** Default 20,000 concurrent connections
-- **Per-IP limits:** Default 100 connections per IP
-- **Burst tokens:** IP burst allowance (default 10) enables short-term bursts
-- **Site-level tracking:** Per-site connection counting via `SiteConnectionLimiter`
-- **Queue system:** When limits are hit, connections can queue (default 1000 queue size, 5000ms timeout)
+- **Global connection limit:** Default 1,000 concurrent connections
+- **Per-IP limits:** Default 10 connections per IP
+- **Burst tokens:** IP burst allowance (default 5) enables short-term bursts
+- **Site-level tracking:** Per-site connection counting via direct `try_acquire_with_limits()` calls (SiteConnectionLimiter struct exists but is not instantiated as a separate entity)
+- **Queue system:** When limits are hit, connections can queue (default 100 queue size, 60000ms timeout)
+
+**Actual Default Values (verified in code):**
+| Setting | Code Default | Config Field |
+|---------|--------------|-------------|
+| Global connections | 1,000 | `traffic.connection_limits.max_connections` |
+| Per-IP connections | 10 | `traffic.connection_limits.max_connections_per_ip` |
+| IP burst tokens | 5 | `traffic.connection_limits.connection_burst` |
+| Queue size | 100 | `traffic.connection_limits.connection_queue_size` |
+| Queue timeout | 60000ms | `traffic.connection_limits.connection_queue_timeout_ms` |
+
+**Queue Timeout Metrics:** When a connection times out in the queue (waits longer than `connection_queue_timeout_ms`), the metric `synvoid.waf.queue_timeout_total` is incremented. This helps identify when the queue is too small or timeout is too short for the traffic pattern.
 
 #### TokenBucket Rate Limiting
 The `TokenBucket` (`src/waf/traffic_shaper/bucket.rs`) provides precise rate-based limiting:
@@ -60,6 +71,26 @@ The `CssManager` (`src/challenge/css.rs`) generates CSS-based challenges:
 - **Invalid CSS rules:** Use impossible aspect ratios (negative or zero denominators). Only bots that don't parse CSS correctly will request these assets.
 - **Flow:** Challenge page → Browser matches valid rule → Requests `/rnd-<name>.png` → Session verified → Cookie set
 - **Bots that follow invalid links** are blocked immediately
+
+**CSS Rule Syntax:**
+```css
+/* Valid rule - realistic aspect ratio (browsers will match) */
+@media (min-aspect-ratio: 16/9) and (max-aspect-ratio: 16/10) { .waf-honeypot { background: url('/rnd-abc123.png'); } }
+
+/* Invalid rule - impossible ratio with negative denominator (bots may follow) */
+@media (min-aspect-ratio: 1/0) and (max-aspect-ratio: 0/0) { .waf-honeypot { background: url('/rnd-xyz789.png'); } }
+```
+
+**Honeypot HTML Attributes:**
+The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs with these HTML attributes:
+- `display: none` - Hidden from normal view
+- `visibility: hidden` - Not rendered
+- `opacity: 0` - Fully transparent
+- `position: absolute; left: -9999px; width: 0; height: 0` - Off-screen placement
+- `tabindex="-1"` - Not focusable via keyboard
+- `aria-hidden="true"` - Excluded from accessibility tree
+
+These attributes make links invisible to humans but still crawlable by bots that parse HTML without rendering.
 
 #### HTTP Honeypot Traps
 The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs:

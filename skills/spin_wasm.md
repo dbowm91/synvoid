@@ -124,23 +124,26 @@ The runtime uses a supervisor pattern for lifecycle management:
 2. **Health Checks**: Periodic health checks on running instances
 3. **Component Loading**: Manifest-based component loading with route matching
 
-## Instance Reuse (2026-05-23)
+## Instance Reuse (2026-05-26)
 
-`SpinRuntime` caches compiled `WasmRuntime` instances by component_id:
+`SpinRuntime` caches both compiled `WasmRuntime` and `SpinAppInstance` by component_id:
 
 ```rust
 pub struct SpinRuntime {
     pub config: SpinRuntimeConfig,
     manifest: RwLock<Option<Manifest>>,
-    instances: RwLock<HashMap<String, SpinAppInstance>>,
+    instances: RwLock<HashMap<String, SpinAppInstance>>,          // Per-request instances
+    cached_instances: RwLock<HashMap<String, SpinAppInstance>>,  // Cached for reuse
     compiled_runtimes: RwLock<HashMap<String, Arc<WasmRuntime>>>,  // Cache compiled WASM modules
     engine: Engine,
 }
 ```
 
-This eliminates the high cold-start overhead of recompiling WASM for every request. The `SpinAppInstance` (per-request state with `last_request`, `request_count`) is still created per request, but the expensive `WasmRuntime` compilation is cached and reused.
+The `get_or_create_instance()` method (line 288-295 in runtime.rs) reuses cached `SpinAppInstance` if it's not idle (5-minute timeout). New instances are created via `instantiate_app()` only when cache miss or instance is idle.
 
-Key method: `SpinRuntime::instantiate_app()` checks the cache first before creating a new `WasmRuntime`.
+Key methods:
+- `SpinRuntime::get_or_create_instance()` — Returns cached instance or creates new one
+- `SpinAppInstance::reuse()` — Updates timestamps without creating new instance
 
 ## Testing
 

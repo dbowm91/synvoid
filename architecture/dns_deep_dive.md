@@ -62,11 +62,12 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 3. **Query Validation**: `DnsQueryValidator` checks malformed queries
 4. **Firewall**: `DnsFirewall` evaluates against blocking rules (subnet, opcode)
 5. **Cache Check**: If enabled, `DnsCache` checked first
-6. **Query Coalescing**: `QueryCoalescer` collapses identical in-flight queries
+6.  **Query Coalescing**: `QueryCoalescer` collapses identical in-flight queries
    - Implemented at `src/dns/query_coalesce.rs`
    - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
    - `QueryCoalescer::with_config()` created in `DnsServer::new()` at `src/dns/server/mod.rs:634-644`
    - Passed to query handler via `QueryContext` at `src/dns/server/mod.rs:419-445`
+   - **Note:** `max_wait_ms` parameter is currently unused (`_max_wait_ms`) - the coalescer does not implement a timeout wait for coalescing requests. This is a known limitation (DNS-2).
 7. **Zone Resolution**: `ShardedZoneStore` looks up zone, builds response
 8. **DNSSEC Signing**: If zone signed, RRSIG records added
 9. **Response**: Wire format response sent to client
@@ -76,19 +77,18 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 **IXFR** (RFC 1995) - Incremental zone transfer
 **TSIG** (RFC 2845) - Transaction signature authentication for zone transfers
 
-**AXFR Record Type Coverage:** The AXFR implementation at `src/dns/transfer.rs:829-1029` handles the following record types: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA. The following record types are **not handled** (fall through with `_ => continue`):
+**AXFR Record Type Coverage:** The AXFR implementation at `src/dns/transfer.rs:829-1029` handles the following record types: A, AAAA, CNAME, NS, SOA, TXT, MX, SRV, PTR, DNSKEY, RRSIG, NSEC, NSEC3, DS, CAA. The following record types are **not handled** (fall through with `_ => continue` at line 1029):
 - **NAPTR** (35) - Naming Authority Pointer
 - **CERT** (37) - Certificate record
 - **SMMEA** (48) - Simple Mail Messaging Exchange Authority
 - **DNAME** (39) - Delegation Name
-
-**Note:** AXFR requests for unsupported record types will return no records of that type in the response.
+- **Note:** AXFR requests for unsupported record types will return no records of that type in the response. These record types are silently skipped. Adding support requires implementing the wire format encoding for each type (DNS-4).
 
 ### DNSSEC Signing/Validation
 
 **Signing** (`dnssec_signing.rs`):
-- Supported Algorithms: **Ed25519** (Algorithm 15), **RSA/SHA-256** (Algorithm 8)
-- `sign_data()` - Signs RDATA using Ed25519 or RSA private key
+- Supported Algorithms: **Ed25519** (Algorithm 15), **ECDSAP256SHA256** (Algorithm 13), **ECDSAP384SHA384** (Algorithm 14), **RSA/SHA-256** (Algorithm 8)
+- `sign_data()` - Signs RDATA using Ed25519, ECDSA, or RSA private key
 - `create_rrsig_record()` - Builds RRSIG with inception/expiration (7 days signed)
 - `create_nsec_record()` / `create_nsec3_record()` - Proof of nonexistence
 - **NSEC3 Algorithms**: Algorithm 1 (SHA-1) and Algorithm 2 (SHA-256) supported
@@ -98,7 +98,12 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 - `compute_dnskey_canonical()` - Canonical DNSKEY wire format
 - `compute_ds_digest()` - DS record digest (SHA-1 [type 1], SHA-256 [type 2], SHA-384 [type 4]). GOST R 34.11-94 (type 3) **not supported** - returns error at `src/dns/dnssec_validation.rs:260`.
 - `verify_ds_digest()` - Validates DS against DNSKEY
-- Chain of trust: DS → DNSKEY → RRSIG → Zone data
+- **Trust Chain (RFC 4035):** Validation follows these steps:
+  1. Start with a trusted trust anchor (configured or RFC 5011 auto-updated)
+  2. Verify DNSKEY chain: trust anchor → DS record → DNSKEY → RRSIG → zone data
+  3. Check RRSIG inception/expiration windows
+  4. Verify signature using the DNSKEY's algorithm
+  5. For authenticated denial of existence, verify NSEC/NSEC3 proofs
 
 **Key Management** (`dnssec_key_mgmt.rs`):
 - KSK (Key Signing Key) / ZSK (Zone Signing Key) separation

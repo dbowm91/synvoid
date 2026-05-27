@@ -12,6 +12,9 @@ The Overseer is the top-level orchestrator that spawns and monitors the Master p
   - **Health Monitoring:** Monitors child process heartbeats and restarts failed processes.
   - **Recovery Orchestration:** Handles system recovery when faults occur.
   - **Upgrade Coordination:** Coordinates zero-downtime upgrades across the system.
+  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/overseer/drain_manager.rs`) during upgrades.
+  - **SO_REUSEPORT Fallback:** Supports both `SO_REUSEPORT` and `PortSwap` upgrade modes via `UpgradeMode` enum (`src/overseer/mode.rs`).
+- **Note:** The `run_overseer_mode()` function exists in `src/startup/master.rs:89` but is not exposed via the default CLI entry point. It is retained for advanced deployment scenarios but is not actively maintained. The Supervisor mode is recommended for new deployments.
 - **Key Logic:** `src/overseer/`.
 
 ### 2. Master (Legacy - Mid-tier Process)
@@ -28,8 +31,9 @@ The Master runs as a child of Overseer and provides process management, admin AP
 The Supervisor is a newer consolidated mode (2026) that merges Overseer + Master responsibilities into a single process for simpler deployments.
 
 - **Modes:**
-  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly via `run_supervisor_mode()` (`src/main.rs:538-547`).
-  - **Legacy Mode:** Invoked via `--master` flag which calls `run_master_mode()` (`src/main.rs:529`). The Master process handles process management, admin API, and IPC coordination for workers.
+  - **Consolidated Mode (default):** Supervisor replaces Overseer + Master, spawning workers directly via `run_supervisor_mode()` (`src/main.rs:541-546`).
+  - **Legacy Mode:** Invoked via `--master` flag which calls `run_master_mode()` (`src/main.rs:531`). The Master process handles process management, admin API, and IPC coordination for workers.
+- **Drain Coordination Limitation:** Unlike the Overseer (which has `DrainManager` at `src/overseer/drain_manager.rs` for coordinated worker draining during upgrades), the Supervisor does not currently implement drain coordination. Workers are restarted directly without the staged draining that Overseer provides. See PL-5 in `plans/plan.md` for planned improvements.
 - **Responsibilities:**
   - **Process Management:** Spawning and monitoring Worker processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
@@ -48,6 +52,7 @@ Workers are lightweight, "dumb" request-handling engines that operate in a share
 
 - **Isolation:** Each worker process is completely independent.
 - **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades (via upgrade mode) to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/startup/worker.rs:42` and `src/process/manager.rs:558-612`.
+- **SO_REUSEPORT Upgrade Path:** In Supervisor mode, the upgrade path uses `SO_REUSEPORT` directly for worker replacement. However, the `UpgradeMode` enum and `detect_upgrade_mode()` function are implemented only in the Overseer module (`src/overseer/mode.rs`). The Supervisor does not currently support the `PortSwap` upgrade mode that Overseer provides as a fallback when `SO_REUSEPORT` is unavailable. See PL-4 in `plans/plan.md`.
 - **CPU Pinning:** On Linux, workers are automatically assigned CPU affinity based on worker ID via `sched_setaffinity`. Not supported on macOS/BSD (logs warning).
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
