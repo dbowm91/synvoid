@@ -399,7 +399,7 @@ impl WafCore {
             Arc::new(AuthManager::new(
                 data_dir.clone().unwrap_or_else(|| PathBuf::from("data")),
                 3600, // session_duration_secs
-                5,    // max_failed_attempts
+                3,    // max_failed_attempts
                 300,  // lockout_duration_secs
             ))
         });
