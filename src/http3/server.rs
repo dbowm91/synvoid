@@ -340,6 +340,13 @@ impl Http3Server {
         let mut body_bytes = Vec::new();
         let mut streaming_waf = self.waf.streaming();
 
+        // HTTP/3 uses custom body collection with inline WAF scanning instead of
+        // stream_body_with_waf() from shared_handler. This is intentional because:
+        // 1. HTTP/3's QUIC-based recv_data() API is fundamentally different from HTTP/1.1's Body collect
+        // 2. HTTP/3 has special stream_scanned_upstream_mode that bypasses body collection entirely
+        // 3. The streaming WAF integration is tailored to QUIC's chunked delivery model
+        // Note: request_body_size tracking differs from HTTP/1.1 (see server.rs:1579 vs 4693)
+
         if !stream_scanned_upstream_mode {
             while let Ok(Some(chunk)) = request_stream.recv_data().await {
                 use bytes::Buf;
