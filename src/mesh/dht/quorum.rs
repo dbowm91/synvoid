@@ -411,6 +411,10 @@ impl QuorumManager {
     }
 
     pub async fn is_request_complete(&self, request_id: &str) -> bool {
+        if !self.pending_raft_requests.read().await.contains_key(request_id) {
+            return true;
+        }
+
         let should_remove = {
             let mut pending_raft = self.pending_raft_requests.write().await;
             if let Some(rx) = pending_raft.get_mut(request_id) {
