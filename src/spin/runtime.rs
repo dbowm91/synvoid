@@ -193,11 +193,7 @@ impl SpinRuntime {
                 runtime.clone()
             } else {
                 drop(cache);
-                let wasi_enabled = component
-                    .wasi
-                    .as_ref()
-                    .map(|w| w.enabled)
-                    .unwrap_or(true);
+                let wasi_enabled = component.wasi.as_ref().map(|w| w.enabled).unwrap_or(true);
 
                 let limits = WasmResourceLimits {
                     max_memory_mb: 64,
@@ -290,14 +286,19 @@ impl SpinRuntime {
             .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))
     }
 
-    fn get_or_create_instance(&self, component_id: &str) -> Result<SpinAppInstance, SpinRuntimeError> {
+    fn get_or_create_instance(
+        &self,
+        component_id: &str,
+    ) -> Result<SpinAppInstance, SpinRuntimeError> {
         if let Some(instance) = self.cached_instances.read().get(component_id).cloned() {
             if !instance.is_idle(Duration::from_secs(300)) {
                 return Ok(instance);
             }
         }
         let instance = self.instantiate_app(component_id)?;
-        self.cached_instances.write().insert(component_id.to_string(), instance.clone());
+        self.cached_instances
+            .write()
+            .insert(component_id.to_string(), instance.clone());
         Ok(instance)
     }
 

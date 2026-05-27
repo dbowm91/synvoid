@@ -539,3 +539,21 @@ These L1-L5 identity hierarchy gaps require future architectural work. Known lim
 This prevents rogue clients from confirming sessions they cannot decrypt.
 
 Key file: `src/mesh/ml_kem_key_exchange.rs:204-265`
+
+## MESH-15 Quorum Deadlock Fixes (2026-05-27)
+
+### MESH-15-FIX-1: is_request_complete() Lock Release ✅
+
+Fixed lock release issue at `src/mesh/dht/quorum.rs:412-430`:
+- Changed to use read lock for checking channel state
+- Only acquires write lock when cleanup is needed
+- Returns `false` immediately when channel is empty (no lock held)
+- Prevents deadlock during network partitions when requests timeout
+
+### MESH-15-FIX-4: MeshRaftNetwork::send_raw() Retry ✅
+
+Added exponential backoff retry at `src/mesh/raft/network.rs:53-91`:
+- 3 retries with 100ms/200ms/400ms delays
+- Logs warning on each retry attempt
+- Returns `Unreachable` error after max retries
+- Detects potential partition and signals back to openraft

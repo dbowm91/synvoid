@@ -645,7 +645,11 @@ impl DnsServer {
         if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
             if let Some(ref cookie) = edns.cookie {
                 if cookie.server_cookie.is_some() {
-                    cookie_valid = cs.validate_cookie(client_ip_for_log, &cookie.client_cookie, cookie.server_cookie.as_ref().unwrap());
+                    cookie_valid = cs.validate_cookie(
+                        client_ip_for_log,
+                        &cookie.client_cookie,
+                        cookie.server_cookie.as_ref().unwrap(),
+                    );
                 } else {
                     cookie_absent = true;
                 }

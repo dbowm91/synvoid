@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::{oneshot, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -410,23 +411,25 @@ impl QuorumManager {
     }
 
     pub async fn is_request_complete(&self, request_id: &str) -> bool {
-        let mut pending_raft = self.pending_raft_requests.write().await;
-        if let Some(rx) = pending_raft.get_mut(request_id) {
-            if let Ok(result) = rx.try_recv() {
-                let success = result.is_ok();
-                let _ = rx;
-                pending_raft.remove(request_id);
-                let mut pending = self.pending_requests.write().await;
-                if let Some(req) = pending.get_mut(request_id) {
-                    req.raft_write_completed = true;
-                    req.raft_write_success = success;
+        let should_remove = {
+            let mut pending_raft = self.pending_raft_requests.write().await;
+            if let Some(rx) = pending_raft.get_mut(request_id) {
+                match rx.try_recv() {
+                    Ok(_result) => true,
+                    Err(TryRecvError::Empty) => return false,
+                    Err(TryRecvError::Closed) => true,
                 }
-                return true;
+            } else {
+                true
             }
-            false
-        } else {
-            true
+        };
+
+        if should_remove {
+            let mut pending_raft = self.pending_raft_requests.write().await;
+            pending_raft.remove(request_id);
         }
+
+        should_remove
     }
 
     pub async fn get_request(&self, request_id: &str) -> Option<QuorumRequest> {

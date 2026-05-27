@@ -6,33 +6,32 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::block_store::BlockStore;
 use crate::config::ConfigManager;
+use crate::overseer::drain_manager::{DrainManager, DrainProtocol};
 use crate::platform::fs::PlatformPaths;
 use crate::process::{
     IpcEndpoint, IpcListener, Message, PidFileManager, ProcessEvent, ProcessManager,
-    ProcessManagerConfig,
+    ProcessManagerConfig, WorkerId,
 };
 use crate::waf::RuleFeedManagerForWaf;
 use crate::RunningFlag;
 
 use super::state::{SupervisorState, SupervisorStateTrackers};
 
+const DRAIN_POLL_INTERVAL_MS: u64 = 100;
+const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
+
 /// Supervisor process for managing worker lifecycle.
 ///
 /// # Drain Coordination
 ///
-/// The Supervisor uses [`ProcessManager::graceful_shutdown()`] for worker shutdown,
-/// which broadcasts SIGTERM and waits for workers to stop. This differs from the
-/// Overseer's [`DrainManager`] which provides per-worker connection tracking during
-/// drain (active/idle connections, drain states, etc.).
-///
-/// **Limitation (PL-5)**: Supervisor does not have a DrainManager equivalent.
-/// For zero-downtime upgrades that require connection draining, the Overseer
-/// architecture should be used, or this could be implemented by porting
-/// `src/overseer/drain_manager.rs` to the Supervisor process.
-
+/// The Supervisor uses [`DrainManager`] for drain-aware worker shutdown, providing
+/// per-worker connection tracking during drain (active/idle connections, drain states, etc.).
+/// This is implemented by porting the Overseer's `DrainManager` to Supervisor.
 pub struct SupervisorProcess {
     state: SupervisorState,
     process_manager: Arc<ProcessManager>,
+    drain_manager: Arc<DrainManager>,
+    drain_protocol: Arc<DrainProtocol>,
     event_rx: mpsc::Receiver<ProcessEvent>,
     running: RunningFlag,
     ipc_listener: Option<IpcListener>,
@@ -46,6 +45,9 @@ impl SupervisorProcess {
         let (process_manager, event_rx) =
             ProcessManager::new(pm_config, Some(state.block_store.clone()));
 
+        let drain_manager = Arc::new(DrainManager::new(DRAIN_POLL_INTERVAL_MS));
+        let drain_protocol = Arc::new(DrainProtocol::new(drain_manager.clone()));
+
         // Initialize IPC listener (consolidated master + command socket)
         let endpoint = IpcEndpoint::master();
         let ipc_listener = endpoint.bind().await?;
@@ -53,6 +55,8 @@ impl SupervisorProcess {
         Ok(Self {
             state,
             process_manager: Arc::new(process_manager),
+            drain_manager,
+            drain_protocol,
             event_rx,
             running: RunningFlag::new(),
             ipc_listener: Some(ipc_listener),
@@ -174,9 +178,85 @@ impl SupervisorProcess {
         }
 
         tracing::info!("Supervisor shutting down...");
-        self.process_manager.graceful_shutdown().await;
+        self.drain_aware_shutdown().await;
 
         Ok(())
+    }
+
+    async fn drain_aware_shutdown(&self) {
+        tracing::info!("Starting drain-aware shutdown");
+
+        let timeout_secs = self
+            .process_manager
+            .get_config()
+            .graceful_shutdown_timeout_secs;
+        let drain_id = self.drain_manager.start_drain(timeout_secs);
+
+        let worker_ids: Vec<WorkerId> = {
+            let unified_workers = self.process_manager.get_all_unified_server_worker_ids();
+            unified_workers
+        };
+
+        for worker_id in &worker_ids {
+            self.drain_manager.register_worker(*worker_id, 0, 0);
+        }
+
+        tracing::info!(
+            "Initiating drain {} for {} unified server workers",
+            drain_id,
+            worker_ids.len()
+        );
+
+        for worker_id in &worker_ids {
+            if let Some(ipc) = self
+                .process_manager
+                .get_unified_server_worker_ipc(*worker_id)
+            {
+                let mut ipc = ipc.lock().await;
+                match self
+                    .drain_protocol
+                    .drain_worker_with_confirmation(
+                        &mut ipc,
+                        worker_id,
+                        timeout_secs,
+                        DRAIN_POLL_INTERVAL_MS,
+                    )
+                    .await
+                {
+                    Ok(true) => {
+                        tracing::info!("Worker {} drained successfully", worker_id);
+                    }
+                    Ok(false) => {
+                        tracing::warn!("Worker {} drain timeout, forcing shutdown", worker_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("Worker {} drain error: {}", worker_id, e);
+                    }
+                }
+            }
+        }
+
+        let drain_complete = self.drain_manager.wait_for_drain(timeout_secs).await;
+
+        if drain_complete {
+            tracing::info!("All workers drained successfully, proceeding with shutdown");
+        } else {
+            tracing::warn!("Drain timeout reached, proceeding with shutdown anyway");
+        }
+
+        let status = self.drain_manager.get_drain_status();
+        tracing::info!(
+            "Drain status: id={}, active={}, idle={}, complete={}",
+            status.drain_id,
+            status.active_connections,
+            status.idle_connections,
+            status.drain_complete
+        );
+
+        self.process_manager.shutdown_workers().await;
+        self.drain_manager.clear();
+
+        tracing::info!("Drain-aware shutdown complete");
     }
 
     async fn handle_connection(

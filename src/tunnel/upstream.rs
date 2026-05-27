@@ -10,15 +10,9 @@
 //!
 //! # TunnelBackend Status
 //!
-//! The `TunnelBackend` struct in this file (`src/tunnel/upstream.rs`) is
-//! **DEPRECATED/RESERVED** - it contains hardcoded 127.0.0.1 and is NOT used
-//! by the active routing path. Active tunnel routing uses:
-//! - [`TunnelRouter::resolve_tunnel_backend()`] → `TunnelBackend::Direct { host, port }`
-//! - [`TunnelRouter::resolve_tunnel_backend()`] → `TunnelBackend::Tunnel { ... }`
-//!
-//! This struct remains for future extension when tunnel backends need to be
-//! routed through the proxy layer directly (currently they use QUIC tunnel
-//! protocol which handles its own transport).
+//! The `TunnelBackend` struct has been removed from this file. Active tunnel
+//! routing uses [`TunnelRouter::resolve_tunnel_backend()`] which returns
+//! [`TunnelBackend::Direct`] and [`TunnelBackend::Tunnel`] variants.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -117,30 +111,5 @@ impl TunnelUpstreamPool {
     pub async fn add_static_mapping(&self, identifier: String, port: u16) {
         let mut resolver = self.resolver.write().await;
         resolver.register_static_mapping(identifier, port);
-    }
-}
-
-use crate::upstream::pool::{Backend, BackendProtocol};
-
-#[allow(dead_code)]
-#[deprecated(since = "2026-05-27", note = "Use TunnelRouter::resolve_tunnel_backend() instead - this struct has hardcoded 127.0.0.1")]
-pub struct TunnelBackend {
-    pub tunnel_identifier: String,
-    pub session_id: String,
-    pub port: u16,
-}
-
-impl TunnelBackend {
-    pub fn new(tunnel_identifier: String, session_id: String, port: u16) -> Self {
-        Self {
-            tunnel_identifier,
-            session_id,
-            port,
-        }
-    }
-
-    #[deprecated(since = "2026-05-27", note = "Use TunnelRouter::resolve_tunnel_backend() instead - this has hardcoded 127.0.0.1")]
-    pub fn to_backend(&self) -> Backend {
-        Backend::new(format!("tcp:127.0.0.1:{}", self.port)).with_protocol(BackendProtocol::Tcp)
     }
 }
