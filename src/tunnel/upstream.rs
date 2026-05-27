@@ -1,5 +1,25 @@
 #![allow(unused_variables, dead_code)]
 
+//! Tunnel upstream resolution and half-TCP proxy support.
+//!
+//! # Architecture
+//!
+//! This module provides tunnel-aware upstream resolution for the proxy layer.
+//! The primary routing path is via [`TunnelRouter::resolve_tunnel_backend()`]
+//! which returns [`TunnelBackend::Direct`] variants with dynamic host resolution.
+//!
+//! # TunnelBackend Status
+//!
+//! The `TunnelBackend` struct in this file (`src/tunnel/upstream.rs`) is
+//! **DEPRECATED/RESERVED** - it contains hardcoded 127.0.0.1 and is NOT used
+//! by the active routing path. Active tunnel routing uses:
+//! - [`TunnelRouter::resolve_tunnel_backend()`] → `TunnelBackend::Direct { host, port }`
+//! - [`TunnelRouter::resolve_tunnel_backend()`] → `TunnelBackend::Tunnel { ... }`
+//!
+//! This struct remains for future extension when tunnel backends need to be
+//! routed through the proxy layer directly (currently they use QUIC tunnel
+//! protocol which handles its own transport).
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -102,6 +122,8 @@ impl TunnelUpstreamPool {
 
 use crate::upstream::pool::{Backend, BackendProtocol};
 
+#[allow(dead_code)]
+#[deprecated(since = "2026-05-27", note = "Use TunnelRouter::resolve_tunnel_backend() instead - this struct has hardcoded 127.0.0.1")]
 pub struct TunnelBackend {
     pub tunnel_identifier: String,
     pub session_id: String,
@@ -117,6 +139,7 @@ impl TunnelBackend {
         }
     }
 
+    #[deprecated(since = "2026-05-27", note = "Use TunnelRouter::resolve_tunnel_backend() instead - this has hardcoded 127.0.0.1")]
     pub fn to_backend(&self) -> Backend {
         Backend::new(format!("tcp:127.0.0.1:{}", self.port)).with_protocol(BackendProtocol::Tcp)
     }
