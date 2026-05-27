@@ -830,6 +830,28 @@ impl ProcessManager {
             .collect()
     }
 
+    pub fn get_all_unified_server_worker_ids(&self) -> Vec<WorkerId> {
+        let unified_server_workers = self.unified_server_workers.read();
+        unified_server_workers
+            .keys()
+            .map(|&id| WorkerId(id))
+            .collect()
+    }
+
+    pub async fn shutdown_workers(&self) {
+        tracing::info!("Shutting down all workers");
+        self.running.store(false, Ordering::SeqCst);
+
+        if let Some(handle) = self.health_monitor_handle.lock().await.take() {
+            handle.abort();
+        }
+
+        self.broadcast_shutdown(false);
+        self.kill_remaining_workers();
+
+        tracing::info!("Worker shutdown complete");
+    }
+
     pub async fn drain_unified_server_worker_async(
         &self,
         worker_id: WorkerId,
