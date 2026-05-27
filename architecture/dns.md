@@ -1,0 +1,794 @@
+# DNS Module Architecture
+
+## 1. Purpose and Responsibility
+
+The SynVoid DNS module provides a **comprehensive, production-grade DNS server** with support for:
+
+- **Authoritative DNS serving** with zone management
+- **Recursive DNS resolution** with caching
+- **DNSSEC signing and validation**
+- **DNS-over-TLS (DoT)**, **DNS-over-HTTPS (DoH)**, **DNS-over-Quic (DoQ)**
+- **Dynamic Updates (RFC 2136)**
+- **TSIG-based transaction security**
+- **Geo-steering** based on client location and node health
+- **Mesh mode** for dynamic registration from edge nodes
+
+The module is located at `src/dns/` and exports a rich set of submodules.
+
+---
+
+## 2. Key Submodules
+
+### 2.1 Core Server
+
+| Submodule | File | Responsibility |
+|-----------|------|----------------|
+| `server/mod.rs` | `src/dns/server/mod.rs` | Main `DnsServer` struct, zone management, query handling |
+| `server/query.rs` | `src/dns/server/query.rs` | Query parsing, validation, cookie checking |
+| `server/response.rs` | `src/dns/server/response.rs` | Response building, NXDOMAIN, error responses |
+| `server/startup.rs` | `src/dns/server/startup.rs` | Server startup, socket binding |
+| `server/zone.rs` | `src/dns/server/zone.rs` | Zone record management |
+| `server/dnssec_impl.rs` | `src/dns/server/dnssec_impl.rs` | DNSSEC-signed response handling |
+| `server/rate_limit.rs` | `src/dns/server/rate_limit.rs` | Rate limiting (Response Rate Limiting - RRL) |
+| `server/sharded_store.rs` | `src/dns/server/sharded_store.rs` | `ShardedZoneStore` for concurrent zone access |
+
+### 2.2 DNSSEC
+
+| Submodule | File | Responsibility |
+|-----------|------|----------------|
+| `dnssec.rs` | `src/dns/dnssec.rs` | Core types: `Algorithm`, `KeyType`, `ZoneSigningKey`, `Nsec3Config`, `KeyRotationConfig` |
+| `dnssec_key_mgmt.rs` | `src/dns/dnssec_key_mgmt.rs` | `DnsSecKeyManager` - key generation, storage |
+| `dnssec_signing.rs` | `src/dns/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 record generation |
+| `dnssec_validation.rs` | `src/dns/dnssec_validation.rs` | Signature verification, canonicalization, DS digest |
+| `trust_anchor.rs` | `src/dns/trust_anchor.rs` | RFC 5011 trust anchor state machine |
+
+### 2.3 Resolvers
+
+| Submodule | File | Responsibility |
+|-----------|------|----------------|
+| `recursive.rs` | `src/dns/recursive.rs` | `RecursiveDnsServer` - recursive resolver server |
+| `resolver.rs` | `src/dns/resolver.rs` | `DnsResolver` trait, `HickoryResolver`, `HickoryRecursor` |
+| `recursive_cache.rs` | `src/dns/recursive_cache.rs` | `RecursiveDnsCache` - cache for recursive resolver |
+
+### 2.4 Protocol Support
+
+| Submodule | File | Responsibility |
+|-----------|------|----------------|
+| `doh.rs` | `src/dns/doh.rs` | DNS-over-HTTPS server |
+| `dot.rs` | `src/dns/dot.rs` | DNS-over-TLS server |
+| `doq.rs` | `src/dns/doq.rs` | DNS-over-Quic server |
+| `tsig.rs` | `src/dns/tsig.rs` | TSIG transaction signing and verification |
+
+### 2.5 Security
+
+| Submodule | File | Responsibility |
+|-----------|------|----------------|
+| `firewall.rs` | `src/dns/firewall.rs` | `DnsFirewall` - query filtering |
+| `cookie.rs` | `src/dns/cookie.rs` | DNS Cookie Server (RFC 7873) |
+| `limits.rs` | `src/dns/limits.rs` | Connection limits |
+| `update.rs` | `src/dns/update.rs` | Dynamic DNS updates (RFC 2136) |
+| `notify.rs` | `src/dns/notify.rs` | DNS NOTIFY handling |
+| `transfer.rs` | `src/dns/transfer.rs` | Zone transfers (AXFR/IXFR) |
+
+### 2.6 Supporting Modules
+
+| Submodule | File | Responsibility |
+|-----------|------|----------------|
+| `cache.rs` | `src/dns/cache.rs` | `DnsCache` - authoritative server cache |
+| `compression.rs` | `src/dns/compression.rs` | DNS message compression |
+| `edns.rs` | `src/dns/edns.rs` | EDNS(0) option parsing |
+| `messages.rs` | `src/dns/messages.rs` | Mesh DNS message types |
+| `metrics.rs` | `src/dns/metrics.rs` | DNS metrics |
+| `qname.rs` | `src/dns/qname.rs` | QNAME minimization and rebinding checks |
+| `query_coalesce.rs` | `src/dns/query_coalesce.rs` | Query coalescing |
+| `query_validator.rs` | `src/dns/query_validator.rs` | Query validation |
+| `store.rs` | `src/dns/store.rs` | `ZoneStore` trait |
+| `wire.rs` | `src/dns/wire.rs` | Wire-format DNS parsing/building |
+| `zone_file.rs` | `src/dns/zone_file.rs` | Zone file parsing |
+| `zone_trie.rs` | `src/dns/zone_trie.rs` | Zone lookup trie |
+| `rpz.rs` | `src/dns/rpz.rs` | Response Policy Zones |
+| `dns64.rs` | `src/dns/dns64.rs` | DNS64 translator |
+| `anycast.rs` | `src/dns/anycast.rs` | Anycast support |
+| `hsm.rs` | `src/dns/hsm.rs` | HSM-backed key management |
+| `crypto_rng.rs` | `src/dns/crypto_rng.rs` | Cryptographic RNG |
+
+---
+
+## 3. Major Data Structures and Types
+
+### 3.1 DnsServer (server/mod.rs:447)
+
+```rust
+pub struct DnsServer {
+    config: Arc<DnsConfig>,
+    zones: Arc<ShardedZoneStore>,
+    zone_trie: Arc<RwLock<ZoneTrie>>,
+    zone_index: Arc<RwLock<Vec<(String, String)>>>,
+    zone_index_btree: Arc RwLock<BTreeMap<String, String>>,
+    rate_limiter: Option<Arc<DnsRateLimiter>>,
+    query_validator: Option<DnsQueryValidator>,
+    firewall: Option<Arc<RwLock<DnsFirewall>>>,
+    connection_limits: Arc<ConnectionLimits>,
+    cache: Option<Arc<DnsCache>>,
+    dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
+    cert_resolver: Option<Arc<CertResolver>>,
+    dot_server: Option<DotServer>,
+    doh_server: Option<DohServer>,
+    doq_server: Option<DoqServer>,
+    update_handler: Option<DynamicUpdateHandler>,
+    notify_handler: Option<NotifyHandler>,
+    query_coalescer: Option<Arc<QueryCoalescer>>,
+    recursive_server: Option<Arc<RecursiveDnsServer>>,
+    dns64_translator: Option<Dns64Translator>,
+    cookie_server: Option<Arc<DnsCookieServer>>,
+    // ... mesh fields
+}
+```
+
+### 3.2 Zone (server/mod.rs:129)
+
+```rust
+pub struct Zone {
+    pub origin: String,
+    pub records: HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
+    pub serial: u32,
+    pub ksk_key: Option<ZoneSigningKey>,
+    pub zsk_key: Option<ZoneSigningKey>,
+    pub dnskey_ttl: Option<u32>,
+    pub nsec3_enabled: bool,
+    pub nsec_enabled: bool,
+    pub nsec3param: Option<Nsec3Config>,
+    pub history: Vec<ZoneHistory>,
+}
+```
+
+### 3.3 RecursiveDnsServer (recursive.rs:52)
+
+```rust
+pub struct RecursiveDnsServer {
+    config: RecursiveDnsConfig,
+    resolver: Arc<dyn DnsResolver>,
+    cache: RecursiveDnsCache,
+    rate_limiter: Option<Arc<DnsRateLimiter>>,
+    firewall: Option<Arc<RwLock<DnsFirewall>>>,
+    metrics: Option<Arc<DnsMetrics>>,
+    query_semaphore: Arc<Semaphore>,
+    running: Arc<tokio::sync::RwLock<bool>>,
+}
+```
+
+### 3.4 TrustAnchorState (trust_anchor.rs:30)
+
+```rust
+pub enum TrustAnchorState {
+    Valid,      // Fully trusted
+    Seen,       // Observed in DNSKEY but not yet validated via CDS
+    Pending,    // Validated via CDS, awaiting 30-day observation (RFC 5011)
+    Revoked,    // REVOKE bit observed
+    Removed,    // Removed from zone
+    Missing,    // Was Valid but expired
+}
+```
+
+### 3.5 Key DNSSEC Types
+
+```rust
+// dnssec.rs
+pub enum Algorithm { Ed25519, RSA }
+pub enum KeyType { KSK, ZSK }
+pub struct ZoneSigningKey {
+    pub key_id: String,
+    pub algorithm: Algorithm,
+    pub key_type: KeyType,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub public_key: Vec<u8>,
+    pub private_key: Vec<u8>,
+    pub key_tag: u16,
+    pub flags: u16,
+}
+pub struct Nsec3Config {
+    pub algorithm: u8,
+    pub flags: u8,
+    pub iterations: u16,
+    pub salt: Vec<u8>,
+}
+```
+
+### 3.6 DnsResolver Trait (resolver.rs:131)
+
+```rust
+#[async_trait]
+pub trait DnsResolver: Send + Sync {
+    async fn lookup_txt(&self, name: &str) -> ResolverResult<TxtRecord>;
+    async fn lookup_ns(&self, name: &str) -> ResolverResult<NsRecord>;
+    async fn lookup_a(&self, name: &str) -> ResolverResult<Vec<IpAddr>>;
+    async fn lookup_ip_with_ttl(&self, name: &str) -> ResolverResult<IpRecord>;
+    async fn lookup_mx(&self, name: &str) -> ResolverResult<Vec<MxRecord>>;
+    async fn lookup_soa(&self, name: &str) -> ResolverResult<Option<SoaRecord>>;
+    async fn lookup_ptr(&self, name: &str) -> ResolverResult<Option<PtrRecord>>;
+    async fn lookup_srv(&self, name: &str) -> ResolverResult<Vec<SrvRecord>>;
+    async fn lookup_cname(&self, name: &str) -> ResolverResult<Option<CNameRecord>>;
+}
+```
+
+---
+
+## 4. Key APIs and Entry Points
+
+### 4.1 DnsServer Factory
+
+```rust
+// server/mod.rs:573
+impl DnsServer {
+    pub fn new(config: DnsConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self
+    pub fn with_acme_dns_challenges(self, challenges: Arc<AcmeDnsChallenge>) -> Self  // [cfg(feature="dns")]
+    pub fn with_cookie_server(self, cookie_server: Arc<DnsCookieServer>) -> Self
+}
+```
+
+### 4.2 RecursiveDnsServer
+
+```rust
+// recursive.rs:63
+impl RecursiveDnsServer {
+    pub async fn new(config: RecursiveDnsConfig, ...) -> RecursiveDnsResult<Self>
+    pub async fn new_with_global_nodes(config: RecursiveDnsConfig, global_node_ips: Vec<IpAddr>) -> RecursiveDnsResult<Self>
+    pub async fn start(self: Arc<Self>) -> RecursiveDnsResult<()>
+    pub fn stop(&self)
+    pub async fn is_running(&self) -> bool
+    pub fn cache(&self) -> &RecursiveDnsCache
+    pub fn cache_stats(&self) -> RecursiveCacheStats
+}
+```
+
+### 4.3 HickoryRecursor (RFC 5011 support)
+
+```rust
+// resolver.rs:628
+impl HickoryRecursor {
+    pub fn new(root_hints_path: &str, trust_anchor_path: &str, enable_dnssec: bool) -> Result<Self, ResolverError>
+    pub async fn start_rfc5011_updates(self: Arc<Self>) -> Result<(), ResolverError>
+    pub async fn stop_rfc5011_updates(&self)
+    pub fn get_trust_anchor_status(&self) -> Option<TrustAnchorStatus>
+    pub async fn lookup_dnskey(&self, name: &str) -> ResolverResult<Vec<DnsKeyRecord>>
+    pub async fn lookup_cds(&self, name: &str) -> ResolverResult<Vec<CdsRecord>>
+    pub async fn perform_rfc5011_trust_anchor_check(&self, zone: &str) -> ResolverResult<Rfc5011CheckResult>
+}
+```
+
+### 4.4 TSIG Verification
+
+```rust
+// tsig.rs:118
+impl TsigVerifier {
+    pub fn new(keys_config: Vec<TsigKeyConfig>) -> Result<Self, String>
+    pub fn add_key(&self, config: TsigKeyConfig) -> Result<(), String>
+    pub fn remove_key(&self, name: &str) -> Option<TsigKey>
+    pub fn verify(&self, tsig_record: &[u8], message: &[u8], original_mac: &[u8], ...) -> Result<(), TsigError>
+    pub fn sign(&self, key_name: &str, message: &[u8], tsig_error: u16) -> Result<Vec<u8>, TsigError>
+}
+```
+
+### 4.5 TrustAnchorManager (RFC 5011)
+
+```rust
+// trust_anchor.rs:191
+impl TrustAnchorManager {
+    pub fn new(config: TrustAnchorConfig) -> Self
+    pub fn add_anchor(&self, key_id: String, key_tag: u16, algorithm: u8, public_key: Vec<u8>) -> Result<(), String>
+    pub fn remove_anchor(&self, key_id: &str) -> Result<(), String>
+    pub fn get_anchors(&self) -> Vec<TrustAnchor>
+    pub fn get_trusted_anchors(&self) -> Vec<TrustAnchor>
+    pub fn observe_dnskey_at_root(&self, key_tag: u16, algorithm: u8, public_key: &[u8], is_revoked: bool) -> Rfc5011Event
+    pub fn trust_anchor_check(&self, key_tag: u16, algorithm: u8, digest_type: u8, digest: &[u8], current_dnskey_keytags: Option<&[u16]>) -> Rfc5011Event
+    pub fn process_rfc5011_updates(&self) -> Vec<Rfc5011Event>
+    pub fn load_initial_anchors_from_file(&self, path: &str) -> Result<usize, String>
+}
+```
+
+### 4.6 DNSSEC Key Management
+
+```rust
+// dnssec.rs (re-exports)
+pub use dnssec_key_mgmt::DnsSecKeyManager;
+pub use dnssec_signing::{sign_data, create_rrsig_record, create_nsec_record, create_nsec3_record, ...};
+pub use dnssec_validation::{calculate_key_tag, canonical_rdata, compute_dnskey, compute_ds_digest, ...};
+```
+
+---
+
+## 5. How DNS Resolution Works
+
+### 5.1 Authoritative Server Resolution Flow
+
+```
+DNS Query Packet
+      │
+      ▼
+┌─────────────────────────────────┐
+│ parse_dns_message()             │
+│ wire.rs                         │
+└─────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────┐
+│ DnsQueryValidator              │
+│ - query_validator.rs            │
+│ - Validates wire format         │
+│ - Checks length limits          │
+│ - Validates label counts        │
+└─────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────┐
+│ Rate Limiting (optional)        │
+│ server/rate_limit.rs           │
+│ - Response Rate Limiting (RRL) │
+└─────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────┐
+│ DNS Firewall (optional)        │
+│ firewall.rs                    │
+│ - Subnet blocking              │
+│ - Opcode filtering             │
+└─────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────┐
+│ Cookie Validation (RFC 7873)  │
+│ cookie.rs:640-658              │
+│ - Constant-time MAC comparison │
+└─────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────┐
+│ Zone Lookup                     │
+│ ShardedZoneStore                │
+│ ZoneTrie for efficient search   │
+└─────────────────────────────────┘
+      │
+      ├──[Zone Found]─────────────► Response built with records
+      │                           (NXDOMAIN if not found)
+      │
+      └──[Zone Not Found]─────────► SERVFAIL / forwarded
+```
+
+### 5.2 Recursive Resolution Flow
+
+```
+Recursive Query (RecursiveDnsServer)
+      │
+      ▼
+┌─────────────────────────────────┐
+│ Check RecursiveDnsCache         │
+│ recursive_cache.rs              │
+│ - Positive/Negative caching     │
+│ - Stale-while-revalidate        │
+└─────────────────────────────────┘
+      │
+      ├──[Cache Hit]──────────────► Build cached response
+      │                           (sets authentic_data flag if DNSSEC validated)
+      │
+      └──[Cache Miss]─────────────┐
+                                  ▼
+                    ┌─────────────────────────────┐
+                    │ Resolve via DnsResolver    │
+                    │ resolver.rs                │
+                    └─────────────────────────────┘
+                                  │
+         ┌────────────────────────┼────────────────────────┐
+         ▼                        ▼                        ▼
+   ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+   │HickoryRecursor│      │HickoryResolver│      │GlobalNode    │
+   │(full recurs.)│      │ (forwarder)  │      │Resolver      │
+   │              │      │              │      │              │
+   │- Root hints  │      │- Google DNS  │      │- Mesh nodes  │
+   │- Trust anchor│      │- Cloudflare  │      │              │
+   │- DNSSEC val  │      │- Upstream IPs│      │              │
+   │- RFC 5011    │      │              │      │              │
+   └──────────────┘      └──────────────┘      └──────────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────────┐
+                    │ Store in cache + respond    │
+                    └─────────────────────────────┘
+```
+
+### 5.3 HickoryRecursor (True Recursive)
+
+The `HickoryRecursor` performs **full recursive resolution**:
+1. Loads root hints from file
+2. Follows delegation chain (root → TLD → authoritative)
+3. Optionally validates DNSSEC (`enable_dnssec` flag)
+4. Optionally performs RFC 5011 trust anchor updates
+
+```rust
+// resolver.rs:628 - HickoryRecursor::from_paths()
+let recursor = hickory_resolver::recursor::Recursor::new(
+    &roots.iter().map(|c| c.ip).collect::<Vec<_>>(),
+    dnssec_policy,
+    None,
+    recursor_opts,
+    TokioRuntimeProvider::default(),
+)?;
+```
+
+### 5.4 HickoryResolver (Forwarder Mode)
+
+The `HickoryResolver` is a **forwarding resolver** that sends queries to configured upstream servers:
+- Google DNS: `8.8.8.8`, `8.8.4.4`
+- Cloudflare DNS: `1.1.1.1`, `1.0.0.1`
+- Custom upstream IPs
+- System resolver config
+
+**Note:** Forwarder mode does **NOT** perform DNSSEC validation - `is_dnssec_validated` is always `false`.
+
+---
+
+## 6. DNSSEC Signing/Validation Flow
+
+### 6.1 DNSSEC Signing (Authoritative Server)
+
+```
+Zone Authoritative Response
+        │
+        ▼
+┌───────────────────────────────────┐
+│ Check if zone has DNSSEC enabled   │
+│ Zone has ksk_key + zsk_key       │
+└───────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────┐
+│ For each record in response:      │
+│ - Create canonical wire format    │
+│ - Sign with ZSK using RRSIG       │
+│ dnssec_signing.rs:sign_data()    │
+│   - Ed25519: ed25519_dalek       │
+│   - RSA: rsa crate               │
+└───────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────┐
+│ Include in response:              │
+│ - DNSKEY record (public keys)    │
+│ - RRSIG records                  │
+│ - NSEC/NSEC3 (prove NXDOMAIN)    │
+│ dnssec_signing.rs:create_nsec*() │
+└───────────────────────────────────┘
+```
+
+### 6.2 DNSSEC Validation (Recursive Resolver)
+
+```
+DNS Response + RRSIG + DNSKEY + DS
+        │
+        ▼
+┌───────────────────────────────────┐
+│ RecursiveDnsServer               │
+│ .resolve_upstream()              │
+│ Uses HickoryRecursor when:       │
+│ config.upstream_provider =       │
+│   RecursiveUpstreamProvider::    │
+│   Recursive                      │
+└───────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────┐
+│ Validate chain of trust:         │
+│                                   │
+│   Validated DNSKEY               │
+│         │                        │
+│         │ (computed from DNSKEY)│
+│         ▼                        │
+│   DS record in parent zone       │
+│         │ (digest match)        │
+│         ▼                        │
+│   Trust Anchor (root)            │
+│   or RFC 5011 managed key        │
+└───────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────┐
+│ Verify RRSIG signatures          │
+│ dnssec_validation.rs            │
+│ verify_rrsig()                  │
+│ - Canonical form of record      │
+│ - Ed25519/RSA verification      │
+└───────────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────┐
+│ Set authentic_data flag in       │
+│ DNS response if validated       │
+│ (AD bit, RFC 4035)              │
+└───────────────────────────────────┘
+```
+
+### 6.3 DNSSEC Key Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `DnsSecKeyManager` | `dnssec_key_mgmt.rs` | Key generation, storage, rollover |
+| `sign_data()` | `dnssec_signing.rs` | Ed25519/RSA signing |
+| `create_rrsig_record()` | `dnssec_signing.rs` | Build RRSIG record |
+| `create_nsec_record()` | `dnssec_signing.rs` | NSEC proof |
+| `create_nsec3_record()` | `dnssec_signing.rs` | NSEC3 proof |
+| `calculate_key_tag()` | `dnssec_validation.rs` | RFC 4034 key tag |
+| `compute_ds_digest()` | `dnssec_validation.rs` | DS digest computation |
+| `canonical_rdata()` | `dnssec_validation.rs` | Canonical RDATA |
+| `verify_ds_digest()` | `dnssec_validation.rs` | DS digest verification |
+
+### 6.4 RFC 5011 Trust Anchor State Machine
+
+```
+                    ┌──────────────────────────────────────────────┐
+  trust_point=0     │              trust_point != 0                  │
+  (newly configured)│              (previously Valid)                 │
+                    │                                              │
+                    │      ┌───────┐                               │
+                    │      │ Valid │◄──────────────────────────────┐│
+                    │      └───┬───┘                               ││
+                    │          │                                    ││
+                    │          │ (30-day observation, key in DNSKEY)││
+                    │          ▼                                    ││
+                    │   ┌────────────┐                              ││
+                    │   │  Pending   │────promote after 30 days──►  ││
+                    │   └────────────┘                              ││
+                    │          │                                    ││
+                    │          │ (CDS digest verified)               ││
+  ┌─────────────┐   │          ▼                                    ││
+  │    Seen     │───┼────►┌────────┐                                ││
+  │(in DNSKEY)   │   │      │Pending │                                ││
+  └─────────────┘   │      └───┬────┘                                ││
+                    │          │                                    ││
+                    │          │ (observation period complete)      ││
+                    │          ▼                                    ││
+                    │   (back to Valid──────────────────────────────┘│
+                    │          │                                    ││
+                    │          │ (REVOKE bit observed)               ││
+                    │          ▼                                    ││
+                    │   ┌──────────┐                                 ││
+                    └──►│ Revoked  │───── 30 days grace period ────► ││
+                        └──────────┘                                 ││
+                              │                                       ││
+                              │ (extended removal period)            ││
+                              ▼                                       ││
+                        ┌──────────┐                                  ││
+                        │ Removed  │───── extended days ────────────► ││
+                        └──────────┘                                 ││
+                              │                                       ││
+                              │ (purge from storage)                  ││
+                              ▼                                       ││
+                        ┌──────────┐                                  ││
+                        │  Missing │◄──── expired, not seen ────────► ││
+                        │ ( Valid  │                                  ││
+                        │  was 0)  │                                  ││
+                        └──────────┘                                  ││
+                             │                                        ││
+                             │ (re-appears, CDS digest matches)      ││
+                             └────────────────────────────────────────┘
+```
+
+**Key rule:** Keys with `trust_point == 0` (never Valid) require digest verification via `trust_anchor_check()` before entering Pending.
+
+### 6.5 Supported Algorithms
+
+| Algorithm | Code | DNSSEC Use | Notes |
+|-----------|------|-----------|-------|
+| Ed25519 | 15 | KSK/ZSK | Recommended, modern |
+| RSA SHA-256 | 8 | KSK/ZSK | Legacy compatibility |
+
+### 6.6 TSIG Transaction Security
+
+TSIG (RFC 2845) provides **message authentication** for DNS:
+
+```rust
+// tsig.rs - TsigVerifier::verify()
+pub fn verify(&self, ..., original_mac: &[u8], ...) -> Result<(), TsigError> {
+    // 1. Time check (fudge window)
+    let time_diff = time_signed.abs_diff(now);
+    if time_diff > fudge_val { return Err(TsigError::TimeInvalid); }
+
+    // 2. Replay check (cache)
+    if cache.is_replay(&mac_hash) { return Err(TsigError::ReplayAttack); }
+
+    // 3. Key lookup
+    let key = keys.get(key_name)?;
+
+    // 4. MAC verification (constant-time)
+    if !bool::from(computed_mac.ct_eq(original_mac)) {
+        return Err(TsigError::MacVerificationFailed);
+    }
+
+    // 5. Record in replay cache
+    cache.insert(mac_hash);
+}
+```
+
+Supported algorithms: **HMAC-SHA1**, **HMAC-SHA256**, **HMAC-SHA384**, **HMAC-SHA512**
+
+---
+
+## 7. Feature Gates
+
+The DNS module respects the crate-level feature gates:
+
+| Feature | Submodules Included | Notes |
+|---------|-------------------|-------|
+| `dns` | Full DNS module | Primary DNS feature |
+| `mesh` | `mesh_sync`, `anycast_sync`, mesh registry | Mesh mode DNS registration |
+| No features | Core DNS (no mesh) | Standalone authoritative server |
+
+### Compilation Profiles
+
+```bash
+# Core (minimal)
+cargo check --no-default-features
+
+# DNS profile
+cargo check --no-default-features --features dns
+
+# Full (DNS + Mesh)
+cargo check --no-default-features --features dns,mesh
+```
+
+### Feature-conditional Code
+
+```rust
+// server/mod.rs
+#[cfg(feature = "dns")]
+pub(crate) acme_dns_challenges: Option<Arc<crate::tls::AcmeDnsChallenge>>,
+
+#[cfg(feature = "mesh")]
+pub mesh_registry: Option<Arc<MeshDnsRegistry>>,
+
+#[cfg(feature = "mesh")]
+pub zone_sync: Option<Arc<AnycastZoneSync>>,
+
+// mod.rs
+#[cfg(feature = "mesh")]
+pub mod anycast_sync;
+#[cfg(feature = "mesh")]
+pub mod mesh_sync;
+```
+
+---
+
+## 8. Key Configuration Types
+
+### 8.1 RecursiveDnsConfig (via config::dns)
+
+```rust
+pub struct RecursiveDnsConfig {
+    pub enabled: bool,
+    pub bind_address: String,
+    pub port: u16,
+    pub upstream_provider: RecursiveUpstreamProvider,
+    pub upstream_servers: Vec<RecursiveUpstreamServer>,
+    pub cache: RecursiveCacheConfig,
+    pub dnssec_validation: bool,
+    pub qname_minimization: bool,
+    pub query_timeout_secs: u64,
+    pub max_concurrent_queries: usize,
+    pub ratelimit: DnsRateLimitConfig,
+    pub firewall: DnsFirewallConfig,
+    pub root_hints_path: String,
+    pub trust_anchor_path: String,
+}
+
+pub enum RecursiveUpstreamProvider {
+    Recursive,      // Full recursive with DNSSEC
+    GlobalNodes,    // Mesh nodes
+    Google,         // Google DNS (no DNSSEC)
+    Cloudflare,     // Cloudflare DNS (no DNSSEC)
+    System,         // System resolver
+    Custom,         // Custom upstream IPs
+}
+```
+
+### 8.2 TrustAnchorConfig
+
+```rust
+pub struct TrustAnchorConfig {
+    pub enabled: bool,
+    pub db_path: String,
+    pub anchor_file_path: String,
+    pub refresh_interval_secs: u64,
+    pub pending_observation_days: u64,      // Default: 30
+    pub revocation_grace_days: u64,           // Default: 30
+    pub extended_removal_days: u64,           // Default: 60
+    pub trust_anchor_retention_days: u64,     // Default: 7
+    pub allow_key_rotation: bool,
+}
+```
+
+---
+
+## 9. Notable Implementation Details
+
+### 9.1 Query Processing Pipeline (server/query.rs)
+
+The authoritative server processes queries through:
+1. **Parse** - `wire::parse_dns_message()`
+2. **Validate** - `DnsQueryValidator`
+3. **Rate limit** - `DnsRateLimiter::check_ip()`
+4. **Firewall** - `DnsFirewall::evaluate_query()`
+5. **Cookie check** - `DnsCookieServer::validate_cookie()` (RFC 7873)
+6. **Zone lookup** - `ShardedZoneStore` + `ZoneTrie`
+7. **Build response** - Records or NXDOMAIN/SERVFAIL
+
+### 9.2 DNS Cookie Server (RFC 7873)
+
+Cookie validation at `src/dns/server/query.rs:640-658`:
+```rust
+if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
+    if let Some(ref cookie) = edns.cookie {
+        if cookie.server_cookie.is_some() {
+            cookie_valid = cs.validate_cookie(client_ip, &cookie.client_cookie, server_cookie);
+        }
+    }
+}
+```
+
+Uses **constant-time comparison** via `subtle::ConstantTimeEq`.
+
+### 9.3 Response Rate Limiting (RRL)
+
+`server/rate_limit.rs` implements DNS Response Rate Limiting:
+- Token bucket algorithm
+- IPv4/IPv6 rate limiting
+- Whitelist support
+
+### 9.4 Serial Number Management
+
+Zone serial numbers follow RFC 1982 arithmetic:
+```rust
+// server/mod.rs:185 - increment_serial_rfc1982()
+const HALF_RANGE: u32 = 0x80000000;
+current.wrapping_add(1)  // Proper wrap-around handling
+```
+
+### 9.5 Cache Key Structure
+
+```rust
+// recursive_cache.rs - RecursiveCacheKey
+pub struct RecursiveCacheKey {
+    pub qname: Vec<u8>,
+    pub qtype: RecursiveRecordType,
+    pub client_subnet: Option<IpAddr>,  // For EDNS Client Subnet
+}
+```
+
+### 9.6 Wire Format Parsing (wire.rs)
+
+```rust
+pub fn parse_dns_message(msg: &[u8]) -> Result<ParsedMessage, WireError>
+pub fn parse_query_name(msg: &[u8], pos: usize) -> Result<(&[u8str], usize), WireError>
+pub fn build_question(...) -> Vec<u8>
+pub fn build_response_header(...) -> Vec<u8>
+pub fn build_error_response(...) -> Option<Vec<u8>>
+```
+
+### 9.7 Serialization
+
+Trust anchor persistence uses **Postcard** (via `rkyv`) for binary serialization:
+```rust
+#[derive(Archive, RkyvSerialize, RkyvDeserialize)]
+pub struct TrustAnchor { ... }
+```
+
+---
+
+## 10. Known Integration Points
+
+| Item | Location | Description |
+|------|----------|--------------|
+| DNS Cookie wiring | `server/query.rs:640-658` | `validate_cookie()` called for RFC 7873 |
+| Query Coalescer | `query_coalesce.rs:117` | `_max_wait_ms` parameter marked unused |
+| DNSSEC validation | `resolver.rs:423` | `HickoryResolver` always returns `is_dnssec_validated: false` |
+| GlobalNodeResolver | `resolver_global.rs` | Resolves via mesh global nodes |
+| mesh_sync | `anycast_sync.rs` | Mesh-based zone sync |
+
