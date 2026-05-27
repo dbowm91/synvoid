@@ -184,6 +184,24 @@ Implemented for:
 
 Note: The adapters return the built response; actual wire sending is done by the caller.
 
+## Known Issues
+
+### BUG-WAF-3: SiteConnectionLimiter Dead Code
+
+**Severity**: MEDIUM
+**Location**: `src/waf/traffic_shaper/limiter.rs:306-346`
+
+**Issue**: `SiteConnectionLimiter` struct is defined but never instantiated. The per-site connection limiting is handled directly via `try_acquire_with_limits()` call on a global `ConnectionLimiter` with `site_id` passed as parameter.
+
+**Status**: Dead code - consider removal
+
+**Verification**:
+- `src/waf/mod.rs:332-334` creates `ConnectionLimiter` directly, not `SiteConnectionLimiter`
+- No instantiation of `SiteConnectionLimiter` exists in codebase
+- Per-site limiting works via site_id parameter to `try_acquire_with_limits()`
+
+---
+
 ## Skills Reference
 
 - `skills/streaming_waf.md` — Streaming WAF engine patterns

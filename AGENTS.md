@@ -146,9 +146,9 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
-| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED |
-| BUG-ROUTER-1 | `src/router.rs:1318` | Hardcoded port 80 instead of configured port | FIXED |
-| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix); outer router has CORS but nested `/api` routes do not | Known - may be intentional (Admin API uses bearer tokens, not browser CORS) |
+| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED (shared secret comparison verified) |
+| BUG-ROUTER-1 | `src/router.rs` | Hardcoded port 80 instead of configured port | FIXED |
+| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
 
 ### Known Implementation Issues
 
@@ -156,11 +156,20 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |-------|----------|--------|--------|
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method | FIXED 2026-05-27 |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs` | Complete implementation exists and is wired | FIXED 2026-05-27 |
-| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known |
-| Spin cold-start instance reuse | `src/spin/runtime.rs:258` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
+| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - consider removal |
+| Spin cold-start instance reuse | `src/spin/runtime.rs:289-303` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
 | PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Fixed - `allowed_dht_prefixes` and `body_receiver` now properly reset | FIXED 2026-05-27 |
 | WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Fixed - documentation corrected to match actual defaults | FIXED 2026-05-27 |
 | is_admin_required_for_tun stub | `src/platform/mod.rs:166-176` | Fixed - now returns `false` for Unix platforms, `true` for Windows | FIXED 2026-05-27 |
+
+### Known High-Priority Issues (Requires Investigation/Fix)
+
+| Issue | Location | Severity | Description |
+|-------|----------|----------|-------------|
+| BUG-DNS-1 | DNS recursor | HIGH | HickoryRecursor DNSSEC policy always SecurityUnaware even when enable_dnssec=true |
+| BUG-DNS-4 | DNS resolver | HIGH | HickoryResolver always returns is_dnssec_validated: false |
+| BUG-PL-3 | Windows | MEDIUM | WindowsSocketFDPassing returns NotSupported, port-swap mode may not work |
+| BUG-WAF-3 | WAF | MEDIUM | SiteConnectionLimiter not wired into WafCore - per-site limiting may not work |
 
 ### Dependency Vulnerability Status
 
@@ -193,7 +202,6 @@ These items were identified in reviews and have been fixed:
 - BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
-- BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
 - DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`)
 - MESH-15-FIX-1 is_request_complete() lock release (`src/mesh/dht/quorum.rs:412-430`)
 - MESH-15-FIX-4 MeshRaftNetwork::send_raw() retry (`src/mesh/raft/network.rs:53-91` - exponential backoff)

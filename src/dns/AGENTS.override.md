@@ -89,3 +89,32 @@ Cookie validation follows RFC 7873 pattern using constant-time comparison from `
 ### Query Coalescer max_wait_ms Unused (DNS-2 - P2)
 
 At `src/dns/query_coalesce.rs:117`, the parameter `_max_wait_ms` is marked as unused. The `get_or_wait()` method doesn't use this parameter to control broadcast timeout behavior.
+
+## Known High-Priority Issues (Requires Investigation/Fix)
+
+### BUG-DNS-1: HickoryRecursor DNSSEC Policy Always SecurityUnaware
+
+**Severity**: HIGH
+**Location**: `src/dns/server.rs` or `src/dns/recursive.rs`
+
+**Issue**: Even when `enable_dnssec=true` is configured, the HickoryRecursor uses `SecurityUnaware` policy, meaning DNSSEC validation is not actually performed.
+
+**Analysis**:
+- Check `hickory_proto::config::SecOpts` for `authentic_data` / `check_dnssec` settings
+- HickoryRecursor may need `with_security_policy()` builder method
+- Requires investigation of hickory 0.26+ API for DNSSEC policy configuration
+
+**Verification**:
+```bash
+cargo test --lib dns
+# Also manual testing with dnsviz or dig +dnssec
+```
+
+### BUG-DNS-4: HickoryResolver always returns is_dnssec_validated: false
+
+**Severity**: HIGH
+**Location**: `src/dns/resolver.rs` or similar
+
+**Issue**: The resolver unconditionally returns `is_dnssec_validated: false` regardless of actual DNSSEC validation results.
+
+**Required Fix**: Wire actual DNSSEC validation status from hickory into the response.
