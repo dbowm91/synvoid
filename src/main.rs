@@ -170,6 +170,9 @@ struct Args {
     )]
     control_addr: Option<String>,
 
+    #[arg(long, help = "Use TLS for Supervisor control API (gRPC)")]
+    control_api_tls: bool,
+
     #[arg(long, help = "Export OpenAPI spec as JSON and exit")]
     export_openapi: bool,
 
@@ -391,7 +394,7 @@ fn main() {
     }
 
     if args.status {
-        if let Err(e) = handle_status(args.control_addr) {
+        if let Err(e) = handle_status(args.control_addr, args.control_api_tls) {
             eprintln!("Status check failed: {}", e);
             std::process::exit(1);
         }
@@ -399,7 +402,7 @@ fn main() {
     }
 
     if args.stop {
-        if let Err(e) = handle_stop(args.control_addr) {
+        if let Err(e) = handle_stop(args.control_addr, args.control_api_tls) {
             eprintln!("Stop failed: {}", e);
             std::process::exit(1);
         }
@@ -407,7 +410,7 @@ fn main() {
     }
 
     if args.rehash {
-        if let Err(e) = handle_rehash(args.control_addr) {
+        if let Err(e) = handle_rehash(args.control_addr, args.control_api_tls) {
             eprintln!("Reload failed: {}", e);
             std::process::exit(1);
         }
@@ -430,7 +433,7 @@ fn main() {
     }
 
     if args.restart {
-        if let Err(e) = handle_stop(args.control_addr) {
+        if let Err(e) = handle_stop(args.control_addr, args.control_api_tls) {
             eprintln!(
                 "Warning: Restart may fail - could not stop existing instance: {}",
                 e

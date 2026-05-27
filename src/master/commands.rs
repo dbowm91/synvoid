@@ -9,12 +9,16 @@ use crate::mesh::protocol::MeshMessageSigner;
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
 use crate::process::{CommandClient, MasterCommand, PidFileManager};
 
-pub fn handle_status(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_status(
+    control_addr: Option<String>,
+    use_tls: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(content) = pid_manager.read_pid() {
         if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+            let client =
+                CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
             match client.get_status() {
                 Ok(status) => {
@@ -84,12 +88,16 @@ pub fn handle_status(control_addr: Option<String>) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-pub fn handle_stop(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_stop(
+    control_addr: Option<String>,
+    use_tls: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(_content) = pid_manager.read_pid() {
         if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+            let client =
+                CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
             match client.send_command(MasterCommand::Stop { graceful: true }) {
                 Ok(msg) => {
@@ -122,12 +130,16 @@ pub fn handle_stop(control_addr: Option<String>) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-pub fn handle_rehash(control_addr: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_rehash(
+    control_addr: Option<String>,
+    use_tls: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(_content) = pid_manager.read_pid() {
         if pid_manager.is_running() {
-            let client = CommandClient::new(Some(pid_manager.socket_file_path()), control_addr);
+            let client =
+                CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
             match client.send_command(MasterCommand::ReloadConfig) {
                 Ok(msg) => {

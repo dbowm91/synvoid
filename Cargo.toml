@@ -242,7 +242,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 base32 = "0.5"
 libc = "0.2"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Console", "Win32_Networking_WinSock", "Win32_Security"] }
-tonic = { version = "0.14", features = ["gzip", "transport"] }
+tonic = { version = "0.14", features = ["gzip", "transport", "tls-native-roots"] }
 tonic-reflection = "0.14"
 tonic-prost = "0.14"
 

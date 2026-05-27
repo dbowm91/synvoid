@@ -78,6 +78,52 @@ impl From<crate::config::TlsConfig> for InternalTlsConfig {
     }
 }
 
+impl From<InternalTlsConfig> for crate::config::TlsConfig {
+    fn from(config: InternalTlsConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            cert_path: config.cert_path.map(|p| p.to_string_lossy().into_owned()),
+            key_path: config.key_path.map(|p| p.to_string_lossy().into_owned()),
+            watch_dir: config.watch_dir.map(|p| p.to_string_lossy().into_owned()),
+            prefer_post_quantum: config.prefer_post_quantum,
+            tls_1_3_only: config.tls_1_3_only,
+            enable_tls_12_fallback: config.enable_tls_12_fallback,
+            ocsp_stapling_enabled: config.ocsp_stapling_enabled,
+            ocsp_response_path: config.ocsp_response_path.map(|p| p.to_string_lossy().into_owned()),
+            port: config.port,
+            acme: crate::config::AcmeConfig::from(config.acme),
+            client_auth: crate::config::ClientAuthConfig::from(config.client_auth),
+            strict_protocol_validation: false,
+        }
+    }
+}
+
+impl From<InternalAcmeConfig> for crate::config::AcmeConfig {
+    fn from(config: InternalAcmeConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            email: config.email,
+            cache_dir: config.cache_dir.map(|p| p.to_string_lossy().into_owned()),
+            staging: config.staging,
+            domains: config.domains,
+            challenge_type: match config.challenge_type {
+                InternalAcmeChallengeType::Http01 => crate::config::AcmeChallengeType::Http01,
+                InternalAcmeChallengeType::Dns01 => crate::config::AcmeChallengeType::Dns01,
+            },
+            terms_of_service_agreed: config.terms_of_service_agreed,
+        }
+    }
+}
+
+impl From<InternalClientAuthConfig> for crate::config::ClientAuthConfig {
+    fn from(config: InternalClientAuthConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            ca_cert_path: config.ca_cert_path.map(|p| p.to_string_lossy().into_owned()),
+        }
+    }
+}
+
 impl From<crate::config::ClientAuthConfig> for InternalClientAuthConfig {
     fn from(config: crate::config::ClientAuthConfig) -> Self {
         Self {

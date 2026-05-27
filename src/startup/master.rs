@@ -519,6 +519,11 @@ async fn run_master(
         ipc_enforce_signing: main_config.security.ipc_enforce_signing,
         allow_insecure_ipc_key: main_config.security.allow_insecure_ipc_key,
         ipc_rate_limit: Default::default(),
+        control_api_tls: main_config
+            .supervisor
+            .control_api_tls
+            .clone()
+            .map(Into::into),
     };
 
     let (process_manager, mut event_rx) =

@@ -3,6 +3,8 @@ use tonic::{Request, Response, Status};
 
 use crate::process::ProcessManager;
 use crate::supervisor::state::SupervisorState;
+use crate::tls::config::InternalTlsConfig;
+use tonic::transport::{Identity, ServerTlsConfig};
 
 // Import generated types
 pub mod proto {
@@ -130,12 +132,42 @@ pub async fn start_grpc_server(
     addr: std::net::SocketAddr,
     process_manager: Arc<ProcessManager>,
     state: SupervisorState,
+    tls_config: Option<InternalTlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service = ControlPlaneService::new(process_manager, state);
 
-    tracing::info!("Starting Control Plane gRPC server on {}", addr);
+    let protocol_str = if tls_config.as_ref().map_or(false, |c| c.enabled) {
+        "TLS"
+    } else {
+        "plain"
+    };
+    tracing::info!(
+        "Starting Control Plane gRPC server on {} ({})",
+        addr,
+        protocol_str
+    );
 
-    tonic::transport::Server::builder()
+    let mut server_builder = tonic::transport::Server::builder();
+
+    if let Some(ref tls) = tls_config {
+        if tls.enabled {
+            let cert_path = tls
+                .cert_path
+                .as_ref()
+                .ok_or("TLS enabled but no cert_path")?;
+            let key_path = tls.key_path.as_ref().ok_or("TLS enabled but no key_path")?;
+
+            let cert_pem = std::fs::read(cert_path)?;
+            let key_pem = std::fs::read(key_path)?;
+
+            let identity = Identity::from_pem(&cert_pem, &key_pem);
+            let tls_config = ServerTlsConfig::new().identity(identity);
+
+            server_builder = server_builder.tls_config(tls_config)?;
+        }
+    }
+
+    server_builder
         .add_service(ControlPlaneServer::new(service))
         .serve(addr)
         .await?;

@@ -169,7 +169,7 @@ impl DnsServer {
                 crate::dns::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
 
             if let Some(key) = query_key {
-                match coalescer.get_or_wait(key.clone()) {
+                match coalescer.get_or_wait(key.clone()).await {
                     Some(crate::dns::query_coalesce::CoalesceResult::Response(resp)) => Some(resp),
                     Some(crate::dns::query_coalesce::CoalesceResult::NewQuery(_)) => {
                         if let Some(c) = ctx.cache {

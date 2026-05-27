@@ -9,6 +9,4 @@ pub use global::{
     BandwidthDirection, BandwidthLimitExceeded, GlobalTrafficShaper, SiteTrafficLimits,
     SiteTrafficShaper,
 };
-pub use limiter::{
-    ConnectionLimitError, ConnectionLimiter, ConnectionToken,
-};
+pub use limiter::{ConnectionLimitError, ConnectionLimiter, ConnectionToken};

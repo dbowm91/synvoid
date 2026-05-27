@@ -139,11 +139,23 @@ impl SupervisorProcess {
             .supervisor
             .control_api_addr
             .parse();
+        let control_api_tls = self
+            .state
+            .config
+            .read()
+            .await
+            .main
+            .supervisor
+            .control_api_tls
+            .clone()
+            .map(crate::tls::config::InternalTlsConfig::from);
         if let Ok(addr) = grpc_addr {
             let pm = self.process_manager.clone();
             let state = self.state.clone();
             tokio::spawn(async move {
-                if let Err(e) = super::api::start_grpc_server(addr, pm, state).await {
+                if let Err(e) =
+                    super::api::start_grpc_server(addr, pm, state, control_api_tls).await
+                {
                     tracing::error!("Failed to start gRPC control server: {}", e);
                 }
             });
@@ -390,6 +402,11 @@ pub fn run_supervisor_mode(
         unified_server_workers: main_config.defaults.worker_pool.workers.max(1),
         master_socket_path: pid_manager.socket_file_path(),
         control_api_addr: main_config.supervisor.control_api_addr.clone(),
+        control_api_tls: main_config
+            .supervisor
+            .control_api_tls
+            .clone()
+            .map(Into::into),
         ..ProcessManagerConfig::default()
     };
 

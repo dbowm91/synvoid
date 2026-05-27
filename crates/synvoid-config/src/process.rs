@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use utoipa::ToSchema;
 
+use crate::tls::TlsConfig;
+
 pub struct Defaults;
 
 impl Defaults {
@@ -151,6 +153,10 @@ impl Default for OverseerConfig {
     }
 }
 
+fn default_control_api_addr() -> String {
+    "127.0.0.1:50051".to_string()
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
 pub struct ProcessManagerConfig {
     #[serde(default = "default_min_workers")]
@@ -179,10 +185,8 @@ pub struct ProcessManagerConfig {
     pub health_check_interval_secs: u64,
     #[serde(default = "default_control_api_addr")]
     pub control_api_addr: String,
-}
-
-fn default_control_api_addr() -> String {
-    "127.0.0.1:50051".to_string()
+    #[serde(default)]
+    pub control_api_tls: Option<TlsConfig>,
 }
 
 impl Default for ProcessManagerConfig {
@@ -201,6 +205,7 @@ impl Default for ProcessManagerConfig {
             warm_workers_target: 2,
             health_check_interval_secs: 5,
             control_api_addr: default_control_api_addr(),
+            control_api_tls: None,
         }
     }
 }
@@ -229,6 +234,8 @@ pub struct SupervisorConfig {
     pub graceful_shutdown_timeout_secs: u64,
     #[serde(default = "default_control_api_addr")]
     pub control_api_addr: String,
+    #[serde(default)]
+    pub control_api_tls: Option<TlsConfig>,
 }
 
 impl Default for SupervisorConfig {
@@ -245,6 +252,7 @@ impl Default for SupervisorConfig {
             health_check_interval_secs: 5,
             graceful_shutdown_timeout_secs: 30,
             control_api_addr: default_control_api_addr(),
+            control_api_tls: None,
         }
     }
 }

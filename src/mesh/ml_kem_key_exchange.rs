@@ -253,7 +253,11 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
             })?;
 
         use subtle::ConstantTimeEq;
-        if decapsulated_secret.as_ref().ct_eq(session.session_key.as_ref()).into() {
+        if decapsulated_secret
+            .as_ref()
+            .ct_eq(session.session_key.as_ref())
+            .into()
+        {
             tracing::debug!(
                 "ML-KEM key confirm verified: session_id={}, shared_secret_present=true",
                 session_id
@@ -263,7 +267,10 @@ impl GrpcMlKemKeyExchangeService for MlKemKeyExchangeService {
                 error: String::new(),
             }))
         } else {
-            tracing::warn!("ML-KEM key confirm failed: shared secret mismatch for session_id={}", session_id);
+            tracing::warn!(
+                "ML-KEM key confirm failed: shared secret mismatch for session_id={}",
+                session_id
+            );
             Ok(Response::new(MlKemKeyConfirmResponse {
                 success: false,
                 error: "Shared secret mismatch".to_string(),

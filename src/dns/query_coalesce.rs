@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use metrics::Gauge;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
+use tokio::time::timeout;
 
 static COALESCER_HITS: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_hits_total"));
@@ -92,6 +93,7 @@ pub struct QueryCoalescer {
     in_flight: Arc<RwLock<HashMap<QueryKey, CoalescerEntry>>>,
     max_entries: usize,
     entry_ttl: Duration,
+    max_wait: Duration,
     metrics: Arc<RwLock<QueryCoalescerMetrics>>,
 }
 
@@ -101,53 +103,61 @@ impl QueryCoalescer {
             in_flight: Arc::new(RwLock::new(HashMap::new())),
             max_entries: 10000,
             entry_ttl: Duration::from_secs(30),
+            max_wait: Duration::from_millis(500),
             metrics: Arc::new(RwLock::new(QueryCoalescerMetrics::default())),
         }
     }
 
-    pub fn with_max_wait_time(_max_wait_ms: u64) -> Self {
+    pub fn with_max_wait_time(max_wait_ms: u64) -> Self {
         Self {
             in_flight: Arc::new(RwLock::new(HashMap::new())),
             max_entries: 10000,
             entry_ttl: Duration::from_secs(30),
+            max_wait: Duration::from_millis(max_wait_ms),
             metrics: Arc::new(RwLock::new(QueryCoalescerMetrics::default())),
         }
     }
 
-    pub fn with_config(_max_wait_ms: u64, max_entries: usize, entry_ttl_secs: u64) -> Self {
+    pub fn with_config(max_wait_ms: u64, max_entries: usize, entry_ttl_secs: u64) -> Self {
         Self {
             in_flight: Arc::new(RwLock::new(HashMap::new())),
             max_entries,
             entry_ttl: Duration::from_secs(entry_ttl_secs),
+            max_wait: Duration::from_millis(max_wait_ms),
             metrics: Arc::new(RwLock::new(QueryCoalescerMetrics::default())),
         }
     }
 
-    pub fn get_or_wait(&self, key: QueryKey) -> Option<CoalesceResult> {
-        let mut in_flight = self.in_flight.write();
+    pub async fn get_or_wait(&self, key: QueryKey) -> Option<CoalesceResult> {
+        // Check if there's an existing query to coalesce with
+        // Extract the receiver outside the lock to avoid Send issues
+        let opt_receiver = {
+            let in_flight = self.in_flight.read();
+            if let Some(entry) = in_flight.get(&key) {
+                Some(entry.sender.subscribe())
+            } else {
+                None
+            }
+        };
 
-        if let Some(entry) = in_flight.get(&key) {
-            let mut receiver = entry.sender.subscribe();
-            drop(in_flight);
-
-            // Use try_recv for non-blocking receive
-            match receiver.try_recv() {
-                Ok(response) => {
+        // Now await with the receiver, no lock held
+        if let Some(mut receiver) = opt_receiver {
+            match timeout(self.max_wait, receiver.recv()).await {
+                Ok(Ok(response)) => {
                     self.metrics.write().hits += 1;
                     COALESCER_HITS.increment(1.0);
                     return Some(CoalesceResult::Response(response));
                 }
-                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
                     self.metrics.write().lagged += 1;
                     COALESCER_LAGGED.increment(1.0);
                     tracing::debug!("Coalescer lagged {} messages for {:?}", n, key);
                     return Some(CoalesceResult::Lagged);
                 }
-                Err(broadcast::error::TryRecvError::Closed) => {
+                Ok(Err(broadcast::error::RecvError::Closed)) => {
                     return None;
                 }
-                Err(broadcast::error::TryRecvError::Empty) => {
-                    // Message not ready yet - return Timeout to indicate caller should wait
+                Err(_) => {
                     self.metrics.write().timeouts += 1;
                     COALESCER_TIMEOUTS.increment(1.0);
                     return Some(CoalesceResult::Timeout);
@@ -155,10 +165,17 @@ impl QueryCoalescer {
             }
         }
 
-        if in_flight.len() >= self.max_entries {
-            self.evict_oldest(&mut in_flight);
+        // Check if we need to evict, then insert
+        {
+            let in_flight = self.in_flight.read();
+            if in_flight.len() >= self.max_entries {
+                drop(in_flight);
+                let mut in_flight = self.in_flight.write();
+                self.evict_oldest(&mut in_flight);
+            }
         }
 
+        let mut in_flight = self.in_flight.write();
         let (tx, _) = broadcast::channel(1);
         let entry = CoalescerEntry {
             sender: tx.clone(),
@@ -307,7 +324,7 @@ mod tests {
             client_ip: None,
         };
 
-        let result = coalescer.get_or_wait(key.clone());
+        let result = coalescer.get_or_wait(key.clone()).await;
         assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
     }
 
@@ -322,14 +339,11 @@ mod tests {
 
         let response = Arc::new(vec![0x00, 0x01, 0x02, 0x03]);
 
-        // First, get_or_wait to establish a listener
-        let _ = coalescer.get_or_wait(key.clone());
+        let _ = coalescer.get_or_wait(key.clone()).await;
 
-        // Then broadcast - the listener should receive it
         coalescer.broadcast_response(key.clone(), response.clone());
 
-        // Now get_or_wait again - should receive the broadcast
-        let result = coalescer.get_or_wait(key);
+        let result = coalescer.get_or_wait(key).await;
 
         // The result should either be a Response (if timing worked out) or NewQuery (if not)
         // This test may be timing-dependent
@@ -352,8 +366,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_max_entries_eviction() {
+    #[tokio::test]
+    async fn test_max_entries_eviction() {
         let coalescer = QueryCoalescer::with_config(500, 3, 30);
 
         for i in 0..5 {
@@ -362,15 +376,15 @@ mod tests {
                 qtype: 1,
                 client_ip: None,
             };
-            coalescer.get_or_wait(key);
+            coalescer.get_or_wait(key).await;
         }
 
         assert_eq!(coalescer.in_flight_count(), 3);
         assert_eq!(coalescer.metrics().evictions, 2);
     }
 
-    #[test]
-    fn test_metrics() {
+    #[tokio::test]
+    async fn test_metrics() {
         let coalescer = QueryCoalescer::new();
 
         let key = QueryKey {
@@ -379,15 +393,11 @@ mod tests {
             client_ip: None,
         };
 
-        // First call creates a new entry - this is a miss
-        coalescer.get_or_wait(key.clone());
-
-        // Second and third calls find existing entry - these time out (non-blocking)
-        coalescer.get_or_wait(key.clone());
-        coalescer.get_or_wait(key);
+        coalescer.get_or_wait(key.clone()).await;
+        coalescer.get_or_wait(key.clone()).await;
+        coalescer.get_or_wait(key).await;
 
         let metrics = coalescer.metrics();
-        // First call is a miss, subsequent calls timeout because no response was broadcast
         assert_eq!(metrics.misses, 1, "Should have 1 miss for first call");
         assert_eq!(
             metrics.timeouts, 2,

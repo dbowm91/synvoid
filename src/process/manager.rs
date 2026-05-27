@@ -52,6 +52,7 @@ pub struct ProcessManagerConfig {
     pub warm_workers_target: usize,
     pub health_check_interval_secs: u64,
     pub control_api_addr: String,
+    pub control_api_tls: Option<crate::tls::config::InternalTlsConfig>,
     pub ipc_session_key: Option<[u8; 32]>,
     pub ipc_enforce_signing: bool,
     pub allow_insecure_ipc_key: bool,
@@ -79,6 +80,7 @@ impl Default for ProcessManagerConfig {
             warm_workers_target: 2,
             health_check_interval_secs: 5,
             control_api_addr: "127.0.0.1:50051".to_string(),
+            control_api_tls: None,
             ipc_session_key: session_key,
             ipc_enforce_signing: true,
             allow_insecure_ipc_key: false,
@@ -173,6 +175,7 @@ impl ProcessManager {
             warm_workers_target: config.warm_workers_target,
             health_check_interval_secs: config.health_check_interval_secs,
             control_api_addr: config.control_api_addr.clone(),
+            control_api_tls: config.control_api_tls.clone().map(|c| c.into()),
         };
 
         let mut sys = sysinfo::System::new();
@@ -340,6 +343,7 @@ impl ProcessManager {
             warm_workers_target: dynamic.warm_workers_target,
             health_check_interval_secs: dynamic.health_check_interval_secs,
             control_api_addr: dynamic.control_api_addr.clone(),
+            control_api_tls: dynamic.control_api_tls.clone().map(|c| c.into()),
         }
     }
 

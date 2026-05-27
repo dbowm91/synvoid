@@ -411,7 +411,12 @@ impl QuorumManager {
     }
 
     pub async fn is_request_complete(&self, request_id: &str) -> bool {
-        if !self.pending_raft_requests.read().await.contains_key(request_id) {
+        if !self
+            .pending_raft_requests
+            .read()
+            .await
+            .contains_key(request_id)
+        {
             return true;
         }
 

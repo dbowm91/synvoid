@@ -351,7 +351,7 @@ impl DnsServer {
                                 let response = if let Some(coalescer) = &ctx.query_coalescer {
 
                                     if let Some(key) = query_key {
-                                        match coalescer.get_or_wait(key.clone()) {
+                                        match coalescer.get_or_wait(key.clone()).await {
                                             Some(crate::dns::query_coalesce::CoalesceResult::Response(resp)) => {
                                                 Some(resp)
                                             }
@@ -733,7 +733,7 @@ impl DnsServer {
                                 let response = if let Some(coalescer) = &ctx.query_coalescer {
 
                                     if let Some(key) = query_key {
-                                        match coalescer.get_or_wait(key.clone()) {
+                                        match coalescer.get_or_wait(key.clone()).await {
                                             Some(crate::dns::query_coalesce::CoalesceResult::Response(resp)) => {
                                                 Some(resp)
                                             }

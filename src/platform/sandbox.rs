@@ -1019,11 +1019,14 @@ pub mod darwin {
         }
 
         fn is_supported() -> bool {
-            #[cfg(feature = "macos-sandbox")]
+            #[cfg(all(target_os = "macos", feature = "macos-sandbox"))]
             {
-                true
+                use libc::dlsym;
+
+                let sym = unsafe { dlsym(libc::RTLD_DEFAULT, b"sandbox_init\0".as_ptr().cast()) };
+                !sym.is_null()
             }
-            #[cfg(not(feature = "macos-sandbox"))]
+            #[cfg(not(all(target_os = "macos", feature = "macos-sandbox")))]
             {
                 false
             }
@@ -1081,6 +1084,14 @@ pub mod darwin {
             {
                 use std::ffi::CStr;
 
+                if !Self::is_supported() {
+                    tracing::warn!(
+                        "macOS Seatbelt sandbox not available at runtime. \
+                         OS-level sandboxing is not active."
+                    );
+                    return Err(SandboxError::NotSupported("Seatbelt not available".into()));
+                }
+
                 let profile_cstr =
                     CStr::from_bytes_with_nul(format!("{}\0", profile).as_bytes())
                         .map_err(|_| SandboxError::Syscall("Invalid sandbox profile".into()))?;
@@ -1111,10 +1122,12 @@ pub mod darwin {
             #[cfg(not(all(target_os = "macos", feature = "macos-sandbox")))]
             {
                 let _ = profile;
-                tracing::info!(
-                    "macOS seatbelt sandbox profile compiled (sandbox disabled - enable 'macos-sandbox' feature for actual enforcement)"
+                tracing::warn!(
+                    "macOS seatbelt sandbox compiled but disabled - enable 'macos-sandbox' feature for actual enforcement"
                 );
-                Ok(())
+                Err(SandboxError::NotSupported(
+                    "Seatbelt sandbox disabled".into(),
+                ))
             }
         }
 

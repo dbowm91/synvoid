@@ -14,11 +14,12 @@ use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 pub struct CommandClient {
     socket_path: Option<PathBuf>,
     grpc_addr: Option<String>,
+    use_tls: bool,
     method: super::ipc::CommandMethod,
 }
 
 impl CommandClient {
-    pub fn new(socket_path: Option<PathBuf>, grpc_addr: Option<String>) -> Self {
+    pub fn new(socket_path: Option<PathBuf>, grpc_addr: Option<String>, use_tls: bool) -> Self {
         let method = if let Some(ref addr) = grpc_addr {
             super::ipc::CommandMethod::GRpc
         } else if socket_path.as_ref().map(|p| p.exists()).unwrap_or(false) {
@@ -44,6 +45,7 @@ impl CommandClient {
         Self {
             socket_path,
             grpc_addr,
+            use_tls,
             method,
         }
     }
@@ -74,7 +76,9 @@ impl CommandClient {
             use crate::supervisor::api::proto::control_plane_client::ControlPlaneClient;
             use crate::supervisor::api::proto::{ReloadRequest, StatusRequest, StopRequest};
 
-            let mut client = ControlPlaneClient::connect(format!("http://{}", addr))
+            let scheme = if self.use_tls { "https" } else { "http" };
+            let uri = format!("{}://{}", scheme, addr);
+            let mut client = ControlPlaneClient::connect(uri)
                 .await
                 .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
@@ -298,7 +302,9 @@ impl CommandClient {
                     use crate::supervisor::api::proto::control_plane_client::ControlPlaneClient;
                     use crate::supervisor::api::proto::StatusRequest;
 
-                    let mut client = ControlPlaneClient::connect(format!("http://{}", addr))
+                    let scheme = if self.use_tls { "https" } else { "http" };
+                    let uri = format!("{}://{}", scheme, addr);
+                    let mut client = ControlPlaneClient::connect(uri)
                         .await
                         .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 

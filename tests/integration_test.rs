@@ -155,6 +155,7 @@ mod tests {
             warm_workers_target: 2,
             health_check_interval_secs: 5,
             control_api_addr: "127.0.0.1:50051".to_string(),
+            control_api_tls: None,
             ipc_session_key: None,
             ipc_enforce_signing: false,
             ipc_rate_limit: Default::default(),
