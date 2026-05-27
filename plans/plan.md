@@ -50,16 +50,15 @@ cargo test --lib dns
 ### BUG-DNS-4: HickoryResolver (Forwarder) Always Returns is_dnssec_validated: false
 
 **Priority**: HIGH
-**Status**: Active (PARTIAL - Recursor mode is correct)
+**Status**: ✅ DONE (Documented - See skills/dns_dnssec.md:130-146)
 **Location**: `src/dns/resolver.rs:420-429`
 
 **Issue**: The `HickoryResolver` (forwarder mode) unconditionally returns `is_dnssec_validated: false`. Note: `HickoryRecursor` (recursive mode) correctly propagates `lookup.authentic_data`.
 
-**Note**: This is by design for forwarder mode since hickory-resolver's API doesn't expose validation status. The comment at line 422-424 acknowledges this.
-
-**Required Fix Options**:
-1. Document that forwarder mode cannot do DNSSEC validation (known limitation)
-2. Route forwarder through recursor when DNSSEC is required
+**Note**: This is by design for forwarder mode since hickory-resolver's API doesn't expose validation status. The skill documentation at `skills/dns_dnssec.md:130-146` already explains:
+- Forwarder mode does NOT perform DNSSEC validation
+- This is by design, not a bug
+- To get DNSSEC validation, use `upstream_provider = "Recursive"` with `dnssec_validation = true`
 
 ---
 
