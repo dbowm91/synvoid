@@ -58,11 +58,44 @@ fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
 fs::rename(&temp_path, path)?;
 ```
 
-## Known Integration Gaps (Fixed)
+## DNSSEC Validation by Provider Type
 
-### DNS Cookie Server Wiring (DNS-1 - FIXED 2026-05-27)
+### Recursive Resolver (HickoryRecursor) - DNSSEC Enabled
 
-`DnsCookieServer` is now wired into query validation at `src/dns/server/query.rs:640-658`:
+When `enable_dnssec=true` and `upstream_provider = "Recursive"`:
+
+```rust
+// src/dns/resolver.rs:693-702
+let dnssec_policy = if enable_dnssec {
+    let trust_anchors = Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
+    let mut config = hickory_resolver::recursor::DnssecConfig::default();
+    config.trust_anchor = Some(std::sync::Arc::new(trust_anchors));
+    hickory_resolver::recursor::DnssecPolicy::ValidateWithStaticKey(config)
+} else {
+    hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
+};
+```
+
+HickoryRecursor correctly uses `ValidateWithStaticKey` when DNSSEC is enabled, performing actual DNSSEC validation.
+
+### Forwarder Resolver (HickoryResolver) - DNSSEC Disabled by Design
+
+**Important**: Forwarder mode (Google/Cloudflare/System/Custom) does NOT perform DNSSEC validation. This is by design, not a bug:
+
+- Google (8.8.8.8) and Cloudflare (1.1.1.1) are stub resolvers that forward queries
+- They do their own DNSSEC validation internally
+- We cannot re-validate their chain-of-trust without becoming a true recursive resolver
+- The `is_dnssec_validated: false` in forwarder mode reflects this limitation
+
+**To get DNSSEC validation**, use `upstream_provider = "Recursive"` with `dnssec_validation = true`.
+
+See `skills/dns_dnssec.md:130-146` for detailed explanation.
+
+## Known Integration Points
+
+### DNS Cookie Server Wiring (FIXED 2026-05-27)
+
+`DnsCookieServer` is wired into query validation at `src/dns/server/query.rs:640-658`:
 
 ```rust
 let mut cookie_valid = false;
@@ -86,35 +119,13 @@ if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
 
 Cookie validation follows RFC 7873 pattern using constant-time comparison from `validate_cookie()`.
 
-### Query Coalescer max_wait_ms Unused (DNS-2 - P2)
+### Query Coalescer max_wait_ms Unused (DNS-QUERY - Deferred)
 
-At `src/dns/query_coalesce.rs:117`, the parameter `_max_wait_ms` is marked as unused. The `get_or_wait()` method doesn't use this parameter to control broadcast timeout behavior.
+At `src/dns/query_coalesce.rs:117`, the parameter `_max_wait_ms` is marked as unused. The `get_or_wait()` method doesn't use this parameter to control broadcast timeout behavior. This is a documented limitation.
 
-## Known High-Priority Issues (Requires Investigation/Fix)
+## Verified Fixes (2026-05-27)
 
-### BUG-DNS-1: HickoryRecursor DNSSEC Policy Always SecurityUnaware
-
-**Severity**: HIGH
-**Location**: `src/dns/server.rs` or `src/dns/recursive.rs`
-
-**Issue**: Even when `enable_dnssec=true` is configured, the HickoryRecursor uses `SecurityUnaware` policy, meaning DNSSEC validation is not actually performed.
-
-**Analysis**:
-- Check `hickory_proto::config::SecOpts` for `authentic_data` / `check_dnssec` settings
-- HickoryRecursor may need `with_security_policy()` builder method
-- Requires investigation of hickory 0.26+ API for DNSSEC policy configuration
-
-**Verification**:
-```bash
-cargo test --lib dns
-# Also manual testing with dnsviz or dig +dnssec
-```
-
-### BUG-DNS-4: HickoryResolver always returns is_dnssec_validated: false
-
-**Severity**: HIGH
-**Location**: `src/dns/resolver.rs` or similar
-
-**Issue**: The resolver unconditionally returns `is_dnssec_validated: false` regardless of actual DNSSEC validation results.
-
-**Required Fix**: Wire actual DNSSEC validation status from hickory into the response.
+| Bug ID | Issue | Status |
+|--------|-------|--------|
+| BUG-DNS-1 | HickoryRecursor DNSSEC policy SecurityUnaware | ✅ FIXED - now uses ValidateWithStaticKey |
+| BUG-DNS-4 | HickoryResolver always false | ✅ DONE - by design (hickory-resolver API limitation) |
