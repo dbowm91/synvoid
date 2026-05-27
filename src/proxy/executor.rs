@@ -8,7 +8,9 @@ use http::{HeaderMap, Method, Request, Response};
 
 use crate::config::site::SiteProxyConfig;
 use crate::config::SiteSecurityHeadersConfig;
-use crate::http_client::HttpClient;
+use crate::http_client::{
+    send_request_erased_streaming, ErasedBodyImpl, ErasedHttpClient, HttpClient,
+};
 use crate::proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache};
 use crate::utils;
 
@@ -99,7 +101,9 @@ pub struct ProxyExecutor {
     pub site_id: String,
     pub upstream_url: String,
     pub client: HttpClient,
+    pub erased_client: ErasedHttpClient,
     pub revalidation_client: HttpClient,
+    pub is_http2: bool,
 }
 
 impl ProxyExecutor {
@@ -206,23 +210,28 @@ impl ProxyExecutor {
             ForwardedProtocol::Https,
         );
 
-        match crate::http_client::send_request_with_body_headers_and_timeout(
-            &self.client,
+        let body = body.unwrap_or_default();
+        let erased_body = ErasedBodyImpl::from_full(http_body_util::Full::new(body));
+
+        match send_request_erased_streaming(
+            &self.erased_client,
             method,
             &url,
-            body,
+            erased_body,
             forward_headers,
             Some(Duration::from_secs(30)),
+            self.is_http2,
         )
         .await
         {
             Ok(resp) => {
-                let mut builder = Response::builder().status(resp.status);
-                for (k, v) in resp.headers.iter() {
+                let hyper_resp = crate::http_client::HttpResponse::from_hyper(resp, None).await;
+                let mut builder = Response::builder().status(hyper_resp.status);
+                for (k, v) in hyper_resp.headers.iter() {
                     builder = builder.header(k, v);
                 }
                 Ok(builder
-                    .body(resp.body)
+                    .body(hyper_resp.body)
                     .unwrap_or_else(|_| crate::http::fallback_error_bytes()))
             }
             Err(e) => Err(e.to_string()),
@@ -288,7 +297,9 @@ impl ProxyExecutor {
         }
 
         let reval_client = self.revalidation_client.clone();
+        let erased_client = self.erased_client.clone();
         let upstream_url = self.upstream_url.clone();
+        let is_http2 = self.is_http2;
         let reval_headers = build_forward_headers(
             client_ip,
             original_headers,
@@ -303,26 +314,30 @@ impl ProxyExecutor {
             tracing::debug!("Triggering background revalidation for {}", path);
             let url = join_upstream_url(&upstream_url, &path);
 
-            match crate::http_client::send_request_with_body_headers_and_timeout(
-                &reval_client,
+            let erased_body = ErasedBodyImpl::from_full(http_body_util::Full::new(Bytes::new()));
+
+            match send_request_erased_streaming(
+                &erased_client,
                 method,
                 &url,
-                None,
+                erased_body,
                 reval_headers,
                 Some(Duration::from_secs(5)),
+                is_http2,
             )
             .await
             {
                 Ok(resp) => {
-                    if cache_clone.is_status_cacheable(resp.status.as_u16()) {
+                    let hyper_resp = crate::http_client::HttpResponse::from_hyper(resp, None).await;
+                    if cache_clone.is_status_cacheable(hyper_resp.status.as_u16()) {
                         let allowed_headers = cache_clone.settings().allowed_headers.clone();
                         let filtered_headers =
-                            filter_cacheable_headers(&resp.headers, &allowed_headers);
+                            filter_cacheable_headers(&hyper_resp.headers, &allowed_headers);
                         let max_age = get_cache_max_age_static(&filtered_headers);
                         if let Err(e) = cache_clone.insert(
                             key_clone.clone(),
-                            resp.body,
-                            resp.status.as_u16(),
+                            hyper_resp.body,
+                            hyper_resp.status.as_u16(),
                             filtered_headers,
                             max_age,
                         ) {
