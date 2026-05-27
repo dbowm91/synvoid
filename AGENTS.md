@@ -226,7 +226,7 @@ Some items are intentionally deferred due to architectural complexity:
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API investigation needed |
 | SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
 | MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field |
-| DNS-2 | QueryCoalescer max_wait_ms | Documented limitation, may not be fixable |
+| DNS-QUERY | QueryCoalescer max_wait_ms | Documented limitation, may not be fixable (underscore prefix = unused) |
 | PR-6 | ProxyHeadersConfig not passed through send_single_request | Enhancement, not a bug |
 | BUG-PL-4 | macOS Seatbelt implementation incomplete | Feature-gated, returns false by default |
 
@@ -250,9 +250,9 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **DhtSyncRequest**: `src/mesh/transport_peer.rs:687-704` - authentication gap, no signature verification (deferred - breaking proto change)
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
-- **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `SecurityUnaware` even when `enable_dnssec=true`
+- **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)
 - **HTTP/3 Body Collection**: `src/http3/server.rs:340-398` - ad-hoc implementation, not using shared_handler
-- **BufferPool**: 4 tiers (small/medium/large/jumbo) - documentation incorrectly says 3
+- **BufferPool**: 4 tiers (small/medium/large/jumbo)
 
 ### Process Architecture
 - **Supervisor** manages lifecycle, consolidates Overseer + Master
