@@ -91,6 +91,7 @@ pub struct ProxyServer {
     pool_max_idle_per_host: usize,
     #[allow(dead_code)]
     pool_idle_timeout: Duration,
+    is_http2: bool,
 }
 
 impl ProxyServer {
@@ -194,6 +195,7 @@ impl ProxyServer {
             cache_purge_allowed_ips: Arc::new(HashSet::new()),
             pool_max_idle_per_host,
             pool_idle_timeout,
+            is_http2: false,
         }
     }
 
@@ -215,6 +217,11 @@ impl ProxyServer {
         let vary_by = settings.vary_by.clone();
         self.cache = Some(cache);
         self.cache_key_builder = Some(CacheKeyBuilder::new(key_pattern, vary_by));
+        self
+    }
+
+    pub fn with_http2(mut self, is_http2: bool) -> Self {
+        self.is_http2 = is_http2;
         self
     }
 
@@ -309,6 +316,7 @@ impl ProxyServer {
             cache_purge_allowed_ips: Arc::new(HashSet::new()),
             pool_max_idle_per_host: pool_max_idle,
             pool_idle_timeout: pool_idle,
+            is_http2: false,
         };
         if let Some(pool) = upstream_pool {
             server = server.with_upstream_pool(pool, retry_config, buffering_config);
@@ -1235,7 +1243,7 @@ impl ProxyServer {
             }),
             forward_headers,
             Some(std::time::Duration::from_secs(30)),
-            true,
+            self.is_http2,
         )
         .await?;
 
