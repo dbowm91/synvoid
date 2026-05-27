@@ -4,55 +4,32 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 
 ## Current Status (2026-05-27)
 
-**All wave implementation items completed and pruned from plan**:
-- Wave 1 (BUG-DNS-1, BUG-DNS-4): Completed/Fixed
-- Wave 2 (IMPROVE-1, BUG-HTTP-4, AUTH-1, PROXY-1, BUG-PL-3, BUG-WAF-3, DNS-2): All completed
-- Wave 3 (documentation fixes): Completed
-- Wave 4 (feature enhancements): Completed
-
-Remaining deferred items are documented in `plans/plan.md`.
+**All fixable deferred items completed**:
+- DNS-QUERY (QueryCoalescer max_wait_ms): ✅ Fixed - async redesign
+- SUP-1 (gRPC Control Plane TLS): ✅ Fixed - added TLS support
+- BUG-PL-4 (macOS Seatbelt): ✅ Fixed - runtime detection
+- PR-6 (ProxyHeadersConfig): ✅ Fixed - added field and builder
 
 ---
 
-## Deferred Items (Architectural Changes Required)
+## Remaining Deferred Items (Major Architectural Work)
 
 | ID | Issue | Reason |
 |----|-------|--------|
-| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id vs peer_id via TLS), but no TLS cert chain validation - requires breaking changes |
-| HTTP2-POOL | ErasedHttpClient HTTP/2 support | `Http2PooledConnection` is empty stub - hyper-util API investigation needed |
-| SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
-| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field |
-| DNS-QUERY | QueryCoalescer max_wait_ms | Documented limitation, may not be fixable (underscore prefix = unused) |
-| PR-6 | ProxyHeadersConfig not passed through send_single_request | Enhancement, not a bug |
-| BUG-PL-4 | macOS Seatbelt implementation incomplete | Feature-gated, returns false by default |
+| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
+| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
+| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field, coordinated rollout required |
 
 ---
 
-## Verified Fixes Summary (2026-05-27)
+## Completed Fixes Summary (2026-05-27)
 
-| Bug ID | Issue | Fix |
-|--------|-------|-----|
-| BUG-DNS-1 | HickoryRecursor DNSSEC policy SecurityUnaware | ✅ FIXED - resolver.rs:693-702 now uses ValidateWithStaticKey |
-| BUG-DNS-4 | HickoryResolver always returns false | ✅ DONE - by design (hickory-resolver API limitation for forwarder mode) |
-| IMPROVE-1 | HTTP/3 body collection divergence | ✅ DONE - documented in http3/server.rs:343-348 with explanatory comments |
-| BUG-HTTP-4 | request_body_size double assignment | ✅ FIXED - removed duplicate assignment at server.rs:1579 |
-| AUTH-1 | max_failed_attempts default 5 vs docs 3 | ✅ FIXED - WafCore now uses 3 |
-| PROXY-1 | PeakEwma weighting clarification | ✅ DONE - docs clarify 90% weight to previous value |
-| BUG-PL-3 | Windows Socket FD Passing Not Functional | ✅ DONE - documented in platform.md (Windows uses WSADuplicateSocketW) |
-| BUG-WAF-3 | SiteConnectionLimiter dead code | ✅ FIXED - struct removed from limiter.rs |
-| DNS-2 | DNSSEC ECDSA Algorithm Gap | ✅ DONE - RFC5011_TRUST_ANCHOR.md marks ECDSA as "Not implemented" |
-
----
-
-## Known Implementation Notes
-
-| Item | Location | Issue |
-|------|----------|-------|
-| ErasedHttpClient Phase 9 | `src/http/server.rs:3302` | `use_erased_client` hardcoded to `false` - Phase 9 never completed |
-| HTTP/2 configurable | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method |
-| DNS Cookie Server | `src/dns/cookie.rs` | Fully wired via `validate_cookie()` in query.rs:645-662 |
-| Spin instance reuse | `src/spin/runtime.rs:289-303` | Uses `get_or_create_instance()` caching with 5-min idle timeout |
-| GOST DS digest | `src/dns/dnssec_validation.rs:260` | Returns error - requires gost94 crate |
+| Bug ID | Issue | Fix | Details |
+|--------|-------|-----|---------|
+| DNS-QUERY | QueryCoalescer max_wait_ms unused | Async redesign | Added max_wait Duration field, changed get_or_wait() to async with tokio::timeout |
+| SUP-1 | gRPC Control Plane TLS not implemented | TLS support added | Added control_api_tls config, tonic TLS support, --control-api-tls CLI flag |
+| BUG-PL-4 | macOS Seatbelt silent failure | Runtime detection | Added dlsym(RTLD_DEFAULT, "sandbox_init") check, proper error handling |
+| PR-6 | ProxyHeadersConfig not passed | Field added | Added proxy_headers_config field to ProxyServer, builder method, apply in send_single_request |
 
 ---
 

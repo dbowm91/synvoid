@@ -218,17 +218,22 @@ These items were identified in reviews and have been fixed:
 
 ## Known Deferred Items
 
-Some items are intentionally deferred due to architectural complexity:
+These items require significant architectural work and are correctly deferred:
 
 | ID | Issue | Reason |
 |----|-------|--------|
-| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id vs peer_id via TLS), but no TLS cert chain validation - requires breaking changes |
-| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API investigation needed |
-| SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
-| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field |
-| DNS-QUERY | QueryCoalescer max_wait_ms | Documented limitation, may not be fixable (underscore prefix = unused) |
-| PR-6 | ProxyHeadersConfig not passed through send_single_request | Enhancement, not a bug |
-| BUG-PL-4 | macOS Seatbelt implementation incomplete | Feature-gated, returns false by default |
+| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
+| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
+| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field, coordinated rollout required |
+
+### Recently Completed (2026-05-27)
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| SUP-1 | gRPC Control Plane TLS | Added control_api_tls config, tonic TLS support, --control-api-tls flag |
+| DNS-QUERY | QueryCoalescer max_wait_ms | Async redesign with tokio::timeout |
+| BUG-PL-4 | macOS Seatbelt silent failure | Runtime detection via dlsym, proper error handling |
+| PR-6 | ProxyHeadersConfig not passed | Added proxy_headers_config field and builder method |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 

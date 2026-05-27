@@ -119,9 +119,13 @@ if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
 
 Cookie validation follows RFC 7873 pattern using constant-time comparison from `validate_cookie()`.
 
-### Query Coalescer max_wait_ms Unused (DNS-QUERY - Deferred)
+### Query Coalescer max_wait_ms (DNS-QUERY - ✅ FIXED 2026-05-27)
 
-At `src/dns/query_coalesce.rs:117`, the parameter `_max_wait_ms` is marked as unused. The `get_or_wait()` method doesn't use this parameter to control broadcast timeout behavior. This is a documented limitation.
+The `max_wait_ms` parameter is now used. At `src/dns/query_coalesce.rs`:
+- Added `max_wait: Duration` field to `QueryCoalescer` struct
+- Changed `get_or_wait()` from sync to async fn
+- Uses `tokio::time::timeout(max_wait, receiver.recv())` instead of non-blocking `try_recv()`
+- Callers updated to use `.await`
 
 ## Verified Fixes (2026-05-27)
 
