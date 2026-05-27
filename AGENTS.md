@@ -147,8 +147,9 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
 | BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED (shared secret comparison verified) |
-| BUG-ROUTER-1 | `src/router.rs` | Hardcoded port 80 instead of configured port | FIXED |
 | BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
+| BUG-DNS-1 | `src/dns/resolver.rs:693-702` | HickoryRecursor DNSSEC policy always SecurityUnaware | Active - fix uses `ValidateWithStaticKey` |
+| BUG-DNS-4 | `src/dns/resolver.rs:420-429` | HickoryResolver (forwarder) always false; Recursor mode correct | Active - by design for forwarder mode (hickory-resolver API limitation) |
 
 ### Known Implementation Issues
 
@@ -156,20 +157,21 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |-------|----------|--------|--------|
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method | FIXED 2026-05-27 |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs` | Complete implementation exists and is wired | FIXED 2026-05-27 |
-| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - consider removal |
+| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known - remove or wire in |
 | Spin cold-start instance reuse | `src/spin/runtime.rs:289-303` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
 | PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Fixed - `allowed_dht_prefixes` and `body_receiver` now properly reset | FIXED 2026-05-27 |
 | WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Fixed - documentation corrected to match actual defaults | FIXED 2026-05-27 |
 | is_admin_required_for_tun stub | `src/platform/mod.rs:166-176` | Fixed - now returns `false` for Unix platforms, `true` for Windows | FIXED 2026-05-27 |
+| Username validation | `src/auth/mod.rs:305-318` | Validation exists (min 1, max 64, no control chars) | FIXED 2026-05-27 |
 
 ### Known High-Priority Issues (Requires Investigation/Fix)
 
 | Issue | Location | Severity | Description |
 |-------|----------|----------|-------------|
 | BUG-DNS-1 | DNS recursor | HIGH | HickoryRecursor DNSSEC policy always SecurityUnaware even when enable_dnssec=true |
-| BUG-DNS-4 | DNS resolver | HIGH | HickoryResolver always returns is_dnssec_validated: false |
-| BUG-PL-3 | Windows | MEDIUM | WindowsSocketFDPassing returns NotSupported, port-swap mode may not work |
-| BUG-WAF-3 | WAF | MEDIUM | SiteConnectionLimiter not wired into WafCore - per-site limiting may not work |
+| BUG-DNS-4 | DNS resolver | MEDIUM | HickoryResolver (forwarder mode) always returns false - by design, hickory-resolver API doesn't expose validation status |
+| BUG-PL-3 | Windows | MEDIUM | WindowsSocketFDPassing returns NotSupported, port-swap mode default for Windows |
+| BUG-WAF-3 | WAF | MEDIUM | SiteConnectionLimiter not wired into WafCore - per-site limiting via ConnectionLimiter works |
 
 ### Dependency Vulnerability Status
 
@@ -210,6 +212,7 @@ These items were identified in reviews and have been fixed:
 - PL-5 DrainManager ported to Supervisor (`src/supervisor/process.rs` - drain_aware_shutdown implemented)
 - APP-15 FastCGI streaming (`src/fastcgi/streaming.rs` - new streaming client with feature flag)
 - TUNNEL-FIX TunnelBackend removed (`src/tunnel/upstream.rs` - deprecated struct deleted)
+- BUG-AUTH-1/2 Username validation added (`src/auth/mod.rs:305-318` - min 1, max 64, no control chars)
 
 ## Known Deferred Items
 
@@ -217,13 +220,17 @@ Some items are intentionally deferred due to architectural complexity:
 
 | ID | Issue | Reason |
 |----|-------|--------|
-| MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
-| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | hyper http2_client::handshake() API incompatible with current hyper-util |
+| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id vs peer_id via TLS), but no TLS cert chain validation - requires breaking changes |
+| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API investigation needed |
 | SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
-
-**Note**: MESH-15 (Quorum deadlock) and APP-15 (FastCGI streaming) are now marked as FIXED in plan.md.
+| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field |
+| DNS-2 | QueryCoalescer max_wait_ms | Documented limitation, may not be fixable |
+| PR-6 | ProxyHeadersConfig not passed through send_single_request | Enhancement, not a bug |
+| BUG-PL-4 | macOS Seatbelt implementation incomplete | Feature-gated, returns false by default |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
+
+The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 
 ## Codebase Quick Reference
 
@@ -231,6 +238,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for secrets
 - **File permissions**: Set `0o600` on private key files
 - **CSRF validation**: Uses `ct_eq()` at `src/admin/state.rs:736`
+- **Session ID comparison**: Not constant-time, but acceptable (high-entropy random 32-byte values)
 
 ### Module Key Facts
 - **MeshProxy**: `src/mesh/proxy.rs:63` (1994 lines) - key routing component not in overview
@@ -238,23 +246,27 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
 - **DhtSyncRequest**: `src/mesh/transport_peer.rs:687-704` - authentication gap, no signature verification (deferred - breaking proto change)
-- **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:648
+- **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
+- **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `SecurityUnaware` even when `enable_dnssec=true`
+- **HTTP/3 Body Collection**: `src/http3/server.rs:340-398` - ad-hoc implementation, not using shared_handler
+- **BufferPool**: 4 tiers (small/medium/large/jumbo) - documentation incorrectly says 3
 
 ### Process Architecture
 - **Supervisor** manages lifecycle, consolidates Overseer + Master
 - **UnifiedServerWorker** uses single Tokio event loop (NOT process-per-tenant)
 - **CPU affinity** is Linux-only, logs warning on other platforms
 - **Default entry point** is `run_supervisor_mode()` via `src/main.rs:538-547`; `--master` flag routes to `run_master_mode()`
+- **Mesh control plane** runs in Supervisor process, not worker (workers get intelligence via IPC)
 
 ### Granian Integration
 - **Granian IS integrated** - `src/app_server/granian.rs` (1047 lines) with full process management, auto-install, admin API
 - NOT a separate process type - runs within the Supervisor/Master architecture
 
-### Supervisor Migration (Planned)
-- See `plans/plan.md` for consolidated action plan
-- Migration to consolidate Overseer/Master into Supervisor (~8 days sequential work)
-- All other plan items can be executed in parallel with migration waves
+### Implementation Notes
+- **PeakEwma weighting**: Slow-moving (90% to old value) is intentional for connection stability
+- **BUG-ROUTER-1**: Hardcoded port 80 is in `Default` impl only, actual usage uses configured port - NOT a bug
+- **Spin header serialization**: Uses JSON (SpinRuntime::serialize_headers_spin), not binary like raw WASM
 
 ## Skills Directory
 
