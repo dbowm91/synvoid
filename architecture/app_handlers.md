@@ -18,7 +18,7 @@ SynVoid handles dynamic PHP applications by interfacing directly with PHP-FPM (o
 
 - **Unix Socket & TCP Support:** Can connect to PHP-FPM via local Unix domain sockets for maximum performance or over TCP for remote backends.
 - **Environment Management:** Automatically populates FastCGI environment variables (e.g., `SCRIPT_FILENAME`, `QUERY_STRING`) required for PHP execution.
-- **Response Streaming:** Efficiently streams responses from the FastCGI backend. Note: Known limitation - buffers entire stdout before sending; true streaming requires architectural change (APP-15).
+- **Response Streaming:** Efficiently streams responses from the FastCGI backend via `src/fastcgi/streaming.rs`.
 
 ## 3. Python (Granian)
 
@@ -87,7 +87,7 @@ The `BackendType` enum at `src/router.rs:66-78` defines all backend variants:
 | `AxumDynamic` | `src/http/server.rs:2172` | Dynamic Axum routes |
 | `AppServer` | `src/http/server.rs:2821` | Granian Python ASGI/WSGI |
 | `Static` | `src/http/server.rs:2213` | Static file serving |
-| `QuicTunnel` | `src/tunnel/upstream.rs:120` | QUIC tunnel proxy |
+| `QuicTunnel` | `src/upstream/address.rs:27` | QUIC tunnel proxy |
 | `Serverless` | `src/http/server.rs:1238` | WASM serverless functions (mesh-gated) |
 | `Mesh` | `src/http/server.rs:2872` | Mesh routing backend |
 | `Spin` | `src/http/server.rs:2421` | Spin framework WASM |

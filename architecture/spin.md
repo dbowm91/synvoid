@@ -414,6 +414,15 @@ cached_instances: RwLock<HashMap<String, SpinAppInstance>>
 - 5-minute idle timeout (`idle_timeout_seconds: 300`)
 - Evicted when idle timeout exceeded
 
+**Note:** Spin uses a simple `cached_instances` HashMap, NOT the sophisticated `InstancePool` used by the serverless module. The serverless `InstancePool` provides:
+- Per-function pools with min/max bounds
+- Autoscaling based on utilization thresholds
+- Pre-warming on startup
+- Cold start tracking and metrics
+- Eviction with configurable cooldown
+
+Spin caching is simpler - just a single component_id → instance mapping with idle timeout.
+
 ### 6.3 Instance Reuse Flow
 
 ```rust
