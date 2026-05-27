@@ -383,6 +383,36 @@ cargo test --lib tunnel
 
 ---
 
+## Implementation Status (2026-05-27)
+
+### Completed Items
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| MESH-15-FIX-1 | is_request_complete() lock release | ✅ DONE | Fixed in quorum.rs:412-430 |
+| MESH-15-FIX-4 | MeshRaftNetwork::send_raw() retry | ✅ DONE | Added exponential backoff (100ms/200ms/400ms) |
+| WRK-BUG-1-FIX-1 | HTTP/2 config wiring to ProxyServer | ✅ DONE | site_config.proxy.http2 now wired |
+| WRK-BUG-1-FIX-2/3 | is_http2 to executor/dispatch paths | ✅ DONE | Uses send_request_erased_streaming |
+| PL-5-FIX-1-4 | DrainManager port to Supervisor | ✅ DONE | Drain-aware shutdown implemented |
+| APP-15-FIX-1-4 | FastCGI Streaming | ✅ DONE | New streaming.rs module, feature flag added |
+| TUNNEL-FIX | Deprecated TunnelBackend removal | ✅ DONE | Struct removed from upstream.rs |
+
+### Deferred/Cancelled Items
+
+| ID | Item | Reason |
+|----|------|--------|
+| MESH-15-FIX-2 | Partition detection in start_request() | Not feasible - QuorumManager has no topology access |
+| MESH-15-FIX-3 | Background cleanup for stale requests | Not needed - existing timeout handles cleanup |
+| HTTP2-POOL-1-4 | ErasedHttpClient HTTP/2 pooling | Reverted - hyper http2_client::handshake() API incompatible |
+
+### Notes
+
+1. **HTTP/2 Pooling**: `typed_pool.rs` has proper HTTP/2 support via `Client::builder().http2_only()`. The `ErasedHttpClient` path needs further investigation - the `http2_client::handshake(io)` API requires TokioIo to implement traits not available in current hyper-util version.
+
+2. **MESH-15-FIX-2**: The plan specified checking `self.topology.check_network_partition()` in `start_request()`, but QuorumManager doesn't have topology access. The partition detection would need to happen at a higher level before requests are sent to QuorumManager.
+
+---
+
 ## Deferred Items (Architectural Changes Required)
 
 These items require significant architectural work and are tracked separately:
@@ -392,17 +422,18 @@ These items require significant architectural work and are tracked separately:
 | **MR-4** | DhtSyncRequest has no auth | Breaking protobuf protocol change |
 | **MESH-14** | Source Node ID Binding Validation | Fundamental TLS/cert identity binding |
 | **SUP-1** | gRPC Control Plane TLS | Intentional - localhost IPC |
+| **HTTP2-POOL** | ErasedHttpClient HTTP/2 support | Requires hyper-util API investigation |
 
 ---
 
 ## Implementation Order Recommendation
 
-1. **MESH-15** (Quorum deadlock) - Security/correctness, start here
-2. **WRK-BUG-1** (HTTP/2) - Configuration wiring, low risk
-3. **HTTP/2 Pooling** - Follows naturally from WRK-BUG-1
-4. **PL-5** (DrainManager) - Important for zero-downtime upgrades
-5. **APP-15** (FastCGI Streaming) - Larger change, test thoroughly
-6. **TunnelBackend** - Cleanup, can run in parallel
+1. **MESH-15** (Quorum deadlock) - Security/correctness ✅
+2. **WRK-BUG-1** (HTTP/2) - Configuration wiring ✅
+3. **HTTP/2 Pooling** - Partially complete, blocked by hyper API issue
+4. **PL-5** (DrainManager) - Zero-downtime upgrades ✅
+5. **APP-15** (FastCGI Streaming) - Larger change, tested ✅
+6. **TunnelBackend** - Cleanup ✅
 
 ---
 
@@ -421,4 +452,4 @@ These items require significant architectural work and are tracked separately:
 ---
 
 *Last Updated: 2026-05-27*
-*Deep dive completed - all items now have implementation plans*
+*Wave implementation complete - HTTP2-POOL deferred pending hyper API investigation*

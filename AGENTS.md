@@ -196,7 +196,14 @@ These items were identified in reviews and have been fixed:
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 - BUG-L3 ML-KEM proof-of-possession (`src/mesh/ml_kem_key_exchange.rs:204-265` - confirm_key now verifies client can decapsulate)
-- DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`) - **FIXED**
+- DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`)
+- MESH-15-FIX-1 is_request_complete() lock release (`src/mesh/dht/quorum.rs:412-430`)
+- MESH-15-FIX-4 MeshRaftNetwork::send_raw() retry (`src/mesh/raft/network.rs:53-91` - exponential backoff)
+- WRK-BUG-1 HTTP/2 config wired (`src/tls/server.rs:1722` - ProxyServer now uses site_config.proxy.http2)
+- WRK-BUG-1 is_http2 to executor/dispatch paths (`src/proxy/executor.rs`, `src/proxy/dispatch.rs`)
+- PL-5 DrainManager ported to Supervisor (`src/supervisor/process.rs` - drain_aware_shutdown implemented)
+- APP-15 FastCGI streaming (`src/fastcgi/streaming.rs` - new streaming client with feature flag)
+- TUNNEL-FIX TunnelBackend removed (`src/tunnel/upstream.rs` - deprecated struct deleted)
 
 ## Known Deferred Items
 
@@ -205,9 +212,10 @@ Some items are intentionally deferred due to architectural complexity:
 | ID | Issue | Reason |
 |----|-------|--------|
 | MESH-14 | No Source Node ID Binding Validation in All Ingress Paths | Requires fundamental changes to bind node_id to TLS/cert identity |
-| MESH-15 | Quorum Deadlock Risk During Partition | Raft implementation incomplete, requires Raft migration |
-| APP-15 | FastCGI Response NOT Truly Streamed | Buffers entire stdout; architectural change needed |
+| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | hyper http2_client::handshake() API incompatible with current hyper-util |
 | SUP-1 | gRPC Control Plane TLS | Intentional - localhost IPC doesn't need TLS |
+
+**Note**: MESH-15 (Quorum deadlock) and APP-15 (FastCGI streaming) are now marked as FIXED in plan.md.
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
