@@ -92,6 +92,7 @@ pub struct ProxyServer {
     #[allow(dead_code)]
     pool_idle_timeout: Duration,
     is_http2: bool,
+    proxy_headers_config: Option<Arc<crate::config::site::ProxyHeadersConfig>>,
 }
 
 impl ProxyServer {
@@ -196,6 +197,7 @@ impl ProxyServer {
             pool_max_idle_per_host,
             pool_idle_timeout,
             is_http2: false,
+            proxy_headers_config: None,
         }
     }
 
@@ -222,6 +224,14 @@ impl ProxyServer {
 
     pub fn with_http2(mut self, is_http2: bool) -> Self {
         self.is_http2 = is_http2;
+        self
+    }
+
+    pub fn with_proxy_headers_config(
+        mut self,
+        config: Option<Arc<crate::config::site::ProxyHeadersConfig>>,
+    ) -> Self {
+        self.proxy_headers_config = config;
         self
     }
 
@@ -317,6 +327,7 @@ impl ProxyServer {
             pool_max_idle_per_host: pool_max_idle,
             pool_idle_timeout: pool_idle,
             is_http2: false,
+            proxy_headers_config: None,
         };
         if let Some(pool) = upstream_pool {
             server = server.with_upstream_pool(pool, retry_config, buffering_config);
@@ -1230,7 +1241,16 @@ impl ProxyServer {
             )?);
         }
 
-        let forward_headers = headers.cloned().unwrap_or_default();
+        let forward_headers = if let Some(ref config) = self.proxy_headers_config {
+            crate::proxy::headers::build_forward_headers(
+                std::net::IpAddr::from([127, 0, 0, 1]),
+                headers.as_deref().unwrap_or(&http::HeaderMap::new()),
+                config,
+                crate::proxy::headers::ForwardedProtocol::Https,
+            )
+        } else {
+            headers.cloned().unwrap_or_default()
+        };
 
         let response = crate::http_client::send_request_erased_streaming(
             &self.erased_client,
