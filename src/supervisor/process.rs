@@ -16,6 +16,20 @@ use crate::RunningFlag;
 
 use super::state::{SupervisorState, SupervisorStateTrackers};
 
+/// Supervisor process for managing worker lifecycle.
+///
+/// # Drain Coordination
+///
+/// The Supervisor uses [`ProcessManager::graceful_shutdown()`] for worker shutdown,
+/// which broadcasts SIGTERM and waits for workers to stop. This differs from the
+/// Overseer's [`DrainManager`] which provides per-worker connection tracking during
+/// drain (active/idle connections, drain states, etc.).
+///
+/// **Limitation (PL-5)**: Supervisor does not have a DrainManager equivalent.
+/// For zero-downtime upgrades that require connection draining, the Overseer
+/// architecture should be used, or this could be implemented by porting
+/// `src/overseer/drain_manager.rs` to the Supervisor process.
+
 pub struct SupervisorProcess {
     state: SupervisorState,
     process_manager: Arc<ProcessManager>,
