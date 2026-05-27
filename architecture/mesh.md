@@ -106,7 +106,7 @@ src/mesh/dht/
 ### Raft Submodule Tree (under `src/mesh/raft/`)
 
 ```
-src/heap/raft/
+src/mesh/raft/
 ├── mod.rs               # MeshRaftNetwork, RaftCommitNotification
 ├── instance.rs         # RaftInstance (Raft lifecycle management)
 ├── network.rs          # MeshRaftNetwork + MeshRaftNetworkFactory (raft network impl)
@@ -578,6 +578,7 @@ src/mesh/
 │   ├── quorum.rs
 │   ├── signed.rs
 │   ├── stake.rs
+│   ├── record_store_persist.rs
 │   ├── capability_attestation.rs
 │   ├── capability_access.rs
 │   ├── edge_attestation.rs
@@ -621,6 +622,7 @@ src/mesh/
 ├── discovery.rs
 ├── rate_limit.rs
 ├── cli.rs
+├── proto/                          # Protocol definitions (mesh.proto)
 ├── transport_connection.rs            [mesh]
 ├── transport_dht.rs                  [mesh]
 ├── transport_dns.rs                  [mesh+dns]

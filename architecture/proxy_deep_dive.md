@@ -257,11 +257,10 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ## Implementation Decisions (Wave 4.2)
 
-// Decision: HTTP/2 remains disabled. While HTTP/2 infrastructure exists (Http2PooledConnection,
-TypedConnectionPool http2 branches), the code path is not wired for production use.
-is_http2=true is hardcoded in send_request_erased_streaming (http_client/mod.rs:893)
-but upstream HTTP/2 pooling is not implemented. This decision avoids complexity and
-maintains HTTP/1.1 connection reuse which is sufficient for current performance targets.
+// Decision: HTTP/2 is configurable via ProxyServer::with_http2() builder method.
+// The site_config.proxy.http2 value is wired through to control HTTP/2 usage.
+// HTTP/2 upstream pooling (Http2PooledConnection) remains a deferred item (HTTP2-POOL)
+// due to hyper-util API limitations.
 
 // Decision: UpstreamClientRegistry is integrated but not used in ProxyServer::send_single_request.
 // The registry exists at src/proxy/client_registry.rs and is instantiated in http/server.rs,
