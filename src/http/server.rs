@@ -1576,7 +1576,6 @@ impl HttpServer {
                 }
             }
         };
-        request_body_size = full_body.len() as u64;
         const CHUNK_WAF_SCAN_SIZE: usize = 64 * 1024; // 64KB chunks for full body scan
 
         let full_body_arc = Arc::new(full_body);
