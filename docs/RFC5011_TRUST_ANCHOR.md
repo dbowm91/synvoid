@@ -93,10 +93,10 @@ SynVoid only accepts modern DNSSEC algorithms. Deprecated algorithms are rejecte
 | 5 | RSASHA1 | Rejected |
 | 6 | DSA-NSEC3-SHA1 | Rejected |
 | 8 | RSASHA256 | Accepted |
-| 13 | ECDSAP256SHA256 | Accepted |
-| 14 | ECDSAP384SHA384 | Accepted |
+| 13 | ECDSAP256SHA256 | **Not implemented** |
+| 14 | ECDSAP384SHA384 | **Not implemented** |
 | 15 | ED25519 | Accepted |
-| 16 | ED448 | Accepted |
+| 16 | ED448 | **Not implemented** |
 
 ## Configuration Options
 
