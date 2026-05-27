@@ -305,25 +305,6 @@ impl UnifiedServer {
 
             if !dns_cfg.enabled {
                 (None, None, None, None)
-            } else if cfg
-                .main
-                .tunnel
-                .mesh
-                .as_ref()
-                .map(|m| m.enabled)
-                .unwrap_or(false)
-                && !cfg
-                    .main
-                    .tunnel
-                    .mesh
-                    .as_ref()
-                    .map(|m| m.role.is_global())
-                    .unwrap_or(false)
-            {
-                tracing::warn!(
-                        "DNS server is only available on global mesh nodes. Refusing to start DNS server on non-global node."
-                    );
-                (None, None, None, None)
             } else {
                 let bind_addr: SocketAddr = format!("{}:{}", dns_cfg.bind_address, dns_cfg.port)
                     .parse()

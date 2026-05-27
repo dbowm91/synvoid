@@ -3434,6 +3434,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2295ed2f9c31e471e1428a8f88a3f0e1f4b27c15049592138d1eebe9c35b183"
 dependencies = [
  "async-trait",
+ "bitflags",
  "cfg-if",
  "data-encoding",
  "futures-channel",
@@ -3443,8 +3444,13 @@ dependencies = [
  "idna",
  "ipnet",
  "jni 0.22.4",
+ "lru-cache",
+ "parking_lot",
  "rand 0.10.1",
+ "ring",
+ "rustls-pki-types",
  "thiserror 2.0.18",
+ "time",
  "tinyvec",
  "tokio",
  "tracing",

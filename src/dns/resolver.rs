@@ -691,12 +691,11 @@ impl HickoryRecursor {
         };
 
         let dnssec_policy = if enable_dnssec {
-            let _trust_anchors =
+            let trust_anchors =
                 Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
-            // In 0.26, SecurityUnaware doesn't take trust_anchor.
-            // If we want to use trust anchors, we might need a different policy or
-            // set it elsewhere. For now, following user instruction to just remove the field.
-            hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
+            let mut config = hickory_resolver::recursor::DnssecConfig::default();
+            config.trust_anchor = Some(std::sync::Arc::new(trust_anchors));
+            hickory_resolver::recursor::DnssecPolicy::ValidateWithStaticKey(config)
         } else {
             hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
         };
