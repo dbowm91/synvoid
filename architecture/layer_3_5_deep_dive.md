@@ -173,10 +173,10 @@ In mesh mode, half-TCP connections can be routed through the DHT to remote peers
 
 When the `dns` feature is enabled, SynVoid supports ACME DNS-01 challenge validation:
 
-- DNS provider integration via `src/dns/provider.rs` (Route53, Cloudflare, etc.)
+- DNS provider integration via `src/tls/acme_dns.rs` (Route53, Cloudflare, etc.)
 - Automatic TXT record creation/deletion for Let's Encrypt/DV certificates
 - Requires `dns` feature flag: `cargo build --features dns,mesh`
-- ACME integration at `src/acme/mod.rs` for certificate management
+- ACME integration at `src/tls/acme.rs` for certificate management
 
 ### Hybrid Signatures Performance (L35-8)
 

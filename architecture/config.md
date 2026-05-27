@@ -375,7 +375,7 @@ manager.reload_site("example.com")?;
 
 ### SiteConfig Structure
 
-Each site has 27 configuration sections:
+Each site has 28 configuration sections:
 
 1. **site** (`SiteInfo`) - Domains, listen addresses, upstream
 2. **ratelimit** (`SiteRateLimitConfig`) - Rate limit overrides
