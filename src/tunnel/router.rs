@@ -103,6 +103,7 @@ impl TunnelRouter {
         self.quic_client = Some(client);
 
         let sessions = self.sessions.clone();
+        let server_mappings = self.config.quic.server.mappings.clone();
         tokio::spawn(async move {
             while let Some(req) = proxy_rx.recv().await {
                 tracing::debug!(
@@ -111,6 +112,11 @@ impl TunnelRouter {
                     req.identifier,
                     req.port
                 );
+
+                let upstream_host = server_mappings
+                    .get(&req.identifier)
+                    .and_then(|m| m.upstream_host.clone())
+                    .unwrap_or_else(|| "127.0.0.1".to_string());
 
                 let session = TunnelRouteSession {
                     id: req.session_id.clone(),
@@ -124,7 +130,7 @@ impl TunnelRouter {
                             identifier: req.identifier.clone(),
                             port: req.port,
                             protocol: "tcp".to_string(),
-                            upstream_host: Some("127.0.0.1".to_string()),
+                            upstream_host: Some(upstream_host),
                             upstream_port: Some(req.port),
                         },
                     )]

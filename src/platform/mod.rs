@@ -165,8 +165,13 @@ impl Platform {
 
     pub fn is_admin_required_for_tun(&self) -> bool {
         match self {
-            Platform::Windows => true,
-            _ => true,
+            Platform::Windows | Platform::Unknown => true,
+            Platform::Linux
+            | Platform::LinuxMusl
+            | Platform::Macos
+            | Platform::FreeBSD
+            | Platform::OpenBSD
+            | Platform::NetBSD => false,
         }
     }
 

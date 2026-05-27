@@ -857,7 +857,6 @@ pub async fn start_admin_server(
             return;
         }
     };
-    let _cors_config = cfg.cors.clone();
     let rate_limit_config = cfg.rate_limit.clone();
     tracing::info!("Admin API token resolved from config/env var");
 
