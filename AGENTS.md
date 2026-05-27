@@ -148,7 +148,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |--------|----------|-------|--------|
 | BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED |
 | BUG-ROUTER-1 | `src/router.rs:1318` | Hardcoded port 80 instead of configured port | FIXED |
-| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS configuration read but not applied to admin API routes | Known - fix pending |
+| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix); outer router has CORS but nested `/api` routes do not | Known - may be intentional (Admin API uses bearer tokens, not browser CORS) |
 
 ### Known Implementation Issues
 
@@ -157,10 +157,8 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method | FIXED 2026-05-27 |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs` | Complete implementation exists and is wired | FIXED 2026-05-27 |
 | SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | Known |
-| TunnelBackend hardcoded 127.0.0.1 | `src/tunnel/upstream.rs:105-123` | Deprecated - active routing uses `TunnelRouter::resolve_tunnel_backend()` | Deprecated |
 | Spin cold-start instance reuse | `src/spin/runtime.rs:258` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
 | PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Fixed - `allowed_dht_prefixes` and `body_receiver` now properly reset | FIXED 2026-05-27 |
-| Supervisor lacks DrainManager | `src/supervisor/process.rs:17-26` | Documented limitation - Overseer has drain_manager.rs, Supervisor does not | Known Limitation |
 | WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Fixed - documentation corrected to match actual defaults | FIXED 2026-05-27 |
 | is_admin_required_for_tun stub | `src/platform/mod.rs:166-176` | Fixed - now returns `false` for Unix platforms, `true` for Windows | FIXED 2026-05-27 |
 
@@ -233,7 +231,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
 - **DhtSyncRequest**: `src/mesh/transport_peer.rs:687-704` - authentication gap, no signature verification (deferred - breaking proto change)
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:648
-- **TunnelBackend**: `src/tunnel/upstream.rs:105-123` - deprecated; active routing uses `TunnelRouter::resolve_tunnel_backend()`
+- **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 
 ### Process Architecture
 - **Supervisor** manages lifecycle, consolidates Overseer + Master
