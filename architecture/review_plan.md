@@ -157,12 +157,101 @@ After all reviews complete:
 # Verify all profiles still compile
 cargo check --no-default-features
 cargo check --no-default-features --features mesh
-cargo check --no-default-features --features dns
+cargo check --no-default-features --features dns    # NOTE: Pre-existing error (dns feature + mesh config mismatch)
 cargo check --no-default-features --features mesh,dns
 
 # Run tests
 cargo test --lib --no-run
 ```
+
+**Note on DNS profile**: There is a pre-existing compilation error in `--features dns` mode at `src/server/mod.rs:311,318` where `MainTunnelConfig` lacks a `.mesh` field. This is unrelated to the review process and existed before this review cycle.
+
+---
+
+## Completed Review Plans
+
+All 18 module review plans have been completed and are available in `plans/`:
+
+| Module | Review Plan | Status |
+|--------|-------------|--------|
+| Admin API | `plans/admin_review_plan.md` | ✅ Complete |
+| App Handlers | `plans/app_handlers_review_plan.md` | ✅ Complete |
+| Auth | `plans/auth_review_plan.md` | ✅ Complete |
+| Config | `plans/config_review_plan.md` | ✅ Complete |
+| DNS | `plans/dns_review_plan.md` | ✅ Complete |
+| HTTP Server | `plans/http_server_review_plan.md` | ✅ Complete |
+| Layer 3.5 | `plans/layer_3_5_review_plan.md` | ✅ Complete |
+| Mesh | `plans/mesh_review_plan.md` | ✅ Complete |
+| Networking | `plans/networking_review_plan.md` | ✅ Complete |
+| Platform | `plans/platform_review_plan.md` | ✅ Complete |
+| Plugin/WASM | `plans/plugin_review_plan.md` | ✅ Complete |
+| Process Lifecycle | `plans/process_lifecycle_review_plan.md` | ✅ Complete |
+| Proxy | `plans/proxy_review_plan.md` | ✅ Complete |
+| Routing | `plans/routing_review_plan.md` | ✅ Complete |
+| Serverless | `plans/serverless_review_plan.md` | ✅ Complete |
+| Spin WASM | `plans/spin_review_plan.md` | ✅ Complete |
+| WAF | `plans/waf_review_plan.md` | ✅ Complete |
+| Worker | `plans/worker_review_plan.md` | ✅ Complete |
+
+---
+
+## Implemented Fixes (Phase 4)
+
+The following fixes have been implemented based on review findings:
+
+| Bug ID | Description | Status |
+|--------|-------------|--------|
+| BUG-L3 | ML-KEM proof-of-possession verification added to `confirm_key()` | ✅ FIXED |
+| BUG-SPIN-1 | Race condition fixed in `get_or_create_instance()` (write lock first) | ✅ FIXED |
+| BUG-AUTH-1/2 | Username validation added (max length, control chars) | ✅ FIXED |
+| BUG-DNS-2 | Documentation updated - ECDSA NOT implemented (only Ed25519/RSA) | ✅ FIXED |
+| BUG-PL-4 | AGENTS.override.md updated - `is_admin_required_for_tun` correctly returns false for Unix | ✅ FIXED |
+
+---
+
+## Remaining Work
+
+The following items from review plans were identified but not yet implemented:
+
+### HIGH Priority
+
+| Item | Description | Review Plan |
+|------|-------------|-------------|
+| BUG-DNS-1 | HickoryRecursor DNSSEC Policy always SecurityUnaware even when `enable_dnssec=true` | `plans/dns_review_plan.md` |
+| BUG-DNS-4 | HickoryResolver always returns `is_dnssec_validated: false` | `plans/dns_review_plan.md` |
+
+### MEDIUM Priority
+
+| Item | Description | Review Plan |
+|------|-------------|-------------|
+| BUG-DNS-3 | QueryCoalescer `max_wait_ms` parameter unused (DNS-2) | `plans/dns_review_plan.md` |
+| BUG-HTTP-2 | HTTP/3 body collection inconsistent with HTTP/1.1 (no `collect_body_with_chunk_waf`) | `plans/http_server_review_plan.md` |
+| BUG-PL-3 | Windows socket FD passing returns NotSupported (should document as known limitation) | `plans/platform_review_plan.md` |
+| IMPROVE-1 | Consolidate HTTP/3 body collection with HTTP/1.1 streaming WAF | `plans/http_server_review_plan.md` |
+
+### LOW Priority (Documentation/Enhancement)
+
+| Item | Description | Review Plan |
+|------|-------------|-------------|
+| IMP-1 | Update `calculate_backoff` documentation (retry.rs vs doc) | `plans/proxy_review_plan.md` |
+| IMP-2 | Update HTTP/2 status documentation (now configurable via `with_http2()`) | `plans/proxy_review_plan.md` |
+| IMP-3 | Add `supports_seatbelt()` method to Platform enum | `plans/platform_review_plan.md` |
+| BUG-SL-1 | `handle_serverless_function` only available with `mesh` feature (document limitation) | `plans/serverless_review_plan.md` |
+| BUG-R2 | Inconsistent port resolution between methods in router.rs | `plans/routing_review_plan.md` |
+| Various | Line number corrections in architecture documents | Multiple review plans |
+
+---
+
+## Known Limitations (Not Planned for Fix)
+
+These items are documented limitations that are intentional or require architectural changes:
+
+| Item | Description | Review Plan |
+|------|-------------|-------------|
+| HTTP2-POOL | HTTP/2 pooled connections not implemented (stub only) - requires hyper-util API redesign | `plans/plan.md` |
+| SiteConnectionLimiter | Dead code - struct defined but never instantiated | `plans/waf_review_plan.md` |
+| BUG-HTTP-4 | `request_body_size` double assignment in body collection | `plans/http_server_review_plan.md` |
+| BUG-PROXY-1 | Latency EWMA weighting direction ambiguity (documentation vs implementation) | `plans/proxy_review_plan.md` |
 
 ---
 
@@ -185,12 +274,12 @@ Subagents should verify these known references from AGENTS.md:
 
 ## Known Bugs from AGENTS.md (Verify Still Present/Fixed)
 
-| Bug ID | Location | Issue |
-|--------|----------|-------|
-| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession |
-| BUG-ROUTER-1 | `src/router.rs:1318` | Hardcoded port 80 |
-| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped |
-| HTTP2-POOL | `src/http_client/mod.rs:893` | HTTP/2 pooling incomplete |
+| Bug ID | Location | Issue | Status |
+|--------|----------|-------|--------|
+| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | ✅ FIXED (025582ee) |
+| BUG-ROUTER-1 | `src/router.rs:1318` | Hardcoded port 80 | ✅ FIXED (per review) |
+| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped | Known - may be intentional |
+| HTTP2-POOL | `src/http_client/mod.rs:893` | HTTP/2 pooling incomplete | DEFERRED |
 
 ---
 
@@ -202,6 +291,8 @@ After all subagents complete and stale items are identified:
 2. Remove stale architecture files if any identified
 3. Commit with message: `Review: Add comprehensive architecture review plans`
 4. Push to main
+
+**Status**: ✅ Phase 6 completed (commit 025582ee)
 
 ---
 
