@@ -584,6 +584,7 @@ JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
 - `RawSocket` instead of `RawFd`
 - `WSADuplicateSocketW` for socket duplication across processes
 - `WSASocketW` with `WSA_FLAG_NO_HANDLE_INHERIT` for recreation
+- **Note:** The `SocketFDPassing` trait returns `NotSupported` on Windows because Windows uses `WSADuplicateSocketW`-based handoff via `Message::WindowsSocketInfo` instead. Port-swap mode is the default for Windows and handles socket handoff differently.
 
 **IPC:**
 - Named Pipes: `\\.\pipe\synvoid-*`
