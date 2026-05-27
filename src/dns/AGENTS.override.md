@@ -58,17 +58,33 @@ fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))?;
 fs::rename(&temp_path, path)?;
 ```
 
-## Known Integration Gaps
+## Known Integration Gaps (Fixed)
 
-### DNS Cookie Server Not Wired (DNS-1 - P1)
+### DNS Cookie Server Wiring (DNS-1 - FIXED 2026-05-27)
 
-`DnsCookieServer` is implemented at `src/dns/cookie.rs:11-50` with full RFC 8905/RFC 7873 support:
-- `validate_cookie()` at lines 66-87
-- `create_response_cookie()` at lines 89-118
+`DnsCookieServer` is now wired into query validation at `src/dns/server/query.rs:640-658`:
 
-The server is created at `src/dns/server/mod.rs:850` and passed to `QueryContext`, but **`validate_cookie()` is NEVER CALLED** in `src/dns/server/query.rs`.
+```rust
+let mut cookie_valid = false;
+let mut cookie_absent = false;
+let client_ip_for_log = client_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]));
+if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
+    if let Some(ref cookie) = edns.cookie {
+        if cookie.server_cookie.is_some() {
+            cookie_valid = cs.validate_cookie(client_ip_for_log, &cookie.client_cookie, cookie.server_cookie.as_ref().unwrap());
+        } else {
+            cookie_absent = true;
+        }
+    } else {
+        cookie_absent = true;
+    }
+    if !cookie_valid && !cookie_absent {
+        tracing::debug!("Invalid DNS cookie from {}", client_ip_for_log);
+    }
+}
+```
 
-**Fix needed**: Call `validate_cookie()` when `cookie_server.is_some()` and query contains EDNS cookie option. Set response cookies via `create_response_cookie()` in outgoing responses.
+Cookie validation follows RFC 7873 pattern using constant-time comparison from `validate_cookie()`.
 
 ### Query Coalescer max_wait_ms Unused (DNS-2 - P2)
 

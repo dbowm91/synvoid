@@ -114,7 +114,7 @@ WasmRuntime (plugin B)
 
 ### Purpose
 
-Implements a Spin framework runtime for executing Spin-compatible WASM modules. Manifest parsing and longest-prefix-match routing are implemented; requests are dispatched via `SpinHttpHandler` at `src/http/server.rs:2420-2503`.
+Implements a Spin framework runtime for executing Spin-compatible WASM modules. Manifest parsing and longest-prefix-match routing are implemented; requests are dispatched via `SpinHttpHandler` at `src/http/server.rs:2421-2503`, handler creation at line 2426.
 
 ### Key Files
 
@@ -122,7 +122,7 @@ Implements a Spin framework runtime for executing Spin-compatible WASM modules. 
 |------|----------------|
 | `mod.rs` | Module declarations only |
 | `runtime.rs` | `SpinRuntime`, `SpinAppInstance`, `SpinRuntimeConfig`. Manages Spin app lifecycle and HTTP handling |
-| `manifest.rs` | `Manifest` and `SpinManifest` structs. Parses Spin v2 manifest format (TOML) |
+| `manifest.rs` | `Manifest` and `SpinManifest` structs. Parses Spin **v2** manifest format (TOML) at `src/spin/manifest.rs:6-22` |
 | `handler.rs` | `SpinHttpHandler` (thin wrapper) and `SpinAppsManager` (global app registry) |
 | `kv_store.rs` | `SpinKvStore` — in-memory key-value store with TTL support |
 
@@ -142,6 +142,13 @@ Implements a Spin framework runtime for executing Spin-compatible WASM modules. 
 2. **Manual app registration required** — Spin apps must be registered via Admin API; no automatic discovery
 3. **KV store is local-only** — No distribution via mesh/DHT
 4. **No WASI socket support** — Only in-memory KV store; no outbound HTTP capability
+
+### Async Compilation Timing (PLUGIN-5)
+
+Spin component compilation uses `AsyncCompilationManager` for non-blocking initialization:
+- State machine: `Pending` -> `Compiling` -> `Ready` / `Failed`
+- `wait_for_completion()` blocks until compilation done
+- **Important**: Calling `.await` twice on the same `AsyncCompilationHandle` causes panic — the handle is consumed on first await
 
 ---
 

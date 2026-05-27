@@ -9,6 +9,7 @@ pub struct PooledInstance {
     pub(crate) store: Store<RequestContext>,
     pub filter_name: String,
     pub max_cpu_fuel: u64,
+    pub(crate) allowed_dht_prefixes: Vec<String>,
 }
 
 impl PooledInstance {
@@ -16,10 +17,13 @@ impl PooledInstance {
         &mut self,
         env: std::collections::HashMap<String, String>,
         timeout_seconds: u64,
+        allowed_dht_prefixes: Vec<String>,
     ) {
         self.store.data_mut().start = Instant::now();
         self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
         self.store.data_mut().env = env;
+        self.store.data_mut().body_receiver = None;
+        self.store.data_mut().allowed_dht_prefixes = allowed_dht_prefixes;
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }

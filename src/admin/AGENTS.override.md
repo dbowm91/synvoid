@@ -28,7 +28,12 @@ The Admin API middleware stack (in order):
 3. CSRF Middleware (`src/admin/middleware.rs:185-266`)
 4. Admin Rate Limit Layer (`src/admin/rate_limit.rs`)
 
-**Note**: Early comment said "No CORS layer" but CORS IS implemented. CORS layer is applied to outer router (line 806 in `build_router_from_state()`), but NOT to nested `/api` routes (lines 179-189). Since Admin API uses bearer/session tokens rather than browser-based access, CORS may not be needed for nested routes, but the inconsistency should be documented or fixed.
+**Note**: CORS implementation status:
+- CORS layer IS implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97`
+- CORS is applied to outer router at line 806 in `build_router_from_state()` (`.layer(create_cors_layer(&admin_cors_config))`)
+- Nested `/api` routes (lines 179-189) do NOT have CORS applied
+- Since Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional
+- BUG-CORS-1 was fixed by removing dead code (`let _cors_config = cfg.cors.clone()`) at `src/admin/mod.rs:860`
 
 ### CORS Configuration Bug (BUG-CORS-1 - P0)
 

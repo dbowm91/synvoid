@@ -419,11 +419,11 @@ All plugin items are independent of Wave A/B:
 | Bug ID | Severity | Description | Location | Status |
 |--------|----------|-------------|----------|--------|
 | BUG-CORS-1 | High | CORS Configuration Ignored | `src/admin/mod.rs:860` | **FIXED** |
-| MR-4 | High | DhtSyncRequest has no auth | `src/mesh/transport_peer.rs:687-704` | Deferred - complex |
-| DNS-1 | High | DNS Cookie Server not wired | `src/dns/server/query.rs` | Deferred - complex |
+| MR-4 | High | DhtSyncRequest has no auth | `src/mesh/transport_peer.rs:687-704` | Deferred - breaking proto change |
+| DNS-1 | High | DNS Cookie Server not wired | `src/dns/server/query.rs:640-658` | **FIXED 2026-05-27** |
 | L35-1 | Medium | TunnelBackend hardcoded 127.0.0.1 | `src/tunnel/upstream.rs:121` | **FIXED** |
-| PLUGIN-2 | Medium | PooledInstance DHT/Body leak | `src/plugin/pool.rs:15-26` | Pending |
-| WRK-BUG-1 | Medium | HTTP/2 hardcoded | `src/http_client/mod.rs:893` | Deferred - complex |
+| PLUGIN-2 | Medium | PooledInstance DHT/Body leak | `src/plugin/pool.rs:15-31` | **FIXED 2026-05-27** |
+| WRK-BUG-1 | Medium | HTTP/2 hardcoded | `src/http_client/mod.rs:893` | **FIXED 2026-05-27** |
 | PLAT-4 | Low | Stub always returns true | `src/platform/mod.rs:166-171` | **FIXED** |
 | CFG-BUG-1 | Low | AppServerConfig port mismatch | `crates/synvoid-config/src/app_server.rs:49` | Pending |
 
@@ -441,9 +441,16 @@ The following items were identified in reviews and have been fixed:
 - **BUG-CORS-1**: CORS dead code removed (`src/admin/mod.rs:860` - removed `let _cors_config = cfg.cors.clone();`) - **FIXED 2026-05-27**
 - **PLAT-4**: `is_admin_required_for_tun()` stub fixed - now returns `false` for Unix platforms, `true` for Windows - **FIXED 2026-05-27**
 - **L35-1**: TunnelBackend now uses configured `upstream_host` from `server_mappings` instead of hardcoded `127.0.0.1` - **FIXED 2026-05-27**
-- **MR-4**: DhtSyncRequest auth - Deferred due to complexity (requires protocol struct, protobuf, encoding changes)
-- **DNS-1**: DNS Cookie Server wiring - Deferred due to complexity (requires API signature changes)
-- **WRK-BUG-1**: HTTP/2 configurable - Deferred due to complexity (requires API signature changes at multiple call sites)
+- **DNS-1**: DNS Cookie Server wired into query validation at `src/dns/server/query.rs:640-658` - **FIXED 2026-05-27**
+- **PLUGIN-2**: PooledInstance DHT/Body leak fixed - added `allowed_dht_prefixes` field and proper resets in `prepare_for_request()` - **FIXED 2026-05-27**
+- **PLUGIN-7**: PooledInstance reset consistency - same fix as PLUGIN-2, unified
+- **PLUGIN-8**: Serverless warmup consistency - `InstancePool::initialize()` now called from `ServerlessManager::initialize()` - **FIXED 2026-05-27**
+- **PLUGIN-9**: Spin manifest validates HTTP trigger requires URL routes - **FIXED 2026-05-27**
+- **PLUGIN-10**: Unauthorized DHT query logging elevated to error level - **FIXED 2026-05-27**
+- **WRK-BUG-1**: HTTP/2 now configurable via `is_http2` parameter in `send_request_erased_streaming()` - **FIXED 2026-05-27**
+- **MR-4**: DhtSyncRequest auth - Deferred (breaking protobuf protocol change required)
+- ~~WRK-BUG-1~~: HTTP/2 configurable - ~~Deferred~~ -> **FIXED 2026-05-27** - Moved to Fixed Items above
+- ~~DNS-1~~: DNS Cookie Server wiring - ~~Deferred~~ -> **FIXED 2026-05-27** - Moved to Fixed Items above
 
 ---
 

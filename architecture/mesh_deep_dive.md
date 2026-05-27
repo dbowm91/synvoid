@@ -27,7 +27,7 @@ SynVoid Mesh is designed for future-proof security, utilizing hybrid key exchang
 ### 3. Distributed Discovery (DHT)
 Peer and service discovery are handled via a Kademlia-based **Distributed Hash Table (DHT)**.
 - **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT.
-- **Hierarchical Routing:** Uses Bloom filters and regional hubs to enable memory-efficient route announcement checking in large-scale networks, not to minimize DHT discovery latency. Bloom filters check if a route advertisement has been seen before (via `MeshBloomFilter` in `src/mesh/hierarchical_routing.rs:66`), reducing redundant route propagation.
+- **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](src/mesh/hierarchical_routing.rs) for implementation details.
 
 ### 4. Raft Consensus
 Global nodes use Raft consensus (`src/mesh/raft/*.rs`) for state consistency:
@@ -75,13 +75,20 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 ## Security & Integrity
 
-- **Peer Authentication:** All nodes must have a valid certificate signed by an authorized Organization Key (see [`validate_member_certificate`](src/mesh/peer_auth.rs:141) in `src/mesh/peer_auth.rs`).
+- **Peer Authentication:** All nodes must have a valid certificate signed by an authorized Organization Public Key (see [`validate_member_certificate`](src/mesh/peer_auth.rs:141) in `src/mesh/peer_auth.rs`).
 - **Audit Logs:** The mesh includes a distributed auditing system (`src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
 - **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](src/mesh/dht/capability_access.rs:7) in `src/mesh/dht/capability_access.rs`).
 
 ### Known DHT Verification Limitations
 
 The DHT ingress path implements a multi-layer identity hierarchy (L1: peer_id/TLS cert → L2: envelope signer → L3: record signer → L4: source_node_id → L5: quorum signer), but certain message types have architectural verification gaps that are documented in [`src/mesh/dht/signed.rs:42-48`](src/mesh/dht/signed.rs:42-48):
+
+### Regional Quorum Scaling Limits
+When `regional_quorum_enabled = true` in `RecordStoreConfig`, the quorum system scales as follows:
+- **Max Nodes:** `regional_quorum_max_nodes` (default: 20) — Maximum nodes to contact in a regional quorum request
+- **Min Nodes:** `regional_quorum_min_nodes` (default: 3) — Minimum required signatures for regional quorum approval
+- **Fallback:** Falls back to `regional_quorum_min_nodes` if insufficient nodes responsive
+- **Note:** Regional quorum is disabled by default for backward compatibility
 
 | Message Type | Verification Status | Gap Description |
 |--------------|---------------------|-----------------|
@@ -99,6 +106,6 @@ The DHT ingress path implements a multi-layer identity hierarchy (L1: peer_id/TL
 - All DHT communication requires TLS 1.3 encryption (transport layer)
 - Global nodes use Raft consensus for state consistency, providing implicit authority
 - Reputation systems and audit logs help detect anomalous behavior
-- Edge nodes require valid certificates signed by authorized Organization Keys
+- **Edge nodes require valid certificates signed by authorized Organization Public Keys**
 
 These limitations are known architectural constraints. Future revisions may address gaps based on threat model evolution and performance requirements.

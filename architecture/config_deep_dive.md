@@ -31,8 +31,8 @@ Features are additive - DNS, ICMP-filter, and Mesh modules compile only when res
 | `lib.rs` | ConfigManager struct at lines 113-119, impl at lines 121-241 |
 | `main_config.rs` | Root configuration container for the entire SynVoid server |
 | `site/mod.rs` | Site-level configuration (per-domain routing, upstream, listen) |
-| `site/app_server.rs` | Granian Python ASGI/RSGI/WSGI server site config |
-| `app_server.rs` | Resolved AppServerConfig for worker processes |
+| `site/app_server.rs` | SiteAppServerConfig for Python ASGI/RSGI/WSGI site config |
+| `app_server.rs` | Resolved AppServerConfig for worker processes; `GranianConfig` lives in `src/app_server/granian.rs` (the runtime type, not synvoid-config) |
 | `server.rs` | Server socket binding and trusted proxy config |
 | `defaults.rs` | Global default values for rate limits, bot challenges, honeypots, etc. |
 | `dns/mod.rs` | DNS server configuration (recursive, zones, DNSSEC, mesh) |
@@ -146,6 +146,20 @@ AppServerConfig {
 - **serde** derive macros for all config structs
 - **schemars** + **utoipa** for OpenAPI documentation generation
 
+### AppServerConfig Default Values Bug (CFG-BUG-1)
+
+**Issue:** `AppServerConfig` in `crates/synvoid-config/src/app_server.rs:49-50` has defaults that may not match production expectations:
+
+```rust
+port: Some(8000),
+host: Some("127.0.0.1".to_string()),
+```
+
+**Note:** These defaults (port 8000 on localhost) are intentional for development mode but differ from typical production expectations where applications often bind to `0.0.0.0` or use different ports. When configuring `site.app_server`, explicitly set `host` and `port` rather than relying on defaults if you need different behavior.
+
+**Verification:** Code defaults match documented behavior at:
+- `crates/synvoid-config/src/app_server.rs:49-50` - `port = Some(8000)`, `host = Some("127.0.0.1")`
+
 ### ConfigManager Pattern
 
 ```rust
@@ -154,14 +168,36 @@ pub struct ConfigManager {
     pub sites: HashMap<String, SiteConfig>,  // sites/*.toml
     pub sites_dir: PathBuf,
     pub config_dir: PathBuf,
+    site_filenames: HashMap<String, PathBuf>,  // Internal: maps site_id -> config file path for hot-reload
 }
 ```
 
+- `site_filenames`: Private HashMap tracking site IDs to their source file paths. Used internally by `reload_site()` and `reload_all()` to determine which file to re-read when hot-reloading.
 - `load_main()` - loads server-wide configuration
 - `load_site()` - loads a single domain config
 - `discover_sites()` - auto-discovers all `*.toml` in `sites/` directory, returns `Vec<(String, Result<SiteConfig, String>)>` with site ID and result
-- `reload_site()` / `reload_all()` - hot-reload support
+- `reload_site()` / `reload_all()` - hot-reload support (uses `site_filenames` to find source files)
 - `get_site()` - domain-based lookup
+
+### ConfigManager Load Sequence
+
+The ConfigManager loads configuration in this order:
+
+1. **`new()`** - Creates empty manager with default main config, empty sites HashMap, sets up `sites/` and `config/` directories (does NOT load any files)
+
+2. **`load_main(path)`** - Loads the main `synvoid.toml` file, applies token resolution, mesh key loading, and calls `validate()`
+
+3. **`discover_sites()`** - Auto-discovers all `*.toml` files in the `sites/` directory:
+   - Creates `sites/` directory if missing
+   - Reads each `.toml` file
+   - Populates both `sites` HashMap AND `site_filenames` HashMap
+   - Returns results with site ID and success/failure
+
+4. **`load_site(path)`** - Manually loads a single site config (also updates `site_filenames`)
+
+5. **`reload_site(domain)`** - Hot-reloads a single site's config by looking up the path in `site_filenames`
+
+6. **`reload_all()`** - Hot-reloads all sites by iterating `sites` HashMap keys
 
 ---
 
@@ -267,7 +303,66 @@ Provides abstraction over serialization with **postcard** as the primary backend
 
 2. **Feature-Gated Compilation**: Large subsystems (DNS, Mesh) compile only when features enabled, but core HTTP server always compiles.
 
-3. **Validator Pattern**: Each config has a `validate()` method returning `Result<(), ConfigValidationError>`.
+3. **Feature Interaction (DNS + mesh configs):**
+   - DNS and mesh features can be enabled independently or together
+   - When both `dns` and `mesh` features are enabled:
+     - `DnsConfig.mesh` can reference mesh nodes for DNS zone transfers
+     - Mesh peers can act as recursive resolvers for the DNS server
+   - DNS validation only runs if `dns.enabled=true` AND `dns` feature compiled
+   - Mesh validation only checks feature flag; `mesh.is_none()` is valid even with mesh config present
+
+4. **Tiered Buffer Pool**: Multi-level caching (TLS → Shard Arena → Fresh Allocation) with memory limits.
+
+### Validation Sequence (MainConfig::validate())
+
+The `MainConfig::validate()` at `crates/synvoid-config/src/main_config.rs:181-214` calls validators in this specific order:
+
+1. **`server.validate()`** - Server bind address, trusted proxies
+2. **`http.validate()`** - HTTP protocol limits
+3. **`tls.validate()`** - TLS certificates, ACME config
+4. **`threat_level.validate()`** - Threat level thresholds
+5. **`fallback.validate()`** - Fallback mode configuration
+6. **`logging.validate()`** - Log exporter settings
+7. **`admin.validate()`** - Admin API configuration (token, CORS, rate limits)
+8. **`defaults.validate()`** - Default behaviors (rate limits, bot, honeypot)
+9. **`tunnel.validate()`** - Tunnel configuration (WireGuard, QUIC)
+10. **`dns.validate()`** - DNS server config (if `dns` feature enabled and `dns.enabled=true`)
+11. **Feature gate check** - Fails if `mesh.is_some()` but `mesh` feature not compiled
+
+**Note:** DNS validation only runs if both the `dns` feature is enabled AND `dns.enabled=true`. Mesh configuration fails validation if the `mesh` feature is not compiled (even if `mesh=None`).
+
+### Hot Reload Examples
+
+```toml
+# config/sites/example.com.toml
+[site]
+domains = ["example.com"]
+upstream.default = "http://127.0.0.1:8000"
+```
+
+**Via CLI:**
+```bash
+synvoid reload --site example.com    # Reload single site
+synvoid reload --all                  # Reload all sites
+```
+
+**Via Admin API:**
+```bash
+# Reload single site
+curl -X POST -H "Authorization: Bearer <token>" \
+  http://127.0.0.1:8081/api/sites/example.com/reload
+
+# Reload all sites
+curl -X POST -H "Authorization: Bearer <token>" \
+  http://127.0.0.1:8081/api/sites/reload-all
+```
+
+**Hot reload behavior:**
+- `reload_site()` looks up the source file path via `site_filenames` HashMap
+- File is re-parsed and validated
+- Only the specified site's config is replaced
+- Other sites remain unaffected
+- `reload_all()` iterates all known sites and reloads each
 
 4. **Hot Reload**: ConfigManager supports `reload_site()` / `reload_all()` for configuration changes without restart.
 

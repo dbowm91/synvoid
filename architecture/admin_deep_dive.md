@@ -85,7 +85,7 @@ SynVoid supports two fundamentally different authentication systems that serve d
 **Key Files:**
 - `src/admin/auth.rs:20-26` - `hash_admin_token()` and `verify_admin_token()`
 
-### Session Management
+### Session Management (with Timing Normalization)
 
 **Session Flow (Browser Clients):**
 1. Client exchanges bearer token for session via `POST /api/auth/session`
@@ -94,10 +94,17 @@ SynVoid supports two fundamentally different authentication systems that serve d
 4. Client includes CSRF token in `x-csrf-token` header for mutating requests
 5. Session expires after 1 hour (3600 seconds), configurable
 
+**Timing Normalization (ADMIN-5):**
+To prevent session enumeration attacks, admin auth includes timing normalization:
+- `verify_dummy_admin_token()` at `src/admin/handlers/auth.rs:14-22` performs a dummy bcrypt verify
+- Ensures minimum 200ms response time even on invalid tokens
+- Applied before both `UNAUTHORIZED` returns in `create_session()`
+
 **Key Files:**
-- `src/admin/state.rs:788-820` - `create_session()` and session data storage
-- `src/admin/state.rs:822-844` - `validate_session()` with sliding window expiration
-- `src/admin/handlers/auth.rs:14-58` - Session creation endpoint
+- `src/admin/state.rs:796-828` - `create_session()` and session data storage
+- `src/admin/state.rs:830-845` - `validate_session()` with sliding window expiration
+- `src/admin/handlers/auth.rs:14-22` - `verify_dummy_admin_token()` timing normalization
+- `src/admin/handlers/auth.rs:24-65` - Session creation endpoint
 
 ### Brute-Force Protection
 
@@ -125,8 +132,8 @@ SynVoid supports two fundamentally different authentication systems that serve d
 4. Check token not expired
 
 **Key Files:**
-- `src/admin/state.rs:725-741` - `validate_csrf()`
-- `src/admin/state.rs:743-771` - `generate_csrf_token()`
+- `src/admin/state.rs:728-749` - `validate_csrf()`
+- `src/admin/state.rs:751-779` - `generate_csrf_token()`
 - `src/admin/middleware.rs:185-266` - `csrf_middleware()`
 
 ### CSRF Middleware Logic
@@ -151,7 +158,7 @@ Request
   └── Admin Rate Limit Layer (requests per minute/second)
 ```
 
-**CORS Support:** CORS is fully implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97`. The CORS layer is created and added to the router in the admin API setup.
+**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97` and applied to the outer router at line 806 in `build_router_from_state()`. However, nested `/api` routes (lines 179-189) do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
 
 **Key File:** `src/admin/middleware.rs`
 
@@ -174,37 +181,39 @@ Request
 
 ## Admin API Structure
 
-### API Organization (26+ handlers)
+### API Organization (26 handlers + 1 feature-gated)
 
-**Location:** `src/admin/handlers/` (26 handlers + up to 4 mesh-gated handlers)
+**Location:** `src/admin/handlers/` (26 handlers + 1 mesh-gated handler)
 
-| Handler | Purpose |
-|---------|---------|
-| `alerting` | Alert configuration and webhook testing |
-| `api_discovery` | API self-discovery |
-| `auth` | Session/CSRF management |
-| `behavioral_intel` | Behavioral intelligence for anomaly detection (mesh feature) |
-| `common` | Shared types, pagination, auth utilities |
-| `config` | All configuration endpoints (40+ sub-endpoints) |
-| `honeypot` | Honeypot port management |
-| `icmp` | ICMP filtering (mesh feature) |
-| `logs` | Log retrieval, error pages, audit logs |
-| `mesh_admin` | Mesh node/org/ban management |
-| `mesh_topology` | Mesh topology graphs |
-| `php` | PHP-FPM pool management |
-| `plugins` | WASM plugin management |
-| `probes` | Probe tracking, suspicious words, upstream errors |
-| `rule_feed` | WAF rule feed management |
-| `serverless` | Serverless function stats |
-| `sites` | Site configuration CRUD |
-| `spin` | Spin framework app management |
-| `stats` | Metrics, bandwidth, request logs |
-| `system` | Worker management, system info |
-| `tcp_udp` | TCP/UDP listener management |
-| `theme` | Admin UI theming |
-| `threat_level` | Threat level control and history |
-| `upstreams` | Upstream backend management |
-| `yara_rules` | YARA rules submissions (mesh feature) |
+| Handler | Purpose | Feature Gate |
+|---------|---------|--------------|
+| `alerting` | Alert configuration and webhook testing | - |
+| `api_discovery` | API self-discovery | - |
+| `auth` | Session/CSRF management | - |
+| `behavioral_intel` | Behavioral intelligence for anomaly detection | mesh |
+| `common` | Shared types, pagination, auth utilities | - |
+| `config` | All configuration endpoints (40+ sub-endpoints) | - |
+| `honeypot` | Honeypot port management | - |
+| `icmp` | ICMP filtering | - |
+| `logs` | Log retrieval, error pages, audit logs | - |
+| `mesh_admin` | Mesh node/org/ban management | mesh |
+| `mesh_topology` | Mesh topology graphs | mesh |
+| `php` | PHP-FPM pool management | - |
+| `plugins` | WASM plugin management | - |
+| `probes` | Probe tracking, suspicious words, upstream errors | - |
+| `rule_feed` | WAF rule feed management | - |
+| `serverless` | Serverless function stats | - |
+| `sites` | Site configuration CRUD | - |
+| `spin` | Spin framework app management | - |
+| `stats` | Metrics, bandwidth, request logs | - |
+| `system` | Worker management, system info | - |
+| `tcp_udp` | TCP/UDP listener management | - |
+| `theme` | Admin UI theming | - |
+| `threat_level` | Threat level control and history | - |
+| `upstreams` | Upstream backend management | - |
+| `yara_rules` | YARA rules submissions | mesh |
+
+**Note:** 3 handlers are mesh-gated (`behavioral_intel`, `mesh_admin`, `mesh_topology`, `yara_rules`) = 26 total, 23 always available.
 
 ### Key REST Endpoint Groups
 

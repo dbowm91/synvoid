@@ -639,6 +639,24 @@ impl DnsServer {
 
         let dnssec_ok = edns_options.as_ref().map(|e| e.dnssec_ok).unwrap_or(false);
 
+        let mut cookie_valid = false;
+        let mut cookie_absent = false;
+        let client_ip_for_log = client_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]));
+        if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
+            if let Some(ref cookie) = edns.cookie {
+                if cookie.server_cookie.is_some() {
+                    cookie_valid = cs.validate_cookie(client_ip_for_log, &cookie.client_cookie, cookie.server_cookie.as_ref().unwrap());
+                } else {
+                    cookie_absent = true;
+                }
+            } else {
+                cookie_absent = true;
+            }
+            if !cookie_valid && !cookie_absent {
+                tracing::debug!("Invalid DNS cookie from {}", client_ip_for_log);
+            }
+        }
+
         let mut pos = 12;
         let mut qname = String::new();
 

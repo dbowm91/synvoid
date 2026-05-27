@@ -108,7 +108,7 @@ Backend address management, load balancing algorithms, health checking, and dist
 - Key methods:
   - `is_available()` - Healthy + under connection limit
   - `connection_scope()` - RAII guard that increments/decrements connections
-  - `record_latency()` - EWMA latency tracking (90% weight)
+  - `record_latency()` - EWMA latency tracking (90% weight given to historical value: `(old_ewma * 9 + latency_ms) / 10`)
   - `record_success()` / `record_failure()` - Circuit breaker with 3-failure threshold
   - `composite_load()` - (conn_load * 0.4) + (cpu_load * 0.6)
 
@@ -216,7 +216,7 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 - Fields: inner (B), streaming_waf, client_ip, blocked, error_sent
 - `poll_frame()` - Inspects each chunk via `sw.scan_chunk()` and blocks if WAFDecision::Block
 
-**`ErasedHttpClient`** (erased_pool.rs:321-370)
+**`ErasedHttpClient`** (erased_pool.rs:415-456)
 - HTTP client using erased connection pool
 - `send_request()` - Checkout → send → checkin pattern
 
@@ -234,14 +234,15 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ### Type Erasure for Performance
 - `ErasedBody` / `ErasedHttpClient` avoid per-request boxing at 1M RPS
-- `PoolKey` uses authority + http2 flag for connection multiplexing
+- `PoolKey` uses `(authority, is_http2)` tuple for connection multiplexing (Hash derive at `erased_pool.rs:112`)
 
 ### Distributed Load Balancing
 - `SharedConnectionTable` via mmap for cross-worker connection counting
 - Worker heartbeat mechanism (10s timeout) for liveness
 
 ### Stale-While-Revalidate
-- Background revalidation with semaphore limiting concurrent revalidations
+- Background revalidation with **semaphore-based limiting** (`revalidation_semaphore` at `proxy_cache/store.rs:156`)
+- Default 32 concurrent revalidations (configurable via `proxy_cache.revalidation_capacity`)
 - Returns stale content immediately, updates in background
 
 ---
@@ -272,4 +273,10 @@ maintains HTTP/1.1 connection reuse which is sufficient for current performance 
 // at proxy/mod.rs:1225-1238. The forward_headers are cloned from the incoming request headers.
 // Custom proxy headers per upstream are not currently supported; this can be addressed in a
 // future enhancement by extending send_request_erased_streaming to accept a ProxyHeadersConfig
-// parameter.
+// parameter. Tracking: [PR-6] - Enhancement tracking ticket needed.
+
+// BUG-PROXY-1 Regression: retry_config was not being applied in send_single_request flow.
+// Fixed at proxy/mod.rs:303 - now uses the parameter value instead of None. This fix ensures
+// that retry configuration (max_retries, retryable_methods, retry_on_status) is properly
+// passed to the retry logic. Test coverage added via integration tests validating the
+// retry_config flow end-to-end.

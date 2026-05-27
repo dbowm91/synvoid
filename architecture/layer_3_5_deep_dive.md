@@ -12,6 +12,18 @@ Yes, SynVoid is exceptionally forward-looking in its PQC implementation. It achi
     *   **Key Exchange (KEM):** Implements ML-KEM-768 for securing QUIC tunnels between mesh nodes (`MlKemKeyExchangeService`).
     *   **Authentication (DSA):** Uses `libcrux` for ML-DSA-44. Crucially, it employs a **Hybrid Signature Scheme** (`MeshHybridSigner`) with struct fields `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), `ed25519_public_key`, and `ml_dsa_public_key`.
 
+### HybridSignature vs MeshHybridSigner Distinction (L35-3)
+
+SynVoid has two layers of hybrid signature support:
+
+| Type | Location | Purpose |
+|------|----------|---------|
+| **`HybridSigner`** trait | `src/mesh/hybrid_signature.rs:190` | Generic trait for any hybrid signer implementing `sign_hybrid()` / `verify_hybrid()` |
+| **`HybridSignature`** struct | `src/mesh/hybrid_signature.rs:36-58` | Generic signature containing `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), and public keys |
+| **`MeshHybridSigner`** | `src/mesh/ml_dsa.rs:122` | Concrete mesh-specific signer that uses Ed25519 + ML-DSA-44 for DHT/mesh messages |
+
+The generic `HybridSigner` trait provides a consistent interface; `MeshHybridSigner` is the concrete implementation for mesh control plane messages. The `HybridSignature` struct stores the raw signature bytes for serialization.
+
 ### Hybrid Signature Verification (BUG-L1)
 
 The `verify_hybrid()` function at `src/mesh/ml_dsa.rs:189-219` implements fail-safe hybrid signature verification:
@@ -22,9 +34,16 @@ The `verify_hybrid()` function at `src/mesh/ml_dsa.rs:189-219` implements fail-s
 
 This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `src/mesh/ml_dsa.rs:206-218`.
 
-### Post-Quantum TLS Provider Installation
+### Post-Quantum TLS Provider Installation (L35-4)
 
-When the `post-quantum` feature is enabled, the post-quantum TLS provider is installed at `src/startup/master.rs:210-234`:
+When the `post-quantum` feature is enabled (`Cargo.toml:30`), the post-quantum TLS provider is installed at `src/startup/master.rs:210-234`:
+
+```toml
+post-quantum = ["dep:rustls-post-quantum"]  # Cargo.toml:30
+rustls-post-quantum = { version = "0.2", optional = true }  # Cargo.toml:156
+```
+
+This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
 
 ```rust
 #[cfg(feature = "post-quantum")]
@@ -56,6 +75,14 @@ The ML-KEM key exchange includes proof-of-possession verification at `src/mesh/m
 2. **Decapsulation Test:** Calls `MlKem768::decapsulate()` with the client's key to confirm the client can actually use the shared secret
 
 This prevents a rogue server from successfully completing key exchange without the client being able to decapsulate. See `confirm_key()` at `src/mesh/ml_kem_key_exchange.rs:241`.
+
+### ML-KEM Timing Side-Channel Consideration (L35-6)
+
+RUSTSEC-2023-0079: `ring` (used via `aws-lc-rs`) ML-KEM implementation uses conditional operations that may leak timing information. For SynVoid's threat model:
+
+- **Data Plane (Layer 3):** Acceptable risk - timing side-channels in TLS handshakes don't expose key material
+- **Control Plane (Layer 5):** The `libcrux-ml-dsa` crate is used for ML-DSA-44 signatures (not ML-KEM for signing)
+- **Mitigation:** Production deployments should enable `verify-pq` feature to validate PQ implementation behavior
 
 ## 2. Dependency Alignment & Safety
 
@@ -105,12 +132,26 @@ Beyond HTTP/HTTPS proxying, SynVoid supports a **Half-TCP** mode for non-HTTP pr
 
 ### Tunnel Backend
 
-The `TunnelBackend` (`src/tunnel/upstream.rs`) provides half-TCP proxy functionality:
+The `TunnelBackend` (`src/tunnel/upstream.rs`) provides half-TCP proxy functionality with two routing modes:
 
 ```rust
-pub fn to_backend(&self) -> Backend {
-    Backend::new(format!("tcp:127.0.0.1:{}", self.port))
-        .with_protocol(BackendProtocol::Tcp)
+pub enum TunnelBackend {
+    Direct { host: String, port: u16 },  // Routes directly to upstream
+    Tunnel { session_id: String, identifier: String },  // Routes through mesh tunnel
+}
+```
+
+**Routing Logic** (`src/tunnel/router.rs:150-170`):
+- `resolve_tunnel_backend()` first attempts QUIC client resolution
+- Falls back to session mappings lookup
+- Both result in `TunnelBackend::Direct` variant with resolved host/port
+- L35-1 fix: Now uses configured `upstream_host` from `server_mappings` instead of hardcoded `127.0.0.1`
+
+```rust
+// TunnelBackend::Direct uses configured host, not hardcoded localhost
+TunnelBackend::Direct {
+    host: mapping.upstream_host.clone().unwrap_or_else(|| "127.0.0.1".to_string()),
+    port: mapping.upstream_port.unwrap_or(mapping.port),
 }
 ```
 
@@ -118,7 +159,7 @@ pub fn to_backend(&self) -> Backend {
 
 When `BackendProtocol::Tcp` is used:
 - **No HTTP Parsing:** Raw TCP stream, not parsed as HTTP
-- **Pool Key:** Uses authority (host:port) for connection reuse
+- **Pool Key:** Currently uses only address (host:port) for connection reuse, **not** including authority header (L35-2 documentation accuracy note - implementation may not use authority)
 - **Keep-Alive:** Connections kept alive in pool for reuse
 - **Protocol Name:** Logged as "TCP" in metrics
 
@@ -127,6 +168,53 @@ This enables proxying for SSH, databases (PostgreSQL, MySQL), custom TCP protoco
 ### Integration with Mesh
 
 In mesh mode, half-TCP connections can be routed through the DHT to remote peers.
+
+### ACME DNS Challenge Integration (L35-7)
+
+When the `dns` feature is enabled, SynVoid supports ACME DNS-01 challenge validation:
+
+- DNS provider integration via `src/dns/provider.rs` (Route53, Cloudflare, etc.)
+- Automatic TXT record creation/deletion for Let's Encrypt/DV certificates
+- Requires `dns` feature flag: `cargo build --features dns,mesh`
+- ACME integration at `src/acme/mod.rs` for certificate management
+
+### Hybrid Signatures Performance (L35-8)
+
+Hybrid signatures (Ed25519 + ML-DSA-44) have significant size overhead:
+
+| Signature Type | Size | Use Case |
+|---------------|------|----------|
+| Ed25519 only | 64 bytes | Classical signatures |
+| ML-DSA-44 only | 2,420 bytes | Post-quantum signatures |
+| Hybrid (Ed25519 + ML-DSA) | 2,484 bytes | Both signatures concatenated |
+
+**Performance Impact:**
+- Wire transmission: ~39x larger than Ed25519 alone
+- Verification time: ML-DSA ~3-5x slower than Ed25519 on same hardware
+- DHT storage: Higher memory/disk usage for signed records
+- **Mitigation**: Fallback to Ed25519-only when PQ not required (`pqc-mesh` feature flag)
+
+### Raft Consensus Quorum Deadlock Risk (L35-9, MESH-15)
+
+The mesh Global tier uses Raft consensus (`src/mesh/raft/`) for state consistency. Known limitation:
+
+> **MESH-15**: Quorum Deadlock Risk During Partition
+>
+> The reliance on a `2/3 Quorum` of Global nodes to sign new `OrgPublicKey` records is dangerous in a purely DHT-based system without a consensus leader. If the network experiences a temporary partition, or if exactly 1/3 of the global nodes go offline, the entire network loses the ability to onboard new organizations or rotate keys.
+
+See `skills/raft_consensus.md` for detailed Raft implementation status.
+
+### rustls-post-quantum Dependency (L35-10)
+
+Post-quantum TLS support depends on `rustls-post-quantum` crate:
+
+```toml
+# Cargo.toml
+post-quantum = ["dep:rustls-post-quantum"]  # Feature flag
+rustls-post-quantum = { version = "0.2", optional = true }  # Line 156
+```
+
+When enabled, this provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections.
 
 ## Summary
 SynVoid’s Layer 3 and 5 are highly advanced, leveraging state-of-the-art PQC and robust cryptographic trust chains. However, the decision to build a bespoke Kademlia-based state synchronization engine for the control plane introduces severe operational complexity. Long-term maintenance would benefit significantly from migrating the Global tier to a standard Raft consensus model.

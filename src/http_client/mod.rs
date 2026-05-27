@@ -875,6 +875,7 @@ pub async fn send_request_erased_streaming(
     body: BoxErasedBody,
     headers: http::HeaderMap,
     timeout: Option<Duration>,
+    is_http2: bool,
 ) -> Result<Response<Incoming>> {
     let uri: Uri = url.parse()?;
     let mut req_builder = Request::builder()
@@ -890,7 +891,6 @@ pub async fn send_request_erased_streaming(
         .authority()
         .map(|a| a.to_string())
         .unwrap_or_default();
-    let is_http2 = true;
 
     let response = if let Some(t) = timeout {
         match tokio::time::timeout(t, client.send_request(req, authority, is_http2, Some(t))).await

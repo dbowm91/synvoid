@@ -193,6 +193,12 @@ impl SpinRuntime {
                 runtime.clone()
             } else {
                 drop(cache);
+                let wasi_enabled = component
+                    .wasi
+                    .as_ref()
+                    .map(|w| w.enabled)
+                    .unwrap_or(true);
+
                 let limits = WasmResourceLimits {
                     max_memory_mb: 64,
                     max_table_elements: None,
@@ -200,7 +206,7 @@ impl SpinRuntime {
                     timeout_seconds: self.config.default_timeout_seconds,
                     max_instances: 1,
                     memory_budget_mb: None,
-                    wasi_enabled: true,
+                    wasi_enabled,
                     allowed_dht_prefixes: Vec::new(),
                 };
                 let new_runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)

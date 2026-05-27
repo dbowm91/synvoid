@@ -16,7 +16,37 @@ Specialized guidance for WASM plugin runtime.
 - Instance pooling reduces instantiation overhead
 - Memory buffers should be reused across invocations
 
-## Known Bugs
+### PooledInstance Lifecycle
+
+The `PooledInstance` trait in `src/plugin/pool.rs:15-31` requires `prepare_for_request()` to reset all fields:
+- `start`, `timeout`, `env`, `fuel` (basic resets)
+- `allowed_dht_prefixes` - MUST be reset to prevent DHT prefix leakage between requests
+- `body_receiver` - MUST be reset to `None` to prevent body receiver leakage
+
+See `src/plugin/instance_pool.rs:219-233` for the correct pattern.
+
+### Spin Manifest Validation
+
+Spin manifest parsing (`src/spin/manifest.rs`) now validates:
+- HTTP triggers require at least one component with a `url` route defined
+- If not, returns `SpinManifestError::NoHttpRoutes`
+
+### Spin WASI Configuration
+
+Spin components can now configure WASI per-component via manifest:
+
+```toml
+[[components]]
+id = "main"
+source = "target/wasm32-wasi/release/my_app.wasm"
+
+[components.wasi]
+enabled = true  # or false to disable
+```
+
+Defaults to `true` if not specified (backward compatible).
+
+## Known Bugs (Fixed)
 
 ### Spin Cold-Start Bug (FIXED 2026-05-26)
 
@@ -24,28 +54,24 @@ Specialized guidance for WASM plugin runtime.
 
 **Fix**: `SpinRuntime` now has `cached_instances` field (line 123) and `get_or_create_instance()` method (lines 288-295) that caches and reuses `SpinAppInstance` by component_id with 5-minute idle timeout. The `reuse()` method on `SpinAppInstance` (lines 103-105) updates request timestamps without creating new instances.
 
-### DHT Prefix Propagation (FIXED previously)
+### PooledInstance DHT/Body Leak (PLUGIN-2 - FIXED 2026-05-27)
 
-`allowed_dht_prefixes` now correctly propagated to pooled instances.
+`src/plugin/pool.rs:15-31` - The generic `PooledInstance` trait's `prepare_for_request()` now properly resets:
+- `start`, `timeout`, `env`, `fuel` (basic resets)
+- `allowed_dht_prefixes` - now properly reset
+- `body_receiver` - now properly reset to `None`
 
-### PooledInstance DHT/Body Leak (PLUGIN-2 - P1)
+### Spin WASI Isolation (PLUGIN-11 - FIXED 2026-05-27)
 
-`src/plugin/pool.rs:15-26` - The generic `PooledInstance` trait's `prepare_for_request()` only resets:
-- `start`, `timeout`, `env`, `fuel`
+`src/spin/runtime.rs:196-209` - WASI is now configurable per-component via manifest. Defaults to `true` if not specified.
 
-Missing resets for:
-- `allowed_dht_prefixes`
-- `body_receiver`
+### Unauthorized DHT Query Logging (PLUGIN-10 - FIXED 2026-05-27)
 
-The concrete `WasmPooledInstance` at `src/serverless/instance_pool.rs:219` correctly resets all fields.
+At `src/plugin/wasm_runtime.rs:867`, unauthorized DHT queries now log at `error` level for security audit trail.
 
-### Spin WASI Isolation (PLUGIN-11 - P1)
+### Serverless Warmup (PLUGIN-8 - FIXED 2026-05-27)
 
-`src/spin/runtime.rs:196` - `wasi_enabled: true` is hardcoded for all Spin components. Should be configurable per-component in Spin manifest.
-
-### Unauthorized DHT Query Logging (PLUGIN-10 - P1)
-
-At `src/plugin/wasm_runtime.rs:871`, unauthorized DHT queries return `-2` but logging is at `warn` level. Should elevate to security event level for audit trail.
+`src/serverless/manager.rs:464-471` - `InstancePool::initialize()` is now called from `ServerlessManager::initialize()` to pre-warm instances before the autoscaler begins.
 
 ## Skills Reference
 

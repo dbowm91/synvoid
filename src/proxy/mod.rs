@@ -1235,6 +1235,7 @@ impl ProxyServer {
             }),
             forward_headers,
             Some(std::time::Duration::from_secs(30)),
+            true,
         )
         .await?;
 

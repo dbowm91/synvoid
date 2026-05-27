@@ -158,6 +158,9 @@ pub struct ProxyUpstreamConfig {
     pub buffering_config: Option<BufferingConfig>,
 
     #[serde(default)]
+    pub http2: Option<bool>,
+
+    #[serde(default)]
     pub cache: Option<ProxyCacheConfig>,
 
     #[serde(default)]
