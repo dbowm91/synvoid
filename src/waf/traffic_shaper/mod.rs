@@ -10,5 +10,5 @@ pub use global::{
     SiteTrafficShaper,
 };
 pub use limiter::{
-    ConnectionLimitError, ConnectionLimiter, ConnectionToken, SiteConnectionLimiter,
+    ConnectionLimitError, ConnectionLimiter, ConnectionToken,
 };
