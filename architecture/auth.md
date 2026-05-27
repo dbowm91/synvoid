@@ -174,6 +174,10 @@ impl AuthManager {
     ) -> Self
 ```
 
+**Note:** The following parameters are **hardcoded** and not configurable via `new()`:
+- `min_password_length`: 8 characters (enforced in `create_user()` and `update_password()`)
+- `session_refresh_threshold`: 0.5 (50% of session duration elapsed triggers refresh)
+
 ### User Management
 
 | Method | Signature | Description |
