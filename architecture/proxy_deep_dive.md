@@ -108,7 +108,7 @@ Backend address management, load balancing algorithms, health checking, and dist
 - Key methods:
   - `is_available()` - Healthy + under connection limit
   - `connection_scope()` - RAII guard that increments/decrements connections
-  - `record_latency()` - EWMA latency tracking (90% weight given to historical value: `(old_ewma * 9 + latency_ms) / 10`)
+  - `record_latency()` - EWMA latency tracking (90% weight to previous value for slow-moving EWMA: `(old_ewma * 9 + latency_ms) / 10`)
   - `record_success()` / `record_failure()` - Circuit breaker with 3-failure threshold
   - `composite_load()` - (conn_load * 0.4) + (cpu_load * 0.6)
 
