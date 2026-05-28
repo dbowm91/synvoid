@@ -83,6 +83,7 @@ src/mesh/dht/
 ├── record_store_message.rs # Message types for record sync
 ├── record_store_crud.rs # CRUD operations on record store
 ├── record_store_dns.rs  # DNS-specific record store
+├── record_store_persist.rs # Persistent record storage to disk
 ├── routing/             # K-bucket routing table implementation
 │   ├── mod.rs           # RoutingTable, KBucket, PeerContact, NodeId
 │   ├── table.rs         # RoutingTable impl
@@ -93,11 +94,11 @@ src/mesh/dht/
 │   ├── manager.rs       # DhtRoutingManager (routing orchestration)
 │   ├── geo_distance.rs  # Geo-based routing
 │   └── regional_hubs.rs # Regional hub info
-├── quorum.rs            # QuorumVerifier for signature quorum checking
-├── signed.rs            # SignedDhtRecord, RecordSigner, TtlManager
+├── quorum.rs            # Quorum verification logic for DHT records
+├── signed.rs            # SignedDhtRecord, RecordSigner, TtlManager, QuorumVerifierContext
 ├── stake.rs             # StakeManager for node staking/Slashing
 ├── capability_attestation.rs # CapabilityAttestation
-├── capability_access.rs # DhtAccessControl, CapabilityAccessVerifier
+├── capability_access.rs # CapabilityAccessVerifier
 ├── edge_attestation.rs  # EdgeAttestation
 ├── network_policy.rs    # GlobalAiBotList, GlobalNodeBlocklist, NetworkPolicy
 └── store.rs             # Additional store types
@@ -156,13 +157,13 @@ src/mesh/kem/
 | `DhtRoutingManager` | `src/mesh/dht/routing/manager.rs` | Orchestrates DHT queries, bootstrapping, and routing. |
 | `DhtConfig` | `src/mesh/dht/mod.rs:161` | DHT configuration (quorum sizes, timeouts, ports, rate limits). |
 | `DhtError` | `src/mesh/dht/mod.rs:108` | DHT-level errors (NotFound, StoreError, NetworkError, etc.). |
-| `TierKeyStore` | `src/mesh/dht/store.rs` | Tier key storage derived from DHT records. |
+| `TierKeyStore` | `src/mesh/dht/mod.rs:850` | Tier key storage derived from DHT records. |
 | `MerkleTree` | `src/mesh/dht/merkle.rs` | Merkle tree for DHT record proofs. |
 | `SignedDhtRecord` | `src/mesh/dht/signed.rs` | Signed DHT record wrapper. |
-| `NodeInfo` | `src/mesh/dht/keys.rs` | Node information for DHT records. |
+| `NodeInfo` | `src/mesh/dht/mod.rs:342` | Node information for DHT records. |
 | `StakeManager` | `src/mesh/dht/stake.rs` | Node staking and slashing logic. |
 | `GlobalNodeBlocklist` | `src/mesh/dht/network_policy.rs` | Global blocklist for misbehaving nodes. |
-| `DhtAccessControl` | `src/mesh/dht/capability_access.rs` | Access control checks on DHT operations. |
+| `DhtAccessControl` | `src/mesh/dht/mod.rs:689` | Access control checks on DHT operations. |
 
 ### Raft
 
@@ -173,7 +174,7 @@ src/mesh/kem/
 | `MeshRaftNetworkFactory` | `src/mesh/raft/network.rs` | Factory for creating per-peer Raft network handlers. |
 | `GlobalRegistryStateMachine` | `src/mesh/raft/state_machine.rs` | State machine for global registry (OrgPublicKey, ThreatIntel, Revocation). |
 | `GlobalNodeRevocationList` | `src/mesh/raft/state_machine.rs` | Revocation list stored in Raft state machine. |
-| `Namespace` | `src/mesh/raft/state_machine.rs` | Namespace enum (Org, Intel, Revocation) for state machine keys. |
+| `Namespace` | `src/mesh/raft/state_machine.rs` | Namespace enum (Org, Intel, Revocation, AuthorizedGlobalNodes) for state machine keys. |
 | `RaftAwareClient` | `src/mesh/raft/client.rs` | Client for performing ConsistentRead RPCs against Raft cluster. |
 | `EdgeReplicaManager` | `src/mesh/raft/edge_replica.rs` | Manages edge node replicas of Raft state. |
 | `RaftCommitNotification` | `src/mesh/raft/mod.rs:42` | Notification emitted when Raft commits a value. |
@@ -236,7 +237,7 @@ src/mesh/kem/
 | Type | Location | Purpose |
 |------|----------|---------|
 | `MeshConfig` | `src/mesh/config.rs` | Root mesh configuration (node role, DHT, transport, global node keys). |
-| `MeshNodeRole` | `src/mesh/config.rs` | Enum: Origin, Edge, Global. |
+| `MeshNodeRole` | `src/mesh/config.rs` | Bitmask struct (u8): GLOBAL (0b010), EDGE (0b001), ORIGIN (0b100), GLOBAL_EDGE (0b011), GLOBAL_ORIGIN (0b110), EDGE_ORIGIN (0b101), ALL (0b111), SERVERLESS_ORIGIN (0b1000). |
 | `MeshArgs` / `MeshCommand` | `src/mesh/cli.rs` | CLI argument parsing. |
 | `AuditLogger` | `src/mesh/audit.rs` | Audit event logging. |
 | `AuditSession` | `src/mesh/audit_session.rs` | Session-scoped audit context. |
@@ -260,7 +261,7 @@ DHT and Raft serve distinct roles but share infrastructure:
 
 | Integration Point | File | Details |
 |------------------|------|---------|
-| `RaftInstance.raft` field | `src/mesh/transport.rs:159` | `MeshTransport` holds `Arc<RwLock<Option<Arc<RaftInstance>>>>`. The transport coordinates with Raft for committed-value hooks. |
+| `MeshTransport.raft_instance` field | `src/mesh/transport.rs:159` | `MeshTransport` holds `Arc<RwLock<Option<Arc<RaftInstance>>>>`. The transport coordinates with Raft for committed-value hooks. |
 | `RaftAwareClient` | `src/mesh/raft/client.rs` | Edge/Origin nodes use this client to perform ConsistentRead RPCs against the Raft cluster instead of DHT for strongly-consistent reads. |
 | `EdgeReplicaManager` | `src/mesh/raft/edge_replica.rs` | Edge nodes cache Raft state machine snapshots locally to serve consistent reads without querying the Raft cluster. |
 | Raft commit hooks | `src/mesh/raft/instance.rs` | `RaftInstance` integrates with `MeshProxy` to publish committed values to the DHT and propagate to peers. |
@@ -269,7 +270,7 @@ DHT and Raft serve distinct roles but share infrastructure:
 
 ### Quorum in DHT vs Raft
 
-- **DHT quorum** (`DhtConfig.write_quorum` / `read_quorum`) is the number of DHT peers that must acknowledge a read/write before it is considered complete. The `QuorumVerifier` in `src/mesh/dht/quorum.rs` validates threshold signatures for DHT records.
+- **DHT quorum** (`DhtConfig.write_quorum` / `read_quorum`) is the number of DHT peers that must acknowledge a read/write before it is considered complete. The `QuorumVerifierContext` in `src/mesh/dht/signed.rs:12` provides context for threshold signature verification of DHT records.
 
 - **Raft quorum** is handled by the `openraft` library internally (majority of cluster nodes). Raft commits are persisted to the state machine, which then publishes to DHT.
 
