@@ -1341,35 +1341,8 @@ impl HttpsServer {
                                             }));
                                     }
                                     crate::static_files::StaticResponseBody::Buffered(
-                                        file_path,
+                                        body,
                                     ) => {
-                                        let file = match tokio::fs::File::open(&file_path).await {
-                                            Ok(f) => f,
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Failed to open {}: {}",
-                                                    file_path.display(),
-                                                    e
-                                                );
-                                                return Ok(Self::build_response(
-                                                    500,
-                                                    "Internal Server Error".to_string(),
-                                                    "text/plain",
-                                                ));
-                                            }
-                                        };
-                                        use futures::StreamExt;
-                                        use http_body_util::StreamBody;
-                                        use tokio_util::io::ReaderStream;
-                                        let stream = ReaderStream::new(file);
-                                        let mut body = StreamBody::new(stream);
-                                        let mut body_bytes = Vec::new();
-                                        while let Some(chunk) = body.next().await {
-                                            if let Ok(bytes) = chunk {
-                                                body_bytes.extend_from_slice(&bytes);
-                                            }
-                                        }
-                                        let body = Bytes::from(body_bytes);
                                         return Ok(builder
                                             .body(Full::new(body).boxed())
                                             .unwrap_or_else(|_| {
