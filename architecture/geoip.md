@@ -17,14 +17,11 @@ The GeoIP module (`src/geoip/`) provides **MaxMind GeoIP database integration** 
 
 ```rust
 pub struct GeoIpManager {
-    config: Arc<GeoIpConfig>,
-    lookup: Arc<RwLock<GeoIpLookup>>,
+    lookup: Arc<GeoIpLookup>,
     updater: Arc<GeoIpUpdater>,
-    blocked_countries: Arc<RwLock<HashSet<String>>>,
-    allowed_countries: Arc<RwLock<HashSet<String>>>,
-    last_update: Arc<RwLock<Option<u64>>>,
+    blocked_countries: HashSet<String>,
+    allowed_countries: HashSet<String>,
     alert_manager: Option<Arc<AlertManager>>,
-    is_enabled: bool,
 }
 
 pub struct GeoIpLookup {

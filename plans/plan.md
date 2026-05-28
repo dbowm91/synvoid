@@ -74,6 +74,8 @@ Wire or properly configure partially-implemented features.
 
 ### Wave 5: Documentation Updates (P2-P3)
 
+> **Status**: ALL 148 documentation items RESOLVED across 15 domains (5A-5O). All verified against source code. Completed 2026-05-28.
+
 Organized by domain for parallel execution. **Each domain can be handled by a separate agent.** Within a domain, tasks can be batched (one agent per domain).
 
 #### Wave 5A: Admin/Observability Docs (11 items)

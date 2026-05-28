@@ -16,6 +16,43 @@ The Integrity module (`src/integrity/`) provides **end-to-end integrity verifica
 ## 2. Key Data Structures
 
 ```rust
+pub struct IntegrityConfig {
+    pub enabled: bool,
+    pub mode: IntegrityMode,
+    pub key_exchange_url: Option<String>,
+    pub global_node_domains: Vec<String>,
+    pub session_ttl_secs: u64,
+    pub max_concurrent_sessions: usize,
+    pub sign_request_headers: Vec<String>,
+    pub sign_response_headers: Vec<String>,
+    pub include_body_hash: bool,
+    pub include_method: bool,
+    pub include_path: bool,
+    pub include_query: bool,
+    pub cache_freshness_signed: bool,
+    pub audit_report_url: Option<String>,
+    pub verify_on_edge: bool,
+    pub allow_unsigned_on_edge_failure: bool,
+    pub audit_pow_enabled: bool,
+    pub audit_pow_difficulty: u8,
+    pub audit_pow_timeout: u64,
+    pub audit_nodes: Vec<String>,
+    pub allowed_upstream_ips: Vec<String>,
+}
+
+pub enum IntegrityMode {
+    Disabled,
+    Audit,
+    Enforced,
+}
+
+pub struct IntegrityHeader {
+    pub session_id: String,
+    pub key_id: String,
+    pub timestamp: i64,
+    pub nonce: String,
+}
+
 pub struct SignedHttpMessage {
     pub integrity_header: IntegrityHeader,
     pub method: Option<String>,
@@ -27,30 +64,15 @@ pub struct SignedHttpMessage {
     pub signed_at: i64,
 }
 
-pub struct IntegrityHeader {
+pub struct SessionKey {
     pub session_id: String,
     pub key_id: String,
-    pub timestamp: i64,
-    pub nonce: String,
-}
-
-pub enum IntegrityMode {
-    Disabled,
-    Audit,
-    Enforced,
-}
-
-pub struct SignedHttpMessage {
-    pub headers: HashMap<String, String>,
-    pub signature: Vec<u8>,
-    pub public_key: Vec<u8>,
-    pub timestamp: u64,
-}
-
-pub struct SessionKey {
-    pub key: Vec<u8>,
-    pub expires_at: u64,
-    pub node_id: String,
+    pub mesh_id: String,
+    pub verifying_key: String,
+    pub client_x25519_pubkey: Option<String>,
+    pub derived_key: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 }
 ```
 

@@ -17,23 +17,24 @@ The ICMP Filter module (`src/icmp_filter/`) provides **cross-platform ICMP packe
 
 ```rust
 pub struct IcmpFilterManager {
-    backend: Option<Box<dyn IcmpFilter>>,
-    config: IcmpFilterConfig,
+    filter: Box<dyn IcmpFilter>,
 }
 
-pub trait IcmpFilter {
-    fn enable(&mut self) -> Result<(), IcmpFilterError>;
-    fn disable(&mut self) -> Result<(), IcmpFilterError>;
+pub trait IcmpFilter: Debug + Send + Sync {
+    fn enable(&mut self) -> Result<()>;
+    fn disable(&mut self) -> Result<()>;
     fn is_enabled(&self) -> bool;
     fn is_enforcing(&self) -> bool;
+    fn backend(&self) -> FilterBackend;
     fn status(&self) -> FilterStatus;
-    fn update_config(&mut self, config: IcmpFilterConfig) -> Result<(), IcmpFilterError>;
+    fn update_config(&mut self, config: IcmpFilterConfig) -> Result<()>;
+    fn config(&self) -> &IcmpFilterConfig;
 }
 
-pub trait IcmpFilterFactory {
-    fn create(config: &IcmpFilterConfig) -> Result<Box<dyn IcmpFilter>, IcmpFilterError>;
-    fn backend() -> FilterBackend;
-    fn is_available() -> bool;
+pub trait IcmpFilterFactory: Debug + Send + Sync {
+    fn create(&self, config: IcmpFilterConfig) -> Result<Box<dyn IcmpFilter>>;
+    fn backend(&self) -> FilterBackend;
+    fn is_available(&self) -> bool;
 }
 
 pub enum FilterBackend {
@@ -45,11 +46,12 @@ pub enum FilterBackend {
 }
 
 pub struct BackendCapabilities {
+    pub backend: FilterBackend,
     pub supports_block: bool,
     pub supports_allow: bool,
     pub supports_rate_limit: bool,
-    pub supports_type_code: bool,
-    pub supports_interface: bool,
+    pub supports_type_code_matching: bool,
+    pub supports_interface_filtering: bool,
     pub requires_admin: bool,
     pub is_enforcing: bool,
 }
