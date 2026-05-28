@@ -145,45 +145,28 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 ## Key Codebase Facts
 
-### Security-Critical Bugs (Known)
+### Security-Critical Bugs (Active — See plans/plan.md Wave 1)
 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
-| BUG-L3 | `src/mesh/ml_kem_key_exchange.rs:204-265` | ML-KEM key exchange proof-of-possession | FIXED (shared secret comparison verified) |
+| SEC-1 | `src/filter/common.rs:74-96` | Docs say "allowlist first" but code checks **denylist first** | OPEN — see plan SEC-1 |
+| SEC-2 | `src/admin/alerting/mod.rs:143-154` | SSRF bypass: only `http://` URLs checked for private IPs, `https://` bypasses | OPEN — see plan SEC-2 |
+| SEC-3 | `src/fastcgi/pool.rs:229` | `execute_stream()` drops semaphore permit immediately, bypassing concurrency limit | OPEN — see plan SEC-3 |
+| SEC-4 | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` skips `validate_key_strength()` | OPEN — see plan SEC-4 |
 | BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
-| BUG-DNS-1 | `src/dns/resolver.rs:693-702` | HickoryRecursor DNSSEC policy always SecurityUnaware | ✅ FIXED (2026-05-27) - uses ValidateWithStaticKey |
-| BUG-DNS-4 | `src/dns/resolver.rs:420-429` | HickoryResolver (forwarder) always false; Recursor mode correct | ✅ DONE - by design, hickory-resolver API doesn't expose validation status |
 
-### Known Implementation Issues
+### Dead Code Markers
 
-| Issue | Location | Impact | Status |
-|-------|----------|--------|--------|
-| HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method | FIXED 2026-05-27 |
-| DNS Cookie Server not integrated | `src/dns/cookie.rs` | Complete implementation exists and is wired | FIXED 2026-05-27 |
-| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | ✅ FIXED 2026-05-27 - removed dead code. **Note**: architecture docs (waf.md:180, waf_deep_dive.md:24, networking_deep_dive.md:82) still reference removed struct |
-| Spin cold-start instance reuse | `src/spin/runtime.rs:289-303` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
-| PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Fixed - `allowed_dht_prefixes` and `body_receiver` now properly reset | FIXED 2026-05-27 |
-| WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Fixed - documentation corrected to match actual defaults | FIXED 2026-05-27 |
-| is_admin_required_for_tun stub | `src/platform/mod.rs:166-176` | Fixed - now returns `false` for Unix platforms, `true` for Windows | FIXED 2026-05-27 |
-| Username validation | `src/auth/mod.rs:305-318` | Validation exists (min 1, max 64, no control chars) | FIXED 2026-05-27 |
-| max_failed_attempts default mismatch | `src/waf/mod.rs:398-404` | WafCore used 5 but docs said 3 | ✅ FIXED 2026-05-27 - WafCore now uses 3 |
-| request_body_size double assignment | `src/http/server.rs:1517, 4692, 1633` | Line 1633 overwrites WAF-computed body size with Content-Length header | ⚠️ PARTIALLY FIXED - line 1633 overwrite still exists (see plans/plan.md XMOD-6) |
-| Dead zero_copy module | `src/zero_copy.rs` | Declared in `lib.rs:101` but ZERO external callers | Dead code — remove or complete |
-| Dead listener/common.rs | `src/listener/common.rs` | All types re-exported but never instantiated | Dead code — `ListenerConfigBase`, `SocketOptionsBase`, `ListenerInstance<C>`, `ConnectionContext` unused |
-| pqc-mesh feature flag unwired | `Cargo.toml` | Feature defined but zero `#[cfg]` usages in source | Dead feature flag — wire or remove |
+These items are tracked in `plans/plan.md` (Wave 3) but are noted here for quick reference:
 
-### Known High-Priority Issues (Requires Investigation/Fix)
-
-| Issue | Location | Severity | Description |
-|-------|----------|----------|-------------|
-| BUG-DNS-1 | DNS recursor | HIGH | ✅ FIXED - HickoryRecursor now uses ValidateWithStaticKey with trust anchors |
-| BUG-DNS-4 | DNS resolver | MEDIUM | ✅ DONE - Documented as by design (hickory-resolver API limitation for forwarder mode) |
-| BUG-PL-3 | Windows | MEDIUM | Documented limitation - WindowsSocketFDPassing returns NotSupported, port-swap mode default |
-| BUG-WAF-3 | WAF | MEDIUM | ✅ FIXED - SiteConnectionLimiter dead code removed |
-| SEC-SSRF-1 | `src/admin/alerting/mod.rs:143-154` | HIGH | SSRF bypass — only `http://` URLs checked for private IPs, `https://` bypasses check |
-| SEC-FILTER-1 | `src/filter/common.rs:74-96` | HIGH | Docs say "allowlist first" but code checks **denylist first** — security-critical doc error |
-| SEC-FASTCGI-1 | `src/fastcgi/pool.rs:229` | HIGH | `execute_stream()` drops semaphore permit immediately, bypassing concurrency limit |
-| SEC-CERT-1 | `src/tls/cert_resolver.rs:215-253` | HIGH | `load_certs_from_dir()` skips `validate_key_strength()` — certs from watch dir bypass RSA checks |
+| Item | Location | Notes |
+|------|----------|-------|
+| `zero_copy` module | `src/zero_copy.rs` | Declared in `lib.rs:101`, zero external callers. Also broken on macOS (uses `/proc/self/fd`) |
+| `listener/common.rs` types | `src/listener/common.rs` | `SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` dead. `ConnectionContext` IS used — keep it |
+| `pqc-mesh` feature | `Cargo.toml:37` | Defined but zero `#[cfg]` usages in source |
+| `honeypot_unified` module | `src/honeypot_unified/` | 215 lines, NOT declared in `lib.rs` |
+| `serialization_rkyv.rs` | `src/serder/serialization_rkyv.rs` | Orphaned file, not declared in `lib.rs` |
+| `RequestContext` trait | `src/http/shared_handler.rs:133` | `#[allow(dead_code)]` |
 
 ### Dependency Vulnerability Status
 
@@ -283,6 +266,11 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **PeakEwma weighting**: Slow-moving (90% to old value) is intentional for connection stability
 - **BUG-ROUTER-1**: Hardcoded port 80 is in `Default` impl only, actual usage uses configured port - NOT a bug
 - **Spin header serialization**: Uses JSON (SpinRuntime::serialize_headers_spin), not binary like raw WASM
+- **collect_body_with_chunk_waf duplication**: Two implementations exist: `src/http/server.rs:4665` and `src/tls/server.rs:2086` with different signatures — consolidate (plan FEAT-3)
+- **Spin idle instance eviction**: `instances` HashMap keyed by UUID grows indefinitely — old entries never cleaned up (plan DOC-L7)
+- **ServerlessScheduler not exported**: `src/serverless/scheduler.rs` exists but not `pub mod` in `mod.rs` (plan FEAT-4)
+- **Email alerting is a stub**: `send_email_internal()` at `src/admin/alerting/mod.rs:349-373` logs message then returns `Ok(())` without sending
+- **Audit log redundant permissions**: `src/admin/audit.rs:131-139` re-applies permissions on every write — already set in `with_audit_dir()`
 
 ## Skills Directory
 

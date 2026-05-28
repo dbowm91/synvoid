@@ -58,6 +58,10 @@ See `skills/admin_api.md` for Admin API patterns.
 
 ## Security Issues (Open)
 
-### SSRF Bypass via HTTPS (SEC-SSRF-1)
+### SSRF Bypass via HTTPS (SEC-2)
 
-`src/admin/alerting/mod.rs:143-154` — SSRF check in `AlertConfig::validate()` is inline (not a named function). Only validates `http://` URLs against private IPs. HTTPS URLs to private IPs bypass the check entirely. Fix: extend validation to also check `https://` URLs.
+`src/admin/alerting/mod.rs:143-154` — SSRF check in `AlertConfig::validate()` is inline (not a named function). Line 143: `if url_lower.starts_with("http://")` — only validates `http://` URLs against private IPs. HTTPS URLs to private IPs (e.g., `https://127.0.0.1/admin`) bypass the check entirely. Fix: extend validation to also check `https://` URLs.
+
+### Email Alerting is a Stub
+
+`send_email_internal()` at `src/admin/alerting/mod.rs:349-373` logs a message then returns `Ok(())` without actually sending any email. No SMTP or email transport is implemented.

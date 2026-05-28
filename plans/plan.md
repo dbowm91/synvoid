@@ -1,7 +1,8 @@
 # SynVoid Consolidated Implementation Plan
 
-> **Note**: This file consolidates all review plan findings into an actionable plan.
+> **Note**: This is the single source of truth for all planned work.
 > Completed items have been pruned. See git history for completed item details.
+> All items verified against source code by review subagents (2026-05-28).
 
 ---
 
@@ -16,18 +17,18 @@
 
 ## Execution Waves
 
-Items are organized into waves that can be parallelized. Within each wave, tasks are grouped by domain so multiple agents can work simultaneously.
+Items are organized into waves that can be parallelized. Within each wave, tasks are grouped by domain so multiple agents can work simultaneously. **Within a wave, all tasks are independent** — assign one task per agent.
 
 ### Wave 1: Security-Critical Code Fixes (P0)
 
-These must be done first. Each task is independent and can be assigned to a separate agent.
+Each task is independent and can be assigned to a separate agent. All verified present in source code.
 
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
 | **SEC-1** | Fix filter allow/deny priority | `src/filter/common.rs:74-96` | Documentation says "allowlist first, then denylist" — actual code checks **denylist first** (`:74-84`), then allowlist (`:86-96`). Update `architecture/filter.md:53-54` to match actual behavior. Security-critical: docs misrepresent filtering order. | Low |
-| **SEC-2** | Fix SSRF bypass via HTTPS | `src/admin/alerting/mod.rs:143-154` | SSRF check is inline in `AlertConfig::validate()` (not a named function). Only checks `http://` URLs for private IPs. HTTPS URLs to private IPs bypass the check. Add HTTPS URL validation. | Low |
-| **SEC-3** | Fix FastCGI semaphore bypass | `src/fastcgi/pool.rs:229` | `execute_stream()` drops semaphore permit immediately, bypassing concurrency limit. Hold permit for duration of request. | Low |
-| **SEC-4** | Fix cert strength validation bypass | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` does NOT call `validate_key_strength()` — certs from watch directory bypass RSA key strength checks. Add validation call. | Low |
+| **SEC-2** | Fix SSRF bypass via HTTPS | `src/admin/alerting/mod.rs:143-154` | SSRF check is inline in `AlertConfig::validate()` (not a named function). Line 143: `if url_lower.starts_with("http://")` — only `http://` URLs get private IPs checked. An `https://` URL to `https://127.0.0.1/admin` bypasses the check entirely. Add HTTPS URL validation. | Low |
+| **SEC-3** | Fix FastCGI semaphore bypass | `src/fastcgi/pool.rs:229` | `execute_stream()` acquires semaphore permit at line 224, then immediately `drop(permit)` at line 229 before any work. Concurrency limiting is completely bypassed. Hold permit for duration of request. | Low |
+| **SEC-4** | Fix cert strength validation bypass | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` does NOT call `validate_key_strength()` (which ends at line 213). Certs loaded from watch directory completely bypass RSA key strength checks. Add validation call. | Low |
 
 ### Wave 2: Code Bug Fixes (P1)
 
@@ -35,13 +36,14 @@ Independent bug fixes, each assignable to a separate agent.
 
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
-| **BUG-1** | Fix CGI thread pool blocking | `src/cgi/mod.rs:342-358` | `execute_script()` blocks thread pool; `tokio::time::timeout` cannot cancel OS process. Use `tokio::process::Command` instead of `std::process::Command`. | Medium |
-| **BUG-2** | Fix static file double-read | `src/static_files/mod.rs:867-880` | `into_response()` double-reads Buffered body file (negates zero-copy). Refactor to use single read. | Medium |
-| **BUG-3** | Fix StreamingFastCgiClient buffering | `src/fastcgi/streaming.rs:258-273` | Buffers entire request body before sending; not truly streaming. Implement true streaming body forwarding. | Medium |
-| **BUG-4** | Fix admin session race window | `src/admin/state.rs:830-852` | `validate_session` releases read lock before write lock for `last_used` update — race window. Use atomic update or single lock scope. | Low |
-| **BUG-5** | Fix cert file reload debounce | `src/tls/cert_resolver.rs:484-498` | `watch_for_cert_changes()` debounce sleeps 500ms then drains events — basic but functional. However, new events arriving after drain but before `load_certificates()` finishes are lost. Consider proper event coalescing with re-check. | Low |
-| **BUG-6** | Fix macOS zero_copy path | `src/zero_copy.rs:128-133` | `FilePath::path()` on Unix uses `/proc/self/fd/{fd}` — Linux-only, broken on macOS. Fix platform-specific path or remove dead module. | Medium |
-| **BUG-7** | Fix ACME non-Unix permissions | `src/tls/acme.rs:190-193` | ACME credential file on non-Unix platforms writes without restrictive permissions. Add Windows ACL handling or document limitation. | Low |
+| **BUG-1** | Fix CGI thread pool blocking | `src/cgi/mod.rs:342-358` | `execute_script()` uses `spawn_blocking` wrapping `std::process::Command` + `wait_with_output()`. The entire CGI execution (stdin write + wait) runs in a single blocking task, which could starve the Tokio blocking thread pool under high concurrency. Use `tokio::process::Command` for async process management. | Medium |
+| **BUG-2** | Fix static file double-read | `src/static_files/mod.rs:867-880` | `into_response()` at line 877-878 does `Bytes::from(std::fs::read(&path).unwrap_or_default())` — synchronous re-read of file already read when creating `StaticResponse::Buffered`. Negates zero-copy. Refactor to use single read. | Medium |
+| **BUG-3** | Fix StreamingFastCgiClient buffering | `src/fastcgi/streaming.rs:258-273` | Buffers entire request body into `stdin_buffer: Vec<u4>` before sending (line 275: `build_stdin_records(&stdin_buffer)`). Not truly streaming. Implement true streaming body forwarding with chunked FastCGI STDIN records. | Medium |
+| **BUG-4** | Fix admin session race window | `src/admin/state.rs:830-852` | TOCTOU race: read lock acquired at line 838, dropped at line 842, write lock acquired at line 843. Between drop and write, another thread could modify the session. Use atomic update or single lock scope. | Low |
+| **BUG-5** | Fix cert file reload debounce | `src/tls/cert_resolver.rs:484-498` | Debounce sleeps 500ms then drains events (line 487-488). New events arriving after drain but before `load_certificates()` finishes are lost. Consider proper event coalescing with re-check. | Low |
+| **BUG-6** | Fix macOS zero_copy path | `src/zero_copy.rs:128-133` | `FilePath::path()` on Unix uses `/proc/self/fd/{fd}` — Linux-only. `#[cfg(unix)]` should be `#[cfg(target_os = "linux")]` since macOS doesn't have procfs. macOS fallback path (line 135: `#[cfg(not(unix))]`) is never reached. | Medium |
+| **BUG-7** | Fix ACME non-Unix permissions | `src/tls/acme.rs:190-193` | Unix path (lines 178-181) sets `0o600` permissions. Non-Unix path (lines 190-193) uses `std::fs::write` with default permissions (typically `0o644`), making credentials file world-readable on Windows. | Low |
+| **BUG-8** | Fix request_body_size double assignment | `src/http/server.rs:1633` | Line 1633: `request_body_size = len;` overwrites WAF-computed body size with raw `Content-Length` header value after WAF scanning. Remove line 1633 or make it conditional. (Cross-references XMOD-6) | Low |
 
 ### Wave 3: Dead Code Cleanup (P1)
 
@@ -50,11 +52,14 @@ Remove or wire dead code. Each task is independent.
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
 | **DEAD-1** | Remove dead zero_copy module | `src/zero_copy.rs` | Declared in `lib.rs:101` but has ZERO external callers anywhere in the codebase. Remove file and `lib.rs` declaration. | Low |
-| **DEAD-4** | Wire or remove pqc-mesh feature | `Cargo.toml` + all `src/**/*.rs` | `pqc-mesh` feature flag defined but has zero `#[cfg]` usages — completely unwired. Either wire it or remove the flag. | Medium |
-| **DEAD-5** | Evaluate listener/common.rs removal | `src/listener/common.rs` | All types (`SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>`, `ConnectionContext`) are re-exported from `listener/mod.rs:3` and further from `tcp/mod.rs:12`/`udp/mod.rs:9`, but never actually instantiated or used. `TcpListenerInstance` and `UdpListenerInstance` are entirely different structs. Remove or complete. | Medium |
-| **DEAD-6** | Remove dead ProxyServer wrappers | `src/proxy/mod.rs:929,1143,1148,1153,1158` | All marked `#[allow(dead_code)]`. Remove or implement. | Low |
-| **DEAD-7** | Remove dead HttpProtocol/PooledConnection stubs | `src/http_client/erased_pool.rs` | `HttpProtocol` enum, `PooledConnection` trait, `Http2PooledConnection` are empty stubs. Remove or implement. | Low |
-| **DEAD-8** | Remove CacheEntryInner::validate() | `src/proxy/cache/store.rs:139-141` | Dead code. Remove. | Low |
+| **DEAD-2** | Remove dead listener/common.rs types | `src/listener/common.rs` | `SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` are defined but never instantiated. `ConnectionContext` IS used (re-exported in `tcp/mod.rs:12`/`udp/mod.rs:9`) — keep it. Remove only the dead types. | Medium |
+| **DEAD-3** | Wire or remove pqc-mesh feature | `Cargo.toml` + all `src/**/*.rs` | `pqc-mesh` feature flag defined at `Cargo.toml:37` but has zero `#[cfg(feature = "pqc-mesh")]` usages. Either wire it to gate ML-DSA-44 post-quantum signatures or remove the flag. | Medium |
+| **DEAD-4** | Remove dead ProxyServer wrappers | `src/proxy/mod.rs:929,1143,1148,1153,1158` | All marked `#[allow(dead_code)]`. Remove or implement. | Low |
+| **DEAD-5** | Remove dead HttpProtocol/PooledConnection stubs | `src/http_client/erased_pool.rs` | `HttpProtocol` enum, `PooledConnection` trait, `Http2PooledConnection` are empty stubs. Remove or implement. | Low |
+| **DEAD-6** | Remove CacheEntryInner::validate() | `src/proxy/cache/store.rs:139-141` | Dead code. Remove. | Low |
+| **DEAD-7** | Remove honeypot_unified dead module | `src/honeypot_unified/` | 215 lines exist but NOT declared in `lib.rs`. Dead module — remove directory. | Low |
+| **DEAD-8** | Remove orphaned serialization_rkyv.rs | `src/serder/serialization_rkyv.rs` | File exists but NOT declared in `lib.rs`. Remove or wire. | Low |
+| **DEAD-9** | Remove dead RequestContext trait | `src/http/shared_handler.rs:133` | `RequestContext` trait is `#[allow(dead_code)]`. Remove or implement. | Low |
 
 ### Wave 4: Feature Wiring (P1-P2)
 
@@ -62,14 +67,16 @@ Wire or properly configure partially-implemented features.
 
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
-| **FEAT-1** | Wire pqc-mesh feature flag | Multiple `#[cfg(feature = "pqc-mesh")]` locations | Feature is defined in Cargo.toml but has zero cfg usages. Investigate what it should gate (ML-DSA-44 post-quantum signatures) and wire it. | High |
+| **FEAT-1** | Wire pqc-mesh feature flag | Multiple `#[cfg(feature = "pqc-mesh")]` locations | Feature is defined in Cargo.toml but has zero cfg usages. Investigate what it should gate (ML-DSA-44 post-quantum signatures) and wire it. (Cross-references DEAD-3) | High |
 | **FEAT-2** | Fix health_check() validation | `src/fastcgi/pool.rs:283-294` | `health_check()` only validates socket format, not actual connectivity. Add real connection test. | Low |
+| **FEAT-3** | Fix collect_body_with_chunk_waf duplication | `src/http/server.rs:4665` + `src/tls/server.rs:2086` | Two implementations with different signatures. Consolidate into single shared implementation. | Medium |
+| **FEAT-4** | Export ServerlessScheduler | `src/serverless/scheduler.rs` + `src/serverless/mod.rs` | `scheduler.rs` exists but not `pub mod` in `mod.rs`. Wire or remove. | Low |
 
-### Wave 5: Documentation Updates (P2)
+### Wave 5: Documentation Updates (P2-P3)
 
-Organized by domain for parallel execution. Each domain can be handled by a separate agent.
+Organized by domain for parallel execution. **Each domain can be handled by a separate agent.** Within a domain, tasks can be batched (one agent per domain).
 
-#### Wave 5A: Admin/Observability Docs (8 items)
+#### Wave 5A: Admin/Observability Docs (11 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -81,6 +88,9 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-A6 | `architecture/metrics.md` | Fix WorkerMetrics: 13+ fields, not 3 |
 | DOC-A7 | `architecture/metrics.md` | Expand global counters: 50+ `LazyLock<AtomicU64>`, not 4 statics |
 | DOC-A8 | `architecture/protocol.md` | Fix ProtocolHandler trait return types and ProtocolDetectionResult field types |
+| DOC-A9 | `architecture/admin_deep_dive.md` | Fix SyslogLogger struct: actual uses `_backend: ()` on Unix, `app_name: String`, `_phantom: ()` — no `syslog` field |
+| DOC-A10 | `architecture/admin_deep_dive.md` | Document audit log per-write permissions at `audit.rs:131-139` (redundant — already set in `with_audit_dir()`) |
+| DOC-A11 | `architecture/admin_deep_dive.md` | Document email alerting stub: `send_email_internal()` at `mod.rs:349-373` logs message then returns `Ok(())` without sending |
 
 #### Wave 5B: App Handler Docs (9 items)
 
@@ -105,8 +115,8 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-C3 | `architecture/config_deep_dive.md:91-117` | Expand SiteConfig hierarchy (missing `worker_pool`, `logging`, `proxy`, `tcp`, `udp`, `tarpit`, `upload`, `auth`, `tunnel`, `whitelist`, `serverless_only`); `site_id` is method not field |
 | DOC-C4 | `architecture/config_deep_dive.md:329` | Fix DNS validation condition: requires `dns.enabled == true`, not just feature compile |
 | DOC-C5 | `architecture/config.md:662-707` | Add missing appendix files: `site/misc.rs`, `icmp_filter.rs`, 10 DNS submodules |
-| DOC-C6 | `architecture/config.md:85-87` | Fix default port function line references |
-| DOC-C7 | `architecture/config.md` | Expand feature flag table to list ALL effects of each feature |
+| DOC-C6 | `architecture/config.md:85-87` | Fix default port function line references: `default_dns_port` at `dns/mod.rs:144` (not 145), `default_wg_port` at `tunnel.rs:87` (not 86) |
+| DOC-C7 | `architecture/config.md` | Expand feature flag table to list ALL effects of each feature. `dns` feature also enables `hickory-proto`, `hickory-resolver`, `tokio-dstip`, `cryptoki`, `getrandom`. Add missing gates: `origin_key_exchange`, `audit`, `verify-pq`, `tun-rs`, `buffer`, `rkyv`, `test-utils` |
 
 #### Wave 5D: DNS Docs (12 items)
 
@@ -116,7 +126,7 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-D2 | `architecture/dns.md:226` | Add `#[cfg(feature = "dns")]` to `with_cookie_server` |
 | DOC-D3 | `architecture/dns.md:341` | Fix cookie validation location: method at `cookie.rs:66-86`, call site at `server/query.rs:645-662` |
 | DOC-D4 | `architecture/dns.md:790` | Remove stale DNS-2 reference (`_max_wait_ms` is now used) |
-| DOC-D5 | `architecture/dns.md:246` | Fix HickoryRecursor `new()` line: 629, not 628 |
+| DOC-D5 | `architecture/dns.md:246` | Fix HickoryRecursor `new()` line: 629 (method), not 628 (impl block start) |
 | DOC-D6 | `architecture/dns.md:224` | Fix `with_acme_dns_challenges` line: 855, not 573 |
 | DOC-D7 | `architecture/dns.md:3.1` | Expand DnsServer struct: ~30 fields (add `zone_index_dirty`, `geoip_lookup`, `shutdown_tx`, etc.) |
 | DOC-D8 | `architecture/dns.md:3.5` | Add `key_size: Option<u32>` to ZoneSigningKey |
@@ -135,7 +145,7 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-E4 | `architecture/http_shared.md:324-325` | Fix `WebPkiServerVerifier` description: uses `with_root_certificates`, not explicit `WebPkiServerVerifier` |
 | DOC-E5 | `architecture/http_shared.md:129` | Fix `StreamingWafBody`: implements `hyper::body::Body`, not `http_body::Body` |
 
-#### Wave 5F: Mesh Docs (7 items)
+#### Wave 5F: Mesh Docs (8 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -146,6 +156,7 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-F5 | `architecture/mesh.md` | Add `AuthorizedGlobalNodes` variant to Namespace (4 variants, not 3) |
 | DOC-F6 | `architecture/mesh.md` | Document MeshNodeRole bitmask: 8 values including `GLOBAL_EDGE`, `GLOBAL_ORIGIN`, `EDGE_ORIGIN`, `ALL`, `SERVERLESS_ORIGIN` |
 | DOC-F7 | `architecture/mesh.md` | Add `record_store_persist.rs` to file tree |
+| DOC-F8 | `architecture/mesh.md` | Fix RaftInstance field reference: `MeshTransport.raft_instance` at `transport.rs:159`, not `RaftInstance.raft` |
 
 #### Wave 5G: Networking Docs (10 items)
 
@@ -162,7 +173,7 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-G9 | `architecture/listener.md` | Fix upstream_address: `String` + `upstream_address_v6: Option<String>` (not `Option<String>`) |
 | DOC-G10 | `architecture/listener.md` | Fix filter_config: `filter_enabled: bool` + `strict_mode: bool` (no `FilterConfig` type) |
 
-#### Wave 5H: Proxy/Routing Docs (18 items)
+#### Wave 5H: Proxy/Routing Docs (21 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -184,8 +195,11 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-H16 | `architecture/location_matcher.md` | Fix LocationMatch: `exact_matches` → `exact_locations` with tuple values, `compiled_regex` → `regex` |
 | DOC-H17 | `architecture/upstream.md` | Fix field types: `cpu_percent`/`memory_percent` are `Arc<AtomicU32>` |
 | DOC-H18 | `architecture/routing_deep_dive.md` | Replace external GitHub URLs with local file paths |
+| DOC-H19 | `architecture/proxy.md` | Document SharedConnectionTable layout: `[16 + max_workers * 8..]` not `[N+1..]` |
+| DOC-H20 | `architecture/proxy.md` | Document CacheKey.uri contains hash-prefixed value: `format!("{}:{}", hash, uri_str)` |
+| DOC-H21 | `architecture/proxy.md` | Document `ErasedHttpClient::new(100)` hardcodes pool size instead of using parameter |
 
-#### Wave 5I: TLS/Crypto Docs (5 items)
+#### Wave 5I: TLS/Crypto Docs (7 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -194,8 +208,10 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-I3 | `architecture/tls.md` | Fix CertResolver.certs: `Arc<RwLock<HashMap<...>>>` (missing `RwLock` wrapper) |
 | DOC-I4 | `architecture/tls.md` | Fix `watch_for_cert_changes`: free function, not method |
 | DOC-I5 | `architecture/tls.md` | Expand SniError: 7 variants, not 4 (add `InvalidHostname`, `ConnectionClosed`, `Io(String)`) |
+| DOC-I6 | `architecture/tls.md` | Add undocumented `config: InternalTlsConfig` field to CertResolver docs |
+| DOC-I7 | `architecture/layer_3_5_deep_dive.md` | Fix rustls-post-quantum line: `Cargo.toml:157` not 156 |
 
-#### Wave 5J: Utilities Docs (5 items)
+#### Wave 5J: Utilities Docs (8 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -203,13 +219,16 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-J2 | `architecture/filter.md` | Fix `Protocol::from_str` return type: `Self` (infallible), not `Option<Self>` |
 | DOC-J3 | `architecture/filter.md` | Fix `BaseFilterConfig` allowlist/denylist: `Vec<String>` (stringly-typed), not `Vec<P>` |
 | DOC-J4 | `architecture/zero_copy.md` | Fix `sendfile_to_socket` description: returns `Err` on unsupported platforms, not userspace fallback |
-| DOC-J5 | `architecture/serder.md` | Remove determinism claim or clarify `no_std` requirement |
+| DOC-J5 | `architecture/serder.md` | Clarify Postcard: single-allocation encoding but NOT cross-version/platform determinism. Only `no_std` with explicit endianness is deterministic |
+| DOC-J6 | `architecture/filter.md` | Fix PhantomData field name: `_marker` not `_phantom` |
+| DOC-J7 | `architecture/filter.md` | Document trait bounds: both traits have `Clone + PartialEq + Eq + Debug + Send + Sync + 'static` |
+| DOC-J8 | `architecture/filter.md` | Document missing `PortConfigBase` type (public API exported from `src/filter/mod.rs:4`) |
 
-#### Wave 5K: WAF/Security Docs (13 items)
+#### Wave 5K: WAF/Security Docs (18 items)
 
 | ID | File | Fix |
 |----|------|-----|
-| DOC-K1 | `architecture/waf.md` | Expand WafCore struct: ~30 fields (add `auth_manager`, `attack_detection_config`, `block_store`, `config`, `whitelist`, `tarpit_generator`, etc.) |
+| DOC-K1 | `architecture/waf.md` | Expand WafCore struct: ~30 fields (add `auth_manager`, `attack_detection_config`, `block_store`, `config`, `whitelist`, `tarpit_generator`, `rate_limiter`, `captcha_manager`, `challenge_config`, `icmp_filter`, `threat_intel`, `behavioral_intel`, `integrity_checker`, etc.) |
 | DOC-K2 | `architecture/waf.md:180` | Remove `SiteConnectionLimiter` reference (struct does not exist) |
 | DOC-K3 | `architecture/waf.md` | Fix WafCoreConfig: 22 fields, not 11 |
 | DOC-K4 | `architecture/waf.md` | Fix default features: `flood-ebpf` is NOT in default features |
@@ -217,13 +236,18 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-K6 | `architecture/block_store.md:20-36` | Fix BlockStore: 64-shard `Vec<RwLock<AHashMap>>`, not `Arc<RwLock<HashMap>>` |
 | DOC-K7 | `architecture/block_store.md` | Fix BlockEntry: `ip: String`, `blocked_at: u64`, `ban_expire_seconds: u64`, `site_scope: String`, add `access_count`/`last_access` |
 | DOC-K8 | `architecture/challenge.md` | Remove non-existent `rate_limiter: RateLimiter` field |
-| DOC-K9 | `architecture/captcha.md` | Fix CaptchaManager.challenges type: uses `CaptchaStore` wrapper |
+| DOC-K9 | `architecture/captcha.md` | Fix CaptchaManager.challenges type: uses `CaptchaStore` wrapper; fix `verification_window_secs`: `u32` not `u64` |
 | DOC-K10 | `architecture/icmp_filter.md` | Remove `FilterBackend::PfBsd` variant (does not exist) |
 | DOC-K11 | `architecture/icmp_filter.md` | Fix feature gates: `icmp-ebpf` not `flood-ebpf`, `icmp-pf` not `icmp-filter` |
-| DOC-K12 | `architecture/integrity.md` | Fix SignedHttpMessage: add missing fields (`integrity_header`, `method`, `path`, `query`, `body_hash`) |
+| DOC-K12 | `architecture/integrity.md` | Fix SignedHttpMessage: add missing fields (`integrity_header`, `method`, `path`, `query`, `body_hash`); fix `signature` and `timestamp` types |
 | DOC-K13 | `architecture/tarpit.md` | Fix TarpitManager.chain: add `Arc<RwLock<>>` wrapper; fix field types `usize` → `u32` |
+| DOC-K14 | `architecture/upload.md` | Fix UploadValidationError: add missing variants (`InvalidMultipart`, `NoData`, `EmptyFilename`, `IoError`, `YaraError`, `SandboxError`) |
+| DOC-K15 | `architecture/upload.md` | Fix UploadValidator struct: different field names/types from documented |
+| DOC-K16 | `architecture/upload.md` | Fix UploadConfig: incomplete documentation |
+| DOC-K17 | `architecture/honeypot.md` | Fix PortHoneypotController: only `runner` and `config` fields |
+| DOC-K18 | `architecture/honeypot.md` | Fix IpHoneypotProfile: `AtomicU64` not `AtomicU32`, `RwLock<Vec<String>>` not `HashSet` |
 
-#### Wave 5L: WASM/Plugin Docs (5 items)
+#### Wave 5L: WASM/Plugin Docs (7 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -232,8 +256,10 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-L3 | `architecture/serverless.md` | Fix FunctionDefinition: `require_trusted_caller: bool` (not `Option<bool>`), `allowed_dht_prefixes: Vec<String>` (not `Option<Vec<String>>`), `path: String` (not `Option<String>`), add `handler: String` field |
 | DOC-L4 | `architecture/plugin_deep_dive.md:109` | Fix host function count: 7, not 6 |
 | DOC-L5 | `architecture/serverless.md` | Remove incorrect `#[cfg(feature = "mesh")]` from `handle_serverless_function_streaming` |
+| DOC-L6 | `architecture/spin.md` | Remove false claim: "Runs a supervisor task for idle eviction and health checks" — no such task exists |
+| DOC-L7 | `architecture/serverless.md` | Document Spin idle instance eviction: `instances` HashMap keyed by UUID grows indefinitely — old entries never cleaned up |
 
-#### Wave 5M: Process Infrastructure Docs (8 items)
+#### Wave 5M: Process Infrastructure Docs (10 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -245,8 +271,10 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-M6 | `architecture/ipc_process.md` | Replace `Overseer*` message variants with `Supervisor*` prefix |
 | DOC-M7 | `architecture/drain.md` | Expand DrainStatus/WorkerDrainState with all actual fields |
 | DOC-M8 | `architecture/platform.md` | Remove non-existent `supports_seatbelt()` method; document feature gate instead |
+| DOC-M9 | `architecture/process_lifecycle.md` | Fix CPU pinning claim: requires `--cpu-affinity` flag, not "automatic" |
+| DOC-M10 | `architecture/process_lifecycle.md` | Fix drain coordination claim: `drain_aware_shutdown()` exists at `process.rs:198-272` |
 
-#### Wave 5N: Overview/General Docs (5 items)
+#### Wave 5N: Overview/General Docs (8 items)
 
 | ID | File | Fix |
 |----|------|-----|
@@ -255,6 +283,18 @@ Organized by domain for parallel execution. Each domain can be handled by a sepa
 | DOC-N3 | `architecture/overview.md:210` | Create or remove `architecture/admin.md` reference |
 | DOC-N4 | `architecture/overview.md:224` | Fix typo: `serder.md` → `serde.md` |
 | DOC-N5 | `architecture/deep_dive_review.md:48` | Remove unverifiable `io_uring` claim or add evidence |
+| DOC-N6 | `architecture/overview.md` | Document `StaticResponseBody` location: defined in `src/static_files/mod.rs:96`, not `src/http/server.rs` |
+| DOC-N7 | `architecture/overview.md` | Document common.md `setup_panic_handler` claim: NOT called from `main.rs` directly |
+| DOC-N8 | `architecture/geoip.md` | Fix GeoIpManager: fields wrapped in `Arc<RwLock<>>` not bare types |
+
+#### Wave 5O: WAF Deep-Dive Doc Gaps (4 items)
+
+| ID | File | Fix |
+|----|------|-----|
+| DOC-O1 | `architecture/integrity.md` | Fix IntegrityConfig: 17+ fields vs documented 5 |
+| DOC-O2 | `architecture/integrity.md` | Fix SessionKey.key: `String` (base64) not `Vec<u8>` |
+| DOC-O3 | `architecture/icmp_filter.md` | Fix BackendCapabilities: `supports_block`, `supports_allow` etc., add `requires_admin`, `is_enforcing` |
+| DOC-O4 | `architecture/icmp_filter.md` | Fix IcmpFilterManager: `filter: Box<dyn IcmpFilter>` not `Option<Box<dyn IcmpFilter>>`; fix IcmpFilterFactory::create: ownership not reference; fix IcmpFilter::update_config: `Result<()>` not `Result<(), IcmpFilterError>` |
 
 ### Wave 6: Cross-Module Conflict Resolution (P2)
 
@@ -267,7 +307,7 @@ Resolve conflicts where multiple documents disagree.
 | **XMOD-3** | Buffer pool tier count — worker_architecture.md says 3, networking_deep_dive.md says 4 | Actual is 4 — fix worker_architecture.md |
 | **XMOD-4** | SiteConnectionLimiter — referenced in 3 files after removal | Delete all three references (waf.md:180, waf_deep_dive.md:24, networking_deep_dive.md:82) |
 | **XMOD-5** | Overseer/Master naming — ipc_process.md uses `Overseer*` variants, code uses `Supervisor*` | Real code inconsistency — document the `Master*` → `Supervisor*` rename in process docs |
-| **XMOD-6** | request_body_size double assignment — `src/http/server.rs` lines 1517, 4692, 1633 | Line 1633 overwrites WAF-computed body size with Content-Length header value. AGENTS.md entry "FIXED" is **stale** — overwrite still exists. Fix: remove line 1633 or make it conditional. |
+| **XMOD-6** | request_body_size double assignment — `src/http/server.rs` lines 1517, 4692, 1633 | Line 1633 overwrites WAF-computed body size with Content-Length header value. Fix: remove line 1633 or make it conditional. (Cross-references BUG-8) |
 | **XMOD-7** | TunnelBackend location — layer_3_5 says `upstream.rs`, actual is `router.rs:200` | Update path reference |
 
 ---
@@ -326,7 +366,7 @@ When the hyper-util API issue is resolved, implement HTTP/2 pooling:
 | CertResolver | `src/tls/cert_resolver.rs` | 215-253 |
 | filter.rs | `src/filter/common.rs` | 74-96 (deny/allow check) |
 | BlockStore | `src/waf/block_store.rs` | 64-shard Vec<RwLock<AHashMap>> |
-| ListenerConfigBase | `src/listener/common.rs` | Dead code |
+| ListenerConfigBase | `src/listener/common.rs` | Dead code (keep ConnectionContext) |
 | zero_copy.rs | `src/zero_copy.rs` | Dead module |
 
 ---
@@ -336,16 +376,33 @@ When the hyper-util API issue is resolved, implement HTTP/2 pooling:
 | Category | Count |
 |----------|-------|
 | P0 Security-Critical Items | 4 |
-| P1 Code Bug Fixes | 7 |
-| P1 Dead Code Cleanup | 6 |
-| P1-P2 Feature Wiring | 2 |
-| P2 Documentation Updates (by domain) | 92 |
+| P1 Code Bug Fixes | 8 |
+| P1 Dead Code Cleanup | 9 |
+| P1-P2 Feature Wiring | 4 |
+| P2-P3 Documentation Updates (by domain) | 148 |
 | P2 Cross-Module Conflicts | 7 |
 | Deferred Items | 3 |
-| **Total Actionable Items** | **119** |
+| **Total Actionable Items** | **183** |
+
+---
+
+## Wave Dependency Map
+
+```
+Wave 1 (Security)     ─────┐
+Wave 2 (Bug Fixes)    ─────┤── All independent, no cross-dependencies
+Wave 3 (Dead Code)    ─────┤
+Wave 4 (Features)     ─────┘
+                              │
+Wave 5 (Docs)         ──────── All doc domains independent, parallelizable
+                              │
+Wave 6 (Conflicts)    ──────── Depends on Waves 1-5 being complete
+```
+
+**Maximum parallelization**: 23+ agents can work simultaneously across Waves 1-5 (4 security + 8 bug + 9 dead code + 4 feature + domains within Wave 5).
 
 ---
 
 *Last Updated: 2026-05-28*
-*Consolidated from 14 review plan files.*
+*Consolidated from 16 original plan files into single source of truth.*
 *All items verified against source code by review subagents.*
