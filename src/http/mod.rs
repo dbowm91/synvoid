@@ -20,6 +20,4 @@ pub use response_builder::{
 };
 pub use response_transform::{apply_compression, apply_minification, ResponseTransformConfig};
 pub use server::HttpServer;
-pub use shared_handler::{
-    HttpRequestContext, HttpsRequestContext, RequestContext, SharedRequestHandler,
-};
+pub use shared_handler::SharedRequestHandler;
