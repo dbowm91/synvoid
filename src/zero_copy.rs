@@ -125,14 +125,14 @@ pub trait FilePath {
     fn path(&self) -> Result<std::path::PathBuf>;
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl FilePath for File {
     fn path(&self) -> Result<std::path::PathBuf> {
         Ok(std::path::PathBuf::from("/proc/self/fd/").join(self.as_raw_fd().to_string()))
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 impl FilePath for File {
     fn path(&self) -> Result<std::path::PathBuf> {
         Err(std::io::Error::new(
