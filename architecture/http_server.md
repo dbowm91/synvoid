@@ -20,7 +20,7 @@ The HTTP Server module (`src/http/`) is the core request handling component of S
 
 | Module | File | Responsibility |
 |--------|------|----------------|
-| **server** | `server.rs` (4908 lines) | Core HTTP server, request handling pipeline, connection management |
+| **server** | `server.rs` (4848 lines) | Core HTTP server, request handling pipeline, connection management |
 | **shared_handler** | `shared_handler.rs` | Request context traits, streamed body with WAF, body collection protocol |
 | **response_builder** | `response_builder.rs` | HTTP response construction with alt-svc, cookies, JSON helpers |
 | **headers** | `headers.rs` | Security/CORS header injection, WebSocket key computation, stealth timestamps |
@@ -338,7 +338,7 @@ Applied to images > minimum size, not whitelisted, with caching by site+hash.
 | Feature | Purpose |
 |---------|---------|
 | `mesh` | Required for `HttpServer::serve()`, mesh backends, mesh config, mesh transport |
-| `dns` | HTTP-01 ACME challenge serving via `mesh_transport.get_http01_challenge()` |
+| `mesh` + `dns` | HTTP-01 ACME challenge serving via `mesh_transport.get_http01_challenge()` |
 
 ### Non-Feature-Gated Functionality
 - HTTP/1.1 + HTTP/2 server

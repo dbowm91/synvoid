@@ -131,7 +131,7 @@ pub struct StreamingWafBody<B> {
 }
 ```
 
-Implements `http_body::Body` and scans each chunk via `sw.scan_chunk()`:
+Implements `hyper::body::Body` and scans each chunk via `sw.scan_chunk()`:
 - `Block` decision → sets `blocked=true`, returns `PermissionDenied` error
 - `Continue` decision → passes frame through
 
@@ -169,7 +169,7 @@ Created via `HttpResponse::from_hyper(response, max_size)` which collects the bo
 | `send_request(client, method, url)` | Basic GET/POST |
 | `send_request_with_timeout(client, method, url, timeout)` | With timeout |
 | `send_request_with_body_and_timeout(client, method, url, body, timeout)` | With body |
-| `send_request_with_headers(client, method, url, headers, timeout)` | With headers |
+| `send_request_with_timeout_and_headers(client, method, url, headers, timeout)` | With headers |
 | `send_request_streaming(client, method, url, body, headers, timeout)` | Returns `Response<Incoming>` for streaming |
 | `send_request_streaming_generic(client, method, url, body, headers, timeout)` | Generic body type |
 | `send_request_erased_streaming(client, method, url, body, headers, timeout, is_http2)` | Uses `ErasedHttpClient` |
@@ -321,7 +321,7 @@ let provider = Arc::new(aws_lc_rs::default_provider());
 3. **Normal verification path** (default):
    - Load native certs or fallback to webpki_roots
    - Load custom CA certs from `ca_cert_path` if provided
-   - Use standard `WebPkiServerVerifier`
+   - Use `with_root_certificates(root_store)` to build `ClientConfig`
    - ALPN: `h2`, `http/1.1`
 
 ### `HostnameSkippingVerifier`
