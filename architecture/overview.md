@@ -221,7 +221,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [Zero Copy](./zero_copy.md) | Kernel-level file-to-socket transfer | [`zero_copy.md`](./zero_copy.md) | — |
 | [Filter](./filter.md) | Generic protocol filter framework | [`filter.md`](./filter.md) | — |
 | [Common](./common.md) | Panic handler, shared utilities | [`common.md`](./common.md) | — |
-| [Serialization](./serder.md) | Postcard/rkyv serialization strategy | [`serder.md`](./serder.md) | — |
+| [Serialization](./serde.md) | Postcard/rkyv serialization strategy | [`serde.md`](./serde.md) | — |
 
 ---
 
@@ -265,17 +265,18 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/http/server.rs` | ~4900 | HTTP request handling pipeline |
+| `src/http/server.rs` | ~4848 | HTTP request handling pipeline |
 | `src/waf/mod.rs` | ~936 | WAF core orchestrator |
-| `src/mesh/` | ~72000+ | Mesh networking (100+ files, 100+ types) |
-| `src/proxy/mod.rs` | ~1450 | Reverse proxy dispatch |
+| `src/mesh/` | ~72400 | Mesh networking (100 files, 100+ types) |
+| `src/proxy/mod.rs` | ~1405 | Reverse proxy dispatch |
 | `src/supervisor/mod.rs` | ~17 | Process supervision (re-exports) |
-| `src/admin/mod.rs` | ~970 | Admin API handlers |
-| `src/tls/server.rs` | ~2280 | TLS termination + ACME |
-| `src/http_client/mod.rs` | ~1300 | HTTP client pool |
+| `src/admin/mod.rs` | ~972 | Admin API handlers |
+| `src/tls/server.rs` | ~2252 | TLS termination + ACME |
+| `src/http_client/mod.rs` | ~1307 | HTTP client pool |
 | `src/upstream/pool.rs` | ~1540 | Upstream connection pool |
 | `src/plugin/mod.rs` | ~424 | WASM plugin runtime |
 | `crates/synvoid-config/src/lib.rs` | ~447 | Configuration types |
+| `src/static_files/mod.rs` | ~1126 | Static file serving, `StaticResponseBody` defined at line 96 |
 
 ---
 
@@ -289,6 +290,8 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [`deep_dive_review.md`](./deep_dive_review.md) | Layered architectural review |
 | [`review_plan.md`](./review_plan.md) | Review methodology and status |
 | [`process_lifecycle.md`](./process_lifecycle.md) | Process execution model |
+
+> **Note:** There is no separate `tunnel.md` or `admin.md`. Tunnel documentation is in [`networking_deep_dive.md`](./networking_deep_dive.md). Admin API documentation is in [`admin_deep_dive.md`](./admin_deep_dive.md).
 
 ### External Documentation
 

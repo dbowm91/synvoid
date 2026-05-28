@@ -75,11 +75,11 @@ Hybrid signature = 64 + 2420 + variable overhead ≈ 2500 bytes
 
 ## Feature Flag
 
-Enable with `pqc-mesh` feature:
+Enable with `post-quantum` feature:
 
 ```toml
 [features]
-pqc-mesh = []
+post-quantum = ["dep:rustls-post-quantum"]
 ```
 
 ## Backward Compatibility

@@ -669,7 +669,7 @@ if self.bcrypt_cost < 12 || self.bcrypt_cost > 15 {
 **Pattern**: Authorized key list with backward compatibility:
 ```rust
 pub struct GenesisKeyConfig {
-    pub authorized_genesis_keys: Vec<String>,  // Empty = any key allowed
+    pub authorized_genesis_keys: Vec<String>,  // Empty = deny all (secure default)
     pub previous_genesis_key_base64: Option<String>,
     pub rotation_sequence: u32,
 }
@@ -677,7 +677,7 @@ pub struct GenesisKeyConfig {
 impl GenesisKeyConfig {
     pub fn is_genesis_key_authorized(&self, public_key: &str) -> bool {
         if self.authorized_genesis_keys.is_empty() {
-            return true;  // Backward compatible - any key allowed
+            return false;  // Secure default - deny when no keys configured
         }
         self.authorized_genesis_keys.iter().any(|k| k == public_key)
     }
@@ -1307,7 +1307,7 @@ fn matches_localhost_lookalike(input: &str) -> bool {
 
 **Location**: `src/mesh/config_identity.rs:238-245`
 
-**Issue**: Empty `authorized_genesis_keys` permitted any key (backward compatible but insecure).
+**Current behavior**: Empty `authorized_genesis_keys` denies all remote immutable records (secure default). Implemented 2026-05-26.
 
 **Pattern**: Deny by default with warning:
 ```rust

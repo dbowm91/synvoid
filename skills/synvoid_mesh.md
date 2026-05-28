@@ -343,7 +343,7 @@ revoke_genesis_key(public_key: &str)
 
 ### Behavior
 
-- Empty `authorized_genesis_keys` = any genesis key allowed (backward compatible)
+- Empty `authorized_genesis_keys` = deny all remote immutable records (secure default)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 

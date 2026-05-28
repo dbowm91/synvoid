@@ -53,9 +53,9 @@ use subtle::ConstantTimeEq;
 required_token.as_bytes().ct_eq(token.as_bytes()).into()
 ```
 
-### FastCGI Concurrency
+### FastCGI Concurrency (RESOLVED)
 
-`execute_stream()` at `src/fastcgi/pool.rs:229` drops the semaphore permit immediately after acquisition, bypassing the concurrency limit. When fixing, ensure the permit is held for the duration of the request.
+`execute_stream()` at `src/fastcgi/pool.rs:229` — semaphore permit is now held for the full function scope, ensuring concurrency limits are respected.
 
 ## Upstream Pool Fixes (2026-05-23)
 

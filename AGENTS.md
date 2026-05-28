@@ -145,32 +145,6 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 ## Key Codebase Facts
 
-### Security-Critical Bugs (Active — See plans/plan.md Wave 1)
-
-| Bug ID | Location | Issue | Status |
-|--------|----------|-------|--------|
-| SEC-1 | `src/filter/common.rs:74-96` | Docs say "allowlist first" but code checks **denylist first** | **RESOLVED** — `architecture/filter.md:68` already correct |
-| SEC-2 | `src/admin/alerting/mod.rs:143-154` | SSRF bypass: only `http://` URLs checked for private IPs, `https://` bypasses | **RESOLVED** — both http/https checked |
-| SEC-3 | `src/fastcgi/pool.rs:229` | `execute_stream()` drops semaphore permit immediately, bypassing concurrency limit | **RESOLVED** — permit held for request duration |
-| SEC-4 | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` skips `validate_key_strength()` | **RESOLVED** — validation added |
-| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
-
-### Dead Code Markers (All Resolved — See plans/plan.md Wave 3)
-
-All dead code items have been removed as of 2026-05-28:
-
-| Item | Location | Status |
-|------|----------|--------|
-| `zero_copy` module | `src/zero_copy.rs` | **REMOVED** — commit `c703f4d2` |
-| `listener/common.rs` types | `src/listener/common.rs` | **REMOVED** — `SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` deleted; `ConnectionContext` kept |
-| `pqc-mesh` feature | `Cargo.toml` | **REMOVED** — commit `43ad3ee0` |
-| `honeypot_unified` module | `src/honeypot_unified/` | **REMOVED** — already deleted prior |
-| `serialization_rkyv.rs` | `src/serder/serialization_rkyv.rs` | **REMOVED** — already deleted prior |
-| `RequestContext` trait | `src/http/shared_handler.rs` | **REMOVED** — commit `ac84bf85` |
-| ProxyServer dead wrappers | `src/proxy/mod.rs` | **REMOVED** — commit `7103c8d7` |
-| HttpProtocol/PooledConnection stubs | `src/http_client/erased_pool.rs` | **REMOVED** — commit `d8557695` |
-| CacheEntryInner::validate() | `src/proxy_cache/store.rs` | **REMOVED** — commit `ec824c50` |
-
 ### Dependency Vulnerability Status
 
 **Last Updated: 2026-05-25**
@@ -188,28 +162,11 @@ All dead code items have been removed as of 2026-05-28:
 - The wasmtime vulnerabilities require aarch64 + Spectre mitigations disabled to exploit - default config is safe
 - yara-x's wasmtime is used for YARA pattern compilation, NOT wasm sandbox execution, reducing attack surface
 
-### Verified "Already Fixed" Items
+### Known Open Issues
 
-These items were identified in reviews and have been fixed:
-- LocationMatcher `current_depth()` stub removed (`src/location_matcher.rs:191-195` - only `is_empty()` and `len()` exist; no stub was ever present)
-- Audit log file permissions (`src/admin/audit.rs:76` - permissions set in `log()` method)
-- StreamingWafCore trailing window logic (`src/waf/attack_detection/streaming.rs:129-134` - correct sliding window)
-- gRPC uptime calculation (`src/supervisor/api.rs:55` - returns elapsed time)
-- CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
-- macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
-- BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - returns true when ML-DSA absent, fail-safe behavior confirmed)
-- BUG-PL-1 - BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
-- allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
-- UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
-- DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`)
-- MESH-15-FIX-1 is_request_complete() lock release (`src/mesh/dht/quorum.rs:412-430`)
-- MESH-15-FIX-4 MeshRaftNetwork::send_raw() retry (`src/mesh/raft/network.rs:53-91` - exponential backoff)
-- WRK-BUG-1 HTTP/2 config wired (`src/tls/server.rs:1722` - ProxyServer now uses site_config.proxy.http2)
-- WRK-BUG-1 is_http2 to executor/dispatch paths (`src/proxy/executor.rs`, `src/proxy/dispatch.rs`)
-- PL-5 DrainManager ported to Supervisor (`src/supervisor/process.rs` - drain_aware_shutdown implemented)
-- APP-15 FastCGI streaming (`src/fastcgi/streaming.rs` - new streaming client with feature flag)
-- TUNNEL-FIX TunnelBackend removed (`src/tunnel/upstream.rs` - deprecated struct deleted)
-- BUG-AUTH-1/2 Username validation added (`src/auth/mod.rs:305-318` - min 1, max 64, no control chars)
+| Bug ID | Location | Issue | Status |
+|--------|----------|-------|--------|
+| BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
 
 ## Known Deferred Items
 
@@ -220,26 +177,6 @@ These items require significant architectural work and are correctly deferred:
 | MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
 | MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field, coordinated rollout required |
-
-### Recently Completed (2026-05-28)
-
-| ID | Issue | Fix |
-|----|-------|-----|
-| SEC-1 | Filter allow/deny priority | Documentation already correct at `filter.md:68` |
-| SEC-2 | SSRF bypass via HTTPS | Added HTTPS URL validation to `admin/alerting/mod.rs:143` |
-| SEC-3 | FastCGI semaphore bypass | Removed `drop(permit)`, held for function scope in `fastcgi/pool.rs:229` |
-| SEC-4 | Cert strength validation bypass | Added `validate_key_strength()` call in `tls/cert_resolver.rs:231` |
-| BUG-1 | CGI thread pool blocking | Converted to `tokio::process::Command` in `cgi/mod.rs:342` |
-| BUG-2 | Static file double-read | Changed `Buffered` variant from `PathBuf` to `Bytes` in `static_files/mod.rs:96` |
-| BUG-3 | FastCGI streaming buffering | Implemented true streaming with chunked STDIN records in `fastcgi/streaming.rs:258` |
-| BUG-4 | Admin session race window | Single write lock for atomic validate+update in `admin/state.rs:838` |
-| BUG-5 | Cert file reload debounce | Restructured loop with `needs_reload` flag in `tls/cert_resolver.rs:491` |
-| BUG-6 | macOS zero_copy path | Changed to `#[cfg(target_os = "linux")]` in `zero_copy.rs:128` |
-| BUG-7 | ACME non-Unix permissions | Added atomic write + Windows ACLs in `tls/acme.rs:190` |
-| BUG-8 | request_body_size override | Removed line 1633 overwrite in `http/server.rs:1633` |
-| DEAD-1-9 | Dead code cleanup | All 9 dead code items removed |
-| FEAT-2-4 | Feature wiring | Health check, body collection consolidation, scheduler export |
-| XMOD-1-7 | Cross-module conflicts | All 7 conflicts resolved |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
@@ -280,9 +217,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **PeakEwma weighting**: Slow-moving (90% to old value) is intentional for connection stability
 - **BUG-ROUTER-1**: Hardcoded port 80 is in `Default` impl only, actual usage uses configured port - NOT a bug
 - **Spin header serialization**: Uses JSON (SpinRuntime::serialize_headers_spin), not binary like raw WASM
-- **collect_body_with_chunk_waf duplication**: Two implementations exist: `src/http/server.rs:4665` and `src/tls/server.rs:2086` with different signatures — consolidate (plan FEAT-3)
 - **Spin idle instance eviction**: `instances` HashMap keyed by UUID grows indefinitely — old entries never cleaned up (plan DOC-L7)
-- **ServerlessScheduler not exported**: `src/serverless/scheduler.rs` exists but not `pub mod` in `mod.rs` (plan FEAT-4)
 - **Email alerting is a stub**: `send_email_internal()` at `src/admin/alerting/mod.rs:349-373` logs message then returns `Ok(())` without sending
 - **Audit log redundant permissions**: `src/admin/audit.rs:131-139` re-applies permissions on every write — already set in `with_audit_dir()`
 
@@ -292,27 +227,41 @@ The `skills/` directory contains detailed documentation for various subsystems:
 
 | Skill | Purpose |
 |-------|---------|
-| `security_patterns.md` | Critical security fixes, constant-time comparison, path traversal, XSS prevention |
-| `streaming_waf.md` | Streaming WAF engine patterns |
-| `dht_persistence.md` | DHT neighborhood persistence |
-| `hybrid_post_quantum.md` | Post-quantum signature implementation |
-| `spin_wasm.md` | Spin WASM runtime |
-| `serverless_wasm.md` | Serverless WASM patterns |
-| `synvoid_mesh.md` | Mesh networking patterns |
-| `topology_visualizer.md` | Topology visualizer API |
-| `behavioral_intel.md` | Behavioral intelligence |
-| `performance_patterns.md` | Performance optimization patterns |
 | `admin_api.md` | Admin API patterns |
-| `dns_dnssec.md` | DNS and DNSSEC patterns |
-| `wasm_components.md` | WASM component model patterns |
-| `dht_scoping.md` | DHT site isolation and scoping patterns |
-| `threat_feed_production.md` | Production and signing of threat intel feeds |
-| `raft_consensus.md` | Raft consensus integration for global control plane |
-| `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
-| `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
-| `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
+| `admin_ui.md` | Admin UI patterns |
+| `behavioral_intel.md` | Behavioral intelligence |
 | `buffer_pool.md` | Sharded mutex buffer pool (replaces TreiberStack with ABA-safe implementation) |
+| `crypto_dependencies.md` | Cryptographic dependency analysis |
+| `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
+| `dht_persistence.md` | DHT neighborhood persistence |
+| `dht_scoping.md` | DHT site isolation and scoping patterns |
+| `dns_dnssec.md` | DNS and DNSSEC patterns |
+| `ebpf_blocking.md` | eBPF-based traffic blocking |
+| `erased_http_client.md` | ErasedHttpClient streaming pool patterns |
 | `extension_runtime.md` | ExtensionRuntime trait and registry for worker lifecycle management |
-| `quorum_manager_fix.md` | Quorum Manager race condition fix with Raft oneshot completion |
+| `fastcgi_streaming.md` | FastCGI streaming client patterns |
+| `h3_proxy.md` | HTTP/3 QUIC proxy patterns |
+| `hickory_migration.md` | Hickory DNS resolver migration |
+| `honeypot.md` | Honeypot detection and response |
+| `httpserver.md` | HTTP server architecture |
+| `hybrid_post_quantum.md` | Post-quantum signature implementation |
+| `implementation_patterns.md` | Common implementation patterns (semaphore, debounce, atomic writes) |
+| `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
+| `org_key_trust_chain.md` | Organization key trust chain |
+| `performance_patterns.md` | Performance optimization patterns |
+| `quorum_manager_fix.md` | Quorum Manager race condition fix (historical) |
+| `raft_consensus.md` | Raft consensus integration for global control plane |
+| `rule_feed_persistence.md` | Rule feed persistence patterns |
+| `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
+| `security_patterns.md` | Critical security fixes, constant-time comparison, path traversal, XSS prevention |
+| `serverless_wasm.md` | Serverless WASM patterns |
+| `spin_wasm.md` | Spin WASM runtime |
+| `static_files.md` | Static file serving patterns |
+| `streaming_waf.md` | Streaming WAF engine patterns |
 | `supply_chain_hashes.md` | Supply chain security with pip --require-hashes |
-| `erased_http_client.md` | ErasedHttpClient Phase 9 incomplete integration |
+| `synvoid_mesh.md` | Mesh networking patterns |
+| `threat_feed_production.md` | Production and signing of threat intel feeds |
+| `topology_visualizer.md` | Topology visualizer API |
+| `waf_bot_detection.md` | WAF bot detection patterns |
+| `wasm_components.md` | WASM component model patterns |
+| `windows_service.md` | Windows service integration |

@@ -1,6 +1,6 @@
-# ErasedHttpClient Integration (Phase 9 Incomplete)
+# ErasedHttpClient Integration (Phase 9 Complete)
 
-This skill documents the ErasedHttpClient implementation and its incomplete Phase 9 integration into the HTTP server.
+This skill documents the ErasedHttpClient implementation and its Phase 9 integration into the HTTP server.
 
 ## Background
 
@@ -9,9 +9,9 @@ The ErasedHttpClient was implemented to provide true streaming via a type-erased
 - `Http1PooledConnection` - Wraps TcpStream in TokioIo with handshake
 - `ErasedHttpClient` - Primary interface using the pool
 
-## Phase 9 Status: INCOMPLETE ⚠️
+## Phase 9 Status: COMPLETED (2026-05-26)
 
-**As of 2026-05-23**: Phase 9 integration into `http/server.rs` was never completed.
+Phase 9 integration into `http/server.rs` is complete. The `ErasedHttpClient` is activated when `body_buffering_policy.should_stream()` returns true based on body size and streaming threshold.
 
 ### What's Implemented
 

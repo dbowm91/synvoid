@@ -56,11 +56,11 @@ let _cors_config = cfg.cors.clone();  // underscore = dropped!
 
 See `skills/admin_api.md` for Admin API patterns.
 
-## Security Issues (Open)
+## Security Issues
 
-### SSRF Bypass via HTTPS (SEC-2)
+### SSRF Bypass via HTTPS (SEC-2 — RESOLVED)
 
-`src/admin/alerting/mod.rs:143-154` — SSRF check in `AlertConfig::validate()` is inline (not a named function). Line 143: `if url_lower.starts_with("http://")` — only validates `http://` URLs against private IPs. HTTPS URLs to private IPs (e.g., `https://127.0.0.1/admin`) bypass the check entirely. Fix: extend validation to also check `https://` URLs.
+`src/admin/alerting/mod.rs:143-154` — SSRF check now validates both `http://` and `https://` URLs against private IPs. Both schemes are checked in the same condition block.
 
 ### Email Alerting is a Stub
 
