@@ -68,7 +68,7 @@ Spin is **not** the same as the generic WASM edge functions described above. Key
 | **Manifest** | Configuration-driven routes | `spin.toml` parsed via `src/spin/manifest.rs` |
 | **Registration** | Part of site configuration | Manual registration via Admin API |
 | **Components** | Single WASM module per route | Multiple named components in manifest |
-| **HTTP Dispatch** | `ServerlessRoute` (generic WASM) in server pipeline at `src/serverless/routing.rs:112` | `SpinHttpHandler` at `src/http/server.rs:2421-2503`, handler creation at line 2426 |
+| **HTTP Dispatch** | `ServerlessRoute` (generic WASM) in server pipeline at `src/serverless/routing.rs:112` | `SpinHttpHandler` at `src/spin/handler.rs:117`, handler creation at `src/http/server.rs:2378` |
 
 Spin applications are registered using `SpinAppsManager::register()` and handled via `SpinHttpHandler` which wraps the `SpinRuntime`. The Spin runtime parses its manifest at startup to determine component routes and trigger configurations.
 
