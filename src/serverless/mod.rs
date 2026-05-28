@@ -3,6 +3,7 @@ pub mod instance_pool;
 pub mod manager;
 pub mod registry;
 pub mod routing;
+pub mod scheduler;
 
 pub use async_compilation::{AsyncCompilationHandle, AsyncCompilationManager, CompilationState};
 pub use instance_pool::{
@@ -20,3 +21,4 @@ pub use registry::{
     get_global_serverless_registry, FunctionMetadata, FunctionStats, ServerlessRegistry,
 };
 pub use routing::{MethodMatch, RouteMatch, ServerlessRoute};
+pub use scheduler::{ServerlessScheduler, TimerEntry, TimerPayload};
