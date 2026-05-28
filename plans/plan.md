@@ -300,17 +300,19 @@ Organized by domain for parallel execution. **Each domain can be handled by a se
 
 ### Wave 6: Cross-Module Conflict Resolution (P2)
 
+> **Status**: ALL 7 conflict resolution items RESOLVED. Verified 2026-05-28.
+
 Resolve conflicts where multiple documents disagree.
 
 | ID | Conflict | Resolution |
 |----|----------|------------|
-| **XMOD-1** | MeshNodeRole — config.md says enum, mesh.md says bitmask | Both wrong in different ways — update both to actual bitmask struct |
-| **XMOD-2** | DrainStatus/WorkerDrainState — incomplete in drain.md AND supervisor.md | Make drain.md canonical, update supervisor.md to reference it |
-| **XMOD-3** | Buffer pool tier count — worker_architecture.md says 3, networking_deep_dive.md says 4 | Actual is 4 — fix worker_architecture.md |
-| **XMOD-4** | SiteConnectionLimiter — referenced in 3 files after removal | Delete all three references (waf.md:180, waf_deep_dive.md:24, networking_deep_dive.md:82) |
-| **XMOD-5** | Overseer/Master naming — ipc_process.md uses `Overseer*` variants, code uses `Supervisor*` | Real code inconsistency — document the `Master*` → `Supervisor*` rename in process docs |
-| **XMOD-6** | request_body_size double assignment — `src/http/server.rs` lines 1517, 4692, 1633 | Line 1633 overwrites WAF-computed body size with Content-Length header value. Fix: remove line 1633 or make it conditional. (Cross-references BUG-8) |
-| **XMOD-7** | TunnelBackend location — layer_3_5 says `upstream.rs`, actual is `router.rs:200` | Update path reference |
+| **XMOD-1** | ~~MeshNodeRole — config.md says enum, mesh.md says bitmask~~ | **RESOLVED**: Both updated to bitmask struct in Wave 5C/5F |
+| **XMOD-2** | ~~DrainStatus/WorkerDrainState — incomplete~~ | **RESOLVED**: Expanded in Wave 5M (DOC-M7) |
+| **XMOD-3** | ~~Buffer pool tier count mismatch~~ | **RESOLVED**: Fixed in Wave 5M (DOC-M4) |
+| **XMOD-4** | ~~SiteConnectionLimiter — referenced after removal~~ | **RESOLVED**: All references removed in Wave 5K/5G |
+| **XMOD-5** | ~~Overseer/Master naming~~ | **RESOLVED**: Replaced with Supervisor in Wave 5M (DOC-M6) |
+| **XMOD-6** | ~~request_body_size double assignment~~ | **RESOLVED**: Removed in Wave 2 (BUG-8) |
+| **XMOD-7** | ~~TunnelBackend location~~ | **RESOLVED**: Fixed in Wave 5I (DOC-I2) |
 
 ---
 
