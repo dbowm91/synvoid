@@ -23,9 +23,11 @@ The Common module (`src/common/`) provides **shared panic handler utilities** th
 
 ## 3. Integration Points
 
-- **Main**: Called at process startup
-- **Supervisor**: Panic logging for control plane
-- **Worker**: Panic logging for data plane
+- **Supervisor**: Panic logging for control plane (`src/supervisor/process.rs:325`)
+- **Worker**: Panic logging for data plane (`src/worker/mod.rs:46`, `src/worker/unified_server.rs:55`)
+- **Mesh Agent**: Panic logging for mesh mode (`src/supervisor/mesh.rs:32`)
+
+> **Note:** `setup_panic_handler` is NOT called directly from `main.rs`. It is called indirectly via supervisor and worker initialization routines.
 
 ---
 
