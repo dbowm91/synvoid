@@ -34,7 +34,6 @@ mesh = ["synvoid-config/mesh", "dep:openraft"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
-pqc-mesh = []  # Post-quantum mesh signatures (ML-DSA-44 for mesh messages)
 macos-sandbox = []  # Enable macOS sandbox enforcement
 test-utils = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
