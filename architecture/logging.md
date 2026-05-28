@@ -16,9 +16,13 @@ The Logging module (`src/logging/`) provides **syslog integration** with configu
 
 ```rust
 pub struct SyslogLogger {
-    min_level: Level,
+    min_level: log::Level,
+    #[cfg(not(unix))]
+    app_name: String,
     #[cfg(unix)]
-    syslog: syslog::Logger<syslog::UnixTransport>,
+    _backend: (),
+    #[cfg(not(unix))]
+    _phantom: (),
 }
 
 pub struct SyslogConfig {

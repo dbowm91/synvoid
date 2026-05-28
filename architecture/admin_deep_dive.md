@@ -159,7 +159,7 @@ Request
   └── Client IP Extraction (trusted proxy support) — innermost
 ```
 
-**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97` and applied to the outer router at line 173 in `build_router_from_state()`. However, nested `/api` routes (lines 179-189) do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
+**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97` and applied at line 806 inside `build_router_from_state()` (defined at line 173). However, nested `/api` routes (lines 179-189) do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
 
 **Key File:** `src/admin/middleware.rs`
 
@@ -182,9 +182,9 @@ Request
 
 ## Admin API Structure
 
-### API Organization (26 handlers + 1 feature-gated)
+### API Organization (28 handlers: 24 always + 4 mesh-gated)
 
-**Location:** `src/admin/handlers/` (26 handlers + 1 mesh-gated handler)
+**Location:** `src/admin/handlers/` (28 handlers, 4 mesh-gated)
 
 | Handler | Purpose | Feature Gate |
 |---------|---------|--------------|
@@ -214,7 +214,7 @@ Request
 | `upstreams` | Upstream backend management | - |
 | `yara_rules` | YARA rules submissions | mesh |
 
-**Note:** 3 handlers are mesh-gated (`behavioral_intel`, `mesh_admin`, `mesh_topology`, `yara_rules`) = 26 total, 23 always available.
+**Note:** 4 handlers are mesh-gated (`behavioral_intel`, `mesh_admin`, `mesh_topology`, `yara_rules`) = 28 total, 24 always available.
 
 ### Key REST Endpoint Groups
 
@@ -375,6 +375,10 @@ Webhook URLs are validated:
 - Only http/https allowed
 - Blocked: localhost, 127.x.x.x, 10.x.x.x, 192.168.x.x, 172.x.x.x
 
+### Email Alerting (Stub)
+
+`send_email_internal()` at `src/admin/alerting/mod.rs:349-373` is a **stub implementation** — it logs the email alert message then returns `Ok(())` without actually sending email. SMTP configuration is validated but no connection is made.
+
 ---
 
 ## OpenAPI Documentation
@@ -396,6 +400,8 @@ Webhook URLs are validated:
 - Automatic versioning on config changes
 - Rollback support
 - File-based storage with 0o600 permissions
+
+**Note:** `log()` at `audit.rs:131-139` re-applies `0o600` permissions on every write. This is redundant since permissions are already set in `with_audit_dir()` at line 76, but provides defense-in-depth against permission drift.
 
 ---
 

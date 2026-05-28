@@ -16,15 +16,18 @@ The Protocol module (`src/protocol/`) provides a **pluggable protocol detection 
 ## 2. Key Data Structures
 
 ```rust
-pub trait ProtocolHandler {
+pub trait ProtocolHandler: Send + Sync {
     fn protocol_type(&self) -> ProtocolType;
-    fn name(&self) -> &str;
-    fn detect(&self, data: &[u8]) -> Option<ProtocolDetectionResult>;
-    fn parse_request(&self, data: &[u8]) -> Option<ProtocolRequest>;
-    fn build_request_for_upstream(&self, req: &ProtocolRequest) -> Vec<u8>;
-    fn parse_response(&self, data: &[u8]) -> Option<ProtocolResponse>;
-    fn apply_waf(&self, request: &ProtocolRequest, waf: &WafCore) -> WafAction;
-    fn select_upstream(&self, request: &ProtocolRequest) -> Option<String>;
+    fn name(&self) -> &'static str;
+    fn detect(&self, data: &[u8]) -> bool;
+    fn parse_request(&self, data: &[u8]) -> Result<ProtocolRequest, ProtocolError>;
+    fn build_request_for_upstream(&self, request: &ProtocolRequest) -> Vec<u8>;
+    fn parse_response(&self, data: &[u8]) -> Result<ProtocolResponse, ProtocolError>;
+    fn apply_waf(&self, request: &mut ProtocolRequest, waf: &Arc<WafCore>) -> WafAction;
+    fn select_upstream(&self, request: &ProtocolRequest, pool: &UpstreamPool) -> Option<Backend>;
+    fn metrics(&self) -> ProtocolMetrics;
+    fn set_waf(&mut self, waf: Arc<WafCore>);
+    fn set_upstream_pool(&mut self, pool: Arc<UpstreamPool>);
 }
 
 pub enum ProtocolType {
@@ -41,8 +44,17 @@ pub enum WafAction {
 
 pub struct ProtocolDetectionResult<P> {
     pub protocol: P,
-    pub confidence: f64,
-    pub matched_pattern: Option<String>,
+    pub confidence: f32,
+    pub matched_pattern: String,
+}
+
+pub enum ProtocolError {
+    Parse(String),
+    Framing(String),
+    ConnectionClosed,
+    Upstream(String),
+    WafBlocked(String),
+    NotImplemented(String),
 }
 ```
 
