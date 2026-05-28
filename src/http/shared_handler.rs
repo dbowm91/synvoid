@@ -129,110 +129,6 @@ impl Default for SharedRequestHandler {
     }
 }
 
-// SAFETY_REASON: Future use - request context trait for protocol abstraction
-#[allow(dead_code)]
-pub trait RequestContext: Send + Sync {
-    type Response;
-
-    fn protocol_name(&self) -> &'static str;
-
-    fn build_response(&self, status: u16, body: String, content_type: &str) -> Self::Response;
-
-    fn build_response_with_headers(
-        &self,
-        status: u16,
-        body: String,
-        content_type: &str,
-        headers: impl IntoIterator<Item = (http::header::HeaderName, http::header::HeaderValue)>,
-    ) -> Self::Response;
-}
-
-pub struct HttpRequestContext;
-
-impl RequestContext for HttpRequestContext {
-    type Response = Response<http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>>;
-
-    fn protocol_name(&self) -> &'static str {
-        "http"
-    }
-
-    fn build_response(&self, status: u16, body: String, content_type: &str) -> Self::Response {
-        use http_body_util::BodyExt;
-        Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Date", crate::http::headers::generate_stealth_timestamp(5))
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
-    }
-
-    fn build_response_with_headers(
-        &self,
-        status: u16,
-        body: String,
-        content_type: &str,
-        headers: impl IntoIterator<Item = (http::header::HeaderName, http::header::HeaderValue)>,
-    ) -> Self::Response {
-        use http_body_util::BodyExt;
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Date", crate::http::headers::generate_stealth_timestamp(5));
-
-        for (name, value) in headers {
-            builder = builder.header(name, value);
-        }
-
-        builder
-            .body(Full::new(Bytes::from(body)).boxed())
-            .unwrap_or_else(|_| crate::http::fallback_error_boxed())
-    }
-}
-
-pub struct HttpsRequestContext;
-
-impl RequestContext for HttpsRequestContext {
-    type Response = Response<Full<Bytes>>;
-
-    fn protocol_name(&self) -> &'static str {
-        "https"
-    }
-
-    fn build_response(&self, status: u16, body: String, content_type: &str) -> Self::Response {
-        Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Date", crate::http::headers::generate_stealth_timestamp(5))
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
-    }
-
-    fn build_response_with_headers(
-        &self,
-        status: u16,
-        body: String,
-        content_type: &str,
-        headers: impl IntoIterator<Item = (http::header::HeaderName, http::header::HeaderValue)>,
-    ) -> Self::Response {
-        let mut builder = Response::builder()
-            .status(status)
-            .header("Content-Type", content_type)
-            .header("Content-Length", body.len())
-            .header("Date", crate::http::headers::generate_stealth_timestamp(5));
-
-        for (name, value) in headers {
-            builder = builder.header(name, value);
-        }
-
-        builder
-            .body(Full::new(Bytes::from(body)))
-            .unwrap_or_else(|_| crate::http::fallback_error_full())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,22 +146,6 @@ mod tests {
             resp.headers().get("content-type").unwrap(),
             "application/json"
         );
-    }
-
-    #[test]
-    fn test_http_request_context() {
-        let ctx = HttpRequestContext;
-        assert_eq!(ctx.protocol_name(), "http");
-        let resp = ctx.build_response(200, "OK".to_string(), "text/plain");
-        assert_eq!(resp.status(), 200);
-    }
-
-    #[test]
-    fn test_https_request_context() {
-        let ctx = HttpsRequestContext;
-        assert_eq!(ctx.protocol_name(), "https");
-        let resp = ctx.build_response(200, "OK".to_string(), "text/plain");
-        assert_eq!(resp.status(), 200);
     }
 
     #[test]
@@ -297,13 +177,7 @@ mod tests {
     }
 }
 
-impl SharedRequestHandler {
-    // SAFETY_REASON: Future use - protocol name for RequestContext
-    #[allow(dead_code)]
-    fn protocol_name(&self) -> &'static str {
-        ""
-    }
-}
+
 
 #[derive(Clone, Copy)]
 pub enum BodyCollectionProtocol {
