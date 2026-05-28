@@ -67,10 +67,10 @@ Wire or properly configure partially-implemented features.
 
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
-| **FEAT-1** | Wire pqc-mesh feature flag | Multiple `#[cfg(feature = "pqc-mesh")]` locations | Feature is defined in Cargo.toml but has zero cfg usages. Investigate what it should gate (ML-DSA-44 post-quantum signatures) and wire it. (Cross-references DEAD-3) | High |
-| **FEAT-2** | Fix health_check() validation | `src/fastcgi/pool.rs:283-294` | `health_check()` only validates socket format, not actual connectivity. Add real connection test. | Low |
-| **FEAT-3** | Fix collect_body_with_chunk_waf duplication | `src/http/server.rs:4665` + `src/tls/server.rs:2086` | Two implementations with different signatures. Consolidate into single shared implementation. | Medium |
-| **FEAT-4** | Export ServerlessScheduler | `src/serverless/scheduler.rs` + `src/serverless/mod.rs` | `scheduler.rs` exists but not `pub mod` in `mod.rs`. Wire or remove. | Low |
+| **FEAT-1** | ~~Wire pqc-mesh feature flag~~ | Multiple `#[cfg(feature = "pqc-mesh")]` locations | ~~Feature is defined in Cargo.toml but has zero cfg usages.~~ **RESOLVED**: Feature removed in DEAD-3 (no actual usage). N/A. | High |
+| **FEAT-2** | ~~Fix health_check() validation~~ | `src/fastcgi/pool.rs:283-294` | ~~`health_check()` only validates socket format, not actual connectivity.~~ **RESOLVED**: Added real TCP/Unix connection test with timeout. Commit: `a4205717`. | Low |
+| **FEAT-3** | ~~Fix collect_body_with_chunk_waf duplication~~ | `src/http/server.rs:4665` + `src/tls/server.rs:2086` | ~~Two implementations with different signatures.~~ **RESOLVED**: Consolidated into shared function in `src/http/shared_handler.rs`. Commit: `7039cc9a`. | Medium |
+| **FEAT-4** | ~~Export ServerlessScheduler~~ | `src/serverless/scheduler.rs` + `src/serverless/mod.rs` | ~~`scheduler.rs` exists but not `pub mod` in `mod.rs`.~~ **RESOLVED**: Added `pub mod scheduler;` and re-exports. Commit: `79eda5c3`. | Low |
 
 ### Wave 5: Documentation Updates (P2-P3)
 
