@@ -21,15 +21,15 @@ pub struct ProxyConfig {
     pub write_buffer_threshold: usize,
     pub flush_interval_bytes: usize,
     pub use_native_copy: bool,
-    pub waf_scanner: Option<Arc<StreamingWafCore>>,
+    pub waf_scanner: Option<Arc<Mutex<StreamingWafCore>>>,
 }
 
 pub enum ProxyError {
-    ReadError(io::Error),
-    WriteError(io::Error),
+    ReadError(String),
+    WriteError(String),
     ConnectionClosed,
     Timeout,
-    WafBlock(String),
+    WafBlock(u16, String),
     Other(String),
 }
 ```

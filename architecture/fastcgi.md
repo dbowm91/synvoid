@@ -17,22 +17,26 @@ The FastCGI module (`src/fastcgi/`) provides a **FastCGI protocol client** suppo
 
 ```rust
 pub struct FastCgiClient {
-    socket: String,
-    is_unix: bool,
-    timeout: Duration,
+    socket_path: String,
+    is_tcp: bool,
 }
 
 pub struct FastCgiPool {
-    semaphore: Arc<Semaphore>,
-    connections: Vec<FastCgiClient>,
     config: FastCgiPoolConfig,
+    connections: RwLock<VecDeque<PooledConnection>>,
+    semaphore: tokio::sync::Semaphore,
+    health_check_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    closed: RwLock<bool>,
+    draining: RwLock<bool>,
 }
 
 pub struct FastCgiPoolConfig {
     pub max_connections: usize,
-    pub connect_timeout: Duration,
-    pub request_timeout: Duration,
+    pub connection_timeout: Duration,
     pub health_check_interval: Duration,
+    pub health_check_timeout: Duration,
+    pub max_idle_time: Duration,
+    pub socket: String,
 }
 
 pub struct StreamingFastCgiClient { /* FCGI record-level streaming */ }
@@ -75,6 +79,6 @@ pub struct FastCgiPoolStatus {
 
 - **Protocol**: Full FastCGI record framing
 - **Connection Pool**: Semaphore-based concurrency control
-- **Health Checks**: Periodic connection health validation
+- **Health Checks**: Periodic connection health validation (socket-format-only — checks TCP/Unix socket connectivity, not FastCGI protocol health; returns `false` on non-Unix platforms for Unix sockets)
 - **Streaming**: Custom FCGI record-level streaming (not HTTP chunked)
 - **Global Registry**: Singleton pool manager via `LazyLock`

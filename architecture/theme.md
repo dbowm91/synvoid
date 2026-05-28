@@ -48,8 +48,10 @@ pub struct DirectoryEntry {
     pub name: String,
     pub href: String,
     pub is_dir: bool,
-    pub modified: Option<DateTime<Utc>>,
-    pub size: Option<u64>,
+    pub modified: String,
+    pub size: String,
+    pub modified_timestamp: u64,
+    pub size_bytes: u64,
 }
 ```
 

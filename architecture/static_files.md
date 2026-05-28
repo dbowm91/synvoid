@@ -20,33 +20,57 @@ The Static Files module (`src/static_files/`) provides **full-featured static fi
 
 ```rust
 pub struct StaticFileHandler {
+    config: Arc<SiteStaticConfig>,
     locations: Vec<NormalizedLocation>,
-    compression: CompressionConfig,
-    minification: MinificationConfig,
-    mesh_config: Option<MeshConfig>,
-    theme: Option<ThemeConfig>,
+    gzip_types: Vec<String>,
+    max_file_size: u64,
+    gzip_level: u32,
+    gzip_min_size: usize,
+    allow_symlinks: bool,
+    block_hidden_files: bool,
+    enable_compression: bool,
+    gzip_on_the_fly: bool,
+    directory_listing: bool,
+    default_cache_ttl: Option<u64>,
+    site_id: String,
+    minified_cache_dir: Option<PathBuf>,
+    enable_zero_copy: bool,
+    mesh_image_protection: Option<MeshImageProtectionConfig>,
+    mesh_compression: Option<MeshCompressionConfig>,
+    mesh_minification: Option<MeshMinificationConfig>,
+    theme_config: ThemeConfig,
+    directory_template_path: Option<String>,
+    minifier_client: Option<MinifierClient>,
+    image_poison_config: Option<MeshImageProtectionConfig>,
 }
 
 pub struct NormalizedLocation {
     pub url_prefix: String,
     pub fs_root: PathBuf,
-    pub index: Vec<String>,
+    pub index: Option<String>,
     pub try_files: Vec<String>,
-    pub cache_ttl: u64,
+    pub cache_ttl: Option<u64>,
+    pub theme: Option<SiteStaticThemeConfig>,
 }
 
-pub enum StaticResponse {
-    InMemory { content: Bytes, headers: Headers },
-    Buffered { path: PathBuf, headers: Headers },
+pub struct StaticResponse {
+    pub status: StatusCode,
+    pub headers: Vec<(String, String)>,
+    pub body: StaticResponseBody,
+}
+
+pub enum StaticResponseBody {
+    InMemory(Bytes),
+    Buffered(Bytes),
 }
 
 pub enum StaticError {
-    NotFound,
-    Forbidden,
+    NotFound(String),
+    Forbidden(String),
     DirectoryListingDisabled,
-    BadRequest,
-    FileTooLarge,
-    Internal,
+    BadRequest(String),
+    FileTooLarge(String),
+    Internal(String),
 }
 ```
 

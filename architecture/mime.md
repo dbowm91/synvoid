@@ -17,8 +17,9 @@ The MIME module (`src/mime/`) provides a **comprehensive MIME type registry** wi
 
 ```rust
 pub struct MimeRegistry {
-    extension_to_mime: HashMap<String, MimeTypeInfo>,
     mime_to_extensions: HashMap<String, Vec<String>>,
+    extension_to_mime: HashMap<String, String>,
+    mime_categories: HashMap<String, FileCategory>,
 }
 
 pub struct MimeTypeInfo {
