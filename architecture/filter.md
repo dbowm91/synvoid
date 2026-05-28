@@ -65,5 +65,5 @@ pub struct ProtocolFilterCore<P, A> {
 
 - **Generic Design**: Type-parameterized over protocol and action types
 - **Strict Mode**: When enabled, unknown protocols are denied by default
-- **Allow/Deny Priority**: Allowlist checked first, then denylist
+- **Allow/Deny Priority**: Denylist checked first, then allowlist (deny takes precedence for security)
 - **Zero-Cost Abstractions**: PhantomData for compile-time type safety

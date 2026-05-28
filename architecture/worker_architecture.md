@@ -21,7 +21,7 @@ The `worker_pool` configuration (`tcp.worker_pool_size`) controls the **number o
 
 The `BufferPool` is implemented at `crates/synvoid-utils/src/buffer/pool.rs:211`:
 - Sharded mutex design for ABA-safe concurrent access
-- Three tiers: small (4KB), medium (32KB), large (128KB) buffers
+- Four tiers: small (4KB), medium (32KB), large (128KB), jumbo (256KB) buffers
 - Global and thread-local acquisition variants
 - Configured via `BufferPoolConfig` at line 242
 

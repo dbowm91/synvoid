@@ -197,7 +197,7 @@ impl ConfigManager {
 
 | Enum | Location | Variants |
 |------|----------|----------|
-| `MeshNodeRole` | `mesh.rs:223` | `GLOBAL`, `EDGE`, `ORIGIN`, `GLOBAL_EDGE`, `GLOBAL_ORIGIN`, `EDGE_ORIGIN`, `ALL`, `SERVERLESS_ORIGIN` |
+| `MeshNodeRole` | `mesh.rs:223` | Bitmask struct (not enum): `GLOBAL(0b010)`, `EDGE(0b001)`, `ORIGIN(0b100)`, `GLOBAL_EDGE(0b011)`, `GLOBAL_ORIGIN(0b110)`, `EDGE_ORIGIN(0b101)`, `ALL(0b111)`, `SERVERLESS_ORIGIN(0b1000)` — use `contains()` not `match` |
 | `VpnAccessLevel` | `tunnel.rs:235` | `General`, `Admin` |
 | `AcmeChallengeType` | `tls.rs:179` | `Http01`, `Dns01` |
 | `DnsMode` | `dns/mod.rs:39` | `Standalone`, `Mesh` |

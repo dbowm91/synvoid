@@ -152,13 +152,14 @@ To prevent session enumeration attacks, admin auth includes timing normalization
 
 ```
 Request
-  ├── Client IP Extraction (trusted proxy support)
-  ├── Auth Middleware (bearer/session validation)
+  ├── Admin Rate Limit Layer (requests per minute/second) — outermost
+  ├── YARA Rate Limit Layer
   ├── CSRF Middleware (session-only mutating requests)
-  └── Admin Rate Limit Layer (requests per minute/second)
+  ├── Auth Middleware (bearer/session validation)
+  └── Client IP Extraction (trusted proxy support) — innermost
 ```
 
-**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97` and applied to the outer router at line 806 in `build_router_from_state()`. However, nested `/api` routes (lines 179-189) do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
+**CORS Support:** CORS is implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97` and applied to the outer router at line 173 in `build_router_from_state()`. However, nested `/api` routes (lines 179-189) do **not** have CORS applied. Since the Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional but should be documented. See BUG-CORS-1.
 
 **Key File:** `src/admin/middleware.rs`
 
