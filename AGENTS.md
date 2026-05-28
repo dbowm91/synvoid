@@ -110,8 +110,7 @@ SynVoid uses a multi-process architecture designed for **high scalability (1M+ R
 
 | Process | Flag | Purpose | Default Count |
 |---------|------|---------|---------------|
-| **Supervisor** | (default) | Manages master lifecycle, upgrades, health monitoring; consolidates legacy Overseer and Master | 1 |
-| **Master** | `--master` | Spawns/manages workers, handles IPC, runs admin API | 1 |
+| **Supervisor** | (default) | Manages worker lifecycle, upgrades, health monitoring, and control-plane APIs | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | Handles HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
 | **StaticWorker** | `--static-worker` | CSS/JS minification, compression | 1 |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated, unused for HTTP) | configurable |
@@ -131,7 +130,7 @@ SynVoid uses a multi-process architecture designed for **high scalability (1M+ R
 The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. However:
 - **No HTTP handler exists** for this mode in `main.rs`
 - The code path exists but is **never invoked** for normal HTTP traffic
-- It may be legacy pre-unified design or for raw TCP/UDP proxy scenarios
+- It may be current unified design or for raw TCP/UDP proxy scenarios
 - The admin API `/system/workers/scale` only scales `BaseWorkerProcess` count
 - **Requires investigation** to determine if it should be removed or completed
 
@@ -202,8 +201,7 @@ These items were identified in reviews and have been fixed:
 - CSRF validation constant-time comparison (`src/admin/state.rs:736` - uses `ct_eq()`)
 - macOS sandbox feature gate exists (`Cargo.toml:38` - just needs enabling)
 - BUG-L1 verify_hybrid() fail-safe (`src/mesh/ml_dsa.rs:217` - returns true when ML-DSA absent, fail-safe behavior confirmed)
-- BUG-PL-1 Master mode CLI flag (`src/main.rs:27` - --master flag now functional for legacy Overseer->Master hierarchy)
-- BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
+- BUG-PL-1 - BUG-PROXY-1 retry_config applied (`src/proxy/mod.rs:303` - uses parameter value not None)
 - allowed_dht_prefixes propagated to pooled instances (`src/serverless/instance_pool.rs:190`, `src/plugin/instance_pool.rs:186`)
 - UpstreamPool active health checks (`src/upstream/pool.rs:751-779` - start_health_check method)
 - DnsConfig.validate() now called in MainConfig::validate() (`crates/synvoid-config/src/main_config.rs:192-203`)
@@ -260,15 +258,15 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **BufferPool**: 4 tiers (small/medium/large/jumbo)
 
 ### Process Architecture
-- **Supervisor** manages lifecycle, consolidates Overseer + Master
+- **Supervisor** manages lifecycle, consolidates Supervisor
 - **UnifiedServerWorker** uses single Tokio event loop (NOT process-per-tenant)
 - **CPU affinity** is Linux-only, logs warning on other platforms
-- **Default entry point** is `run_supervisor_mode()` via `src/main.rs:538-547`; `--master` flag routes to `run_master_mode()`
+- **Default entry point** is `run_supervisor_mode()` via `src/main.rs`
 - **Mesh control plane** runs in Supervisor process, not worker (workers get intelligence via IPC)
 
 ### Granian Integration
 - **Granian IS integrated** - `src/app_server/granian.rs` (1047 lines) with full process management, auto-install, admin API
-- NOT a separate process type - runs within the Supervisor/Master architecture
+- NOT a separate process type - runs within the Supervisor architecture
 
 ### Implementation Notes
 - **PeakEwma weighting**: Slow-moving (90% to old value) is intentional for connection stability

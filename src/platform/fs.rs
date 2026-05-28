@@ -211,8 +211,8 @@ impl PlatformPaths {
         self.runtime_dir.join(name)
     }
 
-    pub fn master_socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("synvoid-master.sock")
+    pub fn supervisor_socket_path(&self) -> PathBuf {
+        self.runtime_dir.join("synvoid-supervisor.sock")
     }
 
     pub fn static_worker_socket_path(&self) -> PathBuf {

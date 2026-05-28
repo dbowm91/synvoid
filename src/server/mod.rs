@@ -494,7 +494,7 @@ impl UnifiedServer {
         let ipc_clone = ipc.clone();
         let renew_callback = move |domains: Vec<String>| {
             tracing::info!(
-                "ACME certificates renewed for {:?}, notifying master",
+                "ACME certificates renewed for {:?}, notifying supervisor",
                 domains
             );
             let ipc = ipc_clone.clone();

@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::block_store::BlockStore;
 use crate::config::ConfigManager;
-use crate::overseer::drain_manager::{DrainManager, DrainProtocol};
+use crate::supervisor::drain_manager::{DrainManager, DrainProtocol};
 use crate::platform::fs::PlatformPaths;
 use crate::process::{
     IpcEndpoint, IpcListener, Message, PidFileManager, ProcessEvent, ProcessManager,
@@ -26,7 +26,7 @@ const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 ///
 /// The Supervisor uses [`DrainManager`] for drain-aware worker shutdown, providing
 /// per-worker connection tracking during drain (active/idle connections, drain states, etc.).
-/// This is implemented by porting the Overseer's `DrainManager` to Supervisor.
+/// Uses the shared drain manager for drain-aware worker shutdown.
 pub struct SupervisorProcess {
     state: SupervisorState,
     process_manager: Arc<ProcessManager>,
@@ -48,8 +48,8 @@ impl SupervisorProcess {
         let drain_manager = Arc::new(DrainManager::new(DRAIN_POLL_INTERVAL_MS));
         let drain_protocol = Arc::new(DrainProtocol::new(drain_manager.clone()));
 
-        // Initialize IPC listener (consolidated master + command socket)
-        let endpoint = IpcEndpoint::master();
+        // Initialize IPC listener for worker messages and admin commands.
+        let endpoint = IpcEndpoint::supervisor();
         let ipc_listener = endpoint.bind().await?;
 
         Ok(Self {
@@ -277,16 +277,16 @@ impl SupervisorProcess {
         state: SupervisorState,
     ) {
         // The supervisor socket handles both Worker Messages and Admin Commands.
-        // On Unix, we try to deserialize as Message first, then as MasterCommand.
+        // On Unix, we try to deserialize as Message first, then as supervisor command.
 
         // Use a small timeout for the initial message to distinguish between
         // a slow worker and a CLI command.
         match ipc.recv_with_timeout::<Message>(1000).await {
             Ok(Some(msg)) => {
-                crate::master::handle_worker_connection_single(ipc, pm, msg).await;
+                crate::supervisor::commands::handle_worker_connection_single(ipc, pm, msg).await;
             }
             _ => {
-                // If not a worker message, try as a MasterCommand
+                // If not a worker message, try as a supervisor command.
                 // We need a separate handler for this since handle_worker_connection
                 // is specialized for Message.
                 Self::handle_admin_command(ipc, pm, state).await;
@@ -299,10 +299,7 @@ impl SupervisorProcess {
         pm: Arc<ProcessManager>,
         state: SupervisorState,
     ) {
-        // Implement command handling similar to src/startup/master.rs:handle_command_connection
-        // but adapted for IpcStream.
-
-        // For now, we'll delegate to a new command handler.
+        // Delegate to supervisor command handler.
         if let Err(e) =
             crate::supervisor::commands::handle_supervisor_command(&mut ipc, pm, state).await
         {
@@ -337,7 +334,7 @@ pub fn run_supervisor_mode(
 
     let main_config = config_manager.main.clone();
 
-    // Initialize core subsystems (ported from Master)
+    // Initialize core subsystems (ported from Supervisor)
     let data_dir = main_config.persistence.data_dir.as_ref().map(PathBuf::from);
     let block_store = Arc::new(BlockStore::new(
         true,
@@ -400,7 +397,7 @@ pub fn run_supervisor_mode(
     let pm_config = ProcessManagerConfig {
         config_path: config_dir.clone(),
         unified_server_workers: main_config.defaults.worker_pool.workers.max(1),
-        master_socket_path: pid_manager.socket_file_path(),
+        supervisor_socket_path: pid_manager.socket_file_path(),
         control_api_addr: main_config.supervisor.control_api_addr.clone(),
         control_api_tls: main_config
             .supervisor

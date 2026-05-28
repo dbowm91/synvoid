@@ -21,7 +21,7 @@ use super::limits::{BlocklistLimitsConfig, ProxyLimitsConfig, RateLimitMemoryCon
 use super::logging::LoggingConfig;
 use super::network::{TarpitDefaults, TcpDefaults, UdpDefaults};
 use super::plugins::PluginConfig;
-use super::process::{OverseerConfig, ProcessManagerConfig, SupervisorConfig};
+use super::process::{ProcessManagerConfig, SupervisorConfig};
 use super::protection::{
     IpFeedConfig, MimesConfig, RuleFeedConfig, ThreatLevelConfig, YaraRuleFeedConfig,
 };
@@ -44,7 +44,7 @@ pub use super::http::{
     Http3Config as MainHttp3Config, HttpConfig as MainHttpConfig, TokioConfig as MainTokioConfig,
 };
 pub use super::process::{
-    OverseerConfig as MainOverseerConfig, ProcessManagerConfig as MainProcessManagerConfig,
+    SupervisorConfig as MainSupervisorCompatConfig, ProcessManagerConfig as MainProcessManagerConfig,
     SupervisorConfig as MainSupervisorConfig,
 };
 pub use super::protection::{
@@ -133,7 +133,7 @@ pub struct MainConfig {
     #[cfg(feature = "mesh")]
     pub mesh: Option<super::MeshConfig>,
     #[serde(default)]
-    pub overseer: OverseerConfig,
+    pub supervisor_compat: SupervisorConfig,
     #[serde(default)]
     pub process_manager: ProcessManagerConfig,
     #[serde(default)]
@@ -271,7 +271,7 @@ impl MainConfig {
             dns: DnsConfig::default(),
             #[cfg(feature = "mesh")]
             mesh: None,
-            overseer: super::OverseerConfig::default(),
+            supervisor_compat: super::SupervisorConfig::default(),
             process_manager: super::ProcessManagerConfig::default(),
             supervisor: super::SupervisorConfig::default(),
             honeypot_port: HoneypotPortConfig::default(),

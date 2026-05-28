@@ -100,8 +100,8 @@ impl RawHandleExt for std::fs::File {
     }
 }
 
-pub fn master_pipe_name() -> String {
-    "\\\\.\\pipe\\synvoid-master".to_string()
+pub fn supervisor_pipe_name() -> String {
+    "\\\\.\\pipe\\synvoid-supervisor".to_string()
 }
 
 pub fn static_worker_pipe_name() -> String {

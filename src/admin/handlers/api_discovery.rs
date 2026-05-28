@@ -188,11 +188,11 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     method: "PUT".to_string(),
                 },
                 ApiEndpoint {
-                    path: "/config/overseer".to_string(),
+                    path: "/config/supervisor".to_string(),
                     method: "GET".to_string(),
                 },
                 ApiEndpoint {
-                    path: "/config/overseer".to_string(),
+                    path: "/config/supervisor".to_string(),
                     method: "PUT".to_string(),
                 },
                 ApiEndpoint {
@@ -303,7 +303,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     method: "GET".to_string(),
                 },
                 ApiEndpoint {
-                    path: "/system/master".to_string(),
+                    path: "/system/supervisor".to_string(),
                     method: "GET".to_string(),
                 },
                 ApiEndpoint {
@@ -327,7 +327,7 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     method: "POST".to_string(),
                 },
                 ApiEndpoint {
-                    path: "/system/overseer".to_string(),
+                    path: "/system/supervisor".to_string(),
                     method: "GET".to_string(),
                 },
                 ApiEndpoint {

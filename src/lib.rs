@@ -1,7 +1,7 @@
 //! # SynVoid — Multi-Process Web Application Firewall
 //!
 //! SynVoid is a high-performance WAF with a multi-process architecture:
-//! - **Supervisor**: Single control plane process (consolidated from legacy Overseer+Master)
+//! - **Supervisor**: Single control plane process
 //! - **Worker**: Handles HTTP requests via Unix domain sockets
 //!
 //! ## Key Modules
@@ -64,12 +64,10 @@ pub mod listener;
 pub mod location_matcher;
 pub mod log_controller;
 pub mod logging;
-pub mod master;
 #[cfg(feature = "mesh")]
 pub mod mesh;
 pub mod metrics;
 pub mod mime;
-pub mod overseer;
 pub mod php;
 pub mod platform;
 pub mod plugin;

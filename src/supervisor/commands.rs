@@ -1,6 +1,6 @@
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{
-    CommandResponse, MasterCommand, MasterStatus, ProcessManager, StatusStats, ThreatSummary,
+    CommandResponse, SupervisorCommand, SupervisorStatus, ProcessManager, StatusStats, ThreatSummary,
 };
 use crate::supervisor::state::SupervisorState;
 use std::sync::Arc;
@@ -10,15 +10,15 @@ pub async fn handle_supervisor_command(
     pm: Arc<ProcessManager>,
     state: SupervisorState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Attempt to receive a MasterCommand.
+    // Attempt to receive a supervisor command.
     // Since AsyncIpcStream::recv_with_timeout is generic, we can use it here.
-    match ipc.recv_with_timeout::<MasterCommand>(5000).await {
+    match ipc.recv_with_timeout::<SupervisorCommand>(5000).await {
         Ok(Some(command)) => {
             match command {
-                MasterCommand::Status => {
+                SupervisorCommand::Status => {
                     let pm_stats = pm.get_status();
-                    let status = MasterStatus {
-                        master_pid: std::process::id(),
+                    let status = SupervisorStatus {
+                        supervisor_pid: std::process::id(),
                         started_at: 0, // TODO: Track start time
                         uptime_secs: 0,
                         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -39,13 +39,13 @@ pub async fn handle_supervisor_command(
                     };
                     ipc.send(&CommandResponse::Status(status)).await?;
                 }
-                MasterCommand::Stop { graceful } => {
+                SupervisorCommand::Stop { graceful } => {
                     tracing::info!("Supervisor: Stop command received (graceful: {})", graceful);
                     ipc.send(&CommandResponse::Ok("Shutdown initiated".to_string()))
                         .await?;
                     state.shutdown().await;
                 }
-                MasterCommand::ReloadConfig => {
+                SupervisorCommand::ReloadConfig => {
                     tracing::info!("Supervisor: ReloadConfig command received");
                     {
                         let mut config = state.config.write().await;
@@ -54,23 +54,24 @@ pub async fn handle_supervisor_command(
                     ipc.send(&CommandResponse::Ok("Configuration reloaded".to_string()))
                         .await?;
                 }
-                MasterCommand::HealthCheck => {
+                SupervisorCommand::HealthCheck => {
                     ipc.send(&CommandResponse::Ok("true".to_string())).await?;
                 }
             }
         }
         _ => {
-            return Err("Failed to receive or parse MasterCommand".into());
+            return Err("Failed to receive or parse supervisor command".into());
         }
     }
 
     Ok(())
 }
 
-pub use crate::master::commands::{
+pub use crate::supervisor::cli_commands::{
     handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
     handle_stop,
 };
+pub use crate::supervisor::ipc::handle_worker_connection_single;
 
 #[cfg(feature = "mesh")]
-pub use crate::master::commands::handle_export_threat_feed;
+pub use crate::supervisor::cli_commands::handle_export_threat_feed;

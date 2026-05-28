@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[cfg(feature = "mesh")]
-use synvoid::master::handle_export_threat_feed;
-use synvoid::master::{
+use synvoid::supervisor::commands::handle_export_threat_feed;
+use synvoid::supervisor::commands::{
     handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
     handle_stop,
 };
@@ -15,8 +15,6 @@ use synvoid::worker::{
 
 use synvoid::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use synvoid::startup::daemon::acquire_pid_file;
-#[cfg(feature = "mesh")]
-use synvoid::startup::master::{run_master_mode, run_overseer_mode};
 use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
 use synvoid::supervisor::run_supervisor_mode;
 
@@ -27,12 +25,6 @@ use synvoid::supervisor::run_supervisor_mode;
 struct Args {
     #[arg(long, help = "Run as mesh agent process (control plane)")]
     mesh_agent: bool,
-
-    #[arg(
-        long,
-        help = "Run as master process (legacy mode - managed by Overseer)"
-    )]
-    master: bool,
 
     #[arg(long, help = "Run as WASM plugin execution jail")]
     wasm_jail: bool,
@@ -55,9 +47,9 @@ struct Args {
     #[arg(
         long,
         value_name = "PATH",
-        help = "Master socket path (worker mode only)"
+        help = "Supervisor IPC socket path (worker mode only)"
     )]
-    master_socket: Option<PathBuf>,
+    supervisor_socket: Option<PathBuf>,
 
     #[arg(long, help = "Run as static file worker process")]
     static_worker: bool,
@@ -484,7 +476,7 @@ fn main() {
         let static_worker_args = build_static_worker_args(
             args.static_worker_id,
             args.config_path,
-            args.master_socket,
+            args.supervisor_socket,
             args.log_level,
             None,
         );
@@ -508,7 +500,7 @@ fn main() {
         let unified_worker_args = build_unified_server_worker_args(
             args.unified_worker_id,
             args.config_path,
-            args.master_socket,
+            args.supervisor_socket,
             args.log_level,
             worker_threads,
             args.cpu_affinity,
@@ -529,9 +521,6 @@ fn main() {
         init_logging_simple();
         let config_path = args.config_path.unwrap_or_else(|| PathBuf::from("config"));
         synvoid::supervisor::run_mesh_agent_mode(Some(config_path), args.foreground);
-    } else if args.master {
-        init_logging_simple();
-        run_master_mode(args.config_path, args.log_level);
     } else if args.wasm_jail {
         init_logging_simple();
         synvoid::sandbox::run_wasm_jail_mode();
@@ -539,8 +528,7 @@ fn main() {
         init_logging_simple();
         synvoid::sandbox::run_yara_jail_mode();
     } else {
-        // Default: Run as Supervisor (manager of Workers)
-        // This replaces the legacy Overseer -> Master hierarchy.
+        // Default: Run as Supervisor (manager of Workers).
         run_supervisor_mode(
             args.config_path,
             args.foreground,

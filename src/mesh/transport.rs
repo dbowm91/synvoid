@@ -540,7 +540,7 @@ impl MeshTransport {
             if let Some(signing_key) = config.signing_key() {
                 use hkdf::Hkdf;
                 use sha2::Sha256;
-                const HKDF_INFO: &[u8] = b"synvoid-tier-key-master";
+                const HKDF_INFO: &[u8] = b"synvoid-tier-key-root";
                 let hk = Hkdf::<Sha256>::new(None, signing_key);
                 let mut okm = [0u8; 32];
                 if hk.expand(HKDF_INFO, &mut okm).is_ok() {
@@ -549,7 +549,7 @@ impl MeshTransport {
                         crate::mesh::tier_key_encryption::TierKeyEncryption::new(okm.to_vec()),
                     ))
                 } else {
-                    tracing::warn!("Failed to derive tier key encryption master key");
+                    tracing::warn!("Failed to derive tier key encryption root key");
                     None
                 }
             } else {

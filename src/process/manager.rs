@@ -31,7 +31,7 @@ pub struct WorkerConfig {
     pub id: WorkerId,
     pub port: u16,
     pub config_path: PathBuf,
-    pub master_socket: PathBuf,
+    pub supervisor_socket: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ pub struct ProcessManagerConfig {
     pub graceful_shutdown_timeout_secs: u64,
     pub worker_port_base: u16,
     pub config_path: PathBuf,
-    pub master_socket_path: PathBuf,
+    pub supervisor_socket_path: PathBuf,
     pub log_level: Option<String>,
     pub pre_spawn_workers: usize,
     pub warm_workers_target: usize,
@@ -74,7 +74,7 @@ impl Default for ProcessManagerConfig {
             graceful_shutdown_timeout_secs: 30,
             worker_port_base: 9000,
             config_path: PathBuf::from("config"),
-            master_socket_path: crate::process::get_secure_socket_path("master.sock"),
+            supervisor_socket_path: crate::process::get_secure_socket_path("supervisor.sock"),
             log_level: None,
             pre_spawn_workers: 0,
             warm_workers_target: 2,
@@ -396,8 +396,8 @@ impl ProcessManager {
 
         cmd.arg("--config-path")
             .arg(&self.config.config_path)
-            .arg("--master-socket")
-            .arg(&self.config.master_socket_path)
+            .arg("--supervisor-socket")
+            .arg(&self.config.supervisor_socket_path)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
@@ -1779,7 +1779,7 @@ impl ProcessManager {
         workers.get(&worker_id.as_usize()).and_then(|w| w.pid())
     }
 
-    pub fn get_master_pid(&self) -> Option<u32> {
+    pub fn get_supervisor_pid(&self) -> Option<u32> {
         Some(std::process::id())
     }
 
@@ -1846,8 +1846,8 @@ impl ProcessManager {
     /// - Signals are kept as fallback for crashed/zombie workers that lost their IPC connection
     /// - Workers handle this via the `MasterConfigReload` IPC message
     pub fn reload_config(&self) {
-        // Workers connect to master, so we can't directly send messages.
-        // The rehash signal will be sent via the master IPC socket when workers reconnect
+        // Workers connect to supervisor, so we can't directly send messages.
+        // The rehash signal will be sent via the supervisor IPC socket when workers reconnect
         // or we can signal workers via SIGUSR1/SIGHUP
         #[cfg(unix)]
         {
@@ -1986,7 +1986,7 @@ impl ProcessManager {
         Ok(())
     }
 
-    pub fn get_status(&self) -> super::ipc::MasterStatus {
+    pub fn get_status(&self) -> super::ipc::SupervisorStatus {
         let workers = self.workers.read();
         let mut worker_infos: Vec<super::ipc::WorkerStatusInfo> = workers
             .values()
@@ -2045,8 +2045,8 @@ impl ProcessManager {
 
         let uptime = Instant::now().duration_since(self.started_at).as_secs();
 
-        super::ipc::MasterStatus {
-            master_pid: std::process::id(),
+        super::ipc::SupervisorStatus {
+            supervisor_pid: std::process::id(),
             started_at: crate::utils::current_timestamp().saturating_sub(uptime),
             uptime_secs: uptime,
             version: env!("CARGO_PKG_VERSION").to_string(),

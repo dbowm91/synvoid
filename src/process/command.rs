@@ -7,7 +7,7 @@ use std::os::unix::net::UnixStream;
 
 use serde::{Deserialize, Serialize};
 
-use super::ipc::{MasterCommand, MasterStatus};
+use super::ipc::{SupervisorCommand, SupervisorStatus};
 use super::ipc_framing::{read_exact_message_sync, write_message_sync};
 use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
@@ -58,7 +58,7 @@ impl CommandClient {
         self.method
     }
 
-    pub fn send_command(&self, command: MasterCommand) -> Result<String, CommandError> {
+    pub fn send_command(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         match self.method {
             super::ipc::CommandMethod::UnixSocket => self.send_via_socket(command),
             super::ipc::CommandMethod::NamedPipe => self.send_via_named_pipe(command),
@@ -67,7 +67,7 @@ impl CommandClient {
         }
     }
 
-    fn send_via_grpc(&self, command: MasterCommand) -> Result<String, CommandError> {
+    fn send_via_grpc(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         let addr = self.grpc_addr.as_ref().ok_or(CommandError::NoSocket)?;
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
@@ -83,28 +83,28 @@ impl CommandClient {
                 .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
             match command {
-                MasterCommand::Status => {
+                SupervisorCommand::Status => {
                     let response = client
                         .get_status(StatusRequest {})
                         .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok(serde_json::to_string_pretty(&response.into_inner()).unwrap_or_default())
                 }
-                MasterCommand::ReloadConfig => {
+                SupervisorCommand::ReloadConfig => {
                     let response = client
                         .reload_config(ReloadRequest {})
                         .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok(response.into_inner().message)
                 }
-                MasterCommand::Stop { graceful } => {
+                SupervisorCommand::Stop { graceful } => {
                     let _ = client
                         .stop(StopRequest { graceful })
                         .await
                         .map_err(|e| CommandError::ServerError(e.to_string()))?;
                     Ok("Shutdown initiated".to_string())
                 }
-                MasterCommand::HealthCheck => {
+                SupervisorCommand::HealthCheck => {
                     let _ = client
                         .get_status(StatusRequest {})
                         .await
@@ -115,7 +115,7 @@ impl CommandClient {
         })
     }
 
-    fn send_via_socket(&self, command: MasterCommand) -> Result<String, CommandError> {
+    fn send_via_socket(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         let socket_path = self.socket_path.as_ref().ok_or(CommandError::NoSocket)?;
 
         let mut stream = UnixStream::connect(socket_path)
@@ -152,7 +152,7 @@ impl CommandClient {
     }
 
     #[cfg(windows)]
-    fn send_via_named_pipe(&self, command: MasterCommand) -> Result<String, CommandError> {
+    fn send_via_named_pipe(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         let pipe_name = "\\\\.\\pipe\\synvoid-commands";
 
         let mut stream = std::fs::OpenOptions::new()
@@ -188,15 +188,15 @@ impl CommandClient {
     }
 
     #[cfg(unix)]
-    fn send_via_named_pipe(&self, _command: MasterCommand) -> Result<String, CommandError> {
+    fn send_via_named_pipe(&self, _command: SupervisorCommand) -> Result<String, CommandError> {
         Err(CommandError::NotSupported(
             "Named pipe not supported on Unix".to_string(),
         ))
     }
 
-    fn send_via_signal(&self, command: MasterCommand) -> Result<String, CommandError> {
+    fn send_via_signal(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         let pid = self
-            .get_master_pid()
+            .get_supervisor_pid()
             .ok_or(CommandError::NoRunningInstance)?;
 
         #[cfg(unix)]
@@ -205,10 +205,10 @@ impl CommandClient {
             use nix::unistd::Pid;
 
             let sig = match command {
-                MasterCommand::Stop { .. } => Signal::SIGTERM,
-                MasterCommand::ReloadConfig => Signal::SIGHUP,
-                MasterCommand::HealthCheck => Signal::SIGUSR1,
-                MasterCommand::Status => Signal::SIGUSR2,
+                SupervisorCommand::Stop { .. } => Signal::SIGTERM,
+                SupervisorCommand::ReloadConfig => Signal::SIGHUP,
+                SupervisorCommand::HealthCheck => Signal::SIGUSR1,
+                SupervisorCommand::Status => Signal::SIGUSR2,
             };
 
             let pid = Pid::from_raw(pid as i32);
@@ -225,7 +225,7 @@ impl CommandClient {
         }
     }
 
-    fn get_master_pid(&self) -> Option<u32> {
+    fn get_supervisor_pid(&self) -> Option<u32> {
         let _socket_path = self.socket_path.as_ref()?;
 
         let data_dir = dirs::data_dir()
@@ -243,7 +243,7 @@ impl CommandClient {
         None
     }
 
-    pub fn get_status(&self) -> Result<MasterStatus, CommandError> {
+    pub fn get_status(&self) -> Result<SupervisorStatus, CommandError> {
         match self.method {
             super::ipc::CommandMethod::UnixSocket => {
                 let socket_path = self.socket_path.as_ref().ok_or(CommandError::NoSocket)?;
@@ -255,7 +255,7 @@ impl CommandClient {
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-                let command = MasterCommand::Status;
+                let command = SupervisorCommand::Status;
                 write_message_sync(&mut stream, &command)
                     .map_err(|e| CommandError::SendFailed(e.to_string()))?;
 
@@ -277,7 +277,7 @@ impl CommandClient {
                     .open(pipe_name)
                     .map_err(|e| CommandError::ConnectionFailed(e.to_string()))?;
 
-                let command = MasterCommand::Status;
+                let command = SupervisorCommand::Status;
                 write_message_sync(&mut stream, &command)
                     .map_err(|e| CommandError::SendFailed(e.to_string()))?;
 
@@ -329,8 +329,8 @@ impl CommandClient {
                         })
                         .collect();
 
-                    Ok(MasterStatus {
-                        master_pid: inner.pid,
+                    Ok(SupervisorStatus {
+                        supervisor_pid: inner.pid,
                         started_at: 0,
                         uptime_secs: inner.uptime_secs,
                         version: inner.version,
@@ -356,7 +356,7 @@ impl CommandClient {
 pub enum CommandResponse {
     Ok(String),
     Error(String),
-    Status(MasterStatus),
+    Status(SupervisorStatus),
 }
 
 #[derive(Debug)]

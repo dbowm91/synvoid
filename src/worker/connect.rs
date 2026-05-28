@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::process::ipc_signed::IpcSigner;
 use crate::process::ipc_transport::IpcEndpoint;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{connect_to_master, IpcStream};
+use crate::process::{connect_to_supervisor, IpcStream};
 
 #[cfg(test)]
 mod tests {
@@ -14,10 +14,10 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn test_connect_to_master_with_retry_invalid_path() {
+    fn test_connect_to_supervisor_with_retry_invalid_path() {
         let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
         let result =
-            connect_to_master_with_retry(&socket_path, 1, Duration::from_millis(10), "test_worker");
+            connect_to_supervisor_with_retry(&socket_path, 1, Duration::from_millis(10), "test_worker");
         assert!(result.is_err());
     }
 
@@ -25,14 +25,14 @@ mod tests {
     fn test_connect_retry_returns_error_after_max_attempts() {
         let socket_path = PathBuf::from("/tmp/nonexistent_master.sock");
         let result =
-            connect_to_master_with_retry(&socket_path, 3, Duration::from_millis(10), "test_worker");
+            connect_to_supervisor_with_retry(&socket_path, 3, Duration::from_millis(10), "test_worker");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_worker_name_in_error_message() {
         let socket_path = PathBuf::from("/tmp/nonexistent.sock");
-        let result = connect_to_master_with_retry(
+        let result = connect_to_supervisor_with_retry(
             &socket_path,
             1,
             Duration::from_millis(10),
@@ -42,9 +42,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_connect_to_master_async_invalid_path() {
+    async fn test_connect_to_supervisor_async_invalid_path() {
         let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
-        let result = connect_to_master_async(
+        let result = connect_to_supervisor_async(
             &socket_path,
             1,
             Duration::from_millis(10),
@@ -58,7 +58,7 @@ mod tests {
     async fn test_async_retry_exhaustion_message() {
         let socket_path = PathBuf::from("/tmp/nonexistent_async.sock");
         let result =
-            connect_to_master_async(&socket_path, 2, Duration::from_millis(10), "async_worker")
+            connect_to_supervisor_async(&socket_path, 2, Duration::from_millis(10), "async_worker")
                 .await;
         assert!(result.is_err());
     }
@@ -67,7 +67,7 @@ mod tests {
     fn test_retry_delay_is_respected() {
         let start = std::time::Instant::now();
         let socket_path = PathBuf::from("/tmp/should_fail.sock");
-        let _ = connect_to_master_with_retry(
+        let _ = connect_to_supervisor_with_retry(
             &socket_path,
             3,
             Duration::from_millis(50),
@@ -85,7 +85,7 @@ mod tests {
     fn test_single_attempt_no_delay() {
         let start = std::time::Instant::now();
         let socket_path = PathBuf::from("/tmp/quick_fail.sock");
-        let _ = connect_to_master_with_retry(
+        let _ = connect_to_supervisor_with_retry(
             &socket_path,
             1,
             Duration::from_millis(100),
@@ -101,12 +101,12 @@ mod tests {
 
     #[test]
     fn test_pathbuf_file_name_extraction() {
-        let path = PathBuf::from("/var/run/master.sock");
+        let path = PathBuf::from("/var/run/supervisor.sock");
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("master");
-        assert_eq!(file_name, "master.sock");
+            .unwrap_or("supervisor");
+        assert_eq!(file_name, "supervisor.sock");
     }
 
     #[test]
@@ -115,12 +115,12 @@ mod tests {
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("master");
-        assert_eq!(file_name, "master");
+            .unwrap_or("supervisor");
+        assert_eq!(file_name, "supervisor");
     }
 }
 
-pub fn connect_to_master_with_retry(
+pub fn connect_to_supervisor_with_retry(
     socket_path: &Path,
     max_retries: u32,
     retry_delay: Duration,
@@ -129,10 +129,10 @@ pub fn connect_to_master_with_retry(
     let mut last_error = None;
 
     for attempt in 1..=max_retries {
-        match connect_to_master(socket_path) {
+        match connect_to_supervisor(socket_path) {
             Ok(ipc) => {
                 if attempt > 1 {
-                    tracing::info!("{} connected to master on attempt {}", worker_name, attempt);
+                    tracing::info!("{} connected to supervisor on attempt {}", worker_name, attempt);
                 }
                 return Ok(ipc);
             }
@@ -141,7 +141,7 @@ pub fn connect_to_master_with_retry(
                 last_error = Some(e);
                 if attempt < max_retries {
                     tracing::warn!(
-                        "{} failed to connect to master (attempt {}/{}): {}, retrying in {:?}",
+                        "{} failed to connect to supervisor (attempt {}/{}): {}, retrying in {:?}",
                         worker_name,
                         attempt,
                         max_retries,
@@ -158,7 +158,7 @@ pub fn connect_to_master_with_retry(
         .map(|e| e.to_string())
         .unwrap_or_else(|| "unknown error".to_string());
     Err(format!(
-        "{} failed to connect to master after {} attempts: {}",
+        "{} failed to connect to supervisor after {} attempts: {}",
         worker_name, max_retries, error_msg
     )
     .into())
@@ -198,7 +198,7 @@ fn try_load_ipc_signer() -> Option<Arc<IpcSigner>> {
     None
 }
 
-pub async fn connect_to_master_async(
+pub async fn connect_to_supervisor_async(
     socket_path: &Path,
     max_retries: u32,
     retry_delay: Duration,
@@ -207,7 +207,7 @@ pub async fn connect_to_master_async(
     let socket_name = socket_path
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("master");
+        .unwrap_or("supervisor");
 
     let endpoint = IpcEndpoint::new(socket_name);
     let mut last_error = None;
@@ -218,7 +218,7 @@ pub async fn connect_to_master_async(
                 Ok(ipc) => {
                     if attempt > 1 {
                         tracing::info!(
-                            "{} connected to master on attempt {}",
+                            "{} connected to supervisor on attempt {}",
                             worker_name,
                             attempt
                         );
@@ -230,7 +230,7 @@ pub async fn connect_to_master_async(
                     last_error = Some(e);
                     if attempt < max_retries {
                         tracing::warn!(
-                            "{} failed to connect to master (attempt {}/{}): {}, retrying in {:?}",
+                            "{} failed to connect to supervisor (attempt {}/{}): {}, retrying in {:?}",
                             worker_name,
                             attempt,
                             max_retries,
@@ -248,7 +248,7 @@ pub async fn connect_to_master_async(
                 Ok(ipc) => {
                     if attempt > 1 {
                         tracing::info!(
-                            "{} connected to master on attempt {}",
+                            "{} connected to supervisor on attempt {}",
                             worker_name,
                             attempt
                         );
@@ -260,7 +260,7 @@ pub async fn connect_to_master_async(
                     last_error = Some(e);
                     if attempt < max_retries {
                         tracing::warn!(
-                            "{} failed to connect to master (attempt {}/{}): {}, retrying in {:?}",
+                            "{} failed to connect to supervisor (attempt {}/{}): {}, retrying in {:?}",
                             worker_name,
                             attempt,
                             max_retries,
@@ -278,13 +278,13 @@ pub async fn connect_to_master_async(
         .map(|e| e.to_string())
         .unwrap_or_else(|| "unknown error".to_string());
     Err(format!(
-        "{} failed to connect to master after {} attempts: {}",
+        "{} failed to connect to supervisor after {} attempts: {}",
         worker_name, max_retries, error_msg
     )
     .into())
 }
 
-pub async fn connect_to_master_async_signed(
+pub async fn connect_to_supervisor_async_signed(
     socket_path: &Path,
     max_retries: u32,
     retry_delay: Duration,
@@ -294,7 +294,7 @@ pub async fn connect_to_master_async_signed(
     let socket_name = socket_path
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("master");
+        .unwrap_or("supervisor");
 
     let endpoint = IpcEndpoint::new(socket_name);
     let mut last_error = None;
@@ -303,7 +303,7 @@ pub async fn connect_to_master_async_signed(
         match endpoint.connect_with_signer(Arc::clone(&signer)).await {
             Ok(ipc) => {
                 if attempt > 1 {
-                    tracing::info!("{} connected to master on attempt {}", worker_name, attempt);
+                    tracing::info!("{} connected to supervisor on attempt {}", worker_name, attempt);
                 }
                 return Ok(ipc);
             }
@@ -312,7 +312,7 @@ pub async fn connect_to_master_async_signed(
                 last_error = Some(e);
                 if attempt < max_retries {
                     tracing::warn!(
-                        "{} failed to connect to master (attempt {}/{}): {}, retrying in {:?}",
+                        "{} failed to connect to supervisor (attempt {}/{}): {}, retrying in {:?}",
                         worker_name,
                         attempt,
                         max_retries,
@@ -329,7 +329,7 @@ pub async fn connect_to_master_async_signed(
         .map(|e| e.to_string())
         .unwrap_or_else(|| "unknown error".to_string());
     Err(format!(
-        "{} failed to connect to master after {} attempts: {}",
+        "{} failed to connect to supervisor after {} attempts: {}",
         worker_name, max_retries, error_msg
     )
     .into())

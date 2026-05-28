@@ -336,7 +336,7 @@ async fn handle_worker_connection_internal(
             let _ = ipc
                 .send(&Message::WorkerError {
                     id: WorkerId(0),
-                    error: "IPC signing enforced but master has no session key".to_string(),
+                    error: "IPC signing enforced but supervisor has no session key".to_string(),
                     severity: ErrorSeverity::Critical,
                     error_code: ErrorCode::AuthenticationFailed,
                 })
@@ -595,7 +595,7 @@ async fn handle_worker_connection_internal(
                                 request
                             );
                             // TODO: Route to separate Mesh Control Plane process once implemented.
-                            // For now, it stays in the Master process.
+                            // For now, it stays in the Supervisor process.
                         }
                         Message::MeshUpdateNotification {
                             worker_id,

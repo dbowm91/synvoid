@@ -13,7 +13,7 @@ const DEFAULT_SYNVOID_DIR: &str = ".synvoid";
 const PID_FILE: &str = "synvoid.pid";
 const STATUS_FILE: &str = "status.json";
 const SOCKET_FILE: &str = "synvoid.sock";
-const OVERSEER_LOCK_FILE: &str = "overseer.lock";
+const SUPERVISOR_LOCK_FILE: &str = "supervisor.lock";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PidFileContent {
@@ -352,26 +352,26 @@ impl Default for PidFileManager {
 }
 
 #[cfg(unix)]
-pub struct OverseerLockFile {
+pub struct SupervisorLockFile {
     lock_path: PathBuf,
     lock_file: Option<File>,
 }
 
 #[cfg(unix)]
-impl Default for OverseerLockFile {
+impl Default for SupervisorLockFile {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[cfg(unix)]
-impl OverseerLockFile {
+impl SupervisorLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(DEFAULT_SYNVOID_DIR);
 
-        let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
+        let lock_path = data_dir.join(SUPERVISOR_LOCK_FILE);
 
         Self {
             lock_path,
@@ -380,7 +380,7 @@ impl OverseerLockFile {
     }
 
     pub fn with_custom_dir(dir: PathBuf) -> Self {
-        let lock_path = dir.join(OVERSEER_LOCK_FILE);
+        let lock_path = dir.join(SUPERVISOR_LOCK_FILE);
         Self {
             lock_path,
             lock_file: None,
@@ -391,12 +391,12 @@ impl OverseerLockFile {
         &self.lock_path
     }
 
-    pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
+    pub fn acquire(&mut self) -> Result<(), SupervisorLockError> {
         use std::fs::OpenOptions;
         use std::io::{Seek, SeekFrom, Write};
 
         if let Some(parent) = self.lock_path.parent() {
-            fs::create_dir_all(parent).map_err(OverseerLockError::IoError)?;
+            fs::create_dir_all(parent).map_err(SupervisorLockError::IoError)?;
         }
 
         let file = OpenOptions::new()
@@ -405,15 +405,15 @@ impl OverseerLockFile {
             .create(true)
             .truncate(false)
             .open(&self.lock_path)
-            .map_err(OverseerLockError::IoError)?;
+            .map_err(SupervisorLockError::IoError)?;
 
         match flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
             Ok(()) => {}
             Err(e) => {
                 if e == nix::errno::Errno::EWOULDBLOCK {
-                    return Err(OverseerLockError::AlreadyLocked);
+                    return Err(SupervisorLockError::AlreadyLocked);
                 }
-                return Err(OverseerLockError::LockError(format!("flock failed: {}", e)));
+                return Err(SupervisorLockError::LockError(format!("flock failed: {}", e)));
             }
         }
 
@@ -421,12 +421,12 @@ impl OverseerLockFile {
         let content = format!("{}\n{}", pid, crate::utils::safe_unix_timestamp());
 
         let mut f = &file;
-        f.set_len(0).map_err(OverseerLockError::IoError)?;
+        f.set_len(0).map_err(SupervisorLockError::IoError)?;
         f.seek(SeekFrom::Start(0))
-            .map_err(OverseerLockError::IoError)?;
+            .map_err(SupervisorLockError::IoError)?;
         f.write_all(content.as_bytes())
-            .map_err(OverseerLockError::IoError)?;
-        f.flush().map_err(OverseerLockError::IoError)?;
+            .map_err(SupervisorLockError::IoError)?;
+        f.flush().map_err(SupervisorLockError::IoError)?;
 
         self.lock_file = Some(file);
         Ok(())
@@ -448,7 +448,7 @@ impl OverseerLockFile {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(DEFAULT_SYNVOID_DIR);
 
-        let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
+        let lock_path = data_dir.join(SUPERVISOR_LOCK_FILE);
 
         if lock_path.exists() {
             if let Ok(metadata) = fs::metadata(&lock_path) {
@@ -459,7 +459,7 @@ impl OverseerLockFile {
                         .as_secs();
 
                     if age > max_age_secs {
-                        tracing::info!("Cleaning up stale overseer lock (age: {}s)", age);
+                        tracing::info!("Cleaning up stale supervisor lock (age: {}s)", age);
                         let _ = fs::remove_file(&lock_path);
                     }
                 }
@@ -536,38 +536,38 @@ impl OverseerLockFile {
 }
 
 #[cfg(unix)]
-impl Drop for OverseerLockFile {
+impl Drop for SupervisorLockFile {
     fn drop(&mut self) {
         self.release();
     }
 }
 
 #[cfg(not(unix))]
-pub struct OverseerLockFile {
+pub struct SupervisorLockFile {
     lock_path: PathBuf,
 }
 
 #[cfg(not(unix))]
-impl Default for OverseerLockFile {
+impl Default for SupervisorLockFile {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[cfg(not(unix))]
-impl OverseerLockFile {
+impl SupervisorLockFile {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(DEFAULT_SYNVOID_DIR);
 
-        let lock_path = data_dir.join(OVERSEER_LOCK_FILE);
+        let lock_path = data_dir.join(SUPERVISOR_LOCK_FILE);
 
         Self { lock_path }
     }
 
     pub fn with_custom_dir(dir: PathBuf) -> Self {
-        let lock_path = dir.join(OVERSEER_LOCK_FILE);
+        let lock_path = dir.join(SUPERVISOR_LOCK_FILE);
         Self { lock_path }
     }
 
@@ -575,9 +575,9 @@ impl OverseerLockFile {
         &self.lock_path
     }
 
-    pub fn acquire(&mut self) -> Result<(), OverseerLockError> {
-        Err(OverseerLockError::LockError(
-            "Overseer lock file not supported on this platform".into(),
+    pub fn acquire(&mut self) -> Result<(), SupervisorLockError> {
+        Err(SupervisorLockError::LockError(
+            "Supervisor lock file not supported on this platform".into(),
         ))
     }
 
@@ -591,27 +591,27 @@ impl OverseerLockFile {
 }
 
 #[cfg(not(unix))]
-impl Drop for OverseerLockFile {
+impl Drop for SupervisorLockFile {
     fn drop(&mut self) {
         self.release();
     }
 }
 
 #[derive(Debug)]
-pub enum OverseerLockError {
+pub enum SupervisorLockError {
     IoError(std::io::Error),
     AlreadyLocked,
     LockError(String),
 }
 
-impl std::fmt::Display for OverseerLockError {
+impl std::fmt::Display for SupervisorLockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OverseerLockError::IoError(e) => write!(f, "IO error: {}", e),
-            OverseerLockError::AlreadyLocked => write!(f, "Overseer is already running"),
-            OverseerLockError::LockError(e) => write!(f, "Lock error: {}", e),
+            SupervisorLockError::IoError(e) => write!(f, "IO error: {}", e),
+            SupervisorLockError::AlreadyLocked => write!(f, "Supervisor is already running"),
+            SupervisorLockError::LockError(e) => write!(f, "Lock error: {}", e),
         }
     }
 }
 
-impl std::error::Error for OverseerLockError {}
+impl std::error::Error for SupervisorLockError {}

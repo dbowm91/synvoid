@@ -11,18 +11,18 @@ use utoipa::ToSchema;
 use super::common::{OptionalAuth, StatusResponse};
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct MasterStatusResponse {
+pub struct SupervisorStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
     pub uptime_secs: Option<u64>,
     pub version: String,
     pub mode: String,
     pub worker_mode: String,
-    pub metrics: MasterMetricsResponse,
+    pub metrics: SupervisorMetricsResponse,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct MasterMetricsResponse {
+pub struct SupervisorMetricsResponse {
     pub total_requests: u64,
     pub blocked: u64,
     pub challenged: u64,
@@ -70,7 +70,7 @@ pub async fn get_capabilities(
         "TLS".to_string(),
         "HTTP/3".to_string(),
         "WebSocket".to_string(),
-        "Master-Worker".to_string(),
+        "Supervisor-Worker".to_string(),
         "IPC".to_string(),
     ];
 
@@ -110,28 +110,28 @@ pub async fn get_capabilities(
 
 #[utoipa::path(
     get,
-    path = "/system/master",
+    path = "/system/supervisor",
     responses(
-        (status = 200, description = "Master process status", body = MasterStatusResponse),
+        (status = 200, description = "Supervisor process status", body = SupervisorStatusResponse),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
     tag = "system"
 )]
-pub async fn get_master_status(
+pub async fn get_supervisor_status(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<MasterStatusResponse>, StatusCode> {
+) -> Result<Json<SupervisorStatusResponse>, StatusCode> {
     let metrics = state.get_metrics();
 
-    Ok(Json(MasterStatusResponse {
+    Ok(Json(SupervisorStatusResponse {
         running: true,
         pid: Some(std::process::id()),
         uptime_secs: Some(state.uptime()),
         version: env!("CARGO_PKG_VERSION").to_string(),
         mode: "Standalone".to_string(),
         worker_mode: "Unified".to_string(),
-        metrics: MasterMetricsResponse {
+        metrics: SupervisorMetricsResponse {
             total_requests: metrics.total_requests,
             blocked: metrics.blocked,
             challenged: metrics.challenged,
@@ -173,7 +173,7 @@ pub async fn get_system_info(
         build_timestamp: env!("BUILD_TIMESTAMP").to_string(),
         architecture: std::env::consts::ARCH.to_string(),
         features,
-        running_mode: "Master".to_string(),
+        running_mode: "Supervisor".to_string(),
     }))
 }
 
@@ -534,64 +534,64 @@ pub async fn scale_workers(
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct OverseerStatusResponse {
+pub struct SupervisorProcessStatusResponse {
     pub running: bool,
     pub pid: Option<u32>,
-    pub master_pid: Option<u32>,
-    pub master_status: String,
+    pub supervisor_pid: Option<u32>,
+    pub supervisor_status: String,
     pub uptime_secs: u64,
     pub upgrade_mode: String,
     pub drain_status: String,
 }
 
-fn get_overseer_status_file_path() -> std::path::PathBuf {
+fn get_supervisor_status_file_path() -> std::path::PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("/var/run"))
         .join("synvoid")
-        .join("overseer_status.json")
+        .join("supervisor_status.json")
 }
 
 #[utoipa::path(
     get,
-    path = "/system/overseer",
+    path = "/system/supervisor",
     responses(
-        (status = 200, description = "Overseer status", body = OverseerStatusResponse),
+        (status = 200, description = "Supervisor status", body = SupervisorProcessStatusResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Process manager not found"),
         (status = 500, description = "Internal server error")
     ),
     tag = "system"
 )]
-pub async fn get_overseer(
+pub async fn get_supervisor(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<OverseerStatusResponse>, StatusCode> {
+) -> Result<Json<SupervisorProcessStatusResponse>, StatusCode> {
     let pm = state
         .process
         .process_manager
         .as_ref()
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let status_file_path = get_overseer_status_file_path();
+    let status_file_path = get_supervisor_status_file_path();
 
     // Try to read status from file first
     if status_file_path.exists() {
         match tokio::fs::read_to_string(&status_file_path).await {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(json) => {
-                    return Ok(Json(OverseerStatusResponse {
+                    return Ok(Json(SupervisorProcessStatusResponse {
                         running: json
                             .get("running")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false),
                         pid: json.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32),
-                        master_pid: json
-                            .get("master_pid")
+                        supervisor_pid: json
+                            .get("supervisor_pid")
                             .and_then(|v| v.as_u64())
                             .map(|v| v as u32),
-                        master_status: json
-                            .get("master_status")
+                        supervisor_status: json
+                            .get("supervisor_status")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown")
                             .to_string(),
@@ -612,25 +612,25 @@ pub async fn get_overseer(
                     }));
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to parse overseer status file: {}", e);
+                    tracing::warn!("Failed to parse supervisor status file: {}", e);
                 }
             },
             Err(e) => {
-                tracing::warn!("Failed to read overseer status file: {}", e);
+                tracing::warn!("Failed to read supervisor status file: {}", e);
             }
         }
     }
 
     // Fallback to process manager state
     let running = pm.is_running();
-    let master_pid = pm.get_master_pid();
+    let supervisor_pid = pm.get_supervisor_pid();
     let _worker_count = pm.get_running_worker_count();
 
-    Ok(Json(OverseerStatusResponse {
+    Ok(Json(SupervisorProcessStatusResponse {
         running,
         pid: None,
-        master_pid,
-        master_status: if running {
+        supervisor_pid,
+        supervisor_status: if running {
             "Running".to_string()
         } else {
             "Stopped".to_string()

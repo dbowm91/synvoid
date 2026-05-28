@@ -84,8 +84,8 @@
 //!
 //! These types are used in IPC and should be migrated first:
 //!
-//! 1. **src/process/ipc.rs** - Master↔Worker messages
-//!    - `MasterCommand`, `MasterStatus`, `WorkerStatusInfo`
+//! 1. **src/process/ipc.rs** - Supervisor↔Worker messages
+//!    - `SupervisorCommand`, `SupervisorStatus`, `WorkerStatusInfo`
 //!    - `Message` enum (all variants)
 //!    - `WorkerMetricsPayload`
 //!

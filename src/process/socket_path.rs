@@ -102,54 +102,54 @@ pub fn get_user_socket_dir() -> PathBuf {
     path
 }
 
-pub fn get_master_socket_path() -> PathBuf {
-    get_secure_socket_path("master.sock")
+pub fn get_supervisor_socket_path() -> PathBuf {
+    get_secure_socket_path("supervisor.sock")
 }
 
 pub fn get_static_worker_socket_path() -> PathBuf {
     get_secure_socket_path("static-worker.sock")
 }
 
-pub fn get_versioned_master_socket_path(generation: u32) -> PathBuf {
-    get_secure_socket_path(&format!("master-{}.sock", generation))
+pub fn get_versioned_supervisor_socket_path(generation: u32) -> PathBuf {
+    get_secure_socket_path(&format!("supervisor-{}.sock", generation))
 }
 
-pub fn get_current_master_generation() -> u32 {
+pub fn get_current_supervisor_generation() -> u32 {
     MASTER_GENERATION.load(Ordering::SeqCst)
 }
 
-pub fn set_master_generation(generation: u32) {
+pub fn set_supervisor_generation(generation: u32) {
     MASTER_GENERATION.store(generation, Ordering::SeqCst);
 }
 
-pub fn next_master_generation() -> u32 {
+pub fn next_supervisor_generation() -> u32 {
     MASTER_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
 }
 
-pub fn resolve_master_socket_for_upgrade(upgrade_mode: bool, generation: Option<u32>) -> PathBuf {
+pub fn resolve_supervisor_socket_for_upgrade(upgrade_mode: bool, generation: Option<u32>) -> PathBuf {
     if upgrade_mode {
         if let Some(gen) = generation {
-            get_versioned_master_socket_path(gen)
+            get_versioned_supervisor_socket_path(gen)
         } else {
-            let gen = next_master_generation();
-            get_versioned_master_socket_path(gen)
+            let gen = next_supervisor_generation();
+            get_versioned_supervisor_socket_path(gen)
         }
     } else {
-        get_master_socket_path()
+        get_supervisor_socket_path()
     }
 }
 
-fn parse_master_generation(name: &str) -> Option<u32> {
-    if name.starts_with("master-") && name.ends_with(".sock") {
-        let gen_str = name.trim_start_matches("master-").trim_end_matches(".sock");
+fn parse_supervisor_generation(name: &str) -> Option<u32> {
+    if name.starts_with("supervisor-") && name.ends_with(".sock") {
+        let gen_str = name.trim_start_matches("supervisor-").trim_end_matches(".sock");
         gen_str.parse::<u32>().ok()
     } else {
         None
     }
 }
 
-pub fn find_active_master_socket() -> Option<PathBuf> {
-    let base_path = get_master_socket_path();
+pub fn find_active_supervisor_socket() -> Option<PathBuf> {
+    let base_path = get_supervisor_socket_path();
     if base_path.exists() {
         return Some(base_path);
     }
@@ -161,7 +161,7 @@ pub fn find_active_master_socket() -> Option<PathBuf> {
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
-                    parse_master_generation(&name).map(|gen| (gen, e.path()))
+                    parse_supervisor_generation(&name).map(|gen| (gen, e.path()))
                 })
                 .collect();
 
@@ -172,16 +172,16 @@ pub fn find_active_master_socket() -> Option<PathBuf> {
     }
 }
 
-pub fn cleanup_old_master_sockets(keep_generation: u32) {
-    let base_path = get_master_socket_path();
+pub fn cleanup_old_supervisor_sockets(keep_generation: u32) {
+    let base_path = get_supervisor_socket_path();
     if let Some(socket_dir) = base_path.parent() {
         if let Ok(entries) = std::fs::read_dir(socket_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if let Some(gen) = parse_master_generation(&name) {
+                if let Some(gen) = parse_supervisor_generation(&name) {
                     if gen < keep_generation {
                         let _ = std::fs::remove_file(entry.path());
-                        tracing::debug!("Cleaned up old master socket: {}", name);
+                        tracing::debug!("Cleaned up old supervisor socket: {}", name);
                     }
                 }
             }

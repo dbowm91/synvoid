@@ -1,6 +1,5 @@
 pub mod bootstrap;
 pub mod daemon;
-pub mod master;
 pub mod worker;
 
 use std::sync::Arc;

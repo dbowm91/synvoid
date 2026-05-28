@@ -234,9 +234,9 @@ impl MultiFeedManager {
         let urls = vec![
             "https://raw.githubusercontent.com/bitwire-it/ipblocklist/main/inbound.txt".to_string(),
             "https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/main/abuseipdb-ipv4.txt".to_string(),
-            "https://raw.githubusercontent.com/borestad/firehol-mirror/master/firehol level1.netset".to_string(),
-            "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt".to_string(),
-            "https://raw.githubusercontent.com/ShadowWhisperer/IPs/master/BlockList/IPsV4.txt".to_string(),
+            "https://raw.githubusercontent.com/borestad/firehol-mirror/main/firehol level1.netset".to_string(),
+            "https://raw.githubusercontent.com/stamparm/ipsum/main/ipsum.txt".to_string(),
+            "https://raw.githubusercontent.com/ShadowWhisperer/IPs/main/BlockList/IPsV4.txt".to_string(),
             "https://www.spamhaus.org/drop/drop.txt".to_string(),
         ];
 

@@ -7,7 +7,7 @@ use crate::config::MainConfig;
 use crate::mesh::protocol::MeshMessageSigner;
 #[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
-use crate::process::{CommandClient, MasterCommand, PidFileManager};
+use crate::process::{CommandClient, SupervisorCommand, PidFileManager};
 
 pub fn handle_status(
     control_addr: Option<String>,
@@ -24,7 +24,7 @@ pub fn handle_status(
                 Ok(status) => {
                     println!("synvoid Status");
                     println!("==============");
-                    println!("Master PID: {}", status.master_pid);
+                    println!("Supervisor PID: {}", status.supervisor_pid);
                     println!("Version: {}", status.version);
                     println!("Uptime: {} seconds", status.uptime_secs);
                     println!();
@@ -99,7 +99,7 @@ pub fn handle_stop(
             let client =
                 CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
-            match client.send_command(MasterCommand::Stop { graceful: true }) {
+            match client.send_command(SupervisorCommand::Stop { graceful: true }) {
                 Ok(msg) => {
                     println!("Stop signal sent: {}", msg);
                     println!("Waiting for shutdown...");
@@ -141,7 +141,7 @@ pub fn handle_rehash(
             let client =
                 CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
-            match client.send_command(MasterCommand::ReloadConfig) {
+            match client.send_command(SupervisorCommand::ReloadConfig) {
                 Ok(msg) => {
                     println!("Reload signal sent: {}", msg);
                 }

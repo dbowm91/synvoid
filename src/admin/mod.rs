@@ -239,9 +239,9 @@ fn build_router_from_state(
         .route("/config/import", post(handlers::config::import_config))
         .route("/config/check-regex", post(handlers::config::check_regex))
         .route(
-            "/config/overseer",
-            get(handlers::config::get_overseer_config)
-                .put(handlers::config::update_overseer_config),
+            "/config/supervisor",
+            get(handlers::config::get_supervisor_config)
+                .put(handlers::config::update_supervisor_config),
         )
         .route(
             "/config/tls",
@@ -586,7 +586,7 @@ fn build_router_from_state(
             "/system/capabilities",
             get(handlers::system::get_capabilities),
         )
-        .route("/system/master", get(handlers::system::get_master_status))
+        .route("/system/supervisor", get(handlers::system::get_supervisor_status))
         .route("/system/workers", get(handlers::system::get_workers))
         .route(
             "/system/workers/count",
@@ -604,7 +604,7 @@ fn build_router_from_state(
             "/system/workers/batch-restart",
             post(handlers::system::batch_restart_workers),
         )
-        .route("/system/overseer", get(handlers::system::get_overseer))
+        .route("/system/supervisor", get(handlers::system::get_supervisor))
         .route(
             "/system/app-servers/{site_id}/logs",
             get(handlers::system::get_granian_logs),

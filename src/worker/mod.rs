@@ -1,7 +1,7 @@
 //! Worker process implementation.
 //!
 //! Handles HTTP request processing, TLS termination, connection management,
-//! and WAF enforcement. Workers are spawned by the master process and
+//! and WAF enforcement. Workers are spawned by the supervisor process and
 //! communicate via IPC.
 
 use std::collections::HashMap;
@@ -50,7 +50,7 @@ pub fn setup_worker_panic_handler() {
 pub struct StaticWorkerArgs {
     pub worker_id: usize,
     pub config_path: PathBuf,
-    pub master_socket: PathBuf,
+    pub supervisor_socket: PathBuf,
     pub static_worker_socket: PathBuf,
     pub log_level: Option<String>,
     pub ipc_key: Option<String>,
@@ -101,10 +101,10 @@ pub async fn run_static_worker(
     }
 
     tracing::info!(
-        "Static worker {} starting, config: {:?}, master socket: {:?}",
+        "Static worker {} starting, config: {:?}, supervisor socket: {:?}",
         args.worker_id,
         args.config_path,
-        args.master_socket
+        args.supervisor_socket
     );
 
     let signer = match IpcSigner::try_from_env() {
@@ -115,8 +115,8 @@ pub async fn run_static_worker(
         }
     };
     let ipc = Arc::new(TokioMutex::new(
-        connect::connect_to_master_async_signed(
-            &args.master_socket,
+        connect::connect_to_supervisor_async_signed(
+            &args.supervisor_socket,
             5,
             std::time::Duration::from_secs(2),
             "Static worker",
@@ -657,7 +657,7 @@ mod tests {
         let args = StaticWorkerArgs {
             worker_id: 1,
             config_path: PathBuf::from("/etc/synvoid"),
-            master_socket: PathBuf::from("/tmp/master.sock"),
+            supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
             static_worker_socket: PathBuf::from("/tmp/static.sock"),
             log_level: Some("debug".to_string()),
             ipc_key: Some("test-key".to_string()),
@@ -665,7 +665,7 @@ mod tests {
 
         assert_eq!(args.worker_id, 1);
         assert_eq!(args.config_path, PathBuf::from("/etc/synvoid"));
-        assert_eq!(args.master_socket, PathBuf::from("/tmp/master.sock"));
+        assert_eq!(args.supervisor_socket, PathBuf::from("/tmp/supervisor.sock"));
         assert_eq!(args.static_worker_socket, PathBuf::from("/tmp/static.sock"));
         assert_eq!(args.log_level, Some("debug".to_string()));
         assert_eq!(args.ipc_key, Some("test-key".to_string()));
@@ -676,7 +676,7 @@ mod tests {
         let args = StaticWorkerArgs {
             worker_id: 0,
             config_path: PathBuf::from("/etc/synvoid"),
-            master_socket: PathBuf::from("/tmp/master.sock"),
+            supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
             static_worker_socket: PathBuf::from("/tmp/static.sock"),
             log_level: None,
             ipc_key: None,

@@ -20,7 +20,7 @@ pub enum CommandMethod {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MasterCommand {
+pub enum SupervisorCommand {
     Stop { graceful: bool },
     ReloadConfig,
     Status,
@@ -28,8 +28,9 @@ pub enum MasterCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MasterStatus {
-    pub master_pid: u32,
+pub struct SupervisorStatus {
+    #[serde(alias = "master_pid")]
+    pub supervisor_pid: u32,
     pub started_at: u64,
     pub uptime_secs: u64,
     pub version: String,
@@ -143,7 +144,7 @@ pub enum MeshUpdateNotification {
     DhtKeyUpdated { key: String },
 }
 
-/// Unique identifier for a worker process within the master's pool.
+/// Unique identifier for a worker process within the supervisor's pool.
 ///
 /// Worker IDs are assigned sequentially starting from 0. They are used
 /// for IPC routing, health checks, and drain operations.
@@ -243,7 +244,7 @@ pub struct ServerlessHandleResponse {
     pub error: Option<String>,
 }
 
-/// IPC messages exchanged between overseer, master, and worker processes.
+/// IPC messages exchanged between supervisor and worker processes.
 ///
 /// Messages are serialized as JSON over Unix domain sockets. Each variant
 /// IPC Message variants grouped by concern (documentation-level grouping).
@@ -253,7 +254,7 @@ pub struct ServerlessHandleResponse {
 ///
 /// - **Worker Lifecycle**: WorkerStarted, WorkerReady, WorkerHeartbeat,
 ///   WorkerRequestLog, WorkerShutdownComplete, WorkerError
-/// - **Master Commands**: MasterShutdown, MasterConfigReload,
+/// - **Supervisor Commands**: SupervisorShutdown, SupervisorConfigReload,
 ///   MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck,
 ///   MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck
 /// - **Static Worker**: StaticWorkerStarted, StaticWorkerReady,
@@ -277,15 +278,15 @@ pub struct ServerlessHandleResponse {
 ///   UnifiedServerWorkerResizeAck
 /// - **Worker Drain**: WorkerDrain, WorkerDrained, WorkerConnectionCount,
 ///   WorkerDrainComplete, WorkerReadyForTraffic
-/// - **Upgrade**: UpgradeReady, UpgradeFailed, OverseerUpgradePrepare,
-///   OverseerUpgradePrepareAck, OverseerUpgradeCommit,
-///   OverseerUpgradeCommitAck, OverseerUpgradeRollback,
-///   OverseerUpgradeRollbackAck, OverseerCommitUpgrade,
-///   OverseerCommitUpgradeAck
-/// - **Overseer**: OverseerDrainWorkers, OverseerDrainWorkersAck,
-///   OverseerGetStatus, OverseerStatusResponse, OverseerDualMasterPrepare,
-///   OverseerDualMasterPrepareAck
-/// - **Master Drain**: MasterDrainMode, MasterDrainModeAck,
+/// - **Upgrade**: UpgradeReady, UpgradeFailed, SupervisorUpgradePrepare,
+///   SupervisorUpgradePrepareAck, SupervisorUpgradeCommit,
+///   SupervisorUpgradeCommitAck, SupervisorUpgradeRollback,
+///   SupervisorUpgradeRollbackAck, SupervisorCommitUpgrade,
+///   SupervisorCommitUpgradeAck
+/// - **Supervisor**: SupervisorDrainWorkers, SupervisorDrainWorkersAck,
+///   SupervisorGetStatus, SupervisorStatusResponse, SupervisorDualSupervisorPrepare,
+///   SupervisorDualSupervisorPrepareAck
+/// - **Supervisor Drain**: SupervisorDrainMode, SupervisorDrainModeAck,
 ///   MasterReportConnections, MasterConnectionsReport, MasterStopAccepting,
 ///   MasterStopAcceptingAck, MasterDrainStatus
 /// - **Drain Protocol**: DrainRequest, DrainStatusRequest, DrainStatusResponse,
@@ -612,49 +613,49 @@ pub enum Message {
     UpgradeFailed {
         error: String,
     },
-    OverseerUpgradePrepare {
+    SupervisorUpgradePrepare {
         binary_path: String,
         config_path: Option<String>,
         version: String,
     },
-    OverseerUpgradePrepareAck {
+    SupervisorUpgradePrepareAck {
         ready: bool,
         error: Option<String>,
     },
-    OverseerUpgradeCommit {
+    SupervisorUpgradeCommit {
         timeout_secs: u64,
     },
-    OverseerUpgradeCommitAck {
+    SupervisorUpgradeCommitAck {
         success: bool,
         error: Option<String>,
     },
-    OverseerUpgradeRollback {
+    SupervisorUpgradeRollback {
         reason: String,
     },
-    OverseerUpgradeRollbackAck {
+    SupervisorUpgradeRollbackAck {
         success: bool,
         error: Option<String>,
     },
-    OverseerDrainWorkers {
+    SupervisorDrainWorkers {
         timeout_secs: u64,
     },
-    OverseerDrainWorkersAck {
+    SupervisorDrainWorkersAck {
         drained_count: usize,
         remaining_connections: u64,
     },
-    OverseerGetStatus,
-    OverseerStatusResponse {
+    SupervisorGetStatus,
+    SupervisorStatusResponse {
         master_pid: u32,
         workers: Vec<WorkerStatusInfo>,
         uptime_secs: u64,
         version: String,
     },
-    OverseerDualMasterPrepare {
+    SupervisorDualSupervisorPrepare {
         binary_path: String,
         config_path: Option<String>,
         version: String,
     },
-    OverseerDualMasterPrepareAck {
+    SupervisorDualSupervisorPrepareAck {
         ready: bool,
         error: Option<String>,
     },
@@ -685,10 +686,10 @@ pub enum Message {
         id: WorkerId,
         connections_handled: u64,
     },
-    OverseerCommitUpgrade {
-        old_master_timeout_secs: u64,
+    SupervisorCommitUpgrade {
+        old_supervisor_timeout_secs: u64,
     },
-    OverseerCommitUpgradeAck {
+    SupervisorCommitUpgradeAck {
         success: bool,
         error: Option<String>,
     },
@@ -940,10 +941,10 @@ impl Message {
             | Message::WorkerDrain { .. }
             | Message::WorkerDrained { .. }
             | Message::UpgradeReady { .. }
-            | Message::OverseerUpgradeCommit { .. }
-            | Message::OverseerDrainWorkers { .. }
-            | Message::OverseerDrainWorkersAck { .. }
-            | Message::OverseerGetStatus
+            | Message::SupervisorUpgradeCommit { .. }
+            | Message::SupervisorDrainWorkers { .. }
+            | Message::SupervisorDrainWorkersAck { .. }
+            | Message::SupervisorGetStatus
             | Message::MasterDrainMode { .. }
             | Message::MasterDrainModeAck { .. }
             | Message::MasterReportConnections { .. }
@@ -952,7 +953,7 @@ impl Message {
             | Message::MasterStopAcceptingAck { .. }
             | Message::WorkerConnectionCount { .. }
             | Message::WorkerDrainComplete { .. }
-            | Message::OverseerCommitUpgrade { .. }
+            | Message::SupervisorCommitUpgrade { .. }
             | Message::SocketHandoffReady { .. }
             | Message::SocketHandoffComplete { .. }
             | Message::WindowsSocketInfo { .. }
@@ -1185,7 +1186,7 @@ impl Message {
             Message::UpgradeFailed { error } => {
                 check_str("UpgradeFailed.error", error, MAX_STRING_LENGTH)
             }
-            Message::OverseerUpgradePrepare {
+            Message::SupervisorUpgradePrepare {
                 binary_path,
                 config_path,
                 version,
@@ -1194,22 +1195,22 @@ impl Message {
                 check_opt_path_str("config_path", config_path, MAX_PATH_LENGTH)?;
                 check_str("version", version, MAX_STRING_LENGTH)
             }
-            Message::OverseerUpgradePrepareAck { error, .. } => {
+            Message::SupervisorUpgradePrepareAck { error, .. } => {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
-            Message::OverseerUpgradeCommitAck { error, .. } => {
+            Message::SupervisorUpgradeCommitAck { error, .. } => {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
-            Message::OverseerUpgradeRollback { reason } => {
+            Message::SupervisorUpgradeRollback { reason } => {
                 check_str("reason", reason, MAX_STRING_LENGTH)
             }
-            Message::OverseerUpgradeRollbackAck { error, .. } => {
+            Message::SupervisorUpgradeRollbackAck { error, .. } => {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
-            Message::OverseerStatusResponse { version, .. } => {
+            Message::SupervisorStatusResponse { version, .. } => {
                 check_str("version", version, MAX_STRING_LENGTH)
             }
-            Message::OverseerDualMasterPrepare {
+            Message::SupervisorDualSupervisorPrepare {
                 binary_path,
                 config_path,
                 version,
@@ -1218,10 +1219,10 @@ impl Message {
                 check_opt_path_str("config_path", config_path, MAX_PATH_LENGTH)?;
                 check_str("version", version, MAX_STRING_LENGTH)
             }
-            Message::OverseerDualMasterPrepareAck { error, .. } => {
+            Message::SupervisorDualSupervisorPrepareAck { error, .. } => {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
-            Message::OverseerCommitUpgradeAck { error, .. } => {
+            Message::SupervisorCommitUpgradeAck { error, .. } => {
                 check_opt_str("error", error, MAX_STRING_LENGTH)
             }
             Message::SocketHandoffRequest { socket_path } => {
@@ -1399,7 +1400,7 @@ impl Message {
             | Message::MasterResizeThreadpool { .. }
             | Message::MasterCertReload
             | Message::HealthCheckAck { .. }
-            | Message::WorkerResizeAck { .. } => MessageCategory::MasterCommand,
+            | Message::WorkerResizeAck { .. } => MessageCategory::SupervisorCommand,
 
             Message::StaticWorkerStarted { .. }
             | Message::StaticWorkerReady { .. }
@@ -1464,21 +1465,21 @@ impl Message {
 
             Message::UpgradeReady { .. }
             | Message::UpgradeFailed { .. }
-            | Message::OverseerUpgradePrepare { .. }
-            | Message::OverseerUpgradePrepareAck { .. }
-            | Message::OverseerUpgradeCommit { .. }
-            | Message::OverseerUpgradeCommitAck { .. }
-            | Message::OverseerUpgradeRollback { .. }
-            | Message::OverseerUpgradeRollbackAck { .. }
-            | Message::OverseerCommitUpgrade { .. }
-            | Message::OverseerCommitUpgradeAck { .. } => MessageCategory::Upgrade,
+            | Message::SupervisorUpgradePrepare { .. }
+            | Message::SupervisorUpgradePrepareAck { .. }
+            | Message::SupervisorUpgradeCommit { .. }
+            | Message::SupervisorUpgradeCommitAck { .. }
+            | Message::SupervisorUpgradeRollback { .. }
+            | Message::SupervisorUpgradeRollbackAck { .. }
+            | Message::SupervisorCommitUpgrade { .. }
+            | Message::SupervisorCommitUpgradeAck { .. } => MessageCategory::Upgrade,
 
-            Message::OverseerDrainWorkers { .. }
-            | Message::OverseerDrainWorkersAck { .. }
-            | Message::OverseerGetStatus
-            | Message::OverseerStatusResponse { .. }
-            | Message::OverseerDualMasterPrepare { .. }
-            | Message::OverseerDualMasterPrepareAck { .. } => MessageCategory::Overseer,
+            Message::SupervisorDrainWorkers { .. }
+            | Message::SupervisorDrainWorkersAck { .. }
+            | Message::SupervisorGetStatus
+            | Message::SupervisorStatusResponse { .. }
+            | Message::SupervisorDualSupervisorPrepare { .. }
+            | Message::SupervisorDualSupervisorPrepareAck { .. } => MessageCategory::Supervisor,
 
             Message::MasterDrainMode { .. }
             | Message::MasterDrainModeAck { .. }
@@ -1511,7 +1512,7 @@ impl Message {
             }
 
             Message::StreamChunk { .. } => MessageCategory::UnifiedServer,
-            Message::CommandResponse { .. } => MessageCategory::MasterCommand,
+            Message::CommandResponse { .. } => MessageCategory::SupervisorCommand,
 
             Message::PluginStateSync { .. }
             | Message::PluginExecuteRequest(_)
@@ -1551,7 +1552,7 @@ impl Message {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageCategory {
     WorkerLifecycle,
-    MasterCommand,
+    SupervisorCommand,
     StaticWorker,
     ThreatIntel,
     BlocklistRules,
@@ -1560,7 +1561,7 @@ pub enum MessageCategory {
     UnifiedServer,
     WorkerDrain,
     Upgrade,
-    Overseer,
+    Supervisor,
     MasterDrain,
     DrainProtocol,
     SocketHandoff,
@@ -1574,7 +1575,7 @@ impl std::fmt::Display for MessageCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MessageCategory::WorkerLifecycle => write!(f, "WorkerLifecycle"),
-            MessageCategory::MasterCommand => write!(f, "MasterCommand"),
+            MessageCategory::SupervisorCommand => write!(f, "SupervisorCommand"),
             MessageCategory::StaticWorker => write!(f, "StaticWorker"),
             MessageCategory::ThreatIntel => write!(f, "ThreatIntel"),
             MessageCategory::BlocklistRules => write!(f, "BlocklistRules"),
@@ -1583,7 +1584,7 @@ impl std::fmt::Display for MessageCategory {
             MessageCategory::UnifiedServer => write!(f, "UnifiedServer"),
             MessageCategory::WorkerDrain => write!(f, "WorkerDrain"),
             MessageCategory::Upgrade => write!(f, "Upgrade"),
-            MessageCategory::Overseer => write!(f, "Overseer"),
+            MessageCategory::Supervisor => write!(f, "Supervisor"),
             MessageCategory::MasterDrain => write!(f, "MasterDrain"),
             MessageCategory::DrainProtocol => write!(f, "DrainProtocol"),
             MessageCategory::SocketHandoff => write!(f, "SocketHandoff"),
@@ -1616,7 +1617,7 @@ pub enum WorkerStatus {
 /// Synchronous IPC stream for framed message passing.
 ///
 /// **COMPATIBILITY WARNING:** This is a legacy sync wrapper retained for
-/// `std::thread::spawn` contexts (static worker connections, overseer IPC
+/// `std::thread::spawn` contexts (static worker connections, supervisor IPC
 /// client) where tokio is not available. **New code should use
 /// [`crate::process::ipc_transport::IpcStream`] (the async transport) which
 /// supports message signing, `enforce_signing`, and proper framed I/O.**
@@ -1637,7 +1638,7 @@ pub enum WorkerStatus {
 /// | Message signing | Partial (via `send_signed`) | Full (via `IpcSigner`, `enforce_signing`) |
 /// | Recv with timeout | Polling via `recv()` | Native `recv_with_timeout()` |
 /// | AsyncRead/Write | No | Yes |
-/// | Use case | Static worker threads, command handling | Master↔Worker IPC, mesh transport |
+/// | Use case | Static worker threads, command handling | Supervisor↔Worker IPC, mesh transport |
 ///
 /// The sync version is used from `std::thread::spawn` contexts (static worker
 /// connections) where tokio is not available. The async version is used from
@@ -1783,7 +1784,7 @@ pub fn get_ipc_path(socket_path: &std::path::Path) -> String {
         let pipe_name = socket_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("synvoid-master");
+            .unwrap_or("synvoid-supervisor");
         format!("\\\\.\\pipe\\{}", pipe_name)
     }
 }
@@ -1792,13 +1793,13 @@ pub fn get_platform_info() -> crate::platform::Platform {
     crate::platform::platform()
 }
 
-/// Connect to the master IPC endpoint without message signing.
+/// Connect to the supervisor IPC endpoint without message signing.
 ///
-/// **DEPRECATED:** Prefer [`crate::process::ipc_transport::connect_to_master_signed`]
+/// **DEPRECATED:** Prefer [`crate::process::ipc_transport::connect_to_supervisor_signed`]
 /// or [`crate::process::ipc_transport::IpcEndpoint::connect_with_signer`] for
 /// production deployments. Unsigned connections must not be used for privileged
 /// operations (Stop, ReloadConfig, threat data exchange).
-pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
+pub fn connect_to_supervisor(path: &std::path::Path) -> io::Result<IpcStream> {
     #[cfg(unix)]
     {
         let stream = UnixStream::connect(path)?;
@@ -1815,7 +1816,7 @@ pub fn connect_to_master(path: &std::path::Path) -> io::Result<IpcStream> {
         let pipe_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("synvoid-master");
+            .unwrap_or("synvoid-supervisor");
         let pipe_path = format!("\\\\.\\pipe\\{}", pipe_name);
 
         let mut attempts = 0;
@@ -1902,13 +1903,13 @@ impl IpcStream {
         })
     }
 
-    /// Connect to the master IPC endpoint without signing (Windows).
+    /// Connect to the supervisor IPC endpoint without signing (Windows).
     ///
     /// **DEPRECATED for privileged paths:** Use the async transport with
     /// `connect_with_signer` when the connection will carry privileged operations.
     #[cfg(windows)]
     pub fn connect_unix(path: &std::path::Path) -> io::Result<Self> {
-        connect_to_master(path)
+        connect_to_supervisor(path)
     }
 
     pub fn send(&mut self, msg: &Message) -> io::Result<()> {
@@ -2166,15 +2167,15 @@ mod tests {
     #[test]
     fn test_master_command_serde() {
         let cmds = [
-            MasterCommand::Stop { graceful: true },
-            MasterCommand::Stop { graceful: false },
-            MasterCommand::ReloadConfig,
-            MasterCommand::Status,
-            MasterCommand::HealthCheck,
+            SupervisorCommand::Stop { graceful: true },
+            SupervisorCommand::Stop { graceful: false },
+            SupervisorCommand::ReloadConfig,
+            SupervisorCommand::Status,
+            SupervisorCommand::HealthCheck,
         ];
         for cmd in cmds {
             let json = serde_json::to_string(&cmd).unwrap();
-            let decoded: MasterCommand = serde_json::from_str(&json).unwrap();
+            let decoded: SupervisorCommand = serde_json::from_str(&json).unwrap();
             assert_eq!(format!("{:?}", cmd), format!("{:?}", decoded));
         }
     }

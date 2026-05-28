@@ -20,7 +20,7 @@ Common issues and solutions for SynVoid.
 - [Logging Issues](#logging-issues)
   - [Logs Not Appearing](#logs-not-appearing)
 - [Mesh Network Issues](#mesh-network-issues)
-- [Worker/Master Issues](#workermaster-issues)
+- [Worker/Supervisor Issues](#workermaster-issues)
 
 ## Connection Issues
 

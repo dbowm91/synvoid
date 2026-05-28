@@ -4,9 +4,9 @@ Specialized guidance for mesh networking, DHT, and Raft consensus.
 
 ## Architecture Overview
 
-### Overseer/Master/Worker IPC
+### Supervisor/Worker IPC
 
-The overseer/master/worker architecture uses:
+The supervisor/worker architecture uses:
 - Unix domain sockets for IPC
 - `Message` enum in `src/process/ipc.rs` for communication
 - `ProcessManager` for worker lifecycle

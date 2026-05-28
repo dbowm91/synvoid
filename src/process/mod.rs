@@ -42,8 +42,8 @@ pub use command::{CommandClient, CommandError, CommandResponse};
 #[cfg(windows)]
 pub use ipc::WindowsIpcListener;
 pub use ipc::{
-    connect_to_master, get_ipc_path, CommandMethod, ErrorCode, ErrorSeverity, IpcStream,
-    IpcValidationError, MasterCommand, MasterStatus, Message, RequestLogPayload,
+    connect_to_supervisor, get_ipc_path, CommandMethod, ErrorCode, ErrorSeverity, IpcStream,
+    IpcValidationError, SupervisorCommand, SupervisorStatus, Message, RequestLogPayload,
     SiteMetricsPayload, StatusStats, ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel,
     ThreatSummary, WorkerId, WorkerMetricsPayload, WorkerStatus, WorkerStatusInfo,
 };
@@ -52,7 +52,7 @@ pub use ipc_framing::{
 };
 pub use ipc_transport::{
     connect_to_commands_async, connect_to_commands_signed, connect_to_endpoint,
-    connect_to_endpoint_signed, connect_to_master_async, connect_to_master_signed,
+    connect_to_endpoint_signed, connect_to_supervisor_async, connect_to_supervisor_signed,
     connect_to_static_worker_async, connect_to_static_worker_signed, IpcEndpoint, IpcListener,
     IpcStream as AsyncIpcStream,
 };
@@ -60,17 +60,17 @@ pub use manager::{
     check_port_available, check_ports_available, start_health_monitor, ProcessEvent,
     ProcessManager, ProcessManagerConfig, WorkerConfig,
 };
-pub use pidfile::{OverseerLockError, OverseerLockFile, PidFileManager};
+pub use pidfile::{SupervisorLockError, SupervisorLockFile, PidFileManager};
 pub use socket_fd::{
     close_fd, create_listening_socket, create_listening_socket_v6, is_reuse_port_supported,
     raw_fd_to_tcp_listener, raw_fd_to_tcp_stream, SocketFDError, SocketFDPassing, SocketHolder,
     SocketInfo, SocketType,
 };
 pub use socket_path::{
-    cleanup_old_master_sockets, find_active_master_socket, get_current_master_generation,
-    get_master_socket_path, get_secure_socket_path, get_static_worker_socket_path,
-    get_versioned_master_socket_path, next_master_generation, resolve_master_socket_for_upgrade,
-    set_master_generation, set_socket_permissions,
+    cleanup_old_supervisor_sockets, find_active_supervisor_socket, get_current_supervisor_generation,
+    get_supervisor_socket_path, get_secure_socket_path, get_static_worker_socket_path,
+    get_versioned_supervisor_socket_path, next_supervisor_generation, resolve_supervisor_socket_for_upgrade,
+    set_supervisor_generation, set_socket_permissions,
 };
 pub use worker::{
     BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tokio::task::JoinHandle;
 
-use super::connect::connect_to_master_async;
+use super::connect::connect_to_supervisor_async;
 use super::context::RequestServices;
 use super::drain_state::WorkerDrainState;
 use super::metrics::WorkerMetrics;
@@ -37,7 +37,7 @@ use crate::{DrainFlag, RunningFlag};
 pub struct UnifiedServerWorkerArgs {
     pub worker_id: usize,
     pub config_path: PathBuf,
-    pub master_socket: PathBuf,
+    pub supervisor_socket: PathBuf,
     pub log_level: Option<String>,
     pub upgrade_mode: bool,
     pub reuse_port: bool,
@@ -56,10 +56,10 @@ pub fn setup_unified_server_panic_handler() {
 }
 
 async fn setup_worker_ipc(
-    master_socket: &std::path::Path,
+    supervisor_socket: &std::path::Path,
     worker_id: &WorkerId,
 ) -> Result<Arc<TokioMutex<AsyncIpcStream>>, Box<dyn std::error::Error + Send + Sync>> {
-    // Read IPC session key from environment (passed via temp file by master)
+    // Read IPC session key from environment (passed via temp file by supervisor)
     let signer = if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
         crate::process::ipc_signed::read_ipc_key_file(&key_file)
     } else if let Ok(key_hex) = std::env::var("SYNVOID_IPC_KEY") {
@@ -96,10 +96,10 @@ async fn setup_worker_ipc(
     };
 
     let mut stream = if let Some(signer) = signer {
-        crate::process::connect_to_master_signed(signer).await?
+        crate::process::connect_to_supervisor_signed(signer).await?
     } else {
-        connect_to_master_async(
-            master_socket,
+        connect_to_supervisor_async(
+            supervisor_socket,
             5,
             std::time::Duration::from_secs(2),
             "Unified server worker",
@@ -234,13 +234,13 @@ pub async fn run_unified_server_worker(
     crate::metrics::health::SystemHealthMonitor::start();
 
     tracing::info!(
-        "Unified Server Worker {} starting, config: {:?}, master socket: {:?}",
+        "Unified Server Worker {} starting, config: {:?}, supervisor socket: {:?}",
         worker_id,
         args.config_path,
-        args.master_socket
+        args.supervisor_socket
     );
 
-    let ipc = setup_worker_ipc(&args.master_socket, &worker_id).await?;
+    let ipc = setup_worker_ipc(&args.supervisor_socket, &worker_id).await?;
 
     let shared_config = setup_config(&args.config_path).await;
 
@@ -599,8 +599,8 @@ pub async fn run_unified_server_worker(
     // The UnifiedServer Worker handles all mesh connections (WAF-WAF, WAF-User VPN, WAF-Server VPN).
     // This ensures:
     // - Direct proxying without IPC overhead for mesh traffic
-    // - Process isolation: mesh-related vulnerabilities don't affect Master
-    // - Single mesh identity per WAF deployment (shared across Workers via Master config)
+    // - Process isolation: mesh-related vulnerabilities don't affect Supervisor
+    // - Single mesh identity per WAF deployment (shared across workers via supervisor config)
     // ============================================================================================
     #[cfg(feature = "mesh")]
     let mesh_config_external = {
@@ -1208,11 +1208,11 @@ pub async fn run_unified_server_worker(
         }
     }
 
-    // Register this worker with Master for threat intelligence coordination
-    // The Master orchestrates what intelligence is shared globally
+    // Register this worker with Supervisor for threat intelligence coordination
+    // The Supervisor orchestrates what intelligence is shared globally
     // Note: UnifiedServerWorkerReady is sent after full state construction (see below)
 
-    // Request blocklist from Master on startup
+    // Request blocklist from Supervisor on startup
     let Some(block_store) = unified_server.get_block_store() else {
         tracing::warn!("BlockStore not initialized, skipping blocklist request");
         return Ok(());
@@ -1233,7 +1233,7 @@ pub async fn run_unified_server_worker(
             match ipc_guard.recv_with_timeout::<Message>(100).await {
                 Ok(Some(Message::BlocklistResponse { blocks, .. })) => {
                     tracing::info!(
-                        "Received blocklist from Master with {} entries",
+                        "Received blocklist from Supervisor with {} entries",
                         blocks.len()
                     );
                     for block in blocks {
@@ -1399,7 +1399,7 @@ pub async fn run_unified_server_worker(
                     Ok(Some(msg)) => Some(msg),
                     Ok(None) => None,
                     Err(_) => {
-                        tracing::warn!("Unified server worker lost connection to master");
+                        tracing::warn!("Unified server worker lost connection to supervisor");
                         ipc_state.master_dead.stop();
                         break;
                     }
@@ -1501,7 +1501,7 @@ pub async fn run_unified_server_worker(
                         .await
                         .is_err()
                     {
-                        tracing::warn!("Failed to send health check ack to master");
+                        tracing::warn!("Failed to send health check ack to supervisor");
                     }
                 }
                 Some(Message::MasterCertReload) => {
@@ -1531,7 +1531,7 @@ pub async fn run_unified_server_worker(
                 }
                 Some(Message::BlocklistUpdate { blocks, version: _ }) => {
                     tracing::debug!(
-                        "Received blocklist update with {} entries from Master",
+                        "Received blocklist update with {} entries from Supervisor",
                         blocks.len()
                     );
                     if let Some(block_store) = ipc_state.unified_server.get_block_store() {
@@ -1549,7 +1549,7 @@ pub async fn run_unified_server_worker(
                 }
                 Some(Message::RulePatternsUpdate { version, patterns }) => {
                     tracing::info!(
-                        "Received rule patterns update v{} from Master ({} categories)",
+                        "Received rule patterns update v{} from Supervisor ({} categories)",
                         version,
                         patterns.len()
                     );
@@ -1581,7 +1581,7 @@ pub async fn run_unified_server_worker(
                     timestamp: _,
                 }) => {
                     tracing::debug!(
-                        "Received threat feed update with {} indicators from Master",
+                        "Received threat feed update with {} indicators from Supervisor",
                         indicators.len()
                     );
                     if let Some(threat_intel) = &ipc_state.request_services.threat_intel {
@@ -1629,7 +1629,7 @@ pub async fn run_unified_server_worker(
                             threat_intel.add_feed_indicator(indicator);
                         }
                         tracing::info!(
-                            "Applied {} threat feed indicators from Master",
+                            "Applied {} threat feed indicators from Supervisor",
                             indicators.len()
                         );
                     } else {
@@ -1792,7 +1792,7 @@ pub async fn run_unified_server_worker(
 
     if !master_dead_flag.is_running() {
         tracing::error!(
-            "Unified Server Worker {} exiting because master died",
+            "Unified Server Worker {} exiting because supervisor died",
             worker_id
         );
         worker_exit_code.store(1, std::sync::atomic::Ordering::Relaxed);
@@ -1884,7 +1884,7 @@ mod tests {
         let args = UnifiedServerWorkerArgs {
             worker_id: 2,
             config_path: PathBuf::from("/custom/config"),
-            master_socket: PathBuf::from("/var/run/master.sock"),
+            supervisor_socket: PathBuf::from("/var/run/supervisor.sock"),
             log_level: Some("debug".to_string()),
             upgrade_mode: true,
             reuse_port: false,
@@ -1897,7 +1897,7 @@ mod tests {
 
         assert_eq!(cloned.worker_id, args.worker_id);
         assert_eq!(cloned.config_path, args.config_path);
-        assert_eq!(cloned.master_socket, args.master_socket);
+        assert_eq!(cloned.supervisor_socket, args.supervisor_socket);
         assert_eq!(cloned.log_level, args.log_level);
         assert_eq!(cloned.upgrade_mode, args.upgrade_mode);
         assert_eq!(cloned.reuse_port, args.reuse_port);
@@ -1909,7 +1909,7 @@ mod tests {
         let args = UnifiedServerWorkerArgs {
             worker_id: 3,
             config_path: PathBuf::from("config"),
-            master_socket: PathBuf::from("/tmp/master.sock"),
+            supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
             log_level: Some("trace".to_string()),
             upgrade_mode: false,
             reuse_port: true,
@@ -1927,7 +1927,7 @@ mod tests {
         let single_thread = UnifiedServerWorkerArgs {
             worker_id: 1,
             config_path: PathBuf::from("config"),
-            master_socket: PathBuf::from("/tmp/master.sock"),
+            supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
             log_level: None,
             upgrade_mode: false,
             reuse_port: true,
@@ -1939,7 +1939,7 @@ mod tests {
         let multi_thread = UnifiedServerWorkerArgs {
             worker_id: 2,
             config_path: PathBuf::from("config"),
-            master_socket: PathBuf::from("/tmp/master.sock"),
+            supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
             log_level: None,
             upgrade_mode: false,
             reuse_port: true,

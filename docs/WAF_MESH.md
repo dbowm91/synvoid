@@ -555,7 +555,7 @@ This is distinct from direct proxy bandwidth (`proxied_bytes_sent`/`proxied_byte
 
 Choose the right architecture for your deployment:
 
-| Feature | Master-Worker Clustering | WAF Mesh Network |
+| Feature | Supervisor-Worker Clustering | WAF Mesh Network |
 |---------|-------------------------|------------------|
 | **Complexity** | Low (centralized) | Medium (distributed) |
 | **Use Case** | Scale single WAF instance | Distribute across regions |
@@ -563,7 +563,7 @@ Choose the right architecture for your deployment:
 | **Origin Lookup** | Per-instance | Global across mesh |
 | **Setup Effort** | Minutes | Hours |
 
-### Use Master-Worker Clustering When:
+### Use Supervisor-Worker Clustering When:
 - You need to scale a single WAF instance horizontally
 - You want simple horizontal scaling within one datacenter
 - You don't need threat intelligence sharing between nodes

@@ -13,7 +13,7 @@ SynVoid uses a two-tier **Shared-Nothing Architecture** to eliminate coordinatio
 The transition to a shared-nothing model is the cornerstone of SynVoid's performance:
 
 ### 1. Kernel-Level Load Balancing (SO_REUSEPORT)
-Workers use `SO_REUSEPORT` to allow the OS kernel to distribute incoming connections. This eliminates the "thundering herd" problem and removes the need for a user-space master to distribute file descriptors.
+Workers use `SO_REUSEPORT` to allow the OS kernel to distribute incoming connections. This eliminates the "thundering herd" problem and removes the need for a user-space supervisor to distribute file descriptors.
 
 ### 2. CPU Core Affinity
 On Linux, workers are automatically pinned to specific CPU cores via `sched_setaffinity`. This ensures:

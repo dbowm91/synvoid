@@ -120,8 +120,8 @@ impl IpcEndpoint {
         }
     }
 
-    pub fn master() -> Self {
-        Self::new("master")
+    pub fn supervisor() -> Self {
+        Self::new("supervisor")
     }
 
     pub fn static_worker() -> Self {
@@ -540,12 +540,12 @@ pub async fn connect_to_endpoint_signed(
     endpoint.connect_with_signer(signer).await
 }
 
-pub async fn connect_to_master_async() -> io::Result<IpcStream> {
-    IpcEndpoint::master().connect().await
+pub async fn connect_to_supervisor_async() -> io::Result<IpcStream> {
+    IpcEndpoint::supervisor().connect().await
 }
 
-pub async fn connect_to_master_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
-    IpcEndpoint::master().connect_with_signer(signer).await
+pub async fn connect_to_supervisor_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
+    IpcEndpoint::supervisor().connect_with_signer(signer).await
 }
 
 pub async fn connect_to_static_worker_async() -> io::Result<IpcStream> {
