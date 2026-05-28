@@ -835,15 +835,11 @@ impl AdminState {
         }
 
         let now = Instant::now();
-        let sessions = self.security.sessions.read();
+        let mut sessions = self.security.sessions.write();
 
-        if let Some(session) = sessions.get(session_id) {
+        if let Some(session) = sessions.get_mut(session_id) {
             if now.duration_since(session.last_used) < Duration::from_secs(SESSION_TTL_SECS) {
-                drop(sessions);
-                let mut sessions = self.security.sessions.write();
-                if let Some(s) = sessions.get_mut(session_id) {
-                    s.last_used = now;
-                }
+                session.last_used = now;
                 return true;
             }
         }
