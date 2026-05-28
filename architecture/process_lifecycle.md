@@ -2,7 +2,7 @@
 
 SynVoid uses a "Shared-Nothing Architecture" to achieve maximum performance, linear scalability, and robust security isolation. The model follows a two-tier hierarchy with Supervisor as the control plane and Workers as the data plane.
 
-> **Historical Note:** Earlier versions used a three-tier Overseer → Master → Worker hierarchy. The Overseer and Master have been consolidated into the Supervisor as of 2026. The `src/overseer/` and `src/master/` directories no longer exist.
+> **Historical Note:** Earlier versions used a three-tier Overseer → Master → Worker hierarchy. The Overseer and Master have been consolidated into the Supervisor as of 2026.
 
 ## The Hierarchy
 
@@ -13,7 +13,7 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
   - **Process Management:** Spawns and monitors Worker processes via ProcessManager.
   - **Health Monitoring:** Monitors child process heartbeats and restarts failed processes.
   - **Zero-Downtime Upgrades:** Coordinating worker rotations and hot-reloads.
-  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades.
+  - **Drain Coordination:** Provides staged worker draining via `DrainManager` (`src/supervisor/drain_manager.rs`) during upgrades. The `drain_aware_shutdown()` method at `src/supervisor/process.rs:198-272` coordinates the full drain protocol.
   - **Control Plane Coordination:** Handles Raft consensus, DHT routing, and Mesh transport.
   - **Configuration:** Loads and validates configuration using the `synvoid-config` crate.
   - **gRPC API:** Hosts the formal Control Plane API (`proto/control.proto`) for remote management.
@@ -30,7 +30,7 @@ Workers are lightweight, "dumb" request-handling engines that operate in a share
 
 - **Isolation:** Each worker process is completely independent.
 - **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/startup/worker.rs:42` and `src/process/manager.rs:558-612`.
-- **CPU Pinning:** On Linux, workers are automatically assigned CPU affinity based on worker ID via `sched_setaffinity`. Not supported on macOS/BSD (logs warning).
+- **CPU Pinning:** On Linux, workers can be assigned CPU affinity based on worker ID via the `--cpu-affinity` flag. Not supported on macOS/BSD (logs warning).
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
 

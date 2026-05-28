@@ -17,19 +17,27 @@ The Drain module (`src/drain/`) provides **state tracking for graceful connectio
 ```rust
 pub struct DrainStatus {
     pub drain_id: u64,
+    pub is_draining: bool,
     pub active_connections: u64,
     pub idle_connections: u64,
-    pub elapsed: Duration,
-    pub remaining: Option<Duration>,
-    pub workers: Vec<WorkerDrainState>,
+    pub connections_drained: u64,
+    pub drain_start: Option<Instant>,
+    pub drain_elapsed_secs: Option<u64>,
+    pub drain_remaining_secs: Option<u64>,
+    pub drain_complete: bool,
+    pub by_worker: HashMap<usize, WorkerConnectionInfo>,
 }
 
 pub struct WorkerDrainState {
-    pub worker_id: WorkerId,
     pub drain_id: u64,
-    pub initial_connections: u64,
+    pub worker_id: WorkerId,
+    pub active_connections: u64,
+    pub idle_connections: u64,
     pub stopped_accepting: bool,
     pub drain_complete: bool,
+    pub initial_connections: u64,
+    pub connections_drained: u64,
+    pub drain_start: Instant,
 }
 
 pub struct WorkerConnectionInfo {

@@ -59,9 +59,16 @@ The IPC & Process module is responsible for:
 - `graceful_shutdown_timeout_secs: u64` - Graceful shutdown timeout
 - `worker_port_base: u16` - Base port for worker assignment
 - `config_path: PathBuf` - Config file path
-- `master_socket_path: PathBuf` - Master IPC socket path
+- `supervisor_socket_path: PathBuf` - Supervisor IPC socket path
+- `log_level: Option<String>` - Log level override
+- `pre_spawn_workers: usize` - Pre-spawn worker count
+- `warm_workers_target: usize` - Warm worker target count
+- `health_check_interval_secs: u64` - Health check interval
+- `control_api_addr: String` - gRPC control API address
+- `control_api_tls: Option<InternalTlsConfig>` - Control API TLS config
 - `ipc_session_key: Option<[u8; 32]>` - HMAC session key
 - `ipc_enforce_signing: bool` - Require signed IPC
+- `allow_insecure_ipc_key: bool` - Allow insecure IPC key via env
 - `ipc_rate_limit: IpcRateLimitConfig` - Rate limit config
 
 **ProcessEvent** (`manager.rs:114-127`):
@@ -73,12 +80,12 @@ The IPC & Process module is responsible for:
 
 **WorkerId** (`ipc.rs:150-157`): Unique worker identifier wrapping `usize`
 
-The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 17 categories:
+The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 18 categories:
 
 | Category | Message Variants |
 |----------|-----------------|
 | **WorkerLifecycle** | WorkerStarted, WorkerReady, WorkerHeartbeat, WorkerRequestLog, WorkerShutdownComplete, WorkerError, WorkerCertReload |
-| **MasterCommand** | MasterShutdown, MasterConfigReload, MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck, MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck, CommandResponse |
+| **SupervisorCommand** | MasterShutdown, MasterConfigReload, MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck, MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck, CommandResponse |
 | **StaticWorker** | StaticWorkerStarted, StaticWorkerReady, StaticWorkerHeartbeat, StaticWorkerRequestLog, StaticWorkerShutdownComplete, StaticWorkerBackgroundTasksDone, StaticWorkerResizeAck, StaticWorkerScan, StaticWorkerCacheUpdate, StaticWorkerDrain, StaticWorkerDrained, StaticWorkerDrainStatus |
 | **AppServer** | AppServerStarted, AppServerReady, AppServerHealth, AppServerStopped, AppServerRestarted, AppServerError |
 | **UnifiedServer** | UnifiedServerWorkerStarted, UnifiedServerWorkerReady, UnifiedServerWorkerHeartbeat, UnifiedServerWorkerShutdownComplete, UnifiedServerWorkerError, UnifiedServerWorkerDrain, UnifiedServerWorkerDrained, UnifiedServerWorkerResize, UnifiedServerWorkerResizeAck |

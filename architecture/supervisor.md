@@ -279,8 +279,16 @@ pub struct ProcessManagerConfig {
     pub worker_port_base: u16,
     pub config_path: PathBuf,
     pub supervisor_socket_path: PathBuf,
+    pub log_level: Option<String>,
+    pub pre_spawn_workers: usize,
+    pub warm_workers_target: usize,
+    pub health_check_interval_secs: u64,
     pub control_api_addr: String,
-    // ... IPC signing/rate-limiting config
+    pub control_api_tls: Option<InternalTlsConfig>,
+    pub ipc_session_key: Option<[u8; 32]>,
+    pub ipc_enforce_signing: bool,
+    pub allow_insecure_ipc_key: bool,
+    pub ipc_rate_limit: IpcRateLimitConfig,
 }
 ```
 
