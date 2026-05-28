@@ -133,12 +133,6 @@ impl CacheEntryInner {
         content.hash(&mut hasher);
         hasher.finish()
     }
-
-    // SAFETY_REASON: Reserved for cache integrity verification
-    #[allow(dead_code)]
-    fn validate(&self, content: &[u8]) -> bool {
-        Self::compute_checksum(content) == self.checksum
-    }
 }
 
 pub struct ProxyCache {
