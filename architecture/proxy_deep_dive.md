@@ -242,7 +242,8 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 
 ### Stale-While-Revalidate
 - Background revalidation with **semaphore-based limiting** (`revalidation_semaphore` at `proxy_cache/store.rs:156`)
-- Default 32 concurrent revalidations (configurable via `proxy_cache.revalidation_capacity`)
+- Default 100 concurrent revalidations (configurable via `max_concurrent_revalidations` in `ProxyCacheSettings`)
+- Circuit breaker after `revalidation_failure_threshold` failures (default 10), with cooldown period
 - Returns stale content immediately, updates in background
 
 ---

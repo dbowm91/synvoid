@@ -50,28 +50,37 @@ pub struct ProxyServer {
     pool_max_idle_per_host: usize,
     pool_idle_timeout: Duration,
     is_http2: bool,                       // HTTP/2 enabled flag
+    proxy_headers_config: Option<Arc<ProxyHeadersConfig>>,  // Custom header overrides
 }
 ```
 
-### BackendType (from upstream module)
+### BackendType (from `src/router.rs:66-78`)
 ```rust
 pub enum BackendType {
-    Single(String),           // Single upstream URL
-    Pool(Vec<Backend>),      // Load-balanced pool
-    Fallback(Vec<Backend>),  // Fallback chain
-    // ... other variants
+    Upstream,       // Standard reverse proxy to HTTP/HTTPS upstream
+    FastCgi,        // FastCGI process (e.g., PHP-FPM)
+    Php,            // PHP via php-cgi executable
+    Cgi,            // Generic CGI execution
+    AxumDynamic,    // Dynamic axum-based handler for plugin routing
+    AppServer,      // Generic application server backend
+    Static,         // Internal StaticFileHandler
+    QuicTunnel,     // Proxy through QUIC tunnel
+    Serverless,     // WASM serverless function execution
+    Mesh,           // Routing through WAF Mesh to remote peer
+    Spin,           // Fermyon Spin framework WASM execution
 }
 ```
 
-### RetryConfig
+### RetryConfig (from `crates/synvoid-config/src/site/proxy.rs:221`)
 ```rust
 pub struct RetryConfig {
-    pub enabled: bool,
-    pub max_retries: u32,
-    pub retry_on_connection_error: bool,
-    pub retry_on_timeout: bool,
-    pub retry_on_status: Vec<u16>,
-    pub timeout_ms: Option<u64>,
+    pub enabled: bool,                    // Default: false
+    pub max_retries: u32,                 // Default: 3
+    pub timeout_ms: Option<u64>,          // Base backoff timeout (None = no delay)
+    pub retry_on_error: bool,             // Default: true (retry on connection errors)
+    pub retry_on_timeout: bool,           // Default: true (retry on timeout errors)
+    pub retry_on_status: Vec<u16>,        // Default: [502, 503, 504]
+    pub retry_non_idempotent: bool,       // Default: false (retry POST/PUT/PATCH)
 }
 ```
 
@@ -89,7 +98,12 @@ impl ProxyServer {
 
 // Builder pattern
 impl ProxyServer {
-    pub fn with_upstream_pool(mut self, pool: Arc<UpstreamPool>, ...) -> Self
+    pub fn with_upstream_pool(
+        mut self,
+        pool: Arc<UpstreamPool>,
+        retry_config: Option<RetryConfig>,
+        buffering_config: Option<BufferingConfig>,
+    ) -> Self
     pub fn with_cache(mut self, cache: Arc<ProxyCache>) -> Self
     pub fn with_http2(mut self, is_http2: bool) -> Self
     pub fn from_config(...) -> Self  // Full configuration from SiteConfig
@@ -208,10 +222,8 @@ if is_swr {
 ### Backoff Calculation
 ```rust
 pub fn calculate_backoff(attempt: u32, base_timeout_ms: u64) -> u64 {
-    let base = base_timeout_ms.unwrap_or(100);
-    let exponential = 2_u64.pow(attempt.min(5));
-    let jitter = rand() % 100;
-    (base * exponential).saturating_add(jitter)
+    let delay = base_timeout_ms * 2u64.saturating_pow(attempt.min(5));
+    delay.min(30000)  // Cap at 30 seconds
 }
 ```
 
@@ -241,16 +253,19 @@ The Proxy module has no feature gates - it is always compiled. However, it integ
 | Feature | Integration |
 |---------|-------------|
 | `mesh` | Threat intelligence announcement on upstream error probing |
-| `http2` | `is_http2` flag enables HTTP/2 upstream |
+
+Note: `is_http2` is a struct field on `ProxyServer` (set via `with_http2()` builder method),
+not a feature gate. The site config value `proxy.http2` is wired through at
+`src/tls/server.rs:1722`.
 
 ## 10. Key Constants
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `MAX_WAF_BODY_SIZE` | 1MB | Body limit for WAF inspection |
-| `DEFAULT_POOL_MAX_IDLE` | 100 | Max idle connections per host |
-| `DEFAULT_POOL_IDLE_TIMEOUT` | 30s | Idle connection timeout |
-| `DEFAULT_UPSTREAM_TIMEOUT` | 30s | Upstream request timeout |
+
+Note: Pool configuration values (`pool_max_idle_per_host`, `pool_idle_timeout`) are passed as
+constructor parameters, not named constants.
 
 ## 11. Dependencies
 
@@ -259,6 +274,53 @@ The Proxy module has no feature gates - it is always compiled. However, it integ
 - `waf` - Attack detection before forwarding
 - `proxy_cache` - Response caching
 - `metrics` - Prometheus metrics
+
+## 12. Implementation Details
+
+### SharedConnectionTable Layout (DOC-H19)
+
+The mmap-based `SharedConnectionTable` in `src/upstream/shared_state.rs` uses this layout:
+
+```
+[0..8]:                              max_workers (u64)
+[8..16]:                             max_backends (u64)
+[16..16 + max_workers * 8]:          heartbeats (AtomicU64) [worker_id]
+[16 + max_workers * 8 ..]:           connections (AtomicUsize) [worker_id][backend_index]
+```
+
+The connections section starts at offset `16 + max_workers * 8`, NOT at `[N+1..]`.
+Each worker has `max_backends` connection counters (one per backend).
+
+### CacheKey URI Hashing (DOC-H20)
+
+In `src/proxy_cache/key.rs:43-52`, `CacheKey::new()` produces a hash-prefixed URI:
+
+```rust
+let mut hasher = AHasher::default();
+Hash::hash(&key, &mut hasher);    // key = expanded pattern string
+Hash::hash(&vary, &mut hasher);   // vary = header-based vary key
+let hash = Hasher::finish(&hasher);
+
+Self {
+    uri: format!("{}:{}", hash, uri_str),  // e.g. "1234567890:/api/users"
+    // ...
+}
+```
+
+The `uri` field contains `"<ahash_hex>:<path_and_query>"`, NOT the raw URI.
+This ensures cache key uniqueness when the same path has different pattern or vary values.
+
+### ErasedHttpClient Pool Size (DOC-H21)
+
+In `src/proxy/mod.rs:311`, `ErasedHttpClient::new(100)` hardcodes the pool size to 100
+max idle connections per host, ignoring any configurable parameter:
+
+```rust
+erased_client: crate::http_client::ErasedHttpClient::new(100),
+```
+
+The `ErashedHttpClient::new(max_idle_per_host: usize)` constructor accepts a parameter,
+but `ProxyServer` always passes 100. This is a known limitation.
 
 ## 12. Related Documentation
 

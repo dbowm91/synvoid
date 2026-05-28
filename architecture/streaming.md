@@ -16,20 +16,12 @@ The Streaming module (`src/streaming/`) provides **async bidirectional data copy
 ## 2. Key Data Structures
 
 ```rust
-pub struct ProxyConfig {
-    pub buffer_size: usize,
-    pub write_buffer_threshold: usize,
-    pub flush_interval_bytes: usize,
-    pub use_native_copy: bool,
-    pub waf_scanner: Option<Arc<Mutex<StreamingWafCore>>>,
-}
-
 pub enum ProxyError {
-    ReadError(String),
-    WriteError(String),
+    ReadError(String),       // Takes String, not io::Error
+    WriteError(String),      // Takes String, not io::Error
     ConnectionClosed,
     Timeout,
-    WafBlock(u16, String),
+    WafBlock(u16, String),   // (status_code, reason)
     Other(String),
 }
 ```
