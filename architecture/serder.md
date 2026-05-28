@@ -15,7 +15,7 @@ The Serialization module (`src/serder.rs`) provides **serialization strategy doc
 
 | Path | Format | Reason |
 |------|--------|--------|
-| DHT/Mesh/Persistence | Postcard | Compact, deterministic, cross-language |
+| DHT/Mesh/Persistence | Postcard | Compact, single-allocation encoding |
 | IPC Messages | Postcard | Performance, type safety |
 | High-perf paths | Rkyv | Zero-copy deserialization |
 | Admin API | JSON | Human-readable, OpenAPI compatible |
@@ -43,7 +43,7 @@ pub use rkyv::{Archive, Deserialize, Serialize};
 
 ## 5. Key Implementation Details
 
-- **Postcard**: Preferred for new code — compact, no-std compatible
+- **Postcard**: Preferred for new code — compact, no-std compatible, single-allocation encoding
 - **Rkyv**: For hot paths requiring zero-copy deserialization
-- **Deterministic**: Postcard produces deterministic output
+- **Deterministic caveat**: Postcard is NOT cross-version/platform deterministic by default. Only `no_std` mode with explicit endianness provides deterministic output. Default `std` mode uses platform-native layout
 - **Cross-language**: Postcard has implementations in multiple languages

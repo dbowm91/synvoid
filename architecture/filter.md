@@ -15,26 +15,32 @@ The Filter module (`src/filter/`) provides a **generic, type-parameterized proto
 ## 2. Key Data Structures
 
 ```rust
-pub trait FilterAction {
+pub trait FilterAction: Clone + PartialEq + Eq + Debug + Send + Sync + 'static {
     fn is_allow(&self) -> bool;
     fn is_drop(&self) -> bool;
 }
 
-pub trait Protocol {
+pub trait Protocol: Clone + PartialEq + Eq + Debug + Send + Sync + 'static {
     fn as_str(&self) -> &str;
-    fn from_str(s: &str) -> Option<Self>;
+    fn from_str(s: &str) -> Self;
 }
 
 pub struct BaseFilterConfig<P: Protocol> {
     pub enabled: bool,
     pub strict_mode: bool,
-    pub protocol_allowlist: Vec<P>,
-    pub protocol_denylist: Vec<P>,
+    pub protocol_allowlist: Vec<String>,
+    pub protocol_denylist: Vec<String>,
+    pub(crate) _marker: PhantomData<P>,
 }
 
-pub struct ProtocolFilterCore<P, A> {
+pub struct ProtocolFilterCore<P: Protocol, A: FilterAction> {
     config: BaseFilterConfig<P>,
-    _phantom: PhantomData<A>,
+    _marker: PhantomData<A>,
+}
+
+pub struct PortConfigBase {
+    pub expected_protocol: String,
+    pub action: String,
 }
 ```
 
@@ -53,7 +59,15 @@ pub struct ProtocolFilterCore<P, A> {
 
 ---
 
-## 4. Integration Points
+## 4. Public API — Additional Types
+
+| Type | Description |
+|------|-------------|
+| `PortConfigBase` | Maps expected protocol to action for a given port |
+
+---
+
+## 5. Integration Points
 
 - **ICMP Filter**: Protocol detection and enforcement for ICMP packets
 - **HTTP Listener**: Protocol expectation for incoming connections
@@ -61,9 +75,9 @@ pub struct ProtocolFilterCore<P, A> {
 
 ---
 
-## 5. Key Implementation Details
+## 6. Key Implementation Details
 
 - **Generic Design**: Type-parameterized over protocol and action types
 - **Strict Mode**: When enabled, unknown protocols are denied by default
 - **Allow/Deny Priority**: Denylist checked first, then allowlist (deny takes precedence for security)
-- **Zero-Cost Abstractions**: PhantomData for compile-time type safety
+- **Zero-Cost Abstractions**: `PhantomData` for compile-time type safety
