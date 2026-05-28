@@ -221,12 +221,10 @@ impl FastCgiPool {
             return Err(FastCgiError::ConnectionFailed("Pool is closed".to_string()));
         }
 
-        let permit = timeout(self.config.connection_timeout, self.semaphore.acquire())
+        let _permit = timeout(self.config.connection_timeout, self.semaphore.acquire())
             .await
             .map_err(|_| FastCgiError::ConnectionFailed("Timeout acquiring permit".to_string()))?
             .map_err(|_| FastCgiError::ConnectionFailed("Semaphore closed".to_string()))?;
-
-        drop(permit);
 
         let client = StreamingFastCgiClient::new(self.config.socket.clone());
         let params = client.build_params_from_request(method, uri, headers, config);
