@@ -155,18 +155,21 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | SEC-4 | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` skips `validate_key_strength()` | **RESOLVED** — validation added |
 | BUG-CORS-1 | `src/admin/mod.rs:860` | CORS config dropped (underscore prefix) | Known - may be intentional (Admin API uses bearer tokens) |
 
-### Dead Code Markers
+### Dead Code Markers (All Resolved — See plans/plan.md Wave 3)
 
-These items are tracked in `plans/plan.md` (Wave 3) but are noted here for quick reference:
+All dead code items have been removed as of 2026-05-28:
 
-| Item | Location | Notes |
-|------|----------|-------|
-| `zero_copy` module | `src/zero_copy.rs` | Declared in `lib.rs:101`, zero external callers. Also broken on macOS (uses `/proc/self/fd`) |
-| `listener/common.rs` types | `src/listener/common.rs` | `SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` dead. `ConnectionContext` IS used — keep it |
-| `pqc-mesh` feature | `Cargo.toml:37` | Defined but zero `#[cfg]` usages in source |
-| `honeypot_unified` module | `src/honeypot_unified/` | 215 lines, NOT declared in `lib.rs` |
-| `serialization_rkyv.rs` | `src/serder/serialization_rkyv.rs` | Orphaned file, not declared in `lib.rs` |
-| `RequestContext` trait | `src/http/shared_handler.rs:133` | `#[allow(dead_code)]` |
+| Item | Location | Status |
+|------|----------|--------|
+| `zero_copy` module | `src/zero_copy.rs` | **REMOVED** — commit `c703f4d2` |
+| `listener/common.rs` types | `src/listener/common.rs` | **REMOVED** — `SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` deleted; `ConnectionContext` kept |
+| `pqc-mesh` feature | `Cargo.toml` | **REMOVED** — commit `43ad3ee0` |
+| `honeypot_unified` module | `src/honeypot_unified/` | **REMOVED** — already deleted prior |
+| `serialization_rkyv.rs` | `src/serder/serialization_rkyv.rs` | **REMOVED** — already deleted prior |
+| `RequestContext` trait | `src/http/shared_handler.rs` | **REMOVED** — commit `ac84bf85` |
+| ProxyServer dead wrappers | `src/proxy/mod.rs` | **REMOVED** — commit `7103c8d7` |
+| HttpProtocol/PooledConnection stubs | `src/http_client/erased_pool.rs` | **REMOVED** — commit `d8557695` |
+| CacheEntryInner::validate() | `src/proxy_cache/store.rs` | **REMOVED** — commit `ec824c50` |
 
 ### Dependency Vulnerability Status
 
@@ -218,14 +221,25 @@ These items require significant architectural work and are correctly deferred:
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
 | MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field, coordinated rollout required |
 
-### Recently Completed (2026-05-27)
+### Recently Completed (2026-05-28)
 
 | ID | Issue | Fix |
 |----|-------|-----|
-| SUP-1 | gRPC Control Plane TLS | Added control_api_tls config, tonic TLS support, --control-api-tls flag |
-| DNS-QUERY | QueryCoalescer max_wait_ms | Async redesign with tokio::timeout |
-| BUG-PL-4 | macOS Seatbelt silent failure | Runtime detection via dlsym, proper error handling |
-| PR-6 | ProxyHeadersConfig not passed | Added proxy_headers_config field and builder method |
+| SEC-1 | Filter allow/deny priority | Documentation already correct at `filter.md:68` |
+| SEC-2 | SSRF bypass via HTTPS | Added HTTPS URL validation to `admin/alerting/mod.rs:143` |
+| SEC-3 | FastCGI semaphore bypass | Removed `drop(permit)`, held for function scope in `fastcgi/pool.rs:229` |
+| SEC-4 | Cert strength validation bypass | Added `validate_key_strength()` call in `tls/cert_resolver.rs:231` |
+| BUG-1 | CGI thread pool blocking | Converted to `tokio::process::Command` in `cgi/mod.rs:342` |
+| BUG-2 | Static file double-read | Changed `Buffered` variant from `PathBuf` to `Bytes` in `static_files/mod.rs:96` |
+| BUG-3 | FastCGI streaming buffering | Implemented true streaming with chunked STDIN records in `fastcgi/streaming.rs:258` |
+| BUG-4 | Admin session race window | Single write lock for atomic validate+update in `admin/state.rs:838` |
+| BUG-5 | Cert file reload debounce | Restructured loop with `needs_reload` flag in `tls/cert_resolver.rs:491` |
+| BUG-6 | macOS zero_copy path | Changed to `#[cfg(target_os = "linux")]` in `zero_copy.rs:128` |
+| BUG-7 | ACME non-Unix permissions | Added atomic write + Windows ACLs in `tls/acme.rs:190` |
+| BUG-8 | request_body_size override | Removed line 1633 overwrite in `http/server.rs:1633` |
+| DEAD-1-9 | Dead code cleanup | All 9 dead code items removed |
+| FEAT-2-4 | Feature wiring | Health check, body collection consolidation, scheduler export |
+| XMOD-1-7 | Cross-module conflicts | All 7 conflicts resolved |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
