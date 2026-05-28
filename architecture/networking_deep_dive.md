@@ -7,13 +7,13 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 ### 1. HTTP/1.1 & HTTP/2
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
-- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:893` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The infrastructure (Http2PooledConnection, typed pool branches) is in place but not wired for production use. This is a known limitation.
+- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:878` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The infrastructure (Http2PooledConnection, typed pool branches) is in place but not wired for production use. This is a known limitation.
 - **Protocol Detection:** At TLS handshake, protocol negotiation occurs via ALPN (`tls/server.rs:410-411`). The server extracts the ALPN protocol and determines if the connection should use HTTP/2 (`h2`) or HTTP/1.1. This detection happens during the TLS handshake callback before request processing begins.
 
 ### 2. HTTP/3 (QUIC)
 SynVoid features native HTTP/3 support via the **Quinn** library.
 - **Connection Migration:** QUIC's use of connection IDs allows clients (like mobile devices) to switch networks without dropping connections. When a client changes network interfaces (e.g., Wi-Fi to cellular), the connection persists using the same connection ID, enabling seamless migration.
-- **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte. **Security Tradeoff:** 0-RTT data is susceptible to replay attacks (RFC 9000). By default, 0-RTT is **disabled** (`mesh.config.quic.enable_0rtt = false`). When enabled, only idempotent requests should be sent early. Configuration: `mesh.quic.enable_0rtt` (default: false).
+- **0-RTT:** Enables clients to send data in the first packet of a handshake, significantly reducing time-to-first-byte. **Security Tradeoff:** 0-RTT data is susceptible to replay attacks (RFC 9000). By default, 0-RTT is **disabled** (`tls.quic_enable_0rtt = false`). When enabled, only idempotent requests should be sent early. Configuration: `tls.quic_enable_0rtt` (default: false).
 - **Independence:** QUIC streams are independent, meaning packet loss on one stream doesn't stall others (eliminating Head-of-Line blocking).
 - **QUIC Tunnel Datagrams:** Maximum datagram payload size is **1200 bytes** (per `src/tunnel/quic/messages.rs:4` `MAX_DATAGRAM_PAYLOAD`).
 
@@ -39,7 +39,7 @@ SynVoid supports **DNS-01** challenges for ACME certificate issuance, enabling c
 1. ACME server delivers a `dns-01` challenge with a key authorization
 2. SynVoid computes `SHA-256(key_authorization)` and base64url-encodes it
 3. The challenge value is stored in `AcmeDnsChallenge` (`src/tls/acme_dns.rs:11-64`)
-4. DNS server serves the value via `_acme-challenge.<domain>` TXT records (`src/dns/server/query.rs:679-698`)
+4. DNS server serves the value via `_acme-challenge.<domain>` TXT records (`src/dns/server/query.rs:698-721`)
 5. ACME server validates by querying the TXT record
 6. On success, the challenge is cleaned up automatically
 
@@ -57,7 +57,7 @@ SynVoid is at the forefront of post-quantum security:
 **Key Exchange:**
 - **X25519MLKEM768:** A hybrid key exchange that combines classical X25519 with the ML-KEM-768 (Kyber) algorithm.
 - **Feature-Gated:** PQ key exchange can be enabled via the `post-quantum` feature flag.
-- Configuration: `mesh.ml_kem` section in `MeshConfig` (variant, rotation interval, session TTL, max sessions).
+- Configuration: `mesh.mlkem` section in `MeshConfig` (variant, rotation interval, session TTL, max sessions).
 
 **Message Signatures:**
 - **ML-DSA-44:** Post-quantum digital signature algorithm for mesh message authentication.
@@ -77,9 +77,9 @@ SynVoid is at the forefront of post-quantum security:
 SynVoid leverages Rust's ownership model and a custom `BufferPool` to minimize data copying and allocation overhead. The buffer pool (see `crates/synvoid-utils/src/buffer/pool.rs`) provides reusable buffers across IO operations, significantly reducing garbage collection pressure. True zero-copy paths exist in specific hot paths, but most handlers currently copy data between network and application layers.
 
 ### 2. Connection Limiting
-The `ConnectionLimiter` provides fine-grained control over concurrent connections at multiple levels:
+The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) provides fine-grained control over concurrent connections at multiple levels:
 - **Global Limit:** Total connections the WAF instance will accept.
-- **Per-Site Limit:** Per-site connection counting via the global limiter's `try_acquire_with_limits()` method which applies limits by site_id internally.
+- **Per-Site Limit:** Per-site connection counting via `try_acquire_with_limits()` which applies limits by site_id parameter.
 - **Per-IP Limit:** Prevents connection exhaustion attacks from a single source.
 
 ### 3. Buffer Management
