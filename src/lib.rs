@@ -98,7 +98,6 @@ pub mod utils;
 pub mod vpn_client;
 pub mod waf;
 pub mod worker;
-pub mod zero_copy;
 
 #[cfg(feature = "icmp-filter")]
 pub mod icmp_filter;
