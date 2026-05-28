@@ -140,8 +140,11 @@ impl AlertConfig {
             if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
                 return Err(AlertConfigError::InvalidWebhookScheme { url: url.clone() });
             }
-            if url_lower.starts_with("http://") {
-                let host = url.strip_prefix("http://").unwrap_or(url);
+            if url_lower.starts_with("http://") || url_lower.starts_with("https://") {
+                let host = url
+                    .strip_prefix("http://")
+                    .or_else(|| url.strip_prefix("https://"))
+                    .unwrap_or(url);
                 let host_part = host.split('/').next().unwrap_or(host);
                 if host_part == "localhost"
                     || host_part.starts_with("127.")
