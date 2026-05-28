@@ -79,7 +79,7 @@ ConfigManager (root container)
 │   ├── mimes: MimesConfig
 │   ├── dns: DnsConfig              # [feature=dns]
 │   ├── mesh: Option<MeshConfig>     # [feature=mesh]
-│   ├── overseer: OverseerConfig    # Legacy process supervisor
+│   ├── supervisor_compat: SupervisorConfig
 │   ├── process_manager: ProcessManagerConfig
 │   ├── supervisor: SupervisorConfig
 │   └── honeypot_port: HoneypotPortConfig
@@ -99,20 +99,31 @@ SiteConfig (per-domain)
 │   └── upstream: UpstreamConfig        # Default + path-based routing, tunnel mappings
 ├── app_server: SiteAppServerConfig     # Python ASGI/RSGI/WSGI (optional)
 ├── ratelimit: SiteRateLimitConfig      # Per-site rate limits
+├── blocked: SiteBlockedConfig          # Blocked paths, methods
+├── bot: SiteBotConfig                  # Bot detection settings
+├── honeypot_probe: SiteProbeConfig     # Honeypot probing detection
+├── error_pages: SiteErrorPagesConfig   # Custom error pages
+├── css_challenge: SiteCssChallengeConfig # CSS challenge settings
+├── whitelist: SiteWhitelistConfig      # IP/user-agent whitelists
+├── worker_pool: SiteWorkerPoolConfig   # Worker pool config
+├── logging: SiteLoggingConfig          # Site-specific logging
+├── proxy: SiteProxyConfig              # Caching, headers, buffering
+├── tcp: SiteTcpConfig                  # TCP-specific settings
+├── udp: SiteUdpConfig                  # UDP-specific settings
+├── tarpit: SiteTarpitConfig            # Tarpit settings
+├── attack_detection: SiteAttackDetectionConfig # SQLi, XSS, etc.
+├── upload: SiteUploadConfig            # Upload settings
+├── auth: SiteAuthConfig                # Authentication settings
+├── r#static: SiteStaticConfig          # Static file serving
 ├── security: SiteSecurityConfig        # Auth, whitelist, geoip
 ├── security_headers: SiteSecurityHeadersConfig
-├── attack_detection: SiteAttackDetectionConfig
-├── proxy: SiteProxyConfig              # Caching, headers, buffering
-├── r#static: SiteStaticConfig          # Static file serving
-├── upload: SiteUploadConfig
 ├── traffic_shaping: SiteTrafficShapingConfig
 ├── grpc: SiteGrpcConfig
 ├── websocket: SiteWebSocketConfig
 ├── tunnel: SiteTunnelConfig
-├── bot: SiteBotConfig
-├── honeypot_probe: SiteProbeConfig
-├── css_challenge: SiteCssChallengeConfig
-├── error_pages: SiteErrorPagesConfig
+├── serverless: Option<ServerlessConfig>
+├── serverless_only: bool
+├── image_poison: SiteImagePoisonConfig
 └── file_manager: SiteFileManagerConfig
 ```
 
