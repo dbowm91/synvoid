@@ -25,7 +25,7 @@ Each task is independent and can be assigned to a separate agent. All verified p
 
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
-| **SEC-1** | Fix filter allow/deny priority | `src/filter/common.rs:74-96` | Documentation says "allowlist first, then denylist" — actual code checks **denylist first** (`:74-84`), then allowlist (`:86-96`). Update `architecture/filter.md:53-54` to match actual behavior. Security-critical: docs misrepresent filtering order. | Low |
+| **SEC-1** | Fix filter allow/deny priority | `src/filter/common.rs:74-96` | Documentation says "allowlist first, then denylist" — actual code checks **denylist first** (`:74-84`), then allowlist (`:86-96`). ~~Update `architecture/filter.md:53-54` to match actual behavior.~~ **RESOLVED**: `architecture/filter.md:68` already correctly states "Denylist checked first, then allowlist (deny takes precedence for security)". | Low |
 | **SEC-2** | Fix SSRF bypass via HTTPS | `src/admin/alerting/mod.rs:143-154` | SSRF check is inline in `AlertConfig::validate()` (not a named function). Line 143: `if url_lower.starts_with("http://")` — only `http://` URLs get private IPs checked. An `https://` URL to `https://127.0.0.1/admin` bypasses the check entirely. Add HTTPS URL validation. | Low |
 | **SEC-3** | Fix FastCGI semaphore bypass | `src/fastcgi/pool.rs:229` | `execute_stream()` acquires semaphore permit at line 224, then immediately `drop(permit)` at line 229 before any work. Concurrency limiting is completely bypassed. Hold permit for duration of request. | Low |
 | **SEC-4** | Fix cert strength validation bypass | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` does NOT call `validate_key_strength()` (which ends at line 213). Certs loaded from watch directory completely bypass RSA key strength checks. Add validation call. | Low |
@@ -215,7 +215,7 @@ Organized by domain for parallel execution. **Each domain can be handled by a se
 
 | ID | File | Fix |
 |----|------|-----|
-| DOC-J1 | `architecture/filter.md:53-54` | **SECURITY**: Fix priority — denylist checked first, then allowlist (doc has it reversed) |
+| DOC-J1 | `architecture/filter.md:53-54` | **SECURITY**: ~~Fix priority — denylist checked first, then allowlist (doc has it reversed)~~ **RESOLVED**: `architecture/filter.md:68` already correct |
 | DOC-J2 | `architecture/filter.md` | Fix `Protocol::from_str` return type: `Self` (infallible), not `Option<Self>` |
 | DOC-J3 | `architecture/filter.md` | Fix `BaseFilterConfig` allowlist/denylist: `Vec<String>` (stringly-typed), not `Vec<P>` |
 | DOC-J4 | `architecture/zero_copy.md` | Fix `sendfile_to_socket` description: returns `Err` on unsupported platforms, not userspace fallback |

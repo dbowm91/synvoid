@@ -149,7 +149,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 
 | Bug ID | Location | Issue | Status |
 |--------|----------|-------|--------|
-| SEC-1 | `src/filter/common.rs:74-96` | Docs say "allowlist first" but code checks **denylist first** | OPEN — see plan SEC-1 |
+| SEC-1 | `src/filter/common.rs:74-96` | Docs say "allowlist first" but code checks **denylist first** | **RESOLVED** — `architecture/filter.md:68` already correct |
 | SEC-2 | `src/admin/alerting/mod.rs:143-154` | SSRF bypass: only `http://` URLs checked for private IPs, `https://` bypasses | OPEN — see plan SEC-2 |
 | SEC-3 | `src/fastcgi/pool.rs:229` | `execute_stream()` drops semaphore permit immediately, bypassing concurrency limit | OPEN — see plan SEC-3 |
 | SEC-4 | `src/tls/cert_resolver.rs:215-253` | `load_certs_from_dir()` skips `validate_key_strength()` | OPEN — see plan SEC-4 |
