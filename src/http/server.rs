@@ -2256,58 +2256,12 @@ impl HttpServer {
                                                 crate::http::fallback_error_boxed()
                                             }));
                                     }
-                                    crate::static_files::StaticResponseBody::Buffered(path) => {
+                                    crate::static_files::StaticResponseBody::Buffered(body) => {
                                         tracing::debug!(
-                                            "Zero-copy streaming for {}",
-                                            path.display()
+                                            "Zero-copy streaming for buffered static content"
                                         );
-                                        let path = path.clone();
-                                        let body_bytes = match tokio::task::spawn_blocking({
-                                            let path = path.clone();
-                                            move || std::fs::read(&path)
-                                        })
-                                        .await
-                                        {
-                                            Ok(Ok(data)) => data,
-                                            Ok(Err(e)) => {
-                                                tracing::warn!(
-                                                    "Failed to read {}: {}",
-                                                    path.display(),
-                                                    e
-                                                );
-                                                return Ok(Response::builder()
-                                                    .status(500)
-                                                    .body(
-                                                        Full::new(Bytes::from_static(
-                                                            b"Internal Server Error",
-                                                        ))
-                                                        .boxed(),
-                                                    )
-                                                    .unwrap_or_else(|_| {
-                                                        crate::http::fallback_error_boxed()
-                                                    }));
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Task failed to read {}: {}",
-                                                    path.display(),
-                                                    e
-                                                );
-                                                return Ok(Response::builder()
-                                                    .status(500)
-                                                    .body(
-                                                        Full::new(Bytes::from_static(
-                                                            b"Internal Server Error",
-                                                        ))
-                                                        .boxed(),
-                                                    )
-                                                    .unwrap_or_else(|_| {
-                                                        crate::http::fallback_error_boxed()
-                                                    }));
-                                            }
-                                        };
                                         return Ok(builder
-                                            .body(Full::new(Bytes::from(body_bytes)).boxed())
+                                            .body(Full::new(body).boxed())
                                             .unwrap_or_else(|_| {
                                                 crate::http::fallback_error_boxed()
                                             }));

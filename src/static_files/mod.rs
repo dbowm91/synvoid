@@ -95,7 +95,7 @@ impl StaticError {
 
 pub enum StaticResponseBody {
     InMemory(Bytes),
-    Buffered(PathBuf),
+    Buffered(Bytes),
 }
 
 pub struct StaticResponse {
@@ -108,9 +108,7 @@ impl StaticResponse {
     pub fn into_bytes(self) -> Bytes {
         match self.body {
             StaticResponseBody::InMemory(b) => b,
-            StaticResponseBody::Buffered(path) => {
-                Bytes::from(std::fs::read(&path).unwrap_or_default())
-            }
+            StaticResponseBody::Buffered(b) => b,
         }
     }
 }
@@ -709,7 +707,7 @@ impl StaticFileHandler {
         counter!("synvoid.static.served").increment(1);
 
         let body = if self.enable_zero_copy && body.len() > 4096 {
-            StaticResponseBody::Buffered(path.to_path_buf())
+            StaticResponseBody::Buffered(Bytes::from(body))
         } else {
             StaticResponseBody::InMemory(Bytes::from(body))
         };
@@ -874,9 +872,7 @@ impl StaticFileHandler {
                 let headers: Vec<_> = resp.headers.into_iter().collect();
                 let body_bytes = match resp.body {
                     StaticResponseBody::InMemory(b) => b,
-                    StaticResponseBody::Buffered(path) => {
-                        Bytes::from(std::fs::read(&path).unwrap_or_default())
-                    }
+                    StaticResponseBody::Buffered(b) => b,
                 };
                 let mut builder = Response::builder().status(status);
                 for (key, value) in headers {
