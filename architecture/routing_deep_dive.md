@@ -47,7 +47,7 @@ The router resolves the request to one of several **Backend Types**:
 - **Spin:** Fermyon Spin framework WASM execution.
 - **Serverless (WASM):** Execution of a WASM function.
 - **Mesh:** Routing the request through the WAF Mesh to a remote peer.
-- **QuicTunnel:** Proxying through a specialized QUIC tunnel. URL parsing is unified via [`Router::parse_quictunnel_url()`](https://github.com/synvoid/synvoid/blob/main/src/router.rs#L513) at both location and site levels.
+- **QuicTunnel:** Proxying through a specialized QUIC tunnel. URL parsing is unified via `Router::parse_quictunnel_url()` at `src/router.rs:513` at both location and site levels.
 
 ---
 
@@ -62,7 +62,7 @@ SynVoid supports multiple load balancing algorithms to distribute traffic across
 - **Weighted Round Robin:** Distribution based on configured backend weights.
 - **Least Connections:** Routes to the backend with the fewest active requests.
 - **Random:** Randomized selection.
-- **PeakEwma:** Cost-based selection using exponential weighted moving average of latency `(conn + 1) * (latency + 1)` [`src/upstream/pool.rs:520-528`](https://github.com/synvoid/synvoid/blob/main/src/upstream/pool.rs#L520-L528).
+- **PeakEwma:** Cost-based selection using exponential weighted moving average of latency `(conn + 1) * (latency + 1)` at `src/upstream/pool.rs:520-528`.
 - **IP Hash:** Ensures session persistence by hashing the client IP to a specific backend.
 
 ### Health Monitoring & Resilience

@@ -96,13 +96,13 @@ Backend
 ├── max_connections: usize                    # Connection limit
 ├── current_connections: ConnectionCounter    # Active connection count
 ├── is_healthy: RunningFlag                   # Health status flag
-├── consecutive_failures: AtomicU32            # Failure counter
-├── consecutive_successes: AtomicU32           # Recovery counter
+├── consecutive_failures: Arc<AtomicU32>      # Failure counter
+├── consecutive_successes: Arc<AtomicU32>     # Recovery counter
 ├── protocol: BackendProtocol                 # Protocol type
 ├── is_backup: bool                           # Backup flag
-├── cpu_percent: AtomicU32                    # CPU usage (0-10000 -> 0.0-100.0%)
-├── memory_percent: AtomicU32                 # Memory usage
-└── latency_ewma: AtomicUsize                 # Exponential moving average latency (ms)
+├── cpu_percent: Arc<AtomicU32>               # CPU usage (0-10000 -> 0.0-100.0%)
+├── memory_percent: Arc<AtomicU32>            # Memory usage
+└── latency_ewma: Arc<AtomicUsize>            # Exponential moving average latency (ms)
 ```
 
 **ConnectionCounter**: Supports both local atomic counter and shared memory counter:
@@ -118,10 +118,10 @@ Memory-mapped shared tables for multi-worker load balancing:
 
 **SharedConnectionTable layout**:
 ```
-[0..8]:        max_workers (u64)
-[8..16]:       max_backends (u64)
-[16..N]:       heartbeats (AtomicU64) [worker_id]
-[N+1..]:       connections (AtomicUsize) [worker_id][backend_index]
+[0..8]:                              max_workers (u64)
+[8..16]:                             max_backends (u64)
+[16..16 + max_workers * 8]:          heartbeats (AtomicU64) [worker_id]
+[16 + max_workers * 8 ..]:           connections (AtomicUsize) [worker_id][backend_index]
 ```
 
 - Uses `memmap2::MmapMut` for persistent shared memory

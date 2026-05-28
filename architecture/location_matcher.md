@@ -16,16 +16,16 @@ The Location Matcher module (`src/location_matcher.rs`) provides **nginx-style U
 
 ```rust
 pub struct LocationMatcher {
-    exact_matches: HashMap<String, usize>,      // O(1) exact lookup
-    prefix_matches: Vec<LocationMatch>,          // Sorted by length (longest first)
-    regex_matches: Vec<LocationMatch>,           // Ordered by declaration
+    exact_locations: HashMap<String, (usize, LocationMatchType)>,   // O(1) exact lookup
+    prefix_locations: Vec<(String, (usize, LocationMatchType))>,    // Sorted by length (longest first)
+    regex_locations: Vec<LocationMatch>,                            // Ordered by declaration
 }
 
 pub struct LocationMatch {
-    pattern: String,
-    compiled_regex: Option<Regex>,
-    match_type: LocationMatchType,
-    original_order: usize,
+    pub pattern: String,
+    pub match_type: LocationMatchType,
+    pub regex: Option<Regex>,        // NOT compiled_regex
+    pub original_order: usize,
 }
 
 pub enum LocationMatchType {
