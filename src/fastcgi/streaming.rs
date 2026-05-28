@@ -255,13 +255,13 @@ impl StreamingFastCgiClient {
         let empty_params = Self::build_empty_params_record();
         Self::write_record(&mut socket, FCGI_PARAMS, request_id, &empty_params).await?;
 
-        let mut stdin_buffer = Vec::new();
         let mut body_buf = [0u8; 8192];
         loop {
             match body_stream.read(&mut body_buf).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    stdin_buffer.extend_from_slice(&body_buf[..n]);
+                    let chunk = &body_buf[..n];
+                    Self::write_record(&mut socket, FCGI_STDIN, request_id, chunk).await?;
                 }
                 Err(e) => {
                     if e.kind() == std::io::ErrorKind::WouldBlock {
@@ -270,11 +270,6 @@ impl StreamingFastCgiClient {
                     return Err(FastCgiError::RequestFailed(e.to_string()));
                 }
             }
-        }
-
-        let stdin_records = Self::build_stdin_records(&stdin_buffer);
-        for chunk in stdin_records {
-            Self::write_record(&mut socket, FCGI_STDIN, request_id, &chunk).await?;
         }
 
         let empty_stdin = Self::build_empty_stdin_record();
@@ -425,17 +420,6 @@ impl StreamingFastCgiClient {
 
     fn build_empty_params_record() -> Vec<u8> {
         vec![0u8]
-    }
-
-    fn build_stdin_records(data: &[u8]) -> Vec<Vec<u8>> {
-        let mut records = Vec::new();
-        let chunk_size = 65535;
-
-        for chunk in data.chunks(chunk_size) {
-            records.push(chunk.to_vec());
-        }
-
-        records
     }
 
     fn build_empty_stdin_record() -> Vec<u8> {
