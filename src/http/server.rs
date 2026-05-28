@@ -4627,28 +4627,16 @@ impl HttpServer {
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
     {
-        let protocol = crate::http::shared_handler::BodyCollectionProtocol::Http;
-        let streaming = crate::http::shared_handler::stream_body_with_waf(
+        crate::http::shared_handler::collect_body_with_chunk_waf(
             body,
             waf,
             client_ip,
-            protocol,
+            crate::http::shared_handler::BodyCollectionProtocol::Http,
+            Some(request_body_size),
+            content_length,
             max_body_size,
-        );
-        use http_body_util::BodyExt;
-        let result = match streaming.collect().await {
-            Ok(c) => Ok(c.to_bytes()),
-            Err(_) => Err(()),
-        };
-        match &result {
-            Ok(body) => {
-                *request_body_size = body.len() as u64;
-            }
-            Err(()) => {
-                *request_body_size = 0;
-            }
-        }
-        result
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -305,3 +305,30 @@ where
     let streaming_waf = waf.streaming();
     WafStreamedBody::new(body, streaming_waf, client_ip, protocol, max_body_size)
 }
+
+pub async fn collect_body_with_chunk_waf<B>(
+    body: B,
+    waf: &Arc<crate::waf::WafCore>,
+    client_ip: IpAddr,
+    protocol: BodyCollectionProtocol,
+    request_body_size: Option<&mut u64>,
+    _content_length: Option<usize>,
+    max_body_size: usize,
+) -> Result<Bytes, ()>
+where
+    B: http_body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Debug,
+{
+    let streaming = stream_body_with_waf(body, waf, client_ip, protocol, max_body_size);
+    let result = match streaming.collect().await {
+        Ok(c) => Ok(c.to_bytes()),
+        Err(_) => Err(()),
+    };
+    if let Some(size) = request_body_size {
+        *size = match &result {
+            Ok(body) => body.len() as u64,
+            Err(()) => 0,
+        };
+    }
+    result
+}

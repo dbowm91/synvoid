@@ -2067,18 +2067,16 @@ impl HttpsServer {
         B: http_body::Body<Data = Bytes> + Unpin,
         B::Error: std::fmt::Debug,
     {
-        let streaming = crate::http::shared_handler::stream_body_with_waf(
+        crate::http::shared_handler::collect_body_with_chunk_waf(
             body,
             waf,
             client_ip,
             crate::http::shared_handler::BodyCollectionProtocol::Https,
+            None,
+            content_length,
             max_body_size,
-        );
-        use http_body_util::BodyExt;
-        match streaming.collect().await {
-            Ok(c) => Ok(c.to_bytes()),
-            Err(_) => Err(()),
-        }
+        )
+        .await
         .unwrap_or_else(|_| Bytes::from_static(&[]))
     }
 }
