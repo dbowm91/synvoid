@@ -580,11 +580,26 @@ rkyv = []          # Rkyv serialization (optional)
 
 ### Feature-Gated Components
 
-| Feature | Components Affected | Default |
-|---------|-------------------|---------|
-| `dns` | `dns/` module, `MainConfig.dns` | **Off** |
-| `icmp-filter` | `icmp_filter.rs`, `MainConfig.icmp_filter` | **Off** |
-| `mesh` | `mesh.rs` module, `TunnelConfig.mesh`, `MeshConfig` | **Off** |
+| Feature | Components Affected | Dependencies | Default |
+|---------|-------------------|--------------|---------|
+| `dns` | `dns/` module, `MainConfig.dns` | `hickory-proto`, `hickory-resolver`, `tokio-dstip`, `cryptoki`, `getrandom` | **On** |
+| `icmp-filter` | `icmp_filter.rs`, `MainConfig.icmp_filter` | None | **Off** |
+| `mesh` | `mesh.rs` module, `TunnelConfig.mesh`, `MeshConfig` | `ed25519-dalek`, `openraft` | **On** |
+| `socket-handoff` | Socket handoff support | None | **On** |
+| `erased_pool` | Erased connection pool | None | **On** |
+| `swagger-ui` | OpenAPI Swagger UI | `utoipa-swagger-ui` | **On** |
+| `wireguard` | WireGuard VPN tunnel | `defguard_boringtun` | **Off** |
+| `flood-ebpf` | eBPF flood protection | `aya` | **Off** |
+| `origin_key_exchange` | Origin key exchange protocol | None | **Off** |
+| `audit` | Audit logging enhancements | None | **Off** |
+| `post-quantum` | Post-quantum TLS | `rustls-post-quantum` | **Off** |
+| `verify-pq` | Post-quantum verification | None | **Off** |
+| `tun-rs` | TUN interface support | None | **Off** |
+| `buffer` | Buffer pool (via synvoid-utils) | `synvoid-utils/buffer` | **Off** |
+| `rkyv` | Rkyv serialization | None | **Off** |
+| `macos-sandbox` | macOS sandbox enforcement | None | **Off** |
+| `test-utils` | Test utilities | None | **Off** |
+| `fastcgi_streaming` | Streaming FastCGI responses | None | **Off** |
 
 ### Feature-Gated Validation
 
@@ -651,8 +666,8 @@ pub type ConfigHandle = Arc<MainConfig>;  // Thread-safe shared config
 | `MIN_TOKEN_LENGTH` | 32 | `admin.rs:7` |
 | `default_mesh_port` | 50051 | `mesh.rs:563` |
 | `default_tls_port` | 443 | `tls.rs:61` |
-| `default_dns_port` | 53 | `dns/mod.rs:145` |
-| `default_wg_port` | 51820 | `tunnel.rs:86` |
+| `default_dns_port` | 53 | `dns/mod.rs:144` |
+| `default_wg_port` | 51820 | `tunnel.rs:87` |
 | `default_quic_port` | 51821 | `tunnel.rs:209` |
 
 ---
@@ -675,7 +690,18 @@ crates/synvoid-config/src/
 ├── traffic.rs              # TrafficShaping, connection limits
 ├── process.rs              # Overseer, Supervisor, ProcessManager
 ├── dns/
-│   └── mod.rs              # DnsConfig (feature-gated)
+│   ├── mod.rs              # DnsConfig (feature-gated)
+│   ├── dns_anycast.rs      # DNS anycast configuration
+│   ├── dns_dnssec.rs       # DNSSEC configuration
+│   ├── dns_encrypted.rs    # DNS over HTTPS/TLS
+│   ├── dns_firewall.rs     # DNS firewall rules
+│   ├── dns_mesh.rs         # DNS mesh integration
+│   ├── dns_misc.rs         # DNS miscellaneous settings
+│   ├── dns_rate_limit.rs   # DNS rate limiting
+│   ├── dns_recursive.rs    # Recursive DNS configuration
+│   ├── dns_settings.rs     # DNS server settings
+│   └── dns_zones.rs        # DNS zone configuration
+├── icmp_filter.rs          # ICMP filtering (feature-gated)
 ├── site/
 │   ├── mod.rs              # SiteConfig, SiteInfo
 │   ├── listen.rs           # SiteListenConfig, UpstreamConfig
@@ -692,6 +718,7 @@ crates/synvoid-config/src/
 │   ├── network.rs          # Site network config
 │   ├── protocol_features.rs # gRPC, WebSocket
 │   ├── app_server.rs       # Granian app server
+│   ├── misc.rs             # SiteImagePoison, SiteLogging, SiteWorkerPool configs
 │   └── file_manager.rs     # File manager config
 ├── bandwidth.rs            # Bandwidth tracking config
 ├── geoip.rs                # GeoIP configuration
