@@ -18,17 +18,34 @@ The Upload module (`src/upload/`) provides a **comprehensive upload validation p
 
 ```rust
 pub struct UploadValidator {
+    sandbox: Arc<Sandbox>,
+    malware_scanner: Option<Arc<MalwareScanner>>,
     config: UploadConfig,
-    yara_scanner: Option<YaraScanner>,
-    sandbox: Option<Sandbox>,
+    reload_lock: parking_lot::RwLock<()>,
+    #[cfg(feature = "mesh")]
+    yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
 }
 
 pub struct UploadConfig {
-    pub max_size: usize,
-    pub allowed_types: Vec<String>,
-    pub yara_enabled: bool,
+    pub enabled: bool,
+    pub max_size: String,
+    pub memory_threshold: String,
+    pub scan_with_yara: bool,
     pub sandbox_enabled: bool,
-    pub rate_limit_per_minute: u32,
+    pub sandbox_dir: String,
+    pub quarantine_dir: String,
+    pub yara_rules_dir: Option<String>,
+    pub yara_timeout_ms: u64,
+    pub verify_signature: bool,
+    pub signature_strict_mode: bool,
+    pub rate_limit_enabled: bool,
+    pub max_uploads_per_minute: u32,
+    pub max_uploads_per_hour: u32,
+    pub max_bytes_per_minute: String,
+    pub burst_allowance: u32,
+    pub allowed_types: AllowedTypesConfig,
+    pub paths: Vec<PathUploadConfig>,
+    pub reject_mime_mismatch: bool,
 }
 
 pub struct EffectiveUploadConfig {
@@ -53,12 +70,17 @@ pub struct MultipartPart {
 }
 
 pub enum UploadValidationError {
-    SizeExceeded,
-    TypeNotAllowed,
-    MalwareDetected,
-    MimeMismatch,
-    InvalidFilename,
-    RateLimited,
+    SizeExceeded { max: u64, actual: u64 },
+    TypeNotAllowed { detected: String, allowed: Vec<String> },
+    MalwareDetected { matches: Vec<String> },
+    IoError(#[from] std::io::Error),
+    YaraError(#[from] YaraError),
+    SandboxError(#[from] SandboxError),
+    InvalidMultipart,
+    NoData,
+    InvalidFilename { reason: String },
+    EmptyFilename,
+    MimeMismatch { declared: String, detected: String },
 }
 ```
 

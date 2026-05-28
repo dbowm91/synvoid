@@ -16,12 +16,22 @@ The Integrity module (`src/integrity/`) provides **end-to-end integrity verifica
 ## 2. Key Data Structures
 
 ```rust
-pub struct IntegrityConfig {
-    pub mode: IntegrityMode,
-    pub key_exchange_url: Option<String>,
-    pub session_ttl_secs: u64,
-    pub signing_headers: Vec<String>,
-    pub audit_pow_settings: Option<PowSettings>,
+pub struct SignedHttpMessage {
+    pub integrity_header: IntegrityHeader,
+    pub method: Option<String>,
+    pub path: Option<String>,
+    pub query: Option<String>,
+    pub headers: HashMap<String, String>,
+    pub body_hash: Option<String>,
+    pub signature: String,
+    pub signed_at: i64,
+}
+
+pub struct IntegrityHeader {
+    pub session_id: String,
+    pub key_id: String,
+    pub timestamp: i64,
+    pub nonce: String,
 }
 
 pub enum IntegrityMode {

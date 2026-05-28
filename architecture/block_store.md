@@ -18,21 +18,24 @@ The Block Store module (`src/block_store.rs`) provides **persistent, thread-safe
 
 ```rust
 pub struct BlockStore {
-    entries: Arc<RwLock<HashMap<IpAddr, BlockEntry>>>,  // 64-shard concurrent map
-    data_dir: Option<PathBuf>,
-    persist_tx: mpsc::Sender<()>,                       // Background persistence
-    entry_count: AtomicU64,
+    shards: Vec<RwLock<AHashMap<String, BlockEntry>>>,  // 64-shard concurrent map
+    enabled: bool,
+    persist_path: Option<PathBuf>,
+    config: DenyListLimitsConfig,
+    total_entries: AtomicUsize,
+    persist_tx: Option<mpsc::Sender<PersistRequest>>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: ArcSwapOption<SizedMitigationProvider>,
 }
 
 pub struct BlockEntry {
-    pub ip: IpAddr,
+    pub ip: String,
     pub reason: String,
-    pub created_at: u64,
-    pub expires_at: Option<u64>,
-    pub site_scope: Option<String>,
+    pub blocked_at: u64,
+    pub ban_expire_seconds: u64,
+    pub site_scope: String,
     pub access_count: u64,
-    pub last_accessed: u64,
+    pub last_access: u64,
 }
 ```
 

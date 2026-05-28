@@ -17,13 +17,14 @@ The Tarpit module (`src/tarpit/`) provides an **anti-scraping tarpit** that gene
 
 ```rust
 pub struct TarpitManager {
-    chain: MarkovChain,
+    chain: Arc<RwLock<MarkovChain>>,
     config: TarpitConfig,
 }
 
 pub struct TarpitConfig {
-    pub max_depth: usize,
-    pub links_per_page: usize,
+    pub enabled: bool,
+    pub max_depth: u32,
+    pub links_per_page: u32,
     pub response_delay_ms: u64,
     pub scraper_patterns: Vec<String>,
 }
