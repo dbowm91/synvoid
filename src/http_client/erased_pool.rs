@@ -37,13 +37,6 @@ impl http_body::Body for Box<dyn ErasedBody> {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HttpProtocol {
-    Http1,
-    Http2,
-}
-
 pub trait ErasedBody: Send + Sync + 'static {
     fn poll_frame(
         &mut self,
@@ -98,16 +91,6 @@ where
 
 pub type BoxErasedBody = Box<dyn ErasedBody>;
 
-#[allow(dead_code)]
-pub trait PooledConnection: Send + Sync + 'static {
-    fn protocol(&self) -> HttpProtocol;
-    fn is_available(&self) -> bool;
-    fn box_body<B>(body: B) -> BoxErasedBody
-    where
-        B: hyper::body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
-        B::Error: fmt::Debug + Send;
-}
-
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct PoolKey {
     pub authority: String,
@@ -119,11 +102,6 @@ pub struct Http1PooledConnection {
     io: Option<TokioIo<tokio::net::TcpStream>>,
     authority: http::uri::Authority,
     sender: Option<http1_client::SendRequest<BoxErasedBody>>,
-}
-
-#[allow(dead_code)]
-pub struct Http2PooledConnection {
-    authority: http::uri::Authority,
 }
 
 impl Http1PooledConnection {
@@ -175,49 +153,6 @@ impl Http1PooledConnection {
             authority,
             sender: None,
         }
-    }
-}
-
-impl PooledConnection for Http1PooledConnection {
-    fn protocol(&self) -> HttpProtocol {
-        HttpProtocol::Http1
-    }
-
-    fn is_available(&self) -> bool {
-        self.sender.is_some()
-    }
-
-    fn box_body<B>(body: B) -> BoxErasedBody
-    where
-        B: hyper::body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
-        B::Error: fmt::Debug + Send,
-    {
-        Box::new(ErasedBodyImpl { inner: body })
-    }
-}
-
-impl PooledConnection for Http2PooledConnection {
-    fn protocol(&self) -> HttpProtocol {
-        HttpProtocol::Http2
-    }
-
-    fn is_available(&self) -> bool {
-        false
-    }
-
-    fn box_body<B>(body: B) -> BoxErasedBody
-    where
-        B: hyper::body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
-        B::Error: fmt::Debug + Send,
-    {
-        Box::new(ErasedBodyImpl { inner: body })
-    }
-}
-
-impl Http2PooledConnection {
-    #[allow(dead_code)]
-    pub fn new(authority: http::uri::Authority) -> Self {
-        Self { authority }
     }
 }
 
@@ -534,22 +469,6 @@ mod tests {
         assert_eq!(key1.clone(), key1);
     }
 
-    #[test]
-    fn test_http1_pooled_connection_is_available() {
-        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
-        let conn = Http1PooledConnection::new_for_test(authority);
-        assert_eq!(conn.protocol(), HttpProtocol::Http1);
-        assert!(!conn.is_available());
-    }
-
-    #[test]
-    fn test_http2_pooled_connection_stub() {
-        let authority: http::uri::Authority = "example.com:80".parse().unwrap();
-        let conn = Http2PooledConnection::new(authority);
-        assert_eq!(conn.protocol(), HttpProtocol::Http2);
-        assert!(!conn.is_available());
-    }
-
     #[tokio::test]
     async fn test_connection_pool_checkout_checkin_reuse() {
         use std::net::SocketAddr;
@@ -608,11 +527,7 @@ mod tests {
         let authority: http::uri::Authority = "example.com:80".parse().unwrap();
         let conn = Http1PooledConnection::new_for_test(authority);
 
-        assert_eq!(conn.protocol(), HttpProtocol::Http1);
-        assert!(
-            !conn.is_available(),
-            "new_for_test creates stub with is_available false"
-        );
+        assert!(!conn.is_connected(), "new_for_test creates stub with is_connected false");
     }
 
     #[tokio::test]
