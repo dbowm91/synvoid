@@ -78,7 +78,10 @@ pub struct SpinAppInstance {
 
 **Key Types:**
 
+Two structs are involved in manifest handling. `SpinManifest` is the raw TOML deserialization target; `Manifest` is the simplified runtime struct created from it.
+
 ```rust
+// Raw TOML deserialization target (spin.toml → SpinManifest)
 pub struct SpinManifest {
     pub spin_version: String,
     pub manifest_version: Option<String>,
@@ -87,6 +90,14 @@ pub struct SpinManifest {
     pub description: Option<String>,
     pub authors: Option<Vec<String>>,
     pub triggers: HashMap<String, TriggerConfig>,
+    pub components: Vec<ManifestComponent>,
+}
+
+// Simplified runtime struct (SpinManifest → Manifest)
+pub struct Manifest {
+    pub name: String,
+    pub version: String,
+    pub trigger_type: String,          // Derived from triggers HashMap key
     pub components: Vec<ManifestComponent>,
 }
 ```
