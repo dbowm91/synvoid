@@ -1630,7 +1630,6 @@ impl HttpServer {
             if let Some(content_length) = parts.headers.get("content-length") {
                 if let Ok(len_str) = content_length.to_str() {
                     if let Ok(len) = len_str.parse::<u64>() {
-                        request_body_size = len;
                         m.bandwidth.record_ingress(len, BandwidthProtocol::Http);
                         m.bandwidth.record_site_ingress(&host, len);
                     }
