@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+use tokio::process::Command;
 
 use bytes::Bytes;
 use http::{header::HeaderName, HeaderMap, HeaderValue, Method, StatusCode, Uri};
@@ -339,23 +341,21 @@ impl CgiHandler {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = tokio::task::spawn_blocking(move || {
-            let child = cmd.spawn()?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| CgiError::ExecutionFailed(e.to_string()))?;
 
-            let mut child = child;
-
-            if !body.is_empty() {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = stdin.write_all(&body);
-                }
+        if !body.is_empty() {
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(&body).await;
             }
+        }
 
-            child.wait_with_output()
-        })
-        .await
-        .map_err(|e| CgiError::ExecutionFailed(e.to_string()))?
-        .map_err(|e| CgiError::ExecutionFailed(e.to_string()))?;
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| CgiError::ExecutionFailed(e.to_string()))?;
 
         let stdout = output.stdout;
         let stderr = output.stderr;
