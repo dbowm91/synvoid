@@ -171,7 +171,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [TLS](./tls.md) | TLS termination, ACME, post-quantum, mTLS | [`tls.md`](./tls.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
 | [Router](./routing_deep_dive.md) | Request routing, domain/path matching | [`routing_deep_dive.md`](./routing_deep_dive.md) | — |
 | [Listener](./listener.md) | Network listener configuration primitives | [`listener.md`](./listener.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
-| [Tunnel](./tunnel.md) | VPN tunnels (QUIC, WireGuard) | — | [`networking_deep_dive.md`](./networking_deep_dive.md) |
+| Tunnel | VPN tunnels (QUIC, WireGuard) | — | [`networking_deep_dive.md`](./networking_deep_dive.md) |
 | [Streaming](./streaming.md) | Bidirectional proxy streaming with WAF scanning | [`streaming.md`](./streaming.md) | — |
 | [Proxy Cache](./proxy_cache.md) | HTTP response caching (moka + disk) | [`proxy_cache.md`](./proxy_cache.md) | — |
 | [Location Matcher](./location_matcher.md) | Nginx-style location matching | [`location_matcher.md`](./location_matcher.md) | — |
@@ -207,7 +207,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 
 | Module | Purpose | Architecture Doc | Deep Dive |
 |--------|---------|------------------|-----------|
-| [Admin API](./admin.md) | Admin REST API, metrics, alerting | [`admin.md`](./admin.md) | [`admin_deep_dive.md`](./admin_deep_dive.md) |
+| [Admin API](./admin_deep_dive.md) | Admin REST API, metrics, alerting | — | [`admin_deep_dive.md`](./admin_deep_dive.md) |
 | [Metrics](./metrics.md) | Atomic counters, per-site metrics, bandwidth | [`metrics.md`](./metrics.md) | — |
 | [Logging](./logging.md) | Syslog integration, dynamic log levels | [`logging.md`](./logging.md) | — |
 | [Log Controller](./log_controller.md) | Runtime log level management | [`log_controller.md`](./log_controller.md) | — |
@@ -265,17 +265,17 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/http/server.rs` | ~5000 | HTTP request handling pipeline |
+| `src/http/server.rs` | ~4900 | HTTP request handling pipeline |
 | `src/waf/mod.rs` | ~936 | WAF core orchestrator |
-| `src/mesh/` | ~15000+ | Mesh networking (100+ types) |
-| `src/proxy/mod.rs` | ~400 | Reverse proxy dispatch |
-| `src/supervisor/mod.rs` | ~800 | Process supervision |
-| `src/admin/mod.rs` | ~2000+ | Admin API handlers |
-| `src/tls/server.rs` | ~1700 | TLS termination + ACME |
-| `src/http_client/mod.rs` | ~900 | HTTP client pool |
-| `src/upstream/pool.rs` | ~800 | Upstream connection pool |
-| `src/plugin/mod.rs` | ~700 | WASM plugin runtime |
-| `crates/synvoid-config/src/lib.rs` | ~500 | Configuration types |
+| `src/mesh/` | ~72000+ | Mesh networking (100+ files, 100+ types) |
+| `src/proxy/mod.rs` | ~1450 | Reverse proxy dispatch |
+| `src/supervisor/mod.rs` | ~17 | Process supervision (re-exports) |
+| `src/admin/mod.rs` | ~970 | Admin API handlers |
+| `src/tls/server.rs` | ~2280 | TLS termination + ACME |
+| `src/http_client/mod.rs` | ~1300 | HTTP client pool |
+| `src/upstream/pool.rs` | ~1540 | Upstream connection pool |
+| `src/plugin/mod.rs` | ~424 | WASM plugin runtime |
+| `crates/synvoid-config/src/lib.rs` | ~447 | Configuration types |
 
 ---
 

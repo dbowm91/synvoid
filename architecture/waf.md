@@ -177,7 +177,7 @@ pub struct GlobalTrafficShaper {
 - Burst token system
 - Connection queue with timeout
 
-**SiteConnectionLimiter**: Per-site wrapper with site-specific limits.
+**Per-Site Limiting:** Per-site connection counting via direct `try_acquire_with_limits()` calls (applies limits by site_id internally).
 
 **Error Types:**
 ```rust

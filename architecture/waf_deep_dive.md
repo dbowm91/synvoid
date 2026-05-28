@@ -21,7 +21,7 @@ The `ConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs`) enforces connectio
 - **Global connection limit:** Default 1,000 concurrent connections
 - **Per-IP limits:** Default 10 connections per IP
 - **Burst tokens:** IP burst allowance (default 5) enables short-term bursts
-- **Site-level tracking:** Per-site connection counting via direct `try_acquire_with_limits()` calls (SiteConnectionLimiter struct exists but is not instantiated as a separate entity)
+- **Site-level tracking:** Per-site connection counting via direct `try_acquire_with_limits()` calls (applies limits by site_id internally)
 - **Queue system:** When limits are hit, connections can queue (default 100 queue size, 60000ms timeout)
 
 **Actual Default Values (verified in code):**

@@ -45,7 +45,7 @@ The transition to `SO_REUSEPORT` and CPU pinning has eliminated many previous bo
 
 **How are OS-specific abstractions handled?**
 SynVoid leverages deep OS integration:
-*   **Linux/Unix:** First-class citizen. Leverages `SO_REUSEPORT`, `sched_setaffinity`, `io_uring` (via Tokio), and advanced sandboxing (Landlock, Pledge).
+*   **Linux/Unix:** First-class citizen. Leverages `SO_REUSEPORT`, `sched_setaffinity`, and advanced sandboxing (Landlock, Pledge).
 *   **Windows:** Supports shared-nothing execution using `SO_REUSEPORT` (available in modern Windows versions) and named pipe IPC.
 
 **Security Flaws at the Foundation Level:**

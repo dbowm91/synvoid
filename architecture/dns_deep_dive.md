@@ -36,7 +36,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `recursive_cache.rs` | Cache for recursive resolver responses |
 | `trust_anchor.rs` | RFC 5011 trust anchor management |
 | `hsm.rs` | HSM-based key storage and signing |
-| `cookie.rs` | RFC 8905/RFC 7873 DNS cookies - client authentication via EDNS cookie exchange |
+| `cookie.rs` | RFC 7873 DNS cookies - client authentication via EDNS cookie exchange |
 | `update.rs` | Dynamic DNS updates (RFC 2136) |
 | `transfer.rs` | Zone transfers (AXFR/IXFR) |
 | `doh.rs` | DNS-over-HTTPS server |

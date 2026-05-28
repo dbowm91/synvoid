@@ -40,7 +40,7 @@ The IPC & Process module is responsible for:
 | **command.rs** | `src/process/command.rs` | `CommandClient` for sending commands to master via socket/signal/grpc |
 | **socket_path.rs** | `src/process/socket_path.rs` | Socket path resolution, generation tracking, permissions |
 | **socket_fd.rs** | `src/process/socket_fd.rs` | Unix socket creation and file descriptor passing |
-| **pidfile.rs** | `src/process/pidfile.rs` | `PidFileManager`, `OverseerLockFile` for process single-instance |
+| **pidfile.rs** | `src/process/pidfile.rs` | `PidFileManager`, `SupervisorLockFile` for process single-instance |
 
 ---
 
@@ -83,8 +83,8 @@ The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 1
 | **AppServer** | AppServerStarted, AppServerReady, AppServerHealth, AppServerStopped, AppServerRestarted, AppServerError |
 | **UnifiedServer** | UnifiedServerWorkerStarted, UnifiedServerWorkerReady, UnifiedServerWorkerHeartbeat, UnifiedServerWorkerShutdownComplete, UnifiedServerWorkerError, UnifiedServerWorkerDrain, UnifiedServerWorkerDrained, UnifiedServerWorkerResize, UnifiedServerWorkerResizeAck |
 | **WorkerDrain** | WorkerDrain, WorkerDrained, WorkerConnectionCount, WorkerDrainComplete, WorkerReadyForTraffic |
-| **Upgrade** | UpgradeReady, UpgradeFailed, OverseerUpgradePrepare, OverseerUpgradePrepareAck, OverseerUpgradeCommit, OverseerUpgradeCommitAck, OverseerUpgradeRollback, OverseerUpgradeRollbackAck, OverseerCommitUpgrade, OverseerCommitUpgradeAck |
-| **Overseer** | OverseerDrainWorkers, OverseerDrainWorkersAck, OverseerGetStatus, OverseerStatusResponse, OverseerDualMasterPrepare, OverseerDualMasterPrepareAck |
+| **Upgrade** | UpgradeReady, UpgradeFailed, SupervisorUpgradePrepare, SupervisorUpgradePrepareAck, SupervisorUpgradeCommit, SupervisorUpgradeCommitAck, SupervisorUpgradeRollback, SupervisorUpgradeRollbackAck, SupervisorCommitUpgrade, SupervisorCommitUpgradeAck |
+| **Supervisor** | SupervisorDrainWorkers, SupervisorDrainWorkersAck, SupervisorGetStatus, SupervisorStatusResponse, SupervisorDualSupervisorPrepare, SupervisorDualSupervisorPrepareAck |
 | **MasterDrain** | MasterDrainMode, MasterDrainModeAck, MasterReportConnections, MasterConnectionsReport, MasterStopAccepting, MasterStopAcceptingAck, MasterDrainStatus |
 | **DrainProtocol** | DrainRequest, DrainStatusRequest, DrainStatusResponse, DrainComplete, StopAccepting, StopAcceptingAck, RestoreFromDrain, RestoreFromDrainAck |
 | **SocketHandoff** | SocketHandoffRequest, SocketHandoffReady, SocketHandoffComplete, SocketHandoffFailed, SocketHandoffActiveConnection, WorkerConnectionHandoff, WorkerConnectionAdopted, WindowsSocketInfo |

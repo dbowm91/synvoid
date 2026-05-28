@@ -128,7 +128,7 @@ pub struct MainConfig {
     pub mimes: MimesConfig,
     pub dns: DnsConfig,                // Feature-gated DNS server
     pub mesh: Option<MeshConfig>,       // Feature-gated mesh networking
-    pub overseer: OverseerConfig,
+    pub supervisor_compat: SupervisorConfig,
     pub process_manager: ProcessManagerConfig,
     pub supervisor: SupervisorConfig,
     pub honeypot_port: HoneypotPortConfig,

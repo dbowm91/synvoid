@@ -40,17 +40,18 @@ pub enum FilterBackend {
     Nftables,
     Ebpf,
     Pf,
-    PfBsd,
     WindowsFirewall,
     Wfp,
 }
 
 pub struct BackendCapabilities {
-    pub block: bool,
-    pub allow: bool,
-    pub rate_limit: bool,
-    pub type_code: bool,
-    pub interface: bool,
+    pub supports_block: bool,
+    pub supports_allow: bool,
+    pub supports_rate_limit: bool,
+    pub supports_type_code: bool,
+    pub supports_interface: bool,
+    pub requires_admin: bool,
+    pub is_enforcing: bool,
 }
 ```
 

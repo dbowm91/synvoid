@@ -36,7 +36,7 @@ This fail-safe approach ensures that if the PQC algorithm is broken or unavailab
 
 ### Post-Quantum TLS Provider Installation (L35-4)
 
-When the `post-quantum` feature is enabled (`Cargo.toml:30`), the post-quantum TLS provider is installed at `src/startup/master.rs:210-234`:
+When the `post-quantum` feature is enabled (`Cargo.toml:30`), the `rustls-post-quantum` crate provides ML-KEM-768 hybrid key exchange for TLS 1.3 connections:
 
 ```toml
 post-quantum = ["dep:rustls-post-quantum"]  # Cargo.toml:30
@@ -132,7 +132,7 @@ Beyond HTTP/HTTPS proxying, SynVoid supports a **Half-TCP** mode for non-HTTP pr
 
 ### Tunnel Backend
 
-The `TunnelBackend` (`src/tunnel/upstream.rs`) provides half-TCP proxy functionality with two routing modes:
+The `TunnelBackend` (defined in `src/tunnel/router.rs:200`) provides half-TCP proxy functionality with two routing modes:
 
 ```rust
 pub enum TunnelBackend {

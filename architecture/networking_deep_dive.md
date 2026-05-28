@@ -79,7 +79,7 @@ SynVoid leverages Rust's ownership model and a custom `BufferPool` to minimize d
 ### 2. Connection Limiting
 The `ConnectionLimiter` provides fine-grained control over concurrent connections at multiple levels:
 - **Global Limit:** Total connections the WAF instance will accept.
-- **Per-Site Limit:** `SiteConnectionLimiter` (`src/waf/traffic_shaper/limiter.rs:306-346`) is **dead code** - the struct is defined but never instantiated. Per-site limiting is achieved via the global limiter's `try_acquire_with_limits()` method which applies limits by site_id internally. **Decision:** Either remove `SiteConnectionLimiter` or implement proper per-site tracking (see NR-1/WR-4 in `plans/plan.md`).
+- **Per-Site Limit:** Per-site connection counting via the global limiter's `try_acquire_with_limits()` method which applies limits by site_id internally.
 - **Per-IP Limit:** Prevents connection exhaustion attacks from a single source.
 
 ### 3. Buffer Management

@@ -89,7 +89,7 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `socket_fd.rs` | Unix FD passing via `SCM_Rights`, `SocketHolder` for batch handoff |
 | `manager.rs` | `ProcessManager` - spawn/monitor/restart workers |
 | `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
-| `pidfile.rs` | PID file management, overseer lock file |
+| `pidfile.rs` | PID file management, supervisor lock file |
 | `command.rs` | Command client/response types |
 | `ipc_windows.rs` | Windows IPC via named pipes (Server side, pipe server implementation) |
 | `socket_path.rs` | Master socket path resolution and versioning for upgrades |
@@ -228,9 +228,8 @@ Bootstrap, daemonization, master/worker startup entry points.
 |------|---------|
 | `bootstrap.rs` | Logging initialization, test mode warning |
 | `daemon.rs` | Signal handlers, PID file acquisition, daemonize |
-| `master.rs` | `run_master_mode()`, `run_overseer_mode()`, master event loop |
 | `worker.rs` | Worker argument builders (`build_static_worker_args`, `build_unified_server_worker_args`) |
-| `mod.rs` | `MasterState`, `MasterStateTrackers` shared across processes |
+| `mod.rs` | Startup module root |
 
 ### Startup Flow
 
@@ -253,9 +252,9 @@ run_master_mode()
 └── event_rx loop
 ```
 
-**Note:** The Master MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Master ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
+**Note:** The Supervisor MUST NOT run UnifiedServer inline for request handling, accept external network traffic, or handle HTTP/TCP/UDP/QUIC/WebSocket requests. Supervisor ONLY runs admin panel API, orchestrates threat intelligence, manages worker processes, and handles IPC communications.
 
-> **Source:** `src/startup/master.rs:278-302`
+> **Source:** `src/supervisor/process.rs`
 
 **Startup Flow Enforcement in SupervisorProcess:**
 The supervisor enforces startup sequencing at `src/supervisor/process.rs`:
@@ -400,9 +399,9 @@ SynVoid supports two deployment modes:
 
 ### Enforcement
 
-- `src/startup/master.rs:278-302`: Master MUST NOT run UnifiedServer inline for request handling
-- Master MUST NOT accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
-- Master MUST NOT handle any external network traffic for proxying
+- `src/supervisor/process.rs`: Supervisor MUST NOT run UnifiedServer inline for request handling
+- Supervisor MUST NOT accept HTTP/TCP/UDP/QUIC/WebSocket requests directly
+- Supervisor MUST NOT handle any external network traffic for proxying
 
 ### macOS Seatbelt Sandboxing
 

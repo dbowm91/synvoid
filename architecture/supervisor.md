@@ -40,7 +40,6 @@ The Supervisor **consolidates** the legacy Overseer and Master hierarchy into a 
 |-------------|------|---------|
 | `run_supervisor_mode()` | `src/supervisor/process.rs:306` | Default entry point (no flags) |
 | `run_mesh_agent_mode()` | `src/supervisor/mesh.rs:27` | Standalone mesh agent (`--mesh-agent`) |
-| `run_master_mode()` | `src/master/mod.rs` | Legacy master mode (`--master`) |
 
 ## 2. Key Submodules and Their Responsibilities
 
@@ -154,9 +153,9 @@ Standalone mesh agent for distributed mesh operations (feature-gated).
 
 ## (Table of Contents placeholder - content continues below)
 
-### 2.7 `overseer/drain_manager.rs` - Drain Management
+### 2.7 `src/supervisor/drain_manager.rs` - Drain Management
 
-Reused drain infrastructure from legacy Overseer, now shared with Supervisor.
+Drain infrastructure for coordinated worker draining during upgrades.
 
 **Key Types:**
 - `DrainManager`: Manages drain state for all workers
@@ -279,7 +278,7 @@ pub struct ProcessManagerConfig {
     pub graceful_shutdown_timeout_secs: u64,
     pub worker_port_base: u16,
     pub config_path: PathBuf,
-    pub master_socket_path: PathBuf,
+    pub supervisor_socket_path: PathBuf,
     pub control_api_addr: String,
     // ... IPC signing/rate-limiting config
 }
@@ -484,7 +483,7 @@ The IPC system uses typed messages over Unix domain sockets (Unix) or named pipe
 ### 6.1 DrainManager Architecture
 
 ```rust
-// src/overseer/drain_manager.rs:20-25
+// src/supervisor/drain_manager.rs:20-25
 pub struct DrainManager {
     workers: Arc<RwLock<HashMap<WorkerId, WorkerDrainState>>>,
     current_drain_id: Arc<AtomicU64>,
@@ -501,7 +500,7 @@ Thread-safe drain state tracking using:
 ### 6.2 Drain Protocol Sequence
 
 ```rust
-// src/overseer/drain_manager.rs:297-369
+// src/supervisor/drain_manager.rs:297-369
 pub async fn drain_worker_with_confirmation(
     &self,
     ipc: &mut IpcStream,
@@ -671,49 +670,16 @@ dns = ["synvoid-config/dns", "dep:hickory-proto", ...]
 
 ## 9. Relationship to Legacy Components
 
-### 9.1 Overseer (Legacy)
+### 9.1 Overseer & Master (Consolidated)
 
-The `src/overseer/` module contains the original implementation:
+The Overseer and Master modules have been consolidated into the Supervisor as of 2026. The `src/overseer/` and `src/master/` directories no longer exist.
 
-```rust
-// src/overseer/mod.rs
-pub mod checksum;
-pub mod cli;
-pub mod connection_tracker;
-pub mod drain_manager;   // SHARED with Supervisor
-pub mod health;
-pub mod ipc_client;
-pub mod mode;
-pub mod preflight;
-pub mod process;         // OverseerProcess (legacy)
-pub mod rollback;
-pub mod socket_handoff;
-pub mod spawn;
-pub mod state;
-pub mod upgrade;
-```
-
-**DrainManager Porting:**
-- `DrainManager` and `DrainProtocol` were ported from Overseer to Supervisor
-- The drainage algorithm remains identical
-- Message types are shared via `crate::drain` module
-
-### 9.2 Master (Legacy)
-
-```rust
-// src/master/mod.rs
-pub mod commands;  // Re-exported by supervisor/commands.rs
-pub mod ipc;
-#[cfg(windows)]
-pub mod windows;
-```
-
-**Supervisor → Master Integration:**
-- `handle_worker_connection_single()` from `crate::master::ipc` handles worker message processing
-- `MasterCommand` types are shared
+**What was preserved:**
+- `DrainManager` and `DrainProtocol` were ported from Overseer to Supervisor (`src/supervisor/drain_manager.rs`)
+- `MasterCommand` message types are shared via the IPC module
 - CLI commands are re-exported via `supervisor::commands`
 
-### 9.3 Architectural Evolution
+### 9.2 Architectural Evolution
 
 ```
 LEGACY (pre-consolidation):
