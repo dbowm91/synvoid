@@ -51,15 +51,15 @@ Remove or wire dead code. Each task is independent.
 
 | ID | Task | Location | Description | Effort |
 |----|------|----------|-------------|--------|
-| **DEAD-1** | Remove dead zero_copy module | `src/zero_copy.rs` | Declared in `lib.rs:101` but has ZERO external callers anywhere in the codebase. Remove file and `lib.rs` declaration. | Low |
-| **DEAD-2** | Remove dead listener/common.rs types | `src/listener/common.rs` | `SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` are defined but never instantiated. `ConnectionContext` IS used (re-exported in `tcp/mod.rs:12`/`udp/mod.rs:9`) — keep it. Remove only the dead types. | Medium |
-| **DEAD-3** | Wire or remove pqc-mesh feature | `Cargo.toml` + all `src/**/*.rs` | `pqc-mesh` feature flag defined at `Cargo.toml:37` but has zero `#[cfg(feature = "pqc-mesh")]` usages. Either wire it to gate ML-DSA-44 post-quantum signatures or remove the flag. | Medium |
-| **DEAD-4** | Remove dead ProxyServer wrappers | `src/proxy/mod.rs:929,1143,1148,1153,1158` | All marked `#[allow(dead_code)]`. Remove or implement. | Low |
-| **DEAD-5** | Remove dead HttpProtocol/PooledConnection stubs | `src/http_client/erased_pool.rs` | `HttpProtocol` enum, `PooledConnection` trait, `Http2PooledConnection` are empty stubs. Remove or implement. | Low |
-| **DEAD-6** | Remove CacheEntryInner::validate() | `src/proxy/cache/store.rs:139-141` | Dead code. Remove. | Low |
-| **DEAD-7** | Remove honeypot_unified dead module | `src/honeypot_unified/` | 215 lines exist but NOT declared in `lib.rs`. Dead module — remove directory. | Low |
-| **DEAD-8** | Remove orphaned serialization_rkyv.rs | `src/serder/serialization_rkyv.rs` | File exists but NOT declared in `lib.rs`. Remove or wire. | Low |
-| **DEAD-9** | Remove dead RequestContext trait | `src/http/shared_handler.rs:133` | `RequestContext` trait is `#[allow(dead_code)]`. Remove or implement. | Low |
+| **DEAD-1** | ~~Remove dead zero_copy module~~ | `src/zero_copy.rs` | ~~Declared in `lib.rs:101` but has ZERO external callers anywhere in the codebase.~~ **RESOLVED**: Removed file and `lib.rs` declaration. Commit: `c703f4d2`. | Low |
+| **DEAD-2** | ~~Remove dead listener/common.rs types~~ | `src/listener/common.rs` | ~~`SocketOptionsBase`, `ListenerConfigBase`, `ListenerInstance<C>` are defined but never instantiated. `ConnectionContext` IS used — keep it.~~ **RESOLVED**: Removed dead types, kept `ConnectionContext`. Commit: `70fb1e6f`. | Medium |
+| **DEAD-3** | ~~Wire or remove pqc-mesh feature~~ | `Cargo.toml` + all `src/**/*.rs` | ~~`pqc-mesh` feature flag defined at `Cargo.toml:37` but has zero `#[cfg(feature = "pqc-mesh")]` usages.~~ **RESOLVED**: Removed feature flag. Commit: `43ad3ee0`. | Medium |
+| **DEAD-4** | ~~Remove dead ProxyServer wrappers~~ | `src/proxy/mod.rs:929,1143,1148,1153,1158` | ~~All marked `#[allow(dead_code)]`.~~ **RESOLVED**: Removed 5 dead wrapper methods. Commit: `7103c8d7`. | Low |
+| **DEAD-5** | ~~Remove dead HttpProtocol/PooledConnection stubs~~ | `src/http_client/erased_pool.rs` | ~~`HttpProtocol` enum, `PooledConnection` trait, `Http2PooledConnection` are empty stubs.~~ **RESOLVED**: Removed all dead stubs. Commit: `d8557695`. | Low |
+| **DEAD-6** | ~~Remove CacheEntryInner::validate()~~ | `src/proxy/cache/store.rs:139-141` | ~~Dead code.~~ **RESOLVED**: Removed method. Commit: `ec824c50`. | Low |
+| **DEAD-7** | ~~Remove honeypot_unified dead module~~ | `src/honeypot_unified/` | ~~215 lines exist but NOT declared in `lib.rs`.~~ **RESOLVED**: Already removed in prior commit `99b7935f`. | Low |
+| **DEAD-8** | ~~Remove orphaned serialization_rkyv.rs~~ | `src/serder/serialization_rkyv.rs` | ~~File exists but NOT declared in `lib.rs`.~~ **RESOLVED**: Already removed in prior commit `99b7935f`. | Low |
+| **DEAD-9** | ~~Remove dead RequestContext trait~~ | `src/http/shared_handler.rs:133` | ~~`RequestContext` trait is `#[allow(dead_code)]`.~~ **RESOLVED**: Removed trait and related types. Commit: `ac84bf85`. | Low |
 
 ### Wave 4: Feature Wiring (P1-P2)
 
