@@ -925,31 +925,6 @@ impl ProxyServer {
         false
     }
 
-    #[allow(dead_code)]
-    fn is_response_cacheable(
-        &self,
-        response: &Response<bytes::Bytes>,
-        _request_headers: &http::HeaderMap,
-    ) -> bool {
-        if let Some(ref cache) = self.cache {
-            let status = response.status().as_u16();
-            if !cache.settings().valid_status.contains(&status) {
-                return false;
-            }
-
-            if let Some(cc) = response.headers().get("cache-control") {
-                if let Ok(cc_str) = cc.to_str() {
-                    if cc_str.contains("no-store") || cc_str.contains("private") {
-                        return false;
-                    }
-                }
-            }
-
-            return true;
-        }
-        false
-    }
-
     fn get_cache_max_age(&self, headers: &http::HeaderMap) -> Option<std::time::Duration> {
         get_cache_max_age_static_impl(headers)
     }
@@ -1137,26 +1112,6 @@ impl ProxyServer {
             last_error.unwrap_or_default()
         )
         .into())
-    }
-
-    #[allow(dead_code)]
-    fn is_retryable_status(&self, status: u16, config: &RetryConfig) -> bool {
-        is_retryable_status_impl(status, config)
-    }
-
-    #[allow(dead_code)]
-    fn is_connection_error(&self, error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
-        is_connection_error_impl(error)
-    }
-
-    #[allow(dead_code)]
-    fn is_timeout_error(&self, error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
-        is_timeout_error_impl(error)
-    }
-
-    #[allow(dead_code)]
-    fn calculate_backoff(&self, attempt: u32, base_timeout_ms: u64) -> u64 {
-        calculate_backoff_impl(attempt, base_timeout_ms)
     }
 
     fn is_response_cacheable_headers(
