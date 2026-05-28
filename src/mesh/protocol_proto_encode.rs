@@ -634,60 +634,6 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
-            MeshMessage::QuorumStoreRequest {
-                request_id,
-                key,
-                value,
-                ttl_seconds,
-                origin_node_id,
-                origin_signature,
-                action,
-            } => proto::MeshMessage {
-                message_type: 100,
-                payload: Some(proto::mesh_message::Payload::QuorumStoreRequest(
-                    proto::QuorumStoreRequest {
-                        request_id: request_id.to_string(),
-                        key: key.to_string(),
-                        value: value.clone(),
-                        ttl_seconds: *ttl_seconds,
-                        origin_node_id: origin_node_id.to_string(),
-                        origin_signature: origin_signature.clone(),
-                        action: *action as u32,
-                    },
-                )),
-            },
-            MeshMessage::QuorumSignatureResponse {
-                request_id,
-                key,
-                signature,
-                signer_public_key,
-            } => proto::MeshMessage {
-                message_type: 101,
-                payload: Some(proto::mesh_message::Payload::QuorumSignatureResponse(
-                    proto::QuorumSignatureResponse {
-                        request_id: request_id.to_string(),
-                        key: key.to_string(),
-                        signature: signature.clone(),
-                        signer_public_key: signer_public_key.clone(),
-                    },
-                )),
-            },
-            MeshMessage::QuorumRejectionResponse {
-                request_id,
-                key,
-                reason,
-                evidence,
-            } => proto::MeshMessage {
-                message_type: 102,
-                payload: Some(proto::mesh_message::Payload::QuorumRejectionResponse(
-                    proto::QuorumRejectionResponse {
-                        request_id: request_id.to_string(),
-                        key: key.to_string(),
-                        reason: reason.to_string(),
-                        evidence: evidence.clone(),
-                    },
-                )),
-            },
             MeshMessage::KeepAlive => proto::MeshMessage {
                 message_type: 13,
                 payload: Some(proto::mesh_message::Payload::KeepAlive(proto::KeepAlive {})),
@@ -2725,35 +2671,6 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         namespace: namespace.as_str().to_string(),
                         key_id: key_id.to_string(),
                         timestamp: *timestamp,
-                    },
-                )),
-            },
-            MeshMessage::DhtRecordCommit {
-                request_id,
-                record,
-                quorum_signatures,
-                timestamp,
-                source_node_id,
-                signature,
-                signer_public_key,
-            } => proto::MeshMessage {
-                message_type: 171,
-                payload: Some(proto::mesh_message::Payload::DhtRecordCommit(
-                    proto::DhtRecordCommit {
-                        request_id: request_id.to_string(),
-                        record: Some(record.clone().into()),
-                        quorum_signatures: quorum_signatures
-                            .iter()
-                            .map(|s| proto::QuorumSignatureEntry {
-                                node_id: s.node_id.clone(),
-                                signature: s.signature.clone(),
-                                timestamp: s.timestamp,
-                            })
-                            .collect(),
-                        timestamp: *timestamp,
-                        source_node_id: source_node_id.to_string(),
-                        signature: signature.clone(),
-                        signer_public_key: signer_public_key.clone(),
                     },
                 )),
             },

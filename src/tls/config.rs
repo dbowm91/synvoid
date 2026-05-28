@@ -89,7 +89,9 @@ impl From<InternalTlsConfig> for crate::config::TlsConfig {
             tls_1_3_only: config.tls_1_3_only,
             enable_tls_12_fallback: config.enable_tls_12_fallback,
             ocsp_stapling_enabled: config.ocsp_stapling_enabled,
-            ocsp_response_path: config.ocsp_response_path.map(|p| p.to_string_lossy().into_owned()),
+            ocsp_response_path: config
+                .ocsp_response_path
+                .map(|p| p.to_string_lossy().into_owned()),
             port: config.port,
             acme: crate::config::AcmeConfig::from(config.acme),
             client_auth: crate::config::ClientAuthConfig::from(config.client_auth),
@@ -119,7 +121,9 @@ impl From<InternalClientAuthConfig> for crate::config::ClientAuthConfig {
     fn from(config: InternalClientAuthConfig) -> Self {
         Self {
             enabled: config.enabled,
-            ca_cert_path: config.ca_cert_path.map(|p| p.to_string_lossy().into_owned()),
+            ca_cert_path: config
+                .ca_cert_path
+                .map(|p| p.to_string_lossy().into_owned()),
         }
     }
 }

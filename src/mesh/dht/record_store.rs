@@ -279,7 +279,6 @@ pub struct RecordStoreManager {
     pub record_state: RwLock<RecordStoreState>,
     pub routing_state: RwLock<RoutingState>,
     pub metrics_state: RwLock<MetricsState>,
-    quorum_manager: Arc<RwLock<Option<Arc<crate::mesh::dht::quorum::QuorumManager>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -356,24 +355,7 @@ impl RecordStoreManager {
                 current_sync_interval: initial_interval,
                 recent_changes: Vec::new(),
             }),
-            quorum_manager: Arc::new(RwLock::new(None)),
         }
-    }
-
-    pub fn set_quorum_manager(&self, manager: Arc<crate::mesh::dht::quorum::QuorumManager>) {
-        let mut qm = self.quorum_manager.write();
-        *qm = Some(manager);
-    }
-
-    pub fn quorum_manager(
-        &self,
-    ) -> Arc<RwLock<Option<Arc<crate::mesh::dht::quorum::QuorumManager>>>> {
-        Arc::clone(&self.quorum_manager)
-    }
-
-    pub fn has_quorum_manager(&self) -> bool {
-        let qm = self.quorum_manager.read();
-        qm.is_some()
     }
 
     pub fn set_record_signer(&self, signing_key: Option<[u8; 32]>) {
@@ -590,7 +572,6 @@ impl Clone for RecordStoreManager {
             record_state: RwLock::new(record_state),
             routing_state: RwLock::new(routing_state),
             metrics_state: RwLock::new(metrics_state),
-            quorum_manager: self.quorum_manager.clone(),
         }
     }
 }

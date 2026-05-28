@@ -172,9 +172,6 @@ message MeshMessage {
         UpstreamUrlDenied upstream_url_denied = 19;
         UpstreamAnnounce upstream_announce = 20;
         UpstreamUpdate upstream_update = 21;
-        QuorumStoreRequest quorum_store_request = 140;
-        QuorumSignatureResponse quorum_signature_response = 141;
-        QuorumRejectionResponse quorum_rejection_response = 142;
         KeepAlive keep_alive = 22;
         KeepAliveAck keep_alive_ack = 23;
         Error error = 24;
@@ -288,7 +285,6 @@ message MeshMessage {
         NotLeader not_leader = 168;
         RaftCommitNotification raft_commit_notification = 169;
         YaraCompiledRuleAnnounce yara_compiled_rule_announce = 170;
-        DhtRecordCommit dht_record_commit = 171;
         JoinRequest join_request = 172;
         JoinResponse join_response = 173;
         ReplicaSyncRequest replica_sync_request = 174;
@@ -524,30 +520,6 @@ message UpstreamUpdate {
     string upstream_id = 1;
     UpstreamInfo info = 2;
     bytes signature = 3;
-}
-
-message QuorumStoreRequest {
-    string request_id = 1;
-    string key = 2;
-    bytes value = 3;
-    uint64 ttl_seconds = 4;
-    string origin_node_id = 5;
-    bytes origin_signature = 6;
-    uint32 action = 7;
-}
-
-message QuorumSignatureResponse {
-    string request_id = 1;
-    string key = 2;
-    bytes signature = 3;
-    optional string signer_public_key = 4;
-}
-
-message QuorumRejectionResponse {
-    string request_id = 1;
-    string key = 2;
-    string reason = 3;
-    optional bytes evidence = 4;
 }
 
 message KeepAlive {}
@@ -1003,16 +975,6 @@ message QuorumSignatureEntry {
     string node_id = 1;
     bytes signature = 2;
     uint64 timestamp = 3;
-}
-
-message DhtRecordCommit {
-    string request_id = 1;
-    DhtRecord record = 2;
-    repeated QuorumSignatureEntry quorum_signatures = 3;
-    uint64 timestamp = 4;
-    string source_node_id = 5;
-    bytes signature = 6;
-    optional string signer_public_key = 7;
 }
 
 message UpstreamVerificationQuery {

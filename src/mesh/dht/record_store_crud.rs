@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 impl RecordStoreManager {
     pub(crate) fn can_cache_on_edge(&self, key: &str) -> bool {
@@ -31,6 +30,16 @@ impl RecordStoreManager {
         }
 
         let is_global = self.is_global_node();
+        let dht_key = DhtKey::from_str(&record.key);
+
+        if dht_key.is_raft_global() {
+            tracing::warn!(
+                "Record store: rejected direct DHT write for Raft-owned key {}; use Raft write path",
+                record.key
+            );
+            crate::metrics::record_dht_store_operation(false);
+            return false;
+        }
 
         if record.signature.is_empty() {
             tracing::warn!("Record store: record for key {} must be signed", record.key);
@@ -84,7 +93,6 @@ impl RecordStoreManager {
             return self.store_record_global(record, is_local_origin);
         }
 
-        let dht_key = DhtKey::from_str(&record.key);
         let is_self_record = dht_key.is_self_record(&self.node_id);
 
         if let Some(ref verifier) = self.capability_verifier {
@@ -128,14 +136,6 @@ impl RecordStoreManager {
                 record.key,
                 source_reputation,
                 self.access_control.min_reputation_for_write()
-            );
-            return false;
-        }
-
-        if self.access_control.requires_global_signature(&record.key) {
-            tracing::warn!(
-                "Record store: key {} requires global signature, edge node cannot store",
-                record.key
             );
             return false;
         }
@@ -195,6 +195,17 @@ impl RecordStoreManager {
 
     pub(crate) fn store_record_global(&self, mut record: DhtRecord, is_local_origin: bool) -> bool {
         let now = crate::mesh::safe_unix_timestamp();
+        let dht_key = DhtKey::from_str(&record.key);
+
+        if dht_key.is_raft_global() {
+            tracing::warn!(
+                "Rejected direct DHT write for Raft-owned key {} from {}; use Raft write path",
+                record.key,
+                record.source_node_id
+            );
+            crate::metrics::record_dht_store_operation(false);
+            return false;
+        }
 
         let expires_at = record.timestamp.saturating_add(record.ttl_seconds);
         if now > expires_at {
@@ -287,7 +298,6 @@ impl RecordStoreManager {
                 return false;
             }
 
-            let dht_key = DhtKey::from_str(&record.key);
             let record_type = dht_key
                 .to_signed_record_type()
                 .unwrap_or(crate::mesh::dht::SignedRecordType::NodeInfo);
@@ -302,113 +312,6 @@ impl RecordStoreManager {
                 crate::metrics::record_dht_store_operation(false);
                 return false;
             }
-        }
-
-        let key_requires_quorum = self.access_control.requires_quorum(&record.key);
-
-        if key_requires_quorum && is_local_record {
-            if is_local_record {
-                let rs = self.record_state.read();
-                if let Some(ref signer) = rs.record_signer {
-                    let signed_record = crate::mesh::dht::SignedDhtRecord::new(
-                        record.key.clone(),
-                        record.value.clone(),
-                        record.source_node_id.clone(),
-                        crate::mesh::dht::SignedRecordType::NodeInfo,
-                    );
-
-                    if let Some(signature) = signer.sign(&signed_record) {
-                        record.signature = signature;
-                        record.signer_public_key = signer.get_verifying_key();
-                        tracing::debug!("Signed local record with Ed25519: {}", record.key);
-                    }
-                }
-            }
-
-            let key = record.key.clone();
-            {
-                let mut rs = self.record_state.write();
-                let version = rs.local_version;
-                rs.records.insert(
-                    record.key.clone(),
-                    DhtRecordEntry {
-                        record: record.clone(),
-                        local_origin: true,
-                        version,
-                        status: crate::mesh::protocol::DhtRecordStatus::PendingQuorum,
-                    },
-                );
-                rs.local_version += 1;
-                tracing::debug!("Stored record as PendingQuorum for key: {}", record.key);
-            }
-
-            let record_store = self.clone();
-            let key_clone = key.clone();
-            let value = record.value.clone();
-            let ttl = record.ttl_seconds;
-
-            tokio::spawn(async move {
-                if let Some(request_id) = record_store
-                    .start_quorum_request(key_clone.clone(), value, ttl)
-                    .await
-                {
-                    tracing::debug!(
-                        "Started quorum request {} for key: {}",
-                        request_id,
-                        key_clone
-                    );
-                    let cancelled = Arc::new(AtomicBool::new(false));
-                    let cancelled_clone = cancelled.clone();
-                    let mut attempts = 0;
-                    let max_attempts = 50;
-
-                    while attempts < max_attempts {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-                        if cancelled_clone.load(Ordering::Relaxed) {
-                            break;
-                        }
-
-                        if let Some(result) =
-                            record_store.check_quorum_completion(&request_id).await
-                        {
-                            match result {
-                                crate::mesh::dht::quorum::QuorumResult::Approved(
-                                    quorum_signatures,
-                                ) => {
-                                    tracing::info!(
-                                        "Quorum approved for key: {}, committing record",
-                                        key_clone
-                                    );
-                                    if record_store
-                                        .commit_record_after_quorum(&key_clone, &quorum_signatures)
-                                        .await
-                                    {
-                                        tracing::info!(
-                                            "Record committed after quorum for key: {}",
-                                            key_clone
-                                        );
-                                    }
-                                    break;
-                                }
-                                crate::mesh::dht::quorum::QuorumResult::Rejected { .. } => {
-                                    tracing::warn!("Quorum rejected for key: {}", key_clone);
-                                    record_store.abort_pending_record(&key_clone);
-                                    break;
-                                }
-                                crate::mesh::dht::quorum::QuorumResult::Timeout { .. } => {
-                                    tracing::warn!("Quorum timeout for key: {}", key_clone);
-                                    record_store.abort_pending_record(&key_clone);
-                                    break;
-                                }
-                            }
-                        }
-                        attempts += 1;
-                    }
-                }
-            });
-
-            return true;
         }
 
         if is_local_record {
@@ -429,39 +332,8 @@ impl RecordStoreManager {
             }
         }
 
-        let key_requires_quorum_proof = self.access_control.requires_quorum_proof(&record.key);
-
-        if key_requires_quorum_proof && !is_local_record {
-            if record.quorum_proof.is_empty() {
-                tracing::warn!(
-                    "Rejected record in quorum-required namespace {} from node {}: no quorum proof attached",
-                    record.key,
-                    record.source_node_id
-                );
-                crate::metrics::record_dht_store_operation(false);
-                return false;
-            }
-
-            let (verified, total_global_nodes) = self.verify_quorum_proof_authoritative(&record);
-            if !verified {
-                tracing::warn!(
-                    "Rejected record in quorum-required namespace {} from node {}: quorum proof verification failed",
-                    record.key,
-                    record.source_node_id
-                );
-                crate::metrics::record_dht_store_operation(false);
-                return false;
-            }
-            tracing::debug!(
-                "Quorum proof verified for key {} ({} global nodes)",
-                record.key,
-                total_global_nodes
-            );
-        }
-
         let mut rs = self.record_state.write();
 
-        let dht_key = DhtKey::from_str(&record.key);
         let record_type = dht_key.to_signed_record_type();
 
         let should_replace = match record_type {
@@ -482,36 +354,17 @@ impl RecordStoreManager {
             _ => match rs.records.get(&record.key) {
                 None => true,
                 Some(existing_entry) => {
-                    if existing_entry.status
-                        == crate::mesh::protocol::DhtRecordStatus::PendingQuorum
-                        && !is_local_record
-                    {
-                        if key_requires_quorum_proof && record.quorum_proof.is_empty() {
-                            tracing::warn!(
-                                "Rejected passive confirmation for PendingQuorum record {}: quorum proof required but missing from gossip",
-                                record.key
-                            );
-                            return false;
-                        }
-                        tracing::info!(
-                            "Confirming record {} from PendingQuorum to Live via Sync/Gossip (quorum_proof={})",
-                            record.key,
-                            if record.quorum_proof.is_empty() { "none" } else { "present" }
-                        );
-                        true
-                    } else {
-                        let existing_key = (
-                            existing_entry.record.timestamp,
-                            existing_entry.record.sequence_number,
-                            existing_entry.record.source_node_id.clone(),
-                        );
-                        let new_key = (
-                            record.timestamp,
-                            record.sequence_number,
-                            record.source_node_id.clone(),
-                        );
-                        new_key > existing_key
-                    }
+                    let existing_key = (
+                        existing_entry.record.timestamp,
+                        existing_entry.record.sequence_number,
+                        existing_entry.record.source_node_id.clone(),
+                    );
+                    let new_key = (
+                        record.timestamp,
+                        record.sequence_number,
+                        record.source_node_id.clone(),
+                    );
+                    new_key > existing_key
                 }
             },
         };
@@ -650,24 +503,17 @@ impl RecordStoreManager {
             return None;
         }
 
-        let (record, is_expired, is_pending_quorum) = {
+        let (record, is_expired) = {
             let rs = self.record_state.read();
             match rs.records.get(key) {
                 Some(entry) => {
-                    let is_pending =
-                        entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum;
                     let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
-                    (Some(entry.record.clone()), now >= expires_at, is_pending)
+                    (Some(entry.record.clone()), now >= expires_at)
                 }
-                None => (None, false, false),
+                None => (None, false),
             }
         };
-
-        if is_pending_quorum {
-            crate::metrics::record_dht_get_operation(false);
-            return None;
-        }
 
         if let Some(record) = record {
             if !is_expired {
@@ -693,9 +539,6 @@ impl RecordStoreManager {
         if self.is_global_node() {
             if let Some(ref disk_store) = self.record_state.read().disk_store {
                 if let Some(entry) = disk_store.get(key) {
-                    if entry.status == crate::mesh::protocol::DhtRecordStatus::PendingQuorum {
-                        return None;
-                    }
                     let now = crate::mesh::safe_unix_timestamp();
                     let expires_at = entry.record.timestamp + entry.record.ttl_seconds;
                     if now < expires_at {
@@ -845,31 +688,6 @@ impl RecordStoreManager {
                     record.key
                 );
                 continue;
-            }
-
-            if self.access_control.requires_quorum_proof(&record.key) {
-                if record.quorum_proof.is_empty() {
-                    tracing::warn!(
-                        "Skipping sync record in quorum-required namespace {}: no quorum proof",
-                        record.key
-                    );
-                    continue;
-                }
-                let (verified, total_global_nodes) =
-                    self.verify_quorum_proof_authoritative(&record);
-                if !verified {
-                    tracing::warn!(
-                        "Skipping sync record in quorum-required namespace {}: quorum proof verification failed ({} global nodes)",
-                        record.key,
-                        total_global_nodes
-                    );
-                    continue;
-                }
-                tracing::debug!(
-                    "Quorum proof verified for sync record key {} ({} global nodes)",
-                    record.key,
-                    total_global_nodes
-                );
             }
 
             if self

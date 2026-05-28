@@ -116,6 +116,22 @@ pub enum DhtKey {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordAuthority {
+    /// Strongly consistent global registry state. Writes must go through Raft.
+    RaftGlobal,
+    /// Signed feed/content published by authorized producers and cached via DHT.
+    SignedFeed,
+    /// Record may only be authored by the node named in the key.
+    NodeSelf,
+    /// Short-lived telemetry/discovery data distributed through DHT.
+    EphemeralTelemetry,
+    /// Content-addressed cache data. Integrity comes from the key/hash binding.
+    ContentAddressedCache,
+    /// Public cache/discovery data that does not define global truth.
+    PublicCache,
+}
+
 impl DhtKey {
     pub fn organization(org_id: &str) -> Self {
         DhtKey::Organization(org_id.to_string())
@@ -713,6 +729,66 @@ impl DhtKey {
         }
     }
 
+    pub fn authority(&self) -> RecordAuthority {
+        match self {
+            DhtKey::SiteScoped { inner_key, .. } => DhtKey::from_str(inner_key).authority(),
+            DhtKey::Organization(_)
+            | DhtKey::OrgPublicKey(_)
+            | DhtKey::TierKey(_, _)
+            | DhtKey::MemberCertificate(_, _)
+            | DhtKey::GlobalNodeList
+            | DhtKey::OrgNameReservation(_)
+            | DhtKey::VerifiedUpstream(_)
+            | DhtKey::TierClaim(_)
+            | DhtKey::DnsDomainRegistration(_)
+            | DhtKey::GenesisKeyTransition { .. }
+            | DhtKey::RevokedGlobalNode { .. }
+            | DhtKey::GlobalNodeProof { .. } => RecordAuthority::RaftGlobal,
+
+            DhtKey::NodeHealth(_)
+            | DhtKey::NodeLoad(_)
+            | DhtKey::GlobalNodeHeartbeat(_)
+            | DhtKey::CapabilityAttestation { .. }
+            | DhtKey::EdgeAttestation { .. } => RecordAuthority::NodeSelf,
+
+            DhtKey::ThreatIndicator(_, _)
+            | DhtKey::YaraRulesManifest { .. }
+            | DhtKey::YaraRuleContent { .. }
+            | DhtKey::YaraChunk { .. }
+            | DhtKey::YaraCompiledRuleContent { .. }
+            | DhtKey::YaraCompiledChunk { .. } => RecordAuthority::SignedFeed,
+
+            DhtKey::TransformedContent { .. } | DhtKey::PoisonedImage { .. } => {
+                RecordAuthority::ContentAddressedCache
+            }
+
+            DhtKey::NodeInfo(_)
+            | DhtKey::GlobalNodePublicKey(_)
+            | DhtKey::NodeCapability { .. }
+            | DhtKey::OriginReachability { .. }
+            | DhtKey::VerificationTask { .. }
+            | DhtKey::OriginPenalty { .. } => RecordAuthority::EphemeralTelemetry,
+
+            DhtKey::Upstream(_)
+            | DhtKey::DnsZone(_)
+            | DhtKey::DnsRecord(_, _)
+            | DhtKey::AnycastNode(_)
+            | DhtKey::UpstreamImageProtection(_)
+            | DhtKey::UpstreamMinification(_)
+            | DhtKey::UpstreamCompression(_)
+            | DhtKey::UpstreamProxyCachePreferences(_)
+            | DhtKey::SiteImagePoisonConfig(_)
+            | DhtKey::SiteContentVersion(_)
+            | DhtKey::UpstreamOwnershipChallenge(_)
+            | DhtKey::ServerlessFunction { .. }
+            | DhtKey::BehavioralFingerprint { .. } => RecordAuthority::PublicCache,
+        }
+    }
+
+    pub fn is_raft_global(&self) -> bool {
+        self.authority() == RecordAuthority::RaftGlobal
+    }
+
     pub fn is_self_record(&self, node_id: &str) -> bool {
         match self {
             DhtKey::SiteScoped { inner_key, .. } => {
@@ -922,5 +998,37 @@ mod tests {
         assert!(DhtKey::upstream("test").is_public());
         assert!(DhtKey::node_info("test").is_public());
         assert!(!DhtKey::organization("test").is_public());
+    }
+
+    #[test]
+    fn test_record_authority_classification() {
+        assert_eq!(
+            DhtKey::organization("test").authority(),
+            RecordAuthority::RaftGlobal
+        );
+        assert_eq!(
+            DhtKey::verified_upstream("example.com").authority(),
+            RecordAuthority::RaftGlobal
+        );
+        assert_eq!(
+            DhtKey::node_health("node-1").authority(),
+            RecordAuthority::NodeSelf
+        );
+        assert_eq!(
+            DhtKey::threat_indicator("indicator", "ip").authority(),
+            RecordAuthority::SignedFeed
+        );
+        assert_eq!(
+            DhtKey::transformed_content("site", "hash", "flags").authority(),
+            RecordAuthority::ContentAddressedCache
+        );
+        assert_eq!(
+            DhtKey::node_info("node-1").authority(),
+            RecordAuthority::EphemeralTelemetry
+        );
+        assert_eq!(
+            DhtKey::upstream("example.com").authority(),
+            RecordAuthority::PublicCache
+        );
     }
 }

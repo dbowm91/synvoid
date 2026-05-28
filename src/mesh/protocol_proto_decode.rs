@@ -454,38 +454,6 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     .map_err(|_| ProtocolError::ConversionFailed("upstream info"))?,
                 signature: u.signature,
             }),
-            proto::mesh_message::Payload::QuorumStoreRequest(q) => {
-                Ok(MeshMessage::QuorumStoreRequest {
-                    request_id: q.request_id.into(),
-                    key: q.key.into(),
-                    value: q.value.clone(),
-                    ttl_seconds: q.ttl_seconds,
-                    origin_node_id: q.origin_node_id.into(),
-                    origin_signature: q.origin_signature.clone(),
-                    action: match q.action {
-                        0 => AnnounceAction::Add,
-                        1 => AnnounceAction::Update,
-                        2 => AnnounceAction::Remove,
-                        _ => AnnounceAction::Add,
-                    },
-                })
-            }
-            proto::mesh_message::Payload::QuorumSignatureResponse(q) => {
-                Ok(MeshMessage::QuorumSignatureResponse {
-                    request_id: q.request_id.into(),
-                    key: q.key.into(),
-                    signature: q.signature.clone(),
-                    signer_public_key: q.signer_public_key.clone(),
-                })
-            }
-            proto::mesh_message::Payload::QuorumRejectionResponse(q) => {
-                Ok(MeshMessage::QuorumRejectionResponse {
-                    request_id: q.request_id.into(),
-                    key: q.key.into(),
-                    reason: q.reason.into(),
-                    evidence: q.evidence.clone(),
-                })
-            }
             proto::mesh_message::Payload::KeepAlive(_) => Ok(MeshMessage::KeepAlive),
             proto::mesh_message::Payload::KeepAliveAck(_) => Ok(MeshMessage::KeepAliveAck),
             proto::mesh_message::Payload::LookupRequest(r) => Ok(MeshMessage::LookupRequest {
@@ -1803,42 +1771,6 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         .unwrap_or(crate::mesh::raft::state_machine::Namespace::Org),
                     key_id: r.key_id.into(),
                     timestamp: r.timestamp,
-                })
-            }
-            proto::mesh_message::Payload::DhtRecordCommit(r) => {
-                let record =
-                    r.record
-                        .map(|rec| rec.into())
-                        .unwrap_or(crate::mesh::protocol::DhtRecord {
-                            key: String::new(),
-                            value: Vec::new(),
-                            timestamp: 0,
-                            sequence_number: 0,
-                            ttl_seconds: 0,
-                            source_node_id: String::new(),
-                            signature: Vec::new(),
-                            signer_public_key: None,
-                            content_hash: Vec::new(),
-                            quorum_proof: Vec::new(),
-                            request_id: None,
-                        });
-                Ok(MeshMessage::DhtRecordCommit {
-                    request_id: r.request_id.into(),
-                    record,
-                    quorum_signatures: r
-                        .quorum_signatures
-                        .into_iter()
-                        .map(|s| crate::mesh::protocol::QuorumSignatureProto {
-                            node_id: s.node_id,
-                            signature: s.signature,
-                            timestamp: s.timestamp,
-                            signer_public_key: None,
-                        })
-                        .collect(),
-                    timestamp: r.timestamp,
-                    source_node_id: r.source_node_id.into(),
-                    signature: r.signature,
-                    signer_public_key: r.signer_public_key,
                 })
             }
             proto::mesh_message::Payload::JoinRequest(r) => Ok(MeshMessage::JoinRequest {

@@ -1374,18 +1374,6 @@ impl MeshTransport {
                 transport_arc.record_store.clone(),
             ));
 
-            if let Some(ref rs) = transport_arc.record_store {
-                let qm_lock = rs.quorum_manager();
-                let qm_guard = qm_lock.read();
-                if let Some(qm) = qm_guard.as_ref() {
-                    let rc = raft_client.clone();
-                    let qm_clone = qm.clone();
-                    tokio::spawn(async move {
-                        qm_clone.set_raft_client(rc).await;
-                    });
-                }
-            }
-
             if let Some(ref manager) = *transport_arc.edge_replica_manager.read() {
                 let rc = raft_client.clone();
                 let m = manager.clone();

@@ -176,7 +176,7 @@ impl RaftAwareClient {
             _ => {
                 return Err(RaftAwareClientError::InvalidResponse(
                     "Failed to get sync response".to_string(),
-                ))
+                ));
             }
         }
 
@@ -195,7 +195,9 @@ impl RaftAwareClient {
             {
                 Ok(res) => res,
                 Err(_) => {
-                    tracing::warn!("Local Raft write timed out - possible quorum loss. Operating in degradation mode.");
+                    tracing::warn!(
+                        "Local Raft write timed out - possible quorum loss. Operating in degradation mode."
+                    );
                     Err(RaftAwareClientError::RaftWriteFailed("Timeout".into()))
                 }
             }
@@ -205,7 +207,9 @@ impl RaftAwareClient {
             {
                 Ok(res) => res,
                 Err(_) => {
-                    tracing::warn!("Remote Raft write timed out - possible quorum loss. Operating in degradation mode.");
+                    tracing::warn!(
+                        "Remote Raft write timed out - possible quorum loss. Operating in degradation mode."
+                    );
                     Err(RaftAwareClientError::RaftUnreachable)
                 }
             }
@@ -480,8 +484,8 @@ impl RaftAwareClient {
     ) -> Result<ConsistentReadResult, RaftAwareClientError> {
         let global_nodes = self.get_global_node_ids().await;
         if global_nodes.is_empty() {
-            tracing::warn!("No global nodes known for consistent read, falling back to DHT");
-            return self.fallback_to_dht(namespace, key).await;
+            tracing::warn!("No global nodes known for consistent read");
+            return Err(RaftAwareClientError::NoGlobalNodes);
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -548,13 +552,13 @@ impl RaftAwareClient {
         }
 
         tracing::warn!(
-            "All Global nodes failed for consistent read, falling back to DHT: {:?}",
+            "All Global nodes failed for consistent read: {:?}",
             last_error
         );
-        self.fallback_to_dht(namespace, key).await
+        Err(last_error)
     }
 
-    async fn fallback_to_dht(
+    pub async fn stale_read_cache(
         &self,
         namespace: Namespace,
         key: &str,

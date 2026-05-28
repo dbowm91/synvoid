@@ -247,45 +247,6 @@ impl DiskRecordStore {
         Ok(())
     }
 
-    pub fn get_pending_quorum_records(&self) -> Vec<(String, DhtRecordEntry)> {
-        let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare("SELECT key, value, timestamp, sequence_number, ttl_seconds, source_node_id, content_hash, signature, signer_public_key, quorum_proof, request_id, local_origin, version, status FROM dht_records WHERE status = ?")
-            .unwrap();
-        let rows = stmt
-            .query_map(params![DhtRecordStatus::PendingQuorum as i32], |row| {
-                let quorum_proof_bytes: Option<Vec<u8>> = row.get(9)?;
-                let quorum_proof = quorum_proof_bytes
-                    .map(|b| crate::serialization::deserialize(&b).unwrap_or_default())
-                    .unwrap_or_default();
-                Ok(DhtRecordEntry {
-                    record: DhtRecord {
-                        key: row.get(0)?,
-                        value: row.get(1)?,
-                        timestamp: row.get(2)?,
-                        sequence_number: row.get(3)?,
-                        ttl_seconds: row.get(4)?,
-                        source_node_id: row.get(5)?,
-                        signature: row.get::<_, Option<Vec<u8>>>(7)?.unwrap_or_default(),
-                        signer_public_key: row.get(8)?,
-                        content_hash: row.get(6)?,
-                        quorum_proof,
-                        request_id: row.get(10)?,
-                    },
-                    local_origin: row.get::<_, i32>(11)? != 0,
-                    version: row.get::<_, i64>(12)? as u64,
-                    status: DhtRecordStatus::from_u8(row.get::<_, i32>(13)? as u8),
-                })
-            })
-            .unwrap();
-
-        let mut result = Vec::new();
-        for row in rows.flatten() {
-            result.push((row.record.key.clone(), row));
-        }
-        result
-    }
-
     pub fn vacuum(&self) -> Result<(), String> {
         let conn = self.conn.lock();
         conn.execute_batch("VACUUM")

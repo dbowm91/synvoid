@@ -34,7 +34,7 @@ Global nodes form a Raft cluster for strong consistency. Key files:
 
 **Namespaces**: Org, Intel, Revocation (defined in `state_machine.rs`)
 
-**DHT Fallback**: When Raft is unavailable, `RaftAwareClient::fallback_to_dht()` provides eventual consistency via DHT lookups.
+**Explicit Stale Cache Reads**: Raft reads stay strict; use `RaftAwareClient::stale_read_cache()` only when callers explicitly want eventual/stale DHT-backed data.
 
 **Streaming Snapshots (W11.2)**: Raft snapshots use a streaming binary format to avoid OOM on large state. Key methods:
 - `GlobalRegistryStateMachine::streaming_serialize()` — iterates SQLite rows, serializes one entry at a time
@@ -77,12 +77,9 @@ All DHT records are validated against future timestamps using `validate_record_t
 - `DhtRecordAnnounce` — validates `source_node_id` against peer TLS identity
 - `DhtSyncRequest` — validates `node_id` against peer TLS identity
 - `DhtAntiEntropyRequest` — validates `node_id` against peer TLS identity
-- `QuorumStoreRequest` — validates `origin_node_id` against peer TLS identity
-- `DhtRecordCommit` — validates `source_node_id` against peer TLS identity
 
-**Still has gaps** (per signed.rs:42-48):
+**Still has gaps** (per signed.rs comments):
 - `DhtRecordPush`: timestamp ignored, lacks envelope signature
-- `QuorumSignatureResp`: response-only message, no source_node_id field to validate
 
 ```rust
 // Helper method added to MeshTransport
@@ -115,39 +112,14 @@ Key files:
 - `src/mesh/dht/signed.rs` — IngressContext, verify_for_ingress()
 - `src/mesh/protocol.rs` — DhtRecordVerificationError enum
 
-## DHT Regional Quorum (W11.1)
+## DHT Quorum Deprecation (2026-05-28)
 
-DHT quorum supports two modes via `QuorumMode`:
-- **Full** (default): Requires 2/3+1 of ALL global nodes — doesn't scale beyond ~100 nodes.
-- **Regional**: Selects closest N global nodes by latency, computes quorum from that subset only.
+The legacy DHT quorum/two-phase commit flow is deprecated in runtime paths:
+- `DhtRecordStatus` is now effectively `Live` only.
+- Deprecated quorum/commit mesh message variants were removed from protocol and `mesh.proto`.
+- Quorum request/response handling methods were removed from `record_store_message.rs`.
 
-Key files:
-- `src/mesh/dht/quorum.rs` — `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo`, `QuorumManager` with Raft write completion via oneshot channel
-- `src/mesh/dht/record_store.rs` — `RecordStoreConfig` fields: `regional_quorum_enabled`, `regional_quorum_max_nodes`, `regional_quorum_min_nodes`
-- `src/mesh/dht/record_store_message.rs` — `start_quorum_request()` uses regional mode when enabled
-
-Configuration: Set `regional_quorum_enabled = true` in `RecordStoreConfig` with `regional_quorum_max_nodes` (default 20) and `regional_quorum_min_nodes` (default 3). Disabled by default for backward compatibility.
-
-## DHT Two-Phase Commit (W11.3)
-
-DHT records requiring quorum use a two-phase commit to prevent gossip of unconfirmed state:
-
-1. **Phase 1 (Pending)**: Record is stored with `DhtRecordStatus::PendingQuorum` status immediately when `store_record_global()` is called. The record is hidden from `get_record()` and `get_all_records()` but exists locally.
-2. **Phase 2 (Commit)**: When quorum approves, `commit_record_after_quorum()` transitions status to `Live`, queues for announce, and sends `DhtRecordCommit` to peers.
-
-Key types:
-- `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `src/mesh/protocol.rs`
-- `DhtRecordCommit` message variant in `MeshMessage` for signaling commitment to peers
-- `QuorumSignatureProto` for serializing quorum signatures in commit messages
-
-Key methods:
-- `store_record_global()` — stores quorum-requiring records as `PendingQuorum` before starting quorum request
-- `commit_record_after_quorum()` — transitions to `Live`, announces, sends `DhtRecordCommit` to peers
-- `abort_pending_record()` — removes record on rejection/timeout
-- `get_record()` / `get_all_records()` — filter out `PendingQuorum` records
-- `handle_record_commit()` — handles incoming `DhtRecordCommit` messages on receiving nodes
-
-All 84 `mesh::dht` tests pass with this implementation.
+Global consistency for system/global namespaces is now enforced via Raft-owned key routing and write rejection on direct DHT paths.
 
 ## Async PQC Verification Pool (W11.4)
 
@@ -206,27 +178,22 @@ SQLite schema uses WAL mode for concurrent read access. See `skills/dht_persiste
 Key files:
 - `src/mesh/dht/record_store_crud.rs` — `get_record()`, `store_record_global()`
 - `src/mesh/dht/record_store.rs` — `warmup_from_disk()`
-- `src/mesh/dht/record_store_message.rs` — `commit_record_after_quorum()`, `abort_pending_record()`
 
 L1 read-through: `get_record()` checks disk if record not in memory (global nodes only)
 Write-through: `store_record_global()` writes to both L1 and L2
-Quorum sync: `commit_record_after_quorum()` promotes to Live in both stores; `abort_pending_record()` removes from both
 
 Startup: `warmup_from_disk()` rebuilds Merkle tree from disk keys without loading all values into RAM.
 
 ## Real-world Latency Tracking (W11.8)
 
-Regional quorum now uses rolling average RTT instead of last measurement:
-
+Rolling average RTT is still tracked and exposed:
 - `ShardedPeerStore::record_latency()` maintains last 20 RTT samples per node
 - `update_peer_latency()` computes rolling average and updates `PeerState.latency_ms`
 - `MeshTopology::get_average_latency_for_node()` exposes rolling average
-- `start_quorum_request()` uses average latency for `select_regional_nodes()` when available
 
 Key files:
 - `src/mesh/topology/types.rs` — `ShardedPeerStore::update_peer_latency()`, `get_average_latency()`
 - `src/mesh/topology.rs` — `MeshTopology::get_average_latency_for_node()`
-- `src/mesh/dht/record_store_message.rs` — Regional node selection uses average latency
 
 ## Incremental Merkle Updates (W12.1)
 
@@ -243,21 +210,18 @@ Key files:
 - `src/mesh/dht/record_store_message.rs` — `update_merkle_incremental()`, integrity worker in `start_background_tasks()`
 - `src/mesh/dht/record_store_crud.rs` — Uses incremental updates in `store_record_global()`, `store_record_edge_cache()`
 
-## Cryptographically-Enforced Quorum Gossip (W12.2)
+## Cryptographically-Enforced Gossip Validation (W12.2)
 
-Records in sensitive namespaces (`verified_upstream:`, `tier_claim:`) require a `quorum_proof` to be accepted via gossip/sync/commit. This prevents a single compromised node from promoting a `PendingQuorum` record to `Live` without quorum approval.
+Records in sensitive namespaces (`verified_upstream:`, `tier_claim:`) still require `quorum_proof` validation on ingress paths that accept those records.
 
 Key concepts:
-- `DhtRecord.quorum_proof: Vec<QuorumSignatureProto>` — Attached during `commit_record_after_quorum()`, propagated via `DhtRecordCommit` and sync
+- `DhtRecord.quorum_proof: Vec<QuorumSignatureProto>` — propagated via announce/sync/push record flows
 - `DhtAccessControl::requires_quorum_proof(key)` — Returns true for `verified_upstream:*` and `tier_claim:*`
 - `signed::verify_quorum_proof(record, global_node_count)` — Checks distinct signer count >= 2/3+1 threshold (min 2)
-- Passive confirmation (`PendingQuorum` → `Live` via gossip) is now quorum-proof-enforced for sensitive namespaces
-
 Key files:
 - `src/mesh/protocol.rs:1541` — `DhtRecord.quorum_proof` field
 - `src/mesh/dht/signed.rs` — `verify_quorum_proof()`, `MIN_QUORUM_PROOF_SIGNATURES`
 - `src/mesh/dht/record_store_crud.rs` — Quorum-proof enforcement in `store_record_global()` and `apply_sync()`
-- `src/mesh/dht/record_store_message.rs` — `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies it
 
 ## Raft/SQLite Storage Optimization (W12.3)
 
@@ -272,16 +236,7 @@ Key file:
 
 ## Durable Quorum Recovery (W12.4)
 
-`RecoveryWorker` scans for `PendingQuorum` records on startup and re-initializes quorum requests:
-
-- Scans disk store for records with `status == PendingQuorum` via `get_pending_quorum_records()`
-- Re-initializes quorum requests for non-expired records
-- Removes expired records during recovery
-
-Key files:
-- `src/mesh/dht/record_store_persist.rs` — `start_recovery_worker()`
-- `src/mesh/dht/record_store_disk.rs:230` — `get_pending_quorum_records()`
-- `src/mesh/dht/record_store_message.rs:482` — Called from `start_background_tasks()`
+Recovery worker logic for PendingQuorum restart is deprecated and currently disabled.
 
 ## Trust-Rooted Immutability (W12.5)
 
@@ -502,7 +457,7 @@ Key files:
 - Changed `oneshot::channel()` to `oneshot::channel::<Result<(), RaftAwareClientError>>()`
 - `is_request_complete()` now receives actual result via `try_recv()` and tracks success in `QuorumRequest`
 - Added `raft_write_completed: bool` and `raft_write_success: bool` fields to `QuorumRequest`
-- `check_quorum_completion()` at `record_store_message.rs:1319-1345` now treats successful DHT threshold but failed Raft write as timeout
+- Legacy quorum completion handling remains in `dht/quorum.rs`; runtime record-store quorum flow is now deprecated
 
 ### DHT Ingress Verification Gaps (Deferred - Architectural)
 
@@ -510,9 +465,6 @@ Key files:
 - DhtSyncRequest (no auth)
 - DhtAntiEntropyRequest (pk unused)
 - DhtRecordPush (no ts)
-- DhtRecordCommit (no envsig)
-- QuorumStoreRequest (no verify)
-- QuorumSignatureResp (no verify)
 
 These L1-L5 identity hierarchy gaps require future architectural work. Known limitation.
 

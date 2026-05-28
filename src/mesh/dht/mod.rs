@@ -689,9 +689,7 @@ pub struct DhtPeerInfo {
 pub struct DhtAccessControl {
     require_global_for_privileged: bool,
     allowed_keys_for_edge: Vec<String>,
-    global_signature_required_keys: Vec<String>,
     self_only_keys: Vec<String>,
-    immutability_required_keys: Vec<String>,
     authorized_genesis_keys: Vec<String>,
     min_reputation_for_write: i64,
 }
@@ -711,18 +709,10 @@ impl DhtAccessControl {
             allowed_keys_for_edge = allowed.clone();
         }
 
-        let global_signature_required_keys =
-            vec!["verified_upstream:".to_string(), "tier_claim:".to_string()];
-
         let self_only_keys = vec![
             "node_health:".to_string(),
             "node_load:".to_string(),
             "capability_attestation:".to_string(),
-        ];
-
-        let immutability_required_keys = vec![
-            "genesis_key_transition:".to_string(),
-            "revoked_global_node:".to_string(),
         ];
 
         let authorized_genesis_keys = mesh_config
@@ -740,9 +730,7 @@ impl DhtAccessControl {
         Self {
             require_global_for_privileged: true,
             allowed_keys_for_edge,
-            global_signature_required_keys,
             self_only_keys,
-            immutability_required_keys,
             authorized_genesis_keys,
             min_reputation_for_write: mesh_config
                 .dht
@@ -785,14 +773,12 @@ impl DhtAccessControl {
             return true;
         }
 
-        for prefix in &self.global_signature_required_keys {
-            if key.starts_with(prefix) {
-                tracing::debug!(
-                    "Key {} requires global node signature, edge node cannot store",
-                    key
-                );
-                return false;
-            }
+        if DhtKey::from_str(key).is_raft_global() {
+            tracing::debug!(
+                "Key {} is Raft-owned global state, edge node cannot store directly",
+                key
+            );
+            return false;
         }
 
         for prefix in &self.self_only_keys {
@@ -816,21 +802,13 @@ impl DhtAccessControl {
     }
 
     pub fn requires_global_signature(&self, key: &str) -> bool {
-        for prefix in &self.global_signature_required_keys {
-            if key.starts_with(prefix) {
-                return true;
-            }
-        }
-        false
+        let dht_key = DhtKey::from_str(key);
+        dht_key.is_raft_global()
     }
 
     pub fn requires_quorum(&self, key: &str) -> bool {
-        for prefix in &self.global_signature_required_keys {
-            if key.starts_with(prefix) {
-                return true;
-            }
-        }
-        false
+        let dht_key = DhtKey::from_str(key);
+        dht_key.is_raft_global()
     }
 
     pub fn requires_quorum_proof(&self, key: &str) -> bool {
@@ -851,12 +829,8 @@ impl DhtAccessControl {
     }
 
     pub fn requires_immutability_trust_anchor(&self, key: &str) -> bool {
-        for prefix in &self.immutability_required_keys {
-            if key.starts_with(prefix) {
-                return true;
-            }
-        }
-        false
+        let dht_key = DhtKey::from_str(key);
+        dht_key.is_raft_global()
     }
 }
 

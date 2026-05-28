@@ -527,27 +527,6 @@ pub enum MeshMessage {
         info: UpstreamInfo,
         signature: Vec<u8>,
     },
-    QuorumStoreRequest {
-        request_id: ArcStr,
-        key: ArcStr,
-        value: Vec<u8>,
-        ttl_seconds: u64,
-        origin_node_id: ArcStr,
-        origin_signature: Vec<u8>,
-        action: AnnounceAction,
-    },
-    QuorumSignatureResponse {
-        request_id: ArcStr,
-        key: ArcStr,
-        signature: Vec<u8>,
-        signer_public_key: Option<String>,
-    },
-    QuorumRejectionResponse {
-        request_id: ArcStr,
-        key: ArcStr,
-        reason: ArcStr,
-        evidence: Option<Vec<u8>>,
-    },
     ReplicaSyncRequest {
         request_id: ArcStr,
         last_sync_index: u64,
@@ -1244,15 +1223,6 @@ pub enum MeshMessage {
         key_id: ArcStr,
         timestamp: u64,
     },
-    DhtRecordCommit {
-        request_id: ArcStr,
-        record: DhtRecord,
-        quorum_signatures: Vec<QuorumSignatureProto>,
-        timestamp: u64,
-        source_node_id: ArcStr,
-        signature: Vec<u8>,
-        signer_public_key: Option<String>,
-    },
     JoinRequest {
         request_id: ArcStr,
         public_key: ArcStr,
@@ -1768,22 +1738,15 @@ pub enum DhtRecordVerificationError {
 pub enum DhtRecordStatus {
     #[default]
     Live,
-    PendingQuorum,
 }
 
 impl DhtRecordStatus {
     pub fn to_u8(&self) -> u8 {
-        match self {
-            DhtRecordStatus::Live => 0,
-            DhtRecordStatus::PendingQuorum => 1,
-        }
+        0
     }
 
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => DhtRecordStatus::PendingQuorum,
-            _ => DhtRecordStatus::Live,
-        }
+    pub fn from_u8(_v: u8) -> Self {
+        DhtRecordStatus::Live
     }
 }
 

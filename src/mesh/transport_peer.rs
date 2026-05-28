@@ -1098,56 +1098,6 @@ impl MeshTransport {
                     let _ = self.send_datagram_to_peer(peer_id, &response).await;
                 }
             }
-            MeshMessage::QuorumStoreRequest {
-                request_id,
-                key,
-                value,
-                ttl_seconds,
-                origin_node_id,
-                origin_signature,
-                action: _,
-            } => {
-                if self
-                    .validate_peer_node_id_binding(peer_id, &origin_node_id)
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "QuorumStoreRequest rejected: origin_node_id {} doesn't match peer {}",
-                        origin_node_id,
-                        peer_id
-                    );
-                    return Ok(());
-                }
-                if let Some(ref record_store) = self.record_store {
-                    let record = crate::mesh::protocol::DhtRecord {
-                        key: key.to_string(),
-                        value: value.clone(),
-                        timestamp: crate::mesh::safe_unix_timestamp(),
-                        sequence_number: 0,
-                        ttl_seconds,
-                        source_node_id: origin_node_id.to_string(),
-                        signature: origin_signature.clone(),
-                        signer_public_key: None,
-                        content_hash: {
-                            use sha2::{Digest, Sha256};
-                            let mut hasher = Sha256::new();
-                            hasher.update(&value);
-                            hasher.finalize().to_vec()
-                        },
-                        quorum_proof: Vec::new(),
-                        request_id: None,
-                    };
-
-                    if record_store
-                        .handle_quorum_store_request(&request_id.to_string(), peer_id, record)
-                        .await
-                    {
-                        tracing::debug!("Quorum store request accepted for key: {}", key);
-                    } else {
-                        tracing::debug!("Quorum store request rejected for key: {}", key);
-                    }
-                }
-            }
             MeshMessage::ReplicaSyncRequest {
                 request_id,
                 last_sync_index,
@@ -1158,64 +1108,6 @@ impl MeshTransport {
             }
             MeshMessage::ReplicaSyncResponse { .. } => {
                 // Handled by pending responses in RaftAwareClient or transport
-            }
-            MeshMessage::QuorumSignatureResponse {
-                request_id,
-                key: _,
-                signature,
-                signer_public_key,
-            } => {
-                if let Some(ref record_store) = self.record_store {
-                    let _ = record_store
-                        .handle_quorum_signature_response(
-                            &request_id.to_string(),
-                            peer_id,
-                            signature,
-                            signer_public_key,
-                        )
-                        .await;
-                }
-            }
-            MeshMessage::QuorumRejectionResponse {
-                request_id,
-                key: _,
-                reason,
-                evidence,
-            } => {
-                if let Some(ref record_store) = self.record_store {
-                    record_store
-                        .handle_quorum_rejection_response(
-                            &request_id.to_string(),
-                            peer_id,
-                            reason,
-                            evidence,
-                        )
-                        .await;
-                }
-            }
-            MeshMessage::DhtRecordCommit {
-                request_id: _,
-                record,
-                quorum_signatures,
-                timestamp: _,
-                source_node_id,
-                signature: _,
-                signer_public_key: _,
-            } => {
-                if self
-                    .validate_peer_node_id_binding(peer_id, &source_node_id)
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "DhtRecordCommit rejected: source_node_id {} doesn't match peer {}",
-                        source_node_id,
-                        peer_id
-                    );
-                    return Ok(());
-                }
-                if let Some(ref record_store) = self.record_store {
-                    record_store.handle_record_commit(record, quorum_signatures, &source_node_id);
-                }
             }
             MeshMessage::UpstreamAnnounce {
                 upstream_id,
