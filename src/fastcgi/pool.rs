@@ -284,10 +284,48 @@ impl FastCgiPool {
         }
 
         let socket = &self.config.socket;
-        if socket.starts_with('/') || socket.starts_with("unix:") {
-            true
+        let timeout_duration = self.config.health_check_timeout;
+
+        let (addr, is_tcp) = match crate::fastcgi::parse_socket_address(socket) {
+            Ok(parsed) => parsed,
+            Err(_) => return false,
+        };
+
+        if is_tcp {
+            use std::net::TcpStream;
+            use std::time::Instant;
+
+            let start = Instant::now();
+            let stream = TcpStream::connect(&addr);
+            match stream {
+                Ok(s) => {
+                    s.set_read_timeout(Some(timeout_duration.saturating_sub(start.elapsed())))
+                        .ok();
+                    true
+                }
+                Err(_) => false,
+            }
         } else {
-            socket.contains(':')
+            #[cfg(unix)]
+            {
+                use std::os::unix::net::UnixStream;
+                use std::time::Instant;
+
+                let start = Instant::now();
+                let stream = UnixStream::connect(&addr);
+                match stream {
+                    Ok(s) => {
+                        s.set_read_timeout(Some(timeout_duration.saturating_sub(start.elapsed())))
+                            .ok();
+                        true
+                    }
+                    Err(_) => false,
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
         }
     }
 
