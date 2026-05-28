@@ -489,20 +489,24 @@ pub fn watch_for_cert_changes(
         tracing::info!("Watching for certificate changes in {:?}", watch_dir);
 
         loop {
-            tokio::select! {
-                Some(_) = rx.recv() => {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    while rx.try_recv().is_ok() {}
-                    tracing::info!("Certificate change detected, reloading...");
-                    match resolver.load_certificates() { Err(e) => {
-                        tracing::error!("Failed to reload certificates: {}", e);
-                    } _ => {
-                        tracing::info!("Certificates reloaded successfully");
-                    }}
-                }
+            let mut needs_reload = tokio::select! {
+                Some(_) = rx.recv() => true,
                 _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {
                     tracing::debug!("Certificate watcher heartbeat");
+                    false
                 }
+            };
+
+            while needs_reload {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                while rx.try_recv().is_ok() {}
+                tracing::info!("Certificate change detected, reloading...");
+                match resolver.load_certificates() { Err(e) => {
+                    tracing::error!("Failed to reload certificates: {}", e);
+                } _ => {
+                    tracing::info!("Certificates reloaded successfully");
+                }}
+                needs_reload = rx.try_recv().is_ok();
             }
         }
     })
