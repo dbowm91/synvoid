@@ -62,8 +62,9 @@ src/tls/
 
 **Key Types:**
 - `CertResolver` — Implements `rustls::server::ResolvesServerCert`. Holds:
-  - `certs: HashMap<String, Arc<CertifiedKey>>` — Domain → Certificate map
-  - `default_cert: Option<Arc<CertifiedKey>>` — Fallback certificate
+  - `certs: Arc<RwLock<HashMap<String, Arc<CertifiedKey>>>>` — Domain → Certificate map (thread-safe)
+  - `default_cert: Arc<RwLock<Option<Arc<CertifiedKey>>>>` — Fallback certificate (thread-safe)
+  - `config: InternalTlsConfig` — TLS configuration (cert paths, PQC, OCSP, etc.)
   - `reload_tx: broadcast::Sender<()>` — Notifies listeners of certificate reloads
 
 **Key Methods:**
@@ -73,7 +74,7 @@ src/tls/
   - TLS 1.3 only, or TLS 1.2+1.3 fallback (with optional BEAST attack warning)
   - Post-quantum hybrid KEM if `prefer_post_quantum` is set
   - mTLS verifier if client auth is enabled
-- `watch_for_cert_changes()` — Spawns a `notify`-based file watcher that debounces certificate directory changes, sleeps 500ms to coalesce multiple file events, and calls `load_certificates()`.
+- `watch_for_cert_changes()` — Free function (not a method) that spawns a `notify`-based file watcher that debounces certificate directory changes, sleeps 500ms to coalesce multiple file events, and calls `load_certificates()`.
 
 **SNI Resolution (`resolve()`):**
 1. Exact match on hostname
@@ -204,7 +205,9 @@ pub enum SniError {
     NotHandshake(u8),
     Incomplete,
     NotClientHello(u8),
-    // ...
+    InvalidHostname,
+    ConnectionClosed,
+    Io(String),
 }
 ```
 

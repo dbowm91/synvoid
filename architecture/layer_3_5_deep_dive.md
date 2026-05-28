@@ -46,6 +46,7 @@ rustls-post-quantum = { version = "0.2", optional = true }  # Cargo.toml:156
 This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
 
 ```rust
+// src/mesh/cert.rs:87-139 — verify_post_quantum_tls()
 #[cfg(feature = "post-quantum")]
 {
     use rustls_post_quantum::provider;
