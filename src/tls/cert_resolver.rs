@@ -231,6 +231,13 @@ impl CertResolver {
                             let key_path = path.with_extension("key");
                             if key_path.exists() {
                                 if let Ok(key) = load_private_key(&key_path) {
+                                    if let Err(e) = self.validate_key_strength(&key) {
+                                        tracing::warn!(
+                                            "Certificate for domain '{}' rejected: {}",
+                                            domain, e
+                                        );
+                                        continue;
+                                    }
                                     let provider = default_provider();
                                     if let Ok(signing_key) =
                                         provider.key_provider.load_private_key(key)
