@@ -8,7 +8,7 @@ The Zero Copy module (`src/zero_copy.rs`) provides **platform-specific kernel-le
 - Kernel-level file-to-socket transfer (sendfile)
 - Kernel-level file-to-file copy (copy_file_range)
 - Platform-specific implementations (Linux, macOS, FreeBSD)
-- Fallback to userspace I/O on unsupported platforms
+- Returns `Err` on unsupported platforms (no userspace fallback)
 
 ---
 
@@ -48,7 +48,7 @@ pub trait FilePath {
 | Linux | `sendfile(2)` | With offset support |
 | macOS | `sendfile(2)` | Different signature |
 | FreeBSD | `sendfile(2)` | sf_fd parameter |
-| Other | Fallback | Userspace copy |
+| Other | N/A | Returns `Err(UnsupportedPlatform)` |
 
 ### `copy_file_range`
 | Platform | Syscall | Notes |
@@ -72,5 +72,5 @@ pub trait FilePath {
 - **Kernel-space**: Avoids copying data through userspace
 - **Zero-alloc**: No intermediate buffers needed
 - **Platform-aware**: Compile-time platform selection
-- **Graceful Fallback**: Regular I/O when kernel support unavailable
+- **Graceful Error**: Returns `Err` when platform unsupported (no userspace fallback)
 - **Offset Support**: Supports partial file transfers
