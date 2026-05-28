@@ -22,15 +22,18 @@ Admin auth now includes timing normalization to prevent session enumeration atta
 
 ### Middleware Stack
 
-The Admin API middleware stack (in order):
-1. Client IP Extraction (`src/admin/middleware.rs:61-101`)
-2. Auth Middleware (`src/admin/middleware.rs:103-183`)
+The Admin API middleware stack (in order, from outermost to innermost):
+1. Rate Limit Layer (`src/admin/rate_limit.rs`)
+2. YARA Rate Limit Layer
 3. CSRF Middleware (`src/admin/middleware.rs:185-266`)
-4. Admin Rate Limit Layer (`src/admin/rate_limit.rs`)
+4. Auth Middleware (`src/admin/middleware.rs:103-183`)
+5. Client IP Extraction (`src/admin/middleware.rs:61-101`)
+
+**Note**: Documentation in `admin_deep_dive.md` has this order reversed — verify against source before relying on docs.
 
 **Note**: CORS implementation status:
 - CORS layer IS implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97`
-- CORS is applied to outer router at line 806 in `build_router_from_state()` (`.layer(create_cors_layer(&admin_cors_config))`)
+- CORS is applied to outer router at line 173 in `build_router_from_state()` (`.layer(create_cors_layer(&admin_cors_config))`)
 - Nested `/api` routes (lines 179-189) do NOT have CORS applied
 - Since Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional
 - BUG-CORS-1 was fixed by removing dead code (`let _cors_config = cfg.cors.clone()`) at `src/admin/mod.rs:860`
@@ -43,7 +46,7 @@ The Admin API middleware stack (in order):
 let _cors_config = cfg.cors.clone();  // underscore = dropped!
 ```
 
-**Problem**: The CORS config is cloned into `_cors_config`, but the underscore prefix means it is immediately dropped. The CORS layer is only applied to the outer router at line 806 in `build_router_from_state()`, but nested `/api` routes (lines 179-189) do NOT have CORS.
+**Problem**: The CORS config is cloned into `_cors_config`, but the underscore prefix means it is immediately dropped. The CORS layer is only applied to the outer router at line 173 in `build_router_from_state()`, but nested `/api` routes (lines 179-189) do NOT have CORS.
 
 **Impact**: Even when `cfg.cors` is configured, CORS headers may not be properly applied to nested routes if they use a different router builder.
 
@@ -52,3 +55,9 @@ let _cors_config = cfg.cors.clone();  // underscore = dropped!
 ## Skills Reference
 
 See `skills/admin_api.md` for Admin API patterns.
+
+## Security Issues (Open)
+
+### SSRF Bypass via HTTPS (SEC-SSRF-1)
+
+`src/admin/alerting/mod.rs:143-154` — SSRF check in `AlertConfig::validate()` is inline (not a named function). Only validates `http://` URLs against private IPs. HTTPS URLs to private IPs bypass the check entirely. Fix: extend validation to also check `https://` URLs.

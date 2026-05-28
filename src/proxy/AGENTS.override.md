@@ -37,6 +37,13 @@ Default behavior forwards all end-to-end headers:
 - Apply `clear`/`hide` config for explicit removals
 - Use `set` overrides for header values
 
+### BackendType
+
+The actual `BackendType` enum is at `src/router.rs:65-78` with 11 variants:
+`Upstream`, `FastCgi`, `Php`, `Cgi`, `AxumDynamic`, `AppServer`, `Static`, `QuicTunnel`, `Serverless`, `Mesh`, `Spin`
+
+**Note**: `architecture/proxy.md` documents this incorrectly — always verify against source.
+
 ### Security: Constant-Time Comparison
 
 Always use `subtle::ConstantTimeEq` for secrets, tokens, and cache purge keys:
@@ -45,6 +52,10 @@ use subtle::ConstantTimeEq;
 // For cache purge token comparison:
 required_token.as_bytes().ct_eq(token.as_bytes()).into()
 ```
+
+### FastCGI Concurrency
+
+`execute_stream()` at `src/fastcgi/pool.rs:229` drops the semaphore permit immediately after acquisition, bypassing the concurrency limit. When fixing, ensure the permit is held for the duration of the request.
 
 ## Upstream Pool Fixes (2026-05-23)
 

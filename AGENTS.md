@@ -160,14 +160,17 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 |-------|----------|--------|--------|
 | HTTP/2 available but not enforced | `src/http_client/mod.rs:893` | Now configurable via `ProxyServer::with_http2()` builder method | FIXED 2026-05-27 |
 | DNS Cookie Server not integrated | `src/dns/cookie.rs` | Complete implementation exists and is wired | FIXED 2026-05-27 |
-| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | ✅ FIXED 2026-05-27 - removed dead code |
+| SiteConnectionLimiter dead code | `src/waf/traffic_shaper/limiter.rs:306-346` | Struct never instantiated; limits work via direct `try_acquire_with_limits()` call | ✅ FIXED 2026-05-27 - removed dead code. **Note**: architecture docs (waf.md:180, waf_deep_dive.md:24, networking_deep_dive.md:82) still reference removed struct |
 | Spin cold-start instance reuse | `src/spin/runtime.rs:289-303` | Fixed via `get_or_create_instance()` caching with 5-min idle timeout | FIXED 2026-05-26 |
 | PooledInstance DHT prefix leak | `src/plugin/pool.rs:15-26` | Fixed - `allowed_dht_prefixes` and `body_receiver` now properly reset | FIXED 2026-05-27 |
 | WAF connection limits misdocumented | `crates/synvoid-config/src/traffic.rs:167-176` | Fixed - documentation corrected to match actual defaults | FIXED 2026-05-27 |
 | is_admin_required_for_tun stub | `src/platform/mod.rs:166-176` | Fixed - now returns `false` for Unix platforms, `true` for Windows | FIXED 2026-05-27 |
 | Username validation | `src/auth/mod.rs:305-318` | Validation exists (min 1, max 64, no control chars) | FIXED 2026-05-27 |
 | max_failed_attempts default mismatch | `src/waf/mod.rs:398-404` | WafCore used 5 but docs said 3 | ✅ FIXED 2026-05-27 - WafCore now uses 3 |
-| request_body_size double assignment | `src/http/server.rs:1517, 1579` | Benign but redundant | ✅ FIXED 2026-05-27 - removed duplicate assignment |
+| request_body_size double assignment | `src/http/server.rs:1517, 4692, 1633` | Line 1633 overwrites WAF-computed body size with Content-Length header | ⚠️ PARTIALLY FIXED - line 1633 overwrite still exists (see plans/plan.md XMOD-6) |
+| Dead zero_copy module | `src/zero_copy.rs` | Declared in `lib.rs:101` but ZERO external callers | Dead code — remove or complete |
+| Dead listener/common.rs | `src/listener/common.rs` | All types re-exported but never instantiated | Dead code — `ListenerConfigBase`, `SocketOptionsBase`, `ListenerInstance<C>`, `ConnectionContext` unused |
+| pqc-mesh feature flag unwired | `Cargo.toml` | Feature defined but zero `#[cfg]` usages in source | Dead feature flag — wire or remove |
 
 ### Known High-Priority Issues (Requires Investigation/Fix)
 
@@ -177,6 +180,10 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 | BUG-DNS-4 | DNS resolver | MEDIUM | ✅ DONE - Documented as by design (hickory-resolver API limitation for forwarder mode) |
 | BUG-PL-3 | Windows | MEDIUM | Documented limitation - WindowsSocketFDPassing returns NotSupported, port-swap mode default |
 | BUG-WAF-3 | WAF | MEDIUM | ✅ FIXED - SiteConnectionLimiter dead code removed |
+| SEC-SSRF-1 | `src/admin/alerting/mod.rs:143-154` | HIGH | SSRF bypass — only `http://` URLs checked for private IPs, `https://` bypasses check |
+| SEC-FILTER-1 | `src/filter/common.rs:74-96` | HIGH | Docs say "allowlist first" but code checks **denylist first** — security-critical doc error |
+| SEC-FASTCGI-1 | `src/fastcgi/pool.rs:229` | HIGH | `execute_stream()` drops semaphore permit immediately, bypassing concurrency limit |
+| SEC-CERT-1 | `src/tls/cert_resolver.rs:215-253` | HIGH | `load_certs_from_dir()` skips `validate_key_strength()` — certs from watch dir bypass RSA checks |
 
 ### Dependency Vulnerability Status
 
