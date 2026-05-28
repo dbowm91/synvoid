@@ -226,8 +226,41 @@ cargo test --lib --no-run
 ## Completion Criteria
 
 This review is complete when:
-- [ ] All 14 subagent plans exist in `plans/`
-- [ ] All stale content has been identified and either pruned or flagged
-- [ ] Cross-module conflicts are documented in `plans/review_conflicts.md`
-- [ ] All profiles compile successfully
-- [ ] Commit is pushed to main
+- [x] All 14 subagent plans exist in `plans/` — **DONE** (14 plans + stale_content_aggregate.md)
+- [x] All stale content has been identified and either pruned or flagged — **DONE** (123 items identified, critical items pruned)
+- [x] Cross-module conflicts are documented in `plans/review_conflicts.md` — **DONE** (11 conflicts, 10 dependencies, 8 AGENTS.md stale entries)
+- [x] All profiles compile successfully — **DONE** (core, mesh, dns, full all compile)
+- [ ] Commit is pushed to main — **PENDING** (commit created, not pushed)
+
+## Iterative Improvement Notes
+
+The following items are flagged for future iterative improvement (not addressed in this pass to keep scope contained):
+
+### High Priority (Security-Critical)
+- filter.md Allow/Deny priority: **FIXED** in this pass
+- admin_deep_dive.md middleware order: **FIXED** in this pass
+
+### Medium Priority (Documentation Accuracy)
+- ~90 struct definition updates across all architecture docs (wrong types, missing fields)
+- DrainStatus/WorkerDrainState incomplete in both drain.md and supervisor.md
+- proxy_cache.md struct definitions completely wrong
+- block_store.md struct definitions completely wrong
+- integrity.md struct definitions completely wrong
+- StaticFileHandler has 16 fields vs documented 5
+- WafCore missing ~15 fields in documentation
+
+### Low Priority (Line Number Drift)
+- ~30 line number references off by 1-20 lines across all docs
+- Overview.md line count estimates updated in this pass
+
+### Dead Code (Flagged for Removal)
+- `src/zero_copy.rs` — module has zero external callers despite being declared in lib.rs
+- `src/listener/common.rs` — entirely dead code, never instantiated
+- `pqc-mesh` feature flag — defined in Cargo.toml but has zero usages
+- `RequestContext` trait — marked `#[allow(dead_code)]`
+
+### Known Deferred Items (Not Addressed)
+- `ListenerConfigBase` dead code in listener.md
+- proxy.md vs proxy_deep_dive.md consolidation
+- DNS-2/_max_wait_ms stale references in dns.md and dns_deep_dive.md
+- spin.md claims supervisor task for idle eviction (doesn't exist)

@@ -80,6 +80,10 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
 | `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:874-1092` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
+| `src/overseer/`, `src/master/`, `src/startup/master.rs` | `src/supervisor/` (consolidated 2026) |
+| `TunnelBackend` at `src/tunnel/upstream.rs` | `TunnelBackend` at `src/tunnel/router.rs:200` (removed from upstream.rs) |
+| `architecture/tunnel.md` | Does not exist — tunnels documented in `networking_deep_dive.md` |
+| `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
 
 ## Modular Agent Guidance
 
