@@ -105,8 +105,8 @@ WasmRuntime (plugin B)
 - **`WasmInstancePool`** uses a `VecDeque<WasmPooledInstance>` protected by `parking_lot::Mutex`
 - `get()` pops from back, `return_instance()` pushes to back (if under `max_size`)
 - Pooled instances retain their `Store` and instantiated `Instance`
-- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes. Both `WasmPooledInstance::prepare_for_request` (in `instance_pool.rs:219-233`) and `PooledInstance::prepare_for_request` (in `pool.rs:15-26`) properly reset body_receiver and DHT prefixes.
-- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (7 stub host functions: `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`, `abort`, `check_timeout`). These stubs are replaced with real implementations on first actual request. Note: `guest_alloc`/`guest_free` are linked as real functions (not stubs) during actual request handling via `create_linker`.
+- Before each request, `prepare_for_request()` resets timeout, fuel, env, body_receiver, and DHT prefixes. Both `WasmPooledInstance::prepare_for_request` (in `instance_pool.rs:219-233`) and `PooledInstance::prepare_for_request` (in `pool.rs:15-26`) reset `body_receiver` to `None` and `allowed_dht_prefixes` to the caller-supplied value.
+- Warmup pre-populates pool via `warmup(modules)` which creates instances with stub implementations (7 stub host functions: `abort`, `check_timeout`, `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`). These stubs are replaced with real implementations on first actual request via `create_linker`. Note: `guest_alloc`/`guest_free` are linked as real functions (not stubs) during actual request handling.
 
 ### PooledInstance Structure
 
@@ -164,7 +164,7 @@ Implements a Spin framework runtime for executing Spin-compatible WASM modules. 
 
 ### Key Structs
 
-- **`SpinRuntime`** — Owns a `wasmtime::Engine`, optional manifest, and `HashMap<String, SpinAppInstance>`. Runs a supervisor task for idle eviction and health checks.
+- **`SpinRuntime`** — Owns a `wasmtime::Engine`, optional manifest, and `HashMap<String, SpinAppInstance>`. Instance eviction relies on `cached_instances` idle timeout checked on each request (no background task).
 
 - **`SpinAppInstance`** — Wraps a `WasmRuntime` (delegate pattern), manifest, component ID, KV store, environment variables, request count, last request time.
 

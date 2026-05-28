@@ -364,7 +364,6 @@ For streaming request bodies, use the streaming variant:
 
 ```rust
 // src/serverless/manager.rs:1224
-#[cfg(feature = "mesh")]
 pub async fn handle_serverless_function_streaming(
     manager: &ServerlessManager,
     method: &Method,
@@ -852,7 +851,8 @@ pub struct ServerlessConfig {
 
 pub struct FunctionDefinition {
     pub name: String,
-    pub path: Option<String>,          // Simple path matching
+    pub path: String,
+    pub handler: String,               // Default: "handle_request"
     pub routes: Option<Vec<String>>,    // Advanced route definitions
     pub allowed_methods: Option<Vec<String>>,
     pub memory_mb: Option<usize>,
@@ -863,12 +863,13 @@ pub struct FunctionDefinition {
     pub idle_timeout_seconds: Option<u64>,
     pub pre_warm_instances: Option<usize>,
     pub env: HashMap<String, String>,
+    pub description: Option<String>,
     pub public_function: Option<bool>,   // Allow public access without mesh auth
-    pub require_trusted_caller: Option<bool>,
+    pub require_trusted_caller: bool,    // Default: false
     pub allowed_callers: Option<Vec<String>>,
     pub allowed_orgs: Option<Vec<String>>,
     pub min_tier_level: Option<u32>,
-    pub allowed_dht_prefixes: Option<Vec<String>>,
+    pub allowed_dht_prefixes: Vec<String>,
 }
 ```
 
@@ -918,6 +919,18 @@ WasmPluginManager    <-------->  WasmRuntime (shared)
 - Serverless uses `InstancePool` for pooling; plugins use `WasmInstancePool` directly
 - Both share the same wasmtime engine and linker configuration
 - Serverless adds `handle_request` export support (plugins may not have it)
+
+### Known Limitation: Spin Instance Eviction
+
+The Spin module (`src/spin/`) has a known instance tracking gap:
+
+- `SpinRuntime.instances` is a `HashMap<String, SpinAppInstance>` keyed by random UUID
+- Every call to `instantiate_app()` inserts a new entry (runtime.rs:227-228)
+- Old entries are **never cleaned up** — only `remove_instance()` (explicit) or `shutdown()` (process exit) removes them
+- `SpinRuntime.cached_instances` (keyed by component_id) does have idle timeout eviction, but `instances` does not
+- Over time with many requests, the `instances` HashMap grows indefinitely, leaking memory
+
+This contrasts with `InstancePool` (serverless) and `WasmInstancePool` (plugin) which both enforce `max_size` bounds and have eviction logic.
 
 ## 12. Thread Safety
 
