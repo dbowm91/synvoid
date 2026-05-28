@@ -16,11 +16,16 @@ The CAPTCHA module (`src/captcha/`) provides **text-based CAPTCHA generation and
 
 ```rust
 pub struct CaptchaManager {
-    challenges: Arc<RwLock<HashMap<String, CaptchaChallenge>>>,
-    verification_window_secs: u64,
-    theme: Option<ThemeConfig>,
+    challenges: Arc<RwLock<CaptchaStore>>,
+    verification_window_secs: u32,
+    theme: ThemeConfig,
 }
 
+struct CaptchaStore {
+    challenges: HashMap<String, CaptchaChallenge>,
+}
+
+#[derive(Clone)]
 struct CaptchaChallenge {
     answer: String,
     created_at: u64,

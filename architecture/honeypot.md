@@ -23,11 +23,8 @@ The Honeypot system consists of two complementary modules for **attack capture a
 
 ```rust
 pub struct PortHoneypotController {
-    listeners: Vec<PortHoneypotListener>,
-    port_manager: PortManager,
-    responder_registry: HoneypotResponderRegistry,
-    intel_extractor: HoneypotIntelExtractor,
-    mesh_controller: HoneypotMeshController,
+    runner: Arc<RwLock<Option<Arc<PortHoneypotRunner>>>>,
+    config: Arc<RwLock<HoneypotPortConfig>>,
 }
 
 pub struct ProtocolDetector { /* fingerprinting logic */ }
@@ -37,22 +34,7 @@ pub struct HoneypotIntelExtractor { /* threat intel */ }
 
 ### Unified Honeypot
 
-```rust
-pub struct UnifiedHoneypotManager {
-    profiles: HashMap<IpAddr, IpHoneypotProfile>,
-}
-
-pub struct IpHoneypotProfile {
-    pub url_hits: AtomicU32,
-    pub port_connections: AtomicU32,
-    pub protocols_probed: RwLock<HashSet<String>>,
-    pub threat_level: AtomicU8,
-}
-
-pub enum ThreatLevel {
-    None, Low, Medium, High, Critical,
-}
-```
+The unified honeypot module (`src/honeypot_unified/`) provides global IP-based threat profiling. It does not currently exist as a standalone module — threat profiling is handled within the port honeypot subsystem via `HoneypotIntelExtractor`.
 
 ---
 
@@ -72,13 +54,7 @@ pub enum ThreatLevel {
 
 | Method | Description |
 |--------|-------------|
-| `UnifiedHoneypotManager::get()` | Singleton access |
-| `record_url_hit(ip)` | Track URL honeypot hit |
-| `record_port_connection(ip, protocol)` | Track port connection |
-| `get_profile(ip) -> Option<IpHoneypotProfile>` | Get IP profile |
-| `get_combined_threat_score(ip) -> u8` | Composite threat score |
-| `get_corrrelated_ips(ip) -> Vec<IpAddr>` | Find related IPs |
-| `clear_expired(max_age_secs)` | Cleanup old profiles |
+| `HoneypotIntelExtractor` | Extracts threat indicators from port honeypot interactions |
 
 ---
 

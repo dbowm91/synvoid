@@ -25,23 +25,37 @@ The central orchestrator that coordinates all WAF components.
 - Handles decision escalation based on threat levels
 - Manages honeypot interactions and tarpit responses
 
-**Key Components:**
+**Key Components (30 fields):**
 ```rust
 pub struct WafCore {
-    pub rate_limiter: RateLimiterManager,           // Rate limiting engine
-    pub bot_detector: BotDetector,                   // Bot detection
-    pub endpoint_blocker: EndpointBlockerManager,     // Path blocking
-    pub sensitive_endpoint_manager: SensitiveEndpointManager, // Honeypot endpoints
+    pub rate_limiter: RateLimiterManager,
+    pub bot_detector: BotDetector,
+    pub endpoint_blocker: EndpointBlockerManager,
+    pub sensitive_endpoint_manager: SensitiveEndpointManager,
     pub error_page_manager: ErrorPageManager,
-    pub challenge_manager: ChallengeManager,         // JS/PoW challenges
-    pub attack_detector: ArcSwapOption<AttackDetector>, // Attack detection
-    pub threat_level: Option<Arc<ThreatLevelManager>>, // Threat escalation
+    pub challenge_manager: ChallengeManager,
+    pub auth_manager: Arc<AuthManager>,
+    pub attack_detector: ArcSwapOption<AttackDetector>,
+    pub attack_detection_config: ArcSwapOption<AttackDetectionConfig>,
+    pub block_store: Option<Arc<BlockStore>>,
+    pub config: WafConfig,
+    pub whitelist: Arc<HashSet<IpAddr>>,
+    tarpit_generator: Arc<crate::tarpit::generator::MarkovChain>,
+    tarpit_defaults: crate::config::TarpitDefaults,
+    pub threat_level: Option<Arc<ThreatLevelManager>>,
     pub violation_tracker: Option<Arc<ViolationTracker>>,
-    pub ip_feed: Option<Arc<IpFeedManager>>,         // IP block feeds
+    pub ip_feed: Option<Arc<IpFeedManager>>,
+    pub probe_tracker: Option<Arc<ProbeTracker>>,
+    pub suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
+    pub upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     pub traffic_shaper: Option<Arc<GlobalTrafficShaper>>,
     pub connection_limiter: Option<Arc<ConnectionLimiter>>,
     pub asn_tracker: Option<Arc<AsnTracker>>,
+    pub test_mode: TestModeConfig,
+    pub honeypot_ban_duration_secs: u64,
+    pub request_services: ArcSwapOption<RequestServices>,
     pub flood_protector: Option<Arc<FloodProtector>>,
+    pub trust_token_key: [u8; 32],
 }
 ```
 
@@ -177,7 +191,7 @@ pub struct GlobalTrafficShaper {
 - Burst token system
 - Connection queue with timeout
 
-**Per-Site Limiting:** Per-site connection counting via direct `try_acquire_with_limits()` calls (applies limits by site_id internally).
+**Per-Site Limiting:** Per-site connection counting via direct `try_acquire_with_limits()` calls on a global `ConnectionLimiter` with `site_id` parameter (applies limits by site_id internally).
 
 **Error Types:**
 ```rust
@@ -319,12 +333,24 @@ pub struct WafCoreConfig {
     pub rate_config: RateLimitConfigStore,
     pub memory_config: RateLimitMemoryConfig,
     pub bot_config: BotDefaults,
+    pub endpoint_config: BlockedDefaults,
     pub waf_config: WafConfig,
+    pub whitelist: Vec<String>,
+    pub block_store: Option<Arc<BlockStore>>,
     pub attack_detection_config: Option<AttackDetectionConfig>,
+    pub auth_manager: Option<Arc<AuthManager>>,
     pub threat_level_config: Option<ThreatLevelConfig>,
+    pub ip_feed_config: Option<IpFeedConfig>,
+    pub probe_config: Option<HoneypotProbingDefaults>,
+    pub suspicious_words_config: Option<SuspiciousWordsConfig>,
+    pub upstream_errors_config: Option<UpstreamErrorsConfig>,
     pub traffic_shaping_config: Option<TrafficShapingConfig>,
     pub bandwidth_config: BandwidthConfig,
-    // ... more fields
+    pub asn_scraping_config: Option<AsnScrapingConfig>,
+    pub geoip: Option<Arc<GeoIpManager>>,
+    pub data_dir: Option<PathBuf>,
+    pub test_mode: TestModeConfig,
+    pub tarpit_defaults: Option<TarpitDefaults>,
 }
 ```
 
@@ -539,11 +565,12 @@ Hot path optimization via `RequestServices`:
 ### Configuration Feature Gates
 
 ```rust
-// In Cargo.toml or features
+// In Cargo.toml
 [features]
-default = ["mesh", "flood-ebpf"]
-mesh = ["dep:crate::mesh"]
-flood-ebpf = ["target_os=linux"]
+default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
+mesh = ["synvoid-config/mesh", "dep:openraft"]
+flood-ebpf = ["dep:aya"]
+icmp-filter = []
 ```
 
 ### Test Mode Configuration
@@ -643,16 +670,27 @@ Request Received
 
 ```rust
 pub struct WafCoreConfig {
-    rate_config: RateLimitConfigStore,      // IP and global limits
-    memory_config: RateLimitMemoryConfig,    // Max entries, shards
-    bot_config: BotDefaults,                 // Bot detection settings
-    endpoint_config: BlockedDefaults,        // Blocked paths
-    waf_config: WafConfig,                   // General WAF settings
+    rate_config: RateLimitConfigStore,
+    memory_config: RateLimitMemoryConfig,
+    bot_config: BotDefaults,
+    endpoint_config: BlockedDefaults,
+    waf_config: WafConfig,
+    whitelist: Vec<String>,
+    block_store: Option<Arc<BlockStore>>,
     attack_detection_config: Option<AttackDetectionConfig>,
+    auth_manager: Option<Arc<AuthManager>>,
     threat_level_config: Option<ThreatLevelConfig>,
     ip_feed_config: Option<IpFeedConfig>,
+    probe_config: Option<HoneypotProbingDefaults>,
+    suspicious_words_config: Option<SuspiciousWordsConfig>,
+    upstream_errors_config: Option<UpstreamErrorsConfig>,
     traffic_shaping_config: Option<TrafficShapingConfig>,
     bandwidth_config: BandwidthConfig,
+    asn_scraping_config: Option<AsnScrapingConfig>,
+    geoip: Option<Arc<GeoIpManager>>,
+    data_dir: Option<PathBuf>,
+    test_mode: TestModeConfig,
+    tarpit_defaults: Option<TarpitDefaults>,
 }
 ```
 

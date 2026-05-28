@@ -17,12 +17,18 @@ The Challenge module (`src/challenge/`) provides a **multi-modal browser verific
 
 ```rust
 pub struct ChallengeManager {
-    pow_manager: PowManager,
-    css_manager: CssManager,
-    mesh_pow_manager: MeshPowManager,
-    honeypot_tracker: HoneypotTracker,
-    rate_limiter: RateLimiter,
-    config: ChallengeConfig,
+    pow: Option<PowManager>,
+    mesh_pow: Option<MeshPowManager>,
+    css: Option<CssManager>,
+    honeypot: HoneypotTracker,
+    cookie_name: String,
+    theme: ThemeConfig,
+    priority: ChallengePriority,
+    max_attempts: u32,
+    rate_limit_window_secs: u64,
+    attempts: RwLock<HashMap<IpAddr, ChallengeAttempt>>,
+    max_attempts_entries: usize,
+    use_mesh_pow_when_available: bool,
 }
 
 pub enum ChallengeResult {

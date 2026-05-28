@@ -62,10 +62,10 @@ pub struct BackendCapabilities {
 | Backend | Platform | Feature Gate | Capabilities |
 |---------|----------|--------------|--------------|
 | Nftables | Linux | `icmp-filter` | block, allow, rate_limit, type_code |
-| eBPF | Linux | `flood-ebpf` | block, rate_limit, type_code |
-| pf | macOS/FreeBSD | `icmp-filter` | block, allow, rate_limit |
-| Windows Firewall | Windows | `icmp-filter` | block, allow |
-| WFP | Windows | `icmp-filter` | block, allow, rate_limit, type_code |
+| eBPF | Linux | `icmp-ebpf` | block, rate_limit, type_code |
+| pf | macOS/FreeBSD | `icmp-pf` | block, allow, rate_limit |
+| Windows Firewall | Windows | `icmp-winfw` | block, allow |
+| WFP | Windows | `icmp-wfp` | block, allow, rate_limit, type_code |
 
 ---
 
