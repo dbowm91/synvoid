@@ -189,8 +189,64 @@ impl AcmeManager {
         }
         #[cfg(not(unix))]
         {
-            std::fs::write(&self.credentials_path, creds_json)
-                .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
+            let temp_path = self.credentials_path.with_extension("tmp");
+            {
+                use std::io::Write;
+                let mut file = std::fs::File::create(&temp_path).map_err(|e| {
+                    AcmeError::Io(format!("Failed to create temp credentials file: {}", e))
+                })?;
+                file.write_all(creds_json.as_bytes()).map_err(|e| {
+                    AcmeError::Io(format!("Failed to write credentials: {}", e))
+                })?;
+            }
+
+            // On Windows, apply a restrictive DACL so only the current user can read the file.
+            #[cfg(windows)]
+            {
+                use windows_sys::Win32::Security::{
+                    SetNamedSecurityInfoW, DACL_SECURITY_INFORMATION, SE_FILE_OBJECT,
+                };
+
+                match crate::platform::SecurityDescriptor::new_user_only() {
+                    Ok(restrict_dacl) => {
+                        if let Some(path_str) = temp_path.to_str() {
+                            let mut path_wide: Vec<u16> =
+                                path_str.encode_utf16().chain(std::iter::once(0)).collect();
+
+                            let result = unsafe {
+                                SetNamedSecurityInfoW(
+                                    path_wide.as_mut_ptr(),
+                                    SE_FILE_OBJECT,
+                                    DACL_SECURITY_INFORMATION,
+                                    std::ptr::null_mut(),
+                                    std::ptr::null_mut(),
+                                    Some(restrict_dacl.as_ptr() as *mut _),
+                                    std::ptr::null_mut(),
+                                )
+                            };
+
+                            if result != 0 {
+                                tracing::warn!(
+                                    "Failed to apply restrictive DACL to {}: {}",
+                                    temp_path.display(),
+                                    result
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create restrictive DACL for {}: {}",
+                            temp_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+
+            std::fs::rename(&temp_path, &self.credentials_path).map_err(|e| {
+                AcmeError::Io(format!("Failed to rename temp credentials file: {}", e))
+            })?;
         }
 
         tracing::info!("Created new ACME account for {}", email);
