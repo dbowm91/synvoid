@@ -76,15 +76,22 @@ The module is located at `src/dns/` and exports a rich set of submodules.
 |-----------|------|----------------|
 | `cache.rs` | `src/dns/cache.rs` | `DnsCache` - authoritative server cache |
 | `compression.rs` | `src/dns/compression.rs` | DNS message compression |
+| `config.rs` | `src/dns/config.rs` | `DnsSettings` - DNS configuration wrapper with bind address and geoip |
 | `edns.rs` | `src/dns/edns.rs` | EDNS(0) option parsing |
 | `messages.rs` | `src/dns/messages.rs` | Mesh DNS message types |
+| `mesh_dnssec.rs` | `src/dns/mesh_dnssec.rs` | Mesh DNSSEC validation - `MeshDnsSecValidator`, `MeshTrustAnchor` |
 | `metrics.rs` | `src/dns/metrics.rs` | DNS metrics |
+| `platform.rs` | `src/dns/platform.rs` | `AnycastSocketPlatform` - platform-specific anycast socket support |
+| `prefetch.rs` | `src/dns/prefetch.rs` | `DnsPrefetcher` - DNS response prefetching based on query frequency |
 | `qname.rs` | `src/dns/qname.rs` | QNAME minimization and rebinding checks |
 | `query_coalesce.rs` | `src/dns/query_coalesce.rs` | Query coalescing |
 | `query_validator.rs` | `src/dns/query_validator.rs` | Query validation |
+| `secure_server.rs` | `src/dns/secure_server.rs` | `SecureDnsServerBase` - TLS DNS server base (DoT/DoH/DoQ) |
+| `sharded_cache.rs` | `src/dns/sharded_cache.rs` | `ShardedDnsCache` - high-performance sharded DNS cache |
 | `store.rs` | `src/dns/store.rs` | `ZoneStore` trait |
 | `wire.rs` | `src/dns/wire.rs` | Wire-format DNS parsing/building |
 | `zone_file.rs` | `src/dns/zone_file.rs` | Zone file parsing |
+| `zone_manager.rs` | `src/dns/zone_manager.rs` | Zone lifecycle management - index rebuilding, record CRUD |
 | `zone_trie.rs` | `src/dns/zone_trie.rs` | Zone lookup trie |
 | `rpz.rs` | `src/dns/rpz.rs` | Response Policy Zones |
 | `dns64.rs` | `src/dns/dns64.rs` | DNS64 translator |
@@ -104,24 +111,40 @@ pub struct DnsServer {
     zones: Arc<ShardedZoneStore>,
     zone_trie: Arc<RwLock<ZoneTrie>>,
     zone_index: Arc<RwLock<Vec<(String, String)>>>,
-    zone_index_btree: Arc RwLock<BTreeMap<String, String>>,
+    zone_index_btree: Arc<RwLock<BTreeMap<String, String>>>,
+    zone_index_dirty: Arc<AtomicBool>,
     rate_limiter: Option<Arc<DnsRateLimiter>>,
     query_validator: Option<DnsQueryValidator>,
     firewall: Option<Arc<RwLock<DnsFirewall>>>,
     connection_limits: Arc<ConnectionLimits>,
+    #[cfg(feature = "mesh")]
+    mesh_registry: Option<Arc<MeshDnsRegistry>>,
+    geoip_lookup: Option<Arc<GeoIpManager>>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
     cache: Option<Arc<DnsCache>>,
     dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
+    signer_name: Option<String>,
+    rrl_enabled: bool,
     cert_resolver: Option<Arc<CertResolver>>,
     dot_server: Option<DotServer>,
     doh_server: Option<DohServer>,
     doq_server: Option<DoqServer>,
+    zone_transfer: Option<Arc<ZoneTransfer>>,
+    ecs_filter_config: EcsFilterConfig,
     update_handler: Option<DynamicUpdateHandler>,
     notify_handler: Option<NotifyHandler>,
+    hsm_manager: Option<HsmManager>,
     query_coalescer: Option<Arc<QueryCoalescer>>,
+    anycast_manager: Option<Arc<AnycastSocketManager>>,
+    #[cfg(feature = "mesh")]
+    mesh_transport: Option<Arc<MeshTransport>>,
+    #[cfg(feature = "mesh")]
+    zone_sync: Option<Arc<AnycastZoneSync>>,
     recursive_server: Option<Arc<RecursiveDnsServer>>,
     dns64_translator: Option<Dns64Translator>,
+    #[cfg(feature = "dns")]
+    acme_dns_challenges: Option<Arc<AcmeDnsChallenge>>,
     cookie_server: Option<Arc<DnsCookieServer>>,
-    // ... mesh fields
 }
 ```
 
@@ -176,6 +199,7 @@ pub enum TrustAnchorState {
 // dnssec.rs
 pub enum Algorithm { Ed25519, RSA }
 pub enum KeyType { KSK, ZSK }
+pub enum DsDigestType { Sha1 = 1, Sha256 = 2, Sha384 = 4 }
 pub struct ZoneSigningKey {
     pub key_id: String,
     pub algorithm: Algorithm,
@@ -186,6 +210,7 @@ pub struct ZoneSigningKey {
     pub private_key: Vec<u8>,
     pub key_tag: u16,
     pub flags: u16,
+    pub key_size: Option<u32>,
 }
 pub struct Nsec3Config {
     pub algorithm: u8,
@@ -193,6 +218,38 @@ pub struct Nsec3Config {
     pub iterations: u16,
     pub salt: Vec<u8>,
 }
+pub struct KeyInfo {
+    pub key_type: String,
+    pub algorithm: String,
+    pub key_tag: u16,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub age_days: u64,
+    pub days_until_expiry: Option<u64>,
+}
+pub struct DnsSecKeyStatus {
+    pub ksk: Option<KeyInfo>,
+    pub zsk: Option<KeyInfo>,
+}
+pub struct KeyRotationResult {
+    pub ksk_rotated: bool,
+    pub zsk_rotated: bool,
+    pub ksk_new_key_id: Option<String>,
+    pub zsk_new_key_id: Option<String>,
+    pub ksk_age_days: Option<u64>,
+    pub zsk_age_days: Option<u64>,
+    pub ksk_error: Option<String>,
+    pub zsk_error: Option<String>,
+}
+pub struct RolloverState {
+    pub ksk_in_rollover: bool,
+    pub zsk_in_rollover: bool,
+    pub ksk_rollover_started: Option<u64>,
+    pub zsk_rollover_started: Option<u64>,
+    pub publish_dnssec: bool,
+}
+// CryptoRngAdapter - wraps getrandom for rand_core 0.6 traits (RSA crate compat)
+pub(crate) struct CryptoRngAdapter;
 ```
 
 ### 3.6 DnsResolver Trait (resolver.rs:131)
@@ -212,6 +269,50 @@ pub trait DnsResolver: Send + Sync {
 }
 ```
 
+### 3.7 ShardedDnsCache (sharded_cache.rs:22)
+
+```rust
+pub struct ShardedDnsCache {
+    shards: Arc<Vec<RwLock<Shard>>>,
+    max_ttl: Duration,
+    min_ttl: Duration,
+    max_entry_size: usize,
+    max_capacity: usize,
+}
+```
+
+### 3.8 SecureDnsServerBase (secure_server.rs:21)
+
+```rust
+pub struct SecureDnsServerBase<C: DnsServerConfig> {
+    pub config: Arc<C>,
+    pub cert_resolver: Option<Arc<CertResolver>>,
+    pub dns_server: Arc<RwLock<Option<DnsServer>>>,
+    pub shutdown_tx: Option<oneshot::Sender<()>>,
+}
+```
+
+### 3.9 DnsSettings (config.rs:7)
+
+```rust
+pub struct DnsSettings {
+    pub config: Arc<DnsConfig>,
+    pub geoip: Option<Arc<GeoIpManager>>,
+    pub bind_address: SocketAddr,
+}
+```
+
+### 3.10 PrefetchConfig (prefetch.rs:9)
+
+```rust
+pub struct PrefetchConfig {
+    pub enabled: bool,
+    pub min_query_count: u32,
+    pub prefetch_ttl_threshold: u32,
+    pub max_prefetched_names: usize,
+}
+```
+
 ---
 
 ## 4. Key APIs and Entry Points
@@ -219,10 +320,12 @@ pub trait DnsResolver: Send + Sync {
 ### 4.1 DnsServer Factory
 
 ```rust
-// server/mod.rs:573
+// server/mod.rs:855
 impl DnsServer {
     pub fn new(config: DnsConfig, cert_resolver: Option<Arc<CertResolver>>) -> Self
-    pub fn with_acme_dns_challenges(self, challenges: Arc<AcmeDnsChallenge>) -> Self  // [cfg(feature="dns")]
+    #[cfg(feature = "dns")]
+    pub fn with_acme_dns_challenges(self, challenges: Arc<AcmeDnsChallenge>) -> Self
+    #[cfg(feature = "dns")]
     pub fn with_cookie_server(self, cookie_server: Arc<DnsCookieServer>) -> Self
 }
 ```
@@ -245,7 +348,7 @@ impl RecursiveDnsServer {
 ### 4.3 HickoryRecursor (RFC 5011 support)
 
 ```rust
-// resolver.rs:628
+// resolver.rs:629
 impl HickoryRecursor {
     pub fn new(root_hints_path: &str, trust_anchor_path: &str, enable_dnssec: bool) -> Result<Self, ResolverError>
     pub async fn start_rfc5011_updates(self: Arc<Self>) -> Result<(), ResolverError>
@@ -338,7 +441,7 @@ DNS Query Packet
       ▼
 ┌─────────────────────────────────┐
 │ Cookie Validation (RFC 7873)  │
-│ cookie.rs:640-658              │
+│ cookie.rs:66-86              │
 │ - Constant-time MAC comparison │
 └─────────────────────────────────┘
       │
@@ -786,8 +889,8 @@ pub struct TrustAnchor { ... }
 
 | Item | Location | Description |
 |------|----------|--------------|
-| DNS Cookie wiring | `server/query.rs:640-658` | `validate_cookie()` called for RFC 7873 |
-| Query Coalescer | `query_coalesce.rs:117` | `_max_wait_ms` parameter marked unused |
+| DNS Cookie wiring | `server/query.rs:645-662` | `validate_cookie()` called for RFC 7873 |
+| Query Coalescer | `query_coalesce.rs:121` | `max_wait_ms` parameter controls timeout for coalescing |
 | DNSSEC validation | `resolver.rs:423` | `HickoryResolver` always returns `is_dnssec_validated: false` |
 | GlobalNodeResolver | `resolver_global.rs` | Resolves via mesh global nodes |
 | mesh_sync | `anycast_sync.rs` | Mesh-based zone sync |

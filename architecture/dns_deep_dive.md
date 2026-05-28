@@ -63,11 +63,11 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 4. **Firewall**: `DnsFirewall` evaluates against blocking rules (subnet, opcode)
 5. **Cache Check**: If enabled, `DnsCache` checked first
 6.  **Query Coalescing**: `QueryCoalescer` collapses identical in-flight queries
-   - Implemented at `src/dns/query_coalesce.rs`
-   - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
-   - `QueryCoalescer::with_config()` created in `DnsServer::new()` at `src/dns/server/mod.rs:634-644`
-   - Passed to query handler via `QueryContext` at `src/dns/server/mod.rs:419-445`
-   - **Note:** `max_wait_ms` parameter is currently unused (`_max_wait_ms`) - the coalescer does not implement a timeout wait for coalescing requests. This is a known limitation (DNS-2).
+    - Implemented at `src/dns/query_coalesce.rs`
+    - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
+    - `QueryCoalescer::with_config()` created in `DnsServer::new()` at `src/dns/server/mod.rs:634-644`
+    - Passed to query handler via `QueryContext` at `src/dns/server/mod.rs:419-445`
+    - `max_wait_ms` controls the timeout for coalescing requests via `tokio::time::timeout`
 7. **Zone Resolution**: `ShardedZoneStore` looks up zone, builds response
 8. **DNSSEC Signing**: If zone signed, RRSIG records added
 9. **Response**: Wire format response sent to client
