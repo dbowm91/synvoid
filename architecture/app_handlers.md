@@ -10,7 +10,7 @@ The `StaticFileHandler` (`src/static_files/mod.rs:42`) is a high-performance eng
 - **Path Normalization:** Protects against path traversal attacks by resolving and validating paths before access.
 - **MIME Type Mapping:** Automatic content-type detection based on file extensions.
 - **Caching & Compression:** Supports `gzip` and `brotli` pre-compression and integrates with the internal proxy cache.
-- **IPC Delegation:** Heavy operations (CSS/JS minification, image compression) are delegated to the `StaticWorker` via IPC for background processing.
+- **IPC Delegation:** Heavy operations (CSS/JS minification, image compression) are delegated to CPU offload workers via IPC for background processing. The legacy `StaticWorker` IPC names remain as compatibility aliases.
 
 ## 2. FastCGI & PHP-FPM
 

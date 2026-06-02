@@ -1,6 +1,7 @@
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{
-    CommandResponse, SupervisorCommand, SupervisorStatus, ProcessManager, StatusStats, ThreatSummary,
+    CommandResponse, ProcessManager, StatusStats, SupervisorCommand, SupervisorStatus,
+    ThreatSummary,
 };
 use crate::supervisor::state::SupervisorState;
 use std::sync::Arc;

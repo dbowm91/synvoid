@@ -1,6 +1,6 @@
 # Supervisor Process Management
 
-SynVoid uses a two-tier "Shared-Nothing Architecture" (Supervisor → Worker) for maximum performance, linear scalability, and robust security isolation. This document covers how to manage the supervisor process and its workers.
+SynVoid uses a two-tier architecture (Supervisor control plane -> data-plane workers). The default data-plane contract is one UnifiedServerWorker for latency-sensitive I/O plus N CPU offload workers for heavy transforms. This document covers how to manage the supervisor process and its workers.
 
 ## Process Architecture
 
@@ -17,12 +17,58 @@ SynVoid uses a two-tier "Shared-Nothing Architecture" (Supervisor → Worker) fo
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                         WORKER PROCESSES                         │
-│  - Isolated Data Plane engines                                  │
-│  - Shared-Nothing: independent listeners (SO_REUSEPORT)          │
-│  - Core-pinned for maximum performance (sched_setaffinity)      │
-│  - Lightweight: focus strictly on request handling              │
+│  - UnifiedServerWorker: network I/O + cheap request-path work   │
+│  - CPU workers: bounded heavy task execution                    │
+│  - Core pinning where supported (sched_setaffinity)             │
+│  - Supervisor-owned lifecycle, health, and rotation             │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## Scaling Knobs
+
+Use each knob for its specific scope:
+
+- `worker_threads` configures tokio runtime parallelism inside a unified worker.
+- `tcp.worker_pool_size` scales the connection accept path.
+- CPU worker count scales bounded heavy task throughput.
+- `unified_server_workers` is advanced mode only and should not be treated as the primary throughput knob.
+
+## Advanced Multi-Unified-Worker Mode
+
+`unified_server_workers > 1` is a specialized deployment mode for explicit process isolation needs.
+It is not the default throughput strategy for SynVoid.
+
+### Listener And Port-Check Semantics
+
+- Shared-port startup (`SO_REUSEPORT`) is only valid when explicitly enabled for multi-worker mode.
+- In shared-port multi-worker mode, listener bind is the source of truth.
+- Pre-bind port conflict checks are skipped for that explicit shared-port path to avoid rejecting valid multi-bind startup.
+- Outside shared-port multi-worker mode, normal pre-bind conflict checks still apply.
+
+### State Semantics (Per-Worker vs Global)
+
+Per-worker state (not automatically shared across unified workers):
+- in-memory connection tracking and drain state
+- per-process caches and hot objects
+- local runtime counters before aggregation
+
+Supervisor/global state:
+- process lifecycle and worker health
+- control-plane configuration distribution
+- aggregated status and management-plane metrics
+
+### Metrics Aggregation Contract
+
+- Worker metrics are emitted per process.
+- Supervisor is responsible for cross-worker aggregation surfaced by status/control APIs.
+- Operator-facing totals should be interpreted from supervisor status, not from any single worker process.
+
+### Cache Invalidation And Reload Semantics
+
+- Config reload/rotation is coordinated by the supervisor.
+- Each unified worker owns its local in-memory cache and refresh lifecycle.
+- Invalidations are applied per worker during reload/rotation; they are not shared-memory invalidations.
+- Operationally, treat cache convergence across multiple unified workers as eventual during coordinated reload.
 
 ## Option 1: systemd (Recommended for Linux)
 
@@ -125,13 +171,23 @@ SynVoid exposes a formal gRPC API for remote management and CLI interaction. Thi
 
 The CLI `CommandClient` automatically uses gRPC to communicate with the local or remote Supervisor.
 
-## Shared-Nothing Data Plane
+## Data-Plane Responsibilities
 
-Workers operate in a shared-nothing environment to eliminate coordination overhead:
+Unified worker responsibilities:
+- listener accept and protocol handling
+- TLS orchestration and HTTP parsing
+- routing, cheap WAF checks, and request streaming
+- cache-hit response serving
 
-- **SO_REUSEPORT:** Each worker binds to the same listening ports. The kernel handles load balancing across workers.
-- **CPU Pinning:** Workers are automatically pinned to specific CPU cores.
-- **IPC Coordination:** The Supervisor pushes configuration and threat intelligence to workers via a high-speed binary IPC protocol.
+CPU worker responsibilities:
+- minification/compression/image transforms
+- expensive body scanning and deep regex work
+- plugin/WASM/serverless execution
+
+Coordination model:
+- Supervisor distributes config and control data over signed IPC.
+- Unified worker offloads bounded heavy tasks to CPU workers.
+- Queue and timeout policies prevent offload saturation from stalling request I/O.
 
 ## IPC Session Key Architecture
 

@@ -1,6 +1,7 @@
 use super::super::state::{AdminState, AggregatedMetrics};
 use super::common::OptionalAuth;
 use crate::metrics::payloads::HealthStatus;
+use crate::metrics::TimingStatsPayload;
 use crate::metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
 use axum::{
     extract::{Query, State},
@@ -251,6 +252,33 @@ pub struct CacheStats {
     pub static_cache_hits: u64,
     pub static_cache_misses: u64,
     pub static_cache_hit_rate: f64,
+    pub cpu_offload_pool_in_flight: usize,
+    pub cpu_offload_pool_connections: usize,
+    pub cpu_offload_pool_evictions: u64,
+    pub cpu_offload_pool_submissions: u64,
+    pub cpu_offload_timeouts: u64,
+    pub cpu_offload_rejections: u64,
+    pub cpu_offload_queued_minify: u64,
+    pub cpu_offload_queued_get_compressed: u64,
+    pub cpu_offload_queued_poison_image: u64,
+    pub cpu_offload_queued_yara_scan: u64,
+    pub cpu_offload_active_minify: u64,
+    pub cpu_offload_active_get_compressed: u64,
+    pub cpu_offload_active_poison_image: u64,
+    pub cpu_offload_active_yara_scan: u64,
+    pub cpu_offload_completed_minify: u64,
+    pub cpu_offload_completed_get_compressed: u64,
+    pub cpu_offload_completed_poison_image: u64,
+    pub cpu_offload_completed_yara_scan: u64,
+    pub cpu_offload_payload_bytes_in_total: u64,
+    pub cpu_offload_payload_bytes_out_total: u64,
+    pub cpu_offload_task_submitted_total: u64,
+    pub cpu_offload_task_fallback_inline_small_total: u64,
+    pub cpu_offload_task_timeout_total: u64,
+    pub cpu_offload_task_rejected_total: u64,
+    pub cpu_offload_task_duration_ms: std::collections::HashMap<String, TimingStatsPayload>,
+    pub cpu_offload_failed_total: u64,
+    pub cpu_offload_worker_rss_bytes: u64,
 }
 
 #[utoipa::path(
@@ -278,7 +306,7 @@ pub async fn get_cache_stats(
 
     let (static_cache_hits, static_cache_misses) =
         if let Some(ref pm) = state.process.process_manager {
-            pm.get_static_worker_cache_stats()
+            pm.get_cpu_worker_cache_stats()
         } else {
             (0, 0)
         };
@@ -289,6 +317,13 @@ pub async fn get_cache_stats(
         0.0
     };
 
+    let cpu_offload_pool_stats = crate::static_files::client::get_global_async_cpu_offload_stats();
+    let cpu_worker_stats = if let Some(ref pm) = state.process.process_manager {
+        pm.get_cpu_worker_cpu_offload_stats()
+    } else {
+        crate::process::StaticCpuOffloadStats::default()
+    };
+
     let stats = CacheStats {
         proxy_cache_hits: proxy_hits,
         proxy_cache_misses: proxy_misses,
@@ -296,6 +331,33 @@ pub async fn get_cache_stats(
         static_cache_hits,
         static_cache_misses,
         static_cache_hit_rate,
+        cpu_offload_pool_in_flight: cpu_offload_pool_stats.active_in_flight,
+        cpu_offload_pool_connections: cpu_offload_pool_stats.pooled_connections,
+        cpu_offload_pool_evictions: cpu_offload_pool_stats.evictions,
+        cpu_offload_pool_submissions: cpu_offload_pool_stats.submissions,
+        cpu_offload_timeouts: cpu_offload_pool_stats.timeouts,
+        cpu_offload_rejections: cpu_offload_pool_stats.rejections,
+        cpu_offload_queued_minify: cpu_worker_stats.queued_minify,
+        cpu_offload_queued_get_compressed: cpu_worker_stats.queued_get_compressed,
+        cpu_offload_queued_poison_image: cpu_worker_stats.queued_poison_image,
+        cpu_offload_queued_yara_scan: cpu_worker_stats.queued_yara_scan,
+        cpu_offload_active_minify: cpu_worker_stats.active_minify,
+        cpu_offload_active_get_compressed: cpu_worker_stats.active_get_compressed,
+        cpu_offload_active_poison_image: cpu_worker_stats.active_poison_image,
+        cpu_offload_active_yara_scan: cpu_worker_stats.active_yara_scan,
+        cpu_offload_completed_minify: cpu_worker_stats.completed_minify,
+        cpu_offload_completed_get_compressed: cpu_worker_stats.completed_get_compressed,
+        cpu_offload_completed_poison_image: cpu_worker_stats.completed_poison_image,
+        cpu_offload_completed_yara_scan: cpu_worker_stats.completed_yara_scan,
+        cpu_offload_payload_bytes_in_total: cpu_worker_stats.payload_bytes_in_total,
+        cpu_offload_payload_bytes_out_total: cpu_worker_stats.payload_bytes_out_total,
+        cpu_offload_task_submitted_total: cpu_worker_stats.submitted_total,
+        cpu_offload_task_fallback_inline_small_total: cpu_worker_stats.fallback_inline_small_total,
+        cpu_offload_task_timeout_total: cpu_worker_stats.timeout_total,
+        cpu_offload_task_rejected_total: cpu_worker_stats.rejected_total,
+        cpu_offload_task_duration_ms: cpu_worker_stats.task_duration_ms,
+        cpu_offload_failed_total: cpu_worker_stats.failed_total,
+        cpu_offload_worker_rss_bytes: cpu_worker_stats.worker_rss_bytes,
     };
 
     Ok(Json(stats))

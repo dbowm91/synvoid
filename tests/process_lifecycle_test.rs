@@ -66,6 +66,7 @@ mod process_lifecycle_tests {
             timestamp: 0,
             static_cache_hits: 0,
             static_cache_misses: 0,
+            cpu_offload_stats: Default::default(),
         };
         let shutdown = Message::StaticWorkerShutdownComplete { worker_id: 0 };
 
@@ -217,12 +218,12 @@ mod process_lifecycle_tests {
     }
 
     #[test]
-    fn test_static_worker_category() {
+    fn test_cpu_worker_category() {
         let started = Message::StaticWorkerStarted {
             worker_id: 0,
             pid: 1234,
         };
-        assert_eq!(started.category(), MessageCategory::StaticWorker);
+        assert_eq!(started.category(), MessageCategory::CpuWorker);
     }
 
     #[test]
@@ -262,10 +263,10 @@ mod process_lifecycle_tests {
             graceful: true,
             timeout_secs: 30,
         };
-        assert_eq!(shutdown.category(), MessageCategory::MasterCommand);
+        assert_eq!(shutdown.category(), MessageCategory::SupervisorCommand);
 
         let resize = Message::MasterResizeThreadpool { worker_threads: 4 };
-        assert_eq!(resize.category(), MessageCategory::MasterCommand);
+        assert_eq!(resize.category(), MessageCategory::SupervisorCommand);
     }
 
     #[test]
@@ -322,23 +323,23 @@ mod process_lifecycle_tests {
     }
 
     #[test]
-    fn test_static_content_category() {
+    fn test_cpu_worker_task_category() {
         let minify_req = Message::MinifyRequest {
             request_id: 123,
             site_id: "test".to_string(),
             path: "/test.css".to_string(),
             encoding: None,
         };
-        assert_eq!(minify_req.category(), MessageCategory::StaticContent);
+        assert_eq!(minify_req.category(), MessageCategory::CpuWorker);
     }
 
     #[test]
     fn test_overseer_category() {
-        let drain_workers = Message::OverseerDrainWorkers { timeout_secs: 30 };
-        assert_eq!(drain_workers.category(), MessageCategory::Overseer);
+        let drain_workers = Message::SupervisorDrainWorkers { timeout_secs: 30 };
+        assert_eq!(drain_workers.category(), MessageCategory::Supervisor);
 
-        let get_status = Message::OverseerGetStatus;
-        assert_eq!(get_status.category(), MessageCategory::Overseer);
+        let get_status = Message::SupervisorGetStatus;
+        assert_eq!(get_status.category(), MessageCategory::Supervisor);
     }
 
     #[test]

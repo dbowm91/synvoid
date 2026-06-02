@@ -195,9 +195,8 @@ impl AcmeManager {
                 let mut file = std::fs::File::create(&temp_path).map_err(|e| {
                     AcmeError::Io(format!("Failed to create temp credentials file: {}", e))
                 })?;
-                file.write_all(creds_json.as_bytes()).map_err(|e| {
-                    AcmeError::Io(format!("Failed to write credentials: {}", e))
-                })?;
+                file.write_all(creds_json.as_bytes())
+                    .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
             }
 
             // On Windows, apply a restrictive DACL so only the current user can read the file.

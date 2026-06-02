@@ -30,7 +30,9 @@ use crate::plugin::get_global_plugin_manager;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
 use crate::process::{check_ports_available, current_timestamp, Message, WorkerId};
 use crate::server::UnifiedServer;
+use crate::static_files::client::get_global_async_cpu_offload_stats;
 use crate::upload::UploadValidator;
+use crate::worker::common::collect_current_process_usage;
 use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
@@ -53,6 +55,10 @@ pub fn setup_unified_server_panic_handler() {
         .to_string_lossy()
         .replace(".sock", "-panic.log");
     setup_panic_handler("UNIFIED SERVER WORKER", Some(&panic_path));
+}
+
+fn should_skip_prebind_port_check(total_workers: usize, reuse_port: bool) -> bool {
+    total_workers > 1 && reuse_port
 }
 
 async fn setup_worker_ipc(
@@ -277,7 +283,15 @@ pub async fn run_unified_server_worker(
             }
         }
 
-        if let Err(e) = check_ports_available(&ports_to_check) {
+        // For multi-unified-worker mode, listener creation must be the source of truth.
+        // A pre-bind check can incorrectly reject valid SO_REUSEPORT shared-port startup.
+        if should_skip_prebind_port_check(args.total_workers, args.reuse_port) {
+            tracing::info!(
+                "Skipping pre-bind port conflict check for shared-port multi-worker mode (total_workers={}, reuse_port={})",
+                args.total_workers,
+                args.reuse_port
+            );
+        } else if let Err(e) = check_ports_available(&ports_to_check) {
             let error_msg = e.to_string();
             let unavailable: Vec<u16> = error_msg
                 .split(['[', ']', ' '])
@@ -1327,7 +1341,9 @@ pub async fn run_unified_server_worker(
     let heartbeat_state = state.clone();
     let task_handles = state.task_handles.clone();
     let heartbeat_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let heartbeat_interval = Duration::from_secs(5);
+        let mut interval = tokio::time::interval(heartbeat_interval);
+        let mut next_heartbeat_at = Instant::now() + heartbeat_interval;
 
         loop {
             interval.tick().await;
@@ -1335,6 +1351,28 @@ pub async fn run_unified_server_worker(
             if !heartbeat_state.running.is_running() {
                 break;
             }
+
+            let lag_ms = Instant::now()
+                .saturating_duration_since(next_heartbeat_at)
+                .as_millis() as u64;
+            heartbeat_state.metrics.record_event_loop_lag_ms(lag_ms);
+            let (memory_bytes, cpu_percent) = collect_current_process_usage();
+            heartbeat_state
+                .metrics
+                .record_process_usage(memory_bytes, cpu_percent);
+            heartbeat_state
+                .metrics
+                .set_active_connections(heartbeat_state.drain_state.get_active_connections());
+            let cpu_offload_stats = get_global_async_cpu_offload_stats();
+            heartbeat_state.metrics.set_offload_counters(
+                cpu_offload_stats.submissions,
+                cpu_offload_stats.timeouts,
+                cpu_offload_stats.rejections,
+            );
+            heartbeat_state
+                .metrics
+                .set_offload_fallbacks(cpu_offload_stats.fallbacks);
+            next_heartbeat_at += heartbeat_interval;
 
             let uptime = heartbeat_state.start_time.elapsed().as_secs();
             let payload = heartbeat_state.metrics.to_payload(uptime);
@@ -1950,5 +1988,18 @@ mod tests {
 
         assert_eq!(single_thread.worker_threads, 1);
         assert_eq!(multi_thread.worker_threads, 16);
+    }
+
+    #[test]
+    fn test_should_skip_prebind_port_check_single_worker() {
+        assert!(!should_skip_prebind_port_check(1, false));
+        assert!(!should_skip_prebind_port_check(1, true));
+    }
+
+    #[test]
+    fn test_should_skip_prebind_port_check_multi_worker() {
+        assert!(!should_skip_prebind_port_check(2, false));
+        assert!(should_skip_prebind_port_check(2, true));
+        assert!(should_skip_prebind_port_check(8, true));
     }
 }

@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::mesh::config::MeshConfig;
+use crate::mesh::config::{MeshConfig, MeshTlsMode};
 
 #[derive(Zeroize, ZeroizeOnDrop)]
 struct ZeroizingPrivateKeyDer(PrivateKeyDer<'static>);
@@ -149,7 +149,7 @@ pub struct MeshCertManager {
     ca_mode: bool,
     enforce_mutual_tls: bool,
     quic_enable_0rtt: bool,
-    strict_certificate_validation: bool,
+    tls_mode: MeshTlsMode,
     ca_key_pair: Arc<RwLock<Option<rcgen::KeyPair>>>,
     ca_certificate: Arc<RwLock<Option<rcgen::Certificate>>>,
     ca_cert_der: Arc<RwLock<Option<CertificateDer<'static>>>>,
@@ -211,7 +211,7 @@ impl MeshCertManager {
             ca_mode,
             enforce_mutual_tls: config.tls.enforce_mutual_tls,
             quic_enable_0rtt: config.tls.quic_enable_0rtt,
-            strict_certificate_validation: config.tls.strict_certificate_validation,
+            tls_mode: config.tls.effective_mode(),
             ca_key_pair: Arc::new(RwLock::new(None)),
             ca_certificate: Arc::new(RwLock::new(None)),
             ca_cert_der: Arc::new(RwLock::new(None)),
@@ -224,7 +224,10 @@ impl MeshCertManager {
             certificate_revocation_list: Arc::new(RwLock::new(std::collections::HashSet::new())),
             crl_entries: Arc::new(RwLock::new(std::collections::HashMap::new())),
             seed_tofu_fingerprints: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            tofu_enabled: Arc::new(RwLock::new(true)),
+            tofu_enabled: Arc::new(RwLock::new(matches!(
+                config.tls.effective_mode(),
+                MeshTlsMode::Tofu
+            ))),
             require_explicit_fingerprint: Arc::new(RwLock::new(
                 config
                     .seed_tofu
@@ -542,7 +545,15 @@ impl MeshCertManager {
     }
 
     pub fn is_tofu_enabled(&self) -> bool {
-        *self.tofu_enabled.read()
+        matches!(self.tls_mode, MeshTlsMode::Tofu) && *self.tofu_enabled.read()
+    }
+
+    pub fn is_strict_validation_enabled(&self) -> bool {
+        matches!(self.tls_mode, MeshTlsMode::Strict)
+    }
+
+    pub fn tls_mode(&self) -> MeshTlsMode {
+        self.tls_mode
     }
 
     pub fn compute_cert_fingerprint(cert_der: &[u8]) -> String {
@@ -800,14 +811,14 @@ impl MeshCertManager {
 
         let trusted = self.trusted_ca_certs.read();
         if trusted.is_empty() {
-            if self.strict_certificate_validation {
+            if matches!(self.tls_mode, MeshTlsMode::Strict) {
                 tracing::warn!(
-                    "CRITICAL SECURITY: No CA certificates configured but strict_certificate_validation=true. \
-                    Rejecting peer {} certificate. Configure ca_path in mesh.tls or set strict_certificate_validation=false",
+                    "CRITICAL SECURITY: No CA certificates configured but mesh.tls.mode=strict. \
+                    Rejecting peer {} certificate. Configure ca_path in mesh.tls or use mode=tofu/permissive",
                     peer_node_id
                 );
                 return Err(MeshCertError::ConfigError(
-                    "No CA certificates configured with strict validation enabled".to_string(),
+                    "No CA certificates configured with strict mesh TLS mode".to_string(),
                 ));
             }
             tracing::warn!(
@@ -1277,4 +1288,136 @@ pub struct CrlEntry {
     pub serial_number: String,
     pub revocation_time: u64,
     pub reason: CrlReason,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mesh::config::{MeshConfig, MeshTlsMode};
+    use rcgen::generate_simple_self_signed;
+
+    fn ensure_rustls_provider_installed() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    }
+
+    #[test]
+    fn verify_peer_certificate_strict_mode_rejects_when_no_ca_configured() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Strict);
+        cfg.tls.strict_certificate_validation = true;
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        let result = mgr.verify_peer_certificate("peer-1.mesh", b"irrelevant", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn verify_peer_certificate_permissive_mode_allows_when_no_ca_configured() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Permissive);
+        cfg.tls.strict_certificate_validation = true;
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        let result = mgr.verify_peer_certificate("peer-1.mesh", b"irrelevant", None);
+        assert_eq!(result.unwrap(), true);
+    }
+
+    #[test]
+    fn verify_peer_certificate_rejects_revoked_node_even_in_permissive_mode() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Permissive);
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        mgr.revoke_certificate("peer-revoked.mesh").unwrap();
+
+        let result = mgr.verify_peer_certificate("peer-revoked.mesh", b"irrelevant", None);
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[test]
+    fn verify_peer_certificate_strict_mode_rejects_unknown_certificate_chain() {
+        ensure_rustls_provider_installed();
+
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Strict);
+        cfg.tls.ca_mode = true;
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        mgr.generate_ca_certificate().unwrap();
+
+        let untrusted = generate_simple_self_signed(vec!["peer-unknown.mesh".to_string()]).unwrap();
+        let result = mgr.verify_peer_certificate("peer-unknown.mesh", untrusted.cert.der(), None);
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[test]
+    fn verify_peer_certificate_strict_mode_rejects_mismatched_node_identity() {
+        ensure_rustls_provider_installed();
+
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Strict);
+        cfg.tls.ca_mode = true;
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        mgr.generate_ca_certificate().unwrap();
+
+        let (cert_der, _key_der) = mgr
+            .sign_certificate("peer-cert.mesh", vec!["peer-cert.mesh".to_string()])
+            .unwrap();
+        let result = mgr.verify_peer_certificate("peer-expected.mesh", &cert_der, None);
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[test]
+    fn mesh_tls_mode_tofu_enables_tofu_and_disables_strict() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Tofu);
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        assert!(mgr.is_tofu_enabled());
+        assert!(!mgr.is_strict_validation_enabled());
+    }
+
+    #[test]
+    fn mesh_tls_mode_permissive_disables_tofu_and_strict() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Permissive);
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        assert!(!mgr.is_tofu_enabled());
+        assert!(!mgr.is_strict_validation_enabled());
+    }
+
+    #[test]
+    fn mesh_tls_legacy_fallback_strict_true_maps_to_strict_mode() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = None;
+        cfg.tls.strict_certificate_validation = true;
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        assert_eq!(mgr.tls_mode(), MeshTlsMode::Strict);
+        assert!(mgr.is_strict_validation_enabled());
+        assert!(!mgr.is_tofu_enabled());
+    }
+
+    #[test]
+    fn mesh_tls_legacy_fallback_strict_false_maps_to_permissive_mode() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = None;
+        cfg.tls.strict_certificate_validation = false;
+        cfg.tls.ca_path = None;
+
+        let mgr = MeshCertManager::new(&cfg);
+        assert_eq!(mgr.tls_mode(), MeshTlsMode::Permissive);
+        assert!(!mgr.is_strict_validation_enabled());
+        assert!(!mgr.is_tofu_enabled());
+    }
 }

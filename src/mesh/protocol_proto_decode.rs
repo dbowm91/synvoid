@@ -832,6 +832,10 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 request_id: r.request_id.into(),
                 node_id: r.node_id.into(),
                 from_version: r.from_version,
+                timestamp: r.timestamp,
+                nonce: r.nonce.into(),
+                signature: r.signature,
+                signer_public_key: r.signer_public_key,
             }),
             proto::mesh_message::Payload::DhtSyncResponse(r) => Ok(MeshMessage::DhtSyncResponse {
                 request_id: r.request_id.into(),

@@ -8,6 +8,8 @@ use std::os::unix::net::UnixStream;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::metrics::TimingStatsPayload;
+
 use super::ipc_framing::{read_message_sync, write_message_sync, DEFAULT_BUFFER_SIZE};
 use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
@@ -109,6 +111,139 @@ pub struct BlockEntryData {
 pub struct RulePatternData {
     pub category: String,
     pub patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CpuTaskKind {
+    Minify,
+    GetCompressed,
+    PoisonImage,
+    YaraScan,
+    WasmExecute,
+    ServerlessInvoke,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CpuTaskPriority {
+    Low,
+    Normal,
+    High,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CpuTaskPolicy {
+    FailClosed,
+    FailOpenWithLog,
+    SkipTransform,
+    DegradeToInlineSmallOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CpuTaskPayload {
+    Minify {
+        site_id: String,
+        path: String,
+        encoding: Option<String>,
+    },
+    GetCompressed {
+        site_id: String,
+        path: String,
+        encoding: String,
+    },
+    PoisonImage {
+        site_id: String,
+        body: Vec<u8>,
+        last_modified: Option<String>,
+        level: Option<String>,
+        intensity: Option<f32>,
+        seed: Option<u64>,
+        max_dimension: Option<u32>,
+        jpeg_quality: Option<u8>,
+    },
+    YaraScan {
+        site_id: String,
+        body: Vec<u8>,
+        excluded_categories: Vec<String>,
+    },
+}
+
+impl CpuTaskPayload {
+    pub fn task_kind(&self) -> CpuTaskKind {
+        match self {
+            CpuTaskPayload::Minify { .. } => CpuTaskKind::Minify,
+            CpuTaskPayload::GetCompressed { .. } => CpuTaskKind::GetCompressed,
+            CpuTaskPayload::PoisonImage { .. } => CpuTaskKind::PoisonImage,
+            CpuTaskPayload::YaraScan { .. } => CpuTaskKind::YaraScan,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CpuTaskResult {
+    Minify {
+        site_id: String,
+        path: String,
+        content: Vec<u8>,
+        content_type: String,
+        encoding: Option<String>,
+        queued_encodings: Vec<String>,
+    },
+    GetCompressed {
+        content: Vec<u8>,
+    },
+    PoisonImage {
+        poisoned_body: Vec<u8>,
+    },
+    YaraScan {
+        matches: Vec<String>,
+    },
+}
+
+impl CpuTaskResult {
+    pub fn task_kind(&self) -> CpuTaskKind {
+        match self {
+            CpuTaskResult::Minify { .. } => CpuTaskKind::Minify,
+            CpuTaskResult::GetCompressed { .. } => CpuTaskKind::GetCompressed,
+            CpuTaskResult::PoisonImage { .. } => CpuTaskKind::PoisonImage,
+            CpuTaskResult::YaraScan { .. } => CpuTaskKind::YaraScan,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StaticCpuOffloadStats {
+    pub queued_minify: u64,
+    pub queued_get_compressed: u64,
+    pub queued_poison_image: u64,
+    pub queued_yara_scan: u64,
+    pub active_minify: u64,
+    pub active_get_compressed: u64,
+    pub active_poison_image: u64,
+    pub active_yara_scan: u64,
+    pub completed_minify: u64,
+    pub completed_get_compressed: u64,
+    pub completed_poison_image: u64,
+    pub completed_yara_scan: u64,
+    pub payload_bytes_in_total: u64,
+    pub payload_bytes_out_total: u64,
+    pub rejected_total: u64,
+    pub timeout_total: u64,
+    pub failed_total: u64,
+    pub submitted_total: u64,
+    pub fallback_inline_small_total: u64,
+    pub task_duration_ms: HashMap<String, TimingStatsPayload>,
+    pub event_loop_lag_ms: u64,
+    pub worker_rss_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CpuTaskErrorCode {
+    InvalidRequest,
+    Timeout,
+    QueueSaturated,
+    PayloadTooLarge,
+    InternalError,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,16 +392,19 @@ pub struct ServerlessHandleResponse {
 /// - **Supervisor Commands**: SupervisorShutdown, SupervisorConfigReload,
 ///   MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck,
 ///   MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck
-/// - **Static Worker**: StaticWorkerStarted, StaticWorkerReady,
+/// - **Cpu Worker**: StaticWorkerStarted, StaticWorkerReady,
 ///   StaticWorkerHeartbeat, StaticWorkerRequestLog, StaticWorkerShutdownComplete,
 ///   StaticWorkerBackgroundTasksDone, StaticWorkerResizeAck, StaticWorkerScan,
 ///   StaticWorkerCacheUpdate, StaticWorkerDrain, StaticWorkerDrained,
-///   StaticWorkerDrainStatus
+///   StaticWorkerDrainStatus, MinifyRequest, MinifyResponse, MinifyError,
+///   PoisonImageRequest, PoisonImageResponse, PoisonImageError,
+///   GetCompressedRequest, GetCompressedResponse, CpuTaskRequest,
+///   CpuTaskCancel, CpuTaskResponse, CpuTaskError
 /// - **Threat Intel**: ThreatIndicatorAnnounce, ThreatIndicatorFromMesh,
 ///   ThreatSyncRequest, ThreatSyncResponse, BlocklistRequest, BlocklistResponse
 /// - **Blocklist & Rules**: BlocklistUpdate, RulePatternsUpdate,
 ///   BlocklistWriteComplete
-/// - **Static Content**: MinifyRequest, MinifyResponse, MinifyError,
+/// - **Legacy Static Content**: MinifyRequest, MinifyResponse, MinifyError,
 ///   PoisonImageRequest, PoisonImageResponse, PoisonImageError,
 ///   GetCompressedRequest, GetCompressedResponse
 /// - **App Server**: AppServerStarted, AppServerReady, AppServerHealth,
@@ -378,6 +516,7 @@ pub enum Message {
         timestamp: u64,
         static_cache_hits: u64,
         static_cache_misses: u64,
+        cpu_offload_stats: StaticCpuOffloadStats,
     },
     StaticWorkerRequestLog {
         worker_id: usize,
@@ -527,6 +666,33 @@ pub enum Message {
     GetCompressedResponse {
         request_id: u64,
         content: Vec<u8>,
+    },
+    CpuTaskRequest {
+        request_id: u64,
+        task_kind: CpuTaskKind,
+        priority: CpuTaskPriority,
+        policy: CpuTaskPolicy,
+        deadline_unix_ms: u64,
+        payload_size_limit: u64,
+        output_size_limit: u64,
+        file_payload_path: Option<String>,
+        payload: CpuTaskPayload,
+    },
+    CpuTaskCancel {
+        request_id: u64,
+        task_kind: CpuTaskKind,
+    },
+    CpuTaskResponse {
+        request_id: u64,
+        task_kind: CpuTaskKind,
+        result: CpuTaskResult,
+    },
+    CpuTaskError {
+        request_id: u64,
+        task_kind: CpuTaskKind,
+        code: CpuTaskErrorCode,
+        message: String,
+        retryable: bool,
     },
     AppServerStarted {
         id: WorkerId,
@@ -1141,6 +1307,155 @@ impl Message {
                 check_str("GetCompressedRequest.path", path, MAX_PATH_LENGTH)?;
                 check_str("GetCompressedRequest.encoding", encoding, MAX_STRING_LENGTH)
             }
+            Message::CpuTaskRequest {
+                task_kind,
+                payload_size_limit,
+                output_size_limit,
+                file_payload_path,
+                payload,
+                ..
+            } => {
+                check_opt_path_str(
+                    "CpuTaskRequest.file_payload_path",
+                    file_payload_path,
+                    MAX_PATH_LENGTH,
+                )?;
+                check_str(
+                    "CpuTaskRequest.payload_size_limit",
+                    &payload_size_limit.to_string(),
+                    MAX_STRING_LENGTH,
+                )?;
+                check_str(
+                    "CpuTaskRequest.output_size_limit",
+                    &output_size_limit.to_string(),
+                    MAX_STRING_LENGTH,
+                )?;
+                if *task_kind != payload.task_kind() {
+                    return Err(IpcValidationError {
+                        field: "CpuTaskRequest.task_kind".into(),
+                        message: format!(
+                            "task_kind {:?} does not match payload {:?}",
+                            task_kind,
+                            payload.task_kind()
+                        ),
+                    });
+                }
+                match payload {
+                    CpuTaskPayload::Minify {
+                        site_id,
+                        path,
+                        encoding,
+                    } => {
+                        check_str("CpuTaskPayload.Minify.site_id", site_id, MAX_STRING_LENGTH)?;
+                        check_str("CpuTaskPayload.Minify.path", path, MAX_PATH_LENGTH)?;
+                        check_opt_str(
+                            "CpuTaskPayload.Minify.encoding",
+                            encoding,
+                            MAX_STRING_LENGTH,
+                        )
+                    }
+                    CpuTaskPayload::GetCompressed {
+                        site_id,
+                        path,
+                        encoding,
+                    } => {
+                        check_str(
+                            "CpuTaskPayload.GetCompressed.site_id",
+                            site_id,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str("CpuTaskPayload.GetCompressed.path", path, MAX_PATH_LENGTH)?;
+                        check_str(
+                            "CpuTaskPayload.GetCompressed.encoding",
+                            encoding,
+                            MAX_STRING_LENGTH,
+                        )
+                    }
+                    CpuTaskPayload::PoisonImage {
+                        site_id,
+                        last_modified,
+                        ..
+                    } => {
+                        check_str(
+                            "CpuTaskPayload.PoisonImage.site_id",
+                            site_id,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_opt_str(
+                            "CpuTaskPayload.PoisonImage.last_modified",
+                            last_modified,
+                            MAX_STRING_LENGTH,
+                        )
+                    }
+                    CpuTaskPayload::YaraScan {
+                        site_id,
+                        excluded_categories,
+                        ..
+                    } => {
+                        check_str(
+                            "CpuTaskPayload.YaraScan.site_id",
+                            site_id,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str_vec(
+                            "CpuTaskPayload.YaraScan.excluded_categories",
+                            excluded_categories,
+                            MAX_STRING_LENGTH,
+                        )
+                    }
+                }
+            }
+            Message::CpuTaskCancel { .. } => Ok(()),
+            Message::CpuTaskError { message, .. } => {
+                check_str("CpuTaskError.message", message, MAX_STRING_LENGTH)
+            }
+            Message::CpuTaskResponse {
+                task_kind, result, ..
+            } => {
+                if *task_kind != result.task_kind() {
+                    return Err(IpcValidationError {
+                        field: "CpuTaskResponse.task_kind".into(),
+                        message: format!(
+                            "task_kind {:?} does not match result {:?}",
+                            task_kind,
+                            result.task_kind()
+                        ),
+                    });
+                }
+                match result {
+                    CpuTaskResult::Minify {
+                        site_id,
+                        path,
+                        content_type,
+                        encoding,
+                        queued_encodings,
+                        ..
+                    } => {
+                        check_str("CpuTaskResult.Minify.site_id", site_id, MAX_STRING_LENGTH)?;
+                        check_str("CpuTaskResult.Minify.path", path, MAX_PATH_LENGTH)?;
+                        check_str(
+                            "CpuTaskResult.Minify.content_type",
+                            content_type,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_opt_str(
+                            "CpuTaskResult.Minify.encoding",
+                            encoding,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str_vec(
+                            "CpuTaskResult.Minify.queued_encodings",
+                            queued_encodings,
+                            MAX_STRING_LENGTH,
+                        )
+                    }
+                    CpuTaskResult::GetCompressed { .. } => Ok(()),
+                    CpuTaskResult::PoisonImage { .. } => Ok(()),
+                    CpuTaskResult::YaraScan { matches } => {
+                        check_str_vec("CpuTaskResult.YaraScan.matches", matches, MAX_STRING_LENGTH)
+                    }
+                }
+            }
             Message::AppServerStarted {
                 site_id,
                 socket_path,
@@ -1413,7 +1728,7 @@ impl Message {
             | Message::StaticWorkerCacheUpdate { .. }
             | Message::StaticWorkerDrain { .. }
             | Message::StaticWorkerDrained { .. }
-            | Message::StaticWorkerDrainStatus { .. } => MessageCategory::StaticWorker,
+            | Message::StaticWorkerDrainStatus { .. } => MessageCategory::CpuWorker,
 
             Message::UpstreamGlobalStats { .. } | Message::GlobalUpstreamStatsBroadcast { .. } => {
                 MessageCategory::Upstream
@@ -1438,7 +1753,11 @@ impl Message {
             | Message::PoisonImageResponse { .. }
             | Message::PoisonImageError { .. }
             | Message::GetCompressedRequest { .. }
-            | Message::GetCompressedResponse { .. } => MessageCategory::StaticContent,
+            | Message::GetCompressedResponse { .. }
+            | Message::CpuTaskRequest { .. }
+            | Message::CpuTaskCancel { .. }
+            | Message::CpuTaskResponse { .. }
+            | Message::CpuTaskError { .. } => MessageCategory::CpuWorker,
 
             Message::AppServerStarted { .. }
             | Message::AppServerReady { .. }
@@ -1532,6 +1851,7 @@ impl Message {
             self.category(),
             MessageCategory::WorkerLifecycle
                 | MessageCategory::StaticWorker
+                | MessageCategory::CpuWorker
                 | MessageCategory::UnifiedServer
                 | MessageCategory::AppServer
         )
@@ -1546,6 +1866,188 @@ impl Message {
                 | MessageCategory::DrainProtocol
         )
     }
+
+    /// Converts a legacy static-content request into the generic CPU worker task envelope.
+    ///
+    /// Returns `(request, is_legacy_shape)` where `is_legacy_shape` indicates
+    /// that the original message used one of the legacy `*Request` variants.
+    pub fn into_cpu_task_request_compat(
+        self,
+    ) -> Option<(
+        u64,
+        CpuTaskKind,
+        CpuTaskPriority,
+        CpuTaskPolicy,
+        u64,
+        u64,
+        u64,
+        Option<String>,
+        CpuTaskPayload,
+        bool,
+    )> {
+        match self {
+            Message::CpuTaskRequest {
+                request_id,
+                task_kind,
+                priority,
+                policy,
+                deadline_unix_ms,
+                payload_size_limit,
+                output_size_limit,
+                file_payload_path,
+                payload,
+            } => Some((
+                request_id,
+                task_kind,
+                priority,
+                policy,
+                deadline_unix_ms,
+                payload_size_limit,
+                output_size_limit,
+                file_payload_path,
+                payload,
+                false,
+            )),
+            Message::MinifyRequest {
+                request_id,
+                site_id,
+                path,
+                encoding,
+            } => Some((
+                request_id,
+                CpuTaskKind::Minify,
+                CpuTaskPriority::Normal,
+                CpuTaskPolicy::SkipTransform,
+                0,
+                u64::MAX,
+                u64::MAX,
+                None,
+                CpuTaskPayload::Minify {
+                    site_id,
+                    path,
+                    encoding,
+                },
+                true,
+            )),
+            Message::GetCompressedRequest {
+                request_id,
+                site_id,
+                path,
+                encoding,
+            } => Some((
+                request_id,
+                CpuTaskKind::GetCompressed,
+                CpuTaskPriority::Normal,
+                CpuTaskPolicy::SkipTransform,
+                0,
+                u64::MAX,
+                u64::MAX,
+                None,
+                CpuTaskPayload::GetCompressed {
+                    site_id,
+                    path,
+                    encoding,
+                },
+                true,
+            )),
+            Message::PoisonImageRequest {
+                request_id,
+                site_id,
+                body,
+                last_modified,
+                level,
+                intensity,
+                seed,
+                max_dimension,
+                jpeg_quality,
+            } => Some((
+                request_id,
+                CpuTaskKind::PoisonImage,
+                CpuTaskPriority::Normal,
+                CpuTaskPolicy::DegradeToInlineSmallOnly,
+                0,
+                u64::MAX,
+                u64::MAX,
+                None,
+                CpuTaskPayload::PoisonImage {
+                    site_id,
+                    body,
+                    last_modified,
+                    level,
+                    intensity,
+                    seed,
+                    max_dimension,
+                    jpeg_quality,
+                },
+                true,
+            )),
+            _ => None,
+        }
+    }
+
+    /// Adapts a generic CPU task response back to the legacy static-content
+    /// response variants when `is_legacy_shape` is true.
+    pub fn adapt_cpu_task_response_compat(
+        response: Message,
+        request_id: u64,
+        task_kind: CpuTaskKind,
+        is_legacy_shape: bool,
+    ) -> Message {
+        if !is_legacy_shape {
+            return response;
+        }
+
+        match response {
+            Message::CpuTaskResponse { result, .. } => match (task_kind, result) {
+                (
+                    CpuTaskKind::Minify,
+                    CpuTaskResult::Minify {
+                        site_id,
+                        path,
+                        content,
+                        content_type,
+                        encoding,
+                        queued_encodings,
+                    },
+                ) => Message::MinifyResponse {
+                    request_id,
+                    site_id,
+                    path,
+                    content,
+                    content_type,
+                    encoding,
+                    queued_encodings,
+                },
+                (CpuTaskKind::GetCompressed, CpuTaskResult::GetCompressed { content }) => {
+                    Message::GetCompressedResponse {
+                        request_id,
+                        content,
+                    }
+                }
+                (CpuTaskKind::PoisonImage, CpuTaskResult::PoisonImage { poisoned_body }) => {
+                    Message::PoisonImageResponse {
+                        request_id,
+                        poisoned_body,
+                    }
+                }
+                (_, _) => Message::MinifyError {
+                    request_id,
+                    error: "CPU task result kind mismatch".to_string(),
+                },
+            },
+            Message::CpuTaskError { message, .. } => match task_kind {
+                CpuTaskKind::PoisonImage => Message::PoisonImageError {
+                    request_id,
+                    error: message,
+                },
+                _ => Message::MinifyError {
+                    request_id,
+                    error: message,
+                },
+            },
+            other => other,
+        }
+    }
 }
 
 /// IPC Message concern groups for logical organization.
@@ -1554,6 +2056,7 @@ pub enum MessageCategory {
     WorkerLifecycle,
     SupervisorCommand,
     StaticWorker,
+    CpuWorker,
     ThreatIntel,
     BlocklistRules,
     StaticContent,
@@ -1577,6 +2080,7 @@ impl std::fmt::Display for MessageCategory {
             MessageCategory::WorkerLifecycle => write!(f, "WorkerLifecycle"),
             MessageCategory::SupervisorCommand => write!(f, "SupervisorCommand"),
             MessageCategory::StaticWorker => write!(f, "StaticWorker"),
+            MessageCategory::CpuWorker => write!(f, "CpuWorker"),
             MessageCategory::ThreatIntel => write!(f, "ThreatIntel"),
             MessageCategory::BlocklistRules => write!(f, "BlocklistRules"),
             MessageCategory::StaticContent => write!(f, "StaticContent"),
@@ -2208,6 +2712,14 @@ mod tests {
             uptime_secs: 3600,
             memory_bytes: 100_000_000,
             cpu_percent: 0.5,
+            event_loop_lag_ms: 0,
+            request_queue_time_ms: Default::default(),
+            inline_cpu_phase_times_ms: HashMap::new(),
+            body_buffering_bytes_total: 0,
+            offload_submissions_total: 0,
+            offload_timeouts_total: 0,
+            offload_rejections_total: 0,
+            offload_fallbacks_total: 0,
             blocked_by_type: std::collections::HashMap::new(),
             per_site: std::collections::HashMap::new(),
             static_cache_hits: 500,
@@ -2229,5 +2741,160 @@ mod tests {
         assert!(
             matches!(decoded, Message::WorkerHeartbeat { id, timestamp: 1000, .. } if id.0 == 1)
         );
+    }
+
+    #[test]
+    fn test_cpu_task_request_validate_rejects_path_traversal_file_payload() {
+        let msg = Message::CpuTaskRequest {
+            request_id: 1,
+            task_kind: CpuTaskKind::PoisonImage,
+            priority: CpuTaskPriority::High,
+            policy: CpuTaskPolicy::FailClosed,
+            deadline_unix_ms: 0,
+            payload_size_limit: 1024,
+            output_size_limit: 2048,
+            file_payload_path: Some("../escape.bin".to_string()),
+            payload: CpuTaskPayload::PoisonImage {
+                site_id: "site-a".to_string(),
+                body: Vec::new(),
+                last_modified: None,
+                level: None,
+                intensity: None,
+                seed: None,
+                max_dimension: None,
+                jpeg_quality: None,
+            },
+        };
+
+        let err = msg
+            .validate()
+            .expect_err("path traversal should be rejected");
+        assert_eq!(err.field, "CpuTaskRequest.file_payload_path");
+        assert!(err.message.contains("path traversal"));
+    }
+
+    #[test]
+    fn test_cpu_task_request_validate_rejects_oversized_file_payload_path() {
+        let msg = Message::CpuTaskRequest {
+            request_id: 2,
+            task_kind: CpuTaskKind::PoisonImage,
+            priority: CpuTaskPriority::Normal,
+            policy: CpuTaskPolicy::SkipTransform,
+            deadline_unix_ms: 0,
+            payload_size_limit: 1024,
+            output_size_limit: 2048,
+            file_payload_path: Some("a".repeat(MAX_PATH_LENGTH + 1)),
+            payload: CpuTaskPayload::PoisonImage {
+                site_id: "site-a".to_string(),
+                body: Vec::new(),
+                last_modified: None,
+                level: None,
+                intensity: None,
+                seed: None,
+                max_dimension: None,
+                jpeg_quality: None,
+            },
+        };
+
+        let err = msg
+            .validate()
+            .expect_err("oversized file path should be rejected");
+        assert_eq!(err.field, "CpuTaskRequest.file_payload_path");
+    }
+
+    #[test]
+    fn test_cpu_task_request_validate_rejects_task_kind_payload_mismatch() {
+        let msg = Message::CpuTaskRequest {
+            request_id: 3,
+            task_kind: CpuTaskKind::Minify,
+            priority: CpuTaskPriority::Normal,
+            policy: CpuTaskPolicy::SkipTransform,
+            deadline_unix_ms: 0,
+            payload_size_limit: 1024,
+            output_size_limit: 2048,
+            file_payload_path: None,
+            payload: CpuTaskPayload::GetCompressed {
+                site_id: "site-a".to_string(),
+                path: "/asset.js".to_string(),
+                encoding: "gzip".to_string(),
+            },
+        };
+
+        let err = msg
+            .validate()
+            .expect_err("task kind mismatch should be rejected");
+        assert_eq!(err.field, "CpuTaskRequest.task_kind");
+        assert!(err.message.contains("does not match payload"));
+    }
+
+    #[test]
+    fn test_cpu_task_response_validate_rejects_task_kind_result_mismatch() {
+        let msg = Message::CpuTaskResponse {
+            request_id: 4,
+            task_kind: CpuTaskKind::PoisonImage,
+            result: CpuTaskResult::GetCompressed {
+                content: vec![1, 2, 3],
+            },
+        };
+
+        let err = msg
+            .validate()
+            .expect_err("task kind mismatch should be rejected");
+        assert_eq!(err.field, "CpuTaskResponse.task_kind");
+        assert!(err.message.contains("does not match result"));
+    }
+
+    #[test]
+    fn test_cpu_task_request_validate_accepts_yara_scan_payload() {
+        let msg = Message::CpuTaskRequest {
+            request_id: 5,
+            task_kind: CpuTaskKind::YaraScan,
+            priority: CpuTaskPriority::High,
+            policy: CpuTaskPolicy::FailClosed,
+            deadline_unix_ms: 0,
+            payload_size_limit: 1024 * 1024,
+            output_size_limit: 1024 * 1024,
+            file_payload_path: None,
+            payload: CpuTaskPayload::YaraScan {
+                site_id: "site-a".to_string(),
+                body: vec![1, 2, 3],
+                excluded_categories: vec!["archive".to_string()],
+            },
+        };
+
+        msg.validate()
+            .expect("YaraScan request envelope should validate");
+    }
+
+    #[test]
+    fn test_cpu_task_response_validate_accepts_yara_scan_result() {
+        let msg = Message::CpuTaskResponse {
+            request_id: 6,
+            task_kind: CpuTaskKind::YaraScan,
+            result: CpuTaskResult::YaraScan {
+                matches: vec!["test-rule".to_string()],
+            },
+        };
+
+        msg.validate()
+            .expect("YaraScan response envelope should validate");
+    }
+
+    #[test]
+    fn test_cpu_task_cancel_validates() {
+        let msg = Message::CpuTaskCancel {
+            request_id: 7,
+            task_kind: CpuTaskKind::PoisonImage,
+        };
+        msg.validate().expect("CpuTaskCancel should validate");
+    }
+
+    #[test]
+    fn test_cpu_task_cancel_category_is_cpu_worker() {
+        let msg = Message::CpuTaskCancel {
+            request_id: 8,
+            task_kind: CpuTaskKind::YaraScan,
+        };
+        assert_eq!(msg.category(), MessageCategory::CpuWorker);
     }
 }

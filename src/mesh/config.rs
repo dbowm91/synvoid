@@ -923,6 +923,13 @@ pub struct MeshDhtConfig {
     pub announce_rate_limit_max_requests: u32,
     #[serde(default = "default_announce_rate_limit_window_secs")]
     pub announce_rate_limit_window_secs: u64,
+    #[serde(default = "default_require_signed_sync_requests")]
+    pub require_signed_sync_requests: bool,
+    /// Optional migration deadline for legacy unsigned DHT sync requests.
+    /// When set, unsigned sync requests are rejected after this Unix timestamp
+    /// even if `require_signed_sync_requests` is false.
+    #[serde(default)]
+    pub unsigned_sync_compat_until_unix: Option<u64>,
 }
 
 fn default_announce_rate_limit_max_requests() -> u32 {
@@ -931,6 +938,10 @@ fn default_announce_rate_limit_max_requests() -> u32 {
 
 fn default_announce_rate_limit_window_secs() -> u64 {
     60
+}
+
+fn default_require_signed_sync_requests() -> bool {
+    true
 }
 
 fn default_convergence_threshold() -> usize {
@@ -1109,6 +1120,8 @@ impl Default for MeshDhtConfig {
             can_host_origins: false,
             announce_rate_limit_max_requests: 100,
             announce_rate_limit_window_secs: 60,
+            require_signed_sync_requests: true,
+            unsigned_sync_compat_until_unix: None,
         }
     }
 }
@@ -1341,7 +1354,7 @@ impl Default for MeshPersistenceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MeshTlsConfig {
     #[serde(default)]
     pub cert_path: Option<String>,
@@ -1367,8 +1380,32 @@ pub struct MeshTlsConfig {
     pub certificate_pin_public_keys: Vec<String>,
     #[serde(default = "default_quic_enable_0rtt")]
     pub quic_enable_0rtt: bool,
+    #[serde(default)]
+    pub mode: Option<MeshTlsMode>,
     #[serde(default = "default_strict_certificate_validation")]
     pub strict_certificate_validation: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MeshTlsMode {
+    #[default]
+    Strict,
+    Tofu,
+    Permissive,
+}
+
+impl MeshTlsConfig {
+    pub fn effective_mode(&self) -> MeshTlsMode {
+        if let Some(mode) = self.mode {
+            mode
+        } else if self.strict_certificate_validation {
+            MeshTlsMode::Strict
+        } else {
+            // Legacy fallback: strict=false historically allowed permissive mesh peers.
+            MeshTlsMode::Permissive
+        }
+    }
 }
 
 fn default_auto_generate() -> bool {
@@ -1396,6 +1433,27 @@ fn default_quic_enable_0rtt() -> bool {
 
 fn default_strict_certificate_validation() -> bool {
     true
+}
+
+impl Default for MeshTlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_path: None,
+            key_path: None,
+            ca_path: None,
+            auto_generate_certs: default_auto_generate(),
+            ca_mode: false,
+            cert_rotation_interval_secs: None,
+            auto_monitor_expiration: default_auto_monitor_expiration(),
+            crl_path: None,
+            enforce_mutual_tls: default_enforce_mutual_tls(),
+            min_tls_version: default_min_tls_version(),
+            certificate_pin_public_keys: Vec::new(),
+            quic_enable_0rtt: default_quic_enable_0rtt(),
+            mode: None,
+            strict_certificate_validation: default_strict_certificate_validation(),
+        }
+    }
 }
 
 #[path = "config_conversion.rs"]
@@ -1468,6 +1526,76 @@ mod tests {
         let nonce1 = &encrypted1[..12];
         let nonce2 = &encrypted2[..12];
         assert_ne!(nonce1, nonce2, "Nonces should be different");
+    }
+
+    #[test]
+    fn test_mesh_tls_effective_mode_defaults_to_strict() {
+        let tls = MeshTlsConfig::default();
+        assert_eq!(tls.effective_mode(), MeshTlsMode::Strict);
+    }
+
+    #[test]
+    fn test_mesh_tls_effective_mode_legacy_strict_false_maps_to_permissive() {
+        let tls = MeshTlsConfig {
+            mode: None,
+            strict_certificate_validation: false,
+            ..MeshTlsConfig::default()
+        };
+        assert_eq!(tls.effective_mode(), MeshTlsMode::Permissive);
+    }
+
+    #[test]
+    fn test_mesh_tls_effective_mode_explicit_mode_overrides_legacy_flag() {
+        let tls = MeshTlsConfig {
+            mode: Some(MeshTlsMode::Tofu),
+            strict_certificate_validation: true,
+            ..MeshTlsConfig::default()
+        };
+        assert_eq!(tls.effective_mode(), MeshTlsMode::Tofu);
+    }
+
+    #[test]
+    fn test_dht_sync_signing_defaults_to_required_with_no_compat_window() {
+        let dht = MeshDhtConfig::default();
+        assert!(dht.require_signed_sync_requests);
+        assert!(dht.unsigned_sync_compat_until_unix.is_none());
+    }
+
+    #[test]
+    fn test_mesh_validate_rejects_unbounded_unsigned_sync_compat() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_sync_requests = false;
+        dht.unsigned_sync_compat_until_unix = None;
+        cfg.dht = Some(dht);
+
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.contains("requires a bounded migration window"));
+    }
+
+    #[test]
+    fn test_mesh_validate_rejects_expired_unsigned_sync_compat_window() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_sync_requests = false;
+        dht.unsigned_sync_compat_until_unix =
+            Some(crate::mesh::safe_unix_timestamp().saturating_sub(1));
+        cfg.dht = Some(dht);
+
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.contains("compatibility window expired"));
+    }
+
+    #[test]
+    fn test_mesh_validate_allows_future_bounded_unsigned_sync_compat_window() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_sync_requests = false;
+        dht.unsigned_sync_compat_until_unix =
+            Some(crate::mesh::safe_unix_timestamp().saturating_add(3600));
+        cfg.dht = Some(dht);
+
+        cfg.validate().expect("validation should pass");
     }
 
     #[test]

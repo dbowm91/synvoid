@@ -5,7 +5,7 @@
 The **Supervisor** is the top-level management process in SynVoid's multi-process architecture, responsible for:
 
 - **Zero-downtime upgrades**: Coordinates graceful worker replacement during upgrades via socket handoff
-- **Worker orchestration**: Manages the lifecycle of `UnifiedServerWorker` processes that handle HTTP/HTTPS/HTTP3 traffic
+- **Worker orchestration**: Manages the lifecycle of `UnifiedServerWorker` processes for HTTP/HTTPS/HTTP3 traffic and CPU offload workers for bounded heavy transforms
 - **IPC communications**: Receives commands from CLI tools and forwards them to workers
 - **Drain-aware shutdown**: Coordinates graceful connection draining before shutdown
 - **Health monitoring**: Monitors worker health and restarts failed workers
@@ -26,11 +26,14 @@ The Supervisor **consolidates** the legacy Overseer and Master hierarchy into a 
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│              UnifiedServerWorker(s)                                 │
-│  - Tokio async runtime (configurable worker threads)                │
-│  - Handles HTTP/HTTPS/HTTP3 + WAF + proxy                          │
-│  - IPC channel back to supervisor                                   │
-│  - Shared memory for connection tables                              │
+│                         Data Plane                                   │
+│  ├─ UnifiedServerWorker(s)                                           │
+│  │  - Tokio async runtime (configurable worker threads)              │
+│  │  - Handles HTTP/HTTPS/HTTP3 + WAF + proxy                        │
+│  │  - IPC channel back to supervisor                                 │
+│  │  - Shared memory for connection tables                            │
+│  └─ CPU Offload Worker(s)                                             │
+│     - Minification, compression, image transforms, scans             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -414,14 +417,14 @@ Starts tonic gRPC server with `ControlPlaneServer` service.
 | Worker Type | Description | Management |
 |-------------|-------------|------------|
 | `UnifiedServerWorker` | HTTP/HTTPS/HTTP3 + WAF + proxy | Created by Supervisor via ProcessManager |
-| `StaticWorker` | CSS/JS minification, compression | Optional, managed separately |
+| `CPU Offload Worker` | CSS/JS minification, compression, scans, image transforms | Optional, managed separately |
 | `BaseWorkerProcess` | Legacy raw TCP/UDP (deprecated) | Not used for HTTP traffic |
 
 ### 5.2 ProcessManager Responsibilities
 
 The `ProcessManager` (in `src/process/manager.rs`) handles:
 
-- **Worker spawning** via `spawn_unified_server_workers(count)`
+- **Worker spawning** via `spawn_unified_server_workers(count)` and `spawn_cpu_worker()`
 - **Health monitoring** via periodic heartbeats
 - **Zombie reaping** via `reap_zombies()`
 - **Graceful shutdown** via `shutdown_workers()`
@@ -684,7 +687,7 @@ The Overseer and Master modules have been consolidated into the Supervisor as of
 
 **What was preserved:**
 - `DrainManager` and `DrainProtocol` were ported from Overseer to Supervisor (`src/supervisor/drain_manager.rs`)
-- `MasterCommand` message types are shared via the IPC module
+- `MasterCommand` message types are shared via the IPC module as legacy compatibility names
 - CLI commands are re-exported via `supervisor::commands`
 
 ### 9.2 Architectural Evolution
@@ -698,7 +701,7 @@ LEGACY (pre-consolidation):
                  │
                  ▼
 ┌──────────────────────────────────┐
-│           Master                 │  ← Process management, IPC
+│   Legacy Master compatibility    │  ← Process management, IPC
 │  (Port 9002 command socket)     │
 └──────────────────────────────────┘
                  │
@@ -711,7 +714,7 @@ NEW (supervisor consolidation):
 ┌──────────────────────────────────┐
 │         Supervisor               │
 │  - Health monitoring (from Overseer)
-│  - Process management (from Master)
+│  - Process management (from Master compatibility path)
 │  - gRPC control API             │
 │  - IPC command socket           │
 └──────────────────────────────────┘
@@ -807,7 +810,7 @@ The Supervisor module is the central orchestration component that:
 3. **Handles CLI commands** via IPC socket
 4. **Coordinates graceful shutdown** with drain-aware worker termination
 5. **Initializes shared tables** for connection and rate limit tracking
-6. **Consolidates legacy Overseer/Master** into single binary
+6. **Consolidates legacy Overseer/Master** into single binary while keeping the new Supervisor process as the only live management process
 
 The design prioritizes:
 - **Zero-downtime upgrades** via socket handoff and drain coordination

@@ -2,7 +2,7 @@
 
 ## 1. Project Summary
 
-SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. It provides comprehensive request filtering, attack detection, load balancing, TLS termination, and optional mesh networking — designed for 1M+ RPS with millions of tenants.
+SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. The default deployment model is one latency-sensitive UnifiedServerWorker plus bounded CPU offload workers, coordinated by a Supervisor-owned control plane. It provides comprehensive request filtering, attack detection, load balancing, TLS termination, and optional mesh networking — designed for 1M+ RPS with millions of tenants.
 
 **Key Capabilities:**
 - Layer 7 WAF with 13 attack detectors, bot protection, rate limiting
@@ -45,7 +45,7 @@ synvoid/
 
 ## 3. Process Architecture
 
-SynVoid uses a multi-process architecture designed for high scalability with millions of tenants:
+SynVoid uses a two-tier architecture: a Supervisor-owned control plane and a data plane built around one UnifiedServerWorker plus bounded CPU offload workers.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -55,30 +55,44 @@ SynVoid uses a multi-process architecture designed for high scalability with mil
 │  • gRPC control plane API                           │
 │  • Mesh agent mode                                  │
 │  • IPC orchestrator                                 │
-└──────────┬──────────────────┬───────────────────────┘
-           │ IPC              │ IPC
-┌──────────▼──────────┐ ┌────▼────────────────────┐
-│ UnifiedServerWorker  │ │ UnifiedServerWorker (N) │
-│  • HTTP/HTTPS/HTTP3  │ │  • Single Tokio event    │
-│  • WAF pipeline      │ │    loop per worker       │
-│  • Proxy dispatch    │ │  • CPU-pinnable          │
-│  • WASM execution    │ │  • Shared-nothing model  │
-└─────────────────────┘ └─────────────────────────┘
+└──────────┬──────────────────────────────────────────┘
+           │ IPC
+           ▼
+┌──────────────────────────────┐
+│    UnifiedServerWorker       │
+│  • HTTP/HTTPS/HTTP3          │
+│  • WAF pipeline              │
+│  • Routing and proxy path    │
+│  • Cheap request-path work   │
+└──────────┬───────────────────┘
+           │ bounded IPC task offload
+           ▼
+┌──────────────────────────────┐
+│    CPU Offload Workers       │
+│  • minify/compress           │
+│  • image transforms          │
+│  • scans / heavy transforms  │
+└──────────┬───────────────────┘
            │
-┌──────────▼──────────┐
-│   StaticWorker       │
-│  • CSS/JS minify     │
-│  • Compression       │
-│  • Brotli/Gzip       │
-└─────────────────────┘
+           ▼
+┌──────────────────────────────┐
+│         Upstream Apps        │
+│  • Static Files              │
+│  • PHP-FPM                   │
+│  • Granian                   │
+│  • FastCGI                   │
+│  • WASM                      │
+└──────────────────────────────┘
 ```
 
 | Process | Flag | Purpose | Default |
 |---------|------|---------|---------|
 | **Supervisor** | (default) | Control plane, lifecycle, gRPC API | 1 |
-| **UnifiedServerWorker** | `--unified-server-worker` | HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
-| **StaticWorker** | `--static-worker` | Static asset minification/compression | 1 |
+| **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
+| **CPU Offload Worker** | `--cpu-worker` (`--static-worker` compat) | Bounded heavy transforms | 1 |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated) | — |
+
+The default scaling knobs are `worker_threads` for Tokio runtime parallelism, `tcp.worker_pool_size` for accept throughput, and CPU offload worker capacity for heavy transforms. `unified_server_workers > 1` remains an advanced isolation mode, not the primary scaling path.
 
 ---
 

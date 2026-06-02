@@ -4,7 +4,7 @@ A production-ready WAF and reverse proxy built for high-performance, high-availa
 
 ## Overview
 
-SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. It utilizes a **Shared-Nothing Architecture** to achieve linear scalability and zero-jitter performance.
+SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophisticated WAF (Web Application Firewall) system. The default deployment model is **one latency-sensitive unified worker plus bounded CPU offload workers**.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -23,28 +23,34 @@ SynVoid combines a nginx-inspired reverse proxy concurrency model with a sophist
 │  │  • Unified Configuration (synvoid-config)                           │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
-            │                           │                           │
-            ▼                           ▼                           ▼
-    ┌───────────────┐           ┌───────────────┐           ┌───────────────┐
-    │  Worker 1     │           │  Worker 2     │           │  Worker 3     │
-    │ (Core Pinned) │           │ (Core Pinned) │           │ (Core Pinned) │
-    │ ┌───────────┐ │           │ ┌───────────┐ │           │ ┌───────────┐ │
-    │ │ SO_REUSE- │ │           │ │ SO_REUSE- │ │           │ │ SO_REUSE- │ │
-    │ │ PORT      │ │           │ │ PORT      │ │           │ │ PORT      │ │
-    │ └───────────┘ │           │ └───────────┘ │           │ └───────────┘ │
-    └───────────────┘           └───────────────┘           └───────────────┘
-            │                           │                           │
-            └───────────────────────────┼───────────────────────────┘
-                                        │
-                                        ▼
-                              ┌─────────────────┐
-                              │  Upstream Apps  │
-                              │  • Static Files │
-                              │  • PHP-FPM      │
-                              │  • Granian      │
-                              │  • FastCGI      │
-                              │  • WASM         │
-                              └─────────────────┘
+            │
+            ▼
+    ┌────────────────────────────┐
+    │ UnifiedServerWorker        │
+    │ (single async event loop)  │
+    │ - HTTP/HTTPS/HTTP3 I/O     │
+    │ - TLS + routing + WAF      │
+    │ - streaming proxy path     │
+    └───────────────┬────────────┘
+                    │ bounded IPC task offload
+         ┌──────────┴──────────┐
+         ▼                     ▼
+┌──────────────────┐  ┌──────────────────┐
+│ CPU Worker 1     │  │ CPU Worker N     │
+│ - minify/encode  │  │ - deep scans      │
+│ - image transforms│ │ - plugin/serverless│
+└─────────┬────────┘  └─────────┬────────┘
+          │                      │
+          └──────────┬───────────┘
+                     ▼
+             ┌─────────────────┐
+             │  Upstream Apps  │
+             │  • Static Files │
+             │  • PHP-FPM      │
+             │  • Granian      │
+             │  • FastCGI      │
+             │  • WASM         │
+             └─────────────────┘
 ```
 
 ## Core Components
@@ -63,12 +69,16 @@ This combination provides:
 - HTTP/2 multiplexing
 - HTTP/3 (QUIC) support
 
+Current HTTP/2 scope note:
+- HTTP/2 upstream support is available via the typed client path.
+- Full erased-client HTTP/2 streaming pooling is not the default request path and remains an advanced/deferred optimization.
+
 ### Request Flow Through Components
 
-When a request arrives, it passes through these components in sequence within a Worker:
+When a request arrives, it passes through these components in sequence within the unified worker:
 
 ```
-1. Listener (TCP/UDP/QUIC + SO_REUSEPORT)
+1. Listener (TCP/UDP/QUIC)
       │
       ▼
 2. Connection Handler (TLS termination, HTTP parsing)
@@ -150,7 +160,7 @@ The WAF implements multiple protection layers, executed independently by each wo
     Allow / Stall / Block / Tarpit / Challenge
 ```
 
-### 3. Supervisor -> Worker Model (Shared-Nothing)
+### 3. Supervisor -> Data Plane Model
 
 SynVoid uses a hierarchical two-tier model to separate the control plane from the data plane.
 
@@ -172,20 +182,18 @@ SynVoid uses a hierarchical two-tier model to separate the control plane from th
           │ Spawns & Monitors
           ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                                 Workers                                     │
+│                                 Data Plane                                  │
 │                                                                             │
-│  ┌────────────┐    ┌────────────┐    ┌────────────┐                      │
-│  │  Worker 1  │    │  Worker 2  │    │  Worker 3  │                      │
-│  │ ┌────────┐ │    │ ┌────────┐ │    │ ┌────────┐ │                      │
-│  │ │Data    │ │    │ │Data    │ │    │ │Data    │ │                      │
-│  │ │Plane   │ │    │ │Plane   │ │    │ │Plane   │ │                      │
-│  │ └────────┘ │    │ └────────┘ │    │ └────────┘ │                      │
-│  └────────────┘    └────────────┘    └────────────┘                      │
+│  ┌────────────────────────┐    ┌────────────────────────┐                 │
+│  │ UnifiedServerWorker    │    │ CPU Offload Workers    │                 │
+│  │ • listener + HTTP path │    │ • bounded heavy tasks  │                 │
+│  │ • cheap WAF decisions  │    │ • transform/scan exec  │                 │
+│  └────────────────────────┘    └────────────────────────┘                 │
 │                                                                             │
-│  Shared-Nothing Architecture:                                               │
-│  • Kernel-level LB via SO_REUSEPORT                                         │
-│  • CPU core affinity for zero-jitter                                        │
-│  • Independent request handling loops                                       │
+│  Default Contract:                                                          │
+│  • One unified worker handles latency-sensitive I/O                         │
+│  • CPU-heavy work is isolated in offload workers                            │
+│  • Multi-unified-worker mode is advanced, not default scaling               │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -224,7 +232,7 @@ Supervisors communicate via QUIC to maintain a globally distributed protection m
 The default execution mode (`synvoid`) runs a Supervisor and its managed workers.
 
 ```
-Internet ──► [SO_REUSEPORT Workers] ──► Upstreams
+Internet ──► [Unified Worker] ──► [CPU Offload Workers] ──► Upstreams
 ```
 
 #### 2. High Availability Cluster

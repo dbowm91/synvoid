@@ -58,6 +58,14 @@ mod tests {
             uptime_secs: 3600,
             memory_bytes: 100_000_000,
             cpu_percent: 25.5,
+            event_loop_lag_ms: 0,
+            request_queue_time_ms: Default::default(),
+            inline_cpu_phase_times_ms: HashMap::new(),
+            body_buffering_bytes_total: 0,
+            offload_submissions_total: 0,
+            offload_timeouts_total: 0,
+            offload_rejections_total: 0,
+            offload_fallbacks_total: 0,
             blocked_by_type: HashMap::new(),
             per_site: HashMap::new(),
             static_cache_hits: 0,
@@ -532,28 +540,30 @@ async fn handle_worker_connection_internal(
                             });
                         }
                         Message::StaticWorkerStarted { worker_id, pid } => {
-                            tracing::debug!("Static worker {} connected (PID: {})", worker_id, pid);
+                            tracing::debug!("CPU worker {} connected (PID: {})", worker_id, pid);
                         }
                         Message::StaticWorkerReady { worker_id } => {
-                            process_manager.handle_static_worker_ready(worker_id);
+                            process_manager.handle_cpu_worker_ready(worker_id);
                         }
                         Message::StaticWorkerHeartbeat {
                             worker_id,
                             timestamp: _,
                             static_cache_hits,
                             static_cache_misses,
+                            cpu_offload_stats,
                         } => {
-                            process_manager.handle_static_worker_heartbeat(
+                            process_manager.handle_cpu_worker_heartbeat(
                                 worker_id,
                                 static_cache_hits,
                                 static_cache_misses,
+                                cpu_offload_stats,
                             );
                         }
                         Message::StaticWorkerRequestLog { worker_id: _, log } => {
                             process_manager.handle_request_log(WorkerId(0), log);
                         }
                         Message::StaticWorkerShutdownComplete { worker_id } => {
-                            tracing::info!("Static worker {} shutdown complete", worker_id);
+                            tracing::info!("CPU worker {} shutdown complete", worker_id);
                             return Err(());
                         }
                         Message::MinifyResponse {

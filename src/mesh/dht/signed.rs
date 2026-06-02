@@ -41,10 +41,10 @@ impl<'a> QuorumVerifierContext<'a> {
 
 // DHT MESSAGE IDENTITY HIERARCHY (see docs/identity_hierarchy.md):
 // L1: peer_id (TLS/cert) → L2: envelope signer → L3: record signer → L4: source_node_id → L5: quorum signer
-// Msg types: DhtRecordAnnounce(TS✓RoleRepEnv✓Rec✓BindP), DhtSyncRequest(TS-Role-Env-RecN/A), DhtSyncResponse(TS✓Env✓Rec✓BindP)
+// Msg types: DhtRecordAnnounce(TS✓RoleRepEnv✓Rec✓BindP), DhtSyncRequest(TS✓Role-Env✓RecN/A), DhtSyncResponse(TS✓Env✓Rec✓BindP)
 //   DhtAntiEntropyRequest(TS✓EnvP RecN/A), DhtAntiEntropyResponse(TS✓Env✓Rec✓BindP), DhtRecordPush(Rec✓)
 //   Raft(N/A✓P✓Replay✓)
-// Gaps: DhtSyncRequest(no auth), DhtAntiEntropyRequest(pk unused), DhtRecordPush(no ts)
+// Gaps: DhtAntiEntropyRequest(pk unused), DhtRecordPush(no ts)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngressPath {
@@ -198,6 +198,7 @@ pub struct DhtAntiEntropyRequestSignable<'a> {
 }
 
 pub const SNAPSHOT_REQUEST_PROTOCOL_VERSION: &str = "synvoid:dht-snapshot:v1";
+pub const SYNC_REQUEST_PROTOCOL_VERSION: &str = "synvoid:dht-sync-request:v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtSnapshotRequestSignable<'a> {
@@ -205,6 +206,16 @@ pub struct DhtSnapshotRequestSignable<'a> {
     pub node_id: &'a str,
     pub from_version: u64,
     pub timestamp: u64,
+    pub protocol_version: &'a str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtSyncRequestSignable<'a> {
+    pub request_id: &'a str,
+    pub node_id: &'a str,
+    pub from_version: u64,
+    pub timestamp: u64,
+    pub nonce: &'a str,
     pub protocol_version: &'a str,
 }
 
@@ -220,6 +231,24 @@ pub fn get_snapshot_request_signable_content(
         from_version,
         timestamp,
         protocol_version: SNAPSHOT_REQUEST_PROTOCOL_VERSION,
+    })
+    .unwrap_or_default()
+}
+
+pub fn get_sync_request_signable_content(
+    request_id: &str,
+    node_id: &str,
+    from_version: u64,
+    timestamp: u64,
+    nonce: &str,
+) -> Vec<u8> {
+    crate::serialization::serialize(&DhtSyncRequestSignable {
+        request_id,
+        node_id,
+        from_version,
+        timestamp,
+        nonce,
+        protocol_version: SYNC_REQUEST_PROTOCOL_VERSION,
     })
     .unwrap_or_default()
 }

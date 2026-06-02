@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use sysinfo::System;
 
 use crate::config::ConfigManager;
 use crate::process::{
@@ -12,6 +13,21 @@ use crate::process::{
 use crate::{DrainFlag, RunningFlag};
 
 pub use crate::common::setup_panic_handler;
+
+pub fn collect_current_process_usage() -> (u64, f64) {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    let Some(pid) = sysinfo::get_current_pid().ok() else {
+        return (0, 0.0);
+    };
+
+    let Some(process) = system.process(pid) else {
+        return (0, 0.0);
+    };
+
+    (process.memory(), process.cpu_usage() as f64)
+}
 
 pub struct IpcConnection {
     stream: Arc<Mutex<IpcStream>>,
@@ -136,7 +152,9 @@ pub fn spawn_heartbeat_loop(
     interval_secs: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+        let heartbeat_interval = Duration::from_secs(interval_secs);
+        let mut interval = tokio::time::interval(heartbeat_interval);
+        let mut next_heartbeat_at = Instant::now() + heartbeat_interval;
 
         loop {
             interval.tick().await;
@@ -144,6 +162,14 @@ pub fn spawn_heartbeat_loop(
             if !lifecycle.is_running() {
                 break;
             }
+
+            let lag_ms = Instant::now()
+                .saturating_duration_since(next_heartbeat_at)
+                .as_millis() as u64;
+            metrics.record_event_loop_lag_ms(lag_ms);
+            let (memory_bytes, cpu_percent) = collect_current_process_usage();
+            metrics.record_process_usage(memory_bytes, cpu_percent);
+            next_heartbeat_at += heartbeat_interval;
 
             let uptime = lifecycle.uptime_secs();
             let payload = metrics.to_payload(uptime);

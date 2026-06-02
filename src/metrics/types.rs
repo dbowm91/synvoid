@@ -1,13 +1,35 @@
 use crate::metrics::bandwidth::BandwidthTracker;
 use crate::metrics::collection::LATENCY_SAMPLE_SIZE;
+use crate::metrics::collection::{get_static_cache_hits, get_static_cache_misses};
 use crate::metrics::payloads::{
-    HealthStatus, ServerlessMetrics, SiteMetricsPayload, WorkerMetricsPayload,
+    HealthStatus, ServerlessMetrics, SiteMetricsPayload, TimingStatsPayload, WorkerMetricsPayload,
 };
 use crate::waf::attack_detection::config::AttackType;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+fn summarize_timing_samples(samples: &[u64]) -> TimingStatsPayload {
+    if samples.is_empty() {
+        return TimingStatsPayload::default();
+    }
+
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let sum: u64 = sorted.iter().sum();
+    let avg = sum as f64 / sorted.len() as f64;
+    let p50 = sorted[sorted.len() / 2] as f64;
+    let p95 = sorted[(sorted.len() as f64 * 0.95) as usize] as f64;
+    let p99 = sorted[((sorted.len() as f64 * 0.99) as usize).min(sorted.len() - 1)] as f64;
+
+    TimingStatsPayload {
+        avg_ms: avg,
+        p50_ms: p50,
+        p95_ms: p95,
+        p99_ms: p99,
+    }
+}
 
 #[derive(Debug)]
 pub struct SiteMetrics {
@@ -194,6 +216,23 @@ impl SiteMetrics {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorkerInlineCpuPhase {
+    RequestPreparation,
+    BufferedWaf,
+    BackendDispatch,
+}
+
+impl WorkerInlineCpuPhase {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            WorkerInlineCpuPhase::RequestPreparation => "request_preparation",
+            WorkerInlineCpuPhase::BufferedWaf => "buffered_waf",
+            WorkerInlineCpuPhase::BackendDispatch => "backend_dispatch",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct WorkerMetrics {
     pub total_requests: AtomicU64,
@@ -206,10 +245,21 @@ pub struct WorkerMetrics {
     pub total_latency_ms: AtomicU64,
     pub request_count: AtomicU64,
     pub latency_samples: Mutex<Vec<u64>>,
+    pub request_queue_samples: Mutex<VecDeque<u64>>,
+    pub inline_cpu_phase_samples: Mutex<HashMap<WorkerInlineCpuPhase, VecDeque<u64>>>,
     pub blocked_by_type: Mutex<HashMap<AttackType, AtomicU64>>,
     pub per_site: Mutex<HashMap<String, SiteMetrics>>,
     pub bandwidth: Arc<BandwidthTracker>,
     pub per_serverless: Mutex<HashMap<String, ServerlessMetrics>>,
+    pub event_loop_lag_ms: AtomicU64,
+    pub body_buffering_bytes_total: AtomicU64,
+    pub active_connections: AtomicU64,
+    pub offload_submissions_total: AtomicU64,
+    pub offload_timeouts_total: AtomicU64,
+    pub offload_rejections_total: AtomicU64,
+    pub offload_fallbacks_total: AtomicU64,
+    pub memory_bytes: AtomicU64,
+    pub cpu_percent_bits: AtomicU64,
 }
 
 impl Clone for WorkerMetrics {
@@ -232,10 +282,31 @@ impl Clone for WorkerMetrics {
             total_latency_ms: AtomicU64::new(self.total_latency_ms.load(Ordering::Relaxed)),
             request_count: AtomicU64::new(self.request_count.load(Ordering::Relaxed)),
             latency_samples: Mutex::new(Vec::new()),
+            request_queue_samples: Mutex::new(VecDeque::new()),
+            inline_cpu_phase_samples: Mutex::new(HashMap::new()),
             blocked_by_type: Mutex::new(blocked_by_type),
             per_site: Mutex::new(HashMap::new()),
             bandwidth: self.bandwidth.clone(),
             per_serverless: Mutex::new(HashMap::new()),
+            event_loop_lag_ms: AtomicU64::new(self.event_loop_lag_ms.load(Ordering::Relaxed)),
+            body_buffering_bytes_total: AtomicU64::new(
+                self.body_buffering_bytes_total.load(Ordering::Relaxed),
+            ),
+            active_connections: AtomicU64::new(self.active_connections.load(Ordering::Relaxed)),
+            offload_submissions_total: AtomicU64::new(
+                self.offload_submissions_total.load(Ordering::Relaxed),
+            ),
+            offload_timeouts_total: AtomicU64::new(
+                self.offload_timeouts_total.load(Ordering::Relaxed),
+            ),
+            offload_rejections_total: AtomicU64::new(
+                self.offload_rejections_total.load(Ordering::Relaxed),
+            ),
+            offload_fallbacks_total: AtomicU64::new(
+                self.offload_fallbacks_total.load(Ordering::Relaxed),
+            ),
+            memory_bytes: AtomicU64::new(self.memory_bytes.load(Ordering::Relaxed)),
+            cpu_percent_bits: AtomicU64::new(self.cpu_percent_bits.load(Ordering::Relaxed)),
         }
     }
 }
@@ -253,10 +324,21 @@ impl Default for WorkerMetrics {
             total_latency_ms: AtomicU64::new(0),
             request_count: AtomicU64::new(0),
             latency_samples: Mutex::new(Vec::with_capacity(LATENCY_SAMPLE_SIZE)),
+            request_queue_samples: Mutex::new(VecDeque::with_capacity(LATENCY_SAMPLE_SIZE)),
+            inline_cpu_phase_samples: Mutex::new(HashMap::new()),
             blocked_by_type: Mutex::new(HashMap::new()),
             per_site: Mutex::new(HashMap::new()),
             bandwidth: Arc::new(BandwidthTracker::default()),
             per_serverless: Mutex::new(HashMap::new()),
+            event_loop_lag_ms: AtomicU64::new(0),
+            body_buffering_bytes_total: AtomicU64::new(0),
+            active_connections: AtomicU64::new(0),
+            offload_submissions_total: AtomicU64::new(0),
+            offload_timeouts_total: AtomicU64::new(0),
+            offload_rejections_total: AtomicU64::new(0),
+            offload_fallbacks_total: AtomicU64::new(0),
+            memory_bytes: AtomicU64::new(0),
+            cpu_percent_bits: AtomicU64::new(0),
         }
     }
 }
@@ -309,6 +391,60 @@ impl WorkerMetrics {
         }
     }
 
+    pub fn record_request_queue_time_ms(&self, queue_time_ms: u64) {
+        let mut samples = self.request_queue_samples.lock();
+        if samples.len() >= LATENCY_SAMPLE_SIZE {
+            samples.pop_front();
+        }
+        samples.push_back(queue_time_ms);
+    }
+
+    pub fn record_inline_cpu_phase_time_ms(&self, phase: WorkerInlineCpuPhase, cpu_time_ms: u64) {
+        let mut samples = self.inline_cpu_phase_samples.lock();
+        let phase_samples = samples
+            .entry(phase)
+            .or_insert_with(|| VecDeque::with_capacity(LATENCY_SAMPLE_SIZE));
+        if phase_samples.len() >= LATENCY_SAMPLE_SIZE {
+            phase_samples.pop_front();
+        }
+        phase_samples.push_back(cpu_time_ms);
+    }
+
+    pub fn record_body_buffering_bytes(&self, body_buffering_bytes: u64) {
+        self.body_buffering_bytes_total
+            .fetch_add(body_buffering_bytes, Ordering::Relaxed);
+    }
+
+    pub fn set_active_connections(&self, active_connections: u64) {
+        self.active_connections
+            .store(active_connections, Ordering::Relaxed);
+    }
+
+    pub fn set_offload_counters(
+        &self,
+        submissions_total: u64,
+        timeout_total: u64,
+        rejection_total: u64,
+    ) {
+        self.offload_submissions_total
+            .store(submissions_total, Ordering::Relaxed);
+        self.offload_timeouts_total
+            .store(timeout_total, Ordering::Relaxed);
+        self.offload_rejections_total
+            .store(rejection_total, Ordering::Relaxed);
+    }
+
+    pub fn set_offload_fallbacks(&self, fallbacks_total: u64) {
+        self.offload_fallbacks_total
+            .store(fallbacks_total, Ordering::Relaxed);
+    }
+
+    pub fn record_process_usage(&self, memory_bytes: u64, cpu_percent: f64) {
+        self.memory_bytes.store(memory_bytes, Ordering::Relaxed);
+        self.cpu_percent_bits
+            .store(cpu_percent.to_bits(), Ordering::Relaxed);
+    }
+
     pub fn record_blocked(&self, attack_type: AttackType) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
         let mut blocked_types = self.blocked_by_type.lock();
@@ -348,6 +484,14 @@ impl WorkerMetrics {
 
     pub fn errors(&self) -> u64 {
         self.errors.load(Ordering::Relaxed)
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.memory_bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn cpu_percent(&self) -> f64 {
+        f64::from_bits(self.cpu_percent_bits.load(Ordering::Relaxed))
     }
 
     pub fn current_load(&self) -> f64 {
@@ -450,6 +594,10 @@ impl WorkerMetrics {
         }
     }
 
+    pub fn record_event_loop_lag_ms(&self, lag_ms: u64) {
+        self.event_loop_lag_ms.store(lag_ms, Ordering::Relaxed);
+    }
+
     pub fn to_payload(&self, uptime_secs: u64) -> WorkerMetricsPayload {
         let mut per_site = HashMap::new();
         let sites = self.per_site.lock();
@@ -464,18 +612,21 @@ impl WorkerMetrics {
         }
 
         let latency_samples = self.latency_samples.lock();
-        let (avg, p50, p95, p99) = if !latency_samples.is_empty() {
-            let mut sorted = latency_samples.clone();
-            sorted.sort_unstable();
-            let sum: u64 = sorted.iter().sum();
-            let avg = sum as f64 / sorted.len() as f64;
-            let p50 = sorted[sorted.len() / 2] as f64;
-            let p95 = sorted[(sorted.len() as f64 * 0.95) as usize] as f64;
-            let p99 = sorted[((sorted.len() as f64 * 0.99) as usize).min(sorted.len() - 1)] as f64;
-            (avg, p50, p95, p99)
-        } else {
-            (0.0, 0.0, 0.0, 0.0)
-        };
+        let latency_summary = summarize_timing_samples(&latency_samples);
+
+        let request_queue_samples = self.request_queue_samples.lock();
+        let request_queue_samples: Vec<u64> = request_queue_samples.iter().copied().collect();
+        let request_queue_time_ms = summarize_timing_samples(&request_queue_samples);
+
+        let inline_cpu_phase_samples = self.inline_cpu_phase_samples.lock();
+        let mut inline_cpu_phase_times_ms = HashMap::new();
+        for (phase, samples) in inline_cpu_phase_samples.iter() {
+            let samples: Vec<u64> = samples.iter().copied().collect();
+            inline_cpu_phase_times_ms.insert(
+                phase.as_str().to_string(),
+                summarize_timing_samples(&samples),
+            );
+        }
 
         WorkerMetricsPayload {
             total_requests: self.total_requests.load(Ordering::Relaxed),
@@ -485,22 +636,30 @@ impl WorkerMetrics {
             errors: self.errors.load(Ordering::Relaxed),
             current_concurrent: self.current_concurrent.load(Ordering::Relaxed),
             peak_concurrent: self.peak_concurrent.load(Ordering::Relaxed),
-            avg_latency_ms: avg,
-            p50_latency_ms: p50,
-            p95_latency_ms: p95,
-            p99_latency_ms: p99,
+            avg_latency_ms: latency_summary.avg_ms,
+            p50_latency_ms: latency_summary.p50_ms,
+            p95_latency_ms: latency_summary.p95_ms,
+            p99_latency_ms: latency_summary.p99_ms,
             uptime_secs,
-            memory_bytes: 0,  // TODO
-            cpu_percent: 0.0, // TODO
+            memory_bytes: self.memory_bytes(),
+            cpu_percent: self.cpu_percent(),
+            event_loop_lag_ms: self.event_loop_lag_ms.load(Ordering::Relaxed),
+            request_queue_time_ms,
+            inline_cpu_phase_times_ms,
+            body_buffering_bytes_total: self.body_buffering_bytes_total.load(Ordering::Relaxed),
+            offload_submissions_total: self.offload_submissions_total.load(Ordering::Relaxed),
+            offload_timeouts_total: self.offload_timeouts_total.load(Ordering::Relaxed),
+            offload_rejections_total: self.offload_rejections_total.load(Ordering::Relaxed),
+            offload_fallbacks_total: self.offload_fallbacks_total.load(Ordering::Relaxed),
             blocked_by_type: blocked_by_type_str,
             per_site,
-            static_cache_hits: 0,
-            static_cache_misses: 0,
+            static_cache_hits: get_static_cache_hits(),
+            static_cache_misses: get_static_cache_misses(),
             bandwidth: self.bandwidth.to_payload(),
             serverless_metrics: Vec::new(), // TODO
             health_score: 1.0,
             last_request_at: None,
-            active_connections: 0,
+            active_connections: self.active_connections.load(Ordering::Relaxed),
             restart_count: 0,
         }
     }

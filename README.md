@@ -1,41 +1,33 @@
 # SynVoid
 
-**High-Performance Shared-Nothing WAF & Reverse Proxy in Rust**
+**High-Performance WAF & Reverse Proxy in Rust**
 
-SynVoid is a high-speed, horizontally scalable Web Application Firewall (WAF) and reverse proxy built for modern, security-conscious infrastructure. Utilizing a **Shared-Nothing Architecture**, SynVoid is designed to process 1M+ requests per second with linear scaling across CPU cores.
+SynVoid is a high-speed, multi-process Web Application Firewall (WAF) and reverse proxy built for security-conscious infrastructure. The default data plane is one latency-sensitive `UnifiedServerWorker` plus bounded CPU offload workers, with the Supervisor managing lifecycle, upgrades, and control-plane state.
 
----
+## Architecture
 
-## 🚀 Key Architectural Shifts
+### 1. Unified Data Plane
+The `UnifiedServerWorker` keeps socket accept, TLS, HTTP parsing, routing, WAF checks, and streaming proxying inline.
 
-SynVoid has recently undergone a major architectural evolution to meet the demands of high-throughput environments:
+### 2. Supervisor-Controlled Control Plane
+The Supervisor owns worker lifecycle, zero-downtime rotations, Raft/DHT mesh coordination, and the gRPC control API.
 
-### 1. Shared-Nothing Data Plane
-Workers are now completely isolated processes (or threads) that own their network stack. Using `SO_REUSEPORT`, the kernel handles load balancing at the socket level, eliminating the bottleneck of a single "acceptor" process.
+### 3. Bounded CPU Offload
+Dedicated CPU workers handle bounded heavy jobs such as minification, compression, image poisoning, and other explicit transforms.
 
-### 2. Unified Supervisor Model
-The legacy Overseer and Master processes have been unified into a single **Supervisor**. The Supervisor centralizes the Control Plane (Raft consensus, DHT routing, and Mesh transport) while relegating the high-performance request handling to the Workers.
+### 4. Linux Optimization
+Linux offers the best support for CPU affinity and kernel networking primitives. Advanced shared-port deployments are supported, but they are not the default model.
 
-### 3. gRPC Control Plane
-Instance management is now formalized via a high-performance **gRPC API**. Status reporting, configuration reloads, and manual blocking are handled through a strongly-typed interface, enabling robust remote orchestration.
-
-### 4. Zero-Jitter Performance
-On Linux, workers are automatically pinned to specific CPU cores via `sched_setaffinity`. This prevents context switching and cache invalidation, ensuring predictable latency even under heavy DDoS load.
-
----
-
-## ✨ Key Features
+## Key Features
 
 - **Advanced Attack Detection**: Native support for SQLi, XSS, SSRF, and command injection detection using `libinjection` and high-speed regex engines.
 - **Bot Mitigation**: Challenges automated traffic with CSS honeypots, JavaScript execution tests, and behavioral analysis.
-- **Distributed WAF Mesh**: (Opt-in) Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network.
+- **Distributed WAF Mesh**: Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network.
 - **Modern Protocol Stack**: First-class support for **HTTP/3 (QUIC)**, HTTP/2, and TLS 1.3.
-- **Linear Scaling**: Designed to scale perfectly with available hardware. Adding more CPU cores results in near-perfect throughput gains.
+- **Capacity Scaling**: Tune `worker_threads`, `tcp.worker_pool_size`, and CPU offload capacity to match the workload mix.
 - **Silent Security**: Features like "Silent Stalling" and "Tarpitting" waste attacker resources without revealing server information.
 
----
-
-## ⚡ Quick Start
+## Quick Start
 
 ### 1. Build from Source
 ```bash
@@ -46,44 +38,36 @@ cargo build --release
 
 ### 2. Run
 ```bash
-# Supervisor automatically manages the worker pool based on CPU cores
+# Supervisor manages the configured worker set
 ./target/release/synvoid --config /etc/synvoid/main.toml
 ```
 
 The system initializes:
-- **Data Plane**: http://localhost:8080 (Managed by Workers)
-- **gRPC Control API**: 127.0.0.1:50051 (Managed by Supervisor)
+- **Data Plane**: http://localhost:8080 (UnifiedServerWorker)
+- **gRPC Control API**: 127.0.0.1:50051 (Supervisor)
 - **Admin UI / Metrics**: http://localhost:8081 | http://localhost:9090
 
----
+## Documentation
 
-## 📖 Documentation
-
-Explore our comprehensive documentation for deeper technical insights:
+Explore our documentation for deeper technical insights:
 
 | Guide | Description |
 |-------|-------------|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Shared-nothing vs Traditional Proxy models |
-| [PROCESS_MANAGEMENT.md](docs/PROCESS_MANAGEMENT.md) | Supervisor and Worker lifecycle |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current data-plane architecture |
+| [PROCESS_MANAGEMENT.md](docs/PROCESS_MANAGEMENT.md) | Supervisor and worker lifecycle |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Complete main.toml reference |
 | [WAF_MESH.md](docs/WAF_MESH.md) | Setting up distributed DDoS defense |
-| [PERFORMANCE.md](docs/PERFORMANCE.md) | Tuning for 1M+ RPS |
+| [PERFORMANCE.md](docs/PERFORMANCE.md) | Tuning `worker_threads`, `tcp.worker_pool_size`, and CPU offload workers |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Logs, IPC, and common issues |
 
----
+## Why Linux?
 
-## 🐧 Why Linux?
+SynVoid is cross-platform, but Linux offers the best support for CPU affinity, shared memory, and high-performance networking primitives. Advanced shared-port deployments are supported, but they are not the default model.
 
-While SynVoid is cross-platform, it is highly optimized for Linux. Features like `SO_REUSEPORT` for load balancing, `sched_setaffinity` for core pinning, and advanced kernel-level network optimizations are most mature on Linux distributions.
+## Project Philosophy
 
----
+SynVoid focuses on keeping the hot path lean. The data plane should stay focused on I/O and routing, the Supervisor should own coordination, and heavy transforms should remain bounded and explicit.
 
-## 🛠 Project Philosophy
-
-SynVoid started as an exploration of high-performance Rust networking and has evolved into a production-ready security layer. Our philosophy is **Isolation over Coordination**: the data plane should never wait for the control plane. By relegating heavy protocols (like Raft or DHT) to the Supervisor and keeping Workers "dumb," we ensure that security logic never compromises throughput.
-
----
-
-## 📜 License
+## License
 
 MIT License - see [LICENSE](LICENSE) file for details.

@@ -586,7 +586,10 @@ fn build_router_from_state(
             "/system/capabilities",
             get(handlers::system::get_capabilities),
         )
-        .route("/system/supervisor", get(handlers::system::get_supervisor_status))
+        .route(
+            "/system/supervisor",
+            get(handlers::system::get_supervisor_status),
+        )
         .route("/system/workers", get(handlers::system::get_workers))
         .route(
             "/system/workers/count",

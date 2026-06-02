@@ -124,6 +124,10 @@ impl IpcEndpoint {
         Self::new("supervisor")
     }
 
+    pub fn cpu_worker() -> Self {
+        Self::static_worker()
+    }
+
     pub fn static_worker() -> Self {
         Self::new("static-worker")
     }
@@ -476,6 +480,10 @@ impl IpcStream {
         self.signer.is_some()
     }
 
+    pub(crate) fn signer(&self) -> Option<Arc<IpcSigner>> {
+        self.signer.as_ref().cloned()
+    }
+
     pub fn peer_pid(&self) -> Option<u32> {
         self.inner.peer_pid()
     }
@@ -548,14 +556,20 @@ pub async fn connect_to_supervisor_signed(signer: Arc<IpcSigner>) -> io::Result<
     IpcEndpoint::supervisor().connect_with_signer(signer).await
 }
 
+pub async fn connect_to_cpu_worker_async() -> io::Result<IpcStream> {
+    IpcEndpoint::cpu_worker().connect().await
+}
+
+pub async fn connect_to_cpu_worker_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
+    IpcEndpoint::cpu_worker().connect_with_signer(signer).await
+}
+
 pub async fn connect_to_static_worker_async() -> io::Result<IpcStream> {
-    IpcEndpoint::static_worker().connect().await
+    connect_to_cpu_worker_async().await
 }
 
 pub async fn connect_to_static_worker_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
-    IpcEndpoint::static_worker()
-        .connect_with_signer(signer)
-        .await
+    connect_to_cpu_worker_signed(signer).await
 }
 
 pub async fn connect_to_commands_async() -> io::Result<IpcStream> {

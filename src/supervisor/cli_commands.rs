@@ -7,7 +7,7 @@ use crate::config::MainConfig;
 use crate::mesh::protocol::MeshMessageSigner;
 #[cfg(feature = "mesh")]
 use crate::mesh::threat_intel::ThreatIntelligenceManager;
-use crate::process::{CommandClient, SupervisorCommand, PidFileManager};
+use crate::process::{CommandClient, PidFileManager, SupervisorCommand};
 
 pub fn handle_status(
     control_addr: Option<String>,

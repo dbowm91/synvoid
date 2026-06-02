@@ -59,7 +59,7 @@ The mesh allows nodes to share behavioral fingerprints of suspected bots.
 
 ## MeshProxy Component
 
-The `MeshProxy` (`src/mesh/proxy.rs:62-78`, 1994 lines total) is the central routing component for mesh proxying:
+The `MeshProxy` (`src/mesh/proxy.rs`) is the central routing component for mesh proxying:
 
 - **Proxy Cache:** Caches proxy decisions to reduce latency for repeated requests to the same destination
 - **Connection Management:** Tracks active connections via `active_connections: DashMap<String, MeshConnection>`
@@ -75,37 +75,29 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 ## Security & Integrity
 
-- **Peer Authentication:** All nodes must have a valid certificate signed by an authorized Organization Public Key (see [`validate_member_certificate`](src/mesh/peer_auth.rs:141) in `src/mesh/peer_auth.rs`).
+- **Peer Authentication:** Mesh TLS supports `strict`, `tofu`, and `permissive` modes. Strict mode requires CA-backed validation, TOFU can pin first-seen fingerprints, and permissive mode accepts peers without CA validation. Transport also enforces node-ID binding for DHT sync and anti-entropy traffic.
 - **Audit Logs:** The mesh includes a distributed auditing system (`src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
 - **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](src/mesh/dht/capability_access.rs:7) in `src/mesh/dht/capability_access.rs`).
 
-### Known DHT Verification Limitations
+### Current DHT Verification Split
 
-The DHT ingress path implements a multi-layer identity hierarchy (L1: peer_id/TLS cert → L2: envelope signer → L3: record signer → L4: source_node_id → L5: quorum signer), but certain message types have architectural verification gaps that are documented in [`src/mesh/dht/signed.rs:42-48`](src/mesh/dht/signed.rs:42-48):
-
-### Regional Quorum Scaling Limits
-When `regional_quorum_enabled = true` in `RecordStoreConfig`, the quorum system scales as follows:
-- **Max Nodes:** `regional_quorum_max_nodes` (default: 20) — Maximum nodes to contact in a regional quorum request
-- **Min Nodes:** `regional_quorum_min_nodes` (default: 3) — Minimum required signatures for regional quorum approval
-- **Fallback:** Falls back to `regional_quorum_min_nodes` if insufficient nodes responsive
-- **Note:** Regional quorum is disabled by default for backward compatibility
+The transport layer now enforces node-ID binding for `DhtRecordAnnounce`, `DhtSyncRequest`, and `DhtAntiEntropyRequest`. Signed snapshot and sync request/response paths are also in place. The remaining weak spots are the anti-entropy request and record-push paths.
 
 | Message Type | Verification Status | Gap Description |
 |--------------|---------------------|-----------------|
-| `DhtRecordAnnounce` | ✅ Full | Timestamp, role, envelope, record, and binding verification |
-| `DhtSyncRequest` | ❌ None | No node_id or TLS certificate validation |
-| `DhtSyncResponse` | ✅ Full | Timestamp, envelope, record, and binding verification |
-| `DhtAntiEntropyRequest` | ⚠️ Partial | `signer_public_key` field is unused in verification |
-| `DhtAntiEntropyResponse` | ✅ Full | Timestamp, envelope, record, and binding verification |
-| `DhtRecordPush` | ⚠️ Partial | Record verified but timestamp ignored, no envelope signature |
-| `DhtRecordCommit` | ⚠️ Partial | Timestamp and record verified, but no envelope signature validation |
-| `QuorumStoreRequest` | ❌ None | No verification performed |
-| `QuorumSignatureResp` | ❌ None | No verification performed |
+| `DhtRecordAnnounce` | ✅ Verified | Peer binding and message signature are enforced before record ingestion |
+| `DhtSnapshotRequest` | ✅ Verified | Signature required; rate-limited and stake-checked |
+| `DhtSnapshotResponse` | ✅ Verified | Signature and timestamp are checked before snapshot apply |
+| `DhtSyncRequest` | ✅ Verified by default | Signed requests are verified; unsigned compatibility fallback remains config-controlled |
+| `DhtSyncResponse` | ✅ Verified | Signature and timestamp are checked before apply |
+| `DhtAntiEntropyRequest` | ⚠️ Partial | Peer/node binding is enforced, but `signer_public_key` is still unused |
+| `DhtAntiEntropyResponse` | ✅ Verified | Signature verified |
+| `DhtRecordPush` | ⚠️ Partial | Timestamp is validated, but the message has no signature field |
 
 **Mitigating Factors:**
 - All DHT communication requires TLS 1.3 encryption (transport layer)
 - Global nodes use Raft consensus for state consistency, providing implicit authority
 - Reputation systems and audit logs help detect anomalous behavior
-- **Edge nodes require valid certificates signed by authorized Organization Public Keys**
+- Deprecated quorum/commit message types (`DhtRecordCommit`, `QuorumStoreRequest`, `QuorumSignatureResp`) were removed from the protocol; older docs that mention them are stale.
 
 These limitations are known architectural constraints. Future revisions may address gaps based on threat model evolution and performance requirements.

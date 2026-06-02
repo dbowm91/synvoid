@@ -116,18 +116,18 @@ SynVoid uses a multi-process architecture designed for **high scalability (1M+ R
 |---------|------|---------|---------------|
 | **Supervisor** | (default) | Manages worker lifecycle, upgrades, health monitoring, and control-plane APIs | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | Handles HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
-| **StaticWorker** | `--static-worker` | CSS/JS minification, compression | 1 |
+| **CpuWorker** | `--cpu-worker` (`--static-worker` compat) | Bounded heavy transforms: minification, compression, image work, scans | 1 |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated, unused for HTTP) | configurable |
 
-### UnifiedServerWorker: Single Process for HTTP/HTTPS/HTTP3
+### UnifiedServerWorker: Latency-Sensitive Data Plane
 
 **The unified worker uses a single Tokio async event loop** which is far more efficient than spawning multiple worker processes:
 
-1. **Tokio's optimization**: A single Tokio runtime with `worker_threads` equal to CPU cores handles all cores efficiently via cooperative scheduling. Adding more worker processes adds process isolation overhead but NOT throughput.
+1. **Tokio's optimization**: Each unified worker runs a Tokio runtime; `worker_threads` controls async scheduling parallelism inside that process. Adding more unified workers is an advanced isolation choice, not the default scaling strategy.
 
 2. **Millions of tenants**: We cannot use process-per-tenant isolation (too many processes). All tenants share the same async event loop with O(1) domain-based routing.
 
-3. **Scaling approach**: For scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop. **Do NOT increase `unified_server_workers` for scaling purposes** — this only affects the number of Tokio runtime threads.
+3. **Scaling approach**: Tune `tcp.worker_pool_size` for accept throughput and `worker_threads` for runtime parallelism. Use CPU offload workers for bounded heavy transforms. **Do NOT treat `unified_server_workers` as a general-purpose scaling knob**.
 
 ### BaseWorkerProcess (Legacy - Not Used for HTTP)
 
@@ -176,7 +176,7 @@ These items require significant architectural work and are correctly deferred:
 |----|-------|--------|
 | MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
-| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field, coordinated rollout required |
+| MR-4 | DHT ingress auth hardening | `DhtAntiEntropyRequest` still ignores `signer_public_key`, and `DhtRecordPush` still lacks full message-auth coverage; breaking protocol changes are needed to normalize all ingress paths |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
@@ -195,7 +195,9 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **BackendType**: `src/router.rs:65-77` has 11 variants
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
-- **DhtSyncRequest**: `src/mesh/transport_peer.rs:687-704` - authentication gap, no signature verification (deferred - breaking proto change)
+- **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding is enforced in transport.
+- **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding is enforced, but `signer_public_key` is still not used in verification.
+- **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - timestamp/signature coverage is still partial; see MR-4.
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)

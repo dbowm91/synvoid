@@ -9,13 +9,13 @@ use synvoid::supervisor::commands::{
     handle_stop,
 };
 use synvoid::worker::{
-    run_static_worker, run_unified_server_worker, setup_unified_server_panic_handler,
+    run_cpu_worker, run_unified_server_worker, setup_unified_server_panic_handler,
     setup_worker_panic_handler,
 };
 
 use synvoid::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use synvoid::startup::daemon::acquire_pid_file;
-use synvoid::startup::worker::{build_static_worker_args, build_unified_server_worker_args};
+use synvoid::startup::worker::{build_cpu_worker_args, build_unified_server_worker_args};
 use synvoid::supervisor::run_supervisor_mode;
 
 #[derive(Parser, Debug)]
@@ -51,11 +51,20 @@ struct Args {
     )]
     supervisor_socket: Option<PathBuf>,
 
-    #[arg(long, help = "Run as static file worker process")]
-    static_worker: bool,
+    #[arg(
+        long = "cpu-worker",
+        alias = "static-worker",
+        help = "Run as CPU offload worker process (compat: --static-worker)"
+    )]
+    cpu_worker: bool,
 
-    #[arg(long, value_name = "ID", help = "Static worker ID")]
-    static_worker_id: Option<usize>,
+    #[arg(
+        long = "cpu-worker-id",
+        alias = "static-worker-id",
+        value_name = "ID",
+        help = "CPU worker ID"
+    )]
+    cpu_worker_id: Option<usize>,
 
     #[arg(
         long,
@@ -82,6 +91,13 @@ struct Args {
         help = "Total number of workers in the pool"
     )]
     total_workers: Option<usize>,
+
+    #[arg(
+        long,
+        hide = true,
+        help = "Enable shared-port startup behavior for internally spawned worker processes"
+    )]
+    reuse_port: bool,
 
     #[arg(short, long, help = "Run in foreground (don't daemonize)")]
     foreground: bool,
@@ -453,7 +469,7 @@ fn main() {
     // Validate mutual exclusivity of worker modes
     let worker_mode_count = [
         args.worker,
-        args.static_worker,
+        args.cpu_worker,
         args.unified_server_worker,
         args.mesh_agent,
         args.wasm_jail,
@@ -464,17 +480,17 @@ fn main() {
     .count();
 
     if worker_mode_count > 1 {
-        eprintln!("Error: Only one mode (--worker, --static-worker, --unified-server-worker, --mesh-agent, --wasm-jail, --yara-jail) can be specified");
+        eprintln!("Error: Only one mode (--worker, --cpu-worker/--static-worker, --unified-server-worker, --mesh-agent, --wasm-jail, --yara-jail) can be specified");
         std::process::exit(1);
     }
 
     // Check for worker mode
-    if args.static_worker {
+    if args.cpu_worker {
         setup_worker_panic_handler();
         init_logging_simple();
 
-        let static_worker_args = build_static_worker_args(
-            args.static_worker_id,
+        let cpu_worker_args = build_cpu_worker_args(
+            args.cpu_worker_id,
             args.config_path,
             args.supervisor_socket,
             args.log_level,
@@ -487,8 +503,8 @@ fn main() {
             .build()
             .expect("Failed to build Tokio runtime");
 
-        if let Err(e) = rt.block_on(run_static_worker(static_worker_args)) {
-            tracing::error!("Static worker error: {}", e);
+        if let Err(e) = rt.block_on(run_cpu_worker(cpu_worker_args)) {
+            tracing::error!("CPU worker error: {}", e);
             std::process::exit(1);
         }
     } else if args.unified_server_worker {
@@ -505,6 +521,7 @@ fn main() {
             worker_threads,
             args.cpu_affinity,
             args.total_workers.unwrap_or(1),
+            args.reuse_port,
         );
 
         let rt = tokio::runtime::Builder::new_multi_thread()

@@ -2,10 +2,10 @@
 
 Based on a comprehensive analysis of the foundational layers (1, 2, 3, and 7), here is a detailed review of SynVoid's architecture, security posture, and performance characteristics.
 
-## Layer 1: Process & Lifecycle Management (gRPC & Shared-Nothing)
+## Layer 1: Process & Lifecycle Management (gRPC & Unified Data Plane)
 
 **Are we achieving zero downtime updates?**
-Yes. SynVoid achieves zero-downtime updates through a combination of its **Shared-Nothing Architecture** and `SO_REUSEPORT`. The Supervisor coordinates the rotation of workers: new workers are spawned and bind to the same ports using the kernel's `SO_REUSEPORT` load balancer, while old workers are signaled via IPC to enter drain mode. This ensures that no incoming connections are dropped during the transition.
+Yes. SynVoid achieves zero-downtime updates through Supervisor-coordinated worker rotation and drain. Advanced overlap modes can use `SO_REUSEPORT` where appropriate while old workers are signaled via IPC to drain.
 
 **Is the IPC mechanism secure?**
 Highly secure. The architecture strictly isolates the control plane from the data plane:
@@ -28,25 +28,25 @@ The WAF engine (`src/waf/attack_detection/`) provides enterprise-grade, comprehe
 Yes. The `ThreatLevelManager` tracks anomaly scores and automatically scales the system's "paranoia" level in real-time. Furthermore, the Supervisor handles global coordination via the Mesh network, sharing threat intelligence across nodes to enable near-instant, globally coordinated defense.
 
 **Scalability:**
-The WAF is built for streaming inspection and scales linearly thanks to the shared-nothing model. Each worker handles its own traffic independently, pinned to a specific CPU core to maximize cache locality and minimize context switching.
+The WAF is built for streaming inspection. Default scaling relies on the unified async worker for latency-sensitive flow plus CPU offload workers for heavy transforms.
 
 ## Layer 3: Proxy & Routing (Traffic Layer)
 
 **Are the architectural decisions sound?**
-The proxy layer is structurally sound and follows a shared-nothing concurrency model. There is a clean separation of concerns between domain/path routing (`Router`), upstream connection management and health checking (`UpstreamPool`), and the actual request forwarding and caching (`ProxyServer`).
+The proxy layer is structurally sound and follows the unified-worker contract. There is a clean separation of concerns between domain/path routing (`Router`), upstream connection management and health checking (`UpstreamPool`), and the actual request forwarding and caching (`ProxyServer`).
 
 **Performance & Scalability Bottlenecks:**
-The transition to `SO_REUSEPORT` and CPU pinning has eliminated many previous bottlenecks:
-1.  **Zero Coordination:** Workers do not need to coordinate for connection acceptance, allowing the kernel to handle load balancing efficiently.
-2.  **Cache Locality:** Core affinity (`sched_setaffinity`) ensures that the worker's memory and CPU caches remain hot for its assigned traffic.
-3.  **Config Distribution:** The Supervisor uses the `synvoid-config` crate to provide a unified configuration view, pushing updates to workers via lock-free IPC channels.
+Current bottlenecks are primarily managed via explicit tuning knobs:
+1.  **Accept path throughput:** `tcp.worker_pool_size`.
+2.  **Unified runtime scheduling:** `worker_threads`.
+3.  **Heavy task isolation:** bounded CPU offload workers with queue/deadline controls.
 
 ## Layer 7: Core Utilities & System (Foundation)
 
 **How are OS-specific abstractions handled?**
 SynVoid leverages deep OS integration:
-*   **Linux/Unix:** First-class citizen. Leverages `SO_REUSEPORT`, `sched_setaffinity`, and advanced sandboxing (Landlock, Pledge).
-*   **Windows:** Supports shared-nothing execution using `SO_REUSEPORT` (available in modern Windows versions) and named pipe IPC.
+*   **Linux/Unix:** First-class citizen. Leverages async networking, affinity controls, and advanced sandboxing (Landlock, Pledge).
+*   **Windows:** Supports the unified-worker model with modern socket semantics and named pipe IPC.
 
 **Security Flaws at the Foundation Level:**
 The primary focus remains on **Sandbox Parity**. While Linux WAF processes are strictly confined by Landlock, Windows processes rely on more standard security descriptors. The move to a gRPC control plane has significantly improved the security of the management interface by providing a well-defined, auditable API boundary.

@@ -53,6 +53,27 @@ impl MeshConfig {
             );
         }
 
+        if let Some(dht) = &self.dht {
+            if !dht.require_signed_sync_requests {
+                let now = crate::mesh::safe_unix_timestamp();
+                match dht.unsigned_sync_compat_until_unix {
+                    Some(deadline) if deadline > now => {}
+                    Some(deadline) => {
+                        return Err(format!(
+                            "mesh.dht.require_signed_sync_requests=false compatibility window expired at {} (now={}); set require_signed_sync_requests=true or extend unsigned_sync_compat_until_unix",
+                            deadline, now
+                        ));
+                    }
+                    None => {
+                        return Err(
+                            "mesh.dht.require_signed_sync_requests=false requires a bounded migration window via mesh.dht.unsigned_sync_compat_until_unix"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }

@@ -688,6 +688,10 @@ impl MeshTransport {
                 request_id,
                 node_id,
                 from_version,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
             } => {
                 if self
                     .validate_peer_node_id_binding(peer_id, &node_id)
@@ -700,8 +704,17 @@ impl MeshTransport {
                     );
                     return Ok(());
                 }
-                self.handle_dht_sync_request(peer_id, &request_id, &node_id, from_version)
-                    .await;
+                self.handle_dht_sync_request(
+                    peer_id,
+                    &request_id,
+                    &node_id,
+                    from_version,
+                    timestamp,
+                    &nonce,
+                    &signature,
+                    signer_public_key.as_deref(),
+                )
+                .await;
             }
             MeshMessage::DhtSyncResponse {
                 request_id,

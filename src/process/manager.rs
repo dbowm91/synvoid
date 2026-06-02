@@ -12,8 +12,8 @@ use tokio::task::JoinHandle;
 use tokio::time::interval;
 
 pub use super::worker::{
-    BaseWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
-    WorkerProcessBase,
+    BaseWorkerProcess, CpuWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess,
+    WorkerProcess, WorkerProcessBase,
 };
 
 use super::ipc::{
@@ -107,6 +107,7 @@ pub struct ProcessManager {
     ipc_signer: Option<Arc<IpcSigner>>,
     static_worker_cache_hits: Arc<AtomicU64>,
     static_worker_cache_misses: Arc<AtomicU64>,
+    static_worker_cpu_offload_stats: Arc<PLRwLock<super::ipc::StaticCpuOffloadStats>>,
     request_logs: Arc<PLRwLock<VecDeque<RequestLogPayload>>>,
     started_at: Instant,
     health_monitor_handle: Arc<TokioMutex<Option<JoinHandle<()>>>>,
@@ -201,6 +202,9 @@ impl ProcessManager {
                 ipc_signer,
                 static_worker_cache_hits: Arc::new(AtomicU64::new(0)),
                 static_worker_cache_misses: Arc::new(AtomicU64::new(0)),
+                static_worker_cpu_offload_stats: Arc::new(PLRwLock::new(
+                    super::ipc::StaticCpuOffloadStats::default(),
+                )),
                 request_logs: Arc::new(PLRwLock::new(VecDeque::with_capacity(10000))),
                 started_at: Instant::now(),
                 health_monitor_handle: Arc::new(TokioMutex::new(None)),
@@ -615,26 +619,28 @@ impl ProcessManager {
         Ok(id)
     }
 
-    pub fn spawn_static_worker(&self) -> std::io::Result<usize> {
+    pub fn spawn_cpu_worker(&self) -> std::io::Result<usize> {
         let worker_binary = self.find_worker_binary()?;
 
         let mut cmd = self.build_worker_command(&worker_binary);
-        cmd.arg("--static-worker")
-            .arg("--static-worker-id")
-            .arg("0");
+        cmd.arg("--cpu-worker").arg("--cpu-worker-id").arg("0");
 
         let child = cmd.spawn()?;
         let pid = child.id();
 
-        let static_worker_process = StaticWorkerProcess::new(0, pid, child);
+        let cpu_worker_process = CpuWorkerProcess::new(0, pid, child);
 
         {
             let mut static_worker = self.static_worker.write();
-            *static_worker = Some(static_worker_process);
+            *static_worker = Some(cpu_worker_process);
         }
 
-        tracing::info!("Spawned static worker with PID {}", pid);
+        tracing::info!("Spawned CPU worker with PID {}", pid);
         Ok(0)
+    }
+
+    pub fn spawn_static_worker(&self) -> std::io::Result<usize> {
+        self.spawn_cpu_worker()
     }
 
     pub fn spawn_unified_server_workers(&self, count: usize) -> std::io::Result<Vec<WorkerId>> {
@@ -673,6 +679,11 @@ impl ProcessManager {
 
         let total_workers = self.config.unified_server_workers;
         cmd.arg("--total-workers").arg(total_workers.to_string());
+        let enable_shared_port_mode =
+            total_workers > 1 && crate::process::is_reuse_port_supported();
+        if enable_shared_port_mode {
+            cmd.arg("--reuse-port");
+        }
 
         let child = cmd.spawn().map_err(|e| {
             tracing::error!("Failed to spawn unified server worker: {}", e);
@@ -937,11 +948,15 @@ impl ProcessManager {
             *worker.status_mut() = WorkerStatus::Ready;
 
             if self.ipc_signer.is_some() {
-                tracing::info!("Static worker {} is ready (signing enabled)", worker_id);
+                tracing::info!("CPU worker {} is ready (signing enabled)", worker_id);
             } else {
-                tracing::info!("Static worker {} is ready (signing disabled)", worker_id);
+                tracing::info!("CPU worker {} is ready (signing disabled)", worker_id);
             }
         }
+    }
+
+    pub fn handle_cpu_worker_ready(&self, worker_id: usize) {
+        self.handle_static_worker_ready(worker_id);
     }
 
     pub fn handle_static_worker_heartbeat(
@@ -949,6 +964,7 @@ impl ProcessManager {
         _worker_id: usize,
         cache_hits: u64,
         cache_misses: u64,
+        cpu_offload_stats: super::ipc::StaticCpuOffloadStats,
     ) {
         let mut static_worker = self.static_worker.write();
         if let Some(worker) = static_worker.as_mut() {
@@ -963,6 +979,17 @@ impl ProcessManager {
             .store(cache_hits, Ordering::Relaxed);
         self.static_worker_cache_misses
             .store(cache_misses, Ordering::Relaxed);
+        *self.static_worker_cpu_offload_stats.write() = cpu_offload_stats;
+    }
+
+    pub fn handle_cpu_worker_heartbeat(
+        &self,
+        worker_id: usize,
+        cache_hits: u64,
+        cache_misses: u64,
+        cpu_offload_stats: super::ipc::StaticCpuOffloadStats,
+    ) {
+        self.handle_static_worker_heartbeat(worker_id, cache_hits, cache_misses, cpu_offload_stats);
     }
 
     pub fn get_static_worker_cache_stats(&self) -> (u64, u64) {
@@ -970,6 +997,18 @@ impl ProcessManager {
             self.static_worker_cache_hits.load(Ordering::Relaxed),
             self.static_worker_cache_misses.load(Ordering::Relaxed),
         )
+    }
+
+    pub fn get_cpu_worker_cache_stats(&self) -> (u64, u64) {
+        self.get_static_worker_cache_stats()
+    }
+
+    pub fn get_static_worker_cpu_offload_stats(&self) -> super::ipc::StaticCpuOffloadStats {
+        self.static_worker_cpu_offload_stats.read().clone()
+    }
+
+    pub fn get_cpu_worker_cpu_offload_stats(&self) -> super::ipc::StaticCpuOffloadStats {
+        self.get_static_worker_cpu_offload_stats()
     }
 
     pub fn is_static_worker_ready(&self) -> bool {
@@ -980,6 +1019,10 @@ impl ProcessManager {
             .unwrap_or(false)
     }
 
+    pub fn is_cpu_worker_ready(&self) -> bool {
+        self.is_static_worker_ready()
+    }
+
     pub fn set_static_worker_ipc(&self, ipc: IpcStream) {
         let mut static_worker = self.static_worker.write();
         if let Some(worker) = static_worker.as_mut() {
@@ -987,11 +1030,19 @@ impl ProcessManager {
         }
     }
 
+    pub fn set_cpu_worker_ipc(&self, ipc: IpcStream) {
+        self.set_static_worker_ipc(ipc);
+    }
+
     pub fn clear_static_worker_ipc(&self) {
         let mut static_worker = self.static_worker.write();
         if let Some(worker) = static_worker.as_mut() {
             worker.ipc = None;
         }
+    }
+
+    pub fn clear_cpu_worker_ipc(&self) {
+        self.clear_static_worker_ipc();
     }
 
     pub fn clear_unified_server_worker_ipc(&self, worker_id: WorkerId) {
@@ -1015,9 +1066,17 @@ impl ProcessManager {
         }
     }
 
+    pub fn set_cpu_worker_ipc_arc(&self, ipc: Arc<tokio::sync::Mutex<IpcStream>>) {
+        self.set_static_worker_ipc_arc(ipc);
+    }
+
     pub fn get_static_worker_ipc(&self) -> Option<Arc<tokio::sync::Mutex<IpcStream>>> {
         let static_worker = self.static_worker.read();
         static_worker.as_ref().and_then(|w| w.ipc.clone())
+    }
+
+    pub fn get_cpu_worker_ipc(&self) -> Option<Arc<tokio::sync::Mutex<IpcStream>>> {
+        self.get_static_worker_ipc()
     }
 
     pub async fn drain_static_worker_async(&self, timeout_secs: u64) -> Result<u64, String> {
@@ -1044,6 +1103,10 @@ impl ProcessManager {
             },
         )
         .await
+    }
+
+    pub async fn drain_cpu_worker_async(&self, timeout_secs: u64) -> Result<u64, String> {
+        self.drain_static_worker_async(timeout_secs).await
     }
 
     pub fn handle_heartbeat(&self, worker_id: WorkerId, metrics: WorkerMetricsPayload) {
@@ -1228,12 +1291,12 @@ impl ProcessManager {
             timestamp,
         };
 
-        if let Some(ref ipc) = self.get_static_worker_ipc() {
+        if let Some(ref ipc) = self.get_cpu_worker_ipc() {
             let mut ipc = ipc.lock().await;
             if let Err(e) = ipc.send(&msg) {
-                tracing::error!("Failed to send threat feed update to static worker: {}", e);
+                tracing::error!("Failed to send threat feed update to CPU worker: {}", e);
             } else {
-                tracing::debug!("Broadcast threat feed update to static worker");
+                tracing::debug!("Broadcast threat feed update to CPU worker");
             }
         }
 
@@ -1255,13 +1318,13 @@ impl ProcessManager {
             config_path: config_path.to_string_lossy().to_string(),
         };
 
-        // Send to static worker
-        if let Some(ref ipc) = self.get_static_worker_ipc() {
+        // Send to CPU worker
+        if let Some(ref ipc) = self.get_cpu_worker_ipc() {
             let mut ipc = ipc.lock().await;
             if let Err(e) = ipc.send(&msg) {
-                tracing::error!("Failed to send config reload to static worker: {}", e);
+                tracing::error!("Failed to send config reload to CPU worker: {}", e);
             } else {
-                tracing::info!("Broadcast config reload to static worker");
+                tracing::info!("Broadcast config reload to CPU worker");
             }
         }
 
@@ -1285,13 +1348,13 @@ impl ProcessManager {
     pub async fn broadcast_cert_reload(&self) {
         let msg = Message::MasterCertReload;
 
-        // Send to static worker (though static worker doesn't handle TLS certs)
-        if let Some(ref ipc) = self.get_static_worker_ipc() {
+        // Send to CPU worker (though the CPU worker doesn't handle TLS certs)
+        if let Some(ref ipc) = self.get_cpu_worker_ipc() {
             let mut ipc = ipc.lock().await;
             if let Err(e) = ipc.send(&msg) {
-                tracing::error!("Failed to send cert reload to static worker: {}", e);
+                tracing::error!("Failed to send cert reload to CPU worker: {}", e);
             } else {
-                tracing::info!("Broadcast cert reload to static worker");
+                tracing::info!("Broadcast cert reload to CPU worker");
             }
         }
 
@@ -2033,6 +2096,7 @@ impl ProcessManager {
 
         drop(unified_server_workers);
 
+        // Supervisor-owned global aggregation across worker processes.
         let total_requests = total_requests + unified_total_requests;
         let total_blocked = total_blocked + unified_total_blocked;
         let total_challenged = total_challenged_workers + total_challenged_unified;

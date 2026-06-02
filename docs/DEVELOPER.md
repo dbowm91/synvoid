@@ -6,50 +6,35 @@ Technical deep-dive into SynVoid's design decisions, deployment patterns, and in
 
 ### Design Philosophy
 
-1. **Shared-Nothing Performance** - Eliminate coordination bottlenecks in the data plane.
+1. **Latency-Sensitive Unified Data Plane** - Keep I/O and cheap request-path work in one unified worker.
 2. **Supervisor-Worker Isolation** - Centralize the control plane while keeping the data plane lightweight.
 3. **gRPC Control Plane** - Robust, typed management API for automation and remote control.
 4. **Core Affinity** - Maximize cache efficiency via deterministic CPU pinning.
 
 ## Concurrency Model
 
-### Shared-Nothing Data Plane
+### Default Data Plane Contract
 
-SynVoid utilizes a shared-nothing concurrency model where each worker process operates independently:
+SynVoid defaults to one unified worker for network I/O plus bounded CPU offload workers for heavy tasks:
 
 ```rust
-// Shared-nothing worker initialization
-fn spawn_worker(core_id: usize) {
-    // Pin to CPU core
-    sched_setaffinity(0, core_id);
-    
-    // Bind with SO_REUSEPORT
-    let listener = TcpListener::bind_with_reuse_port(addr);
-    
-    // Independent event loop
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async move {
-            loop {
-                let (stream, _) = listener.accept().await?;
-                tokio::spawn(handle_connection(stream));
-            }
-        });
+// Unified worker + offload workers
+fn spawn_data_plane() {
+    spawn_unified_server_worker(); // listener, TLS, routing, cheap WAF, streaming proxy
+    spawn_cpu_workers();           // minify/compress/image/deep scan/plugin/serverless
 }
 ```
 
 **Benefits:**
-- **Zero Lock Contention:** Workers don't share mutexes or state for request handling.
-- **Linear Scalability:** Throughput scales predictably with the number of CPU cores.
-- **Kernel Load Balancing:** `SO_REUSEPORT` allows the OS kernel to distribute traffic with minimal overhead.
+- **Predictable latency:** Keep CPU-heavy work off the unified request path.
+- **Bounded degradation:** Queue/deadline controls isolate offload saturation.
+- **Clear scaling knobs:** Runtime/accept/offload capacity can be tuned independently.
 
 ### Worker Pool
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    SynVoid Shared-Nothing Pool              │
+│              SynVoid Unified + CPU Offload Pool             │
 └─────────────────────────────────────────────────────────────┘
 
                     ┌─────────────────┐
@@ -57,16 +42,19 @@ fn spawn_worker(core_id: usize) {
                     │ (Control Plane) │
                     └───────┬─────────┘
                             │ IPC (Config/Threats)
-           ┌────────────────┼───────────────┐
-           │                │               │
-           ▼                ▼               ▼
-     ┌───────────┐    ┌───────────┐    ┌───────────┐
-     │ Worker 1  │    │ Worker 2  │    │ Worker N  │
-     │ (Core 0)  │    │ (Core 1)  │    │ (Core N)  │
-     │───────────│    │───────────│    │───────────│
-     │SO_REUSE-  │    │SO_REUSE-  │    │SO_REUSE-  │
-     │PORT       │    │PORT       │    │PORT       │
-     └───────────┘    └───────────┘    └───────────┘
+                            │
+                            ▼
+                 ┌─────────────────────┐
+                 │ UnifiedServerWorker │
+                 │ (latency-sensitive) │
+                 └──────────┬──────────┘
+                            │ IPC offload
+                 ┌──────────┴──────────┐
+                 ▼                     ▼
+            ┌───────────┐         ┌───────────┐
+            │CPU Worker │         │CPU Worker │
+            │    1      │         │    N      │
+            └───────────┘         └───────────┘
 ```
 
 ## Control Plane Architecture
@@ -145,8 +133,11 @@ net.ipv4.tcp_fin_timeout = 15
 
 ```toml
 [server]
-worker_processes = "auto"  # Pins workers to available cores
-worker_connections = 10240
+worker_threads = 0
+unified_server_workers = 1
+
+[tcp]
+worker_pool_size = 4
 ```
 
 ## Monitoring
@@ -160,9 +151,21 @@ Metrics are aggregated by the Supervisor from all workers:
 synvoid_waf_blocked_total
 synvoid_attack_sqli_total
 
-# Shared-Nothing Worker Metrics
-synvoid_worker_cpu_usage{core="0"}
-synvoid_worker_connections_active{core="0"}
+# Data-plane metrics
+synvoid_worker_connections_active
+synvoid_http_request_latency_ms
+synvoid.static.cpu_offload.queue_depth
+synvoid.static.cpu_offload.active_tasks
+synvoid.static.cpu_offload.task_timeouts
+
+# Worker heartbeat payloads include `event_loop_lag_ms`, `request_queue_time_ms`,
+# `active_connections`, `offload_submissions_total`, `offload_timeouts_total`,
+# `offload_rejections_total`, `offload_fallbacks_total`, `inline_cpu_phase_times_ms`, and
+# `body_buffering_bytes_total`
+# for unified-worker latency analysis.
+# CPU offload heartbeats include `worker_rss_bytes` alongside queue depth, active tasks,
+# task submissions, inline-small fallbacks, timeout/rejection counts, and
+# `cpu_offload_task_duration_ms` summaries by task kind.
 ```
 
 ## Security Best Practices
@@ -171,7 +174,7 @@ synvoid_worker_connections_active{core="0"}
 
 - [ ] Enable TLS for gRPC control plane.
 - [ ] Configure mTLS for Supervisor-to-Supervisor communication.
-- [ ] Use `SO_REUSEPORT` for kernel-level load balancing.
+- [ ] Keep `unified_server_workers` at 1 unless explicitly running advanced isolation mode.
 - [ ] Enable Landlock sandboxing on Linux for workers.
 
 ## Troubleshooting
@@ -186,6 +189,6 @@ RUST_LOG=debug ./synvoid
 
 | Problem | Solution |
 |---------|----------|
-| Unbalanced worker load | Check `SO_REUSEPORT` kernel support and scheduler policy. |
+| High p99 latency | Verify CPU-heavy tasks are offloaded and offload queues are bounded. |
 | gRPC connection refused | Verify TLS certificates and control plane port. |
-| High jitter | Ensure `worker_processes` matches physical cores and pinning is active. |
+| High jitter | Tune `worker_threads`/`tcp.worker_pool_size`, and verify heavy tasks are offloaded. |

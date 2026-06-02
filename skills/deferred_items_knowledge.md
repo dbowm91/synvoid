@@ -2,7 +2,7 @@
 
 Implementation plan remaining items are documented in `plans/plan.md`.
 
-## Current Status (2026-05-27)
+## Current Status (2026-05-29)
 
 **All fixable deferred items completed**:
 - DNS-QUERY (QueryCoalescer max_wait_ms): ✅ Fixed - async redesign
@@ -16,9 +16,18 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 
 | ID | Issue | Reason |
 |----|-------|--------|
-| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
-| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
-| MR-4 | DhtSyncRequest has no auth | Breaking protobuf protocol change - no signature field, coordinated rollout required |
+| HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | Erased-client primitives exist, but active streaming proxy path still uses `StreamingHttpClient`; full HTTP/2 pooled streaming lifecycle remains non-default and requires dedicated connection-task management |
+
+### Recently Resolved Former Deferred Items
+
+- `MESH-14` (source node identity/certificate validation):
+  - peer certificate verification is wired into connection establishment.
+  - mesh TLS trust is explicitly mode-based (`strict` / `tofu` / `permissive`) with strict production baseline.
+  - revocation and mode-behavior tests are present in mesh cert/transport tests.
+- `MR-4` (signed `DhtSyncRequest` auth rollout):
+  - `DhtSyncRequest` includes timestamp/nonce/signature/signer key.
+  - default behavior rejects unsigned sync requests (`mesh.dht.require_signed_sync_requests=true`).
+  - temporary legacy compatibility requires explicit opt-out (`false`) plus a bounded migration deadline (`mesh.dht.unsigned_sync_compat_until_unix`) in the future.
 
 ---
 

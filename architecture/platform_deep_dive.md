@@ -88,11 +88,11 @@ IPC primitives, process management, socket FD passing, message framing, worker l
 | `ipc_rate_limit.rs` | Token bucket rate limiting (global + per-worker) |
 | `socket_fd.rs` | Unix FD passing via `SCM_Rights`, `SocketHolder` for batch handoff |
 | `manager.rs` | `ProcessManager` - spawn/monitor/restart workers |
-| `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess`) |
+| `worker.rs` | Worker process structs (`BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess`) |
 | `pidfile.rs` | PID file management, supervisor lock file |
 | `command.rs` | Command client/response types |
 | `ipc_windows.rs` | Windows IPC via named pipes (Server side, pipe server implementation) |
-| `socket_path.rs` | Master socket path resolution and versioning for upgrades |
+| `socket_path.rs` | Supervisor socket path resolution and versioning for upgrades |
 
 ### Message Types (IPC)
 
@@ -100,7 +100,7 @@ The `Message` enum is organized into **18 categories**:
 
 1. **WorkerLifecycle**: `WorkerStarted`, `WorkerReady`, `WorkerHeartbeat`, `WorkerError`
 2. **MasterCommand**: `MasterShutdown`, `MasterConfigReload`, `MasterHealthCheck`
-3. **StaticWorker**: `StaticWorkerStarted`, `StaticWorkerReady`, `StaticWorkerDrain`
+3. **CpuWorker**: `CpuWorkerStarted`, `CpuWorkerReady`, `CpuWorkerDrain`
 4. **ThreatIntel**: `ThreatIndicatorAnnounce`, `ThreatSyncRequest/Response`
 5. **BlocklistRules**: `BlocklistUpdate`, `RulePatternsUpdate`
 6. **StaticContent**: `MinifyRequest/Response`, `PoisonImageRequest/Response`
@@ -109,7 +109,7 @@ The `Message` enum is organized into **18 categories**:
 9. **WorkerDrain**: `WorkerDrain`, `WorkerDrained`, `WorkerDrainComplete`
 10. **Upgrade**: `UpgradeReady`, `OverseerUpgradePrepare/Commit/Rollback`
 11. **Overseer**: `OverseerDrainWorkers`, `OverseerGetStatus`
-12. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport`
+12. **MasterDrain**: `MasterDrainMode`, `MasterConnectionsReport` (legacy compatibility names)
 13. **DrainProtocol**: `DrainRequest`, `DrainStatusResponse`
 14. **SocketHandoff**: `SocketHandoffRequest/Ready/Complete` (Windows)
 15. **WorkerRestart**: `WorkerRestartRequest`, `WorkerRestartAck`
@@ -220,7 +220,7 @@ The Supervisor handles both worker lifecycle messages AND admin commands via IPC
 
 ### Purpose
 
-Bootstrap, daemonization, master/worker startup entry points.
+Bootstrap, daemonization, supervisor/worker startup entry points.
 
 ### Key Files
 
@@ -228,13 +228,13 @@ Bootstrap, daemonization, master/worker startup entry points.
 |------|---------|
 | `bootstrap.rs` | Logging initialization, test mode warning |
 | `daemon.rs` | Signal handlers, PID file acquisition, daemonize |
-| `worker.rs` | Worker argument builders (`build_static_worker_args`, `build_unified_server_worker_args`) |
+| `worker.rs` | Worker argument builders (`build_cpu_worker_args`, `build_static_worker_args`, `build_unified_server_worker_args`) |
 | `mod.rs` | Startup module root |
 
 ### Startup Flow
 
 ```
-run_master_mode()
+run_supervisor_mode()
 ├── setup_panic_handler()
 ├── ConfigManager::load_main()
 ├── Tokio multi-thread runtime
@@ -245,7 +245,7 @@ run_master_mode()
 ├── ProcessManager::new()
 ├── IpcListener bind
 ├── Worker spawning (UnifiedServerWorker)
-├── StaticWorker spawning
+├── CPU offload worker spawning
 ├── setup_signal_handlers()
 ├── start_health_monitor()
 ├── start_admin_server()
@@ -278,7 +278,7 @@ SynVoid supports two deployment modes:
 │  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API    │   │
 │  │  - Config     │  │  - Workers[]   │  │  (127.0.0.1:50051)    │   │
 │  │  - BlockStore│  │  - Unified[]   │  │                      │   │
-│  │  - Trackers  │  │  - Static      │  │                      │   │
+│  │  - Trackers  │  │  - CPU Offload │  │                      │   │
 │  └──────────────┘  └─────────────────┘  └───────────────────────┘   │
 │         │                    │                      │                │
 │         │         ┌──────────┴──────────┐            │                │
@@ -296,8 +296,8 @@ SynVoid supports two deployment modes:
 │     │  │ (tokio async loop, CPU-affinity pinned, Linux-only)     │  │             │
 │     │  └─────────────────────────────────────────────┘  │             │
 │     │  ┌─────────────────────────────────────────────┐  │             │
-│     │  │ StaticWorker                                │  │             │
-│     │  │ (CSS/JS minification, compression)          │  │             │
+│     │  │ CPU Offload Worker                          │  │             │
+│     │  │ (CSS/JS minification, compression, scans)   │  │             │
 │     │  └─────────────────────────────────────────────┘  │             │
 │     └─────────────────────────────────────────────────────┘             │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -314,7 +314,7 @@ SynVoid supports two deployment modes:
 │  │ SupervisorState │  │ ProcessManager │  │  gRPC Control API    │   │
 │  │  - Config     │  │  - Workers[]   │  │  (127.0.0.1:50051)    │   │
 │  │  - BlockStore│  │  - Unified[]   │  │                      │   │
-│  │  - Trackers  │  │  - Static      │  │                      │   │
+│  │  - Trackers  │  │  - CPU Offload │  │                      │   │
 │  └──────────────┘  └─────────────────┘  └───────────────────────┘   │
 │         │                    │                      │                │
 │         │         ┌──────────┴──────────┐            │                │
@@ -326,7 +326,7 @@ SynVoid supports two deployment modes:
           │         ┌─────────────────────────────────┘
           │         │
      ┌────▼─────────▼──────────────────────────────────┐
-     │               Master Process                       │
+     │      Supervisor Process (legacy Master compatibility) │
      │  ┌─────────────────┐  ┌──────────────────────┐   │
      │  │ ProcessManager  │  │ Admin Server         │   │
      │  │ (shared w/ sup) │  │ (port from config)   │   │
@@ -348,12 +348,12 @@ SynVoid supports two deployment modes:
      │  │ (tokio async loop)   │  │
      │  └─────────────────────┘  │
      │  ┌─────────────────────┐  │
-     │  │ StaticWorker        │  │  (CSS/JS minification)
+     │  │ CPU Offload Worker   │  │  (CSS/JS minification, scans)
      │  └─────────────────────┘  │
      └───────────────────────────┘
 ```
 
-**Legend:** Supervisor → Master → Workers. Master handles admin API only. Use this for multi-host orchestration.
+**Legend:** Supervisor → Workers. The legacy `Master` name remains for command compatibility only. Use this for multi-host orchestration.
 
 ---
 
@@ -373,27 +373,27 @@ SynVoid supports two deployment modes:
 
 ---
 
-## Critical Security Constraint: Master/Supervisor Isolation
+## Critical Security Constraint: Supervisor Isolation
 
 ### Requirement
 
-**Master and Supervisor processes MUST NOT accept external traffic or handle untrusted client requests.**
+**The Supervisor must not accept external traffic or handle untrusted client requests.**
 
 ### Architecture
 
 | Process | Role | External Traffic |
 |---------|------|------------------|
 | **Supervisor** | Lifecycle management, health monitoring, upgrade coordination | No - localhost IPC only |
-| **Master** | Admin API, worker orchestration, threat intelligence | No - localhost admin API only |
+| **Legacy Master command path** | Admin API compatibility, worker orchestration compatibility, threat intelligence compatibility | No - localhost admin API only |
 | **UnifiedServerWorker** | HTTP/HTTPS/HTTP3 request handling, WAF, proxy | **Yes - all client traffic** |
 
 ### Security Model
 
-1. **Least Privilege**: Master/Supervisor handle sensitive operations (config management, worker orchestration, threat intelligence aggregation). Workers handle untrusted client input (HTTP requests, uploads, etc.)
+1. **Least Privilege**: Supervisor handles sensitive operations (config management, worker orchestration, threat intelligence aggregation). Workers handle untrusted client input (HTTP requests, uploads, etc.)
 
-2. **Process Isolation**: If a CVE exists in request handling code (UnifiedServerWorker), the Master/Supervisor processes are protected because they run in separate processes. An attacker cannot escalate from a compromised Worker to Master.
+2. **Process Isolation**: If a CVE exists in request handling code (UnifiedServerWorker), the Supervisor process is protected because it runs separately from the data plane. An attacker cannot escalate from a compromised Worker to the Supervisor.
 
-3. **Crash Isolation**: When a Worker crashes (OOM, segfault, panic), the Master continues running and can restart the Worker. The admin panel remains accessible even during Worker failures.
+3. **Crash Isolation**: When a Worker crashes (OOM, segfault, panic), the Supervisor continues running and can restart the Worker. The admin panel remains accessible even during Worker failures.
 
 4. **gRPC Binding**: The Supervisor's gRPC control API binds to `127.0.0.1:50051` only (configurable via `control_api_addr`). TLS is not required for localhost IPC.
 

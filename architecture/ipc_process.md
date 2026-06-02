@@ -2,9 +2,7 @@
 
 **Module Path:** `src/process/`
 
-**Purpose:** Provides inter-process communication (IPC) infrastructure and process lifecycle management for the SynVoid multi-process arc
-able
-hitecture. This module handles all aspects of worker process spawning, IPC message passing, signed authentication, rate limiting, and process supervision.
+**Purpose:** Provides inter-process communication (IPC) infrastructure and process lifecycle management for the SynVoid multi-process architecture. This module handles all aspects of supervisor/worker process spawning, IPC message passing, signed authentication, rate limiting, and process supervision. Legacy `Master` and `StaticWorker` names remain in a few message and command types for compatibility.
 
 ---
 
@@ -12,14 +10,14 @@ hitecture. This module handles all aspects of worker process spawning, IPC messa
 
 The IPC & Process module is responsible for:
 
-1. **Process Lifecycle Management**: Spawning, supervising, health monitoring, and graceful shutdown of worker processes (base workers, unified server workers, and static workers)
-2. **IPC Transport**: Reliable message passing between supervisor, master, and worker processes via Unix domain sockets (Unix) or named pipes (Windows)
+1. **Process Lifecycle Management**: Spawning, supervising, health monitoring, and graceful shutdown of worker processes (base workers, unified server workers, and CPU offload workers; `StaticWorker` names remain as compatibility aliases)
+2. **IPC Transport**: Reliable message passing between supervisor and worker processes via Unix domain sockets (Unix) or named pipes (Windows)
 3. **Message Framing**: Length-prefixed framing for serialized IPC messages with configurable maximum message size (1MB)
 4. **Signed IPC**: Cryptographic authentication of IPC messages using HMAC-SHA3-256 with replay protection via nonce caching
 5. **Rate Limiting**: Token bucket-based rate limiting for IPC connections to prevent DoS attacks
 6. **Connection Pooling**: Connection pooling for IPC endpoints to reduce connection overhead
 7. **Socket FD Passing**: Unix-specific file descriptor passing for socket handoff during upgrades
-8. **PID/Lock Management**: PID file management and overseer lock file handling for single-instance enforcement
+8. **PID/Lock Management**: PID file management and supervisor lock file handling for single-instance enforcement
 
 ---
 
@@ -36,7 +34,7 @@ The IPC & Process module is responsible for:
 | **ipc_rate_limit.rs** | `src/process/ipc_rate_limit.rs` | Token bucket rate limiter with per-worker tracking |
 | **ipc_pool.rs** | `src/process/ipc_pool.rs` | Connection pooling for IPC endpoints |
 | **ipc_windows.rs** | `src/process/ipc_windows.rs` | Windows named pipe utilities |
-| **worker.rs** | `src/process/worker.rs` | `BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess`, `UnifiedServerWorkerProcess` |
+| **worker.rs** | `src/process/worker.rs` | `BaseWorkerProcess`, `WorkerProcess`, `StaticWorkerProcess` / `CpuWorkerProcess`, `UnifiedServerWorkerProcess` |
 | **command.rs** | `src/process/command.rs` | `CommandClient` for sending commands to master via socket/signal/grpc |
 | **socket_path.rs** | `src/process/socket_path.rs` | Socket path resolution, generation tracking, permissions |
 | **socket_fd.rs** | `src/process/socket_fd.rs` | Unix socket creation and file descriptor passing |
@@ -51,7 +49,7 @@ The IPC & Process module is responsible for:
 **ProcessManagerConfig** (`manager.rs:38-59`):
 - `min_workers: usize` - Minimum worker count
 - `max_workers: usize` - Maximum worker count
-- `unified_server_workers: usize` - Unified server worker count
+- `unified_server_workers: usize` - Unified server worker process count (default 1; advanced isolation mode)
 - `max_restart_attempts: u32` - Max restart attempts before giving up
 - `restart_cooldown_secs: u64` - Base cooldown between restarts
 - `restart_backoff_max_secs: u64` - Maximum restart backoff
@@ -86,7 +84,7 @@ The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 1
 |----------|-----------------|
 | **WorkerLifecycle** | WorkerStarted, WorkerReady, WorkerHeartbeat, WorkerRequestLog, WorkerShutdownComplete, WorkerError, WorkerCertReload |
 | **SupervisorCommand** | MasterShutdown, MasterConfigReload, MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck, MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck, CommandResponse |
-| **StaticWorker** | StaticWorkerStarted, StaticWorkerReady, StaticWorkerHeartbeat, StaticWorkerRequestLog, StaticWorkerShutdownComplete, StaticWorkerBackgroundTasksDone, StaticWorkerResizeAck, StaticWorkerScan, StaticWorkerCacheUpdate, StaticWorkerDrain, StaticWorkerDrained, StaticWorkerDrainStatus |
+| **CpuWorker** | CpuWorkerStarted, CpuWorkerReady, CpuWorkerHeartbeat, CpuWorkerRequestLog, CpuWorkerShutdownComplete, CpuWorkerBackgroundTasksDone, CpuWorkerResizeAck, CpuWorkerScan, CpuWorkerCacheUpdate, CpuWorkerDrain, CpuWorkerDrained, CpuWorkerDrainStatus |
 | **AppServer** | AppServerStarted, AppServerReady, AppServerHealth, AppServerStopped, AppServerRestarted, AppServerError |
 | **UnifiedServer** | UnifiedServerWorkerStarted, UnifiedServerWorkerReady, UnifiedServerWorkerHeartbeat, UnifiedServerWorkerShutdownComplete, UnifiedServerWorkerError, UnifiedServerWorkerDrain, UnifiedServerWorkerDrained, UnifiedServerWorkerResize, UnifiedServerWorkerResizeAck |
 | **WorkerDrain** | WorkerDrain, WorkerDrained, WorkerConnectionCount, WorkerDrainComplete, WorkerReadyForTraffic |
@@ -102,6 +100,8 @@ The `Message` enum (`ipc.rs:299-802`) contains **60+ variants** organized into 1
 | **MeshControl** | MeshControlRequest, MeshControlResponse, MeshUpdateNotification |
 | **WorkerRestart** | RestartWorkerRequest, RestartWorkerResponse |
 | **Upstream** | UpstreamGlobalStats, GlobalUpstreamStatsBroadcast |
+
+> Compatibility note: the `StaticWorker` message names are retained for older IPC compatibility, but the generalized CPU offload worker role is the current behavior.
 
 ### 3.3 Signed IPC Types
 
@@ -143,7 +143,7 @@ Default configuration:
 **WorkerProcess** (`worker.rs:93-101`):
 - id: WorkerId, base: BaseWorkerProcess, port, metrics, restart_count, last_restart_at
 
-**StaticWorkerProcess** (`worker.rs:158-162`):
+**CpuWorkerProcess** (`worker.rs:158-162`, alias of `StaticWorkerProcess`):
 - worker_id, base: BaseWorkerProcess, ipc: Option<Arc<Mutex<IpcStream>>>
 
 **UnifiedServerWorkerProcess** (`worker.rs:185-192`):
@@ -158,6 +158,7 @@ Default configuration:
 ```rust
 pub fn new(config: ProcessManagerConfig, block_store: Option<Arc<BlockStore>>) -> (Self, mpsc::Receiver<ProcessEvent>)
 pub fn spawn_worker(&self) -> std::io::Result<WorkerId>
+pub fn spawn_cpu_worker(&self) -> std::io::Result<usize>
 pub fn spawn_static_worker(&self) -> std::io::Result<usize>
 pub fn spawn_unified_server_workers(&self, count: usize) -> std::io::Result<Vec<WorkerId>>
 pub fn spawn_unified_server_worker(&self) -> std::io::Result<WorkerId>
@@ -317,7 +318,7 @@ Message validation enforces:
 
 ### 6.1 Key Exchange Security
 
-1. **Master generates session key** via `generate_session_key()` (OsRng)
+1. **Supervisor generates session key** via `generate_session_key()` (OsRng)
 2. **Key passed to workers via temp file** (avoids `/proc/<pid>/environ` exposure)
    - File path: `$TMPDIR/synvoid_ipc_key_<pid>`
    - Permissions: `0o600` (owner read/write only)
@@ -409,14 +410,14 @@ Framing layer checks against MAX_MESSAGE_SIZE (1MB) and increments `OVERSIZED_RE
 
 ```
 Supervisor (run_supervisor_mode)
-  └── Master (run_master_mode)
+  └── Data Plane
         ├── BaseWorkerProcess (--worker) [legacy, unused for HTTP]
         ├── UnifiedServerWorkerProcess (--unified-server-worker) [primary HTTP worker]
-        ├── StaticWorkerProcess (--static-worker) [CSS/JS minification, compression]
+        ├── CpuWorkerProcess (--cpu-worker, compat: --static-worker) [CSS/JS minification, compression]
         └── AppServerProcess (Granian, per-site) [Spin WASM runtime]
 ```
 
-The **UnifiedServerWorker** is the primary worker, handling HTTP/HTTPS/HTTP3 + WAF + proxy in a single Tokio event loop. The **StaticWorker** handles asset minification. Both communicate with Master via signed IPC.
+The **UnifiedServerWorker** is the primary worker, handling HTTP/HTTPS/HTTP3 + WAF + proxy in a single Tokio event loop. The **CpuWorker** handles bounded asset minification and other heavy transforms. Both communicate with the Supervisor via signed IPC.
 
 ---
 
@@ -425,8 +426,9 @@ The **UnifiedServerWorker** is the primary worker, handling HTTP/HTTPS/HTTP3 + W
 | Function | File | Purpose |
 |----------|------|---------|
 | `start_health_monitor()` | `manager.rs:2067` | Background task for health checking |
-| `connect_to_master_signed()` | `ipc_transport.rs:548` | Connect to master with signing |
-| `connect_to_static_worker_signed()` | `ipc_transport.rs:555` | Connect to static worker |
+| `connect_to_supervisor_signed()` | `ipc_transport.rs:551` | Connect to supervisor with signing |
+| `connect_to_cpu_worker_signed()` | `ipc_transport.rs:559` | Connect to CPU offload worker |
+| `connect_to_static_worker_signed()` | `ipc_transport.rs:567` | Compatibility alias for CPU offload worker |
 | `connect_to_commands_signed()` | `ipc_transport.rs:566` | Connect to command endpoint |
 | `read_ipc_key_file()` | `ipc_signed.rs:598` | Load signer from key file |
 | `IpcSigner::try_from_env()` | `ipc_signed.rs:149` | Load signer from environment |

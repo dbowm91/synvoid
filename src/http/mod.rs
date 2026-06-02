@@ -1,19 +1,47 @@
+pub mod app_server_backend_dispatch;
+pub mod axum_dynamic_dispatch;
+pub mod body_policy;
+pub mod buffered_request_waf_dispatch;
+pub mod cgi_backend_dispatch;
+pub mod challenge_paths;
 pub mod directory_viewer;
 pub mod early_parse;
+pub mod fastcgi_php_backend_dispatch;
 pub mod file_manager;
 pub mod file_manager_ui;
 pub mod headers;
+pub mod image_poisoning;
+pub mod internal_endpoint_dispatch;
 pub mod internal_handlers;
+pub mod mesh_backend_dispatch;
+pub mod request_parse;
 pub mod response_builder;
 pub mod response_helpers;
 pub mod response_transform;
 pub mod server;
+pub mod serverless_backend_dispatch;
 pub mod shared_handler;
+pub mod special_request_paths;
+pub mod spin_backend_dispatch;
+pub mod static_backend_dispatch;
+pub mod streaming_request_fast_path;
+pub mod streaming_waf_decision;
+pub mod streaming_waf_upstream_dispatch;
+pub mod upload_validation_dispatch;
+pub mod upstream_buffered_dispatch;
+pub mod upstream_proxy_dispatch_plan;
+pub mod upstream_response_transform;
+pub mod upstream_streaming_dispatch;
 pub mod validation_helpers;
+pub mod waf_decision;
+pub mod wasm_filter_dispatch;
 pub mod webdav;
+pub mod websocket_dispatch;
+pub mod websocket_upgrade_dispatch;
 
 pub use early_parse::{EarlyHttpParser, EarlyHttpRequest};
 pub use headers::{inject_cors_headers, inject_security_headers};
+pub use image_poisoning::{apply_image_poisoning, invalidate_image_poison_cache_for_site};
 pub use response_builder::{
     bad_gateway_bytes, error_body, error_response_bytes, fallback_error_boxed,
     fallback_error_bytes, fallback_error_full, reason_phrase,

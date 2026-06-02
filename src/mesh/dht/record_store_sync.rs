@@ -6,10 +6,36 @@ impl RecordStoreManager {
             return None;
         }
 
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let from_version = self.record_state.read().local_version;
+        let timestamp = MeshMessage::generate_timestamp();
+        let nonce = MeshMessage::generate_nonce().to_string();
+        let mut signature = Vec::new();
+        let mut signer_public_key = None;
+
+        {
+            let rs = self.record_state.read();
+            if let Some(ref signer) = rs.mesh_signer {
+                let content = crate::mesh::dht::signed::get_sync_request_signable_content(
+                    &request_id,
+                    &self.node_id,
+                    from_version,
+                    timestamp,
+                    &nonce,
+                );
+                signature = signer.sign(&content);
+                signer_public_key = Some(signer.get_public_key());
+            }
+        }
+
         Some(MeshMessage::DhtSyncRequest {
-            request_id: uuid::Uuid::new_v4().to_string().into(),
+            request_id: request_id.into(),
             node_id: self.node_id.clone().into(),
-            from_version: self.record_state.read().local_version,
+            from_version,
+            timestamp,
+            nonce: nonce.into(),
+            signature,
+            signer_public_key,
         })
     }
 
@@ -913,6 +939,22 @@ impl RecordStoreManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+
+    fn build_test_record_store(
+        mesh_signer: Option<crate::mesh::protocol::MeshMessageSigner>,
+    ) -> RecordStoreManager {
+        let mesh_config = crate::mesh::config::MeshConfig::default();
+        let access_control = crate::mesh::dht::DhtAccessControl::new(&mesh_config);
+        RecordStoreManager::new(
+            crate::mesh::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::mesh::config::MeshNodeRole::GLOBAL,
+            mesh_signer,
+            access_control,
+            None,
+        )
+    }
 
     #[test]
     fn test_record_type_derivation_from_dht_key() {
@@ -1010,5 +1052,89 @@ mod tests {
             crate::mesh::dht::signed::SignedRecordType::NodeInfo,
             "SignedDhtRecord should use NodeInfo type derived from DHT key, not hardcoded Organization"
         );
+    }
+
+    #[test]
+    fn test_create_sync_request_signed_when_mesh_signer_present() {
+        let signing_key = [7u8; 32];
+        let store = build_test_record_store(Some(crate::mesh::protocol::MeshMessageSigner::new(
+            signing_key,
+        )));
+
+        let req = store.create_sync_request();
+        assert!(
+            req.is_some(),
+            "sync request should be created for global node"
+        );
+
+        match req.unwrap() {
+            MeshMessage::DhtSyncRequest {
+                request_id,
+                node_id,
+                from_version,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
+            } => {
+                assert!(!request_id.is_empty(), "request_id must be set");
+                assert_eq!(node_id.to_string(), "test-global-node");
+                assert!(timestamp > 0, "timestamp must be set");
+                assert!(!nonce.is_empty(), "nonce must be set");
+                assert!(!signature.is_empty(), "signature must be present");
+                let signer_public_key = signer_public_key
+                    .as_ref()
+                    .expect("signer public key should be present");
+                let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(signer_public_key)
+                    .expect("public key should decode");
+                let verifier = crate::mesh::protocol::MeshMessageSigner::new([9u8; 32]);
+                let content = crate::mesh::dht::signed::get_sync_request_signable_content(
+                    &request_id,
+                    &node_id,
+                    from_version,
+                    timestamp,
+                    &nonce,
+                );
+                assert!(
+                    verifier.verify(&content, &signature, &pk_bytes),
+                    "signature should verify against signable content"
+                );
+            }
+            other => panic!("unexpected message variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_create_sync_request_unsigned_legacy_when_mesh_signer_missing() {
+        let store = build_test_record_store(None);
+
+        let req = store.create_sync_request();
+        assert!(
+            req.is_some(),
+            "sync request should be created for global node"
+        );
+
+        match req.unwrap() {
+            MeshMessage::DhtSyncRequest {
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
+                ..
+            } => {
+                assert!(timestamp > 0, "timestamp must be set");
+                assert!(!nonce.is_empty(), "nonce must be set");
+                assert!(
+                    signature.is_empty(),
+                    "signature should be empty for legacy unsigned mode"
+                );
+                assert!(
+                    signer_public_key.is_none(),
+                    "signer_public_key should be absent for legacy unsigned mode"
+                );
+            }
+            other => panic!("unexpected message variant: {:?}", other),
+        }
     }
 }

@@ -48,7 +48,7 @@ use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use crate::mesh::cert::MeshCertManager;
-use crate::mesh::config::{MeshConfig, MeshPeerConfig};
+use crate::mesh::config::{MeshConfig, MeshPeerConfig, MeshTlsMode};
 use crate::mesh::dht::DEFAULT_GET_BY_PREFIX_LIMIT;
 use crate::mesh::kem::MlKem768;
 use crate::mesh::organization::{MemberCertificate, OrgPublicKey};
@@ -470,7 +470,103 @@ impl PendingQueryManager {
     }
 }
 
+fn mesh_tls_mode_requires_peer_cert_identity(mode: MeshTlsMode) -> bool {
+    matches!(mode, MeshTlsMode::Strict | MeshTlsMode::Tofu)
+}
+
+fn mesh_tls_mode_label(mode: MeshTlsMode) -> &'static str {
+    match mode {
+        MeshTlsMode::Strict => "strict",
+        MeshTlsMode::Tofu => "tofu",
+        MeshTlsMode::Permissive => "permissive",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerIdentityState {
+    Missing,
+    NotCertificateDer,
+    CertificateDer,
+}
+
+fn validate_peer_identity_state_for_mode(
+    mode: MeshTlsMode,
+    peer_identity_state: PeerIdentityState,
+    peer_node_id: &str,
+) -> Result<(), MeshTransportError> {
+    let requires_identity = mesh_tls_mode_requires_peer_cert_identity(mode);
+    match peer_identity_state {
+        PeerIdentityState::Missing if requires_identity => {
+            Err(MeshTransportError::AuthFailed(format!(
+                "Peer {} has no TLS peer identity; mesh TLS mode requires certificate identity ({})",
+                peer_node_id,
+                mesh_tls_mode_label(mode)
+            )))
+        }
+        PeerIdentityState::NotCertificateDer if requires_identity => {
+            Err(MeshTransportError::AuthFailed(format!(
+                "Peer {} TLS identity is not CertificateDer; mesh TLS mode requires certificate identity ({})",
+                peer_node_id,
+                mesh_tls_mode_label(mode)
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
 impl MeshTransport {
+    fn verify_peer_connection_certificate_if_available(
+        &self,
+        peer_node_id: &str,
+        connection: &quinn::Connection,
+    ) -> Result<(), MeshTransportError> {
+        let cert_mgr = self.cert_manager.read();
+        let tls_mode = cert_mgr.tls_mode();
+        let Some(peer_identity) = connection.peer_identity() else {
+            validate_peer_identity_state_for_mode(
+                tls_mode,
+                PeerIdentityState::Missing,
+                peer_node_id,
+            )?;
+            tracing::warn!(
+                "Peer {} has no TLS peer identity exposed by QUIC connection; skipping certificate verification hook",
+                peer_node_id
+            );
+            return Ok(());
+        };
+
+        let Some(peer_cert) = peer_identity.downcast_ref::<rustls_pki_types::CertificateDer<'_>>()
+        else {
+            validate_peer_identity_state_for_mode(
+                tls_mode,
+                PeerIdentityState::NotCertificateDer,
+                peer_node_id,
+            )?;
+            tracing::warn!(
+                "Peer {} TLS identity is not a rustls CertificateDer; skipping certificate verification hook",
+                peer_node_id
+            );
+            return Ok(());
+        };
+        validate_peer_identity_state_for_mode(
+            tls_mode,
+            PeerIdentityState::CertificateDer,
+            peer_node_id,
+        )?;
+
+        match cert_mgr.verify_peer_certificate(peer_node_id, peer_cert.as_ref(), None) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(MeshTransportError::AuthFailed(format!(
+                "Peer {} certificate verification failed",
+                peer_node_id
+            ))),
+            Err(e) => Err(MeshTransportError::AuthFailed(format!(
+                "Peer {} certificate verification error: {}",
+                peer_node_id, e
+            ))),
+        }
+    }
+
     fn get_org_auth_data(&self) -> (Option<MemberCertificate>, Option<OrgPublicKey>) {
         let org_id = self.config.node_identity.genesis_org_id();
         let org_manager = self.org_manager.read();
@@ -2388,6 +2484,8 @@ impl MeshTransport {
             dns_serving_healthy: peer_capabilities.can_serve_dns,
         };
 
+        self.verify_peer_connection_certificate_if_available(&peer_node_id, &connection)?;
+
         let peer_connection = crate::mesh::transport_types::MeshPeerConnection {
             node_id: peer_node_id.clone(),
             address: remote_addr.to_string(),
@@ -2863,6 +2961,8 @@ impl MeshTransport {
 
                 let peer_capabilities = peer_capabilities;
                 let dns_serving_healthy = peer_capabilities.can_serve_dns;
+
+                self.verify_peer_connection_certificate_if_available(&node_id, &connection)?;
 
                 let peer_connection = MeshPeerConnection {
                     node_id: node_id.to_string(),
@@ -3818,5 +3918,98 @@ impl crate::mesh::dht::routing::manager::PingTransport for MeshTransport {
             };
             let _ = this.send_datagram_to_peer(&node_id_owned, &ping).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        mesh_tls_mode_requires_peer_cert_identity, validate_peer_identity_state_for_mode,
+        MeshTlsMode, PeerIdentityState,
+    };
+
+    #[test]
+    fn mesh_tls_mode_requires_identity_for_strict() {
+        assert!(mesh_tls_mode_requires_peer_cert_identity(
+            MeshTlsMode::Strict
+        ));
+    }
+
+    #[test]
+    fn mesh_tls_mode_requires_identity_for_tofu() {
+        assert!(mesh_tls_mode_requires_peer_cert_identity(MeshTlsMode::Tofu));
+    }
+
+    #[test]
+    fn mesh_tls_mode_allows_missing_identity_for_permissive() {
+        assert!(!mesh_tls_mode_requires_peer_cert_identity(
+            MeshTlsMode::Permissive
+        ));
+    }
+
+    #[test]
+    fn peer_identity_state_matrix_strict_mode() {
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Strict,
+            PeerIdentityState::Missing,
+            "peer-a"
+        )
+        .is_err());
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Strict,
+            PeerIdentityState::NotCertificateDer,
+            "peer-a"
+        )
+        .is_err());
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Strict,
+            PeerIdentityState::CertificateDer,
+            "peer-a"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn peer_identity_state_matrix_tofu_mode() {
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Tofu,
+            PeerIdentityState::Missing,
+            "peer-b"
+        )
+        .is_err());
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Tofu,
+            PeerIdentityState::NotCertificateDer,
+            "peer-b"
+        )
+        .is_err());
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Tofu,
+            PeerIdentityState::CertificateDer,
+            "peer-b"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn peer_identity_state_matrix_permissive_mode() {
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Permissive,
+            PeerIdentityState::Missing,
+            "peer-c"
+        )
+        .is_ok());
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Permissive,
+            PeerIdentityState::NotCertificateDer,
+            "peer-c"
+        )
+        .is_ok());
+        assert!(validate_peer_identity_state_for_mode(
+            MeshTlsMode::Permissive,
+            PeerIdentityState::CertificateDer,
+            "peer-c"
+        )
+        .is_ok());
     }
 }

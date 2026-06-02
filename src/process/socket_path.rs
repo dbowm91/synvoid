@@ -106,6 +106,10 @@ pub fn get_supervisor_socket_path() -> PathBuf {
     get_secure_socket_path("supervisor.sock")
 }
 
+pub fn get_cpu_worker_socket_path() -> PathBuf {
+    get_static_worker_socket_path()
+}
+
 pub fn get_static_worker_socket_path() -> PathBuf {
     get_secure_socket_path("static-worker.sock")
 }
@@ -126,7 +130,10 @@ pub fn next_supervisor_generation() -> u32 {
     MASTER_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
 }
 
-pub fn resolve_supervisor_socket_for_upgrade(upgrade_mode: bool, generation: Option<u32>) -> PathBuf {
+pub fn resolve_supervisor_socket_for_upgrade(
+    upgrade_mode: bool,
+    generation: Option<u32>,
+) -> PathBuf {
     if upgrade_mode {
         if let Some(gen) = generation {
             get_versioned_supervisor_socket_path(gen)
@@ -141,7 +148,9 @@ pub fn resolve_supervisor_socket_for_upgrade(upgrade_mode: bool, generation: Opt
 
 fn parse_supervisor_generation(name: &str) -> Option<u32> {
     if name.starts_with("supervisor-") && name.ends_with(".sock") {
-        let gen_str = name.trim_start_matches("supervisor-").trim_end_matches(".sock");
+        let gen_str = name
+            .trim_start_matches("supervisor-")
+            .trim_end_matches(".sock");
         gen_str.parse::<u32>().ok()
     } else {
         None

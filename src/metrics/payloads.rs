@@ -70,6 +70,18 @@ pub struct RequestLogPayload {
     feature = "rkyv",
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
+pub struct TimingStatsPayload {
+    pub avg_ms: f64,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
+}
+
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkerMetricsPayload {
     pub total_requests: u64,
@@ -86,6 +98,14 @@ pub struct WorkerMetricsPayload {
     pub uptime_secs: u64,
     pub memory_bytes: u64,
     pub cpu_percent: f64,
+    pub event_loop_lag_ms: u64,
+    pub request_queue_time_ms: TimingStatsPayload,
+    pub inline_cpu_phase_times_ms: HashMap<String, TimingStatsPayload>,
+    pub body_buffering_bytes_total: u64,
+    pub offload_submissions_total: u64,
+    pub offload_timeouts_total: u64,
+    pub offload_rejections_total: u64,
+    pub offload_fallbacks_total: u64,
     pub blocked_by_type: HashMap<String, u64>,
     pub per_site: HashMap<String, SiteMetricsPayload>,
     pub static_cache_hits: u64,

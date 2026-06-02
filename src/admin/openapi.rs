@@ -1584,4 +1584,133 @@ mod tests {
             path_count
         );
     }
+
+    #[test]
+    fn test_cache_stats_schema_exposes_cpu_offload_fields() {
+        let openapi_json = serde_json::to_value(synvoidOpenApi::openapi()).expect("openapi json");
+        let properties = &openapi_json["components"]["schemas"]["CacheStats"]["properties"];
+
+        assert!(
+            properties.get("cpu_offload_pool_in_flight").is_some(),
+            "CacheStats schema should include cpu_offload_pool_in_flight"
+        );
+        assert!(
+            properties.get("cpu_offload_pool_connections").is_some(),
+            "CacheStats schema should include cpu_offload_pool_connections"
+        );
+        assert!(
+            properties.get("cpu_offload_pool_evictions").is_some(),
+            "CacheStats schema should include cpu_offload_pool_evictions"
+        );
+        assert!(
+            properties.get("cpu_offload_pool_submissions").is_some(),
+            "CacheStats schema should include cpu_offload_pool_submissions"
+        );
+        assert!(
+            properties.get("cpu_offload_timeouts").is_some(),
+            "CacheStats schema should include cpu_offload_timeouts"
+        );
+        assert!(
+            properties.get("cpu_offload_rejections").is_some(),
+            "CacheStats schema should include cpu_offload_rejections"
+        );
+        assert!(
+            properties.get("cpu_offload_queued_minify").is_some(),
+            "CacheStats schema should include cpu_offload_queued_minify"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_queued_get_compressed")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_queued_get_compressed"
+        );
+        assert!(
+            properties.get("cpu_offload_queued_poison_image").is_some(),
+            "CacheStats schema should include cpu_offload_queued_poison_image"
+        );
+        assert!(
+            properties.get("cpu_offload_queued_yara_scan").is_some(),
+            "CacheStats schema should include cpu_offload_queued_yara_scan"
+        );
+        assert!(
+            properties.get("cpu_offload_active_minify").is_some(),
+            "CacheStats schema should include cpu_offload_active_minify"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_active_get_compressed")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_active_get_compressed"
+        );
+        assert!(
+            properties.get("cpu_offload_active_poison_image").is_some(),
+            "CacheStats schema should include cpu_offload_active_poison_image"
+        );
+        assert!(
+            properties.get("cpu_offload_active_yara_scan").is_some(),
+            "CacheStats schema should include cpu_offload_active_yara_scan"
+        );
+        assert!(
+            properties.get("cpu_offload_completed_minify").is_some(),
+            "CacheStats schema should include cpu_offload_completed_minify"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_completed_get_compressed")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_completed_get_compressed"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_completed_poison_image")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_completed_poison_image"
+        );
+        assert!(
+            properties.get("cpu_offload_completed_yara_scan").is_some(),
+            "CacheStats schema should include cpu_offload_completed_yara_scan"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_payload_bytes_in_total")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_payload_bytes_in_total"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_payload_bytes_out_total")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_payload_bytes_out_total"
+        );
+        assert!(
+            properties.get("cpu_offload_task_submitted_total").is_some(),
+            "CacheStats schema should include cpu_offload_task_submitted_total"
+        );
+        assert!(
+            properties
+                .get("cpu_offload_task_fallback_inline_small_total")
+                .is_some(),
+            "CacheStats schema should include cpu_offload_task_fallback_inline_small_total"
+        );
+        assert!(
+            properties.get("cpu_offload_task_timeout_total").is_some(),
+            "CacheStats schema should include cpu_offload_task_timeout_total"
+        );
+        assert!(
+            properties.get("cpu_offload_task_rejected_total").is_some(),
+            "CacheStats schema should include cpu_offload_task_rejected_total"
+        );
+        assert!(
+            properties.get("cpu_offload_task_duration_ms").is_some(),
+            "CacheStats schema should include cpu_offload_task_duration_ms"
+        );
+        assert!(
+            properties.get("cpu_offload_failed_total").is_some(),
+            "CacheStats schema should include cpu_offload_failed_total"
+        );
+        assert!(
+            properties.get("cpu_offload_worker_rss_bytes").is_some(),
+            "CacheStats schema should include cpu_offload_worker_rss_bytes"
+        );
+    }
 }

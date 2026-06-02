@@ -1,4 +1,13 @@
+//! Inline response-transform helpers for already-buffered bodies.
+//!
+//! These helpers are intentionally bounded and are used only when the response
+//! body is already resident in memory. Static-file minify/compress work stays
+//! on the CPU offload plane; these helpers cover the small inline cases that
+//! remain on the unified worker.
+
 use bytes::Bytes;
+use dashmap::DashMap;
+use std::sync::LazyLock;
 
 use crate::config::site::{SiteImagePoisonConfig, SiteStaticConfig};
 #[cfg(feature = "mesh")]
@@ -139,6 +148,32 @@ pub struct ResponseTransformResult {
     pub body: Bytes,
     pub body_len: u64,
     pub additional_headers: Vec<(String, String)>,
+}
+
+static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
+    LazyLock::new(DashMap::new);
+
+static IMAGE_PROTECTION_REGEX: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\.(?:jpe?g|png|gif|webp|bmp|svg|ico)(?:\?|$)").unwrap());
+
+pub fn path_looks_like_image(path: &str) -> bool {
+    IMAGE_PROTECTION_REGEX.is_match(path)
+}
+
+pub fn is_whitelisted_path(whitelist_patterns: Option<&Vec<String>>, path: &str) -> bool {
+    whitelist_patterns
+        .map(|patterns| {
+            patterns.iter().any(|pattern| {
+                WHITELIST_REGEX_CACHE
+                    .entry(pattern.clone())
+                    .or_insert_with(|| regex::Regex::new(pattern).ok())
+                    .value()
+                    .as_ref()
+                    .map(|regex| regex.is_match(path))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 pub fn apply_minification(

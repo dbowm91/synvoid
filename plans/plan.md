@@ -1,7 +1,7 @@
 # SynVoid Implementation Plan
 
 > **Status**: All actionable items (Waves 1-6) completed and verified 2026-05-28.
-> Only deferred items requiring major architectural work remain.
+> Deferred list updated 2026-05-29 after Phase 7 mesh trust hardening work.
 > See git history for completed item details.
 
 ---
@@ -12,9 +12,7 @@ These items require significant architectural work and are correctly deferred:
 
 | ID | Issue | Reason | Effort |
 |----|-------|--------|--------|
-| **MESH-14** | Source Node ID Binding Validation | `verify_peer_certificate()` exists at `src/mesh/cert.rs:790-872` but is **never called**. Default mesh TLS config is permissive (no CA = accept all). Requires PKI hierarchy, trust model changes, and wiring into connection establishment. | VeryHigh |
 | **HTTP2-POOL** | ErasedHttpClient HTTP/2 support | `ErasedHttpClient` streaming path remains HTTP/1.1-only. HTTP/2 works via `TypedConnectionPool` for `Full<Bytes>` bodies only. hyper-util API requires background task management per connection for full streaming HTTP/2 support. | VeryHigh |
-| **MR-4** | DhtSyncRequest has no auth | `DhtSyncRequest` proto (`mesh.proto:897-901`) and Rust struct (`protocol.rs:848-852`) have no `signature`/`signer_public_key` fields. Breaking protobuf protocol change requiring coordinated rollout across all mesh nodes. | High |
 
 ---
 
@@ -65,7 +63,7 @@ When the hyper-util API issue is resolved, implement HTTP/2 pooling:
 
 ## Completed Work Summary
 
-All 183 items across 6 waves were completed and verified 2026-05-28:
+All 185 non-deferred items across 6 waves were completed and verified 2026-05-29:
 
 | Wave | Category | Items | Status |
 |------|----------|-------|--------|
@@ -75,10 +73,10 @@ All 183 items across 6 waves were completed and verified 2026-05-28:
 | 4 | Feature Wiring (P1-P2) | 4 | ALL WIRED |
 | 5 | Documentation Updates (P2-P3) | 148 | ALL UPDATED |
 | 6 | Cross-Module Conflicts (P2) | 7 | ALL RESOLVED |
-| — | Deferred Items | 3 | DEFERRED |
-| **Total** | | **186** | **183 done, 3 deferred** |
+| — | Deferred Items | 1 | DEFERRED |
+| **Total** | | **186** | **185 done, 1 deferred** |
 
 ---
 
-*Last Updated: 2026-05-28*
-*All actionable items completed. Only deferred architectural items remain.*
+*Last Updated: 2026-05-29*
+*All actionable items completed. Remaining deferred architectural item: HTTP2-POOL.*

@@ -1359,6 +1359,10 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 request_id,
                 node_id,
                 from_version,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
             } => proto::MeshMessage {
                 message_type: 78,
                 payload: Some(proto::mesh_message::Payload::DhtSyncRequest(
@@ -1366,6 +1370,10 @@ impl From<&MeshMessage> for proto::MeshMessage {
                         request_id: request_id.to_string(),
                         node_id: node_id.to_string(),
                         from_version: *from_version,
+                        timestamp: *timestamp,
+                        nonce: nonce.to_string(),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.clone(),
                     },
                 )),
             },

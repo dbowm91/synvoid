@@ -182,6 +182,8 @@ impl WorkerProcessBase for StaticWorkerProcess {
 
 delegate_to_base!(StaticWorkerProcess);
 
+pub type CpuWorkerProcess = StaticWorkerProcess;
+
 pub struct UnifiedServerWorkerProcess {
     pub id: WorkerId,
     pub base: BaseWorkerProcess,

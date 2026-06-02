@@ -898,6 +898,10 @@ message DhtSyncRequest {
     string request_id = 1;
     string node_id = 2;
     uint64 from_version = 3;
+    uint64 timestamp = 4;
+    string nonce = 5;
+    bytes signature = 6;
+    optional string signer_public_key = 7;
 }
 
 message DhtSyncResponse {

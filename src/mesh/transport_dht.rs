@@ -7,6 +7,77 @@ use crate::mesh::transport::MeshTransport;
 use base64::Engine;
 use ed25519_dalek::Verifier;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DhtSyncAuthMode {
+    Signed,
+    UnsignedAllowed,
+    UnsignedRejected,
+}
+
+fn classify_dht_sync_auth_mode(
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+    require_signed_sync_requests: bool,
+    unsigned_sync_compat_until_unix: Option<u64>,
+    now_unix: u64,
+) -> DhtSyncAuthMode {
+    let has_auth = !signature.is_empty() && signer_public_key.is_some_and(|s| !s.is_empty());
+    if has_auth {
+        DhtSyncAuthMode::Signed
+    } else if unsigned_sync_compat_until_unix.is_some_and(|deadline| now_unix >= deadline) {
+        DhtSyncAuthMode::UnsignedRejected
+    } else if require_signed_sync_requests {
+        DhtSyncAuthMode::UnsignedRejected
+    } else {
+        DhtSyncAuthMode::UnsignedAllowed
+    }
+}
+
+fn verify_dht_sync_request_signature(
+    request_id: &str,
+    node_id: &str,
+    from_version: u64,
+    timestamp: u64,
+    nonce: &str,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    let Some(signer_public_key) = signer_public_key else {
+        return false;
+    };
+    let content = crate::mesh::dht::signed::get_sync_request_signable_content(
+        request_id,
+        node_id,
+        from_version,
+        timestamp,
+        nonce,
+    );
+    match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key) {
+        Ok(pk_bytes) if pk_bytes.len() == 32 && signature.len() == 64 => {
+            let mut pk_array = [0u8; 32];
+            pk_array.copy_from_slice(&pk_bytes);
+            let mut sig_array = [0u8; 64];
+            sig_array.copy_from_slice(signature);
+            match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                Ok(pk) => pk
+                    .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+                    .is_ok(),
+                Err(_) => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+fn replay_result_reason(replay_result: crate::mesh::protocol::ReplayResult) -> &'static str {
+    match replay_result {
+        crate::mesh::protocol::ReplayResult::FutureTimestamp => "future_timestamp",
+        crate::mesh::protocol::ReplayResult::ExpiredTimestamp => "expired_timestamp",
+        crate::mesh::protocol::ReplayResult::ReplayDetected => "replay_detected",
+        crate::mesh::protocol::ReplayResult::Valid => "valid",
+    }
+}
+
 impl MeshTransport {
     pub(crate) async fn handle_dht_snapshot_request(
         &self,
@@ -240,6 +311,10 @@ impl MeshTransport {
         request_id: &str,
         node_id: &str,
         from_version: u64,
+        timestamp: u64,
+        nonce: &str,
+        signature: &[u8],
+        signer_public_key: Option<&str>,
     ) {
         tracing::debug!(
             "Received DHT sync request from {} (node: {}, from_version: {})",
@@ -247,6 +322,97 @@ impl MeshTransport {
             node_id,
             from_version
         );
+
+        let require_signed_sync_requests = self
+            .config
+            .dht
+            .as_ref()
+            .map(|d| d.require_signed_sync_requests)
+            .unwrap_or(true);
+        let unsigned_sync_compat_until_unix = self
+            .config
+            .dht
+            .as_ref()
+            .and_then(|d| d.unsigned_sync_compat_until_unix);
+        let now_unix = crate::mesh::safe_unix_timestamp();
+        match classify_dht_sync_auth_mode(
+            signature,
+            signer_public_key,
+            require_signed_sync_requests,
+            unsigned_sync_compat_until_unix,
+            now_unix,
+        ) {
+            DhtSyncAuthMode::UnsignedRejected => {
+                tracing::warn!(
+                    "DHT sync request from {} rejected: unsigned request not allowed (require_signed_sync_requests={}, compat_until={:?}, now={})",
+                    from_peer,
+                    require_signed_sync_requests,
+                    unsigned_sync_compat_until_unix,
+                    now_unix
+                );
+                return;
+            }
+            DhtSyncAuthMode::UnsignedAllowed => {
+                tracing::warn!(
+                    "DHT sync request from {} has no auth fields; accepting because mesh.dht.require_signed_sync_requests=false",
+                    from_peer
+                );
+            }
+            DhtSyncAuthMode::Signed => {
+                if nonce.is_empty() {
+                    tracing::warn!(
+                        "DHT sync request from {} rejected: nonce is empty",
+                        from_peer
+                    );
+                    return;
+                }
+
+                if !crate::mesh::dht::signed::validate_message_timestamp(timestamp) {
+                    tracing::warn!(
+                        "DHT sync request from {} rejected: timestamp too old or too far in future",
+                        from_peer
+                    );
+                    return;
+                }
+
+                let replay_state = self
+                    .peer_connections
+                    .get(from_peer)
+                    .map(|conn| conn.replay_protection.clone());
+                if let Some(replay_protection) = replay_state {
+                    let replay_result = replay_protection
+                        .write()
+                        .await
+                        .check_and_add(nonce, timestamp);
+                    if !matches!(replay_result, crate::mesh::protocol::ReplayResult::Valid) {
+                        tracing::warn!(
+                            "DHT sync request from {} rejected: replay protection {}",
+                            from_peer,
+                            replay_result_reason(replay_result)
+                        );
+                        return;
+                    }
+                }
+
+                let signature_valid = verify_dht_sync_request_signature(
+                    request_id,
+                    node_id,
+                    from_version,
+                    timestamp,
+                    nonce,
+                    signature,
+                    signer_public_key,
+                );
+
+                if !signature_valid {
+                    tracing::warn!(
+                        "DHT sync request from {} rejected: invalid signature",
+                        from_peer
+                    );
+                    return;
+                }
+            }
+        }
 
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.create_sync_response(request_id, from_version) {
@@ -628,5 +794,157 @@ impl MeshTransport {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        classify_dht_sync_auth_mode, replay_result_reason, verify_dht_sync_request_signature,
+        DhtSyncAuthMode,
+    };
+    use crate::mesh::protocol::MeshMessageSigner;
+
+    #[test]
+    fn test_classify_sync_auth_signed_when_signature_and_key_present() {
+        let mode = classify_dht_sync_auth_mode(&[1u8; 64], Some("key"), true, None, 100);
+        assert_eq!(mode, DhtSyncAuthMode::Signed);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_unsigned_rejected_when_required() {
+        let mode = classify_dht_sync_auth_mode(&[], None, true, None, 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedRejected);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_unsigned_allowed_when_not_required() {
+        let mode = classify_dht_sync_auth_mode(&[], None, false, None, 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedAllowed);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_legacy_unsigned_compatibility_mode() {
+        let mode = classify_dht_sync_auth_mode(&[], Some(""), false, Some(150), 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedAllowed);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_treats_empty_public_key_as_unsigned() {
+        let mode = classify_dht_sync_auth_mode(&[1u8; 64], Some(""), true, None, 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedRejected);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_compat_window_expired_rejects_unsigned() {
+        let mode = classify_dht_sync_auth_mode(&[], None, false, Some(100), 101);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedRejected);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_compat_window_at_deadline_rejects_unsigned() {
+        let mode = classify_dht_sync_auth_mode(&[], None, false, Some(100), 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedRejected);
+    }
+
+    #[test]
+    fn test_verify_sync_request_signature_rejects_tampered_signature() {
+        let signer = MeshMessageSigner::new([42u8; 32]);
+        let request_id = "req-1";
+        let node_id = "node-a";
+        let from_version = 10;
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let nonce = "nonce-a";
+        let content = crate::mesh::dht::signed::get_sync_request_signable_content(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+        );
+        let mut signature = signer.sign(&content);
+        signature[0] ^= 0x01;
+        let valid = verify_dht_sync_request_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid);
+    }
+
+    #[test]
+    fn test_verify_sync_request_signature_accepts_valid_signature() {
+        let signer = MeshMessageSigner::new([24u8; 32]);
+        let request_id = "req-2";
+        let node_id = "node-b";
+        let from_version = 11;
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let nonce = "nonce-b";
+        let content = crate::mesh::dht::signed::get_sync_request_signable_content(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_sync_request_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_replay_result_reason_replay_detected() {
+        assert_eq!(
+            replay_result_reason(crate::mesh::protocol::ReplayResult::ReplayDetected),
+            "replay_detected"
+        );
+    }
+
+    #[test]
+    fn test_replay_protection_rejects_duplicate_nonce_at_same_timestamp() {
+        let mut replay = crate::mesh::protocol::ReplayProtection::new();
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let first = replay.check_and_add("dup-nonce", timestamp);
+        let second = replay.check_and_add("dup-nonce", timestamp);
+        assert!(matches!(first, crate::mesh::protocol::ReplayResult::Valid));
+        assert!(matches!(
+            second,
+            crate::mesh::protocol::ReplayResult::ReplayDetected
+        ));
+    }
+
+    #[test]
+    fn test_replay_protection_rejects_expired_timestamp() {
+        let mut replay = crate::mesh::protocol::ReplayProtection::new();
+        let stale = crate::mesh::safe_unix_timestamp()
+            .saturating_sub(crate::mesh::protocol::REPLAY_WINDOW_SECS + 1);
+        let result = replay.check_and_add("stale-nonce", stale);
+        assert!(matches!(
+            result,
+            crate::mesh::protocol::ReplayResult::ExpiredTimestamp
+        ));
+    }
+
+    #[test]
+    fn test_replay_protection_rejects_future_timestamp() {
+        let mut replay = crate::mesh::protocol::ReplayProtection::new();
+        let future = crate::mesh::safe_unix_timestamp().saturating_add(61);
+        let result = replay.check_and_add("future-nonce", future);
+        assert!(matches!(
+            result,
+            crate::mesh::protocol::ReplayResult::FutureTimestamp
+        ));
     }
 }

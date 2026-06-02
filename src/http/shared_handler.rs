@@ -177,8 +177,6 @@ mod tests {
     }
 }
 
-
-
 #[derive(Clone, Copy)]
 pub enum BodyCollectionProtocol {
     Http,

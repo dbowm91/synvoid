@@ -215,8 +215,12 @@ impl PlatformPaths {
         self.runtime_dir.join("synvoid-supervisor.sock")
     }
 
-    pub fn static_worker_socket_path(&self) -> PathBuf {
+    pub fn cpu_worker_socket_path(&self) -> PathBuf {
         self.runtime_dir.join("synvoid-static-worker.sock")
+    }
+
+    pub fn static_worker_socket_path(&self) -> PathBuf {
+        self.cpu_worker_socket_path()
     }
 
     pub fn unified_worker_socket_path(&self, worker_id: usize) -> PathBuf {

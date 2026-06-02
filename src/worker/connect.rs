@@ -16,16 +16,24 @@ mod tests {
     #[test]
     fn test_connect_to_supervisor_with_retry_invalid_path() {
         let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
-        let result =
-            connect_to_supervisor_with_retry(&socket_path, 1, Duration::from_millis(10), "test_worker");
+        let result = connect_to_supervisor_with_retry(
+            &socket_path,
+            1,
+            Duration::from_millis(10),
+            "test_worker",
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn test_connect_retry_returns_error_after_max_attempts() {
         let socket_path = PathBuf::from("/tmp/nonexistent_master.sock");
-        let result =
-            connect_to_supervisor_with_retry(&socket_path, 3, Duration::from_millis(10), "test_worker");
+        let result = connect_to_supervisor_with_retry(
+            &socket_path,
+            3,
+            Duration::from_millis(10),
+            "test_worker",
+        );
         assert!(result.is_err());
     }
 
@@ -132,7 +140,11 @@ pub fn connect_to_supervisor_with_retry(
         match connect_to_supervisor(socket_path) {
             Ok(ipc) => {
                 if attempt > 1 {
-                    tracing::info!("{} connected to supervisor on attempt {}", worker_name, attempt);
+                    tracing::info!(
+                        "{} connected to supervisor on attempt {}",
+                        worker_name,
+                        attempt
+                    );
                 }
                 return Ok(ipc);
             }
@@ -303,7 +315,11 @@ pub async fn connect_to_supervisor_async_signed(
         match endpoint.connect_with_signer(Arc::clone(&signer)).await {
             Ok(ipc) => {
                 if attempt > 1 {
-                    tracing::info!("{} connected to supervisor on attempt {}", worker_name, attempt);
+                    tracing::info!(
+                        "{} connected to supervisor on attempt {}",
+                        worker_name,
+                        attempt
+                    );
                 }
                 return Ok(ipc);
             }

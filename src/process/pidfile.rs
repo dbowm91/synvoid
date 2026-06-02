@@ -413,7 +413,10 @@ impl SupervisorLockFile {
                 if e == nix::errno::Errno::EWOULDBLOCK {
                     return Err(SupervisorLockError::AlreadyLocked);
                 }
-                return Err(SupervisorLockError::LockError(format!("flock failed: {}", e)));
+                return Err(SupervisorLockError::LockError(format!(
+                    "flock failed: {}",
+                    e
+                )));
             }
         }
 

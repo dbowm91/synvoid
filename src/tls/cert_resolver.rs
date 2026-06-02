@@ -234,7 +234,8 @@ impl CertResolver {
                                     if let Err(e) = self.validate_key_strength(&key) {
                                         tracing::warn!(
                                             "Certificate for domain '{}' rejected: {}",
-                                            domain, e
+                                            domain,
+                                            e
                                         );
                                         continue;
                                     }
@@ -501,11 +502,14 @@ pub fn watch_for_cert_changes(
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 while rx.try_recv().is_ok() {}
                 tracing::info!("Certificate change detected, reloading...");
-                match resolver.load_certificates() { Err(e) => {
-                    tracing::error!("Failed to reload certificates: {}", e);
-                } _ => {
-                    tracing::info!("Certificates reloaded successfully");
-                }}
+                match resolver.load_certificates() {
+                    Err(e) => {
+                        tracing::error!("Failed to reload certificates: {}", e);
+                    }
+                    _ => {
+                        tracing::info!("Certificates reloaded successfully");
+                    }
+                }
                 needs_reload = rx.try_recv().is_ok();
             }
         }

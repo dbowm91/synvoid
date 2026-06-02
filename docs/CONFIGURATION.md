@@ -23,6 +23,7 @@ Complete configuration reference for SynVoid.
 - [App Server](#app-server-configuration)
 - [WAF Mesh](#waf-mesh-configuration)
 - [Process Management](#process-management)
+- [CPU Offload IPC Pool Environment Overrides](#cpu-offload-ipc-pool-environment-overrides)
 - [Security](#security-configuration)
 
 ## Main Configuration (`config/main.toml`)
@@ -496,6 +497,35 @@ ports = [3306]
 upstream_format = "127.0.0.1:{port}"
 ```
 
+## CPU Offload IPC Pool Environment Overrides
+
+These environment variables control bounded async IPC offload concurrency for CPU-task clients (`AsyncMinifierClient` and `PoisonImageClient`):
+
+- `SYNVOID_CPU_TASK_POOL_MAX_CONNECTIONS`:
+  - Default: `4`
+  - Minimum accepted value: `1`
+  - Meaning: maximum async IPC connections kept in the per-process CPU task pool.
+- `SYNVOID_CPU_TASK_MAX_IN_FLIGHT_PER_CONNECTION`:
+  - Default: `1`
+  - Minimum accepted value: `1`
+  - Meaning: maximum concurrent in-flight requests assigned to a single pooled connection.
+    The async CPU-task clients now demultiplex responses by `request_id`, so values above `1`
+    are supported when metrics justify them.
+
+Invalid values fall back to defaults. Zero or negative-equivalent values are clamped to `1`.
+
+Example:
+
+```bash
+export SYNVOID_CPU_TASK_POOL_MAX_CONNECTIONS=8
+export SYNVOID_CPU_TASK_MAX_IN_FLIGHT_PER_CONNECTION=2
+```
+
+Operational guidance:
+- Increase these values gradually while watching latency and memory.
+- Raise per-connection in-flight only if the CPU-offload pool shows measurable contention.
+- If the static/CPU worker saturates, tune worker capacity and task limits before raising IPC concurrency aggressively.
+
 ## Tarpit System
 
 ```toml
@@ -507,6 +537,57 @@ response_delay_ms = 100
 ```
 
 ## Threat Level System
+
+## WAF Mesh Configuration
+
+Mesh and DHT security-sensitive options:
+
+```toml
+[mesh]
+enabled = true
+role = "global"                      # or "edge", "origin", etc.
+network_id = "prod-mesh"
+
+[mesh.tls]
+enforce_mutual_tls = true
+mode = "strict"                     # strict | tofu | permissive
+strict_certificate_validation = true
+
+[mesh.dht]
+enabled = true
+require_signed_sync_requests = true  # default-deny for unsigned DhtSyncRequest
+```
+
+### Signed DHT Sync Rollout
+
+- `mesh.dht.require_signed_sync_requests = true` (default):
+  - unsigned `DhtSyncRequest` is rejected.
+  - signed request validation enforces timestamp window, nonce replay protection, and signature verification.
+- `mesh.dht.require_signed_sync_requests = false`:
+  - temporary compatibility mode for legacy peers that do not sign sync requests.
+  - not recommended for production except during controlled migration windows.
+
+### Recommended Production Baseline
+
+- Keep `mesh.tls.mode = "strict"` for production mesh deployments.
+- Keep `mesh.dht.require_signed_sync_requests = true`.
+- Treat `require_signed_sync_requests = false` as temporary and remove after peer rollout.
+
+### Mesh TLS Modes
+
+- `mesh.tls.mode = "strict"`:
+  - peer certificates must validate against configured mesh CA trust.
+  - if no CA certs are configured, peer cert verification fails closed.
+- `mesh.tls.mode = "tofu"`:
+  - seed certificate fingerprint pinning/TOFU checks are enabled.
+  - useful only for controlled bootstrap environments, not as long-term production trust.
+- `mesh.tls.mode = "permissive"`:
+  - allows peer cert acceptance when CA trust is unavailable.
+  - migration-only mode; avoid as steady-state in production.
+
+Legacy compatibility:
+- If `mesh.tls.mode` is omitted, SynVoid falls back to `mesh.tls.strict_certificate_validation` for backward compatibility.
+- Prefer setting `mesh.tls.mode` explicitly in all new configs.
 
 ```toml
 [threat_level]

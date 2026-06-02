@@ -1,26 +1,26 @@
 # Platform Support
 
-SynVoid is designed for consistent performance across modern operating systems, leveraging platform-specific primitives for its Shared-Nothing Architecture.
+SynVoid is designed for consistent performance across modern operating systems, with a default unified-worker data plane and optional advanced multi-worker features.
 
 ## Support Matrix
 
 | Platform | Support Level | CI Tested | Notes |
 |----------|--------------|-----------|-------|
-| Linux (glibc) | Production | Yes | Primary target, full `SO_REUSEPORT` & core pinning |
+| Linux (glibc) | Production | Yes | Primary target, full socket/affinity support |
 | Alpine Linux (musl) | Production | Yes | Full feature support |
-| macOS | Production | Yes | Full `SO_REUSEPORT` support |
-| Windows (10+) | Production | Yes | `SO_REUSEPORT` support via modern Windows API |
+| macOS | Production | Yes | Full socket feature support |
+| Windows (10+) | Production | Yes | Modern socket feature support |
 | FreeBSD | Production | Yes | Full feature support |
 
 ## Feature Availability by Platform
 
-### Shared-Nothing Architecture
+### Data-Plane Runtime Features
 
 | Feature | Linux | macOS | FreeBSD | Windows |
 |---------|-------|-------|---------|---------|
 | `SO_REUSEPORT` | ✅ | ✅ | ✅ | ✅ |
 | CPU Core Pinning | ✅ (native) | ❌ | ✅ | ❌ |
-| Shared-Nothing Mode| ✅ | ✅ | ✅ | ✅ |
+| Advanced multi-unified-worker mode (`SO_REUSEPORT`) | ✅ | ✅ | ✅ | ✅ |
 
 ### Control Plane (gRPC)
 
@@ -43,7 +43,7 @@ Linux is the premier platform for SynVoid, offering the most granular performanc
 
 ### Windows (10, 11, Server 2019+)
 
-Modern Windows versions support `SO_REUSEPORT` semantics (via `SO_REUSEADDR` behavior changes and specific socket flags), enabling SynVoid's shared-nothing model.
+Modern Windows versions support socket semantics required for SynVoid's advanced multi-unified-worker mode.
 
 **Differences:**
 - **IPC:** Uses Named Pipes (`\\.\pipe\synvoid-*`) instead of Unix Domain Sockets.
@@ -52,17 +52,17 @@ Modern Windows versions support `SO_REUSEPORT` semantics (via `SO_REUSEADDR` beh
 
 ### macOS & BSD
 
-Full shared-nothing support using `kqueue` and `SO_REUSEPORT`.
+Full support for the default unified-worker model, with advanced `SO_REUSEPORT` mode available.
 
 **Notes:**
-- **macOS:** `SO_REUSEPORT` is fully supported, allowing multiple workers to bind to the same port.
+- **macOS:** `SO_REUSEPORT` is available for advanced multi-unified-worker deployments.
 - **FreeBSD:** Leverages native `SO_REUSEPORT_LB` for kernel-level distribution.
 
 ## Zero-Downtime Upgrades
 
 Across all platforms, SynVoid achieves zero-downtime upgrades via:
 1. **New Supervisor Start:** The new Supervisor takes over the gRPC management port.
-2. **Worker Rotation:** The new Supervisor spawns new workers that bind to the service ports via `SO_REUSEPORT`.
+2. **Worker Rotation:** The new Supervisor spawns new workers and drains old workers gracefully.
 3. **Graceful Drain:** Old workers are signaled via IPC to finish processing and exit.
 
 ## Feature Flags
@@ -75,8 +75,8 @@ Across all platforms, SynVoid achieves zero-downtime upgrades via:
 ## Performance Considerations
 
 ### Linux
-- Ensure `worker_processes` matches physical cores.
-- Check `dmesg` to verify Landlock and Core Pinning are active.
+- Tune `worker_threads` and `tcp.worker_pool_size` first; increase CPU offload worker count for heavy transforms.
+- Check `dmesg` to verify Landlock and affinity features are active.
 
 ### Windows
 - Use Windows Server 2019 or later for optimal socket performance.
@@ -87,4 +87,4 @@ Across all platforms, SynVoid achieves zero-downtime upgrades via:
 Each platform is verified in CI:
 - **Unit Tests:** All core logic.
 - **Integration Tests:** Supervisor-Worker IPC and gRPC command handling.
-- **Load Tests:** Verified shared-nothing throughput on Linux and macOS.
+- **Load Tests:** Verified unified-worker throughput and offload-worker isolation behavior.

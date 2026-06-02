@@ -44,8 +44,8 @@ pub use super::http::{
     Http3Config as MainHttp3Config, HttpConfig as MainHttpConfig, TokioConfig as MainTokioConfig,
 };
 pub use super::process::{
-    SupervisorConfig as MainSupervisorCompatConfig, ProcessManagerConfig as MainProcessManagerConfig,
-    SupervisorConfig as MainSupervisorConfig,
+    ProcessManagerConfig as MainProcessManagerConfig,
+    SupervisorConfig as MainSupervisorCompatConfig, SupervisorConfig as MainSupervisorConfig,
 };
 pub use super::protection::{
     IpFeedConfig as MainIpFeedConfig, RuleFeedConfig as MainRuleFeedConfig,

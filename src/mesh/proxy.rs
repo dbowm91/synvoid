@@ -24,7 +24,7 @@ use tokio::sync::RwLock as TokioRwLock;
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
 
-fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
+pub(crate) fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
     WHITELIST_REGEX_CACHE
         .entry(pattern.to_string())
         .or_insert_with(|| regex::Regex::new(pattern).ok())
@@ -1843,14 +1843,15 @@ impl MeshProxy {
             }
         }
 
-        let static_worker_socket = std::env::var("STATIC_WORKER_SOCKET")
+        let cpu_worker_socket = std::env::var("CPU_WORKER_SOCKET")
+            .or_else(|_| std::env::var("STATIC_WORKER_SOCKET"))
             .unwrap_or_else(|_| "/var/run/synvoid-static-worker.sock".to_string());
 
-        if static_worker_socket.is_empty() {
+        if cpu_worker_socket.is_empty() {
             return body;
         }
 
-        let socket_path = std::path::PathBuf::from(&static_worker_socket);
+        let socket_path = std::path::PathBuf::from(&cpu_worker_socket);
 
         let client = crate::static_files::client::PoisonImageClient::new(socket_path);
 

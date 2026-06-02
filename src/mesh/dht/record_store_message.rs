@@ -156,6 +156,10 @@ impl RecordStoreManager {
                 request_id,
                 node_id: _,
                 from_version,
+                timestamp: _,
+                nonce: _,
+                signature: _,
+                signer_public_key: _,
             } => {
                 tracing::debug!(
                     "Received DhtSyncRequest from {} (version: {})",

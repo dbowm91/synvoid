@@ -104,9 +104,9 @@ pub enum RouteResult {
 impl Router {
     pub fn new(main_config: &MainConfig, sites: HashMap<String, SiteConfig>) -> Self {
         let sites_clone = sites.clone();
-        let static_worker_socket = Self::resolve_static_worker_socket(main_config);
-        let minifier_client = MinifierClient::new(static_worker_socket.clone());
-        let async_minifier_client = AsyncMinifierClient::new(static_worker_socket);
+        let cpu_worker_socket = Self::resolve_cpu_worker_socket(main_config);
+        let minifier_client = MinifierClient::new(cpu_worker_socket.clone());
+        let async_minifier_client = AsyncMinifierClient::new(cpu_worker_socket);
         let default_theme_config = ThemeConfig::from(main_config.defaults.theme.clone());
 
         let location_matchers = Self::build_location_matchers(&sites_clone);
@@ -155,7 +155,7 @@ impl Router {
     }
 
     #[inline]
-    fn resolve_static_worker_socket(main_config: &MainConfig) -> PathBuf {
+    fn resolve_cpu_worker_socket(main_config: &MainConfig) -> PathBuf {
         main_config
             .static_config
             .as_ref()
@@ -165,7 +165,7 @@ impl Router {
                 path.pop();
                 path.join("synvoid-static-worker.sock")
             })
-            .unwrap_or_else(|| PlatformPaths::new().static_worker_socket_path())
+            .unwrap_or_else(|| PlatformPaths::new().cpu_worker_socket_path())
     }
 
     fn build_all_maps(

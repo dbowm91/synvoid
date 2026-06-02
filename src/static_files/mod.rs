@@ -661,6 +661,7 @@ impl StaticFileHandler {
                             }
                         }
                         Err(e) => {
+                            client::record_cpu_offload_fallback();
                             tracing::debug!(
                                 "Minification failed for {}: {}",
                                 relative_path.display(),

@@ -99,7 +99,7 @@ pub async fn start_metrics_publisher(
                     }
                 }
 
-                let (static_cache_hits, static_cache_misses) = process_manager.get_static_worker_cache_stats();
+                let (static_cache_hits, static_cache_misses) = process_manager.get_cpu_worker_cache_stats();
                 _total_static_cache_hits += static_cache_hits;
                 _total_static_cache_misses += static_cache_misses;
 

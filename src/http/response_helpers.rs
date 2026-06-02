@@ -71,3 +71,10 @@ pub fn build_websocket_response(headers: &http::HeaderMap) -> BoxBodyResponse {
         .body(boxed)
         .unwrap_or_else(|_| crate::http::fallback_error_boxed())
 }
+
+pub fn format_secure_http_only_cookie(name: &str, value: &str, max_age_secs: u64) -> String {
+    format!(
+        "{}={}; path=/; max-age={}; Secure; SameSite=Strict; HttpOnly",
+        name, value, max_age_secs
+    )
+}

@@ -849,6 +849,10 @@ pub enum MeshMessage {
         request_id: ArcStr,
         node_id: ArcStr,
         from_version: u64,
+        timestamp: u64,
+        nonce: ArcStr,
+        signature: Vec<u8>,
+        signer_public_key: Option<String>,
     },
     DhtSyncResponse {
         request_id: ArcStr,

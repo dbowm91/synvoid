@@ -22,10 +22,12 @@ Welcome to SynVoid - a production-ready WAF and reverse proxy built for performa
 
 SynVoid is an all-in-one web application firewall and reverse proxy that provides:
 
-- **Shared-Nothing Data Plane** - Isolated workers with `SO_REUSEPORT` and core affinity.
+- **Unified Data Plane** - One latency-sensitive unified worker plus bounded CPU offload workers.
 - **Supervisor Control Plane** - Centralized management via a gRPC API.
 - **WAF Protection** - Multi-layer defense against common web attacks.
 - **Reverse Proxy** - HTTP/1.1, HTTP/2, and HTTP/3 support.
+  - HTTP/2 upstream support is available via the typed client path.
+  - Full erased-client HTTP/2 streaming pooling is not the default request path and remains an advanced/deferred optimization.
 - **Application Server** - Built-in support for PHP, Python, and static files.
 
 ## Quick Start
@@ -52,7 +54,11 @@ Create a minimal `config/main.toml`:
 [server]
 host = "0.0.0.0"
 port = 80
-worker_processes = "auto"
+worker_threads = 0
+unified_server_workers = 1
+
+[tcp]
+worker_pool_size = 4
 
 [admin]
 enabled = true

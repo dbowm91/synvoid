@@ -1,6 +1,6 @@
 # Process Lifecycle & Execution Model
 
-SynVoid uses a "Shared-Nothing Architecture" to achieve maximum performance, linear scalability, and robust security isolation. The model follows a two-tier hierarchy with Supervisor as the control plane and Workers as the data plane.
+SynVoid uses a two-tier architecture with a latency-sensitive unified worker data plane and supervisor-led control plane. The default model is one `UnifiedServerWorker` plus bounded CPU offload workers.
 
 > **Historical Note:** Earlier versions used a three-tier Overseer → Master → Worker hierarchy. The Overseer and Master have been consolidated into the Supervisor as of 2026.
 
@@ -22,14 +22,14 @@ The Supervisor is the top-level process that manages worker lifecycle, upgrades,
 - **IPC Role:** Acts as the central hub for worker coordination.
 
 ### 2. Worker (The Data Plane)
-Workers are lightweight, "dumb" request-handling engines that operate in a shared-nothing environment. SynVoid uses three worker types:
+Workers are request-handling engines managed by the Supervisor. SynVoid uses a unified worker, CPU offload workers, and one legacy raw TCP/UDP worker type:
 
 - **UnifiedServerWorker:** Primary worker handling HTTP/HTTPS/HTTP3 + WAF + proxy via a single Tokio async event loop. Handles all site routing and security enforcement.
-- **StaticWorker:** Dedicated worker for background tasks like CSS/JS minification and image compression. Communicates with the unified server via IPC.
+- **CPU Offload Worker (historically `StaticWorker`):** Dedicated worker for bounded heavy tasks like CSS/JS minification, compression, image transforms, YARA scans, and other expensive transforms. The legacy `StaticWorker` IPC names are retained for compatibility.
 - **Legacy Worker (BaseWorkerProcess):** Deprecated raw TCP/UDP proxy worker. Unused for HTTP traffic; requires further investigation to determine if it should be removed.
 
-- **Isolation:** Each worker process is completely independent.
-- **Kernel Load Balancing:** Uses `SO_REUSEPORT` during worker upgrades to allow kernel distribution across old and new workers. Initial workers use `reuse_port: false` (default). See `src/startup/worker.rs:42` and `src/process/manager.rs:558-612`.
+- **Isolation:** Worker process boundaries isolate failure domains and lifecycle operations.
+- **Kernel Load Balancing:** `SO_REUSEPORT` can be used in advanced multi-unified-worker mode and upgrade overlap flows.
 - **CPU Pinning:** On Linux, workers can be assigned CPU affinity based on worker ID via the `--cpu-affinity` flag. Not supported on macOS/BSD (logs warning).
 - **Minimal Intelligence:** Workers focus strictly on request handling (WAF pipeline, proxying). They receive threat intelligence and configuration updates from the Supervisor.
 - **Key Logic:** `src/worker/`.
@@ -46,13 +46,15 @@ SynVoid utilizes a tiered communication strategy:
 
 ---
 
-## Shared-Nothing Data Plane
+## Unified Data Plane Contract
 
-The transition to a shared-nothing model ensures that the data plane can scale linearly with the number of CPU cores:
+The default scaling contract is:
 
-- **No Shared State:** Workers do not share memory or mutexes for request handling.
-- **Independent Listeners:** Each worker opens its own set of listeners using `SO_REUSEPORT`.
-- **Async Efficiency:** Each worker runs a dedicated Tokio runtime optimized for its assigned core.
+- **Unified worker:** Handles listener accept, TLS/HTTP parsing, routing, cheap WAF decisions, and streaming proxy.
+- **CPU offload workers:** Handle bounded heavy work (minification/compression/image transforms/deep scans/plugin execution).
+- **Advanced multi-unified-worker mode:** Available but not the primary throughput knob.
+
+Inline work stays on the unified worker when it is small, bounded, and predictable. Once work depends on body size, deep regex behavior, or transform cost, it belongs in the CPU offload plane.
 
 ---
 
@@ -63,7 +65,7 @@ Upgrades are coordinated by the Supervisor:
 1.  A new Supervisor process can be started to replace the old one.
 2.  The new Supervisor takes over the gRPC management interface.
 3.  Workers are rotated: new workers are spawned by the new Supervisor, and old workers are signaled to drain.
-4.  `SO_REUSEPORT` allows both old and new workers to coexist during the transition without dropping connections.
+4.  When enabled for advanced overlap mode, `SO_REUSEPORT` allows old and new workers to coexist during transition.
 
 ---
 

@@ -1340,9 +1340,7 @@ impl HttpsServer {
                                                 )
                                             }));
                                     }
-                                    crate::static_files::StaticResponseBody::Buffered(
-                                        body,
-                                    ) => {
+                                    crate::static_files::StaticResponseBody::Buffered(body) => {
                                         return Ok(builder
                                             .body(Full::new(body).boxed())
                                             .unwrap_or_else(|_| {

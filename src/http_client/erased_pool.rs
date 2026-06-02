@@ -527,7 +527,10 @@ mod tests {
         let authority: http::uri::Authority = "example.com:80".parse().unwrap();
         let conn = Http1PooledConnection::new_for_test(authority);
 
-        assert!(!conn.is_connected(), "new_for_test creates stub with is_connected false");
+        assert!(
+            !conn.is_connected(),
+            "new_for_test creates stub with is_connected false"
+        );
     }
 
     #[tokio::test]

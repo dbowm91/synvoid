@@ -1,6 +1,6 @@
 # Worker Architecture & Unified Server
 
-The Worker process is the data plane of SynVoid, responsible for high-performance request handling and security enforcement. The centerpiece of the worker is the **UnifiedServerWorker** which runs within the Supervisor/Master process hierarchy.
+SynVoid's worker data plane is split between a latency-sensitive **UnifiedServerWorker** and bounded **CPU offload workers**. The unified worker keeps socket accept, TLS, parsing, routing, and cheap WAF work inline; CPU-heavy transforms are delegated to the offload plane.
 
 ## The UnifiedServerWorker vs worker_pool Module
 
@@ -10,12 +10,30 @@ The `worker_pool` configuration (`tcp.worker_pool_size`) controls the **number o
 |-----------|---------|---------------|
 | **UnifiedServerWorker** | Single process handling HTTP/HTTPS/HTTP3 + WAF + proxy via Tokio async runtime | `--unified-server-worker` flag |
 | **`tcp.worker_pool_size`** | Number of connection-accepting threads within the unified event loop | `tcp.worker_pool_size` config |
-| **`unified_server_workers`** | Number of Tokio runtime threads (defaults to CPU cores) | `tcp.unified_server_workers` config |
+| **`unified_server_workers`** | Number of unified worker processes (default 1; advanced isolation mode) | `server.unified_server_workers` config |
 
 **Scaling Guidance:**
 - For HTTP scaling, tune `tcp.worker_pool_size` (connection accepting threads) or use async primitives within the existing event loop
-- **Do NOT increase `unified_server_workers` for scaling purposes** — this only affects the number of Tokio runtime threads, not throughput
+- **Do NOT increase `unified_server_workers` for normal scaling** — it increases process count for advanced isolation; use `worker_threads` for runtime parallelism and `tcp.worker_pool_size` for accept throughput
 - The unified worker uses a single Tokio runtime optimized for millions of tenants via O(1) domain-based routing
+
+### Inline vs Offload Boundary
+
+Keep these inline in the unified worker:
+- listener accept
+- TLS orchestration and HTTP parsing
+- routing
+- cheap WAF checks and rate-limit accounting
+- cache-hit response serving
+- proxy streaming
+
+Offload to CPU workers when the work becomes expensive:
+- minification and compression
+- image transforms and poisoning
+- YARA scanning
+- WASM/plugin execution
+- serverless execution
+- heavy body inspection and deep regex work
 
 ### Buffer Pool Implementation
 
@@ -90,15 +108,17 @@ The Unified Server is designed to handle multiple protocols and transport layers
 
 ```
 Supervisor Process
-  └── Master Process
-        └── UnifiedServerWorker (Tokio Runtime)
-              ├── Initialize ConfigManager
-              ├── Load site configurations
-              ├── Start TcpListenerPool (N threads based on worker_pool_size)
-              ├── Start UdpListenerPool
-              ├── Initialize WAF pipeline
-              ├── Start upstream connection pools
-              └── Begin accepting connections (cooperative multitasking)
+  └── Data Plane
+        ├── UnifiedServerWorker(s) (Tokio Runtime)
+        │     ├── Initialize ConfigManager
+        │     ├── Load site configurations
+        │     ├── Start TcpListenerPool (N threads based on worker_pool_size)
+        │     ├── Start UdpListenerPool
+        │     ├── Initialize WAF pipeline
+        │     ├── Start upstream connection pools
+        │     └── Begin accepting connections (cooperative multitasking)
+        └── CPU Offload Worker(s)
+              └── Bounded heavy transforms, scans, and compression tasks
 ```
 
 ### Health Check Integration
