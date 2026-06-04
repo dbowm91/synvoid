@@ -1415,6 +1415,11 @@ pub struct MeshTlsConfig {
     pub mode: Option<MeshTlsMode>,
     #[serde(default = "default_strict_certificate_validation")]
     pub strict_certificate_validation: bool,
+    /// Require PKI binding for global node DHT messages (BindP fix).
+    /// When true, DHT handlers verify source_node_id against cert chain.
+    /// Default: false (backward compatible)
+    #[serde(default)]
+    pub require_pki_binding: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -1483,6 +1488,7 @@ impl Default for MeshTlsConfig {
             quic_enable_0rtt: default_quic_enable_0rtt(),
             mode: None,
             strict_certificate_validation: default_strict_certificate_validation(),
+            require_pki_binding: false,
         }
     }
 }

@@ -78,6 +78,29 @@ struct PinnedFingerprint {
     pinned_at: std::time::Instant,
 }
 
+/// A certificate chain binding a node_id to a TLS certificate via a CA.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertChain {
+    /// DER-encoded leaf certificate (the node's TLS cert)
+    pub leaf_cert_der: Vec<u8>,
+    /// DER-encoded CA certificate (the issuing global node's CA cert)
+    pub ca_cert_der: Vec<u8>,
+    /// Ed25519 signature: sign(leaf_cert_der || node_id, ca_private_key)
+    pub ca_signature: Vec<u8>,
+}
+
+/// A DHT record binding a node_id to its certified public key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeCertBinding {
+    pub node_id: String,
+    /// The certified public key (from the leaf cert)
+    pub certified_public_key: Vec<u8>,
+    /// The CA's public key (from the CA cert)
+    pub ca_public_key: Vec<u8>,
+    /// Timestamp of binding
+    pub timestamp: u64,
+}
+
 const MAX_TOOF_FINGERPRINT_AGE_DAYS: u64 = 30;
 const MAX_TOOF_FINGERPRINT_AGE_SECS: u64 = 30 * 24 * 60 * 60;
 
@@ -1261,6 +1284,23 @@ pub fn verify_ed25519(data: &str, signature: &[u8], public_key: &[u8]) -> bool {
     }
 }
 
+pub fn verify_ed25519_bytes(data: &[u8], signature: &[u8], public_key: &[u8]) -> bool {
+    if signature.len() != 64 || public_key.len() != 32 {
+        return false;
+    }
+    let mut sig_array = Zeroizing::new([0u8; 64]);
+    sig_array.copy_from_slice(signature);
+    let mut pk_array = Zeroizing::new([0u8; 32]);
+    pk_array.copy_from_slice(public_key);
+
+    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(pk) => pk
+            .verify(data, &ed25519_dalek::Signature::from_bytes(&sig_array))
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
 pub fn get_ed25519_public_key(private_key: &[u8]) -> Option<Vec<u8>> {
     if private_key.len() != 32 {
         return None;
@@ -1270,6 +1310,56 @@ pub fn get_ed25519_public_key(private_key: &[u8]) -> Option<Vec<u8>> {
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_array);
     let verifying_key = signing_key.verifying_key();
     Some(verifying_key.as_bytes().to_vec())
+}
+
+/// Verify a certificate chain: leaf cert is signed by CA cert, CA public key
+/// matches a registered global node key, and node_id is bound in the chain.
+pub fn verify_certificate_chain(
+    chain: &CertChain,
+    expected_node_id: &str,
+    trusted_global_keys: &std::collections::HashMap<String, Vec<u8>>,
+) -> Result<(), MeshCertError> {
+    use x509_parser::prelude::*;
+
+    // Parse leaf cert
+    let (_, leaf_cert) = X509Certificate::from_der(&chain.leaf_cert_der)
+        .map_err(|e| MeshCertError::CertificateParsing(format!("leaf cert: {}", e)))?;
+
+    // Parse CA cert
+    let (_, ca_cert) = X509Certificate::from_der(&chain.ca_cert_der)
+        .map_err(|e| MeshCertError::CertificateParsing(format!("ca cert: {}", e)))?;
+
+    // Extract CA public key (Ed25519)
+    let ca_pubkey_bytes = ca_cert
+        .subjectPublicKeyInfo()
+        .subject_public_key()
+        .raw_bytes()
+        .to_vec();
+
+    // Verify CA public key is in trusted set
+    let ca_trusted = trusted_global_keys.values().any(|k| *k == ca_pubkey_bytes);
+    if !ca_trusted {
+        return Err(MeshCertError::UntrustedCa);
+    }
+
+    // Verify leaf cert is issued by CA (check issuer matches CA subject)
+    let leaf_issuer = leaf_cert.issuer();
+    let ca_subject = ca_cert.subject();
+    if leaf_issuer != ca_subject {
+        return Err(MeshCertError::CertificateChainMismatch(
+            "leaf issuer does not match CA subject".to_string(),
+        ));
+    }
+
+    // Verify ca_signature covers leaf_cert_der || node_id
+    let signable = [chain.leaf_cert_der.as_slice(), expected_node_id.as_bytes()].concat();
+    if !verify_ed25519_bytes(&signable, &chain.ca_signature, &ca_pubkey_bytes) {
+        return Err(MeshCertError::InvalidSignature(
+            "ca_signature verification failed".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1296,6 +1386,14 @@ pub enum MeshCertError {
     CertificateExpired,
     #[error("Certificate not yet valid")]
     CertificateNotYetValid,
+    #[error("Certificate parsing error: {0}")]
+    CertificateParsing(String),
+    #[error("Untrusted CA certificate")]
+    UntrustedCa,
+    #[error("Certificate chain mismatch: {0}")]
+    CertificateChainMismatch(String),
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
