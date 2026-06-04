@@ -434,6 +434,17 @@ impl MeshTransport {
             }
         }
 
+        // MESH-14: If require_pki_binding, verify node has a cert binding
+        if self.config.tls.require_pki_binding {
+            if self.cert_manager.read().get_cert_binding(node_id).is_none() {
+                tracing::warn!(
+                    "DHT sync request from {} rejected: no cert binding for node {} (require_pki_binding=true)",
+                    from_peer, node_id
+                );
+                return;
+            }
+        }
+
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.create_sync_response(request_id, from_version) {
                 if let Err(e) = self.send_datagram_to_peer(from_peer, &response).await {
@@ -616,6 +627,17 @@ impl MeshTransport {
                     "DHT anti-entropy request from {} rejected: replay protection {}",
                     from_peer,
                     replay_result_reason(replay_result)
+                );
+                return;
+            }
+        }
+
+        // MESH-14: If require_pki_binding, verify node has a cert binding
+        if self.config.tls.require_pki_binding {
+            if self.cert_manager.read().get_cert_binding(node_id).is_none() {
+                tracing::warn!(
+                    "DHT anti-entropy request from {} rejected: no cert binding for node {} (require_pki_binding=true)",
+                    from_peer, node_id
                 );
                 return;
             }

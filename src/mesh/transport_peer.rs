@@ -1259,6 +1259,7 @@ impl MeshTransport {
         peer_id: &str,
         source_node_id: &str,
     ) -> Result<(), ()> {
+        // Existing in-memory check
         if let Some(peer) = self.peer_connections.get(peer_id) {
             if peer.node_id != source_node_id {
                 tracing::warn!(
@@ -1270,6 +1271,36 @@ impl MeshTransport {
                 return Err(());
             }
         }
+
+        // MESH-14: If require_pki_binding enabled, verify against cert chain
+        if self.config.tls.require_pki_binding {
+            let cert_mgr = self.cert_manager.read();
+            if let Some(cert_binding) = cert_mgr.get_cert_binding(source_node_id) {
+                // Verify the TLS peer's public key matches the certified key
+                if let Some(peer_pubkey) = cert_mgr.get_global_node_key(source_node_id) {
+                    if peer_pubkey != cert_binding.certified_public_key {
+                        tracing::warn!(
+                            "PKI binding check failed: peer {} public key does not match cert binding for {}",
+                            peer_id, source_node_id
+                        );
+                        return Err(());
+                    }
+                } else {
+                    tracing::warn!(
+                        "PKI binding check failed: no public key registered for node {}",
+                        source_node_id
+                    );
+                    return Err(());
+                }
+            } else {
+                tracing::warn!(
+                    "PKI binding check failed: no cert binding for node {}",
+                    source_node_id
+                );
+                return Err(());
+            }
+        }
+
         Ok(())
     }
 
