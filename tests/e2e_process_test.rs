@@ -2,9 +2,8 @@
 mod e2e_process_tests {
     use std::sync::Arc;
 
-    use synvoid::config::OverseerConfig;
     use synvoid::process::ipc::{MessageCategory, UpgradeModePayload};
-    use synvoid::process::ipc_transport::{IpcEndpoint, IpcListener, IpcStream};
+    use synvoid::process::ipc_transport::{IpcEndpoint, IpcListener};
     use synvoid::process::{
         generate_session_key, ErrorCode, ErrorSeverity, IpcSigner, Message, WorkerId,
     };
@@ -117,22 +116,13 @@ mod e2e_process_tests {
     // --- Process Config Tests ---
 
     #[test]
+    #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
     fn test_overseer_config_defaults() {
-        let config = OverseerConfig::default();
-        assert!(config.auto_restart);
-        assert_eq!(config.restart_delay_secs, 5);
-        assert_eq!(config.max_restart_attempts, 5);
-        assert_eq!(config.health_check_interval_secs, 5);
-        assert_eq!(config.stable_uptime_secs, 60);
-        assert_eq!(config.ipc_read_timeout_ms, 5000);
-        assert_eq!(config.ipc_write_timeout_ms, 5000);
-        assert_eq!(config.master_startup_timeout_secs, 30);
     }
 
     #[test]
+    #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
     fn test_overseer_config_auto_restart() {
-        let config = OverseerConfig::default();
-        assert!(config.auto_restart);
     }
 
     // --- State Tracking Tests ---
@@ -210,7 +200,7 @@ mod e2e_process_tests {
                 timeout_secs: 30,
             }
             .category(),
-            MessageCategory::MasterCommand
+            MessageCategory::SupervisorCommand
         );
 
         assert_eq!(
@@ -218,12 +208,12 @@ mod e2e_process_tests {
                 config_path: "x".into()
             }
             .category(),
-            MessageCategory::MasterCommand
+            MessageCategory::SupervisorCommand
         );
 
         assert_eq!(
-            Message::OverseerGetStatus.category(),
-            MessageCategory::Overseer
+            Message::SupervisorGetStatus.category(),
+            MessageCategory::Supervisor
         );
 
         assert_eq!(
@@ -288,7 +278,7 @@ mod e2e_process_tests {
 
         assert!(!Message::MasterHealthCheck { timestamp: 0 }.is_lifecycle());
 
-        assert!(!Message::OverseerGetStatus.is_lifecycle());
+        assert!(!Message::SupervisorGetStatus.is_lifecycle());
 
         assert!(!Message::WorkerDrain {
             id: WorkerId(0),

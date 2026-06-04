@@ -1631,7 +1631,7 @@ mod entropy_calculation_tests {
 mod overseer_lifecycle_tests {
     use parking_lot::RwLock;
     use std::sync::Arc;
-    use synvoid::overseer::drain_manager::DrainManager;
+    use synvoid::supervisor::drain_manager::DrainManager;
     use synvoid::process::WorkerId;
 
     #[test]

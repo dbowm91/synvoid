@@ -1,14 +1,12 @@
 use super::StaticWorkerState;
 
-use cloakrs::{process_image_bytes, ProtectionContext, ProtectionLevel};
+use stegoeggo::{process_image_bytes, ProtectionContext, ProtectionLevel};
 
 fn parse_protection_level(level: &str) -> ProtectionLevel {
     match level.to_lowercase().as_str() {
         "disabled" => ProtectionLevel::Disabled,
         "l1" | "light" => ProtectionLevel::Light,
-        "l2" | "standard" => ProtectionLevel::Standard,
-        "l3" | "enhanced" => ProtectionLevel::Enhanced,
-        "strong" => ProtectionLevel::Strong,
+        "l2" | "standard" | "l3" | "enhanced" | "strong" => ProtectionLevel::Standard,
         _ => {
             tracing::warn!(level = %level, "Unknown image poison protection level, defaulting to Standard");
             ProtectionLevel::Standard

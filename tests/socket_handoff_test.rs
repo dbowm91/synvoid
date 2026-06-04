@@ -2,7 +2,6 @@
 mod socket_handoff_tests {
     use std::net::TcpListener;
 
-    use synvoid::overseer::socket_handoff::DualMasterHandoff;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -44,20 +43,13 @@ mod socket_handoff_tests {
     }
 
     #[tokio::test]
+    #[ignore = "DualMasterHandoff was removed during overseer->supervisor refactor"]
     async fn test_socket_handoff_dual_master_handoff_creation() {
-        let ports = vec![8080u16, 8443u16];
-        let handoff = DualMasterHandoff::new(ports.clone());
-        let _ = handoff;
     }
 
     #[tokio::test]
+    #[ignore = "HANDOFF_TIMEOUT_SECS was removed during overseer->supervisor refactor"]
     async fn test_socket_handoff_timeout_handling() {
-        use synvoid::overseer::socket_handoff::HANDOFF_TIMEOUT_SECS;
-
-        assert_eq!(
-            HANDOFF_TIMEOUT_SECS, 30,
-            "Default timeout should be 30 seconds"
-        );
     }
 
     #[tokio::test]
@@ -153,18 +145,21 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_error_handling() {
-        use synvoid::overseer::socket_handoff::SocketHandoffError;
+        use synvoid::platform::SocketHandoffError;
 
-        let err = SocketHandoffError::Timeout;
+        let err = SocketHandoffError::NoSocketsReceived;
         let err_msg = err.to_string();
-        assert!(err_msg.contains("Timeout"), "Should contain Timeout");
+        assert!(
+            err_msg.contains("No sockets received"),
+            "Should contain error message"
+        );
     }
 
     #[tokio::test]
     async fn test_socket_handoff_invalid_state_error() {
-        use synvoid::overseer::socket_handoff::SocketHandoffError;
+        use synvoid::platform::SocketHandoffError;
 
-        let err = SocketHandoffError::InvalidState("test state".to_string());
+        let err = SocketHandoffError::IpcError("test state".to_string());
         let err_msg = err.to_string();
         assert!(
             err_msg.contains("test state"),

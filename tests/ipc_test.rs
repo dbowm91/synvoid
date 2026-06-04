@@ -794,6 +794,7 @@ mod ipc_tests {
             timestamp: 1000,
             static_cache_hits: 500,
             static_cache_misses: 50,
+            cpu_offload_stats: synvoid::process::ipc::StaticCpuOffloadStats::default(),
         }
     );
 
@@ -1218,7 +1219,7 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_prepare,
-        Message::OverseerUpgradePrepare {
+        Message::SupervisorUpgradePrepare {
             binary_path: "/usr/bin/synvoid-new".to_string(),
             config_path: Some("/etc/synvoid/new.toml".to_string()),
             version: "2.0.0".to_string(),
@@ -1227,7 +1228,7 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_prepare_ack_success,
-        Message::OverseerUpgradePrepareAck {
+        Message::SupervisorUpgradePrepareAck {
             ready: true,
             error: None,
         }
@@ -1235,7 +1236,7 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_prepare_ack_error,
-        Message::OverseerUpgradePrepareAck {
+        Message::SupervisorUpgradePrepareAck {
             ready: false,
             error: Some("Binary incompatible".to_string()),
         }
@@ -1243,12 +1244,12 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_commit_full,
-        Message::OverseerUpgradeCommit { timeout_secs: 120 }
+        Message::SupervisorUpgradeCommit { timeout_secs: 120 }
     );
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_commit_ack_success,
-        Message::OverseerUpgradeCommitAck {
+        Message::SupervisorUpgradeCommitAck {
             success: true,
             error: None,
         }
@@ -1256,14 +1257,14 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_rollback_full,
-        Message::OverseerUpgradeRollback {
+        Message::SupervisorUpgradeRollback {
             reason: "Health check failed".to_string(),
         }
     );
 
     roundtrip_test!(
         test_roundtrip_overseer_upgrade_rollback_ack_success,
-        Message::OverseerUpgradeRollbackAck {
+        Message::SupervisorUpgradeRollbackAck {
             success: true,
             error: None,
         }
@@ -1271,14 +1272,14 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_commit_upgrade,
-        Message::OverseerCommitUpgrade {
-            old_master_timeout_secs: 60
+        Message::SupervisorCommitUpgrade {
+            old_supervisor_timeout_secs: 60
         }
     );
 
     roundtrip_test!(
         test_roundtrip_overseer_commit_upgrade_ack_full,
-        Message::OverseerCommitUpgradeAck {
+        Message::SupervisorCommitUpgradeAck {
             success: true,
             error: None,
         }
@@ -1287,12 +1288,12 @@ mod ipc_tests {
     // Overseer Messages
     roundtrip_test!(
         test_roundtrip_overseer_drain_workers,
-        Message::OverseerDrainWorkers { timeout_secs: 30 }
+        Message::SupervisorDrainWorkers { timeout_secs: 30 }
     );
 
     roundtrip_test!(
         test_roundtrip_overseer_drain_workers_ack,
-        Message::OverseerDrainWorkersAck {
+        Message::SupervisorDrainWorkersAck {
             drained_count: 4,
             remaining_connections: 10,
         }
@@ -1300,12 +1301,12 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_get_status,
-        Message::OverseerGetStatus
+        Message::SupervisorGetStatus
     );
 
     roundtrip_test!(
         test_roundtrip_overseer_status_response,
-        Message::OverseerStatusResponse {
+        Message::SupervisorStatusResponse {
             master_pid: 12345,
             workers: vec![WorkerStatusInfo {
                 id: 0,
@@ -1322,7 +1323,7 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_dual_master_prepare,
-        Message::OverseerDualMasterPrepare {
+        Message::SupervisorDualSupervisorPrepare {
             binary_path: "/usr/bin/synvoid".to_string(),
             config_path: Some("/etc/synvoid/config.toml".to_string()),
             version: "2.0.0".to_string(),
@@ -1331,7 +1332,7 @@ mod ipc_tests {
 
     roundtrip_test!(
         test_roundtrip_overseer_dual_master_prepare_ack_success,
-        Message::OverseerDualMasterPrepareAck {
+        Message::SupervisorDualSupervisorPrepareAck {
             ready: true,
             error: None,
         }

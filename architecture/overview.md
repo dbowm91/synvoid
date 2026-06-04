@@ -26,7 +26,6 @@ synvoid/
 │   └── synvoid-utils/      # Shared utilities (buffer pool, serialization)
 ├── admin-ui/               # Admin dashboard frontend
 ├── pqc/                    # Post-quantum cryptography crate
-├── cloak/                  # Cloakrs encryption library
 ├── skills/                 # Detailed subsystem documentation
 ├── architecture/           # This documentation set
 ├── docs/                   # Architecture decision records (ADRs)
