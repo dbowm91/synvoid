@@ -12,12 +12,10 @@ use http::Response;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use http_body_util::Full;
-use hyper_util::rt::TokioIo;
 use metrics::counter;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
@@ -66,42 +64,16 @@ use request_preparation::{
     RequestPreparationOutcome,
 };
 
-use crate::waf::traffic_shaper::ConnectionLimiter;
-use crate::waf::ConnectionToken;
-use parking_lot::Mutex;
-
+mod accept_loop;
 mod backend_dispatch;
+mod connection_types;
+mod observability;
 mod request_preparation;
 mod traffic_control;
 
-struct ConnectionTokenGuard {
-    limiter: Arc<ConnectionLimiter>,
-    token: Arc<Mutex<Option<ConnectionToken>>>,
-}
+pub(super) use observability::{send_request_log_if_enabled, RequestMetrics};
 
-impl ConnectionTokenGuard {
-    fn new(limiter: Arc<ConnectionLimiter>, token: ConnectionToken) -> Self {
-        Self {
-            limiter,
-            token: Arc::new(Mutex::new(Some(token))),
-        }
-    }
-
-    fn release_and_acquire(&self, new_token: ConnectionToken) -> Option<ConnectionToken> {
-        let mut guard = self.token.lock();
-        let old_token = guard.take();
-        *guard = Some(new_token);
-        old_token
-    }
-}
-
-impl Drop for ConnectionTokenGuard {
-    fn drop(&mut self) {
-        if let Some(token) = self.token.lock().take() {
-            self.limiter.release(token);
-        }
-    }
-}
+use connection_types::*;
 
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
@@ -121,156 +93,12 @@ use crate::mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
 use crate::mesh::MeshBackendPool;
 use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
-use crate::metrics::{RequestLogPayload, WorkerInlineCpuPhase, WorkerMetrics};
-use crate::process::current_timestamp;
+use crate::metrics::{WorkerInlineCpuPhase, WorkerMetrics};
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
-use crate::RunningFlag;
 use tokio::sync::RwLock;
-
-static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
-static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
-
-const HTTP_VALID_METHODS: &[&str] = &[
-    "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
-];
-
-fn is_valid_http_request_start(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return false;
-    }
-
-    for method in HTTP_VALID_METHODS {
-        let method_bytes = method.as_bytes();
-        if bytes.len() > method_bytes.len()
-            && bytes[..method_bytes.len()] == *method_bytes
-            && bytes[method_bytes.len()] == b' '
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_tls_client_hello(bytes: &[u8]) -> bool {
-    bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
-}
-
-struct ProtocolValidatingStream<S> {
-    stream: S,
-    initial_bytes: Option<Vec<u8>>,
-}
-
-impl<S> ProtocolValidatingStream<S> {
-    fn new(stream: S, initial_bytes: Vec<u8>) -> Self {
-        Self {
-            stream,
-            initial_bytes: Some(initial_bytes),
-        }
-    }
-}
-
-impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ProtocolValidatingStream<S> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        if let Some(bytes) = self.initial_bytes.take() {
-            let len = bytes.len().min(buf.remaining());
-            buf.put_slice(&bytes[..len]);
-            if len < bytes.len() {
-                self.initial_bytes = Some(bytes[len..].to_vec());
-            }
-            return std::task::Poll::Ready(Ok(()));
-        }
-        std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
-    }
-}
-
-impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for ProtocolValidatingStream<S> {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        std::pin::Pin::new(&mut self.stream).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.stream).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.stream).poll_shutdown(cx)
-    }
-}
-
-struct HttpConnection {
-    io: Mutex<Option<TokioIo<ProtocolValidatingStream<tokio::net::TcpStream>>>>,
-    drop_requested: RunningFlag,
-}
-
-impl HttpConnection {
-    fn new(stream: tokio::net::TcpStream, initial_bytes: Vec<u8>) -> Self {
-        let stream = if initial_bytes.is_empty() {
-            ProtocolValidatingStream::new(stream, vec![])
-        } else {
-            ProtocolValidatingStream::new(stream, initial_bytes)
-        };
-        Self {
-            io: Mutex::new(Some(TokioIo::new(stream))),
-            drop_requested: RunningFlag::new(),
-        }
-    }
-
-    fn request_drop(&self) {
-        self.drop_requested.stop();
-    }
-
-    fn should_drop(&self) -> bool {
-        !self.drop_requested.is_running()
-    }
-
-    fn take_stream(&self) -> Option<TokioIo<ProtocolValidatingStream<tokio::net::TcpStream>>> {
-        self.io.lock().take()
-    }
-}
-
-struct DrainGuard {
-    state: Option<Arc<WorkerDrainState>>,
-}
-
-impl DrainGuard {
-    fn new(state: Option<Arc<WorkerDrainState>>) -> Self {
-        if let Some(ref ds) = state {
-            ds.increment_active();
-        }
-        Self { state }
-    }
-}
-
-impl Drop for DrainGuard {
-    fn drop(&mut self) {
-        if let Some(ref state) = self.state {
-            state.decrement_active();
-        }
-    }
-}
-
-#[allow(dead_code)]
-struct RequestMetrics {
-    site_id: String,
-    metrics: Arc<WorkerMetrics>,
-}
 
 struct PassBackendDispatchContext<'a> {
     app_servers:
@@ -323,47 +151,6 @@ struct PassUpstreamProxyContext<'a> {
     alt_svc: &'a Option<String>,
     #[cfg(feature = "mesh")]
     mesh_transport: &'a Option<Arc<MeshTransportManager>>,
-}
-
-#[allow(dead_code)]
-impl RequestMetrics {
-    fn record_start(&self) {
-        self.metrics.record_site_request_start(&self.site_id);
-    }
-
-    fn record_blocked(&self) {
-        self.metrics.record_site_blocked(&self.site_id);
-    }
-
-    fn record_challenged(&self) {
-        self.metrics.record_site_challenged(&self.site_id);
-    }
-
-    fn record_proxied(&self) {
-        self.metrics.record_site_proxied(&self.site_id);
-    }
-
-    fn record_upstream_success(&self) {
-        self.metrics.record_site_upstream_success(&self.site_id);
-    }
-
-    fn record_upstream_failure(&self) {
-        self.metrics.record_site_upstream_failure(&self.site_id);
-    }
-
-    fn record_request_end(&self, latency_ms: u64) {
-        self.metrics
-            .record_site_request_end(&self.site_id, latency_ms);
-    }
-
-    fn record_egress(&self, bytes: u64, direction: EgressDirection) {
-        self.metrics
-            .bandwidth
-            .record_egress(bytes, BandwidthProtocol::Http, direction);
-        self.metrics
-            .bandwidth
-            .record_site_egress(&self.site_id, bytes);
-    }
 }
 
 pub struct HttpServer {
@@ -505,193 +292,37 @@ impl HttpServer {
     }
 
     #[cfg(feature = "mesh")]
-    pub async fn serve(mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let std_listener = crate::platform::socket::bind_tcp_reuse(self.addr)?;
-        let listener = TcpListener::from_std(std_listener)?;
-        tracing::info!(
-            "HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
-            self.addr
-        );
-
-        let router = self.router.clone();
-        let waf = self.waf.clone();
-        let client = self.client.clone();
-        let flood_protector = self.flood_protector.clone();
-        let http_config = self.http_config.clone();
-        let alt_svc = self.alt_svc.clone();
-        let main_config = self.main_config.clone();
-        let drain_state = self.drain_state.clone();
-        #[cfg(feature = "mesh")]
-        let mesh_config = self.mesh_config.clone();
-        #[cfg(feature = "mesh")]
-        let mesh_transport = self.mesh_transport.clone();
-        let metrics = self.metrics.clone();
-        let worker_id = self.worker_id;
-        let serverless_manager = self.serverless_manager.clone();
-        let connection_limit = self.connection_limit.clone();
-        let app_servers = self.app_servers.clone();
-        #[cfg(feature = "mesh")]
-        let mesh_backend_pool = self.mesh_backend_pool.clone();
-        let upstream_client_registry = self.upstream_client_registry.clone();
-        let erased_http_client = self.erased_http_client.clone();
-
-        let header_read_timeout = Duration::from_secs(self.http_config.header_read_timeout_secs);
-        let max_headers = self.http_config.max_headers;
-        let max_buf_size = self.http_config.max_request_size;
-
-        loop {
-            tokio::select! {
-                _ = self.shutdown_rx.recv() => {
-                    tracing::info!("HTTP server received shutdown signal");
-                    break;
-                }
-                result = listener.accept() => {
-                    match result {
-                        Ok((stream, client_addr)) => {
-                            let client_ip = client_addr.ip();
-
-                            let local_addr = stream.local_addr().ok();
-
-                            if let Some(ref fp) = flood_protector {
-                                match fp.check_tcp_connection(client_ip) {
-                                    FloodDecision::Blackholed => {
-                                        counter!("synvoid.http.flood_blackhole").increment(1);
-                                        continue;
-                                    }
-                                    FloodDecision::RateLimited => {
-                                        counter!("synvoid.http.flood_limited").increment(1);
-                                        continue;
-                                    }
-                                    FloodDecision::Allowed => {}
-                                }
-                            }
-
-                            let router = router.clone();
-                            let waf = waf.clone();
-                            let client = client.clone();
-                            let alt_svc = alt_svc.clone();
-                            let main_config = main_config.clone();
-                            let drain_state = drain_state.clone();
-                            let http_config = http_config.clone();
-                            #[cfg(feature = "mesh")]
-                            let mesh_config = mesh_config.clone();
-                            #[cfg(feature = "mesh")]
-                            let mesh_transport = mesh_transport.clone();
-                            let metrics = metrics.clone();
-                            let ipc = self.ipc.clone();
-                            let serverless_manager = serverless_manager.clone();
-                            let connection_limit = connection_limit.clone();
-                            let app_servers = app_servers.clone();
-                            #[cfg(feature = "mesh")]
-                            let mesh_backend_pool = mesh_backend_pool.clone();
-                            let upstream_client_registry = upstream_client_registry.clone();
-                            let erased_http_client = erased_http_client.clone();
-
-                            let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
-                                let mut peek_buf = [0u8; 16];
-                                let mut stream_clone = stream;
-                                match tokio::io::AsyncReadExt::read(&mut stream_clone, &mut peek_buf).await {
-                                    Ok(n) => {
-                                        if n == 0 {
-                                            continue;
-                                        }
-                                        if is_tls_client_hello(&peek_buf[..n]) {
-                                            counter!("synvoid.http.tls_on_http_port").increment(1);
-                                            tracing::debug!(
-                                                "Rejected TLS connection on HTTP port from {}",
-                                                client_ip
-                                            );
-                                            continue;
-                                        }
-                                        if !is_valid_http_request_start(&peek_buf[..n]) {
-                                            counter!("synvoid.http.invalid_protocol").increment(1);
-                                            tracing::debug!(
-                                                "Rejected non-HTTP connection on HTTP port from {}",
-                                                client_ip
-                                            );
-                                            continue;
-                                        }
-                                        (peek_buf[..n].to_vec(), stream_clone)
-                                    }
-                                    Err(_) => {
-                                        continue;
-                                    }
-                                }
-                            } else {
-                                (vec![], stream)
-                            };
-
-                            let http_conn = Arc::new(HttpConnection::new(stream_for_conn, initial_bytes));
-                            let http_conn_clone = http_conn.clone();
-
-                            let io = match http_conn.io.lock().take() {
-                                Some(io) => io,
-                                None => {
-                                    tracing::error!("Failed to take IO from HTTP connection");
-                                    continue;
-                                }
-                            };
-
-                            let conn = hyper::server::conn::http1::Builder::new()
-                                .header_read_timeout(header_read_timeout)
-                                .max_headers(max_headers)
-                                .max_buf_size(max_buf_size)
-                                .serve_connection(io, hyper::service::service_fn(move |req| {
-                                    let router = router.clone();
-                                    let waf = waf.clone();
-                                    let client = client.clone();
-                                    let alt_svc = alt_svc.clone();
-                                    let main_config = main_config.clone();
-                                    let local_addr = local_addr;
-                                    let drain_state = drain_state.clone();
-                                    let http_config = http_config.clone();
-                                    #[cfg(feature = "mesh")]
-                                    let mesh_config = mesh_config.clone();
-                                    #[cfg(feature = "mesh")]
-                                    let mesh_transport = mesh_transport.clone();
-                                    let metrics = metrics.clone();
-                                    let http_conn = http_conn_clone.clone();
-                                    let ipc_for_request = ipc.clone();
-                                    let worker_id_for_request = worker_id;
-                                    let serverless_manager = serverless_manager.clone();
-                                    let connection_limit = connection_limit.clone();
-                                    let app_servers = app_servers.clone();
-                                    #[cfg(feature = "mesh")]
-                                    let mesh_backend_pool = mesh_backend_pool.clone();
-                                    let upstream_client_registry = upstream_client_registry.clone();
-                                    let erased_http_client = erased_http_client.clone();
-                                    async move {
-                                        Self::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry, erased_http_client).await
-                                    }
-                                }))
-                                .with_upgrades();
-
-                            tokio::spawn(async move {
-                                if let Err(e) = conn.await {
-                                    tracing::debug!("HTTP connection error: {}", e);
-                                }
-                                if http_conn.should_drop() {
-                                    if let Some(stream) = http_conn.take_stream() {
-                                        drop(stream);
-                                    }
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            tracing::error!("Accept error: {}", e);
-                        }
-                    }
-                }
-            }
-        }
-
-        tracing::info!("HTTP server shutdown");
-
-        Ok(())
+    pub async fn serve(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        accept_loop::run_accept_loop(
+            self.addr,
+            self.shutdown_rx,
+            self.router,
+            self.waf,
+            self.client,
+            self.flood_protector,
+            self.http_config,
+            self.alt_svc,
+            self.main_config,
+            self.drain_state,
+            #[cfg(feature = "mesh")]
+            self.mesh_config,
+            #[cfg(feature = "mesh")]
+            self.mesh_transport,
+            self.metrics,
+            self.ipc,
+            self.worker_id,
+            self.serverless_manager,
+            self.connection_limit,
+            self.app_servers,
+            #[cfg(feature = "mesh")]
+            self.mesh_backend_pool,
+            self.upstream_client_registry,
+            self.erased_http_client,
+        ).await
     }
 
     #[allow(unused_assignments)]
-    async fn handle_request(
+    pub(super) async fn handle_request(
         mut req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,
         local_addr: Option<SocketAddr>,
@@ -923,7 +554,7 @@ impl HttpServer {
                 &main_config,
                 || http_conn.request_drop(),
                 |status, latency_ms| {
-                    Self::send_request_log_if_enabled(
+                    send_request_log_if_enabled(
                         ipc.clone(),
                         worker_id,
                         &main_config,
@@ -1019,7 +650,7 @@ impl HttpServer {
 
         let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
         let ipc_clone = ipc.clone();
-        Self::send_request_log_if_enabled(
+        send_request_log_if_enabled(
             ipc_clone,
             worker_id,
             &main_config,
@@ -1034,85 +665,6 @@ impl HttpServer {
         );
 
         response
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn send_request_log_if_enabled(
-        ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-        worker_id: Option<crate::process::ipc::WorkerId>,
-        main_config: &Arc<MainConfig>,
-        client_ip: IpAddr,
-        method: &str,
-        path: &str,
-        status: u16,
-        latency_ms: u64,
-        site_id: &str,
-        user_agent: Option<&str>,
-        is_internal: bool,
-    ) {
-        let verbose_config = &main_config.logging.verbose_request_logging;
-        if !verbose_config.enabled {
-            return;
-        }
-
-        let should_log = if is_internal {
-            verbose_config.log_internal
-        } else {
-            match status {
-                0 => verbose_config.log_dropped,
-                1..=399 => verbose_config.log_proxied,
-                400..=599 => verbose_config.log_blocked,
-                _ => false,
-            }
-        };
-
-        if !should_log {
-            return;
-        }
-
-        let max_per_second = verbose_config.max_logs_per_second;
-        let now = crate::utils::safe_unix_timestamp();
-
-        let last_reset = REQUEST_LOG_RATE_LIMITER_RESET.load(Ordering::Relaxed);
-        if now != last_reset {
-            // Only one thread should reset the counter per second.
-            // compare_exchange ensures only the first caller resets.
-            if REQUEST_LOG_RATE_LIMITER_RESET
-                .compare_exchange(last_reset, now, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                REQUEST_LOG_RATE_LIMITER.store(0, Ordering::Relaxed);
-            }
-        }
-
-        let current_count = REQUEST_LOG_RATE_LIMITER.fetch_add(1, Ordering::Relaxed);
-        if current_count >= max_per_second {
-            return;
-        }
-
-        if let (Some(ref ipc), Some(ref worker_id)) = (ipc, worker_id) {
-            let log = RequestLogPayload {
-                timestamp: current_timestamp(),
-                client_ip: client_ip.to_string(),
-                method: method.to_string(),
-                path: path.to_string(),
-                status,
-                response_time_ms: latency_ms as u32,
-                site_id: site_id.to_string(),
-                user_agent: user_agent.map(|s| s.to_string()),
-                bytes_sent: 0,
-                bytes_received: 0,
-            };
-            let ipc = ipc.clone();
-            let worker_id = *worker_id;
-            tokio::spawn(async move {
-                let mut ipc_guard = ipc.lock().await;
-                let msg = crate::process::Message::WorkerRequestLog { id: worker_id, log };
-                if let Err(e) = ipc_guard.send(&msg).await {
-                    tracing::warn!("Failed to send request log: {}", e);
-                }
-            });
-        }
     }
 }
 

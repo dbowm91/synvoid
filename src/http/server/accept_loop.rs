@@ -1,0 +1,186 @@
+use super::*;
+
+pub(super) async fn run_accept_loop(
+    addr: SocketAddr,
+    mut shutdown_rx: broadcast::Receiver<()>,
+    router: Arc<Router>,
+    waf: Arc<WafCore>,
+    client: HttpClient,
+    flood_protector: Option<Arc<FloodProtector>>,
+    http_config: HttpConfig,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    drain_state: Option<Arc<WorkerDrainState>>,
+    #[cfg(feature = "mesh")] mesh_config: Option<Arc<MeshConfig>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
+    metrics: Option<Arc<WorkerMetrics>>,
+    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    worker_id: Option<crate::process::ipc::WorkerId>,
+    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    connection_limit: Arc<Semaphore>,
+    app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
+    #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
+    erased_http_client: ErasedHttpClient,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let std_listener = crate::platform::socket::bind_tcp_reuse(addr)?;
+    let listener = TcpListener::from_std(std_listener)?;
+    tracing::info!(
+        "HTTP server listening on {} (HTTP/1.1 + HTTP/2) [SO_REUSEPORT]",
+        addr
+    );
+
+    let header_read_timeout = Duration::from_secs(http_config.header_read_timeout_secs);
+    let max_headers = http_config.max_headers;
+    let max_buf_size = http_config.max_request_size;
+
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                tracing::info!("HTTP server received shutdown signal");
+                break;
+            }
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, client_addr)) => {
+                        let client_ip = client_addr.ip();
+
+                        let local_addr = stream.local_addr().ok();
+
+                        if let Some(ref fp) = flood_protector {
+                            match fp.check_tcp_connection(client_ip) {
+                                FloodDecision::Blackholed => {
+                                    counter!("synvoid.http.flood_blackhole").increment(1);
+                                    continue;
+                                }
+                                FloodDecision::RateLimited => {
+                                    counter!("synvoid.http.flood_limited").increment(1);
+                                    continue;
+                                }
+                                FloodDecision::Allowed => {}
+                            }
+                        }
+
+                        let router = router.clone();
+                        let waf = waf.clone();
+                        let client = client.clone();
+                        let alt_svc = alt_svc.clone();
+                        let main_config = main_config.clone();
+                        let drain_state = drain_state.clone();
+                        let http_config = http_config.clone();
+                        #[cfg(feature = "mesh")]
+                        let mesh_config = mesh_config.clone();
+                        #[cfg(feature = "mesh")]
+                        let mesh_transport = mesh_transport.clone();
+                        let metrics = metrics.clone();
+                        let ipc = ipc.clone();
+                        let serverless_manager = serverless_manager.clone();
+                        let connection_limit = connection_limit.clone();
+                        let app_servers = app_servers.clone();
+                        #[cfg(feature = "mesh")]
+                        let mesh_backend_pool = mesh_backend_pool.clone();
+                        let upstream_client_registry = upstream_client_registry.clone();
+                        let erased_http_client = erased_http_client.clone();
+
+                        let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
+                            let mut peek_buf = [0u8; 16];
+                            let mut stream_clone = stream;
+                            match tokio::io::AsyncReadExt::read(&mut stream_clone, &mut peek_buf).await {
+                                Ok(n) => {
+                                    if n == 0 {
+                                        continue;
+                                    }
+                                    if is_tls_client_hello(&peek_buf[..n]) {
+                                        counter!("synvoid.http.tls_on_http_port").increment(1);
+                                        tracing::debug!(
+                                            "Rejected TLS connection on HTTP port from {}",
+                                            client_ip
+                                        );
+                                        continue;
+                                    }
+                                    if !is_valid_http_request_start(&peek_buf[..n]) {
+                                        counter!("synvoid.http.invalid_protocol").increment(1);
+                                        tracing::debug!(
+                                            "Rejected non-HTTP connection on HTTP port from {}",
+                                            client_ip
+                                        );
+                                        continue;
+                                    }
+                                    (peek_buf[..n].to_vec(), stream_clone)
+                                }
+                                Err(_) => {
+                                    continue;
+                                }
+                            }
+                        } else {
+                            (vec![], stream)
+                        };
+
+                        let http_conn = Arc::new(HttpConnection::new(stream_for_conn, initial_bytes));
+                        let http_conn_clone = http_conn.clone();
+
+                        let io = match http_conn.io.lock().take() {
+                            Some(io) => io,
+                            None => {
+                                tracing::error!("Failed to take IO from HTTP connection");
+                                continue;
+                            }
+                        };
+
+                        let conn = hyper::server::conn::http1::Builder::new()
+                            .header_read_timeout(header_read_timeout)
+                            .max_headers(max_headers)
+                            .max_buf_size(max_buf_size)
+                            .serve_connection(io, hyper::service::service_fn(move |req| {
+                                let router = router.clone();
+                                let waf = waf.clone();
+                                let client = client.clone();
+                                let alt_svc = alt_svc.clone();
+                                let main_config = main_config.clone();
+                                let local_addr = local_addr;
+                                let drain_state = drain_state.clone();
+                                let http_config = http_config.clone();
+                                #[cfg(feature = "mesh")]
+                                let mesh_config = mesh_config.clone();
+                                #[cfg(feature = "mesh")]
+                                let mesh_transport = mesh_transport.clone();
+                                let metrics = metrics.clone();
+                                let http_conn = http_conn_clone.clone();
+                                let ipc_for_request = ipc.clone();
+                                let worker_id_for_request = worker_id;
+                                let serverless_manager = serverless_manager.clone();
+                                let connection_limit = connection_limit.clone();
+                                let app_servers = app_servers.clone();
+                                #[cfg(feature = "mesh")]
+                                let mesh_backend_pool = mesh_backend_pool.clone();
+                                let upstream_client_registry = upstream_client_registry.clone();
+                                let erased_http_client = erased_http_client.clone();
+                                async move {
+                                    super::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry, erased_http_client).await
+                                }
+                            }))
+                            .with_upgrades();
+
+                        tokio::spawn(async move {
+                            if let Err(e) = conn.await {
+                                tracing::debug!("HTTP connection error: {}", e);
+                            }
+                            if http_conn.should_drop() {
+                                if let Some(stream) = http_conn.take_stream() {
+                                    drop(stream);
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Accept error: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!("HTTP server shutdown");
+
+    Ok(())
+}
