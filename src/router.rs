@@ -486,6 +486,10 @@ impl Router {
         self.plugin_manager.as_ref()
     }
 
+    pub fn async_minifier_client(&self) -> Option<&AsyncMinifierClient> {
+        self.async_minifier_client.as_ref()
+    }
+
     #[inline]
     fn is_host_valid_for_site(&self, clean_host: &str, site_config: &Arc<SiteConfig>) -> bool {
         if let Some(suffixes) = self

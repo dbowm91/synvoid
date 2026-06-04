@@ -1078,6 +1078,87 @@ impl AsyncMinifierClient {
         self
     }
 
+    pub async fn request_wasm_transform(
+        &self,
+        site_id: &str,
+        plugin_names: &[String],
+        status_code: u16,
+        body: Vec<u8>,
+        env: std::collections::HashMap<String, String>,
+        policy: crate::process::CpuTaskPolicy,
+        timeout_ms: u64,
+    ) -> Result<(u16, Vec<u8>), MinifierClientError> {
+        let connection = self
+            .pool
+            .acquire_for_task_kind(crate::process::CpuTaskKind::WasmExecute, self.timeout_ms)
+            .await?;
+
+        let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let deadline_unix_ms = crate::utils::current_timestamp()
+            .saturating_mul(1000)
+            .saturating_add(timeout_ms);
+
+        let payload_size = body.len();
+        let request = Message::CpuTaskRequest {
+            request_id,
+            task_kind: crate::process::CpuTaskKind::WasmExecute,
+            priority: crate::process::CpuTaskPriority::Normal,
+            policy,
+            deadline_unix_ms,
+            payload_size_limit: (payload_size as u64).max(1024 * 1024),
+            output_size_limit: (payload_size as u64 + 65536).max(2 * 1024 * 1024),
+            file_payload_path: None,
+            payload: crate::process::CpuTaskPayload::WasmTransformResponse {
+                site_id: site_id.to_string(),
+                plugin_names: plugin_names.to_vec(),
+                status_code,
+                body,
+                env,
+                timeout_ms,
+            },
+        };
+
+        let response = match connection
+            .submit_with_timeout(
+                request,
+                request_id,
+                crate::process::CpuTaskKind::WasmExecute,
+                timeout_ms,
+            )
+            .await
+        {
+            Ok(message) => message,
+            Err(err) => {
+                let is_timeout = matches!(err, AsyncCpuTaskDispatchError::Timeout);
+                if is_timeout {
+                    record_cpu_offload_timeout();
+                }
+                self.pool.release(&connection);
+                if is_timeout && connection.is_closed() {
+                    self.pool.evict(&connection).await;
+                } else {
+                    self.pool.evict(&connection).await;
+                }
+                return Err(map_async_cpu_task_dispatch_error_for_minifier(err));
+            }
+        };
+
+        self.pool.release(&connection);
+
+        match response {
+            Message::CpuTaskResponse {
+                result: crate::process::CpuTaskResult::WasmTransformResponse { status_code, body },
+                ..
+            } => Ok((status_code, body)),
+            Message::CpuTaskError { message, .. } => {
+                Err(MinifierClientError::MinificationFailed(message))
+            }
+            _ => Err(MinifierClientError::ReceiveFailed(
+                "Unexpected response type".to_string(),
+            )),
+        }
+    }
+
     pub async fn request_minify(
         &self,
         site_id: &str,

@@ -122,32 +122,27 @@ pub async fn maybe_handle_fastcgi_or_php_backend(
             let content_type = response.headers.get("content-type").map(|v| v.as_str());
             let mut body = response.body;
 
-            if let Some(pm) = router.plugin_manager() {
-                let wasm_resp = http::Response::builder()
-                    .status(response.status)
-                    .body(body.clone())
-                    .unwrap_or_else(|_| {
-                        http::Response::builder()
-                            .status(response.status)
-                            .body(Bytes::from_static(&[]))
-                            .unwrap_or_else(|_| http::Response::new(Bytes::from_static(&[])))
-                    });
-                let transform_result =
-                    if let Some(ref plugin_names) = target.site_config.proxy.wasm_plugins {
-                        pm.apply_wasm_response_transforms_with_plugins(
-                            wasm_resp,
+            if let Some(plugin_names) = &target.site_config.proxy.wasm_plugins {
+                if let Some(client) = router.async_minifier_client() {
+                    let policy = crate::process::CpuTaskPolicy::FailOpenWithLog;
+                    match client
+                        .request_wasm_transform(
+                            site_id,
                             plugin_names,
+                            response.status,
+                            body.to_vec(),
                             HashMap::new(),
+                            policy,
+                            30000,
                         )
-                    } else {
-                        pm.apply_wasm_response_transforms(wasm_resp, HashMap::new())
-                    };
-                match transform_result {
-                    Ok(transformed) => {
-                        body = transformed.into_body();
-                    }
-                    Err(e) => {
-                        tracing::error!("WASM response transform error: {}", e);
+                        .await
+                    {
+                        Ok((_resp_status, transformed_body)) => {
+                            body = Bytes::from(transformed_body);
+                        }
+                        Err(e) => {
+                            tracing::error!("WASM response transform offload error: {}", e);
+                        }
                     }
                 }
             }

@@ -37,37 +37,34 @@ where
     // work is already offloaded through the CPU worker path; this function only
     // handles already-buffered upstream responses.
     let upstream_body_len = body.len() as u64;
-    let (mut body, mut body_len) = if let Some(pm) = router.plugin_manager() {
-        let wasm_resp = http::Response::builder()
-            .status(status)
-            .body(body.clone())
-            .unwrap_or_else(|_| {
-                http::Response::builder()
-                    .status(status)
-                    .body(Bytes::from_static(&[]))
-                    .unwrap_or_else(|_| http::Response::new(Bytes::from_static(&[])))
-            });
-        let transform_result = if let Some(ref plugin_names) = target.site_config.proxy.wasm_plugins
-        {
-            pm.apply_wasm_response_transforms_with_plugins(
-                wasm_resp,
-                plugin_names,
-                std::collections::HashMap::new(),
-            )
+    let (mut body, mut body_len) = if let Some(plugin_names) = &target.site_config.proxy.wasm_plugins {
+        if let Some(client) = router.async_minifier_client() {
+            let policy = crate::process::CpuTaskPolicy::FailOpenWithLog;
+            match client
+                .request_wasm_transform(
+                    site_id,
+                    plugin_names,
+                    status,
+                    body.to_vec(),
+                    std::collections::HashMap::new(),
+                    policy,
+                    30000,
+                )
+                .await
+            {
+                Ok((_resp_status, transformed_body)) => {
+                    let transformed_len = transformed_body.len() as u64;
+                    (Bytes::from(transformed_body), transformed_len)
+                }
+                Err(e) => {
+                    tracing::error!("WASM response transform offload error: {}", e);
+                    let original_len = body.len() as u64;
+                    (body, original_len)
+                }
+            }
         } else {
-            pm.apply_wasm_response_transforms(wasm_resp, std::collections::HashMap::new())
-        };
-        match transform_result {
-            Ok(transformed) => {
-                let transformed_body = transformed.into_body();
-                let transformed_len = transformed_body.len() as u64;
-                (transformed_body, transformed_len)
-            }
-            Err(e) => {
-                tracing::error!("WASM response transform error: {}", e);
-                let original_len = body.len() as u64;
-                (body, original_len)
-            }
+            let original_len = body.len() as u64;
+            (body, original_len)
         }
     } else {
         let original_len = body.len() as u64;

@@ -348,6 +348,8 @@ pub fn process_cpu_task_request_sync(
                 },
             }
         }
+        // Serverless handler ABI (handle_request) — NOT for response transforms.
+        // Response transforms use CpuTaskPayload::WasmTransformResponse instead.
         CpuTaskPayload::WasmExecute {
             site_id: _site_id,
             plugin_name,
@@ -417,6 +419,70 @@ pub fn process_cpu_task_request_sync(
                     task_kind,
                     code: CpuTaskErrorCode::InternalError,
                     message: format!("Failed to create WASM execute runtime: {}", e),
+                    retryable: false,
+                },
+            }
+        }
+        CpuTaskPayload::WasmTransformResponse {
+            site_id: _site_id,
+            plugin_names,
+            status_code,
+            body,
+            env,
+            timeout_ms: _timeout_ms,
+        } => {
+            let plugin_manager = crate::plugin::get_global_plugin_manager();
+            let wasm_manager = plugin_manager.wasm_manager();
+
+            let wasm_resp = http::Response::builder()
+                .status(status_code)
+                .body(bytes::Bytes::from(body))
+                .unwrap_or_else(|_| {
+                    http::Response::builder()
+                        .status(200)
+                        .body(bytes::Bytes::new())
+                        .unwrap_or_else(|_| http::Response::new(bytes::Bytes::new()))
+                });
+
+            let transform_result = wasm_manager.transform_response_with_plugins(
+                wasm_resp,
+                &plugin_names,
+                env,
+            );
+
+            match transform_result {
+                Ok(transformed) => {
+                    let (parts, transformed_body) = transformed.into_parts();
+                    let result = CpuTaskResult::WasmTransformResponse {
+                        status_code: parts.status.as_u16(),
+                        body: transformed_body.to_vec(),
+                    };
+                    let response = Message::CpuTaskResponse {
+                        request_id,
+                        task_kind,
+                        result,
+                    };
+                    if estimate_cpu_task_output_size(&response)
+                        > output_size_limit
+                            .min(state.cpu_task_limiter.limits.max_output_bytes as u64)
+                            as usize
+                    {
+                        Message::CpuTaskError {
+                            request_id,
+                            task_kind,
+                            code: CpuTaskErrorCode::PayloadTooLarge,
+                            message: "CPU task output exceeds configured cap".to_string(),
+                            retryable: false,
+                        }
+                    } else {
+                        response
+                    }
+                }
+                Err(e) => Message::CpuTaskError {
+                    request_id,
+                    task_kind,
+                    code: CpuTaskErrorCode::InternalError,
+                    message: format!("WASM response transform failed: {}", e),
                     retryable: false,
                 },
             }

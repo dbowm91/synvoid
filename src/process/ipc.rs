@@ -179,6 +179,14 @@ pub enum CpuTaskPayload {
         input: Vec<u8>,
         timeout_ms: u64,
     },
+    WasmTransformResponse {
+        site_id: String,
+        plugin_names: Vec<String>,
+        status_code: u16,
+        body: Vec<u8>,
+        env: std::collections::HashMap<String, String>,
+        timeout_ms: u64,
+    },
 }
 
 impl CpuTaskPayload {
@@ -190,6 +198,7 @@ impl CpuTaskPayload {
             CpuTaskPayload::YaraScan { .. } => CpuTaskKind::YaraScan,
             CpuTaskPayload::WasmExecute { .. } => CpuTaskKind::WasmExecute,
             CpuTaskPayload::ServerlessInvoke { .. } => CpuTaskKind::ServerlessInvoke,
+            CpuTaskPayload::WasmTransformResponse { .. } => CpuTaskKind::WasmExecute,
         }
     }
 }
@@ -216,6 +225,10 @@ pub enum CpuTaskResult {
     WasmExecute {
         output: Vec<u8>,
     },
+    WasmTransformResponse {
+        status_code: u16,
+        body: Vec<u8>,
+    },
     ServerlessInvoke {
         output: Vec<u8>,
     },
@@ -229,6 +242,7 @@ impl CpuTaskResult {
             CpuTaskResult::PoisonImage { .. } => CpuTaskKind::PoisonImage,
             CpuTaskResult::YaraScan { .. } => CpuTaskKind::YaraScan,
             CpuTaskResult::WasmExecute { .. } => CpuTaskKind::WasmExecute,
+            CpuTaskResult::WasmTransformResponse { .. } => CpuTaskKind::WasmExecute,
             CpuTaskResult::ServerlessInvoke { .. } => CpuTaskKind::ServerlessInvoke,
         }
     }
