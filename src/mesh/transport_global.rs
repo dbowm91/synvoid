@@ -140,7 +140,7 @@ impl MeshTransport {
 
         // MESH-14: Verify cert chain if present
         if let Some(cert_chain) = cert_chain {
-            let trusted_keys = self.cert_manager.get_global_node_public_keys();
+            let trusted_keys = self.cert_manager.read().get_global_node_public_keys();
             if let Err(e) = crate::mesh::cert::verify_certificate_chain(
                 cert_chain,
                 node_id,
@@ -157,7 +157,19 @@ impl MeshTransport {
                     "GlobalNodeAnnounce from {} has valid cert chain, registering binding",
                     node_id
                 );
-                // The binding is already registered via register_global_node()
+                // Extract public keys and register the cert binding
+                if let (Some(leaf_pubkey), Some(ca_pubkey)) = (
+                    crate::mesh::cert::extract_public_key_from_cert(&cert_chain.leaf_cert_der),
+                    crate::mesh::cert::extract_public_key_from_cert(&cert_chain.ca_cert_der),
+                ) {
+                    let binding = crate::mesh::cert::NodeCertBinding {
+                        node_id: node_id.to_string(),
+                        certified_public_key: leaf_pubkey,
+                        ca_public_key: ca_pubkey,
+                        timestamp: crate::mesh::safe_unix_timestamp(),
+                    };
+                    self.cert_manager.read().register_cert_binding(binding);
+                }
             }
         }
 

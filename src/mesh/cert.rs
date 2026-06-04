@@ -187,6 +187,7 @@ pub struct MeshCertManager {
     seed_tofu_fingerprints: Arc<RwLock<std::collections::HashMap<String, PinnedFingerprint>>>,
     tofu_enabled: Arc<RwLock<bool>>,
     require_explicit_fingerprint: Arc<RwLock<bool>>,
+    cert_bindings: Arc<RwLock<std::collections::HashMap<String, NodeCertBinding>>>,
 }
 
 impl std::fmt::Debug for MeshCertManager {
@@ -206,6 +207,7 @@ impl std::fmt::Debug for MeshCertManager {
                 "certificate_revocation_list",
                 &self.certificate_revocation_list,
             )
+            .field("cert_bindings", &self.cert_bindings.read().len())
             .finish_non_exhaustive()
     }
 }
@@ -258,6 +260,7 @@ impl MeshCertManager {
                     .map(|c| c.require_explicit_fingerprint)
                     .unwrap_or(false),
             )),
+            cert_bindings: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -973,6 +976,15 @@ impl MeshCertManager {
     pub fn add_peer_public_key(&self, peer_node_id: &str, public_key: Vec<u8>) {
         let mut keys = self.global_node_public_keys.write();
         keys.insert(peer_node_id.to_string(), public_key);
+    }
+
+    pub fn register_cert_binding(&self, binding: NodeCertBinding) {
+        let mut bindings = self.cert_bindings.write();
+        bindings.insert(binding.node_id.clone(), binding);
+    }
+
+    pub fn get_cert_binding(&self, node_id: &str) -> Option<NodeCertBinding> {
+        self.cert_bindings.read().get(node_id).cloned()
     }
 
     pub fn ca_mode(&self) -> bool {

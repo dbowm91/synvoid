@@ -574,6 +574,7 @@ pub enum SignedRecordType {
     GlobalNodeProof,
     GenesisKeyTransition,
     RevokedGlobalNode,
+    NodeCertBinding,
 }
 
 impl SignedRecordType {
@@ -617,6 +618,7 @@ impl SignedRecordType {
                 | SignedRecordType::YaraCompiledRuleContent
                 | SignedRecordType::YaraRulesManifest
                 | SignedRecordType::GlobalNodeProof
+                | SignedRecordType::NodeCertBinding
         )
     }
 
@@ -664,6 +666,7 @@ impl SignedRecordType {
             SignedRecordType::GlobalNodeProof => Some(Duration::from_secs(86400 * 30)),
             SignedRecordType::GenesisKeyTransition => Some(Duration::from_secs(86400)),
             SignedRecordType::RevokedGlobalNode => Some(Duration::from_secs(86400 * 7)),
+            SignedRecordType::NodeCertBinding => Some(Duration::from_secs(86400)),
         }
     }
 
@@ -861,6 +864,7 @@ impl SignedDhtRecord {
             SignedRecordType::RevokedGlobalNode => "RevokedGlobalNode",
             SignedRecordType::YaraCompiledRuleContent => "YaraCompiledRuleContent",
             SignedRecordType::GlobalNodeProof => "GlobalNodeProof",
+            SignedRecordType::NodeCertBinding => "NodeCertBinding",
         };
 
         let content = DhtRecordSignable {
@@ -1384,6 +1388,7 @@ impl TtlManager {
             SignedRecordType::RevokedGlobalNode => self.revoked_global_node_ttl,
             SignedRecordType::YaraCompiledRuleContent => self.yara_rule_content_ttl,
             SignedRecordType::GlobalNodeProof => Duration::from_secs(3600),
+            SignedRecordType::NodeCertBinding => Duration::from_secs(86400),
         }
     }
 

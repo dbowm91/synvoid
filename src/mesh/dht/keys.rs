@@ -110,6 +110,9 @@ pub enum DhtKey {
     BehavioralFingerprint {
         fingerprint_id: String,
     },
+    NodeCertBinding {
+        node_id: String,
+    },
     SiteScoped {
         site_id: String,
         inner_key: String,
@@ -359,6 +362,12 @@ impl DhtKey {
         }
     }
 
+    pub fn node_cert_binding(node_id: &str) -> Self {
+        DhtKey::NodeCertBinding {
+            node_id: node_id.to_string(),
+        }
+    }
+
     pub fn site_scoped(site_id: &str, inner: DhtKey) -> Self {
         DhtKey::SiteScoped {
             site_id: site_id.to_string(),
@@ -508,6 +517,9 @@ impl DhtKey {
             DhtKey::BehavioralFingerprint { fingerprint_id } => {
                 format!("behavior_fingerprint:{}", fingerprint_id)
             }
+            DhtKey::NodeCertBinding { node_id } => {
+                format!("node_cert_binding:{}", node_id)
+            }
             DhtKey::SiteScoped { site_id, inner_key } => {
                 format!("site_scoped:{}:{}", site_id, inner_key)
             }
@@ -645,6 +657,9 @@ impl DhtKey {
             "behavior_fingerprint" if parts.len() >= 2 => DhtKey::BehavioralFingerprint {
                 fingerprint_id: parts[1..].join(":"),
             },
+            "node_cert_binding" if parts.len() >= 2 => DhtKey::NodeCertBinding {
+                node_id: parts[1..].join(":"),
+            },
             "site_scoped" if parts.len() >= 3 => {
                 let site_id = parts[1].to_string();
                 let inner_key = parts[2..].join(":");
@@ -709,6 +724,7 @@ impl DhtKey {
                     | DhtKey::UpstreamProxyCachePreferences(_)
                     | DhtKey::OrgPublicKey(_)
                     | DhtKey::BehavioralFingerprint { .. }
+                    | DhtKey::NodeCertBinding { .. }
             ),
         }
     }
@@ -743,7 +759,8 @@ impl DhtKey {
             | DhtKey::DnsDomainRegistration(_)
             | DhtKey::GenesisKeyTransition { .. }
             | DhtKey::RevokedGlobalNode { .. }
-            | DhtKey::GlobalNodeProof { .. } => RecordAuthority::RaftGlobal,
+            | DhtKey::GlobalNodeProof { .. }
+            | DhtKey::NodeCertBinding { .. } => RecordAuthority::RaftGlobal,
 
             DhtKey::NodeHealth(_)
             | DhtKey::NodeLoad(_)
@@ -846,6 +863,7 @@ impl DhtKey {
             DhtKey::RevokedGlobalNode { .. } => "revoked_global_node",
             DhtKey::ServerlessFunction { .. } => "serverless_function",
             DhtKey::BehavioralFingerprint { .. } => "behavioral_fingerprint",
+            DhtKey::NodeCertBinding { .. } => "node_cert_binding",
             DhtKey::YaraCompiledRuleContent { .. } => "yara_compiled_rule_content",
             DhtKey::YaraCompiledChunk { .. } => "yara_compiled_chunk",
             DhtKey::GlobalNodeProof { .. } => "global_node_proof",
@@ -904,6 +922,7 @@ impl DhtKey {
             DhtKey::UpstreamOwnershipChallenge(_) => None,
             DhtKey::GenesisKeyTransition { .. } => Some(SignedRecordType::GenesisKeyTransition),
             DhtKey::RevokedGlobalNode { .. } => Some(SignedRecordType::RevokedGlobalNode),
+            DhtKey::NodeCertBinding { .. } => Some(SignedRecordType::NodeCertBinding),
             DhtKey::ServerlessFunction { .. } => None,
             DhtKey::BehavioralFingerprint { .. } => None,
         }
