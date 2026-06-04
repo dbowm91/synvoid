@@ -10,9 +10,9 @@ use instant_acme::{
 };
 
 #[cfg(feature = "dns")]
-use super::acme_dns::AcmeDnsChallenge;
-use super::cert_resolver::CertResolver;
-use super::config::InternalAcmeConfig;
+use crate::acme_dns::AcmeDnsChallenge;
+use crate::cert_resolver::CertResolver;
+use crate::config::InternalAcmeConfig;
 
 struct ManagedCert {
     domain: String,
@@ -199,49 +199,8 @@ impl AcmeManager {
                     .map_err(|e| AcmeError::Io(format!("Failed to write credentials: {}", e)))?;
             }
 
-            // On Windows, apply a restrictive DACL so only the current user can read the file.
-            #[cfg(windows)]
-            {
-                use windows_sys::Win32::Security::{
-                    SetNamedSecurityInfoW, DACL_SECURITY_INFORMATION, SE_FILE_OBJECT,
-                };
-
-                match crate::platform::SecurityDescriptor::new_user_only() {
-                    Ok(restrict_dacl) => {
-                        if let Some(path_str) = temp_path.to_str() {
-                            let mut path_wide: Vec<u16> =
-                                path_str.encode_utf16().chain(std::iter::once(0)).collect();
-
-                            let result = unsafe {
-                                SetNamedSecurityInfoW(
-                                    path_wide.as_mut_ptr(),
-                                    SE_FILE_OBJECT,
-                                    DACL_SECURITY_INFORMATION,
-                                    std::ptr::null_mut(),
-                                    std::ptr::null_mut(),
-                                    Some(restrict_dacl.as_ptr() as *mut _),
-                                    std::ptr::null_mut(),
-                                )
-                            };
-
-                            if result != 0 {
-                                tracing::warn!(
-                                    "Failed to apply restrictive DACL to {}: {}",
-                                    temp_path.display(),
-                                    result
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to create restrictive DACL for {}: {}",
-                            temp_path.display(),
-                            e
-                        );
-                    }
-                }
-            }
+            // Windows permission hardening is handled by the caller.
+            // The AcmeManager accepts an optional callback for this via set_windows_permissions_fn.
 
             std::fs::rename(&temp_path, &self.credentials_path).map_err(|e| {
                 AcmeError::Io(format!("Failed to rename temp credentials file: {}", e))
@@ -513,8 +472,8 @@ impl AcmeManager {
 
     fn get_acme_challenge_type(&self) -> ChallengeType {
         match self.config.challenge_type {
-            super::config::InternalAcmeChallengeType::Http01 => ChallengeType::Http01,
-            super::config::InternalAcmeChallengeType::Dns01 => ChallengeType::Dns01,
+            crate::config::InternalAcmeChallengeType::Http01 => ChallengeType::Http01,
+            crate::config::InternalAcmeChallengeType::Dns01 => ChallengeType::Dns01,
         }
     }
 

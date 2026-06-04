@@ -4,10 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::http_client::ErasedBody;
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response, StatusCode};
-use http_body_util::BodyExt;
 use parking_lot::RwLock;
 #[allow(unused_imports)]
 use wasmtime::component::{Component, Linker as ComponentLinker};
@@ -15,12 +13,12 @@ use wasmtime::{
     Config, Engine, Instance, Linker, Memory, Module, OptLevel, ResourceLimiter, Store, TypedFunc,
 };
 
-use crate::plugin::instance_pool::WasmInstancePool;
-use crate::plugin::wasm_metrics::{
+use crate::instance_pool::WasmInstancePool;
+use crate::streaming_body::StreamingBody;
+use crate::wasm_metrics::{
     record_wasm_decision_block, record_wasm_decision_challenge, record_wasm_decision_pass,
     record_wasm_duration, record_wasm_error, record_wasm_fuel_consumed, record_wasm_invocation,
 };
-use crate::plugin::{WasmFilterResult, WasmPluginError};
 
 /// Maximum size of request/response data passed through WASM memory (1MB)
 const MAX_WASM_DATA_SIZE: usize = 1024 * 1024;
@@ -894,10 +892,9 @@ impl WasmRuntime {
                         return -2;
                     }
 
-                    #[cfg(feature = "mesh")]
-                    let result = if let Some(rs) = crate::mesh::get_global_record_store() {
-                        if let Some(record) = rs.get_record(&key) {
-                            let value = &record.value;
+                    let result = if let Some(provider) = crate::mesh_callbacks::get_mesh_provider()
+                    {
+                        if let Some(value) = provider.get_record(&key) {
                             let value_len = value.len().min(out_max as usize);
                             let out_start = out_ptr as usize;
                             let out_end = out_start.saturating_add(value_len);
@@ -920,9 +917,6 @@ impl WasmRuntime {
                     } else {
                         0
                     };
-
-                    #[cfg(not(feature = "mesh"))]
-                    let result = 0;
 
                     if result > 0 {
                         tracing::debug!("WASM mesh_query_dht('{}') -> {} bytes", key, result);
@@ -956,10 +950,10 @@ impl WasmRuntime {
 
                     let ip_str = String::from_utf8_lossy(&mem_data[ip_start..ip_end]).to_string();
 
-                    #[cfg(feature = "mesh")]
-                    let threat_result = if let Some(rs) = crate::mesh::get_global_record_store() {
-                        let key = format!("threat_indicator:{}:IpBlock", ip_str);
-                        if rs.get_record(&key).is_some() {
+                    let threat_result = if let Some(provider) =
+                        crate::mesh_callbacks::get_mesh_provider()
+                    {
+                        if provider.check_threat(&ip_str) {
                             tracing::debug!("WASM mesh_check_threat('{}') -> THREATENED", ip_str);
                             1
                         } else {
@@ -968,9 +962,6 @@ impl WasmRuntime {
                     } else {
                         0
                     };
-
-                    #[cfg(not(feature = "mesh"))]
-                    let threat_result = 0;
 
                     if threat_result == 1 {
                         return 1;
@@ -1018,12 +1009,8 @@ impl WasmRuntime {
 
                     tracing::debug!("WASM mesh_emit_event('{}', {} bytes)", topic, data.len());
 
-                    #[cfg(feature = "mesh")]
-                    if let Some(rs) = crate::mesh::get_global_record_store() {
-                        let key = format!("event:{}", topic);
-                        if let Ok(bytes) = serde_json::to_vec(&data) {
-                            rs.store_and_announce(key, bytes, 300);
-                        }
+                    if let Some(provider) = crate::mesh_callbacks::get_mesh_provider() {
+                        provider.store_event(&topic, &data);
                     }
 
                     0
@@ -1569,7 +1556,7 @@ impl WasmRuntime {
         method: &str,
         uri: &str,
         headers: &str,
-        mut body: Box<dyn ErasedBody>,
+        body: Box<dyn StreamingBody>,
         env: std::collections::HashMap<String, String>,
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let start = Instant::now();
@@ -1588,19 +1575,22 @@ impl WasmRuntime {
 
         // Feed the body chunks into the receiver
         tokio::spawn(async move {
-            while let Some(chunk) = body.frame().await {
-                match chunk {
-                    Ok(frame) => {
+            let mut body = body;
+            loop {
+                let frame = std::future::poll_fn(|cx| body.poll_frame(cx)).await;
+                match frame {
+                    Some(Ok(frame)) => {
                         if let Some(data) = frame.data_ref() {
                             if tx.send(Ok(data.clone())).await.is_err() {
                                 break;
                             }
                         }
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         let _ = tx.send(Err(e)).await;
                         break;
                     }
+                    None => break,
                 }
             }
         });
@@ -1864,6 +1854,24 @@ impl WasmRuntime {
 
         Ok(response)
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WasmPluginError {
+    #[error("Failed to load WASM module: {0}")]
+    LoadFailed(String),
+    #[error("Function not found: {0}")]
+    FunctionNotFound(String),
+    #[error("Execution failed: {0}")]
+    ExecutionFailed(String),
+    #[error("Sandbox error: {0}")]
+    SandboxError(String),
+}
+
+pub enum WasmFilterResult {
+    Pass,
+    Block(StatusCode, String),
+    Challenge(String),
 }
 
 #[cfg(test)]

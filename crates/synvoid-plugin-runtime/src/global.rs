@@ -4,7 +4,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use thiserror::Error;
 
-use crate::plugin::WasmPluginManager;
+use crate::wasm_runtime::WasmPluginManager;
 
 static GLOBAL_PLUGIN_MANAGER: std::sync::LazyLock<Arc<GlobalPluginManager>> =
     std::sync::LazyLock::new(|| Arc::new(GlobalPluginManager::new()));

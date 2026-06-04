@@ -297,27 +297,11 @@ impl ProxyCache {
         self.inflight_revalidations.remove(key);
     }
 
-    #[cfg(feature = "mesh")]
-    pub fn apply_preferences(&self, preferences: &crate::mesh::protocol::ProxyCachePreferences) {
+    /// Update cache settings via a closure. The closure receives a mutable reference
+    /// to the current settings; changes are applied atomically under the write lock.
+    pub fn update_settings(&self, f: impl FnOnce(&mut ProxyCacheSettings)) {
         let mut settings = self.settings.read().clone();
-        settings.enabled = preferences.enable;
-        settings.inactive = std::time::Duration::from_secs(preferences.inactive);
-        settings.valid_status = preferences.valid_status.iter().map(|&v| v as u16).collect();
-        settings.methods = preferences.methods.clone();
-        settings.use_stale = preferences.use_stale.clone();
-        settings.min_uses = preferences.min_uses;
-        settings.stale_while_revalidate = if preferences.stale_while_revalidate > 0 {
-            Some(std::time::Duration::from_secs(
-                preferences.stale_while_revalidate,
-            ))
-        } else {
-            None
-        };
-        settings.stale_if_error = if preferences.stale_if_error > 0 {
-            Some(std::time::Duration::from_secs(preferences.stale_if_error))
-        } else {
-            None
-        };
+        f(&mut settings);
         *self.settings.write() = settings;
     }
 
@@ -914,13 +898,13 @@ mod tests {
 
     fn create_test_settings(temp_dir: &TempDir) -> ProxyCacheSettings {
         ProxyCacheSettings {
-            enabled: false,
+            enabled: true,
             path: temp_dir.path().join("cache"),
             max_memory_size: 1024 * 1024,
             max_disk_size: 10 * 1024 * 1024,
             inactive: Duration::from_secs(300),
             use_temp_file: false,
-            valid_status: vec![200],
+            valid_status: vec![200, 301],
             methods: vec!["GET".to_string()],
             use_stale: vec![],
             stale_while_revalidate: None,

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use wasmtime::{Instance, Store};
 
-use crate::plugin::wasm_runtime::RequestContext;
+use crate::wasm_runtime::RequestContext;
 
 pub struct PooledInstance {
     pub instance: Instance,

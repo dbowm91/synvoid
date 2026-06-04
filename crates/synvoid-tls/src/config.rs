@@ -59,8 +59,8 @@ impl Default for InternalTlsConfig {
     }
 }
 
-impl From<crate::config::TlsConfig> for InternalTlsConfig {
-    fn from(config: crate::config::TlsConfig) -> Self {
+impl From<synvoid_config::TlsConfig> for InternalTlsConfig {
+    fn from(config: synvoid_config::TlsConfig) -> Self {
         Self {
             enabled: config.enabled,
             cert_path: config.cert_path.map(PathBuf::from),
@@ -78,7 +78,7 @@ impl From<crate::config::TlsConfig> for InternalTlsConfig {
     }
 }
 
-impl From<InternalTlsConfig> for crate::config::TlsConfig {
+impl From<InternalTlsConfig> for synvoid_config::TlsConfig {
     fn from(config: InternalTlsConfig) -> Self {
         Self {
             enabled: config.enabled,
@@ -93,14 +93,14 @@ impl From<InternalTlsConfig> for crate::config::TlsConfig {
                 .ocsp_response_path
                 .map(|p| p.to_string_lossy().into_owned()),
             port: config.port,
-            acme: crate::config::AcmeConfig::from(config.acme),
-            client_auth: crate::config::ClientAuthConfig::from(config.client_auth),
+            acme: synvoid_config::AcmeConfig::from(config.acme),
+            client_auth: synvoid_config::ClientAuthConfig::from(config.client_auth),
             strict_protocol_validation: false,
         }
     }
 }
 
-impl From<InternalAcmeConfig> for crate::config::AcmeConfig {
+impl From<InternalAcmeConfig> for synvoid_config::AcmeConfig {
     fn from(config: InternalAcmeConfig) -> Self {
         Self {
             enabled: config.enabled,
@@ -109,15 +109,15 @@ impl From<InternalAcmeConfig> for crate::config::AcmeConfig {
             staging: config.staging,
             domains: config.domains,
             challenge_type: match config.challenge_type {
-                InternalAcmeChallengeType::Http01 => crate::config::AcmeChallengeType::Http01,
-                InternalAcmeChallengeType::Dns01 => crate::config::AcmeChallengeType::Dns01,
+                InternalAcmeChallengeType::Http01 => synvoid_config::AcmeChallengeType::Http01,
+                InternalAcmeChallengeType::Dns01 => synvoid_config::AcmeChallengeType::Dns01,
             },
             terms_of_service_agreed: config.terms_of_service_agreed,
         }
     }
 }
 
-impl From<InternalClientAuthConfig> for crate::config::ClientAuthConfig {
+impl From<InternalClientAuthConfig> for synvoid_config::ClientAuthConfig {
     fn from(config: InternalClientAuthConfig) -> Self {
         Self {
             enabled: config.enabled,
@@ -128,8 +128,8 @@ impl From<InternalClientAuthConfig> for crate::config::ClientAuthConfig {
     }
 }
 
-impl From<crate::config::ClientAuthConfig> for InternalClientAuthConfig {
-    fn from(config: crate::config::ClientAuthConfig) -> Self {
+impl From<synvoid_config::ClientAuthConfig> for InternalClientAuthConfig {
+    fn from(config: synvoid_config::ClientAuthConfig) -> Self {
         Self {
             enabled: config.enabled,
             ca_cert_path: config.ca_cert_path.map(PathBuf::from),
@@ -137,8 +137,8 @@ impl From<crate::config::ClientAuthConfig> for InternalClientAuthConfig {
     }
 }
 
-impl From<crate::config::AcmeConfig> for InternalAcmeConfig {
-    fn from(config: crate::config::AcmeConfig) -> Self {
+impl From<synvoid_config::AcmeConfig> for InternalAcmeConfig {
+    fn from(config: synvoid_config::AcmeConfig) -> Self {
         Self {
             enabled: config.enabled,
             email: config.email,
@@ -146,8 +146,8 @@ impl From<crate::config::AcmeConfig> for InternalAcmeConfig {
             staging: config.staging,
             domains: config.domains,
             challenge_type: match config.challenge_type {
-                crate::config::AcmeChallengeType::Http01 => InternalAcmeChallengeType::Http01,
-                crate::config::AcmeChallengeType::Dns01 => InternalAcmeChallengeType::Dns01,
+                synvoid_config::AcmeChallengeType::Http01 => InternalAcmeChallengeType::Http01,
+                synvoid_config::AcmeChallengeType::Dns01 => InternalAcmeChallengeType::Dns01,
             },
             terms_of_service_agreed: config.terms_of_service_agreed,
         }

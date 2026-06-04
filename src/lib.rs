@@ -74,7 +74,7 @@ pub mod plugin;
 pub mod process;
 pub mod protocol;
 pub mod proxy;
-pub mod proxy_cache;
+pub use synvoid_proxy_cache as proxy_cache;
 pub mod router;
 pub mod sandbox;
 pub mod serder;

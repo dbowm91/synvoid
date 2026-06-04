@@ -396,7 +396,24 @@ impl MeshProxy {
         let mut proxy_cache = self.proxy_cache.write();
         match proxy_cache.as_mut() {
             Some(cache) => {
-                cache.apply_preferences(preferences);
+                cache.update_settings(|settings| {
+                    settings.enabled = preferences.enable;
+                    settings.inactive = std::time::Duration::from_secs(preferences.inactive);
+                    settings.valid_status = preferences.valid_status.iter().map(|&v| v as u16).collect();
+                    settings.methods = preferences.methods.clone();
+                    settings.use_stale = preferences.use_stale.clone();
+                    settings.min_uses = preferences.min_uses;
+                    settings.stale_while_revalidate = if preferences.stale_while_revalidate > 0 {
+                        Some(std::time::Duration::from_secs(preferences.stale_while_revalidate))
+                    } else {
+                        None
+                    };
+                    settings.stale_if_error = if preferences.stale_if_error > 0 {
+                        Some(std::time::Duration::from_secs(preferences.stale_if_error))
+                    } else {
+                        None
+                    };
+                });
             }
             None => {
                 let settings = ProxyCacheSettings {

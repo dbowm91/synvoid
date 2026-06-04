@@ -80,7 +80,7 @@ pub enum ServerlessError {
 #[derive(Clone)]
 pub struct ServerlessFunction {
     pub definition: FunctionDefinition,
-    pub runtime: Option<Arc<crate::plugin::wasm_runtime::WasmRuntime>>,
+    pub runtime: Option<Arc<crate::plugin::WasmRuntime>>,
     pub compilation_handle: Option<Arc<AsyncCompilationHandle>>,
 }
 
@@ -592,7 +592,7 @@ impl ServerlessManager {
     fn load_function_wasm(
         &self,
         func_def: &FunctionDefinition,
-    ) -> Result<Arc<crate::plugin::wasm_runtime::WasmRuntime>, ServerlessError> {
+    ) -> Result<Arc<crate::plugin::WasmRuntime>, ServerlessError> {
         #[cfg(feature = "mesh")]
         if let Some(wasm_dist) = crate::mesh::get_global_wasm_dist_manager() {
             #[cfg(feature = "mesh")]
@@ -652,7 +652,7 @@ impl ServerlessManager {
     pub async fn load_function_wasm_async(
         &self,
         func_def: &FunctionDefinition,
-    ) -> Result<Arc<crate::plugin::wasm_runtime::WasmRuntime>, ServerlessError> {
+    ) -> Result<Arc<crate::plugin::WasmRuntime>, ServerlessError> {
         let runtime = self.runtime.clone();
         let func_def = func_def.clone();
         let default_limits = self.get_default_limits();
@@ -944,7 +944,7 @@ impl ServerlessManager {
 
     async fn invoke_with_runtime(
         &self,
-        runtime: Arc<crate::plugin::wasm_runtime::WasmRuntime>,
+        runtime: Arc<crate::plugin::WasmRuntime>,
         function_name: &str,
         method: &str,
         path: &str,
@@ -1001,7 +1001,7 @@ impl ServerlessManager {
 
     pub async fn invoke_serverless_with_runtime(
         &self,
-        runtime: Arc<crate::plugin::wasm_runtime::WasmRuntime>,
+        runtime: Arc<crate::plugin::WasmRuntime>,
         function_name: &str,
         method: &Method,
         path: &str,
@@ -1119,7 +1119,7 @@ impl ServerlessManager {
 
     async fn invoke_runtime_for_offload(
         &self,
-        runtime: Arc<crate::plugin::wasm_runtime::WasmRuntime>,
+        runtime: Arc<crate::plugin::WasmRuntime>,
         function_name: &str,
         input: &[u8],
     ) -> Result<Vec<u8>, ServerlessError> {

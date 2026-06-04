@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
-use crate::plugin::pool::{PooledInstance, WasmPool};
-use crate::plugin::wasm_runtime::{GuestExports, RequestContext};
+use crate::pool::{PooledInstance, WasmPool};
+use crate::wasm_runtime::{GuestExports, RequestContext};
 
 pub struct WasmInstancePool {
     pool: Arc<Mutex<VecDeque<WasmPooledInstance>>>,

@@ -8,7 +8,7 @@ use http::{HeaderMap, Response};
 use parking_lot::RwLock;
 use wasmtime::{Config, Engine, OptLevel};
 
-use crate::plugin::wasm_runtime::WasmResourceLimits;
+use crate::plugin::WasmResourceLimits;
 use crate::plugin::WasmRuntime;
 use crate::spin::kv_store::SpinKvStore;
 use crate::spin::manifest::Manifest;

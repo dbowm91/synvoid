@@ -9,4 +9,4 @@ pub mod store;
 
 pub use config::ProxyCacheSettings;
 pub use key::{CacheKey, CacheKeyBuilder};
-pub use store::{CacheHit, ProxyCache, ProxyCacheEntry};
+pub use store::{CacheError, CacheHit, CacheStats, ProxyCache, ProxyCacheEntry};

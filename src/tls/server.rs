@@ -48,12 +48,12 @@ use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::RunningFlag;
 
-use super::cert_resolver::CertResolver;
-use super::config::InternalTlsConfig;
+use synvoid_tls::CertResolver;
+use synvoid_tls::InternalTlsConfig;
 
 const ALPN_HTTP2: &[u8] = b"h2";
 
-use crate::tls::sni_peek::compute_ja4;
+use synvoid_tls::sni_peek::compute_ja4;
 
 fn is_tls_client_hello(bytes: &[u8]) -> bool {
     bytes.len() >= 3 && bytes[0] == 0x16 && bytes[1] == 0x03 && (bytes[2] <= 0x03)
@@ -290,7 +290,7 @@ impl HttpsServer {
         );
 
         if let Some(watch_dir) = &self.config.watch_dir {
-            super::cert_resolver::watch_for_cert_changes(
+            synvoid_tls::cert_resolver::watch_for_cert_changes(
                 self.cert_resolver.clone(),
                 watch_dir.clone(),
             );

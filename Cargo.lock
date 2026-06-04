@@ -8041,8 +8041,11 @@ dependencies = [
  "synvoid-challenge",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-plugin-runtime",
+ "synvoid-proxy-cache",
  "synvoid-tarpit",
  "synvoid-testkit",
+ "synvoid-tls",
  "synvoid-utils",
  "synvoid-waf",
  "sysinfo",
@@ -8142,6 +8145,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-plugin-runtime"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http 1.4.1",
+ "http-body",
+ "http-body-util",
+ "parking_lot",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "wasmtime 42.0.2",
+]
+
+[[package]]
+name = "synvoid-proxy-cache"
+version = "0.1.0"
+dependencies = [
+ "ahash 0.8.12",
+ "bytes",
+ "dashmap 7.0.0-rc2",
+ "http 1.4.1",
+ "moka",
+ "parking_lot",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-tarpit"
 version = "0.1.0"
 dependencies = [
@@ -8159,6 +8193,31 @@ dependencies = [
  "synvoid-config",
  "synvoid-core",
  "tempfile",
+]
+
+[[package]]
+name = "synvoid-tls"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "dashmap 7.0.0-rc2",
+ "hex",
+ "instant-acme",
+ "metrics 0.22.4",
+ "notify",
+ "parking_lot",
+ "rsa",
+ "rustls",
+ "rustls-pki-types",
+ "serde_json",
+ "sha2",
+ "synvoid-config",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "x509-parser 0.16.0",
 ]
 
 [[package]]

@@ -379,6 +379,37 @@ pub async fn init_mesh_and_threat_intel(
             threat_intel.start_background_tasks();
             crate::waf::set_threat_intel(threat_intel.clone());
 
+            // Register mesh DHT provider for WASM plugin runtime
+            {
+                struct MeshDhtAdapter;
+
+                impl synvoid_plugin_runtime::mesh_callbacks::MeshDhtProvider for MeshDhtAdapter {
+                    fn get_record(&self, key: &str) -> Option<Vec<u8>> {
+                        crate::mesh::get_global_record_store()
+                            .and_then(|rs| rs.get_record(key))
+                            .map(|r| r.value)
+                    }
+                    fn check_threat(&self, ip: &str) -> bool {
+                        crate::mesh::get_global_record_store().map_or(false, |rs| {
+                            let key = format!("threat_indicator:{}:IpBlock", ip);
+                            rs.get_record(&key).is_some()
+                        })
+                    }
+                    fn store_event(&self, topic: &str, data: &[u8]) {
+                        if let Some(rs) = crate::mesh::get_global_record_store() {
+                            let key = format!("event:{}", topic);
+                            let value = data.to_vec();
+                            rs.store_and_announce(key, value, 300);
+                        }
+                    }
+                }
+
+                synvoid_plugin_runtime::mesh_callbacks::set_mesh_provider(std::sync::Arc::new(
+                    MeshDhtAdapter,
+                ));
+                tracing::debug!("Mesh DHT provider registered for WASM plugin runtime");
+            }
+
             // YARA rules manager
             {
                 let main_config = {

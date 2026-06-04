@@ -8,32 +8,35 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
 pub mod axum_loader;
-pub mod global;
-pub mod instance_pool;
-pub mod pool;
-pub mod wasm_metrics;
-pub mod wasm_runtime;
 
-pub use global::{get_global_plugin_manager, GlobalPluginManager};
-pub use pool::{PooledInstance, WasmPool};
-pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};
+// Re-export types from the new crate
+pub use synvoid_plugin_runtime::{
+    WasmFilterResult, WasmPluginError, WasmPluginManager, WasmPluginMetrics,
+    WasmResourceLimits, WasmRuntime, PluginInfo,
+    PooledInstance, WasmPool,
+    GlobalPluginManager, GlobalWasmMemoryBudget, MemoryBudgetError,
+    get_global_plugin_manager,
+    get_wasm_metrics, get_all_wasm_metrics,
+    WasmInstancePool,
+};
 
-pub enum WasmFilterResult {
-    Pass,
-    Block(StatusCode, String),
-    Challenge(String),
-}
+// Bridge: implement StreamingBody for Box<dyn ErasedBody> so serverless code
+// can pass ErasedBody directly to invoke_handler_streaming.
+impl synvoid_plugin_runtime::streaming_body::StreamingBody
+    for Box<dyn crate::http_client::ErasedBody>
+{
+    fn poll_frame(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<
+        Option<Result<http_body::Frame<Bytes>, std::io::Error>>,
+    > {
+        crate::http_client::ErasedBody::poll_frame(self.as_mut(), cx)
+    }
 
-#[derive(Debug, thiserror::Error)]
-pub enum WasmPluginError {
-    #[error("Failed to load WASM module: {0}")]
-    LoadFailed(String),
-    #[error("Function not found: {0}")]
-    FunctionNotFound(String),
-    #[error("Execution failed: {0}")]
-    ExecutionFailed(String),
-    #[error("Sandbox error: {0}")]
-    SandboxError(String),
+    fn size_hint(&self) -> http_body::SizeHint {
+        crate::http_client::ErasedBody::size_hint(self.as_ref())
+    }
 }
 
 // ─── PluginManager (public API) ──────────────────────────────────────────────

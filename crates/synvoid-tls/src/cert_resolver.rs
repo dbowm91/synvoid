@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use super::config::InternalTlsConfig;
+use crate::config::InternalTlsConfig;
 
 #[derive(Clone)]
 pub struct CertResolver {
@@ -116,7 +116,7 @@ impl CertResolver {
         }
 
         if self.reload_tx.send(()).is_err() {
-            crate::metrics::record_dropped_tls_reload_event();
+            counter!("synvoid.tls.reload_events_dropped").increment(1);
             tracing::warn!("Failed to notify TLS reload - receiver dropped");
         }
         Ok(())

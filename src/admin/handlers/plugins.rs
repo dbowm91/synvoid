@@ -1,6 +1,6 @@
 use super::super::state::{AdminState, ReloadEvent};
 use super::common::OptionalAuth;
-use crate::plugin::wasm_metrics::{get_all_wasm_metrics, get_wasm_metrics};
+use crate::plugin::{get_all_wasm_metrics, get_wasm_metrics};
 use axum::{
     extract::{Path, State},
     http::StatusCode,

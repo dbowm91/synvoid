@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -194,6 +194,9 @@ synvoid-core = { path = "crates/synvoid-core" }
 synvoid-tarpit = { path = "crates/synvoid-tarpit" }
 synvoid-challenge = { path = "crates/synvoid-challenge" }
 synvoid-waf = { path = "crates/synvoid-waf" }
+synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" }
+synvoid-tls = { path = "crates/synvoid-tls" }
+synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }
