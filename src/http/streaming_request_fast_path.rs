@@ -106,7 +106,21 @@ where
                     let streaming_waf = waf.streaming();
                     let stream_body =
                         crate::http_client::StreamingWafBody::new(body, streaming_waf, client_ip);
-                    let erased_body = crate::http_client::ErasedBodyImpl::new(stream_body);
+                    use http_body_util::BodyExt;
+                    let body_bytes = match stream_body.collect().await {
+                        Ok(collected) => collected.to_bytes(),
+                        Err(_) => {
+                            return Ok(StreamingRequestFastPathOutcome::Respond(
+                                crate::http::response_builder::build_response_with_alt_svc(
+                                    500,
+                                    "Internal Server Error".to_string(),
+                                    "text/plain",
+                                    alt_svc,
+                                    main_config,
+                                ),
+                            ));
+                        }
+                    };
 
                     return Ok(
                         match crate::serverless::manager::handle_serverless_function_streaming(
@@ -114,7 +128,7 @@ where
                             method,
                             path,
                             &parts.headers,
-                            erased_body,
+                            body_bytes,
                             crate::serverless::manager::CallerContext::local(),
                         )
                         .await

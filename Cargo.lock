@@ -8041,8 +8041,10 @@ dependencies = [
  "synvoid-challenge",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-http-client",
  "synvoid-plugin-runtime",
  "synvoid-proxy-cache",
+ "synvoid-serverless",
  "synvoid-tarpit",
  "synvoid-testkit",
  "synvoid-tls",
@@ -8145,6 +8147,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-http-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "http 1.4.1",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "hyperlocal",
+ "metrics 0.22.4",
+ "moka",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "synvoid-plugin-runtime"
 version = "0.1.0"
 dependencies = [
@@ -8173,6 +8201,25 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "synvoid-serverless"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "http 1.4.1",
+ "http-body",
+ "parking_lot",
+ "regex",
+ "serde_json",
+ "synvoid-config",
+ "synvoid-plugin-runtime",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
