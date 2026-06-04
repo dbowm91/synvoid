@@ -19,7 +19,7 @@ The target end state is:
 | 4. Backpressure & Fallback | **COMPLETE** | Per-site/global active+queue limits, 4 policy variants (FailClosed/FailOpen/SkipTransform/DegradeToInlineSmallOnly), per-task deadlines, output size caps |
 | 5. IPC Layer | **COMPLETE** | Generic task envelope with kind/priority/policy/deadline/payload limits, file-backed payloads (256KB threshold), bounded in-flight per connection |
 | 6. Multi-Worker Story | **DEFERRED** | Multi-worker kept as advanced mode only. Pre-bind port check fixed (`should_skip_prebind_port_check`). Cross-worker cache/state replication not implemented (correctly deferred — only needed if multi-worker is primary) |
-| 7. Mesh Trust | **COMPLETE** | TLS modes (Strict/Tofu/Permissive) implemented; `verify_peer_certificate()` wired into handshake; DhtSyncRequest/DhtAntiEntropyRequest/DhtRecordPush signed; replay protection on all DHT messages; MESH-14 PKI hierarchy implemented (CertChain, NodeCertBinding, verify_certificate_chain, config-gated enforcement) |
+| 7. Mesh Trust | **PARTIAL** | TLS modes (Strict/Tofu/Permissive) implemented; `verify_peer_certificate()` wired into handshake; DhtSyncRequest/DhtAntiEntropyRequest/DhtRecordPush signed; replay protection on all DHT messages; MESH-14 PKI hierarchy implemented (CertChain, NodeCertBinding, verify_certificate_chain, config-gated enforcement). DHT handler integration incomplete: `signer_public_key` not verified against `certified_public_key` in NodeCertBinding (MR-4). |
 | 8. HTTP/2 Pooling | **COMPLETE** | `Http2PooledConnection` stub removed; HTTP/2 pooling via `TypedClientPool` |
 | 9. Refactor Hot Paths | **COMPLETE** | 43+ modules extracted from http/; `server.rs` reduced from 1,243 to 795 lines (observability, connection types, accept loop extracted) |
 | 10. Observability | **COMPLETE** | All metrics implemented: event-loop lag, queue time, active connections, offload submissions/fallbacks (unified); queue depth/duration/rejection/timeout/RSS by 6 task kinds (CPU worker) |
@@ -219,8 +219,8 @@ Multi-worker is documented as advanced isolation mode, not primary scaling. Cros
 - ~~Support only temporary legacy compatibility for unsigned peers~~ ✅ (`unsigned_sync_compat_until_unix` config)
 - ~~Move to default deny for unsigned sync~~ ✅ (`require_signed_sync_requests` defaults to true)
 
-**Remaining:**
-- BindP: `signer_public_key` not cryptographically bound to `node_id` via PKI (requires MESH-14)
+**Remaining (PARTIAL):**
+- BindP: DHT handlers verify `node_id` has a `NodeCertBinding` when `require_pki_binding=true`, but do NOT verify that `signer_public_key` matches the `certified_public_key` in that binding. The `validate_peer_node_id_binding()` path (transport_peer.rs) correctly links these, but the DHT handler path (transport_dht.rs) has the gap — it checks binding existence but not `signer_public_key` ↔ `certified_public_key` equivalence. MESH-14 infrastructure is complete; DHT handler integration is incomplete.
 
 ### Success Criteria
 - ~~Mesh peer identity is not optional in production.~~ ✅ (Strict mode default)
@@ -279,5 +279,5 @@ This plan is complete when:
 - ~~the docs, ADRs, and code agree on the worker model~~ ✅
 - ~~CPU-heavy work is offloaded through a bounded generalized worker~~ ✅
 - ~~the unified worker stays focused on latency-sensitive I/O~~ ✅
-- ~~mesh peer trust is enforced in production~~ ✅ (TLS modes + signed DHT sync + MESH-14 PKI hierarchy)
+- ~~mesh peer trust is enforced in production~~ ⚠️ PARTIAL (TLS modes + signed DHT sync + MESH-14 PKI hierarchy complete; DHT handler BindP integration incomplete — MR-4)
 - ~~and the remaining deferred items are clearly labeled as deliberate, not accidental~~ ✅

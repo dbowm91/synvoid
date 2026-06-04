@@ -13,6 +13,7 @@ These items require significant architectural work and are correctly deferred:
 | ID | Issue | Reason | Effort |
 |----|-------|--------|--------|
 | **HTTP2-POOL** | ErasedHttpClient HTTP/2 support | `ErasedHttpClient` streaming path remains HTTP/1.1-only. HTTP/2 works via `TypedConnectionPool` for `Full<Bytes>` bodies only. hyper-util API requires background task management per connection for full streaming HTTP/2 support. | VeryHigh |
+| **MR-4** | DHT ingress auth hardening | `DhtAntiEntropyRequest` and `DhtSyncRequest` handlers verify signatures and check for `NodeCertBinding` existence, but do not verify that `signer_public_key` matches the `certified_public_key` in the binding (BindP gap). MESH-14 infrastructure is complete but DHT handler integration is incomplete. | High |
 
 ---
 
@@ -63,7 +64,7 @@ When the hyper-util API issue is resolved, implement HTTP/2 pooling:
 
 ## Completed Work Summary
 
-All 185 non-deferred items across 6 waves were completed and verified 2026-05-29:
+All 185 non-deferred items across 6 waves were completed and verified 2026-05-29.
 
 | Wave | Category | Items | Status |
 |------|----------|-------|--------|
@@ -73,10 +74,10 @@ All 185 non-deferred items across 6 waves were completed and verified 2026-05-29
 | 4 | Feature Wiring (P1-P2) | 4 | ALL WIRED |
 | 5 | Documentation Updates (P2-P3) | 148 | ALL UPDATED |
 | 6 | Cross-Module Conflicts (P2) | 7 | ALL RESOLVED |
-| — | Deferred Items | 1 | DEFERRED |
-| **Total** | | **186** | **185 done, 1 deferred** |
+| — | Deferred Items | 2 | DEFERRED |
+| **Total** | | **187** | **185 done, 2 deferred** |
 
 ---
 
-*Last Updated: 2026-05-29*
-*All actionable items completed. Remaining deferred architectural item: HTTP2-POOL.*
+*Last Updated: 2026-06-04*
+*All actionable items completed. Remaining deferred architectural items: HTTP2-POOL, MR-4.*
