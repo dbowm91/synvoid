@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -190,6 +190,10 @@ libloading = "0.8"
 aya = { version = "0.13", optional = true }
 
 synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] }
+synvoid-core = { path = "crates/synvoid-core" }
+synvoid-tarpit = { path = "crates/synvoid-tarpit" }
+synvoid-challenge = { path = "crates/synvoid-challenge" }
+synvoid-waf = { path = "crates/synvoid-waf" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }
@@ -271,6 +275,7 @@ strip = true
 
 [dev-dependencies]
 synvoid = { path = ".", features = ["test-utils"] }
+synvoid-testkit = { path = "crates/synvoid-testkit" }
 libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"

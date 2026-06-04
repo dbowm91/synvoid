@@ -1,5 +1,5 @@
-use crate::tarpit::generator::MarkovChain;
-use crate::tarpit::TarpitConfig;
+use super::MarkovChain;
+use super::TarpitConfig;
 use metrics::{counter, histogram};
 use rand::Rng;
 use std::sync::Arc;

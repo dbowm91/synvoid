@@ -7,19 +7,21 @@ use arc_swap::ArcSwapOption;
 
 pub mod asn_tracker;
 pub mod attack_detection;
-pub mod bot;
 pub mod endpoints;
 pub mod flood;
 pub mod ip_feed;
 pub mod mitigation;
 pub mod probe_tracker;
 pub mod ratelimit;
-pub mod request_sanitization;
 pub mod rule_feed;
 pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
 pub mod violation_tracker;
+
+// Re-exports from extracted synvoid-waf crate
+pub use synvoid_waf::bot;
+pub use synvoid_waf::request_sanitization;
 
 pub use attack_detection::AttackDetectionConfig;
 pub use probe_tracker::{
@@ -182,7 +184,7 @@ pub struct WafCore {
     pub block_store: Option<Arc<BlockStore>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
-    tarpit_generator: Arc<crate::tarpit::generator::MarkovChain>,
+    tarpit_generator: Arc<crate::tarpit::MarkovChain>,
     tarpit_defaults: crate::config::TarpitDefaults,
     pub threat_level: Option<Arc<ThreatLevelManager>>,
     pub violation_tracker: Option<Arc<ViolationTracker>>,
@@ -383,7 +385,7 @@ impl WafCore {
         });
 
         let tarpit_defaults = tarpit_defaults.unwrap_or_default();
-        let tarpit_generator = Arc::new(crate::tarpit::generator::MarkovChain::new());
+        let tarpit_generator = Arc::new(crate::tarpit::MarkovChain::new());
 
         let mut whitelist_set = HashSet::new();
         for ip_str in whitelist {

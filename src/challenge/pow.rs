@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 #[allow(unused_imports)]
 use rand::Rng;
 use sha2::{Digest, Sha256};
+use super::{has_leading_zeros, has_leading_zeros_ct};
 
 const MAX_NONCE: u64 = 100_000_000;
 const MIN_TIMESTAMP_SECS: u64 = 60;
@@ -373,49 +374,6 @@ impl PowManager {
     pub fn window_secs(&self) -> u64 {
         self.window_secs
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PowResult {
-    Valid,
-    NotSet,
-    Invalid,
-}
-
-pub fn has_leading_zeros(hash: &[u8], zeros: usize) -> bool {
-    let zeros_u8 = zeros / 8;
-    let zeros_remainder = zeros % 8;
-
-    let mut result: u8 = 1;
-
-    for hash_byte in &hash[..zeros_u8] {
-        result &= (*hash_byte == 0) as u8;
-    }
-
-    if zeros_remainder > 0 && zeros_u8 < hash.len() {
-        let mask = (0xFF_u8) << (8 - zeros_remainder);
-        result &= ((hash[zeros_u8] & mask) == 0) as u8;
-    }
-
-    result == 1
-}
-
-pub fn has_leading_zeros_ct(hash: &[u8], zeros: usize) -> subtle::Choice {
-    let zeros_u8 = zeros / 8;
-    let zeros_remainder = zeros % 8;
-
-    let mut result = subtle::Choice::from(1);
-
-    for hash_byte in hash.iter().take(zeros_u8.min(hash.len())) {
-        result &= subtle::Choice::from((*hash_byte == 0) as u8);
-    }
-
-    if zeros_remainder > 0 && zeros_u8 < hash.len() {
-        let mask = (0xFF_u8) << (8 - zeros_remainder);
-        result &= subtle::Choice::from(((hash[zeros_u8] & mask) == 0) as u8);
-    }
-
-    result
 }
 
 pub fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> {

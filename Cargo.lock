@@ -8038,8 +8038,13 @@ dependencies = [
  "stegoeggo",
  "subtle",
  "synvoid",
+ "synvoid-challenge",
  "synvoid-config",
+ "synvoid-core",
+ "synvoid-tarpit",
+ "synvoid-testkit",
  "synvoid-utils",
+ "synvoid-waf",
  "sysinfo",
  "syslog",
  "tar",
@@ -8077,6 +8082,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-challenge"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "serde",
+ "sha2",
+ "subtle",
+]
+
+[[package]]
 name = "synvoid-config"
 version = "0.1.0"
 dependencies = [
@@ -8108,6 +8124,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "synvoid-fuzz"
 version = "0.0.0"
 dependencies = [
@@ -8115,6 +8139,26 @@ dependencies = [
  "libfuzzer-sys",
  "postcard",
  "synvoid",
+]
+
+[[package]]
+name = "synvoid-tarpit"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "rand 0.9.4",
+ "serde",
+]
+
+[[package]]
+name = "synvoid-testkit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "synvoid-config",
+ "synvoid-core",
+ "tempfile",
 ]
 
 [[package]]
@@ -8126,6 +8170,32 @@ dependencies = [
  "postcard",
  "rkyv 0.8.16",
  "serde",
+]
+
+[[package]]
+name = "synvoid-waf"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick 1.1.4",
+ "base64",
+ "bitflags",
+ "hex",
+ "http 1.4.1",
+ "isbot",
+ "libinjectionrs",
+ "moka",
+ "parking_lot",
+ "rand 0.9.4",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "synvoid-core",
+ "synvoid-utils",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

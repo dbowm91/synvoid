@@ -1,0 +1,509 @@
+use crate::attack_detection::config::{AttackDetectionResult, AttackType, InputLocation};
+use crate::attack_detection::normalizer::InputNormalizer;
+use aho_corasick::AhoCorasick;
+use std::sync::Arc;
+use synvoid_core::url::urlencoding_decode_result;
+
+#[macro_export]
+macro_rules! pattern_detector {
+    (
+        $(#[$attr:meta])*
+        $name:ident,
+        $attack_type:expr,
+        $attack_name:literal,
+        $patterns_fn:path,
+        $high_patterns_fn:path
+    ) => {
+        $(#[$attr])*
+        pub struct $name {
+            inner: $crate::attack_detection::detector_common::BasePatternDetector,
+        }
+
+        impl $name {
+            pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
+                let inner = $crate::attack_detection::detector_common::BasePatternDetector::new(
+                    $patterns_fn().as_slice(),
+                    $high_patterns_fn().as_slice(),
+                    custom_patterns,
+                    paranoia_level,
+                    $attack_type,
+                    $attack_name,
+                );
+                Self { inner }
+            }
+
+            pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+                self.inner.detect_internal(input, location)
+            }
+        }
+
+        impl $crate::attack_detection::detector_common::PatternDetector for $name {
+            fn patterns(&self) -> &Arc<AhoCorasick> {
+                self.inner.patterns()
+            }
+
+            fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+                self.inner.detect_internal(input, location)
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! url_decode_detector {
+    (
+        $(#[$attr:meta])*
+        $name:ident,
+        $attack_type:expr,
+        $attack_name:literal,
+        $patterns_fn:path,
+        $high_patterns_fn:path
+    ) => {
+        $(#[$attr])*
+        pub struct $name {
+            inner: $crate::attack_detection::detector_common::BasePatternDetector,
+        }
+
+        impl $name {
+            pub fn new(paranoia_level: u8, custom_patterns: &[String]) -> Self {
+                let inner = $crate::attack_detection::detector_common::BasePatternDetector::new(
+                    $patterns_fn().as_slice(),
+                    $high_patterns_fn().as_slice(),
+                    custom_patterns,
+                    paranoia_level,
+                    $attack_type,
+                    $attack_name,
+                );
+                Self { inner }
+            }
+
+            fn detect_with_url_decode(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+                use synvoid_core::url::url_decode_all;
+
+                let decoded = if input.contains('%') || input.contains('+') {
+                    url_decode_all(input)
+                } else {
+                    input.to_string()
+                };
+
+                if let Some(mat) = self.inner.patterns_ref().find(&decoded) {
+                    let matched = decoded[mat.start()..mat.end()].to_string();
+                    tracing::warn!(
+                        attack_type = $attack_name,
+                        matched_pattern = %matched,
+                        location = %location,
+                        "{} detected", $attack_name
+                    );
+                    return Some(AttackDetectionResult {
+                        attack_type: $attack_type,
+                        fingerprint: None,
+                        matched_pattern: Some(matched),
+                        input_location: location,
+                    });
+                }
+
+                if decoded != input {
+                    if let Some(mat) = self.inner.patterns_ref().find(input) {
+                        let matched = input[mat.start()..mat.end()].to_string();
+                        tracing::warn!(
+                            attack_type = $attack_name,
+                            matched_pattern = %matched,
+                            location = %location,
+                            "{} detected (encoded)", $attack_name
+                        );
+                        return Some(AttackDetectionResult {
+                            attack_type: $attack_type,
+                            fingerprint: None,
+                            matched_pattern: Some(matched),
+                            input_location: location,
+                        });
+                    }
+                }
+
+                None
+            }
+
+            pub fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+                self.detect_with_url_decode(input, location)
+            }
+        }
+
+        impl $crate::attack_detection::detector_common::PatternDetector for $name {
+            fn patterns(&self) -> &Arc<AhoCorasick> {
+                self.inner.patterns()
+            }
+
+            fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+                self.detect_with_url_decode(input, location)
+            }
+        }
+    };
+}
+
+const SECURITY_HEADERS: &[&str] = &[
+    "cookie",
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-original-url",
+    "x-rewrite-url",
+    "x-host",
+    "x-forwarded-proto",
+    "referer",
+    "origin",
+    "authorization",
+    "proxy-authorization",
+];
+
+pub fn detect_in_headers<F>(
+    headers: &http::HeaderMap,
+    mut check_header: F,
+    normalizer: Option<&InputNormalizer>,
+    mut detect: impl FnMut(&[u8], InputLocation) -> Option<AttackDetectionResult>,
+) -> Option<AttackDetectionResult>
+where
+    F: FnMut(&str) -> bool,
+{
+    for header_name in SECURITY_HEADERS {
+        if !check_header(header_name) {
+            continue;
+        }
+
+        if let Some(value) = headers.get(*header_name) {
+            if let Ok(value_str) = value.to_str() {
+                let input = value_str.as_bytes();
+                let location = InputLocation::Header((*header_name).into());
+
+                if let Some(result) = detect(input, location.clone()) {
+                    return Some(result);
+                }
+
+                if let Some(norm) = normalizer {
+                    let normalized = norm.normalize(value_str);
+                    if normalized.as_str() != value_str {
+                        if let Some(result) = detect(normalized.as_bytes(), location) {
+                            return Some(result);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub trait PatternDetector: Send + Sync {
+    fn patterns(&self) -> &Arc<AhoCorasick>;
+
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult>;
+
+    #[inline]
+    fn detect_in_security_headers(
+        &self,
+        headers: &http::HeaderMap,
+        normalizer: Option<&InputNormalizer>,
+    ) -> Option<AttackDetectionResult> {
+        for header_name in SECURITY_HEADERS {
+            if let Some(value) = headers.get(*header_name) {
+                if let Ok(value_str) = value.to_str() {
+                    let location = InputLocation::Header((*header_name).into());
+                    if let Some(r) = self.detect(value_str, location.clone()) {
+                        return Some(r);
+                    }
+                    if let Some(norm) = normalizer {
+                        let normalized = norm.normalize(value_str);
+                        if normalized.as_str() != value_str {
+                            if let Some(result) = self.detect(normalized.as_str(), location.clone())
+                            {
+                                return Some(result);
+                            }
+                        }
+                    } else if let Ok(decoded) = urlencoding_decode_result(value_str) {
+                        if decoded != value_str {
+                            if let Some(r) = self.detect(&decoded, location) {
+                                return Some(r);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn detect_in_headers<F>(
+        &self,
+        headers: &http::HeaderMap,
+        mut check_header: F,
+        normalizer: Option<&InputNormalizer>,
+    ) -> Option<AttackDetectionResult>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        for header_name in SECURITY_HEADERS {
+            if !check_header(header_name) {
+                continue;
+            }
+            if let Some(value) = headers.get(*header_name) {
+                if let Ok(value_str) = value.to_str() {
+                    let location = InputLocation::Header((*header_name).into());
+                    if let Some(r) = self.detect(value_str, location.clone()) {
+                        return Some(r);
+                    }
+                    if let Some(norm) = normalizer {
+                        let normalized = norm.normalize(value_str);
+                        if normalized.as_str() != value_str {
+                            if let Some(result) = self.detect(normalized.as_str(), location.clone())
+                            {
+                                return Some(result);
+                            }
+                        }
+                    } else if let Ok(decoded) = urlencoding_decode_result(value_str) {
+                        if decoded != value_str {
+                            if let Some(r) = self.detect(&decoded, location) {
+                                return Some(r);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn detect_in_all_headers(
+        &self,
+        headers: &http::HeaderMap,
+        normalizer: Option<&InputNormalizer>,
+    ) -> Option<AttackDetectionResult> {
+        for (header_name, header_value) in headers.iter() {
+            if let Ok(value) = header_value.to_str() {
+                let location = InputLocation::Header(header_name.as_str().into());
+                if let Some(r) = self.detect(value, location.clone()) {
+                    return Some(r);
+                }
+                if let Some(norm) = normalizer {
+                    let normalized = norm.normalize(value);
+                    if normalized.as_str() != value {
+                        if let Some(r) = self.detect(normalized.as_str(), location) {
+                            return Some(r);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+pub struct BasePatternDetector {
+    patterns: Arc<AhoCorasick>,
+    attack_type: AttackType,
+    attack_name: &'static str,
+}
+
+impl BasePatternDetector {
+    pub fn new(
+        base_patterns: &[&'static str],
+        high_patterns: &[&'static str],
+        custom_patterns: &[String],
+        paranoia_level: u8,
+        attack_type: AttackType,
+        attack_name: &'static str,
+    ) -> Self {
+        let patterns = build_pattern_automaton(
+            base_patterns,
+            high_patterns,
+            custom_patterns,
+            paranoia_level,
+        );
+        Self {
+            patterns,
+            attack_type,
+            attack_name,
+        }
+    }
+
+    pub fn from_automaton(
+        patterns: Arc<AhoCorasick>,
+        attack_type: AttackType,
+        attack_name: &'static str,
+    ) -> Self {
+        Self {
+            patterns,
+            attack_type,
+            attack_name,
+        }
+    }
+
+    pub fn detect_internal(
+        &self,
+        input: &str,
+        location: InputLocation,
+    ) -> Option<AttackDetectionResult> {
+        if let Some(mat) = self.patterns.find(input) {
+            let matched = input[mat.start()..mat.end()].to_string();
+
+            tracing::warn!(
+                attack_type = self.attack_name,
+                matched_pattern = %matched,
+                location = %location,
+                "{} detected", self.attack_name
+            );
+
+            return Some(AttackDetectionResult {
+                attack_type: self.attack_type,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
+        }
+
+        None
+    }
+
+    pub fn detect_internal_normalized<F, S>(
+        &self,
+        input: &str,
+        location: InputLocation,
+        normalizer: F,
+    ) -> Option<AttackDetectionResult>
+    where
+        F: Fn(&str) -> S,
+        S: AsRef<str>,
+    {
+        let normalized = normalizer(input);
+        let normalized_ref = normalized.as_ref();
+
+        if let Some(mat) = self.patterns.find(normalized_ref) {
+            let matched = normalized_ref[mat.start()..mat.end()].to_string();
+
+            tracing::warn!(
+                attack_type = self.attack_name,
+                matched_pattern = %matched,
+                location = %location,
+                "{} detected", self.attack_name
+            );
+
+            return Some(AttackDetectionResult {
+                attack_type: self.attack_type,
+                fingerprint: None,
+                matched_pattern: Some(matched),
+                input_location: location,
+            });
+        }
+
+        None
+    }
+
+    pub fn patterns_ref(&self) -> &Arc<AhoCorasick> {
+        &self.patterns
+    }
+}
+
+impl PatternDetector for BasePatternDetector {
+    fn patterns(&self) -> &Arc<AhoCorasick> {
+        &self.patterns
+    }
+
+    fn detect(&self, input: &str, location: InputLocation) -> Option<AttackDetectionResult> {
+        self.detect_internal(input, location)
+    }
+}
+
+pub fn build_pattern_automaton(
+    base_patterns: &[&'static str],
+    high_patterns: &[&'static str],
+    custom_patterns: &[String],
+    paranoia_level: u8,
+) -> Arc<AhoCorasick> {
+    let mut patterns: Vec<String> = base_patterns.iter().map(|s| s.to_string()).collect();
+
+    if paranoia_level >= 3 {
+        patterns.extend(high_patterns.iter().map(|s| s.to_string()));
+    }
+
+    let mut seen: std::collections::HashSet<String> = patterns.iter().cloned().collect();
+    for pattern in custom_patterns {
+        if seen.insert(pattern.clone()) {
+            patterns.push(pattern.clone());
+        }
+    }
+
+    let patterns_str: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
+    Arc::new(
+        AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .build(&patterns_str)
+            .unwrap(),
+    )
+}
+
+pub fn check_inputs<D>(
+    detector: &D,
+    normalizer: &InputNormalizer,
+    path: Option<&str>,
+    query_string: Option<&str>,
+    headers: &http::HeaderMap,
+    body: Option<&[u8]>,
+) -> Option<AttackDetectionResult>
+where
+    D: PatternDetector,
+{
+    if let Some(p) = path {
+        let normalized = normalizer.normalize(p);
+        if let Some(result) =
+            detect_with_pre_normalized(detector, normalized.as_str(), InputLocation::Path)
+        {
+            return Some(result);
+        }
+    }
+
+    if let Some(qs) = query_string {
+        let normalized = normalizer.normalize(qs);
+        if let Some(result) =
+            detect_with_pre_normalized(detector, normalized.as_str(), InputLocation::QueryString)
+        {
+            return Some(result);
+        }
+    }
+
+    if let Some(result) = detector.detect_in_security_headers(headers, Some(normalizer)) {
+        return Some(result);
+    }
+
+    if let Some(body_bytes) = body {
+        let s = String::from_utf8_lossy(body_bytes);
+        let s: &str = &s;
+        let normalized = normalizer.normalize(s);
+        if let Some(result) =
+            detect_with_pre_normalized(detector, normalized.as_str(), InputLocation::PostBody)
+        {
+            return Some(result);
+        }
+    }
+
+    None
+}
+
+fn detect_with_pre_normalized<D>(
+    detector: &D,
+    normalized: &str,
+    location: InputLocation,
+) -> Option<AttackDetectionResult>
+where
+    D: PatternDetector,
+{
+    if let Some(mat) = detector.patterns().find(normalized) {
+        let matched = normalized[mat.start()..mat.end()].to_string();
+        return Some(AttackDetectionResult {
+            attack_type: AttackType::Other,
+            fingerprint: None,
+            matched_pattern: Some(matched),
+            input_location: location,
+        });
+    }
+    None
+}
