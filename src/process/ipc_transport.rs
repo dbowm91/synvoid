@@ -125,10 +125,6 @@ impl IpcEndpoint {
     }
 
     pub fn cpu_worker() -> Self {
-        Self::static_worker()
-    }
-
-    pub fn static_worker() -> Self {
         Self::new("static-worker")
     }
 
@@ -562,14 +558,6 @@ pub async fn connect_to_cpu_worker_async() -> io::Result<IpcStream> {
 
 pub async fn connect_to_cpu_worker_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
     IpcEndpoint::cpu_worker().connect_with_signer(signer).await
-}
-
-pub async fn connect_to_static_worker_async() -> io::Result<IpcStream> {
-    connect_to_cpu_worker_async().await
-}
-
-pub async fn connect_to_static_worker_signed(signer: Arc<IpcSigner>) -> io::Result<IpcStream> {
-    connect_to_cpu_worker_signed(signer).await
 }
 
 pub async fn connect_to_commands_async() -> io::Result<IpcStream> {

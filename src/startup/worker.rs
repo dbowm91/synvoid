@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::platform::fs::PlatformPaths;
-use crate::worker::{CpuWorkerArgs, StaticWorkerArgs, UnifiedServerWorkerArgs};
+use crate::worker::{CpuWorkerArgs, UnifiedServerWorkerArgs};
 
 pub fn build_cpu_worker_args(
     cpu_worker_id: Option<usize>,
@@ -18,21 +18,22 @@ pub fn build_cpu_worker_args(
         worker_id: cpu_worker_id.unwrap_or(0),
         config_path: config_path.unwrap_or_else(|| PathBuf::from("config")),
         supervisor_socket: supervisor_socket.unwrap_or_else(|| paths.supervisor_socket_path()),
-        static_worker_socket: paths.cpu_worker_socket_path(),
+        cpu_worker_socket: paths.cpu_worker_socket_path(),
         log_level,
         ipc_key: ipc_key_hex,
     }
 }
 
+#[deprecated(note = "Use build_cpu_worker_args instead")]
 pub fn build_static_worker_args(
-    static_worker_id: Option<usize>,
+    cpu_worker_id: Option<usize>,
     config_path: Option<PathBuf>,
     supervisor_socket: Option<PathBuf>,
     log_level: Option<String>,
     ipc_session_key: Option<[u8; 32]>,
-) -> StaticWorkerArgs {
+) -> CpuWorkerArgs {
     build_cpu_worker_args(
-        static_worker_id,
+        cpu_worker_id,
         config_path,
         supervisor_socket,
         log_level,

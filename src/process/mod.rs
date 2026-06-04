@@ -45,7 +45,7 @@ pub use ipc::{
     connect_to_supervisor, get_ipc_path, CommandMethod, CpuTaskErrorCode, CpuTaskKind,
     CpuTaskPayload, CpuTaskPolicy, CpuTaskPriority, CpuTaskResult, ErrorCode, ErrorSeverity,
     IpcStream, IpcValidationError, Message, RequestLogPayload, SiteMetricsPayload,
-    StaticCpuOffloadStats, StatusStats, SupervisorCommand, SupervisorStatus, ThreatIndicatorData,
+    CpuOffloadStats, StatusStats, SupervisorCommand, SupervisorStatus, ThreatIndicatorData,
     ThreatIndicatorType, ThreatSeverityLevel, ThreatSummary, WorkerId, WorkerMetricsPayload,
     WorkerStatus, WorkerStatusInfo,
 };
@@ -55,7 +55,7 @@ pub use ipc_framing::{
 pub use ipc_transport::{
     connect_to_commands_async, connect_to_commands_signed, connect_to_cpu_worker_async,
     connect_to_cpu_worker_signed, connect_to_endpoint, connect_to_endpoint_signed,
-    connect_to_static_worker_async, connect_to_static_worker_signed, connect_to_supervisor_async,
+    connect_to_supervisor_async,
     connect_to_supervisor_signed, IpcEndpoint, IpcListener, IpcStream as AsyncIpcStream,
 };
 pub use manager::{
@@ -70,12 +70,12 @@ pub use socket_fd::{
 };
 pub use socket_path::{
     cleanup_old_supervisor_sockets, find_active_supervisor_socket, get_cpu_worker_socket_path,
-    get_current_supervisor_generation, get_secure_socket_path, get_static_worker_socket_path,
+    get_current_supervisor_generation, get_secure_socket_path,
     get_supervisor_socket_path, get_versioned_supervisor_socket_path, next_supervisor_generation,
     resolve_supervisor_socket_for_upgrade, set_socket_permissions, set_supervisor_generation,
 };
 pub use worker::{
-    BaseWorkerProcess, CpuWorkerProcess, StaticWorkerProcess, UnifiedServerWorkerProcess,
+    BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess,
     WorkerProcess, WorkerProcessBase,
 };
 

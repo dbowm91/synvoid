@@ -199,8 +199,8 @@ mod ipc_tests {
     }
 
     #[test]
-    fn test_roundtrip_static_worker_started() {
-        let msg = Message::StaticWorkerStarted {
+    fn test_roundtrip_cpu_worker_started() {
+        let msg = Message::CpuWorkerStarted {
             worker_id: 2,
             pid: 5678,
         };
@@ -208,7 +208,7 @@ mod ipc_tests {
         let decoded: Message = serde_json::from_str(&json).unwrap();
         assert!(matches!(
             decoded,
-            Message::StaticWorkerStarted {
+            Message::CpuWorkerStarted {
                 worker_id: 2,
                 pid: 5678,
             }
@@ -773,23 +773,23 @@ mod ipc_tests {
 
     roundtrip_test!(test_roundtrip_master_cert_reload, Message::MasterCertReload);
 
-    // Static Worker Messages
+    // Static Worker Messages (renamed to CpuWorker)
     roundtrip_test!(
-        test_roundtrip_static_worker_started_full,
-        Message::StaticWorkerStarted {
+        test_roundtrip_cpu_worker_started_full,
+        Message::CpuWorkerStarted {
             worker_id: 2,
             pid: 5678,
         }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_ready_full,
-        Message::StaticWorkerReady { worker_id: 42 }
+        test_roundtrip_cpu_worker_ready_full,
+        Message::CpuWorkerReady { worker_id: 42 }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_heartbeat,
-        Message::StaticWorkerHeartbeat {
+        test_roundtrip_cpu_worker_heartbeat,
+        Message::CpuWorkerHeartbeat {
             worker_id: 1,
             timestamp: 1000,
             static_cache_hits: 500,
@@ -799,8 +799,8 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_request_log,
-        Message::StaticWorkerRequestLog {
+        test_roundtrip_cpu_worker_request_log,
+        Message::CpuWorkerRequestLog {
             worker_id: 1,
             log: RequestLogPayload {
                 timestamp: 1000,
@@ -818,33 +818,33 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_shutdown_complete_full,
-        Message::StaticWorkerShutdownComplete { worker_id: 3 }
+        test_roundtrip_cpu_worker_shutdown_complete_full,
+        Message::CpuWorkerShutdownComplete { worker_id: 3 }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_background_tasks_done,
-        Message::StaticWorkerBackgroundTasksDone { worker_id: 5 }
+        test_roundtrip_cpu_worker_background_tasks_done,
+        Message::CpuWorkerBackgroundTasksDone { worker_id: 5 }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_resize_ack_full,
-        Message::StaticWorkerResizeAck {
+        test_roundtrip_cpu_worker_resize_ack_full,
+        Message::CpuWorkerResizeAck {
             worker_id: 2,
             worker_threads: 8,
         }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_scan,
-        Message::StaticWorkerScan {
+        test_roundtrip_cpu_worker_scan,
+        Message::CpuWorkerScan {
             site_id: "test-site".to_string(),
         }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_cache_update,
-        Message::StaticWorkerCacheUpdate {
+        test_roundtrip_cpu_worker_cache_update,
+        Message::CpuWorkerCacheUpdate {
             site_id: "test-site".to_string(),
             path: "/var/www/html".to_string(),
             minified_path: "/var/www/html.min".to_string(),
@@ -852,16 +852,16 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_drain_full,
-        Message::StaticWorkerDrain {
+        test_roundtrip_cpu_worker_drain_full,
+        Message::CpuWorkerDrain {
             timeout_secs: 30,
             drain_id: 12345,
         }
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_drained_full,
-        Message::StaticWorkerDrained {
+        test_roundtrip_cpu_worker_drained_full,
+        Message::CpuWorkerDrained {
             worker_id: 1,
             remaining_tasks: 0,
             drain_id: 12345,
@@ -869,8 +869,8 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_static_worker_drain_status,
-        Message::StaticWorkerDrainStatus {
+        test_roundtrip_cpu_worker_drain_status,
+        Message::CpuWorkerDrainStatus {
             drain_id: 999,
             is_draining: true,
             active_tasks: 5,

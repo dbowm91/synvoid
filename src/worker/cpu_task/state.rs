@@ -1,4 +1,4 @@
-// Submodule: StaticWorkerState, CpuTaskLimiter, CompressionTask, CpuTaskPermit.
+// Submodule: CpuWorkerState, CpuTaskLimiter, CompressionTask, CpuTaskPermit.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -13,19 +13,17 @@ use crate::upload::yara_scanner::YaraScanner;
 use crate::{DrainFlag, RunningFlag};
 
 #[derive(Clone)]
-pub struct StaticWorkerArgs {
+pub struct CpuWorkerArgs {
     pub worker_id: usize,
     pub config_path: std::path::PathBuf,
     pub supervisor_socket: std::path::PathBuf,
-    pub static_worker_socket: std::path::PathBuf,
+    pub cpu_worker_socket: std::path::PathBuf,
     pub log_level: Option<String>,
     pub ipc_key: Option<String>,
 }
 
-pub type CpuWorkerArgs = StaticWorkerArgs;
-
 #[derive(Clone)]
-pub struct StaticWorkerState {
+pub struct CpuWorkerState {
     pub worker_id: usize,
     pub running: RunningFlag,
     pub stop_background_tasks: DrainFlag,
@@ -37,7 +35,7 @@ pub struct StaticWorkerState {
     pub yara_scanner: Option<Arc<YaraScanner>>,
 }
 
-impl StaticWorkerState {
+impl CpuWorkerState {
     pub fn get_cache_stats(&self) -> (u64, u64) {
         let mut total_hits = 0u64;
         let mut total_misses = 0u64;
@@ -190,12 +188,12 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_static_worker_args_creation() {
-        let args = StaticWorkerArgs {
+    fn test_cpu_worker_args_creation() {
+        let args = CpuWorkerArgs {
             worker_id: 1,
             config_path: PathBuf::from("/etc/synvoid"),
             supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
-            static_worker_socket: PathBuf::from("/tmp/static.sock"),
+            cpu_worker_socket: PathBuf::from("/tmp/static.sock"),
             log_level: Some("debug".to_string()),
             ipc_key: Some("test-key".to_string()),
         };
@@ -206,18 +204,18 @@ mod tests {
             args.supervisor_socket,
             PathBuf::from("/tmp/supervisor.sock")
         );
-        assert_eq!(args.static_worker_socket, PathBuf::from("/tmp/static.sock"));
+        assert_eq!(args.cpu_worker_socket, PathBuf::from("/tmp/static.sock"));
         assert_eq!(args.log_level, Some("debug".to_string()));
         assert_eq!(args.ipc_key, Some("test-key".to_string()));
     }
 
     #[test]
-    fn test_static_worker_args_default_log_level() {
-        let args = StaticWorkerArgs {
+    fn test_cpu_worker_args_default_log_level() {
+        let args = CpuWorkerArgs {
             worker_id: 0,
             config_path: PathBuf::from("/etc/synvoid"),
             supervisor_socket: PathBuf::from("/tmp/supervisor.sock"),
-            static_worker_socket: PathBuf::from("/tmp/static.sock"),
+            cpu_worker_socket: PathBuf::from("/tmp/static.sock"),
             log_level: None,
             ipc_key: None,
         };

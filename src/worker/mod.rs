@@ -6,7 +6,7 @@
 //!
 //! ## Module layout
 //!
-//! The CPU offload worker (`run_static_worker` / `run_cpu_worker`) lives in
+//! The CPU offload worker (`run_cpu_worker`) lives in
 //! the [`cpu_task`] subdirectory. The unified server worker
 //! (`run_unified_server_worker`) lives in the [`unified_server`]
 //! subdirectory.
@@ -29,7 +29,7 @@ mod response_builder;
 
 pub use traits::{BaseWorkerState, WorkerLifecycle};
 
-pub use cpu_task::{CpuWorkerArgs, StaticWorkerArgs, run_cpu_worker, run_static_worker};
+pub use cpu_task::{CpuWorkerArgs, run_cpu_worker};
 pub use unified_server::{
     UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler,
 };

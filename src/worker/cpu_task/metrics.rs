@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use crate::metrics::TimingStatsPayload;
-use crate::process::{CpuTaskKind, StaticCpuOffloadStats};
+use crate::process::{CpuTaskKind, CpuOffloadStats};
 
 pub static CPU_TASK_ACTIVE_MINIFY: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_GET_COMPRESSED: AtomicU64 = AtomicU64::new(0);
@@ -40,8 +40,8 @@ pub static CPU_TASK_DURATION_SAMPLES: LazyLock<Mutex<HashMap<&'static str, VecDe
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub const CPU_TASK_DURATION_SAMPLE_SIZE: usize = 1000;
 
-pub fn snapshot_static_cpu_offload_stats(worker_rss_bytes: u64) -> StaticCpuOffloadStats {
-    StaticCpuOffloadStats {
+pub fn snapshot_static_cpu_offload_stats(worker_rss_bytes: u64) -> CpuOffloadStats {
+    CpuOffloadStats {
         queued_minify: CPU_TASK_QUEUED_MINIFY.load(Ordering::Relaxed),
         queued_get_compressed: CPU_TASK_QUEUED_GET_COMPRESSED.load(Ordering::Relaxed),
         queued_poison_image: CPU_TASK_QUEUED_POISON_IMAGE.load(Ordering::Relaxed),

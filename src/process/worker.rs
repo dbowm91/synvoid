@@ -155,13 +155,13 @@ impl WorkerProcessBase for WorkerProcess {
 
 delegate_to_base!(WorkerProcess);
 
-pub struct StaticWorkerProcess {
+pub struct CpuWorkerProcess {
     pub worker_id: usize,
     pub base: BaseWorkerProcess,
     pub ipc: Option<Arc<tokio::sync::Mutex<super::ipc::IpcStream>>>,
 }
 
-impl StaticWorkerProcess {
+impl CpuWorkerProcess {
     pub fn new(worker_id: usize, pid: u32, child: Child) -> Self {
         Self {
             worker_id,
@@ -171,7 +171,7 @@ impl StaticWorkerProcess {
     }
 }
 
-impl WorkerProcessBase for StaticWorkerProcess {
+impl WorkerProcessBase for CpuWorkerProcess {
     fn base(&self) -> &BaseWorkerProcess {
         &self.base
     }
@@ -180,9 +180,7 @@ impl WorkerProcessBase for StaticWorkerProcess {
     }
 }
 
-delegate_to_base!(StaticWorkerProcess);
-
-pub type CpuWorkerProcess = StaticWorkerProcess;
+delegate_to_base!(CpuWorkerProcess);
 
 pub struct UnifiedServerWorkerProcess {
     pub id: WorkerId,

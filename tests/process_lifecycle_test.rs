@@ -55,20 +55,20 @@ mod process_lifecycle_tests {
     }
 
     #[test]
-    fn test_message_is_lifecycle_static_worker() {
-        let started = Message::StaticWorkerStarted {
+    fn test_message_is_lifecycle_cpu_worker() {
+        let started = Message::CpuWorkerStarted {
             worker_id: 0,
             pid: 1234,
         };
-        let ready = Message::StaticWorkerReady { worker_id: 0 };
-        let heartbeat = Message::StaticWorkerHeartbeat {
+        let ready = Message::CpuWorkerReady { worker_id: 0 };
+        let heartbeat = Message::CpuWorkerHeartbeat {
             worker_id: 0,
             timestamp: 0,
             static_cache_hits: 0,
             static_cache_misses: 0,
             cpu_offload_stats: Default::default(),
         };
-        let shutdown = Message::StaticWorkerShutdownComplete { worker_id: 0 };
+        let shutdown = Message::CpuWorkerShutdownComplete { worker_id: 0 };
 
         assert!(started.is_lifecycle());
         assert!(ready.is_lifecycle());
@@ -219,7 +219,7 @@ mod process_lifecycle_tests {
 
     #[test]
     fn test_cpu_worker_category() {
-        let started = Message::StaticWorkerStarted {
+        let started = Message::CpuWorkerStarted {
             worker_id: 0,
             pid: 1234,
         };

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use ::metrics::{counter, gauge, histogram};
 
-use crate::process::{CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, Message};
+use crate::process::{CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskResult, Message};
 use crate::worker::image_poisoning;
 use crate::worker::response_builder;
 
@@ -21,10 +21,10 @@ use super::payload::{
     cpu_task_site_id, deadline_timeout_error, estimate_cpu_task_output_size,
     estimate_cpu_task_payload_size, is_deadline_exceeded,
 };
-use super::state::{CpuTaskPermit, StaticWorkerState};
+use super::state::{CpuTaskPermit, CpuWorkerState};
 
 pub fn process_cpu_task_request_sync(
-    state: &StaticWorkerState,
+    state: &CpuWorkerState,
     request_id: u64,
     task_kind: CpuTaskKind,
     policy: CpuTaskPolicy,
@@ -151,19 +151,18 @@ pub fn process_cpu_task_request_sync(
         } => match response_builder::process_minify_request(
             state, request_id, site_id, path, encoding,
         ) {
-            Ok(Message::MinifyResponse {
+            Ok(CpuTaskResult::Minify {
                 site_id,
                 path,
                 content,
                 content_type,
                 encoding,
                 queued_encodings,
-                ..
             }) => {
                 let response = Message::CpuTaskResponse {
                     request_id,
                     task_kind,
-                    result: crate::process::CpuTaskResult::Minify {
+                    result: CpuTaskResult::Minify {
                         site_id,
                         path,
                         content,
@@ -209,11 +208,11 @@ pub fn process_cpu_task_request_sync(
         } => match response_builder::process_compressed_request(
             state, request_id, site_id, path, encoding,
         ) {
-            Ok(Message::GetCompressedResponse { content, .. }) => {
+            Ok(CpuTaskResult::GetCompressed { content }) => {
                 let response = Message::CpuTaskResponse {
                     request_id,
                     task_kind,
-                    result: crate::process::CpuTaskResult::GetCompressed { content },
+                    result: CpuTaskResult::GetCompressed { content },
                 };
                 if estimate_cpu_task_output_size(&response)
                     > output_size_limit.min(state.cpu_task_limiter.limits.max_output_bytes as u64)

@@ -219,6 +219,7 @@ impl PlatformPaths {
         self.runtime_dir.join("synvoid-static-worker.sock")
     }
 
+    #[deprecated(note = "Use cpu_worker_socket_path instead")]
     pub fn static_worker_socket_path(&self) -> PathBuf {
         self.cpu_worker_socket_path()
     }

@@ -602,6 +602,25 @@ impl MeshTransport {
             }
         }
 
+        let replay_state = self
+            .peer_connections
+            .get(from_peer)
+            .map(|conn| conn.replay_protection.clone());
+        if let Some(replay_protection) = replay_state {
+            let replay_result = replay_protection
+                .write()
+                .await
+                .check_and_add(nonce, timestamp);
+            if !matches!(replay_result, crate::mesh::protocol::ReplayResult::Valid) {
+                tracing::warn!(
+                    "DHT anti-entropy request from {} rejected: replay protection {}",
+                    from_peer,
+                    replay_result_reason(replay_result)
+                );
+                return;
+            }
+        }
+
         if let Some(ref record_store) = self.record_store {
             if let Some(response) = record_store.handle_anti_entropy_request(
                 request_id,

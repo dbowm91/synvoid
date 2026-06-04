@@ -1,5 +1,5 @@
 // Submodule: CPU offload task subsystem (state, metrics, dispatch, yara,
-// payload, connection handling, and the run_static_worker bootstrap).
+// payload, connection handling, and the run_cpu_worker bootstrap).
 
 pub mod connection;
 pub mod dispatch;
@@ -29,19 +29,13 @@ use self::connection::handle_minify_client_connection;
 use self::dispatch::process_cpu_task_request_sync;
 use self::metrics::{STATIC_CPU_OFFLOAD_EVENT_LOOP_LAG_MS, snapshot_static_cpu_offload_stats};
 use self::payload::deadline_timeout_error;
-use self::state::{CompressionTask, CpuTaskLimiter, CpuTaskLimits, StaticWorkerState};
+use self::state::{CompressionTask, CpuTaskLimiter, CpuTaskLimits, CpuWorkerState};
 use self::yara::build_yara_scanner_from_main_config;
 
-pub use self::state::{CpuWorkerArgs, StaticWorkerArgs};
+pub use self::state::CpuWorkerArgs;
 
 pub async fn run_cpu_worker(
     args: CpuWorkerArgs,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    run_static_worker(args).await
-}
-
-pub async fn run_static_worker(
-    args: StaticWorkerArgs,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(ref level) = args.log_level {
         crate::log_controller::init_logging_with_dynamic_level(level);
@@ -75,7 +69,7 @@ pub async fn run_static_worker(
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard
-            .send(&Message::StaticWorkerStarted {
+            .send(&Message::CpuWorkerStarted {
                 worker_id: args.worker_id,
                 pid: std::process::id(),
             })
@@ -110,7 +104,7 @@ pub async fn run_static_worker(
         max_output_bytes: 64 * 1024 * 1024,
     }));
 
-    let state = StaticWorkerState {
+    let state = CpuWorkerState {
         worker_id: args.worker_id,
         running: running.clone(),
         stop_background_tasks: stop_background_tasks.clone(),
@@ -124,7 +118,7 @@ pub async fn run_static_worker(
 
     response_builder::init_minifier_caches(&state, &main_config);
 
-    let socket_path = args.static_worker_socket.clone();
+    let socket_path = args.cpu_worker_socket.clone();
     if socket_path.exists() {
         let _ = std::fs::remove_file(&socket_path);
     }
@@ -249,7 +243,7 @@ pub async fn run_static_worker(
     {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard
-            .send(&Message::StaticWorkerReady {
+            .send(&Message::CpuWorkerReady {
                 worker_id: args.worker_id,
             })
             .await?;
@@ -287,7 +281,7 @@ pub async fn run_static_worker(
                     );
 
                     let _ = ipc
-                        .send(&Message::StaticWorkerBackgroundTasksDone {
+                        .send(&Message::CpuWorkerBackgroundTasksDone {
                             worker_id: ipc_state.worker_id,
                         })
                         .await;
@@ -523,7 +517,7 @@ pub async fn run_static_worker(
 
             let mut ipc = watch_state.ipc.lock().await;
             let _ = ipc
-                .send(&Message::StaticWorkerHeartbeat {
+                .send(&Message::CpuWorkerHeartbeat {
                     worker_id: watch_state.worker_id,
                     timestamp: crate::process::current_timestamp(),
                     static_cache_hits: cache_hits,
@@ -574,7 +568,7 @@ pub async fn run_static_worker(
                     }
                 };
 
-                let temp_state = StaticWorkerState {
+                let temp_state = CpuWorkerState {
                     worker_id: 0,
                     running: running_for_reload.clone(),
                     stop_background_tasks: stop_bg_for_reload.clone(),

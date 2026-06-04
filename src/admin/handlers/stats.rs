@@ -321,7 +321,7 @@ pub async fn get_cache_stats(
     let cpu_worker_stats = if let Some(ref pm) = state.process.process_manager {
         pm.get_cpu_worker_cpu_offload_stats()
     } else {
-        crate::process::StaticCpuOffloadStats::default()
+        crate::process::CpuOffloadStats::default()
     };
 
     let stats = CacheStats {

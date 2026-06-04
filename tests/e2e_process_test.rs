@@ -255,7 +255,7 @@ mod e2e_process_tests {
 
         assert!(Message::WorkerShutdownComplete { id: WorkerId(0) }.is_lifecycle());
 
-        assert!(Message::StaticWorkerStarted {
+        assert!(Message::CpuWorkerStarted {
             worker_id: 0,
             pid: 0,
         }

@@ -1,1 +1,1 @@
-pub use crate::metrics::{StaticWorkerMetrics, WorkerMetrics};
+pub use crate::metrics::{CpuWorkerMetrics, WorkerMetrics};

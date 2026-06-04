@@ -107,10 +107,6 @@ pub fn get_supervisor_socket_path() -> PathBuf {
 }
 
 pub fn get_cpu_worker_socket_path() -> PathBuf {
-    get_static_worker_socket_path()
-}
-
-pub fn get_static_worker_socket_path() -> PathBuf {
     get_secure_socket_path("static-worker.sock")
 }
 

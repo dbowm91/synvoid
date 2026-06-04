@@ -57,7 +57,7 @@ impl AsyncCpuPoolLimits {
 }
 
 #[cfg(unix)]
-fn connect_to_static_worker(socket_path: &PathBuf) -> io::Result<IpcStream> {
+fn connect_to_cpu_worker(socket_path: &PathBuf) -> io::Result<IpcStream> {
     use std::os::unix::net::UnixStream;
     let stream = UnixStream::connect(socket_path)?;
     stream.set_nonblocking(false).ok();
@@ -65,7 +65,7 @@ fn connect_to_static_worker(socket_path: &PathBuf) -> io::Result<IpcStream> {
 }
 
 #[cfg(windows)]
-fn connect_to_static_worker(_socket_path: &PathBuf) -> io::Result<IpcStream> {
+fn connect_to_cpu_worker(_socket_path: &PathBuf) -> io::Result<IpcStream> {
     let pipe_name = "\\\\.\\pipe\\synvoid-static-worker";
 
     let mut attempts = 0;
@@ -114,7 +114,7 @@ impl MinifierClient {
         path: &str,
         encoding: Option<&str>,
     ) -> Result<MinifyResult, MinifierClientError> {
-        let mut ipc = connect_to_static_worker(&self.socket_path)
+        let mut ipc = connect_to_cpu_worker(&self.socket_path)
             .map_err(|e| MinifierClientError::ConnectionFailed(e.to_string()))?;
 
         let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
@@ -228,7 +228,7 @@ impl MinifierClient {
         path: &str,
         encoding: &str,
     ) -> Result<Bytes, MinifierClientError> {
-        let mut ipc = connect_to_static_worker(&self.socket_path)
+        let mut ipc = connect_to_cpu_worker(&self.socket_path)
             .map_err(|e| MinifierClientError::ConnectionFailed(e.to_string()))?;
 
         let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
@@ -315,7 +315,7 @@ impl MinifierClient {
     }
 
     pub fn is_available(&self) -> bool {
-        connect_to_static_worker(&self.socket_path).is_ok()
+        connect_to_cpu_worker(&self.socket_path).is_ok()
     }
 }
 

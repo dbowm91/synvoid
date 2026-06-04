@@ -136,27 +136,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_static_worker_messages() {
-        let started = Message::StaticWorkerStarted {
+    async fn test_cpu_worker_messages() {
+        let started = Message::CpuWorkerStarted {
             worker_id: 10,
             pid: 5678,
         };
 
         match started {
-            Message::StaticWorkerStarted { worker_id, pid } => {
+            Message::CpuWorkerStarted { worker_id, pid } => {
                 assert_eq!(worker_id, 10);
                 assert_eq!(pid, 5678);
             }
-            _ => panic!("Expected StaticWorkerStarted message"),
+            _ => panic!("Expected CpuWorkerStarted message"),
         }
 
-        let ready = Message::StaticWorkerReady { worker_id: 10 };
+        let ready = Message::CpuWorkerReady { worker_id: 10 };
 
         match ready {
-            Message::StaticWorkerReady { worker_id } => {
+            Message::CpuWorkerReady { worker_id } => {
                 assert_eq!(worker_id, 10);
             }
-            _ => panic!("Expected StaticWorkerReady message"),
+            _ => panic!("Expected CpuWorkerReady message"),
         }
     }
 
@@ -387,7 +387,7 @@ async fn handle_worker_connection_internal(
                     Message::WorkerStarted { id, pid, .. } => {
                         (Some(id.as_usize() as u64), true, Some(*pid as u32))
                     }
-                    Message::StaticWorkerStarted { worker_id, pid } => {
+                    Message::CpuWorkerStarted { worker_id, pid } => {
                         (Some(*worker_id as u64), true, Some(*pid))
                     }
                     Message::UnifiedServerWorkerStarted { id, pid, .. } => {
@@ -398,10 +398,10 @@ async fn handle_worker_connection_internal(
                         (Some(id.as_usize() as u64), false, None)
                     }
                     Message::WorkerError { id, .. } => (Some(id.as_usize() as u64), false, None),
-                    Message::StaticWorkerReady { worker_id } => {
+                    Message::CpuWorkerReady { worker_id } => {
                         (Some(*worker_id as u64), false, None)
                     }
-                    Message::StaticWorkerHeartbeat { worker_id, .. } => {
+                    Message::CpuWorkerHeartbeat { worker_id, .. } => {
                         (Some(*worker_id as u64), false, None)
                     }
                     _ => (None, false, None),
@@ -539,13 +539,13 @@ async fn handle_worker_connection_internal(
                                 pm.broadcast_cert_reload().await;
                             });
                         }
-                        Message::StaticWorkerStarted { worker_id, pid } => {
+                        Message::CpuWorkerStarted { worker_id, pid } => {
                             tracing::debug!("CPU worker {} connected (PID: {})", worker_id, pid);
                         }
-                        Message::StaticWorkerReady { worker_id } => {
+                        Message::CpuWorkerReady { worker_id } => {
                             process_manager.handle_cpu_worker_ready(worker_id);
                         }
-                        Message::StaticWorkerHeartbeat {
+                        Message::CpuWorkerHeartbeat {
                             worker_id,
                             timestamp: _,
                             static_cache_hits,
@@ -559,10 +559,10 @@ async fn handle_worker_connection_internal(
                                 cpu_offload_stats,
                             );
                         }
-                        Message::StaticWorkerRequestLog { worker_id: _, log } => {
+                        Message::CpuWorkerRequestLog { worker_id: _, log } => {
                             process_manager.handle_request_log(WorkerId(0), log);
                         }
-                        Message::StaticWorkerShutdownComplete { worker_id } => {
+                        Message::CpuWorkerShutdownComplete { worker_id } => {
                             tracing::info!("CPU worker {} shutdown complete", worker_id);
                             return Err(());
                         }

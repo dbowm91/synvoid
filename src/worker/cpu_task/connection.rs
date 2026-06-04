@@ -7,13 +7,13 @@ use crate::process::{IpcStream, Message};
 
 use super::dispatch::process_cpu_task_request_sync;
 use super::payload::deadline_timeout_error;
-use super::state::StaticWorkerState;
+use super::state::CpuWorkerState;
 
 /// Handle a CPU worker IPC connection (cross-platform).
 ///
 /// Uses the sync `IpcStream` abstraction for framed message I/O on both
 /// Unix (UnixStream) and Windows (named pipe as File).
-pub fn handle_minify_client_connection(mut ipc: IpcStream, state: StaticWorkerState) {
+pub fn handle_minify_client_connection(mut ipc: IpcStream, state: CpuWorkerState) {
     let mut cancelled_requests = HashSet::new();
     loop {
         match ipc.try_recv() {

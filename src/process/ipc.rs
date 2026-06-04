@@ -235,7 +235,7 @@ impl CpuTaskResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct StaticCpuOffloadStats {
+pub struct CpuOffloadStats {
     pub queued_minify: u64,
     pub queued_get_compressed: u64,
     pub queued_poison_image: u64,
@@ -421,11 +421,11 @@ pub struct ServerlessHandleResponse {
 /// - **Supervisor Commands**: SupervisorShutdown, SupervisorConfigReload,
 ///   MasterProcessConfigReload, MasterSupervisorConfigReload, MasterHealthCheck,
 ///   MasterResizeThreadpool, MasterCertReload, HealthCheckAck, WorkerResizeAck
-/// - **Cpu Worker**: StaticWorkerStarted, StaticWorkerReady,
-///   StaticWorkerHeartbeat, StaticWorkerRequestLog, StaticWorkerShutdownComplete,
-///   StaticWorkerBackgroundTasksDone, StaticWorkerResizeAck, StaticWorkerScan,
-///   StaticWorkerCacheUpdate, StaticWorkerDrain, StaticWorkerDrained,
-///   StaticWorkerDrainStatus, MinifyRequest, MinifyResponse, MinifyError,
+/// - **Cpu Worker**: CpuWorkerStarted, CpuWorkerReady,
+///   CpuWorkerHeartbeat, CpuWorkerRequestLog, CpuWorkerShutdownComplete,
+///   CpuWorkerBackgroundTasksDone, CpuWorkerResizeAck, CpuWorkerScan,
+///   CpuWorkerCacheUpdate, CpuWorkerDrain, CpuWorkerDrained,
+///   CpuWorkerDrainStatus, MinifyRequest, MinifyResponse, MinifyError,
 ///   PoisonImageRequest, PoisonImageResponse, PoisonImageError,
 ///   GetCompressedRequest, GetCompressedResponse, CpuTaskRequest,
 ///   CpuTaskCancel, CpuTaskResponse, CpuTaskError
@@ -533,38 +533,38 @@ pub enum Message {
         id: WorkerId,
         domains: Vec<String>,
     },
-    StaticWorkerStarted {
+    CpuWorkerStarted {
         worker_id: usize,
         pid: u32,
     },
-    StaticWorkerReady {
+    CpuWorkerReady {
         worker_id: usize,
     },
-    StaticWorkerHeartbeat {
+    CpuWorkerHeartbeat {
         worker_id: usize,
         timestamp: u64,
         static_cache_hits: u64,
         static_cache_misses: u64,
-        cpu_offload_stats: StaticCpuOffloadStats,
+        cpu_offload_stats: CpuOffloadStats,
     },
-    StaticWorkerRequestLog {
+    CpuWorkerRequestLog {
         worker_id: usize,
         log: RequestLogPayload,
     },
-    StaticWorkerShutdownComplete {
+    CpuWorkerShutdownComplete {
         worker_id: usize,
     },
-    StaticWorkerBackgroundTasksDone {
+    CpuWorkerBackgroundTasksDone {
         worker_id: usize,
     },
-    StaticWorkerResizeAck {
+    CpuWorkerResizeAck {
         worker_id: usize,
         worker_threads: u32,
     },
-    StaticWorkerScan {
+    CpuWorkerScan {
         site_id: String,
     },
-    StaticWorkerCacheUpdate {
+    CpuWorkerCacheUpdate {
         site_id: String,
         path: String,
         minified_path: String,
@@ -576,16 +576,16 @@ pub enum Message {
     GlobalUpstreamStatsBroadcast {
         aggregated_stats: HashMap<String, u64>,
     },
-    StaticWorkerDrain {
+    CpuWorkerDrain {
         timeout_secs: u64,
         drain_id: u64,
     },
-    StaticWorkerDrained {
+    CpuWorkerDrained {
         worker_id: usize,
         remaining_tasks: u64,
         drain_id: u64,
     },
-    StaticWorkerDrainStatus {
+    CpuWorkerDrainStatus {
         drain_id: u64,
         is_draining: bool,
         active_tasks: u64,
@@ -1108,15 +1108,15 @@ impl Message {
             | Message::HealthCheckAck { .. }
             | Message::WorkerResizeAck { .. }
             | Message::WorkerCertReload { .. }
-            | Message::StaticWorkerStarted { .. }
-            | Message::StaticWorkerReady { .. }
-            | Message::StaticWorkerHeartbeat { .. }
-            | Message::StaticWorkerShutdownComplete { .. }
-            | Message::StaticWorkerBackgroundTasksDone { .. }
-            | Message::StaticWorkerResizeAck { .. }
-            | Message::StaticWorkerDrain { .. }
-            | Message::StaticWorkerDrained { .. }
-            | Message::StaticWorkerDrainStatus { .. }
+            | Message::CpuWorkerStarted { .. }
+            | Message::CpuWorkerReady { .. }
+            | Message::CpuWorkerHeartbeat { .. }
+            | Message::CpuWorkerShutdownComplete { .. }
+            | Message::CpuWorkerBackgroundTasksDone { .. }
+            | Message::CpuWorkerResizeAck { .. }
+            | Message::CpuWorkerDrain { .. }
+            | Message::CpuWorkerDrained { .. }
+            | Message::CpuWorkerDrainStatus { .. }
             | Message::ThreatSyncRequest { .. }
             | Message::ThreatSyncResponse { .. }
             | Message::BlocklistRequest { .. }
@@ -1175,22 +1175,22 @@ impl Message {
                 config_path,
                 MAX_PATH_LENGTH,
             ),
-            Message::StaticWorkerScan { site_id } => {
-                check_str("StaticWorkerScan.site_id", site_id, MAX_STRING_LENGTH)
+            Message::CpuWorkerScan { site_id } => {
+                check_str("CpuWorkerScan.site_id", site_id, MAX_STRING_LENGTH)
             }
-            Message::StaticWorkerCacheUpdate {
+            Message::CpuWorkerCacheUpdate {
                 site_id,
                 path,
                 minified_path,
             } => {
                 check_str(
-                    "StaticWorkerCacheUpdate.site_id",
+                    "CpuWorkerCacheUpdate.site_id",
                     site_id,
                     MAX_STRING_LENGTH,
                 )?;
-                check_path_str("StaticWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
+                check_path_str("CpuWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
                 check_path_str(
-                    "StaticWorkerCacheUpdate.minified_path",
+                    "CpuWorkerCacheUpdate.minified_path",
                     minified_path,
                     MAX_PATH_LENGTH,
                 )
@@ -1596,7 +1596,7 @@ impl Message {
             Message::UnifiedServerWorkerError { error, .. } => {
                 check_str("UnifiedServerWorkerError.error", error, MAX_STRING_LENGTH)
             }
-            Message::WorkerRequestLog { log, .. } | Message::StaticWorkerRequestLog { log, .. } => {
+            Message::WorkerRequestLog { log, .. } | Message::CpuWorkerRequestLog { log, .. } => {
                 check_str(
                     "RequestLogPayload.client_ip",
                     &log.client_ip,
@@ -1830,18 +1830,18 @@ impl Message {
             | Message::HealthCheckAck { .. }
             | Message::WorkerResizeAck { .. } => MessageCategory::SupervisorCommand,
 
-            Message::StaticWorkerStarted { .. }
-            | Message::StaticWorkerReady { .. }
-            | Message::StaticWorkerHeartbeat { .. }
-            | Message::StaticWorkerRequestLog { .. }
-            | Message::StaticWorkerShutdownComplete { .. }
-            | Message::StaticWorkerBackgroundTasksDone { .. }
-            | Message::StaticWorkerResizeAck { .. }
-            | Message::StaticWorkerScan { .. }
-            | Message::StaticWorkerCacheUpdate { .. }
-            | Message::StaticWorkerDrain { .. }
-            | Message::StaticWorkerDrained { .. }
-            | Message::StaticWorkerDrainStatus { .. } => MessageCategory::CpuWorker,
+            Message::CpuWorkerStarted { .. }
+            | Message::CpuWorkerReady { .. }
+            | Message::CpuWorkerHeartbeat { .. }
+            | Message::CpuWorkerRequestLog { .. }
+            | Message::CpuWorkerShutdownComplete { .. }
+            | Message::CpuWorkerBackgroundTasksDone { .. }
+            | Message::CpuWorkerResizeAck { .. }
+            | Message::CpuWorkerScan { .. }
+            | Message::CpuWorkerCacheUpdate { .. }
+            | Message::CpuWorkerDrain { .. }
+            | Message::CpuWorkerDrained { .. }
+            | Message::CpuWorkerDrainStatus { .. } => MessageCategory::CpuWorker,
 
             Message::UpstreamGlobalStats { .. } | Message::GlobalUpstreamStatsBroadcast { .. } => {
                 MessageCategory::Upstream
@@ -1963,7 +1963,6 @@ impl Message {
         matches!(
             self.category(),
             MessageCategory::WorkerLifecycle
-                | MessageCategory::StaticWorker
                 | MessageCategory::CpuWorker
                 | MessageCategory::UnifiedServer
                 | MessageCategory::AppServer
@@ -2168,7 +2167,6 @@ impl Message {
 pub enum MessageCategory {
     WorkerLifecycle,
     SupervisorCommand,
-    StaticWorker,
     CpuWorker,
     ThreatIntel,
     BlocklistRules,
@@ -2192,7 +2190,6 @@ impl std::fmt::Display for MessageCategory {
         match self {
             MessageCategory::WorkerLifecycle => write!(f, "WorkerLifecycle"),
             MessageCategory::SupervisorCommand => write!(f, "SupervisorCommand"),
-            MessageCategory::StaticWorker => write!(f, "StaticWorker"),
             MessageCategory::CpuWorker => write!(f, "CpuWorker"),
             MessageCategory::ThreatIntel => write!(f, "ThreatIntel"),
             MessageCategory::BlocklistRules => write!(f, "BlocklistRules"),

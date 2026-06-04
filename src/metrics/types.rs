@@ -666,7 +666,7 @@ impl WorkerMetrics {
 }
 
 #[derive(Debug, Default)]
-pub struct StaticWorkerMetrics {
+pub struct CpuWorkerMetrics {
     pub cache_hits: AtomicU64,
     pub cache_misses: AtomicU64,
     pub minifications: AtomicU64,
@@ -674,7 +674,7 @@ pub struct StaticWorkerMetrics {
     pub errors: AtomicU64,
 }
 
-impl StaticWorkerMetrics {
+impl CpuWorkerMetrics {
     pub fn new() -> Self {
         Self::default()
     }

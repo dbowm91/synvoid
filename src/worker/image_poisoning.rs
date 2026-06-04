@@ -1,4 +1,4 @@
-use super::cpu_task::state::StaticWorkerState;
+use super::cpu_task::state::CpuWorkerState;
 
 use stegoeggo::{ProtectionContext, ProtectionLevel, process_image_bytes};
 
@@ -15,7 +15,7 @@ fn parse_protection_level(level: &str) -> ProtectionLevel {
 }
 
 pub(in crate::worker) fn poison_image_sync(
-    state: &StaticWorkerState,
+    state: &CpuWorkerState,
     site_id: &str,
     body: Vec<u8>,
     _last_modified: Option<String>,

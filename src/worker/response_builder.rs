@@ -4,16 +4,17 @@ use std::time::{Instant, SystemTime};
 
 use tokio::task;
 
-use super::cpu_task::state::{CompressionTask, StaticWorkerState};
+use super::cpu_task::state::{CompressionTask, CpuWorkerState};
+use crate::process::CpuTaskResult;
 use crate::static_files::minifier;
 
 pub(in crate::worker) fn process_minify_request(
-    state: &StaticWorkerState,
-    request_id: u64,
+    state: &CpuWorkerState,
+    _request_id: u64,
     site_id: String,
     path: String,
     encoding: Option<String>,
-) -> Result<crate::process::Message, String> {
+) -> Result<CpuTaskResult, String> {
     let cache = {
         let caches = state
             .minifier_caches
@@ -156,8 +157,7 @@ pub(in crate::worker) fn process_minify_request(
         }
     }
 
-    Ok(crate::process::Message::MinifyResponse {
-        request_id,
+    Ok(CpuTaskResult::Minify {
         site_id,
         path,
         content: response_content,
@@ -168,12 +168,12 @@ pub(in crate::worker) fn process_minify_request(
 }
 
 pub(in crate::worker) fn process_compressed_request(
-    state: &StaticWorkerState,
-    request_id: u64,
+    state: &CpuWorkerState,
+    _request_id: u64,
     site_id: String,
     path: String,
     encoding: String,
-) -> Result<crate::process::Message, String> {
+) -> Result<CpuTaskResult, String> {
     let cache = {
         let caches = state
             .minifier_caches
@@ -203,14 +203,13 @@ pub(in crate::worker) fn process_compressed_request(
         .content
         .to_vec();
 
-    Ok(crate::process::Message::GetCompressedResponse {
-        request_id,
+    Ok(CpuTaskResult::GetCompressed {
         content,
     })
 }
 
 pub(in crate::worker) fn init_minifier_caches(
-    state: &StaticWorkerState,
+    state: &CpuWorkerState,
     _main_config: &crate::config::MainConfig,
 ) {
     let config = match state.config_manager.read() {
@@ -236,7 +235,7 @@ pub(in crate::worker) fn init_minifier_caches(
 }
 
 pub(in crate::worker) fn check_and_invalidate_cache(
-    state: &StaticWorkerState,
+    state: &CpuWorkerState,
     site_id: &str,
     root: &PathBuf,
 ) {
@@ -265,7 +264,7 @@ pub(in crate::worker) fn check_and_invalidate_cache(
 }
 
 pub(in crate::worker) async fn handle_minify_request(
-    state: &StaticWorkerState,
+    state: &CpuWorkerState,
     request_id: u64,
     site_id: String,
     path: String,
@@ -505,7 +504,7 @@ pub(in crate::worker) async fn handle_minify_request(
         .await;
 }
 
-pub(super) async fn send_error(state: &StaticWorkerState, request_id: u64, error: String) {
+pub(super) async fn send_error(state: &CpuWorkerState, request_id: u64, error: String) {
     let mut ipc = state.ipc.lock().await;
     let _ = ipc
         .send(&crate::process::Message::MinifyError { request_id, error })
@@ -513,7 +512,7 @@ pub(super) async fn send_error(state: &StaticWorkerState, request_id: u64, error
 }
 
 pub(in crate::worker) async fn handle_compressed_request(
-    state: &StaticWorkerState,
+    state: &CpuWorkerState,
     request_id: u64,
     site_id: String,
     path: String,
@@ -574,7 +573,7 @@ pub(in crate::worker) async fn handle_compressed_request(
         .await;
 }
 
-pub(in crate::worker) fn process_compression_queue(state: &StaticWorkerState) {
+pub(in crate::worker) fn process_compression_queue(state: &CpuWorkerState) {
     let tasks: Vec<CompressionTask> = match state.compression_queue.write() {
         Ok(mut queue) => queue.drain(..).collect(),
         Err(_) => return,
