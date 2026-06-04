@@ -859,9 +859,9 @@ impl MeshCertManager {
             return Ok(true);
         }
 
-        use rustls::RootCertStore;
-        use rustls::client::WebPkiServerVerifier;
         use rustls::client::danger::ServerCertVerifier;
+        use rustls::client::WebPkiServerVerifier;
+        use rustls::RootCertStore;
         use std::time::SystemTime;
 
         let mut root_store = RootCertStore::empty();
@@ -1701,6 +1701,282 @@ mod tests {
         assert!(
             !result,
             "registered key of unexpected length should reject as impersonation"
+        );
+    }
+}
+
+#[cfg(test)]
+mod mesh_pki_tests {
+    use super::*;
+
+    /// Extract the raw 32-byte Ed25519 seed from a PKCS8 DER-encoded key pair.
+    /// Ed25519 PKCS8: 30 2e 02 01 00 30 05 06 03 2b 65 70 04 22 04 20 [32 bytes]
+    fn extract_ed25519_seed(pkcs8_der: &[u8]) -> [u8; 32] {
+        assert!(pkcs8_der.len() >= 48, "PKCS8 DER too short for Ed25519");
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&pkcs8_der[16..48]);
+        seed
+    }
+
+    /// Generate a self-signed CA cert and key pair for testing.
+    /// Returns (rcgen_cert, rcgen_key_pair, cert_der_bytes, raw_public_key).
+    fn generate_test_ca() -> (rcgen::Certificate, rcgen::KeyPair, Vec<u8>, Vec<u8>) {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec!["test-ca.mesh".to_string()]).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let cert = params.self_signed(&key_pair).unwrap();
+        let cert_der = cert.der().to_vec();
+        let raw_pubkey = extract_public_key_from_cert(&cert_der).expect("CA cert must have pubkey");
+        (cert, key_pair, cert_der, raw_pubkey)
+    }
+
+    /// Generate a leaf cert signed by a CA.
+    /// Returns (cert_der_bytes, raw_public_key).
+    fn generate_test_leaf(
+        ca_cert: &rcgen::Certificate,
+        ca_key: &rcgen::KeyPair,
+        node_id: &str,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let leaf_key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec![format!("{}.mesh", node_id)]).unwrap();
+        params.is_ca = rcgen::IsCa::NotCa;
+        let leaf_cert = params.signed_by(&leaf_key, ca_cert, ca_key).unwrap();
+        let cert_der = leaf_cert.der().to_vec();
+        let raw_pubkey =
+            extract_public_key_from_cert(&cert_der).expect("leaf cert must have pubkey");
+        (cert_der, raw_pubkey)
+    }
+
+    /// Sign arbitrary bytes with an Ed25519 key pair (via raw seed extraction).
+    fn sign_with_ca_key(ca_key: &rcgen::KeyPair, data: &[u8]) -> Vec<u8> {
+        let pkcs8_der = ca_key.serialize_der();
+        let seed = extract_ed25519_seed(&pkcs8_der);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        signing_key.sign(data).to_bytes().to_vec()
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_valid() {
+        let (ca_cert, ca_key, ca_cert_der, ca_pubkey) = generate_test_ca();
+        let node_id = "global-node-1";
+        let (leaf_cert_der, _leaf_pubkey) = generate_test_leaf(&ca_cert, &ca_key, node_id);
+
+        let signable = [leaf_cert_der.as_slice(), node_id.as_bytes()].concat();
+        let ca_signature = sign_with_ca_key(&ca_key, &signable);
+
+        let chain = CertChain {
+            leaf_cert_der,
+            ca_cert_der,
+            ca_signature,
+        };
+
+        let mut trusted_keys = std::collections::HashMap::new();
+        trusted_keys.insert("ca-node".to_string(), ca_pubkey);
+
+        assert!(verify_certificate_chain(&chain, node_id, &trusted_keys).is_ok());
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_wrong_node_id() {
+        let (ca_cert, ca_key, ca_cert_der, ca_pubkey) = generate_test_ca();
+        let node_id = "global-node-1";
+        let (leaf_cert_der, _) = generate_test_leaf(&ca_cert, &ca_key, node_id);
+
+        let signable = [leaf_cert_der.as_slice(), node_id.as_bytes()].concat();
+        let ca_signature = sign_with_ca_key(&ca_key, &signable);
+
+        let chain = CertChain {
+            leaf_cert_der,
+            ca_cert_der,
+            ca_signature,
+        };
+
+        let mut trusted_keys = std::collections::HashMap::new();
+        trusted_keys.insert("ca-node".to_string(), ca_pubkey);
+
+        assert!(verify_certificate_chain(&chain, "wrong-node-id", &trusted_keys).is_err());
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_unknown_ca() {
+        let (ca_cert, ca_key, ca_cert_der, _ca_pubkey) = generate_test_ca();
+        let node_id = "global-node-1";
+        let (leaf_cert_der, _) = generate_test_leaf(&ca_cert, &ca_key, node_id);
+
+        let signable = [leaf_cert_der.as_slice(), node_id.as_bytes()].concat();
+        let ca_signature = sign_with_ca_key(&ca_key, &signable);
+
+        let chain = CertChain {
+            leaf_cert_der,
+            ca_cert_der,
+            ca_signature,
+        };
+
+        let trusted_keys = std::collections::HashMap::new();
+        assert!(verify_certificate_chain(&chain, node_id, &trusted_keys).is_err());
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_tampered_signature() {
+        let (ca_cert, ca_key, ca_cert_der, ca_pubkey) = generate_test_ca();
+        let node_id = "global-node-1";
+        let (leaf_cert_der, _) = generate_test_leaf(&ca_cert, &ca_key, node_id);
+
+        let signable = [leaf_cert_der.as_slice(), node_id.as_bytes()].concat();
+        let mut ca_signature = sign_with_ca_key(&ca_key, &signable);
+        ca_signature[0] ^= 0xff;
+
+        let chain = CertChain {
+            leaf_cert_der,
+            ca_cert_der,
+            ca_signature,
+        };
+
+        let mut trusted_keys = std::collections::HashMap::new();
+        trusted_keys.insert("ca-node".to_string(), ca_pubkey);
+
+        assert!(verify_certificate_chain(&chain, node_id, &trusted_keys).is_err());
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_tampered_leaf_cert() {
+        let (ca_cert, ca_key, ca_cert_der, ca_pubkey) = generate_test_ca();
+        let node_id = "global-node-1";
+        let (mut leaf_cert_der, _) = generate_test_leaf(&ca_cert, &ca_key, node_id);
+
+        let signable = [leaf_cert_der.as_slice(), node_id.as_bytes()].concat();
+        let ca_signature = sign_with_ca_key(&ca_key, &signable);
+
+        // Tamper with the leaf cert after signing
+        leaf_cert_der[0] ^= 0x01;
+
+        let chain = CertChain {
+            leaf_cert_der,
+            ca_cert_der,
+            ca_signature,
+        };
+
+        let mut trusted_keys = std::collections::HashMap::new();
+        trusted_keys.insert("ca-node".to_string(), ca_pubkey);
+
+        assert!(verify_certificate_chain(&chain, node_id, &trusted_keys).is_err());
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_issuer_mismatch() {
+        // Two separate CAs — leaf is signed by CA-1 but chain presents CA-2's cert
+        let (ca1_cert, ca1_key, _ca1_der, _ca1_pk) = generate_test_ca();
+        let (ca2_cert, _ca2_key, ca2_der, ca2_pk) = generate_test_ca();
+        let node_id = "global-node-1";
+        let (leaf_cert_der, _) = generate_test_leaf(&ca1_cert, &ca1_key, node_id);
+
+        // Sign with CA-1 but put CA-2's cert in the chain
+        let signable = [leaf_cert_der.as_slice(), node_id.as_bytes()].concat();
+        let ca_signature = sign_with_ca_key(&ca1_key, &signable);
+
+        let chain = CertChain {
+            leaf_cert_der,
+            ca_cert_der: ca2_der,
+            ca_signature,
+        };
+
+        let mut trusted_keys = std::collections::HashMap::new();
+        trusted_keys.insert("ca2".to_string(), ca2_pk);
+
+        // Should fail: leaf issuer (CA-1) != CA subject (CA-2)
+        assert!(verify_certificate_chain(&chain, node_id, &trusted_keys).is_err());
+    }
+
+    #[test]
+    fn test_cert_binding_roundtrip() {
+        let binding = NodeCertBinding {
+            node_id: "test-node".to_string(),
+            certified_public_key: vec![1, 2, 3],
+            ca_public_key: vec![4, 5, 6],
+            timestamp: 12345,
+        };
+
+        let serialized = postcard::to_stdvec(&binding).unwrap();
+        let deserialized: NodeCertBinding = postcard::from_bytes(&serialized).unwrap();
+
+        assert_eq!(deserialized.node_id, "test-node");
+        assert_eq!(deserialized.certified_public_key, vec![1, 2, 3]);
+        assert_eq!(deserialized.ca_public_key, vec![4, 5, 6]);
+        assert_eq!(deserialized.timestamp, 12345);
+    }
+
+    #[test]
+    fn test_cert_binding_register_and_retrieve() {
+        let mut cfg = crate::mesh::config::MeshConfig::default();
+        cfg.tls.mode = Some(crate::mesh::config::MeshTlsMode::Strict);
+        cfg.tls.ca_path = None;
+        let mgr = MeshCertManager::new(&cfg);
+
+        let binding = NodeCertBinding {
+            node_id: "node-a".to_string(),
+            certified_public_key: vec![10, 20, 30],
+            ca_public_key: vec![40, 50, 60],
+            timestamp: 99999,
+        };
+
+        mgr.register_cert_binding(binding.clone());
+        let retrieved = mgr.get_cert_binding("node-a").unwrap();
+        assert_eq!(retrieved.node_id, "node-a");
+        assert_eq!(retrieved.certified_public_key, vec![10, 20, 30]);
+        assert_eq!(retrieved.timestamp, 99999);
+    }
+
+    #[test]
+    fn test_cert_binding_not_found() {
+        let mut cfg = crate::mesh::config::MeshConfig::default();
+        cfg.tls.mode = Some(crate::mesh::config::MeshTlsMode::Strict);
+        cfg.tls.ca_path = None;
+        let mgr = MeshCertManager::new(&cfg);
+
+        assert!(mgr.get_cert_binding("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_verify_certificate_chain_multiple_trusted_keys() {
+        let (ca1_cert, ca1_key, ca1_der, ca1_pk) = generate_test_ca();
+        let (ca2_cert, ca2_key, ca2_der, ca2_pk) = generate_test_ca();
+        let node_id = "global-node-1";
+
+        // Sign leaf with CA-1
+        let (leaf1_der, _) = generate_test_leaf(&ca1_cert, &ca1_key, node_id);
+        let signable1 = [leaf1_der.as_slice(), node_id.as_bytes()].concat();
+        let sig1 = sign_with_ca_key(&ca1_key, &signable1);
+
+        let chain1 = CertChain {
+            leaf_cert_der: leaf1_der,
+            ca_cert_der: ca1_der,
+            ca_signature: sig1,
+        };
+
+        // Both CAs in trusted set
+        let mut trusted_keys = std::collections::HashMap::new();
+        trusted_keys.insert("ca1".to_string(), ca1_pk);
+        trusted_keys.insert("ca2".to_string(), ca2_pk);
+
+        assert!(
+            verify_certificate_chain(&chain1, node_id, &trusted_keys).is_ok(),
+            "chain signed by CA-1 should pass with both CAs trusted"
+        );
+
+        // Sign leaf with CA-2
+        let (leaf2_der, _) = generate_test_leaf(&ca2_cert, &ca2_key, node_id);
+        let signable2 = [leaf2_der.as_slice(), node_id.as_bytes()].concat();
+        let sig2 = sign_with_ca_key(&ca2_key, &signable2);
+
+        let chain2 = CertChain {
+            leaf_cert_der: leaf2_der,
+            ca_cert_der: ca2_der,
+            ca_signature: sig2,
+        };
+
+        assert!(
+            verify_certificate_chain(&chain2, node_id, &trusted_keys).is_ok(),
+            "chain signed by CA-2 should pass with both CAs trusted"
         );
     }
 }
