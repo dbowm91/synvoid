@@ -503,6 +503,7 @@ impl MeshTransport {
                 timestamp,
                 signature,
                 key_exchange_endpoint,
+                cert_chain,
             } => {
                 self.handle_global_node_announce(
                     peer_id,
@@ -512,6 +513,7 @@ impl MeshTransport {
                     timestamp,
                     &signature,
                     key_exchange_endpoint.as_deref(),
+                    cert_chain.as_ref(),
                 )
                 .await;
             }

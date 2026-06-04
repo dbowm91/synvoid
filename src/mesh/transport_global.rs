@@ -71,6 +71,7 @@ impl MeshTransport {
         timestamp: u64,
         signature: &[u8],
         key_exchange_endpoint: Option<&str>,
+        cert_chain: Option<&crate::mesh::cert::CertChain>,
     ) {
         tracing::info!(
             "Received GlobalNodeAnnounce: {} action={:?} from {}",
@@ -137,6 +138,29 @@ impl MeshTransport {
             action
         );
 
+        // MESH-14: Verify cert chain if present
+        if let Some(cert_chain) = cert_chain {
+            let trusted_keys = self.cert_manager.get_global_node_public_keys();
+            if let Err(e) = crate::mesh::cert::verify_certificate_chain(
+                cert_chain,
+                node_id,
+                &trusted_keys,
+            ) {
+                tracing::warn!(
+                    "GlobalNodeAnnounce from {} has invalid cert chain: {}",
+                    node_id,
+                    e
+                );
+                // Don't reject — fall back to existing behavior
+            } else {
+                tracing::debug!(
+                    "GlobalNodeAnnounce from {} has valid cert chain, registering binding",
+                    node_id
+                );
+                // The binding is already registered via register_global_node()
+            }
+        }
+
         // Store in DHT
         if let Some(ref record_store) = self.record_store {
             match action {
@@ -200,6 +224,7 @@ impl MeshTransport {
                     timestamp,
                     signature: signature.to_vec(),
                     key_exchange_endpoint: key_exchange_endpoint.map(|s| s.into()),
+                    cert_chain: None,
                 };
                 let _ = self
                     .broadcast_to_random_peers(
@@ -323,6 +348,7 @@ impl MeshTransport {
             timestamp,
             signature,
             key_exchange_endpoint: None,
+            cert_chain: None,
         };
 
         let _ = self
@@ -392,6 +418,7 @@ impl MeshTransport {
             timestamp,
             signature,
             key_exchange_endpoint: None,
+            cert_chain: None,
         };
 
         let _ = self

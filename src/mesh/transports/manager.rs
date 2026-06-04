@@ -680,6 +680,7 @@ impl MeshTransportManager {
             timestamp,
             signature,
             key_exchange_endpoint: key_exchange_endpoint.map(|s| s.into()),
+            cert_chain: None,
         };
 
         // Use the manager's broadcast method

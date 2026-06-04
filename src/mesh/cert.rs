@@ -532,6 +532,10 @@ impl MeshCertManager {
         keys.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 
+    pub fn get_global_node_public_keys(&self) -> std::collections::HashMap<String, Vec<u8>> {
+        self.global_node_public_keys.read().clone()
+    }
+
     pub fn is_global_node_authorized(&self, signer_public_key: &str) -> bool {
         let keys = self.global_node_public_keys.read();
         keys.values()

@@ -1968,6 +1968,7 @@ impl MeshTransport {
             timestamp,
             signature,
             key_exchange_endpoint: key_exchange_endpoint.map(|s| s.into()),
+            cert_chain: None,
         };
 
         let _ = self

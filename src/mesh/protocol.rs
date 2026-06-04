@@ -492,6 +492,8 @@ pub enum MeshMessage {
         timestamp: u64,
         signature: Vec<u8>,
         key_exchange_endpoint: Option<ArcStr>,
+        /// Optional cert chain for PKI binding (MESH-14)
+        cert_chain: Option<crate::mesh::cert::CertChain>,
     },
     OrgMemberAnnounce {
         org_id: ArcStr,

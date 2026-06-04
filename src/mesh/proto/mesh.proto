@@ -1124,6 +1124,7 @@ message GlobalNodeAnnounce {
     uint64 timestamp = 4;
     bytes signature = 5;
     string key_exchange_endpoint = 6;
+    bytes cert_chain = 7;
 }
 
 message OrgMemberAnnounce {

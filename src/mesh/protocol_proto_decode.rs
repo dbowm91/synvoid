@@ -395,6 +395,11 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 } else {
                     Some(r.key_exchange_endpoint.into())
                 };
+                let cert_chain = if r.cert_chain.is_empty() {
+                    None
+                } else {
+                    serde_json::from_slice::<crate::mesh::cert::CertChain>(&r.cert_chain).ok()
+                };
                 Ok(MeshMessage::GlobalNodeAnnounce {
                     node_id: r.node_id.into(),
                     public_key: r.public_key.into(),
@@ -402,6 +407,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     timestamp: r.timestamp,
                     signature: r.signature,
                     key_exchange_endpoint,
+                    cert_chain,
                 })
             }
             proto::mesh_message::Payload::OrgMemberAnnounce(r) => {
