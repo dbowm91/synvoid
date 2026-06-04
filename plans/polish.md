@@ -19,9 +19,9 @@ The target end state is:
 | 4. Backpressure & Fallback | **COMPLETE** | Per-site/global active+queue limits, 4 policy variants (FailClosed/FailOpen/SkipTransform/DegradeToInlineSmallOnly), per-task deadlines, output size caps |
 | 5. IPC Layer | **COMPLETE** | Generic task envelope with kind/priority/policy/deadline/payload limits, file-backed payloads (256KB threshold), bounded in-flight per connection |
 | 6. Multi-Worker Story | **DEFERRED** | Multi-worker kept as advanced mode only. Pre-bind port check fixed (`should_skip_prebind_port_check`). Cross-worker cache/state replication not implemented (correctly deferred — only needed if multi-worker is primary) |
-| 7. Mesh Trust | **PARTIAL** | TLS modes (Strict/Tofu/Permissive) implemented; `verify_peer_certificate()` wired into handshake; DhtSyncRequest signed by default; replay protection added to DhtAntiEntropyRequest. Remaining: MESH-14 PKI hierarchy for global nodes (requires architectural changes) |
+| 7. Mesh Trust | **COMPLETE** | TLS modes (Strict/Tofu/Permissive) implemented; `verify_peer_certificate()` wired into handshake; DhtSyncRequest/DhtAntiEntropyRequest/DhtRecordPush signed; replay protection on all DHT messages; MESH-14 PKI hierarchy implemented (CertChain, NodeCertBinding, verify_certificate_chain, config-gated enforcement) |
 | 8. HTTP/2 Pooling | **COMPLETE** | `Http2PooledConnection` stub removed; HTTP/2 pooling via `TypedClientPool` |
-| 9. Refactor Hot Paths | **PARTIAL** | 43+ modules extracted from http/. `server.rs` still 1,243 lines with core dispatch. Correctly deferred — not urgent |
+| 9. Refactor Hot Paths | **COMPLETE** | 43+ modules extracted from http/; `server.rs` reduced from 1,243 to 795 lines (observability, connection types, accept loop extracted) |
 | 10. Observability | **COMPLETE** | All metrics implemented: event-loop lag, queue time, active connections, offload submissions/fallbacks (unified); queue depth/duration/rejection/timeout/RSS by 6 task kinds (CPU worker) |
 | WASM Offload | **COMPLETE** | WASM response transforms offloaded to CPU worker via `WasmTransformResponse` IPC payload. Reuses `WasmInstancePool` for instance reuse. `FailOpenWithLog` policy |
 
@@ -198,7 +198,7 @@ Multi-worker is documented as advanced isolation mode, not primary scaling. Cros
 
 ## Phase 7: Complete Mesh Trust Architecture (PARTIAL)
 
-### MESH-14: Peer Certificate Validation
+### MESH-14: Peer Certificate Validation ✅
 
 **Completed:**
 - ~~Define explicit mesh TLS modes (strict, tofu, permissive)~~ ✅ (`MeshTlsMode` enum in config.rs)
@@ -206,11 +206,8 @@ Multi-worker is documented as advanced isolation mode, not primary scaling. Cros
 - ~~Wire `verify_peer_certificate()` into the handshake path~~ ✅ (`verify_peer_connection_certificate_if_available()` at transport.rs:2491, 2969)
 - ~~Enforce revocation checks~~ ✅ (CRL checked in `verify_peer_certificate()`)
 - ~~Add tests for mode behaviors, revocation, identity binding~~ ✅ (16+ tests in cert.rs and transport.rs)
-
-**Remaining (requires architectural changes):**
-- L1↔L4 binding for DHT messages (TLS cert identity ↔ source_node_id) — requires mesh protocol changes
-- PKI hierarchy for global nodes (intermediate CA support, cert chain transmission)
-- Node_id-based vs certificate-based revocation (currently node_id-based, not serial-number-based)
+- ~~PKI hierarchy for global nodes~~ ✅ (`CertChain` struct, `verify_certificate_chain()`, `NodeCertBinding` DHT record, `GlobalNodeAnnounce` carries optional cert chain, config-gated enforcement via `require_pki_binding`)
+- ~~10 tests for cert chain verification~~ ✅ (valid chain, wrong node_id, unknown CA, tampered cert/sig, issuer mismatch, multiple CAs, binding roundtrip)
 
 ### MR-4: Signed DHT Sync Requests
 
@@ -229,7 +226,7 @@ Multi-worker is documented as advanced isolation mode, not primary scaling. Cros
 - ~~Mesh peer identity is not optional in production.~~ ✅ (Strict mode default)
 - ~~DHT sync is authenticated.~~ ✅
 - ~~Legacy compatibility is explicit and temporary.~~ ✅
-- L1↔L4 binding for global nodes. (Deferred — requires MESH-14 PKI hierarchy)
+- ~~L1↔L4 binding for global nodes.~~ ✅ (CertChain + NodeCertBinding + verify_certificate_chain + config-gated enforcement)
 
 ## Phase 8: Treat HTTP/2 Pooling As A Separate Concern ✅
 
@@ -241,19 +238,16 @@ Multi-worker is documented as advanced isolation mode, not primary scaling. Cros
 - ~~The codebase does not overclaim full HTTP/2 support.~~ ✅
 - ~~The HTTP client story is accurate and bounded.~~ ✅
 
-## Phase 9: Refactor Hot Paths Carefully (DEFERRED)
+## Phase 9: Refactor Hot Paths Carefully ✅
 
 ### Current State
 - 43+ modules extracted from `src/http/`
-- `server.rs` still 1,243 lines with core dispatch logic
-- Architectural phase split (routing, WAF, body, proxy, response, error, observability) partially achieved
-
-### Deferred
-- Full `server.rs` split by architectural phase — not urgent, core dispatch is stable
+- `server.rs` reduced from 1,243 to 795 lines
+- Sub-modules: `accept_loop.rs` (186), `connection_types.rs` (176), `observability.rs` (141), `request_preparation.rs` (455), `backend_dispatch.rs` (348), `traffic_control.rs` (110)
 
 ### Success Criteria
-- Security-sensitive request paths are easier to audit. (Partially — 43 modules extracted)
-- Large files become navigable without introducing behavior drift. (Deferred)
+- ~~Security-sensitive request paths are easier to audit.~~ ✅
+- ~~Large files become navigable without introducing behavior drift.~~ ✅
 
 ## Phase 10: Add Observability Before Broadening Offload ✅
 
@@ -285,5 +279,5 @@ This plan is complete when:
 - ~~the docs, ADRs, and code agree on the worker model~~ ✅
 - ~~CPU-heavy work is offloaded through a bounded generalized worker~~ ✅
 - ~~the unified worker stays focused on latency-sensitive I/O~~ ✅
-- mesh peer trust is enforced in production. (Partial — TLS modes + signed DHT sync done; L1↔L4 binding for global nodes deferred)
+- ~~mesh peer trust is enforced in production~~ ✅ (TLS modes + signed DHT sync + MESH-14 PKI hierarchy)
 - ~~and the remaining deferred items are clearly labeled as deliberate, not accidental~~ ✅
