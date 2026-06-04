@@ -69,6 +69,26 @@ fn verify_dht_sync_request_signature(
     }
 }
 
+fn verify_dht_anti_entropy_request_signature(
+    request_id: &str,
+    node_id: &str,
+    local_root_hash: &[u8],
+    timestamp: u64,
+    nonce: &str,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    crate::mesh::dht::signed::verify_dht_anti_entropy_request_envelope_signature(
+        request_id,
+        node_id,
+        local_root_hash,
+        timestamp,
+        nonce,
+        signature,
+        signer_public_key,
+    )
+}
+
 fn replay_result_reason(replay_result: crate::mesh::protocol::ReplayResult) -> &'static str {
     match replay_result {
         crate::mesh::protocol::ReplayResult::FutureTimestamp => "future_timestamp",
@@ -511,10 +531,13 @@ impl MeshTransport {
         &self,
         from_peer: &str,
         request_id: &str,
-        _node_id: &str,
+        node_id: &str,
         local_root_hash: &[u8],
         interested_keys: &[String],
         timestamp: u64,
+        nonce: &str,
+        signature: &[u8],
+        signer_public_key: Option<&str>,
     ) {
         tracing::debug!(
             "Received DHT anti-entropy request from {} ({} interested keys)",
@@ -528,6 +551,55 @@ impl MeshTransport {
                 from_peer
             );
             return;
+        }
+
+        let require_signed = self
+            .config
+            .dht
+            .as_ref()
+            .map(|d| d.require_signed_anti_entropy_requests)
+            .unwrap_or(true);
+        let compat_until = self
+            .config
+            .dht
+            .as_ref()
+            .and_then(|d| d.unsigned_anti_entropy_compat_until_unix);
+        let now_unix = crate::mesh::safe_unix_timestamp();
+        let has_auth = !signature.is_empty()
+            && signer_public_key.is_some_and(|s| !s.is_empty())
+            && !nonce.is_empty();
+        if !has_auth {
+            let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
+            if require_signed && !compat_active {
+                tracing::warn!(
+                    "DHT anti-entropy request from {} rejected: missing envelope signature/nonce (require_signed_anti_entropy_requests={}, compat_until={:?}, now={})",
+                    from_peer,
+                    require_signed,
+                    compat_until,
+                    now_unix
+                );
+                return;
+            }
+            tracing::warn!(
+                "DHT anti-entropy request from {} accepted without signature (legacy compat window active or signing disabled)",
+                from_peer
+            );
+        } else {
+            if !verify_dht_anti_entropy_request_signature(
+                request_id,
+                node_id,
+                local_root_hash,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
+            ) {
+                tracing::warn!(
+                    "DHT anti-entropy request from {} rejected: invalid envelope signature",
+                    from_peer
+                );
+                return;
+            }
         }
 
         if let Some(ref record_store) = self.record_store {
@@ -800,8 +872,12 @@ impl MeshTransport {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_dht_sync_auth_mode, replay_result_reason, verify_dht_sync_request_signature,
+        classify_dht_sync_auth_mode, replay_result_reason,
+        verify_dht_anti_entropy_request_signature, verify_dht_sync_request_signature,
         DhtSyncAuthMode,
+    };
+    use crate::mesh::dht::signed::{
+        verify_dht_record_push_envelope_signature_bytes, DhtRecordPushEnvelopeSignable,
     };
     use crate::mesh::protocol::MeshMessageSigner;
 
@@ -946,5 +1022,281 @@ mod tests {
             result,
             crate::mesh::protocol::ReplayResult::FutureTimestamp
         ));
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_accepts_valid_signature() {
+        let signer = MeshMessageSigner::new([7u8; 32]);
+        let request_id = "anti-req-1";
+        let node_id = "node-x";
+        let local_root_hash: Vec<u8> = vec![1, 2, 3, 4];
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let nonce = "anti-nonce-1";
+        let content = crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_rejects_tampered_signature() {
+        let signer = MeshMessageSigner::new([8u8; 32]);
+        let request_id = "anti-req-2";
+        let node_id = "node-y";
+        let local_root_hash: Vec<u8> = vec![5, 6, 7, 8];
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let nonce = "anti-nonce-2";
+        let content = crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+        );
+        let mut signature = signer.sign(&content);
+        signature[0] ^= 0x01;
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid);
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_rejects_missing_public_key() {
+        let signer = MeshMessageSigner::new([9u8; 32]);
+        let request_id = "anti-req-3";
+        let node_id = "node-z";
+        let local_root_hash: Vec<u8> = vec![9, 9, 9];
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let nonce = "anti-nonce-3";
+        let content = crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+            &signature,
+            None,
+        );
+        assert!(!valid, "missing public key must reject");
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_rejects_empty_nonce() {
+        let signer = MeshMessageSigner::new([10u8; 32]);
+        let request_id = "anti-req-4";
+        let node_id = "node-w";
+        let local_root_hash: Vec<u8> = vec![0, 0, 0, 1];
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let content = crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            "",
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            "",
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid, "empty nonce must reject");
+    }
+
+    fn build_dht_record(key: &str, value: &[u8]) -> crate::mesh::protocol::DhtRecord {
+        crate::mesh::protocol::DhtRecord {
+            key: key.to_string(),
+            value: value.to_vec(),
+            timestamp: 1,
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node-r".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        }
+    }
+
+    #[test]
+    fn test_verify_record_push_envelope_signature_accepts_valid_signature() {
+        let signer = MeshMessageSigner::new([11u8; 32]);
+        let request_id = "push-req-1";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "push-nonce-1";
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let content = crate::mesh::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, nonce, timestamp,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            node_id,
+            &records,
+            hop_count,
+            nonce,
+            timestamp,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(valid);
+    }
+
+    #[test]
+    fn test_verify_record_push_envelope_signature_rejects_tampered_record() {
+        let signer = MeshMessageSigner::new([12u8; 32]);
+        let request_id = "push-req-2";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "push-nonce-2";
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let content = crate::mesh::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, nonce, timestamp,
+        );
+        let signature = signer.sign(&content);
+        let mut tampered = records.clone();
+        tampered[0].value = b"tampered".to_vec();
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            node_id,
+            &tampered,
+            hop_count,
+            nonce,
+            timestamp,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid, "tampered record set must reject");
+    }
+
+    #[test]
+    fn test_verify_record_push_envelope_signature_rejects_missing_nonce() {
+        let signer = MeshMessageSigner::new([13u8; 32]);
+        let request_id = "push-req-3";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let content = crate::mesh::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, "", timestamp,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            node_id,
+            &records,
+            hop_count,
+            "",
+            timestamp,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid, "missing nonce must reject");
+    }
+
+    #[test]
+    fn test_verify_record_push_envelope_signature_rejects_missing_signature() {
+        let signer = MeshMessageSigner::new([14u8; 32]);
+        let request_id = "push-req-4";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "push-nonce-4";
+        let timestamp = crate::mesh::safe_unix_timestamp();
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            node_id,
+            &records,
+            hop_count,
+            nonce,
+            timestamp,
+            &[],
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid, "missing signature must reject");
+    }
+
+    #[test]
+    fn test_record_push_envelope_signable_content_changes_with_nonce() {
+        let request_id = "push-req-5";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let timestamp = 1u64;
+        let a = crate::mesh::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, "nonce-a", timestamp,
+        );
+        let b = crate::mesh::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, "nonce-b", timestamp,
+        );
+        assert_ne!(
+            a, b,
+            "different nonces must produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_dht_record_push_envelope_signable_uses_protocol_version() {
+        let request_id = "push-req-6";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "nonce-x";
+        let timestamp = 1u64;
+        let mut record_keys: Vec<&str> = records.iter().map(|r| r.key.as_str()).collect();
+        record_keys.sort();
+        let record_set_digest = crate::mesh::dht::signed::compute_record_set_digest(&records);
+        let content = crate::mesh::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, nonce, timestamp,
+        );
+        let direct = crate::serialization::serialize(&DhtRecordPushEnvelopeSignable {
+            request_id,
+            node_id,
+            record_keys,
+            record_set_digest: &record_set_digest,
+            hop_count,
+            nonce,
+            timestamp,
+            protocol_version: crate::mesh::dht::signed::DHT_RECORD_PUSH_PROTOCOL_VERSION,
+        })
+        .unwrap_or_default();
+        assert_eq!(content, direct);
     }
 }

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::metrics::TimingStatsPayload;
 
-use super::ipc_framing::{read_message_sync, write_message_sync, DEFAULT_BUFFER_SIZE};
+use super::ipc_framing::{DEFAULT_BUFFER_SIZE, read_message_sync, write_message_sync};
 use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +166,19 @@ pub enum CpuTaskPayload {
         body: Vec<u8>,
         excluded_categories: Vec<String>,
     },
+    WasmExecute {
+        site_id: String,
+        plugin_name: String,
+        function_name: String,
+        input: Vec<u8>,
+        timeout_ms: u64,
+    },
+    ServerlessInvoke {
+        site_id: String,
+        function_name: String,
+        input: Vec<u8>,
+        timeout_ms: u64,
+    },
 }
 
 impl CpuTaskPayload {
@@ -175,6 +188,8 @@ impl CpuTaskPayload {
             CpuTaskPayload::GetCompressed { .. } => CpuTaskKind::GetCompressed,
             CpuTaskPayload::PoisonImage { .. } => CpuTaskKind::PoisonImage,
             CpuTaskPayload::YaraScan { .. } => CpuTaskKind::YaraScan,
+            CpuTaskPayload::WasmExecute { .. } => CpuTaskKind::WasmExecute,
+            CpuTaskPayload::ServerlessInvoke { .. } => CpuTaskKind::ServerlessInvoke,
         }
     }
 }
@@ -198,6 +213,12 @@ pub enum CpuTaskResult {
     YaraScan {
         matches: Vec<String>,
     },
+    WasmExecute {
+        output: Vec<u8>,
+    },
+    ServerlessInvoke {
+        output: Vec<u8>,
+    },
 }
 
 impl CpuTaskResult {
@@ -207,6 +228,8 @@ impl CpuTaskResult {
             CpuTaskResult::GetCompressed { .. } => CpuTaskKind::GetCompressed,
             CpuTaskResult::PoisonImage { .. } => CpuTaskKind::PoisonImage,
             CpuTaskResult::YaraScan { .. } => CpuTaskKind::YaraScan,
+            CpuTaskResult::WasmExecute { .. } => CpuTaskKind::WasmExecute,
+            CpuTaskResult::ServerlessInvoke { .. } => CpuTaskKind::ServerlessInvoke,
         }
     }
 }
@@ -217,14 +240,20 @@ pub struct StaticCpuOffloadStats {
     pub queued_get_compressed: u64,
     pub queued_poison_image: u64,
     pub queued_yara_scan: u64,
+    pub queued_wasm_execute: u64,
+    pub queued_serverless_invoke: u64,
     pub active_minify: u64,
     pub active_get_compressed: u64,
     pub active_poison_image: u64,
     pub active_yara_scan: u64,
+    pub active_wasm_execute: u64,
+    pub active_serverless_invoke: u64,
     pub completed_minify: u64,
     pub completed_get_compressed: u64,
     pub completed_poison_image: u64,
     pub completed_yara_scan: u64,
+    pub completed_wasm_execute: u64,
+    pub completed_serverless_invoke: u64,
     pub payload_bytes_in_total: u64,
     pub payload_bytes_out_total: u64,
     pub rejected_total: u64,
@@ -1403,6 +1432,72 @@ impl Message {
                             MAX_STRING_LENGTH,
                         )
                     }
+                    CpuTaskPayload::WasmExecute {
+                        site_id,
+                        plugin_name,
+                        function_name,
+                        input,
+                        timeout_ms,
+                    } => {
+                        check_str(
+                            "CpuTaskPayload.WasmExecute.site_id",
+                            site_id,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str(
+                            "CpuTaskPayload.WasmExecute.plugin_name",
+                            plugin_name,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str(
+                            "CpuTaskPayload.WasmExecute.function_name",
+                            function_name,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        if input.len() > MAX_STRING_LENGTH {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskPayload.WasmExecute.input".into(),
+                                message: format!("{} > {}", input.len(), MAX_STRING_LENGTH),
+                            });
+                        }
+                        if *timeout_ms == 0 {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskPayload.WasmExecute.timeout_ms".into(),
+                                message: "timeout_ms must be > 0".into(),
+                            });
+                        }
+                        Ok(())
+                    }
+                    CpuTaskPayload::ServerlessInvoke {
+                        site_id,
+                        function_name,
+                        input,
+                        timeout_ms,
+                    } => {
+                        check_str(
+                            "CpuTaskPayload.ServerlessInvoke.site_id",
+                            site_id,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str(
+                            "CpuTaskPayload.ServerlessInvoke.function_name",
+                            function_name,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        if input.len() > MAX_STRING_LENGTH {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskPayload.ServerlessInvoke.input".into(),
+                                message: format!("{} > {}", input.len(), MAX_STRING_LENGTH),
+                            });
+                        }
+                        if *timeout_ms == 0 {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskPayload.ServerlessInvoke.timeout_ms".into(),
+                                message: "timeout_ms must be > 0".into(),
+                            });
+                        }
+                        Ok(())
+                    }
                 }
             }
             Message::CpuTaskCancel { .. } => Ok(()),
@@ -1453,6 +1548,24 @@ impl Message {
                     CpuTaskResult::PoisonImage { .. } => Ok(()),
                     CpuTaskResult::YaraScan { matches } => {
                         check_str_vec("CpuTaskResult.YaraScan.matches", matches, MAX_STRING_LENGTH)
+                    }
+                    CpuTaskResult::WasmExecute { output } => {
+                        if output.len() > MAX_STRING_LENGTH {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskResult.WasmExecute.output".into(),
+                                message: format!("{} > {}", output.len(), MAX_STRING_LENGTH),
+                            });
+                        }
+                        Ok(())
+                    }
+                    CpuTaskResult::ServerlessInvoke { output } => {
+                        if output.len() > MAX_STRING_LENGTH {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskResult.ServerlessInvoke.output".into(),
+                                message: format!("{} > {}", output.len(), MAX_STRING_LENGTH),
+                            });
+                        }
+                        Ok(())
                     }
                 }
             }

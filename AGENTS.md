@@ -84,6 +84,8 @@ cargo check --no-default-features --features mesh,dns
 | `TunnelBackend` at `src/tunnel/upstream.rs` | `TunnelBackend` at `src/tunnel/router.rs:200` (removed from upstream.rs) |
 | `architecture/tunnel.md` | Does not exist — tunnels documented in `networking_deep_dive.md` |
 | `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
+| `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
+| `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
 
 ## Modular Agent Guidance
 

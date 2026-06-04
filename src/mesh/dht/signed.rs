@@ -42,9 +42,11 @@ impl<'a> QuorumVerifierContext<'a> {
 // DHT MESSAGE IDENTITY HIERARCHY (see docs/identity_hierarchy.md):
 // L1: peer_id (TLS/cert) → L2: envelope signer → L3: record signer → L4: source_node_id → L5: quorum signer
 // Msg types: DhtRecordAnnounce(TS✓RoleRepEnv✓Rec✓BindP), DhtSyncRequest(TS✓Role-Env✓RecN/A), DhtSyncResponse(TS✓Env✓Rec✓BindP)
-//   DhtAntiEntropyRequest(TS✓EnvP RecN/A), DhtAntiEntropyResponse(TS✓Env✓Rec✓BindP), DhtRecordPush(Rec✓)
+//   DhtAntiEntropyRequest(TS✓Env✓RecN/A), DhtAntiEntropyResponse(TS✓Env✓Rec✓BindP), DhtRecordPush(TS✓Env✓Rec✓)
 //   Raft(N/A✓P✓Replay✓)
-// Gaps: DhtAntiEntropyRequest(pk unused), DhtRecordPush(no ts)
+// All priority DHT envelopes now include nonce + protocol_version + signature
+// coverage (see MR-4). Remaining binding gaps (BindP) require L1↔L4 cert
+// hierarchy for global nodes (MESH-14).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngressPath {
@@ -195,10 +197,14 @@ pub struct DhtAntiEntropyRequestSignable<'a> {
     pub node_id: &'a str,
     pub local_root_hash: &'a [u8],
     pub timestamp: u64,
+    pub nonce: &'a str,
+    pub protocol_version: &'a str,
 }
 
 pub const SNAPSHOT_REQUEST_PROTOCOL_VERSION: &str = "synvoid:dht-snapshot:v1";
 pub const SYNC_REQUEST_PROTOCOL_VERSION: &str = "synvoid:dht-sync-request:v1";
+pub const ANTI_ENTROPY_REQUEST_PROTOCOL_VERSION: &str = "synvoid:dht-anti-entropy-request:v1";
+pub const DHT_RECORD_PUSH_PROTOCOL_VERSION: &str = "synvoid:dht-record-push:v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtSnapshotRequestSignable<'a> {
@@ -263,6 +269,18 @@ pub struct DhtAntiEntropyResponseSignable<'a> {
     pub record_set_digest: &'a [u8],
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DhtRecordPushEnvelopeSignable<'a> {
+    pub request_id: &'a str,
+    pub node_id: &'a str,
+    pub record_keys: Vec<&'a str>,
+    pub record_set_digest: &'a [u8],
+    pub hop_count: u32,
+    pub nonce: &'a str,
+    pub timestamp: u64,
+    pub protocol_version: &'a str,
+}
+
 pub fn compute_record_set_digest(records: &[crate::mesh::protocol::DhtRecord]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -272,6 +290,119 @@ pub fn compute_record_set_digest(records: &[crate::mesh::protocol::DhtRecord]) -
         hasher.update(&signable_content);
     }
     hasher.finalize().to_vec()
+}
+
+pub fn get_dht_record_push_envelope_signable_content(
+    request_id: &str,
+    node_id: &str,
+    records: &[crate::mesh::protocol::DhtRecord],
+    hop_count: u32,
+    nonce: &str,
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut record_keys: Vec<&str> = records.iter().map(|r| r.key.as_str()).collect();
+    record_keys.sort();
+    let record_set_digest = compute_record_set_digest(records);
+    crate::serialization::serialize(&DhtRecordPushEnvelopeSignable {
+        request_id,
+        node_id,
+        record_keys,
+        record_set_digest: &record_set_digest,
+        hop_count,
+        nonce,
+        timestamp,
+        protocol_version: DHT_RECORD_PUSH_PROTOCOL_VERSION,
+    })
+    .unwrap_or_default()
+}
+
+pub fn verify_dht_anti_entropy_request_envelope_signature(
+    request_id: &str,
+    node_id: &str,
+    local_root_hash: &[u8],
+    timestamp: u64,
+    nonce: &str,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    use ed25519_dalek::Verifier;
+    let Some(signer_public_key) = signer_public_key else {
+        return false;
+    };
+    if signature.is_empty() || nonce.is_empty() {
+        return false;
+    }
+    let content = get_anti_entropy_request_signable_content(
+        request_id,
+        node_id,
+        local_root_hash,
+        timestamp,
+        nonce,
+    );
+    if content.is_empty() {
+        return false;
+    }
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key)
+    {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if pk_bytes.len() != 32 || signature.len() != 64 {
+        return false;
+    }
+    let mut pk_array = [0u8; 32];
+    pk_array.copy_from_slice(&pk_bytes);
+    let mut sig_array = [0u8; 64];
+    sig_array.copy_from_slice(signature);
+    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(pk) => pk
+            .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
+pub fn verify_dht_record_push_envelope_signature_bytes(
+    request_id: &str,
+    node_id: &str,
+    records: &[crate::mesh::protocol::DhtRecord],
+    hop_count: u32,
+    nonce: &str,
+    timestamp: u64,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    use ed25519_dalek::Verifier;
+    let Some(signer_public_key) = signer_public_key else {
+        return false;
+    };
+    if signature.is_empty() || nonce.is_empty() {
+        return false;
+    }
+    let content = get_dht_record_push_envelope_signable_content(
+        request_id, node_id, records, hop_count, nonce, timestamp,
+    );
+    if content.is_empty() {
+        return false;
+    }
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key)
+    {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if pk_bytes.len() != 32 || signature.len() != 64 {
+        return false;
+    }
+    let mut pk_array = [0u8; 32];
+    pk_array.copy_from_slice(&pk_bytes);
+    let mut sig_array = [0u8; 64];
+    sig_array.copy_from_slice(signature);
+    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(pk) => pk
+            .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+            .is_ok(),
+        Err(_) => false,
+    }
 }
 
 pub fn get_snapshot_signable_content(
@@ -319,12 +450,15 @@ pub fn get_anti_entropy_request_signable_content(
     node_id: &str,
     local_root_hash: &[u8],
     timestamp: u64,
+    nonce: &str,
 ) -> Vec<u8> {
     crate::serialization::serialize(&DhtAntiEntropyRequestSignable {
         request_id,
         node_id,
         local_root_hash,
         timestamp,
+        nonce,
+        protocol_version: ANTI_ENTROPY_REQUEST_PROTOCOL_VERSION,
     })
     .unwrap_or_default()
 }

@@ -117,13 +117,11 @@ mod e2e_process_tests {
 
     #[test]
     #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
-    fn test_overseer_config_defaults() {
-    }
+    fn test_overseer_config_defaults() {}
 
     #[test]
     #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
-    fn test_overseer_config_auto_restart() {
-    }
+    fn test_overseer_config_auto_restart() {}
 
     // --- State Tracking Tests ---
 

@@ -227,8 +227,10 @@ impl RecordStoreManager {
                 records,
                 hop_count,
                 seen_node_ids,
-                timestamp: _,
-                signer_public_key: _,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
             } => {
                 tracing::debug!(
                     "Received DhtRecordPush from {} with {} records, hop {}",
@@ -242,6 +244,56 @@ impl RecordStoreManager {
                     return None;
                 }
 
+                let require_signed = self
+                    .config
+                    .dht
+                    .as_ref()
+                    .map(|d| d.require_signed_record_push)
+                    .unwrap_or(true);
+                let compat_until = self
+                    .config
+                    .dht
+                    .as_ref()
+                    .and_then(|d| d.unsigned_record_push_compat_until_unix);
+                let now_unix = crate::mesh::safe_unix_timestamp();
+                let has_auth = !signature.is_empty()
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
+                    && !nonce.is_empty();
+                if !has_auth {
+                    let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
+                    if require_signed && !compat_active {
+                        tracing::warn!(
+                            "DhtRecordPush from {} rejected: missing envelope signature/nonce (require_signed_record_push={}, compat_until={:?}, now={})",
+                            from_node,
+                            require_signed,
+                            compat_until,
+                            now_unix
+                        );
+                        return None;
+                    }
+                    tracing::warn!(
+                        "DhtRecordPush from {} accepted without signature (legacy compat window active or signing disabled)",
+                        from_node
+                    );
+                } else {
+                    if !crate::mesh::dht::signed::verify_dht_record_push_envelope_signature_bytes(
+                        &request_id,
+                        from_node,
+                        &records,
+                        *hop_count,
+                        &nonce,
+                        *timestamp,
+                        &signature,
+                        signer_public_key.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "DhtRecordPush from {} rejected: invalid envelope signature",
+                            from_node
+                        );
+                        return None;
+                    }
+                }
+
                 let reputation = self.get_sender_reputation(from_node, signer).await;
 
                 let ingress_ctx = crate::mesh::dht::signed::DhtRecordIngressContext::new_remote(
@@ -251,7 +303,7 @@ impl RecordStoreManager {
                     crate::mesh::dht::signed::IngressPath::Push,
                 );
 
-                for record in records {
+                for record in records.iter() {
                     self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation);
                     self.init_propagation_state(&record.key);
                 }
@@ -703,6 +755,8 @@ impl RecordStoreManager {
             .iter()
             .map(|peer| {
                 let request_id = MeshMessage::generate_nonce().to_string();
+                let nonce = MeshMessage::generate_nonce().to_string();
+                let timestamp = MeshMessage::generate_timestamp();
 
                 let interested_keys: Vec<String> = {
                     let rs = record_store.record_state.read();
@@ -716,12 +770,30 @@ impl RecordStoreManager {
                     entries.into_iter().take(100).map(|(k, _)| k).collect()
                 };
 
+                let mut signature = Vec::new();
+                {
+                    let rs = record_store.record_state.read();
+                    if let Some(ref signer) = rs.mesh_signer {
+                        let content =
+                            crate::mesh::dht::signed::get_anti_entropy_request_signable_content(
+                                &request_id,
+                                &node_id,
+                                &my_root_hash,
+                                timestamp,
+                                &nonce,
+                            );
+                        signature = signer.sign(&content);
+                    }
+                }
+
                 let request = MeshMessage::DhtAntiEntropyRequest {
                     request_id: request_id.into(),
                     node_id: node_id.clone().into(),
                     local_root_hash: my_root_hash.clone(),
                     interested_keys,
-                    timestamp: MeshMessage::generate_timestamp(),
+                    timestamp,
+                    nonce: nonce.into(),
+                    signature,
                     signer_public_key: signer_public_key.clone(),
                 };
 

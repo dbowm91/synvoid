@@ -432,6 +432,29 @@ impl WasmPluginManager {
             .collect()
     }
 
+    pub fn get_runtime_by_name(&self, name: &str) -> Option<Arc<WasmRuntime>> {
+        self.runtimes
+            .read()
+            .iter()
+            .find(|r| r.name() == name)
+            .cloned()
+    }
+
+    pub fn invoke_by_name(
+        &self,
+        name: &str,
+        method: &str,
+        uri: &str,
+        headers: &str,
+        body: &[u8],
+        env: std::collections::HashMap<String, String>,
+    ) -> Result<Response<Bytes>, WasmPluginError> {
+        let runtime = self
+            .get_runtime_by_name(name)
+            .ok_or_else(|| WasmPluginError::FunctionNotFound(name.to_string()))?;
+        runtime.invoke_handler(method, uri, headers, body, env)
+    }
+
     pub fn reload_plugin_by_name(&self, name: &str) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         let path =
             self.plugin_paths.read().get(name).cloned().ok_or_else(|| {

@@ -72,6 +72,44 @@ impl MeshConfig {
                     }
                 }
             }
+
+            if !dht.require_signed_anti_entropy_requests {
+                let now = crate::mesh::safe_unix_timestamp();
+                match dht.unsigned_anti_entropy_compat_until_unix {
+                    Some(deadline) if deadline > now => {}
+                    Some(deadline) => {
+                        return Err(format!(
+                            "mesh.dht.require_signed_anti_entropy_requests=false compatibility window expired at {} (now={}); set require_signed_anti_entropy_requests=true or extend unsigned_anti_entropy_compat_until_unix",
+                            deadline, now
+                        ));
+                    }
+                    None => {
+                        return Err(
+                            "mesh.dht.require_signed_anti_entropy_requests=false requires a bounded migration window via mesh.dht.unsigned_anti_entropy_compat_until_unix"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+
+            if !dht.require_signed_record_push {
+                let now = crate::mesh::safe_unix_timestamp();
+                match dht.unsigned_record_push_compat_until_unix {
+                    Some(deadline) if deadline > now => {}
+                    Some(deadline) => {
+                        return Err(format!(
+                            "mesh.dht.require_signed_record_push=false compatibility window expired at {} (now={}); set require_signed_record_push=true or extend unsigned_record_push_compat_until_unix",
+                            deadline, now
+                        ));
+                    }
+                    None => {
+                        return Err(
+                            "mesh.dht.require_signed_record_push=false requires a bounded migration window via mesh.dht.unsigned_record_push_compat_until_unix"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
         }
 
         Ok(())

@@ -741,6 +741,9 @@ impl MeshTransport {
                 local_root_hash,
                 interested_keys,
                 timestamp,
+                nonce,
+                signature,
+                signer_public_key,
                 ..
             } => {
                 if self
@@ -761,6 +764,9 @@ impl MeshTransport {
                     &local_root_hash,
                     &interested_keys,
                     timestamp,
+                    &nonce,
+                    &signature,
+                    signer_public_key.as_deref(),
                 )
                 .await;
             }

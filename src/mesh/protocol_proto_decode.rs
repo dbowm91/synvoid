@@ -871,6 +871,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     local_root_hash: r.local_root_hash,
                     interested_keys: r.interested_keys,
                     timestamp: r.timestamp,
+                    nonce: r.nonce.into(),
+                    signature: r.signature,
                     signer_public_key: r.signer_public_key,
                 })
             }
@@ -896,6 +898,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                 hop_count: r.hop_count,
                 seen_node_ids: r.seen_node_ids,
                 timestamp: r.timestamp,
+                nonce: r.nonce.into(),
+                signature: r.signature,
                 signer_public_key: r.signer_public_key,
             }),
             proto::mesh_message::Payload::DhtRecordPushAck(r) => {

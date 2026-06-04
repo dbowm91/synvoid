@@ -17,7 +17,7 @@ use crate::serverless::async_compilation::{
 };
 use crate::serverless::instance_pool::{InstancePool, InstancePoolConfig};
 use crate::serverless::registry::get_global_serverless_registry;
-use crate::serverless::routing::{parse_routes, MethodMatch, RouteMatch, ServerlessRoute};
+use crate::serverless::routing::{MethodMatch, RouteMatch, ServerlessRoute, parse_routes};
 
 #[derive(Debug, Clone)]
 pub struct CallerContext {
@@ -1037,12 +1037,134 @@ impl ServerlessManager {
                 ServerlessError::ExecutionError(e.to_string())
             })
     }
+
+    /// CPU offload invocation: dispatch a function with raw input bytes and
+    /// return the response body. No caller permission checks are performed
+    /// because CPU offload requests originate from the local data plane and
+    /// are considered trusted.
+    pub async fn invoke_for_cpu_offload(
+        &self,
+        function_name: &str,
+        input: &[u8],
+        _timeout_ms: u64,
+    ) -> Result<Vec<u8>, ServerlessError> {
+        let function = self
+            .functions
+            .read()
+            .get(function_name)
+            .cloned()
+            .ok_or_else(|| ServerlessError::FunctionNotFound(function_name.to_string()))?;
+
+        get_global_serverless_registry().record_invocation(function_name);
+
+        if let Some(pool) = self.pools.read().get(function_name).cloned() {
+            let instance = pool.get_instance().await.map_err(|e| {
+                get_global_serverless_registry().record_error(function_name);
+                ServerlessError::WasmError(format!("Failed to get instance from pool: {}", e))
+            })?;
+
+            let start = Instant::now();
+            let env = function.definition.env.clone();
+            let body_vec = input.to_vec();
+            let uri = "/".to_string();
+            let method_str = "POST".to_string();
+            let headers_json = "{}".to_string();
+
+            let result = instance
+                .instance
+                .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
+                .map_err(|e| {
+                    get_global_serverless_registry().record_error(function_name);
+                    ServerlessError::ExecutionError(e.to_string())
+                });
+
+            let duration_ms = start.elapsed().as_millis() as u64;
+            instance.record_request(duration_ms);
+            pool.return_instance(&instance.id);
+
+            return result.map(|response| response.into_body().to_vec());
+        }
+
+        let Some(runtime) = function.runtime else {
+            if let Some(ref compilation_handle) = function.compilation_handle {
+                if let crate::serverless::async_compilation::CompilationState::Compiling {
+                    ..
+                } = compilation_handle.poll_state()
+                {
+                    compilation_handle
+                        .wait_for_completion()
+                        .await
+                        .map_err(|e| {
+                            get_global_serverless_registry().record_error(function_name);
+                            ServerlessError::CompilationFailed(e.to_string())
+                        })?;
+                    if let Some(func) = self.functions.read().get(function_name).cloned() {
+                        if let Some(runtime) = func.runtime.clone() {
+                            return self
+                                .invoke_runtime_for_offload(runtime, function_name, input)
+                                .await;
+                        }
+                    }
+                }
+            }
+            get_global_serverless_registry().record_error(function_name);
+            return Err(ServerlessError::WasmError(
+                "No WASM runtime available for CPU offload".to_string(),
+            ));
+        };
+
+        self.invoke_runtime_for_offload(runtime, function_name, input)
+            .await
+    }
+
+    async fn invoke_runtime_for_offload(
+        &self,
+        runtime: Arc<crate::plugin::wasm_runtime::WasmRuntime>,
+        function_name: &str,
+        input: &[u8],
+    ) -> Result<Vec<u8>, ServerlessError> {
+        let funcs = self.functions.read();
+        let env = funcs
+            .get(function_name)
+            .map(|f| f.definition.env.clone())
+            .unwrap_or_default();
+        drop(funcs);
+
+        let body_vec = input.to_vec();
+        let uri = "/".to_string();
+        let method_str = "POST".to_string();
+        let headers_json = "{}".to_string();
+
+        runtime
+            .invoke_handler(&method_str, &uri, &headers_json, &body_vec, env)
+            .map(|response| response.into_body().to_vec())
+            .map_err(|e| {
+                get_global_serverless_registry().record_error(function_name);
+                ServerlessError::ExecutionError(e.to_string())
+            })
+    }
 }
 
 impl Default for ServerlessManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+static GLOBAL_SERVERLESS_MANAGER: std::sync::LazyLock<
+    parking_lot::RwLock<Option<Arc<ServerlessManager>>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(None));
+
+pub fn set_global_serverless_manager(manager: Arc<ServerlessManager>) {
+    *GLOBAL_SERVERLESS_MANAGER.write() = Some(manager);
+}
+
+pub fn get_global_serverless_manager() -> Option<Arc<ServerlessManager>> {
+    GLOBAL_SERVERLESS_MANAGER.read().clone()
+}
+
+pub fn clear_global_serverless_manager() {
+    *GLOBAL_SERVERLESS_MANAGER.write() = None;
 }
 
 #[cfg(feature = "mesh")]

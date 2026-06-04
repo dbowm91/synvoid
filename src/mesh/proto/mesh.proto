@@ -944,6 +944,8 @@ message DhtAntiEntropyRequest {
     repeated string interested_keys = 4;
     uint64 timestamp = 5;
     optional string signer_public_key = 6;
+    string nonce = 7;
+    bytes signature = 8;
 }
 
 message DhtAntiEntropyResponse {
@@ -964,6 +966,8 @@ message DhtRecordPush {
     repeated string seen_node_ids = 4;
     uint64 timestamp = 5;
     optional string signer_public_key = 6;
+    string nonce = 7;
+    bytes signature = 8;
 }
 
 message DhtRecordPushAck {

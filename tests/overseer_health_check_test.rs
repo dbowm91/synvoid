@@ -8,23 +8,19 @@ mod overseer_health_check_tests {
 
     #[test]
     #[ignore = "EnhancedHealthConfig and ValidationMetrics were removed during overseer->supervisor refactor"]
-    fn test_validation_metrics_default() {
-    }
+    fn test_validation_metrics_default() {}
 
     #[tokio::test]
     #[ignore = "EnhancedHealthConfig and ValidationMetrics were removed during overseer->supervisor refactor"]
-    async fn test_validation_metrics_increment_successful() {
-    }
+    async fn test_validation_metrics_increment_successful() {}
 
     #[tokio::test]
     #[ignore = "EnhancedHealthConfig and ValidationMetrics were removed during overseer->supervisor refactor"]
-    async fn test_validation_metrics_increment_failed() {
-    }
+    async fn test_validation_metrics_increment_failed() {}
 
     #[test]
     #[ignore = "EnhancedHealthConfig was removed during overseer->supervisor refactor"]
-    fn test_enhanced_health_config_default() {
-    }
+    fn test_enhanced_health_config_default() {}
 
     #[test]
     fn test_supervisor_state_trackers_default() {

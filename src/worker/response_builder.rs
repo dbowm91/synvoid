@@ -4,10 +4,10 @@ use std::time::{Instant, SystemTime};
 
 use tokio::task;
 
-use super::{CompressionTask, StaticWorkerState};
+use super::cpu_task::state::{CompressionTask, StaticWorkerState};
 use crate::static_files::minifier;
 
-pub(super) fn process_minify_request(
+pub(in crate::worker) fn process_minify_request(
     state: &StaticWorkerState,
     request_id: u64,
     site_id: String,
@@ -167,7 +167,7 @@ pub(super) fn process_minify_request(
     })
 }
 
-pub(super) fn process_compressed_request(
+pub(in crate::worker) fn process_compressed_request(
     state: &StaticWorkerState,
     request_id: u64,
     site_id: String,
@@ -209,7 +209,7 @@ pub(super) fn process_compressed_request(
     })
 }
 
-pub(super) fn init_minifier_caches(
+pub(in crate::worker) fn init_minifier_caches(
     state: &StaticWorkerState,
     _main_config: &crate::config::MainConfig,
 ) {
@@ -235,7 +235,11 @@ pub(super) fn init_minifier_caches(
     }
 }
 
-pub(super) fn check_and_invalidate_cache(state: &StaticWorkerState, site_id: &str, root: &PathBuf) {
+pub(in crate::worker) fn check_and_invalidate_cache(
+    state: &StaticWorkerState,
+    site_id: &str,
+    root: &PathBuf,
+) {
     if let Ok(caches) = state.minifier_caches.read() {
         if let Some(cache) = caches.get(site_id) {
             if let Ok(entries) = std::fs::read_dir(root) {
@@ -260,7 +264,7 @@ pub(super) fn check_and_invalidate_cache(state: &StaticWorkerState, site_id: &st
     }
 }
 
-pub(super) async fn handle_minify_request(
+pub(in crate::worker) async fn handle_minify_request(
     state: &StaticWorkerState,
     request_id: u64,
     site_id: String,
@@ -508,7 +512,7 @@ pub(super) async fn send_error(state: &StaticWorkerState, request_id: u64, error
         .await;
 }
 
-pub(super) async fn handle_compressed_request(
+pub(in crate::worker) async fn handle_compressed_request(
     state: &StaticWorkerState,
     request_id: u64,
     site_id: String,
@@ -570,7 +574,7 @@ pub(super) async fn handle_compressed_request(
         .await;
 }
 
-pub(super) fn process_compression_queue(state: &StaticWorkerState) {
+pub(in crate::worker) fn process_compression_queue(state: &StaticWorkerState) {
     let tasks: Vec<CompressionTask> = match state.compression_queue.write() {
         Ok(mut queue) => queue.drain(..).collect(),
         Err(_) => return,

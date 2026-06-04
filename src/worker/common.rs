@@ -7,8 +7,8 @@ use sysinfo::System;
 
 use crate::config::ConfigManager;
 use crate::process::{
-    connect_to_supervisor, current_timestamp, IpcStream, Message, RequestLogPayload, WorkerId,
-    WorkerMetricsPayload,
+    IpcStream, Message, RequestLogPayload, WorkerId, WorkerMetricsPayload, connect_to_supervisor,
+    current_timestamp,
 };
 use crate::{DrainFlag, RunningFlag};
 

@@ -930,6 +930,25 @@ pub struct MeshDhtConfig {
     /// even if `require_signed_sync_requests` is false.
     #[serde(default)]
     pub unsigned_sync_compat_until_unix: Option<u64>,
+    /// When true, DHT anti-entropy requests must include a valid envelope
+    /// signature (otherwise the request is rejected). Default: true.
+    #[serde(default = "default_require_signed_anti_entropy_requests")]
+    pub require_signed_anti_entropy_requests: bool,
+    /// Optional migration deadline for legacy unsigned anti-entropy requests.
+    /// When set, unsigned anti-entropy requests are rejected after this Unix
+    /// timestamp even if `require_signed_anti_entropy_requests` is false.
+    #[serde(default)]
+    pub unsigned_anti_entropy_compat_until_unix: Option<u64>,
+    /// When true, DHT record pushes must include a valid envelope signature
+    /// covering the record set digest (otherwise the push is rejected).
+    /// Default: true.
+    #[serde(default = "default_require_signed_record_push")]
+    pub require_signed_record_push: bool,
+    /// Optional migration deadline for legacy unsigned DHT record pushes.
+    /// When set, unsigned record pushes are rejected after this Unix timestamp
+    /// even if `require_signed_record_push` is false.
+    #[serde(default)]
+    pub unsigned_record_push_compat_until_unix: Option<u64>,
 }
 
 fn default_announce_rate_limit_max_requests() -> u32 {
@@ -941,6 +960,14 @@ fn default_announce_rate_limit_window_secs() -> u64 {
 }
 
 fn default_require_signed_sync_requests() -> bool {
+    true
+}
+
+fn default_require_signed_anti_entropy_requests() -> bool {
+    true
+}
+
+fn default_require_signed_record_push() -> bool {
     true
 }
 
@@ -1122,6 +1149,10 @@ impl Default for MeshDhtConfig {
             announce_rate_limit_window_secs: 60,
             require_signed_sync_requests: true,
             unsigned_sync_compat_until_unix: None,
+            require_signed_anti_entropy_requests: true,
+            unsigned_anti_entropy_compat_until_unix: None,
+            require_signed_record_push: true,
+            unsigned_record_push_compat_until_unix: None,
         }
     }
 }
@@ -1559,6 +1590,10 @@ mod tests {
         let dht = MeshDhtConfig::default();
         assert!(dht.require_signed_sync_requests);
         assert!(dht.unsigned_sync_compat_until_unix.is_none());
+        assert!(dht.require_signed_anti_entropy_requests);
+        assert!(dht.unsigned_anti_entropy_compat_until_unix.is_none());
+        assert!(dht.require_signed_record_push);
+        assert!(dht.unsigned_record_push_compat_until_unix.is_none());
     }
 
     #[test]
@@ -1592,6 +1627,80 @@ mod tests {
         let mut dht = MeshDhtConfig::default();
         dht.require_signed_sync_requests = false;
         dht.unsigned_sync_compat_until_unix =
+            Some(crate::mesh::safe_unix_timestamp().saturating_add(3600));
+        cfg.dht = Some(dht);
+
+        cfg.validate().expect("validation should pass");
+    }
+
+    #[test]
+    fn test_mesh_validate_rejects_unbounded_unsigned_anti_entropy_compat() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_anti_entropy_requests = false;
+        dht.unsigned_anti_entropy_compat_until_unix = None;
+        cfg.dht = Some(dht);
+
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.contains("require_signed_anti_entropy_requests=false"));
+    }
+
+    #[test]
+    fn test_mesh_validate_rejects_expired_unsigned_anti_entropy_compat_window() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_anti_entropy_requests = false;
+        dht.unsigned_anti_entropy_compat_until_unix =
+            Some(crate::mesh::safe_unix_timestamp().saturating_sub(1));
+        cfg.dht = Some(dht);
+
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.contains("compatibility window expired"));
+    }
+
+    #[test]
+    fn test_mesh_validate_allows_future_bounded_unsigned_anti_entropy_compat_window() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_anti_entropy_requests = false;
+        dht.unsigned_anti_entropy_compat_until_unix =
+            Some(crate::mesh::safe_unix_timestamp().saturating_add(3600));
+        cfg.dht = Some(dht);
+
+        cfg.validate().expect("validation should pass");
+    }
+
+    #[test]
+    fn test_mesh_validate_rejects_unbounded_unsigned_record_push_compat() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_record_push = false;
+        dht.unsigned_record_push_compat_until_unix = None;
+        cfg.dht = Some(dht);
+
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.contains("require_signed_record_push=false"));
+    }
+
+    #[test]
+    fn test_mesh_validate_rejects_expired_unsigned_record_push_compat_window() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_record_push = false;
+        dht.unsigned_record_push_compat_until_unix =
+            Some(crate::mesh::safe_unix_timestamp().saturating_sub(1));
+        cfg.dht = Some(dht);
+
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err.contains("compatibility window expired"));
+    }
+
+    #[test]
+    fn test_mesh_validate_allows_future_bounded_unsigned_record_push_compat_window() {
+        let mut cfg = MeshConfig::default();
+        let mut dht = MeshDhtConfig::default();
+        dht.require_signed_record_push = false;
+        dht.unsigned_record_push_compat_until_unix =
             Some(crate::mesh::safe_unix_timestamp().saturating_add(3600));
         cfg.dht = Some(dht);
 

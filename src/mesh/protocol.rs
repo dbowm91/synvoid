@@ -883,6 +883,8 @@ pub enum MeshMessage {
         local_root_hash: Vec<u8>,
         interested_keys: Vec<String>,
         timestamp: u64,
+        nonce: ArcStr,
+        signature: Vec<u8>,
         signer_public_key: Option<String>,
     },
     DhtAntiEntropyResponse {
@@ -901,6 +903,8 @@ pub enum MeshMessage {
         hop_count: u32,
         seen_node_ids: Vec<String>,
         timestamp: u64,
+        nonce: ArcStr,
+        signature: Vec<u8>,
         signer_public_key: Option<String>,
     },
     DhtRecordPushAck {

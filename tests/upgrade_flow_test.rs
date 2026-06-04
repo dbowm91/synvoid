@@ -6,81 +6,65 @@
 mod upgrade_flow_tests {
     #[test]
     #[ignore = "UpgradeState was removed during overseer->supervisor refactor"]
-    fn test_upgrade_state_default() {
-    }
+    fn test_upgrade_state_default() {}
 
     #[test]
     #[ignore = "UpgradeState was removed during overseer->supervisor refactor"]
-    fn test_upgrade_state_transitions() {
-    }
+    fn test_upgrade_state_transitions() {}
 
     #[test]
     #[ignore = "UpgradeState was removed during overseer->supervisor refactor"]
-    fn test_upgrade_state_is_terminal() {
-    }
+    fn test_upgrade_state_is_terminal() {}
 
     #[test]
     #[ignore = "UpgradeState was removed during overseer->supervisor refactor"]
-    fn test_upgrade_state_is_transition() {
-    }
+    fn test_upgrade_state_is_transition() {}
 
     #[test]
     #[ignore = "UpgradeState was removed during overseer->supervisor refactor"]
-    fn test_upgrade_state_max_duration() {
-    }
+    fn test_upgrade_state_max_duration() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_default() {
-    }
+    fn test_overseer_state_default() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_can_stage() {
-    }
+    fn test_overseer_state_can_stage() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_can_apply() {
-    }
+    fn test_overseer_state_can_apply() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_can_rollback() {
-    }
+    fn test_overseer_state_can_rollback() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_enter_state() {
-    }
+    fn test_overseer_state_enter_state() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_needs_recovery() {
-    }
+    fn test_overseer_state_needs_recovery() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_is_dual_master_state() {
-    }
+    fn test_overseer_state_is_dual_master_state() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_can_abort_upgrade() {
-    }
+    fn test_overseer_state_can_abort_upgrade() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_version_tracking() {
-    }
+    fn test_overseer_state_version_tracking() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_state_error_tracking() {
-    }
+    fn test_overseer_state_error_tracking() {}
 
     #[test]
     #[ignore = "OverseerState was removed during overseer->supervisor refactor"]
-    fn test_overseer_persistence_can_create() {
-    }
+    fn test_overseer_persistence_can_create() {}
 }

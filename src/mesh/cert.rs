@@ -616,7 +616,8 @@ impl MeshCertManager {
                 }
                 tracing::warn!(
                     "TOFU: First connection to seed {} - accepting certificate fingerprint {} (trust on first use)",
-                    seed_address, fingerprint
+                    seed_address,
+                    fingerprint
                 );
                 entry.insert(PinnedFingerprint {
                     fingerprint: fingerprint.to_string(),
@@ -828,9 +829,9 @@ impl MeshCertManager {
             return Ok(true);
         }
 
-        use rustls::client::danger::ServerCertVerifier;
-        use rustls::client::WebPkiServerVerifier;
         use rustls::RootCertStore;
+        use rustls::client::WebPkiServerVerifier;
+        use rustls::client::danger::ServerCertVerifier;
         use std::time::SystemTime;
 
         let mut root_store = RootCertStore::empty();
@@ -879,6 +880,66 @@ impl MeshCertManager {
                 );
                 Ok(false)
             }
+        }
+    }
+
+    /// Verify that a peer's certificate's public key matches the registered
+    /// global node key for `peer_node_id`, when one is registered.
+    ///
+    /// Returns:
+    /// - `Ok(true)` when no registered key exists for the peer (allows new
+    ///   node onboarding), or when the registered key matches the cert's key.
+    /// - `Ok(false)` when a registered key exists but doesn't match the
+    ///   certificate's public key (indicates a node_id impersonation attempt).
+    /// - `Err(MeshCertError)` when the cert chain itself is invalid.
+    pub fn verify_peer_certificate_identity_binding(
+        &self,
+        peer_node_id: &str,
+        cert_der: &[u8],
+        intermediate_certs: Option<&[CertificateDer<'static>]>,
+    ) -> Result<bool, MeshCertError> {
+        if matches!(self.tls_mode, MeshTlsMode::Permissive) {
+            return Ok(true);
+        }
+
+        if !self.verify_peer_certificate(peer_node_id, cert_der, intermediate_certs)? {
+            return Ok(false);
+        }
+
+        let Some(cert_public_key) = extract_public_key_from_cert(cert_der) else {
+            tracing::warn!(
+                "Peer {} certificate has no extractable public key; identity binding check skipped",
+                peer_node_id
+            );
+            return Ok(true);
+        };
+
+        let Some(registered_key) = self.get_global_node_key(peer_node_id) else {
+            tracing::debug!(
+                "Peer {} has no registered global node key; allowing onboarding",
+                peer_node_id
+            );
+            return Ok(true);
+        };
+
+        if registered_key.len() != cert_public_key.len() {
+            tracing::warn!(
+                "Peer {} registered key length {} does not match certificate public key length {}; rejecting as impersonation",
+                peer_node_id,
+                registered_key.len(),
+                cert_public_key.len()
+            );
+            return Ok(false);
+        }
+
+        if registered_key.ct_eq(&cert_public_key).into() {
+            Ok(true)
+        } else {
+            tracing::warn!(
+                "Peer {} certificate public key does not match registered global node key; rejecting as node_id impersonation attempt",
+                peer_node_id
+            );
+            Ok(false)
         }
     }
 
@@ -954,7 +1015,7 @@ impl MeshCertManager {
                 return Err(MeshCertError::ConfigError(
                     "CA certificate not generated. Call generate_ca_certificate() first."
                         .to_string(),
-                ))
+                ));
             }
         };
 
@@ -1419,5 +1480,113 @@ mod tests {
         assert_eq!(mgr.tls_mode(), MeshTlsMode::Permissive);
         assert!(!mgr.is_strict_validation_enabled());
         assert!(!mgr.is_tofu_enabled());
+    }
+
+    fn issue_ca_signed_cert(node_id: &str) -> (std::sync::Arc<MeshCertManager>, Vec<u8>) {
+        ensure_rustls_provider_installed();
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Strict);
+        cfg.tls.ca_mode = true;
+        cfg.tls.ca_path = None;
+
+        let mgr = std::sync::Arc::new(MeshCertManager::new(&cfg));
+        mgr.generate_ca_certificate().unwrap();
+        let (cert_der, _key_der) = mgr
+            .sign_certificate(node_id, vec![node_id.to_string()])
+            .unwrap();
+        (mgr, cert_der)
+    }
+
+    #[test]
+    fn identity_binding_passes_when_registered_key_matches_cert_key() {
+        let (mgr, cert_der) = issue_ca_signed_cert("peer-a.mesh");
+        let cert_public_key = extract_public_key_from_cert(&cert_der).expect("cert has pubkey");
+        mgr.register_global_node("peer-a.mesh", cert_public_key);
+
+        let result = mgr
+            .verify_peer_certificate_identity_binding("peer-a.mesh", &cert_der, None)
+            .unwrap();
+        assert!(result, "matching key should pass identity binding");
+    }
+
+    #[test]
+    fn identity_binding_rejects_when_registered_key_differs_from_cert_key() {
+        let (mgr, cert_der) = issue_ca_signed_cert("peer-a.mesh");
+        let mut attacker_key = extract_public_key_from_cert(&cert_der).expect("cert has pubkey");
+        if !attacker_key.is_empty() {
+            attacker_key[0] ^= 0xFF;
+        }
+        mgr.register_global_node("peer-a.mesh", attacker_key);
+
+        let result = mgr
+            .verify_peer_certificate_identity_binding("peer-a.mesh", &cert_der, None)
+            .unwrap();
+        assert!(
+            !result,
+            "mismatched key should fail identity binding (impersonation)"
+        );
+    }
+
+    #[test]
+    fn identity_binding_passes_when_no_key_registered_for_node() {
+        let (mgr, cert_der) = issue_ca_signed_cert("peer-new.mesh");
+        assert!(mgr.get_global_node_key("peer-new.mesh").is_none());
+
+        let result = mgr
+            .verify_peer_certificate_identity_binding("peer-new.mesh", &cert_der, None)
+            .unwrap();
+        assert!(
+            result,
+            "node without registered key should pass (allows onboarding)"
+        );
+    }
+
+    #[test]
+    fn identity_binding_strict_mode_rejects_mismatch() {
+        let (mgr, cert_der) = issue_ca_signed_cert("peer-b.mesh");
+        let cert_public_key = extract_public_key_from_cert(&cert_der).expect("cert has pubkey");
+        let mut other_key = cert_public_key.clone();
+        other_key[0] ^= 0x01;
+        mgr.register_global_node("peer-b.mesh", other_key);
+
+        assert!(matches!(mgr.tls_mode(), MeshTlsMode::Strict));
+        let result = mgr
+            .verify_peer_certificate_identity_binding("peer-b.mesh", &cert_der, None)
+            .unwrap();
+        assert!(!result, "strict mode must reject identity mismatch");
+    }
+
+    #[test]
+    fn identity_binding_permissive_mode_skips_binding_check() {
+        let mut cfg = MeshConfig::default();
+        cfg.tls.mode = Some(MeshTlsMode::Permissive);
+        cfg.tls.ca_path = None;
+        let mgr = MeshCertManager::new(&cfg);
+        let bogus_cert = b"not-a-real-cert";
+        let mut other_key = vec![9u8; 32];
+        other_key[0] ^= 0x01;
+        mgr.register_global_node("peer-c.mesh", other_key);
+
+        let result = mgr
+            .verify_peer_certificate_identity_binding("peer-c.mesh", bogus_cert, None)
+            .unwrap();
+        assert!(
+            result,
+            "permissive mode should skip the identity binding check (current behavior)"
+        );
+    }
+
+    #[test]
+    fn identity_binding_rejects_length_mismatch_as_impersonation() {
+        let (mgr, cert_der) = issue_ca_signed_cert("peer-d.mesh");
+        mgr.register_global_node("peer-d.mesh", vec![0u8; 32]);
+
+        let result = mgr
+            .verify_peer_certificate_identity_binding("peer-d.mesh", &cert_der, None)
+            .unwrap();
+        assert!(
+            !result,
+            "registered key of unexpected length should reject as impersonation"
+        );
     }
 }

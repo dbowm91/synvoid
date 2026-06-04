@@ -554,10 +554,14 @@ impl MeshTransport {
             peer_node_id,
         )?;
 
-        match cert_mgr.verify_peer_certificate(peer_node_id, peer_cert.as_ref(), None) {
+        match cert_mgr.verify_peer_certificate_identity_binding(
+            peer_node_id,
+            peer_cert.as_ref(),
+            None,
+        ) {
             Ok(true) => Ok(()),
             Ok(false) => Err(MeshTransportError::AuthFailed(format!(
-                "Peer {} certificate verification failed",
+                "Peer {} certificate verification or identity binding failed",
                 peer_node_id
             ))),
             Err(e) => Err(MeshTransportError::AuthFailed(format!(

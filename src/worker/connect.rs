@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::process::ipc_signed::IpcSigner;
 use crate::process::ipc_transport::IpcEndpoint;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{connect_to_supervisor, IpcStream};
+use crate::process::{IpcStream, connect_to_supervisor};
 
 #[cfg(test)]
 mod tests {

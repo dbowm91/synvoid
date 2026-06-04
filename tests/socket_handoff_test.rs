@@ -44,13 +44,11 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     #[ignore = "DualMasterHandoff was removed during overseer->supervisor refactor"]
-    async fn test_socket_handoff_dual_master_handoff_creation() {
-    }
+    async fn test_socket_handoff_dual_master_handoff_creation() {}
 
     #[tokio::test]
     #[ignore = "HANDOFF_TIMEOUT_SECS was removed during overseer->supervisor refactor"]
-    async fn test_socket_handoff_timeout_handling() {
-    }
+    async fn test_socket_handoff_timeout_handling() {}
 
     #[tokio::test]
     async fn test_socket_handoff_message_roundtrip() {
