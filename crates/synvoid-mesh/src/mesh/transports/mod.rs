@@ -1,0 +1,115 @@
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use std::time::Instant;
+
+use async_trait::async_trait;
+use bytes::Bytes;
+
+use crate::config::MeshNodeRole;
+use crate::protocol::MeshMessage;
+
+pub mod manager;
+pub mod quic;
+pub mod stack;
+
+pub use crate::transport_core::MeshTransportError;
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
+#[serde(rename_all = "lowercase")]
+#[derive(Default)]
+pub enum MeshTransportType {
+    #[default]
+    Quic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TransportHint {
+    #[default]
+    Default,
+    LowLatency,
+    HighThroughput,
+    Reliable,
+}
+
+impl TransportHint {
+    pub fn is_low_latency(&self) -> bool {
+        matches!(self, TransportHint::LowLatency)
+    }
+
+    pub fn is_high_throughput(&self) -> bool {
+        matches!(self, TransportHint::HighThroughput)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DatagramPacket {
+    pub source_node: String,
+    pub peer_id: String,
+    pub data: Bytes,
+    pub received_at: Instant,
+}
+
+pub trait MeshTransportTrait: Send + Sync {
+    fn transport_type(&self) -> MeshTransportType;
+
+    fn is_connected(&self, peer_id: &str) -> bool;
+
+    fn get_peer_address(&self, peer_id: &str) -> Option<String>;
+
+    #[allow(async_fn_in_trait)]
+    async fn send_stream(
+        &self,
+        peer_id: &str,
+        message: &MeshMessage,
+    ) -> Result<(), MeshTransportError>;
+
+    #[allow(async_fn_in_trait)]
+    async fn send_datagram(
+        &self,
+        peer_id: &str,
+        message: &MeshMessage,
+    ) -> Result<(), MeshTransportError>;
+
+    #[allow(async_fn_in_trait)]
+    async fn broadcast_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError>;
+
+    fn get_connected_peers(&self) -> Vec<String>;
+
+    fn local_addresses(&self) -> Vec<String>;
+
+    fn is_available(&self) -> bool;
+}
+
+#[async_trait]
+pub trait MeshPeerConnectionTrait: Send + Sync {
+    fn peer_id(&self) -> &str;
+    fn address(&self) -> &str;
+    fn role(&self) -> MeshNodeRole;
+    fn upstreams(&self) -> Vec<String>;
+    fn connected_at(&self) -> Instant;
+    fn last_seen(&self) -> Instant;
+
+    async fn send_stream(&self, message: &MeshMessage) -> Result<(), MeshTransportError>;
+    async fn send_datagram(&self, message: &MeshMessage) -> Result<(), MeshTransportError>;
+}
+
+pub trait MeshDatagramHandler: Send + Sync {
+    fn handle_datagram(&self, packet: DatagramPacket);
+}
+
+pub use manager::{
+    MeshTransportManager, PeerTransportState, DEFAULT_MAX_RETRIES, RETRY_BACKOFF_BASE_MS,
+    RETRY_BACKOFF_MAX_MS,
+};
+pub use quic::QuicMeshTransport;
+pub use stack::MeshTransportStack;

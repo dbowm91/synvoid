@@ -1,0 +1,134 @@
+[package]
+name = "synvoid-mesh"
+version = "0.1.0"
+edition = "2021"
+description = "Mesh networking, DHT, Raft consensus, and distributed systems for SynVoid"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+mesh = ["dep:openraft", "synvoid-serverless/mesh"]
+dns = []
+
+[dependencies]
+synvoid-core = { path = "../synvoid-core" }
+synvoid-config = { path = "../synvoid-config", features = ["mesh"] }
+synvoid-utils = { path = "../synvoid-utils" }
+synvoid-integrity = { path = "../synvoid-integrity" }
+synvoid-geoip = { path = "../synvoid-geoip" }
+synvoid-tls = { path = "../synvoid-tls" }
+synvoid-tunnel = { path = "../synvoid-tunnel" }
+synvoid-proxy = { path = "../synvoid-proxy" }
+synvoid-proxy-cache = { path = "../synvoid-proxy-cache" }
+synvoid-serverless = { path = "../synvoid-serverless", optional = true }
+pqc = { path = "../../pqc", features = ["async"] }
+
+# Async runtime
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["alloc"] }
+rkyv = { package = "rkyv", version = "0.8", features = ["std", "alloc"] }
+bincode = "1.3"
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+thiserror = "2"
+
+# Crypto
+base64 = "0.22"
+sha2 = "0.10"
+sha3 = "0.10"
+hex = "0.4"
+base32 = "0.5"
+ed25519-dalek = { version = "2" }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+digest = "0.10"
+subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
+rand = "0.9"
+uuid = { version = "1", features = ["v4", "serde"] }
+pbkdf2 = "0.12"
+
+# Storage
+dashmap = "7.0.0-rc2"
+parking_lot = "0.12"
+arc-swap = "1"
+moka = { version = "0.12", features = ["sync", "future"] }
+lru_time_cache = "0.11"
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Schema
+schemars = "0.8"
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+
+# Compression
+flate2 = "1"
+
+# QUIC/TLS (for cert and transport modules)
+quinn = { version = "0.11", features = ["runtime-tokio"] }
+rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
+rustls-pki-types = "1"
+tokio-rustls = "0.26"
+x509-parser = "0.16"
+rcgen = "0.13"
+
+# gRPC / Protobuf
+tonic = { version = "0.14", features = ["gzip", "transport"] }
+tonic-prost = "0.14"
+prost = "0.14"
+
+# HTTP types (for proxy module)
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
+bytes = "1"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+# Metrics facade
+metrics = "0.22"
+
+# Web (for client_audit)
+axum = { version = "0.8", features = ["ws", "macros", "json"] }
+
+# Bloom filter (for hierarchical routing)
+bloomfilter = "2"
+
+# CLI (for cli.rs)
+clap = { version = "4", features = ["derive"] }
+
+# Async trait (for DHT, Raft, transport trait objects)
+async-trait = "0.1"
+
+# Regex
+regex = "1"
+
+# Temp files
+tempfile = "3"
+
+# URL parsing
+url = "2"
+
+# YARA rules
+yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
+
+# Raft consensus (optional, behind mesh feature)
+openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true }
+
+[build-dependencies]
+tonic-prost-build = "0.14"

@@ -72,3 +72,50 @@ pub fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+
+/// Returns Duration since UNIX_EPOCH, defaulting to zero duration on error.
+#[inline]
+pub fn safe_unix_duration() -> std::time::Duration {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+}
+
+/// Returns seconds since UNIX_EPOCH (alias for safe_unix_timestamp).
+#[inline]
+pub fn current_timestamp() -> u64 {
+    safe_unix_timestamp()
+}
+
+/// Returns the first non-loopback IPv4 address found on this machine.
+pub fn get_first_non_loopback_ip() -> Result<std::net::IpAddr, String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")
+        .map_err(|e| format!("Failed to bind socket: {}", e))?;
+    socket
+        .connect("8.8.8.8:53")
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+    let local_addr = socket
+        .local_addr()
+        .map_err(|e| format!("Failed to get local addr: {}", e))?;
+    Ok(local_addr.ip())
+}
+
+/// Compares two semver-style version strings, returns true if `new` > `current`.
+pub fn is_newer_version(new: &str, current: &str) -> bool {
+    if new == current {
+        return false;
+    }
+    let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
+    let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
+    for i in 0..new_parts.len().max(current_parts.len()) {
+        let new_part = new_parts.get(i).unwrap_or(&0);
+        let current_part = current_parts.get(i).unwrap_or(&0);
+        if new_part > current_part {
+            return true;
+        }
+        if new_part < current_part {
+            return false;
+        }
+    }
+    false
+}

@@ -48,8 +48,7 @@ use std::sync::LazyLock;
 
 use crate::admin::SESSION_COOKIE_NAME;
 
-#[derive(Clone, Debug)]
-pub struct ClientIp(pub String);
+pub use synvoid_admin::rate_limit::ClientIp;
 
 static TRUSTED_PROXIES: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
 
