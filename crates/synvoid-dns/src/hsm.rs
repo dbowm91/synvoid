@@ -1,0 +1,571 @@
+use parking_lot::RwLock;
+use std::sync::Arc;
+use thiserror::Error;
+use zeroize::Zeroizing;
+
+#[derive(Debug, Clone, Error)]
+pub enum HsmError {
+    #[error("HSM Provider: {0}")]
+    Provider(String),
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
+    #[error("Signing failed: {0}")]
+    SigningFailed(String),
+    #[error("Initialization failed: {0}")]
+    InitializationFailed(String),
+    #[error("Session error: {0}")]
+    SessionError(String),
+    #[error("Object not found")]
+    ObjectNotFound,
+}
+
+pub trait HsmSigner: Send + Sync {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError>;
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError>;
+    fn key_id(&self) -> &str;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Algorithm {
+    #[default]
+    Ed25519,
+    RsaSha256,
+}
+
+impl Algorithm {
+    pub fn to_cryptoki_mechanism(&self) -> cryptoki::mechanism::Mechanism {
+        use cryptoki::mechanism::eddsa::{EddsaParams, EddsaSignatureScheme};
+        use cryptoki::mechanism::Mechanism;
+        match self {
+            Algorithm::Ed25519 => Mechanism::Eddsa(EddsaParams::new(EddsaSignatureScheme::Ed25519)),
+            Algorithm::RsaSha256 => Mechanism::Sha256RsaPkcs,
+        }
+    }
+}
+
+impl From<super::dnssec::Algorithm> for Algorithm {
+    fn from(algo: super::dnssec::Algorithm) -> Self {
+        match algo {
+            super::dnssec::Algorithm::Ed25519 => Algorithm::Ed25519,
+            super::dnssec::Algorithm::RSA => Algorithm::RsaSha256,
+        }
+    }
+}
+
+pub enum HsmBackend {
+    Pkcs11(Pkcs11Hsm),
+    Soft(SoftHsm),
+}
+
+pub struct Pkcs11Hsm {
+    context: cryptoki::context::Pkcs11,
+    slot: cryptoki::slot::Slot,
+    pin: Zeroizing<String>,
+    key_label: Option<String>,
+    key_id: Option<Vec<u8>>,
+    algorithm: Algorithm,
+}
+
+impl Pkcs11Hsm {
+    pub fn new(
+        module_path: &str,
+        slot_id: usize,
+        pin: &str,
+        key_label: Option<&str>,
+        key_id: Option<&[u8]>,
+        algorithm: super::dnssec::Algorithm,
+    ) -> Result<Self, HsmError> {
+        use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
+        use cryptoki::slot::Slot;
+
+        let context =
+            Pkcs11::new(module_path).map_err(|e| HsmError::InitializationFailed(e.to_string()))?;
+
+        // Initialize with multi-threading support
+        let _ = context
+            .initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK))
+            .map_err(|e| {
+                // If already initialized, that's fine
+                let err_str = e.to_string();
+                if err_str.contains("CRYPTOKI_ALREADY_INITIALIZED") {
+                    Ok(())
+                } else {
+                    Err(HsmError::InitializationFailed(err_str))
+                }
+            });
+
+        let slots: Vec<Slot> = context
+            .get_all_slots()
+            .map_err(|e| HsmError::Provider(e.to_string()))?;
+
+        let slot = *slots
+            .get(slot_id)
+            .ok_or_else(|| HsmError::Provider(format!("Slot {} not found", slot_id)))?;
+
+        Ok(Self {
+            context,
+            slot,
+            pin: Zeroizing::new(pin.to_string()),
+            key_label: key_label.map(|s| s.to_string()),
+            key_id: key_id.map(|b| b.to_vec()),
+            algorithm: Algorithm::from(algorithm),
+        })
+    }
+
+    pub fn find_key(&self) -> Result<cryptoki::object::ObjectHandle, HsmError> {
+        use cryptoki::object::{Attribute, ObjectClass};
+
+        let session = self
+            .context
+            .open_rw_session(self.slot)
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
+
+        let mut template = vec![Attribute::Class(ObjectClass::PRIVATE_KEY)];
+
+        if let Some(ref label) = self.key_label {
+            template.push(Attribute::Label(label.clone().into()));
+        }
+
+        if let Some(ref id) = self.key_id {
+            template.push(Attribute::Id(id.clone()));
+        }
+
+        if template.len() == 1 {
+            // Default to searching for something if neither label nor id is provided
+            template.push(Attribute::Label("dnssec-key".into()));
+        }
+
+        let objects = session
+            .find_objects(&template)
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        let handle = objects.into_iter().next().ok_or_else(|| {
+            HsmError::KeyNotFound(format!(
+                "Key not found (label={:?}, id={:?})",
+                self.key_label, self.key_id
+            ))
+        })?;
+
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
+
+        Ok(handle)
+    }
+
+    pub fn find_public_key(&self) -> Result<cryptoki::object::ObjectHandle, HsmError> {
+        use cryptoki::object::{Attribute, ObjectClass};
+
+        let session = self
+            .context
+            .open_rw_session(self.slot)
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
+
+        let mut template = vec![Attribute::Class(ObjectClass::PUBLIC_KEY)];
+
+        if let Some(ref label) = self.key_label {
+            template.push(Attribute::Label(label.clone().into()));
+        }
+
+        if let Some(ref id) = self.key_id {
+            template.push(Attribute::Id(id.clone()));
+        }
+
+        if template.len() == 1 {
+            template.push(Attribute::Label("dnssec-key".into()));
+        }
+
+        let objects = session
+            .find_objects(&template)
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        let handle = objects.into_iter().next().ok_or_else(|| {
+            HsmError::KeyNotFound(format!(
+                "Public key not found (label={:?}, id={:?})",
+                self.key_label, self.key_id
+            ))
+        })?;
+
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
+
+        Ok(handle)
+    }
+
+    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError> {
+        let key_handle = self.find_key()?;
+
+        let session = self
+            .context
+            .open_rw_session(self.slot)
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
+
+        let mechanism = self.algorithm.to_cryptoki_mechanism();
+
+        let signature = session
+            .sign(&mechanism, key_handle, data)
+            .map_err(|e| HsmError::SigningFailed(e.to_string()))?;
+
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
+
+        Ok(signature)
+    }
+
+    pub fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
+        use cryptoki::object::{Attribute, AttributeType};
+
+        let key_handle = self.find_public_key()?;
+
+        let session = self
+            .context
+            .open_rw_session(self.slot)
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        if !self.pin.is_empty() {
+            session
+                .login(
+                    cryptoki::session::UserType::User,
+                    Some(&cryptoki::types::AuthPin::new(
+                        (*self.pin).clone().into_boxed_str(),
+                    )),
+                )
+                .map_err(|e| HsmError::SessionError(e.to_string()))?;
+        }
+
+        let attributes = session
+            .get_attributes(
+                key_handle,
+                &[AttributeType::EcPoint, AttributeType::Modulus],
+            )
+            .map_err(|e| HsmError::SessionError(e.to_string()))?;
+
+        if !self.pin.is_empty() {
+            let _ = session.logout();
+        }
+
+        for attr in attributes {
+            match attr {
+                Attribute::EcPoint(point) => {
+                    // For Ed25519, the EcPoint attribute often contains the DER-encoded OID and then the public key
+                    // We might need to strip the DER prefix depending on how cryptoki returns it
+                    return Ok(point);
+                }
+                Attribute::Modulus(modulus) => {
+                    return Ok(modulus);
+                }
+                _ => {}
+            }
+        }
+
+        Err(HsmError::ObjectNotFound)
+    }
+}
+
+impl HsmSigner for Pkcs11Hsm {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError> {
+        Pkcs11Hsm::sign(self, data)
+    }
+
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
+        Pkcs11Hsm::get_public_key(self)
+    }
+
+    fn key_id(&self) -> &str {
+        self.key_label.as_deref().unwrap_or("unnamed")
+    }
+}
+
+pub struct SoftHsm {
+    key: ed25519_dalek::SigningKey,
+    key_id: String,
+}
+
+impl SoftHsm {
+    pub fn new(key_id: String) -> Self {
+        let bytes =
+            super::crypto_rng::random_bytes(32).expect("Crypto RNG failure at startup for HSM");
+        let key = ed25519_dalek::SigningKey::from_bytes(
+            bytes
+                .as_slice()
+                .try_into()
+                .expect("random_bytes(32) should return exactly 32 bytes"),
+        );
+        Self { key, key_id }
+    }
+
+    pub fn from_bytes(key_id: String, seed: &[u8]) -> Self {
+        let key = ed25519_dalek::SigningKey::from_bytes(
+            seed.try_into()
+                .expect("Ed25519 seed must be exactly 32 bytes"),
+        );
+        Self { key, key_id }
+    }
+}
+
+impl HsmSigner for SoftHsm {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError> {
+        use ed25519_dalek::Signer;
+        let sig = self.key.sign(data);
+        Ok(sig.to_bytes().to_vec())
+    }
+
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
+        Ok(self.key.verifying_key().to_bytes().to_vec())
+    }
+
+    fn key_id(&self) -> &str {
+        &self.key_id
+    }
+}
+
+pub struct HsmManager {
+    backend: Arc<RwLock<Option<Box<dyn HsmSigner>>>>,
+}
+
+impl HsmManager {
+    pub fn new() -> Self {
+        Self {
+            backend: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    pub fn initialize(&self, config: &synvoid_config::dns::HsmConfig) -> Result<(), HsmError> {
+        if !config.enabled {
+            tracing::info!("HSM disabled, using in-memory keys");
+            return Ok(());
+        }
+
+        match config.provider {
+            synvoid_config::dns::HsmProvider::Pkcs11 => {
+                if config.module_path.is_empty() {
+                    tracing::warn!("PKCS#11 module path not specified, falling back to SoftHSM");
+                    let key_id = "soft-hsm-key".to_string();
+                    let hsm = SoftHsm::new(key_id);
+                    *self.backend.write() = Some(Box::new(hsm));
+                    tracing::info!("HSM initialized (SoftHSM fallback)");
+                    return Ok(());
+                }
+
+                let key_id_bytes = config.key_id.as_ref().map(|id| id.as_bytes());
+
+                match Pkcs11Hsm::new(
+                    &config.module_path,
+                    config.slot_id.unwrap_or(0),
+                    config.pin.as_deref().unwrap_or(""),
+                    config.key_label.as_deref().or(Some("dnssec-key")),
+                    key_id_bytes,
+                    super::dnssec::Algorithm::Ed25519,
+                ) {
+                    Ok(hsm) => {
+                        *self.backend.write() = Some(Box::new(hsm));
+                        tracing::info!("HSM initialized (PKCS#11)");
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to initialize PKCS#11 HSM: {}, falling back to SoftHSM",
+                            e
+                        );
+                        let key_id = "soft-hsm-key".to_string();
+                        let hsm = SoftHsm::new(key_id);
+                        *self.backend.write() = Some(Box::new(hsm));
+                    }
+                }
+            }
+            synvoid_config::dns::HsmProvider::Soft => {
+                let key_id = "soft-hsm-key".to_string();
+                let hsm = SoftHsm::new(key_id);
+                *self.backend.write() = Some(Box::new(hsm));
+                tracing::info!("HSM initialized (SoftHSM)");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.backend.read().is_some()
+    }
+
+    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HsmError> {
+        let backend = self.backend.read();
+        match backend.as_ref() {
+            Some(signer) => signer.sign(data),
+            None => Err(HsmError::Provider("HSM not initialized".to_string())),
+        }
+    }
+
+    pub fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
+        let backend = self.backend.read();
+        match backend.as_ref() {
+            Some(signer) => signer.get_public_key(),
+            None => Err(HsmError::Provider("HSM not initialized".to_string())),
+        }
+    }
+}
+
+impl Default for HsmManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_soft_hsm_sign_verify() {
+        let hsm = SoftHsm::new("test-key".to_string());
+
+        let data = b"test data to sign";
+        let signature = hsm.sign(data).expect("signing should succeed");
+
+        assert_eq!(signature.len(), 64, "Ed25519 signatures are 64 bytes");
+
+        let public_key = hsm.get_public_key().expect("get_public_key should succeed");
+        assert_eq!(public_key.len(), 32, "Ed25519 public keys are 32 bytes");
+    }
+
+    #[test]
+    fn test_soft_hsm_key_id() {
+        let key_id = "my-custom-key-id";
+        let hsm = SoftHsm::new(key_id.to_string());
+        assert_eq!(hsm.key_id(), key_id);
+    }
+
+    #[test]
+    fn test_soft_hsm_from_bytes() {
+        let seed = [0u8; 32];
+        let hsm = SoftHsm::from_bytes("test".to_string(), &seed);
+
+        let data = b"sign me";
+        let sig1 = hsm.sign(data).expect("signing should succeed");
+
+        let sig2 = hsm.sign(data).expect("signing should succeed");
+        assert_eq!(
+            sig1, sig2,
+            "same key should produce same signature for same input"
+        );
+    }
+
+    #[test]
+    fn test_soft_hsm_deterministic_signatures() {
+        let seed = [1u8; 32];
+        let hsm1 = SoftHsm::from_bytes("key1".to_string(), &seed);
+        let hsm2 = SoftHsm::from_bytes("key2".to_string(), &seed);
+
+        let data = b"test data";
+
+        let sig1 = hsm1.sign(data).expect("signing should succeed");
+        let sig2 = hsm2.sign(data).expect("signing should succeed");
+
+        assert_eq!(
+            sig1, sig2,
+            "identical seeds should produce identical signatures"
+        );
+    }
+
+    #[test]
+    fn test_hsm_manager_default_uninitialized() {
+        let manager = HsmManager::new();
+        assert!(
+            !manager.is_available(),
+            "manager should not be available by default"
+        );
+    }
+
+    #[test]
+    fn test_hsm_manager_init_soft() {
+        let manager = HsmManager::new();
+        let config = synvoid_config::dns::HsmConfig {
+            enabled: true,
+            provider: synvoid_config::dns::HsmProvider::Soft,
+            module_path: String::new(),
+            slot_id: None,
+            pin: None,
+            key_label: None,
+            key_id: None,
+        };
+
+        manager
+            .initialize(&config)
+            .expect("initialization should succeed");
+        assert!(
+            manager.is_available(),
+            "manager should be available after init"
+        );
+
+        let signature = manager.sign(b"test").expect("signing should succeed");
+        assert_eq!(signature.len(), 64);
+    }
+
+    #[test]
+    fn test_hsm_manager_disabled() {
+        let manager = HsmManager::new();
+        let config = synvoid_config::dns::HsmConfig {
+            enabled: false,
+            provider: synvoid_config::dns::HsmProvider::Soft,
+            module_path: String::new(),
+            slot_id: None,
+            pin: None,
+            key_label: None,
+            key_id: None,
+        };
+
+        manager
+            .initialize(&config)
+            .expect("initialization should succeed");
+        assert!(
+            !manager.is_available(),
+            "manager should NOT be available when disabled"
+        );
+    }
+
+    #[test]
+    fn test_algorithm_from_dnssec() {
+        assert_eq!(
+            Algorithm::from(super::super::dnssec::Algorithm::Ed25519),
+            Algorithm::Ed25519
+        );
+        assert_eq!(
+            Algorithm::from(super::super::dnssec::Algorithm::RSA),
+            Algorithm::RsaSha256
+        );
+    }
+}

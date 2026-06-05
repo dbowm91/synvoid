@@ -8028,7 +8028,9 @@ dependencies = [
  "synvoid-challenge",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-dns",
  "synvoid-geoip",
+ "synvoid-http",
  "synvoid-http-client",
  "synvoid-integrity",
  "synvoid-plugin-runtime",
@@ -8129,6 +8131,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-dns"
+version = "0.1.0"
+dependencies = [
+ "ahash 0.8.12",
+ "async-trait",
+ "base64",
+ "bytes",
+ "chrono",
+ "cryptoki",
+ "digest",
+ "ed25519-dalek",
+ "futures",
+ "getrandom 0.2.17",
+ "hex",
+ "hickory-proto",
+ "hickory-resolver",
+ "hkdf",
+ "hmac",
+ "http 1.4.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "ipnetwork 0.18.0",
+ "lru_time_cache",
+ "metrics 0.22.4",
+ "moka",
+ "parking_lot",
+ "quinn",
+ "rand 0.9.4",
+ "rand_core 0.6.4",
+ "rkyv 0.8.16",
+ "rsa",
+ "rusqlite",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "subtle",
+ "synvoid-config",
+ "synvoid-core",
+ "synvoid-geoip",
+ "synvoid-tls",
+ "synvoid-utils",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-dstip",
+ "tokio-rustls",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "synvoid-fuzz"
 version = "0.0.0"
 dependencies = [
@@ -8157,6 +8212,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-http"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bytes",
+ "chrono",
+ "http 1.4.1",
+ "http-body",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-util",
+ "metrics 0.22.4",
+ "rand 0.9.4",
+ "serde_json",
+ "sha1",
+ "synvoid-config",
+ "synvoid-core",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-http-client"
 version = "0.1.0"
 dependencies = [
@@ -8180,6 +8259,30 @@ dependencies = [
  "tokio",
  "tracing",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "synvoid-http3"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "h3",
+ "h3-quinn",
+ "http 1.4.1",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "metrics 0.22.4",
+ "quinn",
+ "rustls",
+ "serde_json",
+ "synvoid-config",
+ "synvoid-core",
+ "synvoid-http",
+ "synvoid-http-client",
+ "synvoid-proxy",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
