@@ -527,12 +527,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 signature,
                 key_exchange_endpoint,
                 cert_chain,
-            } => {
-                let cert_chain_bytes = cert_chain
-                    .as_ref()
-                    .and_then(|cc| serde_json::to_vec(cc).ok())
-                    .unwrap_or_default();
-                proto::MeshMessage {
+            } => proto::MeshMessage {
                 message_type: 66,
                 payload: Some(proto::mesh_message::Payload::GlobalNodeAnnounce(
                     proto::GlobalNodeAnnounce {
@@ -545,10 +540,13 @@ impl From<&MeshMessage> for proto::MeshMessage {
                             .as_ref()
                             .map(|s| s.to_string())
                             .unwrap_or_default(),
-                        cert_chain: cert_chain_bytes,
+                        cert_chain: cert_chain
+                            .as_ref()
+                            .and_then(|cc| serde_json::to_vec(cc).ok())
+                            .unwrap_or_default(),
                     },
                 )),
-            }
+            },
             MeshMessage::OrgMemberAnnounce {
                 org_id,
                 member_node_id,
@@ -2837,6 +2835,7 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
-        }
-    }
+}
+
+}
 }

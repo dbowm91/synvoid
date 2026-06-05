@@ -243,20 +243,20 @@ impl ProxyCache {
         )
     }
 
-    pub(crate) fn record_revalidation_start(&self) {
+    pub fn record_revalidation_start(&self) {
         self.revalidation_active.fetch_add(1, Ordering::Relaxed);
         self.revalidation_queued.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn record_revalidation_end(&self) {
+    pub fn record_revalidation_end(&self) {
         self.revalidation_active.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn record_revalidation_queued(&self) {
+    pub fn record_revalidation_queued(&self) {
         self.revalidation_queued.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn record_revalidation_failure(&self) {
+    pub fn record_revalidation_failure(&self) {
         let failures = self.revalidation_failures.fetch_add(1, Ordering::Relaxed);
         let threshold = self.settings.read().revalidation_failure_threshold;
         if failures >= threshold {

@@ -597,11 +597,29 @@ pub fn wire_serverless_to_mesh(
     if let Some(sm) = unified_server.get_serverless_manager() {
         if let Some(tm) = transport_manager {
             if let Some(rs) = tm.get_record_store() {
-                sm.set_record_store(rs);
+                struct RecordStoreAdapter(Arc<crate::mesh::dht::RecordStoreManager>);
+                impl synvoid_serverless::mesh_integration::MeshDhtProvider for RecordStoreAdapter {
+                    fn store_function(&self, name: &str, data: Vec<u8>, ttl: u64) {
+                        self.0.store_and_announce(format!("function:{}", name), data, ttl);
+                    }
+                    fn get_record(&self, key: &str) -> Option<Vec<u8>> {
+                        self.0.get_record(key).map(|r| r.value)
+                    }
+                }
+                synvoid_serverless::mesh_integration::set_mesh_dht(Arc::new(RecordStoreAdapter(rs)));
                 tracing::info!("Serverless manager wired to DHT record store");
             }
             if let Some(quic) = tm.get_quic_transport() {
-                sm.set_transport(quic.get_inner());
+                struct TransportAdapter(Arc<crate::mesh::transport::MeshTransport>);
+                impl synvoid_serverless::mesh_integration::MeshTransportProvider for TransportAdapter {
+                    fn announce_serverless(&self) {
+                        self.0.announce_serverless();
+                    }
+                    fn node_id(&self) -> String {
+                        self.0.get_node_id()
+                    }
+                }
+                synvoid_serverless::mesh_integration::set_mesh_transport(Arc::new(TransportAdapter(quic.get_inner())));
                 tracing::info!("Serverless manager wired to mesh transport");
             }
             if let Some(quic) = tm.get_quic_transport() {

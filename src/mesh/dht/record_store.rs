@@ -159,6 +159,8 @@ pub struct RecordStoreConfig {
     pub regional_quorum_enabled: bool,
     pub regional_quorum_max_nodes: usize,
     pub regional_quorum_min_nodes: usize,
+    pub require_signed_record_push: bool,
+    pub unsigned_record_push_compat_until_unix: Option<u64>,
 }
 
 impl Default for RecordStoreConfig {
@@ -190,6 +192,8 @@ impl Default for RecordStoreConfig {
             regional_quorum_enabled: false,
             regional_quorum_max_nodes: 20,
             regional_quorum_min_nodes: 3,
+            require_signed_record_push: true,
+            unsigned_record_push_compat_until_unix: None,
         }
     }
 }

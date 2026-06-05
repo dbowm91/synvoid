@@ -71,7 +71,7 @@ mod observability;
 mod request_preparation;
 mod traffic_control;
 
-pub(super) use observability::{send_request_log_if_enabled, RequestMetrics};
+pub(crate) use observability::{send_request_log_if_enabled, RequestMetrics};
 
 use connection_types::*;
 

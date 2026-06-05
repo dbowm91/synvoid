@@ -86,7 +86,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
         crate::proxy::WafDecision::Drop => {
             counter!("synvoid.http.early_drop").increment(1);
             http_conn.request_drop();
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -117,7 +117,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
                 &session_cookie_value,
                 session_cookie_max_age as u64,
             );
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -142,7 +142,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
             ));
         }
         crate::proxy::WafDecision::Challenge(_type, html) => {
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -169,7 +169,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
             let body = waf
                 .error_page_manager
                 .render_page_with_theme(status, Some(&message), None);
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -202,7 +202,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
         crate::router::RouteResult::Found(target) => target,
         crate::router::RouteResult::NotFound(msg) => {
             tracing::debug!("Route not found: {} for host: {}", msg, host);
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -227,7 +227,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
         }
         crate::router::RouteResult::Error(msg) => {
             tracing::error!("Router error: {}", msg);
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -274,7 +274,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
                         e
                     );
                     counter!("synvoid.traffic.connection_limited").increment(1);
-                    HttpServer::send_request_log_if_enabled(
+                    send_request_log_if_enabled(
                         ipc.clone(),
                         worker_id,
                         main_config,
@@ -322,7 +322,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
         #[cfg(feature = "mesh")]
         serverless_manager,
         |status| {
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
@@ -422,7 +422,7 @@ pub(super) async fn prepare_request_before_buffered_waf(
         main_config,
         alt_svc,
         |status, bypassed| {
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,

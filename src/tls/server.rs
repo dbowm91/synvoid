@@ -33,7 +33,7 @@ use crate::http::response_helpers::apply_security_headers;
 
 use crate::http_client::{
     send_request_streaming, send_request_streaming_generic, ErasedBodyImpl, ErasedHttpClient,
-    StreamingWafBody, UpstreamTlsConfig,
+    StreamingWafBody,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -940,7 +940,7 @@ impl HttpsServer {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(UpstreamTlsConfig::from_site_config);
+                    .and_then(crate::http_client::upstream_tls_from_site_config);
                 let streaming_client = upstream_client_registry
                     .get_or_create_streaming(&target.site_id, tls_config.as_ref());
                 let streaming_waf = waf.streaming();
@@ -1689,7 +1689,7 @@ impl HttpsServer {
                                 .upstream
                                 .as_ref()
                                 .and_then(|u| u.tls.as_ref())
-                                .and_then(crate::http_client::UpstreamTlsConfig::from_site_config);
+                                .and_then(crate::http_client::upstream_tls_from_site_config);
                             let http2_enabled = target
                                 .site_config
                                 .proxy
@@ -1847,7 +1847,7 @@ impl HttpsServer {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(UpstreamTlsConfig::from_site_config);
+                    .and_then(crate::http_client::upstream_tls_from_site_config);
 
                 let client =
                     upstream_client_registry.get_or_create(&target.site_id, tls_config.as_ref());

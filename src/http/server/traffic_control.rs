@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::current_timestamp;
 use metrics::counter;
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,7 +27,7 @@ pub(super) async fn maybe_enforce_request_traffic_limits(
             Err(e) => {
                 tracing::warn!("Connection limit exceeded for {}: {}", client_ip, e);
                 counter!("synvoid.traffic.connection_limited").increment(1);
-                HttpServer::send_request_log_if_enabled(
+                send_request_log_if_enabled(
                     ipc.clone(),
                     worker_id,
                     main_config,

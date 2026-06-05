@@ -1347,9 +1347,9 @@ pub fn verify_certificate_chain(
 
     // Extract CA public key (Ed25519)
     let ca_pubkey_bytes = ca_cert
-        .subjectPublicKeyInfo()
-        .subject_public_key()
-        .raw_bytes()
+        .public_key()
+        .subject_public_key
+        .as_ref()
         .to_vec();
 
     // Verify CA public key is in trusted set

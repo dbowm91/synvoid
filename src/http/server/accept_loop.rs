@@ -119,7 +119,7 @@ pub(super) async fn run_accept_loop(
                         let http_conn = Arc::new(HttpConnection::new(stream_for_conn, initial_bytes));
                         let http_conn_clone = http_conn.clone();
 
-                        let io = match http_conn.io.lock().take() {
+                        let io = match http_conn.take_stream() {
                             Some(io) => io,
                             None => {
                                 tracing::error!("Failed to take IO from HTTP connection");
@@ -156,7 +156,14 @@ pub(super) async fn run_accept_loop(
                                 let upstream_client_registry = upstream_client_registry.clone();
                                 let erased_http_client = erased_http_client.clone();
                                 async move {
-                                    super::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry, erased_http_client).await
+                                    #[cfg(feature = "mesh")]
+                                    {
+                                        super::HttpServer::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry, erased_http_client).await
+                                    }
+                                    #[cfg(not(feature = "mesh"))]
+                                    {
+                                        super::HttpServer::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, upstream_client_registry, erased_http_client).await
+                                    }
                                 }
                             }))
                             .with_upgrades();

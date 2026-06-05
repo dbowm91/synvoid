@@ -31,5 +31,5 @@ pub use scheduler::{ServerlessScheduler, TimerEntry, TimerPayload};
 #[cfg(feature = "mesh")]
 pub use mesh_integration::{
     MeshDhtProvider, MeshOrganizationProvider, MeshRoutingProvider, MeshTransportProvider,
-    MeshWasmDistProvider,
+    MeshWasmDistProvider, set_mesh_dht, set_mesh_transport,
 };

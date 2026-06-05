@@ -20,25 +20,6 @@ pub use synvoid_plugin_runtime::{
     WasmInstancePool,
 };
 
-// Bridge: implement StreamingBody for Box<dyn ErasedBody> so serverless code
-// can pass ErasedBody directly to invoke_handler_streaming.
-impl synvoid_plugin_runtime::streaming_body::StreamingBody
-    for Box<dyn crate::http_client::ErasedBody>
-{
-    fn poll_frame(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<
-        Option<Result<http_body::Frame<Bytes>, std::io::Error>>,
-    > {
-        crate::http_client::ErasedBody::poll_frame(self.as_mut(), cx)
-    }
-
-    fn size_hint(&self) -> http_body::SizeHint {
-        crate::http_client::ErasedBody::size_hint(self.as_ref())
-    }
-}
-
 // ─── PluginManager (public API) ──────────────────────────────────────────────
 
 pub struct PluginManager {

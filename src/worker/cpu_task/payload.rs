@@ -160,7 +160,8 @@ pub fn cpu_task_site_id(payload: &CpuTaskPayload) -> Option<String> {
         | CpuTaskPayload::PoisonImage { site_id, .. }
         | CpuTaskPayload::YaraScan { site_id, .. }
         | CpuTaskPayload::WasmExecute { site_id, .. }
-        | CpuTaskPayload::ServerlessInvoke { site_id, .. } => Some(site_id.clone()),
+        | CpuTaskPayload::ServerlessInvoke { site_id, .. }
+        | CpuTaskPayload::WasmTransformResponse { site_id, .. } => Some(site_id.clone()),
     }
 }
 
@@ -213,6 +214,16 @@ pub fn estimate_cpu_task_payload_size(payload: &CpuTaskPayload) -> usize {
             input,
             ..
         } => site_id.len() + function_name.len() + input.len(),
+        CpuTaskPayload::WasmTransformResponse {
+            site_id,
+            plugin_names,
+            body,
+            ..
+        } => {
+            site_id.len()
+                + plugin_names.iter().map(std::string::String::len).sum::<usize>()
+                + body.len()
+        }
     }
 }
 
@@ -241,6 +252,7 @@ pub fn estimate_cpu_task_output_size(message: &Message) -> usize {
             }
             crate::process::CpuTaskResult::WasmExecute { output }
             | crate::process::CpuTaskResult::ServerlessInvoke { output } => output.len(),
+            crate::process::CpuTaskResult::WasmTransformResponse { body, .. } => body.len(),
         },
         Message::CpuTaskError { message, .. } => message.len(),
         _ => 0,

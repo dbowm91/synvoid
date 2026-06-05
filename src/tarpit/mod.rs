@@ -2,6 +2,7 @@ pub mod handler;
 
 // Re-export from the extracted crate
 pub use synvoid_tarpit::{MarkovChain, TarpitConfig};
+pub use handler::TarpitHandler;
 
 use parking_lot::RwLock;
 use std::sync::Arc;

@@ -129,7 +129,7 @@ pub async fn maybe_handle_fastcgi_or_php_backend(
                         .request_wasm_transform(
                             site_id,
                             plugin_names,
-                            response.status,
+                            response.status.as_u16(),
                             body.to_vec(),
                             HashMap::new(),
                             policy,

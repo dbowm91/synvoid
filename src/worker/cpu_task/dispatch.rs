@@ -432,7 +432,7 @@ pub fn process_cpu_task_request_sync(
             timeout_ms: _timeout_ms,
         } => {
             let plugin_manager = crate::plugin::get_global_plugin_manager();
-            let wasm_manager = plugin_manager.wasm_manager();
+            let wasm_manager = plugin_manager.get_wasm_manager();
 
             let wasm_resp = http::Response::builder()
                 .status(status_code)

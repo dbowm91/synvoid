@@ -56,6 +56,8 @@ pub fn create_record_store(
         regional_quorum_enabled: false,
         regional_quorum_max_nodes: 20,
         regional_quorum_min_nodes: 3,
+        require_signed_record_push: dht_config.require_signed_record_push,
+        unsigned_record_push_compat_until_unix: dht_config.unsigned_record_push_compat_until_unix,
     };
 
     let access_control = DhtAccessControl::new(config);

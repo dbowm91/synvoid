@@ -259,6 +259,28 @@ impl MeshNodeRole {
     pub fn to_u8(self) -> u8 {
         self.0
     }
+
+    pub fn bits(&self) -> u8 {
+        self.0
+    }
+
+    pub fn as_u32(&self) -> u32 {
+        self.0 as u32
+    }
+}
+
+impl std::ops::BitOr for MeshNodeRole {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        MeshNodeRole(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for MeshNodeRole {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
 }
 
 impl Default for MeshNodeRole {

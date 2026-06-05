@@ -5,7 +5,7 @@ use http::HeaderMap;
 
 use crate::config::site::ProxyHeadersConfig;
 use crate::config::MainConfig;
-use crate::http_client::{HttpClient, StreamingHttpClient, UpstreamTlsConfig};
+use crate::http_client::{HttpClient, StreamingHttpClient};
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     build_forward_headers, build_headers_to_filter, ForwardedProtocol, PreparedUpstreamTarget,
@@ -61,7 +61,7 @@ pub fn prepare_upstream_proxy_dispatch_plan(
         .upstream
         .as_ref()
         .and_then(|u| u.tls.as_ref())
-        .and_then(UpstreamTlsConfig::from_site_config);
+        .and_then(crate::http_client::upstream_tls_from_site_config);
 
     let forwarding_client = if site_tls_config.is_some() {
         upstream_client_registry.get_or_create(&target.site_id, site_tls_config.as_ref())

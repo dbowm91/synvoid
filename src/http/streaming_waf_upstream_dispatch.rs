@@ -8,7 +8,7 @@ use http_body_util::BodyExt;
 
 use crate::config::site::ProxyHeadersConfig;
 use crate::config::MainConfig;
-use crate::http_client::{send_request_streaming_generic, ErasedBodyImpl, UpstreamTlsConfig};
+use crate::http_client::{send_request_streaming_generic, ErasedBodyImpl};
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::{
     build_forward_headers, build_headers_to_filter_for_site, filter_response_headers_buf,
@@ -54,7 +54,7 @@ pub async fn handle_streaming_waf_upstream_pass(
         .upstream
         .as_ref()
         .and_then(|u| u.tls.as_ref())
-        .and_then(UpstreamTlsConfig::from_site_config);
+        .and_then(crate::http_client::upstream_tls_from_site_config);
     let streaming_client =
         upstream_client_registry.get_or_create_streaming(&target.site_id, tls_config.as_ref());
     let streaming_waf = waf.streaming();

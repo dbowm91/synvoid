@@ -15,7 +15,7 @@ static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
 static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
 
 #[allow(dead_code)]
-pub(super) struct RequestMetrics {
+pub(crate) struct RequestMetrics {
     pub(super) site_id: String,
     pub(super) metrics: Arc<WorkerMetrics>,
 }
@@ -62,7 +62,7 @@ impl RequestMetrics {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn send_request_log_if_enabled(
+pub(crate) fn send_request_log_if_enabled(
     ipc: Option<Arc<tokio::sync::Mutex<IpcStream>>>,
     worker_id: Option<WorkerId>,
     main_config: &Arc<MainConfig>,

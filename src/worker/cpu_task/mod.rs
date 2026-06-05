@@ -394,7 +394,8 @@ pub async fn run_cpu_worker(
                                     // Route through generic CpuTask* response handling below.
                                 }
                                 CpuTaskPayload::WasmExecute { .. }
-                                | CpuTaskPayload::ServerlessInvoke { .. } => {
+                                | CpuTaskPayload::ServerlessInvoke { .. }
+                                | CpuTaskPayload::WasmTransformResponse { .. } => {
                                     // No legacy WasmExecute/ServerlessInvoke response shape exists.
                                     // Route through generic CpuTask* response handling below.
                                 }

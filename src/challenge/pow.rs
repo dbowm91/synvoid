@@ -12,6 +12,13 @@ use super::{has_leading_zeros, has_leading_zeros_ct};
 const MAX_NONCE: u64 = 100_000_000;
 const MIN_TIMESTAMP_SECS: u64 = 60;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PowResult {
+    Valid,
+    NotSet,
+    Invalid,
+}
+
 #[derive(Debug, Clone)]
 pub struct PowChallenge {
     pub challenge: String,

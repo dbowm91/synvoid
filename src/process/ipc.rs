@@ -1512,6 +1512,43 @@ impl Message {
                         }
                         Ok(())
                     }
+                    CpuTaskPayload::WasmTransformResponse {
+                        site_id,
+                        plugin_names,
+                        body,
+                        env,
+                        ..
+                    } => {
+                        check_str(
+                            "CpuTaskPayload.WasmTransformResponse.site_id",
+                            site_id,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        check_str_vec(
+                            "CpuTaskPayload.WasmTransformResponse.plugin_names",
+                            plugin_names,
+                            MAX_STRING_LENGTH,
+                        )?;
+                        if body.len() > MAX_STRING_LENGTH {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskPayload.WasmTransformResponse.body".into(),
+                                message: format!("{} > {}", body.len(), MAX_STRING_LENGTH),
+                            });
+                        }
+                        for (k, v) in env {
+                            check_str(
+                                "CpuTaskPayload.WasmTransformResponse.env key",
+                                k,
+                                MAX_STRING_LENGTH,
+                            )?;
+                            check_str(
+                                "CpuTaskPayload.WasmTransformResponse.env value",
+                                v,
+                                MAX_STRING_LENGTH,
+                            )?;
+                        }
+                        Ok(())
+                    }
                 }
             }
             Message::CpuTaskCancel { .. } => Ok(()),
@@ -1577,6 +1614,15 @@ impl Message {
                             return Err(IpcValidationError {
                                 field: "CpuTaskResult.ServerlessInvoke.output".into(),
                                 message: format!("{} > {}", output.len(), MAX_STRING_LENGTH),
+                            });
+                        }
+                        Ok(())
+                    }
+                    CpuTaskResult::WasmTransformResponse { body, .. } => {
+                        if body.len() > MAX_STRING_LENGTH {
+                            return Err(IpcValidationError {
+                                field: "CpuTaskResult.WasmTransformResponse.body".into(),
+                                message: format!("{} > {}", body.len(), MAX_STRING_LENGTH),
                             });
                         }
                         Ok(())

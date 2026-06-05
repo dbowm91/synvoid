@@ -18,7 +18,7 @@ use crate::http::headers::generate_stealth_timestamp;
 use crate::http::response_helpers::apply_security_headers;
 use crate::http_client::{
     create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
-    ErasedBodyImpl, HttpClient, StreamingWafBody, UpstreamTlsConfig,
+    ErasedBodyImpl, HttpClient, StreamingWafBody,
 };
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
@@ -660,7 +660,7 @@ impl Http3Server {
                     .upstream
                     .as_ref()
                     .and_then(|u| u.tls.as_ref())
-                    .and_then(UpstreamTlsConfig::from_site_config);
+                    .and_then(crate::http_client::upstream_tls_from_site_config);
                 let streaming_client = self
                     .upstream_client_registry
                     .get_or_create_streaming(&route_target.site_id, tls_config.as_ref());

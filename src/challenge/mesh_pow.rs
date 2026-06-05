@@ -172,7 +172,7 @@ impl MeshPowManager {
         let input = format!("{}{}", challenge, client_nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        crate::challenge::pow::has_leading_zeros_ct(&hash, self.difficulty as usize).into()
+        super::has_leading_zeros_ct(&hash, self.difficulty as usize).into()
     }
 
     pub fn generate_challenge_page(&self, honeypot_html: &str) -> String {

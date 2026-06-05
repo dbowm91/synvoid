@@ -169,7 +169,7 @@ pub(super) async fn handle_pass_backend_dispatch(
             dispatch_ctx.site_id,
             dispatch_ctx.user_agent,
             dispatch_ctx.alt_svc,
-            HttpServer::send_request_log_if_enabled,
+            send_request_log_if_enabled,
         )
         .await
         {
@@ -191,7 +191,7 @@ pub(super) async fn handle_pass_backend_dispatch(
         dispatch_ctx.start,
         dispatch_ctx.user_agent,
         dispatch_ctx.alt_svc,
-        HttpServer::send_request_log_if_enabled,
+        send_request_log_if_enabled,
     )
     .await
     {
@@ -287,7 +287,7 @@ pub(super) async fn handle_pass_backend_dispatch(
         dispatch_ctx.alt_svc,
         dispatch_ctx.main_config,
         |status| {
-            HttpServer::send_request_log_if_enabled(
+            send_request_log_if_enabled(
                 dispatch_ctx.ipc.clone(),
                 dispatch_ctx.worker_id,
                 dispatch_ctx.main_config,
