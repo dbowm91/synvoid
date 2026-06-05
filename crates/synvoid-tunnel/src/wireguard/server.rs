@@ -7,7 +7,7 @@ use super::config::{
     generate_keypair, WgImplementation, WireGuardConfig, WireGuardPeerConfig, WireGuardServerConfig,
 };
 use super::runtime::WireGuardRuntime;
-use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport};
+use crate::{PeerInfo, TunnelStats, TunnelTransport};
 
 pub struct WireGuardServer {
     config: WireGuardServerConfig,

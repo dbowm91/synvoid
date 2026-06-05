@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tunnel::TunnelManager;
+use crate::TunnelManager;
 
 pub struct TunnelUpstreamResolver {
     manager: Arc<TunnelManager>,

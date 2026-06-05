@@ -3,7 +3,7 @@ use quinn::{RecvStream, SendStream};
 use anyhow::Result;
 
 use super::messages::TunnelMessage;
-use crate::buffer::BufferPool;
+use synvoid_utils::buffer::pool::BufferPool;
 
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 

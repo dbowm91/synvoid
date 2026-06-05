@@ -193,7 +193,7 @@ impl TunnelMessage {
             return None;
         }
         let header: DataChunkHeader = crate::serialization::deserialize(&data[1..]).ok()?;
-        let header_size = crate::serialization::serialized_size(&header).ok()? as usize;
+        let header_size = crate::serialization::serialized_size(&header) as usize;
         let data_start = 1 + header_size;
         if data.len() < data_start + header.data_len as usize {
             return None;
@@ -281,7 +281,7 @@ impl DatagramMessage {
     }
 
     pub fn encoded_size(&self) -> usize {
-        crate::serialization::serialized_size(self).unwrap_or(0) as usize
+        crate::serialization::serialized_size(self) as usize
     }
 
     pub fn is_fragmented(&self) -> bool {

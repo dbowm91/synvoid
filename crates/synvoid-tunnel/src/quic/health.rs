@@ -7,7 +7,7 @@ use quinn::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::tunnel::quic::messages::DatagramCapabilities;
+use crate::quic::messages::DatagramCapabilities;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckConfig {

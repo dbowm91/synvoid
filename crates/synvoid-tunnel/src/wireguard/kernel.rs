@@ -19,7 +19,7 @@ use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
 use super::stats::{WgInterfaceStats, WgStatsCollector};
 use super::tun::{is_tun_available, TunInterface};
-use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
+use crate::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 pub struct KernelWireGuard {
     config: WireGuardConfig,

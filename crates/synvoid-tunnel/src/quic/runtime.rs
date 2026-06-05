@@ -14,7 +14,7 @@ use super::registry::{TunnelSessionInfo, QUIC_TUNNEL_REGISTRY};
 use super::tls::QuicTlsConfig;
 use super::validation::{validate_max_message_size, DEFAULT_MESSAGE_SIZE};
 use super::ConnectionQuality;
-use crate::config::TunnelQuicConfig;
+use synvoid_config::TunnelQuicConfig;
 
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 1000;
@@ -247,7 +247,7 @@ impl QuicRuntime {
         mut shutdown_rx: broadcast::Receiver<()>,
         _max_message_size: usize,
         _peer_config: Option<
-            Arc<std::sync::RwLock<HashMap<String, crate::config::TunnelQuicPeerConfig>>>,
+            Arc<std::sync::RwLock<HashMap<String, synvoid_config::TunnelQuicPeerConfig>>>,
         >,
         health_monitor: Option<Arc<QuicHealthMonitor>>,
     ) {

@@ -10,7 +10,7 @@ use rustls_pki_types::pem::{self, PemObject};
 
 use quinn::{ClientConfig, ServerConfig};
 
-use crate::config::TunnelQuicConfig;
+use synvoid_config::TunnelQuicConfig;
 
 #[derive(Debug, Clone)]
 pub struct QuicTlsConfig {

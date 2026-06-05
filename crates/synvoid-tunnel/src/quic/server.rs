@@ -14,17 +14,17 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, Semaphore};
 
-use crate::buffer::BufferPool;
-use crate::config::{PortMappingConfig, TunnelQuicConfig, TunnelQuicPeerConfig, VpnAccessLevel};
-use crate::tunnel::quic::framing::{read_message, write_message};
-use crate::tunnel::quic::health::QuicHealthMonitor;
-use crate::tunnel::quic::messages::{
+use synvoid_utils::buffer::pool::BufferPool;
+use synvoid_config::{PortMappingConfig, TunnelQuicConfig, TunnelQuicPeerConfig, VpnAccessLevel};
+use crate::quic::framing::{read_message, write_message};
+use crate::quic::health::QuicHealthMonitor;
+use crate::quic::messages::{
     DatagramCapabilities, DatagramMessage, PortMapping, TunnelMessage,
 };
-use crate::tunnel::quic::registry::{TunnelSessionInfo, QUIC_TUNNEL_REGISTRY};
-use crate::tunnel::quic::runtime::{IncomingConnection, QuicConnection, QuicRuntime};
-use crate::tunnel::quic::tls::QuicTlsConfig;
-use crate::tunnel::quic::validation::{
+use crate::quic::registry::{TunnelSessionInfo, QUIC_TUNNEL_REGISTRY};
+use crate::quic::runtime::{IncomingConnection, QuicConnection, QuicRuntime};
+use crate::quic::tls::QuicTlsConfig;
+use crate::quic::validation::{
     validate_client_id, validate_identifier, validate_peer_id, validate_port,
 };
 

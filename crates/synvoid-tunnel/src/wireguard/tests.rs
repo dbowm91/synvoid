@@ -1,58 +1,6 @@
-use crate::tunnel::wireguard::config::{WgImplementation, WireGuardConfig, WireGuardPeerConfig};
-use crate::tunnel::wireguard::session::{WgPeerSession, WgSessionManager};
-use crate::tunnel::wireguard::stats::{WgInterfaceStats, WgPeerStats};
-
-#[test]
-fn test_vpn_client_config_wireguard_mode() {
-    use crate::vpn_client::{TransportType, VpnClientConfig, WireGuardClientTransportConfig};
-
-    let wg_transport = WireGuardClientTransportConfig::new(
-        "GMHOtIbfPFGbUDhMY9ggLQWjmf9qxj+Jx9qGgyT4pVo=",
-        "KUtqWjuqVvRKSSnXyKGD3qcS6m3FD1Y0e5wzHUzX4VU=",
-        "vpn.example.com:51820",
-    )
-    .with_allowed_ips(vec!["10.0.0.0/24"])
-    .with_implementation(WgImplementation::Userspace);
-
-    let config = VpnClientConfig::default()
-        .with_transport(TransportType::WireGuard)
-        .with_wireguard(wg_transport);
-
-    assert_eq!(config.transport, TransportType::WireGuard);
-    assert!(config.wireguard.is_some());
-
-    let wg_config = config.wireguard.unwrap().to_wireguard_config();
-    assert_eq!(wg_config.implementation, WgImplementation::Userspace);
-    assert_eq!(wg_config.peers.len(), 1);
-}
-
-#[test]
-fn test_vpn_client_config_transport_types() {
-    use crate::vpn_client::{TransportType, VpnClientConfig};
-
-    let quic_config = VpnClientConfig::default();
-    assert_eq!(quic_config.transport, TransportType::Quic);
-    assert!(quic_config.wireguard.is_none());
-
-    let wg_config = VpnClientConfig::default().with_transport(TransportType::WireGuard);
-    assert_eq!(wg_config.transport, TransportType::WireGuard);
-}
-
-#[test]
-fn test_wireguard_client_transport_config_to_wireguard_config() {
-    use crate::vpn_client::WireGuardClientTransportConfig;
-
-    let wg_transport = WireGuardClientTransportConfig::new(
-        "private_key_here",
-        "public_key_here",
-        "endpoint:51820",
-    )
-    .with_allowed_ips(vec!["0.0.0.0/1", "192.168.0.0/16"]);
-
-    assert_eq!(wg_transport.private_key, "private_key_here");
-    assert_eq!(wg_transport.peer_public_key, "public_key_here");
-    assert_eq!(wg_transport.allowed_ips.len(), 2);
-}
+use crate::wireguard::config::{WgImplementation, WireGuardConfig, WireGuardPeerConfig};
+use crate::wireguard::session::{WgPeerSession, WgSessionManager};
+use crate::wireguard::stats::{WgInterfaceStats, WgPeerStats};
 
 #[test]
 fn test_full_config_flow() {
@@ -120,7 +68,7 @@ fn test_session_lifecycle() {
 #[cfg(target_os = "linux")]
 #[test]
 fn test_stats_parsing_multiple_interfaces() {
-    use crate::tunnel::wireguard::stats::parse_wg_show_output;
+    use crate::wireguard::stats::parse_wg_show_output;
 
     let output = r#"
 interface: wg0
@@ -157,7 +105,7 @@ peer: CLIENT2_PUB
 #[cfg(target_os = "linux")]
 #[test]
 fn test_stats_parsing_persistent_keepalive() {
-    use crate::tunnel::wireguard::stats::parse_wg_show_output;
+    use crate::wireguard::stats::parse_wg_show_output;
 
     let output = r#"
 interface: wg0

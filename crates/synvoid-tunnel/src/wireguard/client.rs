@@ -6,7 +6,7 @@ use super::config::{
     generate_keypair, WireGuardClientConfig, WireGuardConfig, WireGuardPeerConfig,
 };
 use super::runtime::WireGuardRuntime;
-use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport};
+use crate::{PeerInfo, TunnelStats, TunnelTransport};
 
 pub struct WireGuardClient {
     config: WireGuardClientConfig,

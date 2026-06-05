@@ -10,7 +10,7 @@ use super::config::{WgImplementation, WireGuardConfig, WireGuardPeerConfig};
 use super::kernel::KernelWireGuard;
 use super::session::{WgConnectionStats, WgSessionManager};
 use super::userspace::UserspaceWireGuard;
-use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
+use crate::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 pub enum WireGuardBackend {
     Kernel(KernelWireGuard),

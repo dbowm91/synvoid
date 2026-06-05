@@ -1,0 +1,43 @@
+[package]
+name = "synvoid-tunnel"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+wireguard = ["dep:defguard_boringtun"]
+tun-rs = ["dep:pin-project-lite"]
+
+[dependencies]
+synvoid-config = { path = "../synvoid-config" }
+synvoid-upstream = { path = "../synvoid-upstream" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+quinn = { version = "0.11", features = ["runtime-tokio"] }
+rustls = "0.23"
+rustls-pki-types = "1"
+rcgen = "0.13"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+dashmap = "7.0.0-rc2"
+bytes = "1"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc", "use-std"] }
+bincode = "1"
+subtle = "2"
+rand = "0.9"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+metrics = "0.22"
+tracing = "0.1"
+anyhow = "1"
+thiserror = "2"
+ipnetwork = "0.21"
+libc = "0.2"
+defguard_boringtun = { version = "0.6", optional = true }
+pin-project-lite = { version = "0.2", optional = true }
+ed25519-dalek = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"

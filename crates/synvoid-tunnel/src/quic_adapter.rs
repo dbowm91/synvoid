@@ -11,7 +11,7 @@ impl TunnelConnector for QuicTunnelAdapter {
         identifier: &str,
     ) -> Result<(quinn::SendStream, quinn::RecvStream), Box<dyn std::error::Error + Send + Sync>>
     {
-        let runtime = crate::tunnel::QUIC_TUNNEL_REGISTRY
+        let runtime = crate::QUIC_TUNNEL_REGISTRY
             .get_runtime()
             .await
             .ok_or("QUIC tunnel runtime not initialized")?;

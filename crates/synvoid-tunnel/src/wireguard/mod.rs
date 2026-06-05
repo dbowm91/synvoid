@@ -30,7 +30,7 @@ pub use userspace::UserspaceWireGuard;
 use metrics::{counter, gauge};
 use tokio::sync::broadcast;
 
-use crate::config::{TunnelVpnConfig, WireGuardPeerConfig as ConfigWireGuardPeerConfig};
+use synvoid_config::{TunnelVpnConfig, WireGuardPeerConfig as ConfigWireGuardPeerConfig};
 
 // SAFETY_REASON: Debugging - stored for introspection
 #[allow(dead_code)]

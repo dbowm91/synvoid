@@ -12,10 +12,10 @@ use tokio::sync::{broadcast, mpsc};
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
 #[allow(unused_imports)]
-use crate::tunnel::tun::{is_tun_available, TunConfig, TunInterface};
+use crate::tun::{is_tun_available, TunConfig, TunInterface};
 #[cfg(feature = "tun-rs")]
-use crate::tunnel::tun::{TunReader, TunWriter};
-use crate::tunnel::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
+use crate::tun::{TunReader, TunWriter};
+use crate::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 const MAX_PACKET_SIZE: usize = 65535;
 const QUEUE_SIZE: usize = 1024;
@@ -269,7 +269,7 @@ impl UserspaceWireGuard {
     }
 
     #[cfg(feature = "tun-rs")]
-    fn spawn_packet_handler(&mut self, device: Arc<crate::tunnel::tun::AsyncTunDevice>) {
+    fn spawn_packet_handler(&mut self, device: Arc<crate::tun::AsyncTunDevice>) {
         let shutdown_rx = self.shutdown_tx.subscribe();
         let sessions = self.sessions.clone();
         let tx_queue_rx = self.tx_queue_rx.take();
