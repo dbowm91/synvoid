@@ -22,14 +22,14 @@ path = "src/bin/server.rs"
 default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
 dns = ["synvoid-config/dns", "synvoid-tls/dns", "dep:hickory-proto", "dep:hickory-resolver", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
-wireguard = ["dep:defguard_boringtun"]
+wireguard = ["synvoid-tunnel/wireguard"]
 icmp-filter = []
 flood-ebpf = ["dep:aya"]
-origin_key_exchange = []
+origin_key_exchange = ["synvoid-integrity/origin_key_exchange"]
 audit = []
-post-quantum = ["dep:rustls-post-quantum"]
+post-quantum = []  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
 verify-pq = []
-tun-rs = []
+tun-rs = ["synvoid-tunnel/tun-rs"]
 mesh = ["synvoid-config/mesh", "synvoid-serverless/mesh", "dep:openraft"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
@@ -63,7 +63,7 @@ tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
-rustls-native-certs = "0.8"
+# rustls-native-certs moved to synvoid-http-client
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }
@@ -86,7 +86,7 @@ bitflags = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-isbot = "0.1"
+# isbot moved to synvoid-waf
 stegoeggo = "0.2"
 regex = "1"
 parking_lot = "0.12"
@@ -156,9 +156,9 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-pki-types = "1"
-rustls-post-quantum = { version = "0.2", optional = true }
+# rustls-post-quantum removed (0 direct uses; prefer-post-quantum feature on rustls handles PQ)
 x509-parser = "0.16"
-instant-acme = { version = "0.8", features = ["aws-lc-rs", "rcgen"] }
+# instant-acme moved to synvoid-tls
 
 # Post-Quantum Cryptography (aws-lc-rs with unstable for ML-DSA)
 aws-lc-rs = { version = "1", features = ["unstable"] }
@@ -211,16 +211,16 @@ wasmtime = { version = "42.0.2", features = ["component-model"] }
 url = "2"
 
 # WireGuard (optional - requires defguard_boringtun)
-defguard_boringtun = { version = "0.6", optional = true }
+# defguard_boringtun moved to synvoid-tunnel
 
 # Unix domain socket support for HTTP client
-hyperlocal = { version = "0.9", features = ["hyper-util"] }
+# hyperlocal moved to synvoid-http-client
 
 # Syslog support
 syslog = "6"
 
 # systemd readiness notification
-sd-notify = "0.4"
+# sd-notify removed (0 uses in root)
 
 # Logging facade
 log = "0.4"
@@ -232,7 +232,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional =
 prost = "0.14"
 prost-build = "0.14"
 lru_time_cache = "0.11"
-linked-hash-map = "0.5"
+# linked-hash-map removed (0 uses in root or extracted crates)
 indexmap = "2"
 ahash = "0.8"
 smallvec = "1"

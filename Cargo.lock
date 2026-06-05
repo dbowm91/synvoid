@@ -7274,17 +7274,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
-name = "rustls-post-quantum"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0da3cd9229bac4fae1f589c8f875b3c891a058ddaa26eb3bde16b5e43dc174ce"
-dependencies = [
- "aws-lc-rs",
- "rustls",
- "rustls-webpki",
-]
-
-[[package]]
 name = "rustls-webpki"
 version = "0.103.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7410,15 +7399,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "sd-notify"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b943eadf71d8b69e661330cb0e2656e31040acf21ee7708e2c238a0ec6af2bf4"
-dependencies = [
- "libc",
 ]
 
 [[package]]
@@ -7957,7 +7937,6 @@ dependencies = [
  "cryptoki",
  "daemonize2",
  "dashmap 7.0.0-rc2",
- "defguard_boringtun",
  "digest",
  "dirs",
  "ed25519-dalek",
@@ -7979,18 +7958,14 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "hyperlocal",
  "indexmap",
  "infer",
- "instant-acme",
  "ipnetwork 0.18.0",
- "isbot",
  "libc",
  "libfuzzer-sys",
  "libinjectionrs",
  "libloading",
  "lightningcss",
- "linked-hash-map",
  "log",
  "lru_time_cache",
  "matchit 0.7.3",
@@ -8023,11 +7998,8 @@ dependencies = [
  "rsa",
  "rusqlite",
  "rustls",
- "rustls-native-certs",
  "rustls-pki-types",
- "rustls-post-quantum",
  "schemars 0.8.22",
- "sd-notify",
  "serde",
  "serde_bytes",
  "serde_json",
