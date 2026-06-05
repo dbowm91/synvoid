@@ -8026,7 +8026,9 @@ dependencies = [
  "subtle",
  "synvoid",
  "synvoid-admin",
+ "synvoid-app-handlers",
  "synvoid-challenge",
+ "synvoid-cli",
  "synvoid-config",
  "synvoid-core",
  "synvoid-dns",
@@ -8035,6 +8037,7 @@ dependencies = [
  "synvoid-http-client",
  "synvoid-integrity",
  "synvoid-mesh",
+ "synvoid-platform",
  "synvoid-plugin-runtime",
  "synvoid-proxy",
  "synvoid-proxy-cache",
@@ -8108,6 +8111,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-app-handlers"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "fastcgi-client",
+ "futures",
+ "http 1.4.1",
+ "http-body-util",
+ "infer",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "synvoid-config",
+ "synvoid-core",
+ "synvoid-http-client",
+ "synvoid-plugin-runtime",
+ "synvoid-serverless",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "walkdir",
+]
+
+[[package]]
 name = "synvoid-challenge"
 version = "0.1.0"
 dependencies = [
@@ -8116,6 +8144,13 @@ dependencies = [
  "serde",
  "sha2",
  "subtle",
+]
+
+[[package]]
+name = "synvoid-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
@@ -8409,6 +8444,15 @@ dependencies = [
  "x509-parser 0.16.0",
  "yara-x",
  "zeroize",
+]
+
+[[package]]
+name = "synvoid-platform"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

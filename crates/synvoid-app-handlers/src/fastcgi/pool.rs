@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use utoipa::ToSchema;
 
-use crate::config::site::FastCgiConfig;
+use synvoid_config::site::FastCgiConfig;
 use crate::fastcgi::streaming::FastCgiResponseStream;
 use crate::fastcgi::{FastCgiClient, FastCgiError, FastCgiResponse};
 
@@ -464,7 +464,7 @@ mod tests {
     #[tokio::test]
     async fn test_pool_manager() {
         let manager = FastCgiPoolManager::new();
-        let config = crate::config::site::FastCgiConfig::default();
+        let config = synvoid_config::site::FastCgiConfig::default();
 
         let pool1 = manager.get_or_create_pool("/tmp/test.sock", &config);
         let pool2 = manager.get_or_create_pool("/tmp/test.sock", &config);

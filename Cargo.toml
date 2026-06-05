@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -113,9 +113,11 @@ unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 bloomfilter = "2"
 serde_bytes = "0.11"
+synvoid-cli = { path = "crates/synvoid-cli" }
 synvoid-config = { path = "crates/synvoid-config" }
 synvoid-dns = { path = "crates/synvoid-dns", optional = true }
 synvoid-http-client = { path = "crates/synvoid-http-client" }
+synvoid-platform = { path = "crates/synvoid-platform" }
 synvoid-upstream = { path = "crates/synvoid-upstream" }
 synvoid-tunnel = { path = "crates/synvoid-tunnel" }
 
@@ -208,6 +210,7 @@ synvoid-serverless = { path = "crates/synvoid-serverless" }
 synvoid-geoip = { path = "crates/synvoid-geoip" }
 synvoid-integrity = { path = "crates/synvoid-integrity" }
 synvoid-mesh = { path = "crates/synvoid-mesh", optional = true }
+synvoid-app-handlers = { path = "crates/synvoid-app-handlers" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }

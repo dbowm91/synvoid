@@ -1,0 +1,10 @@
+[package]
+name = "synvoid-platform"
+version = "0.1.0"
+edition = "2021"
+description = "Platform detection, filesystem utilities, and sandbox primitives for SynVoid"
+
+[dependencies]
+thiserror = "2"
+tracing = "0.1"
+libc = "0.2"

@@ -1,0 +1,28 @@
+[package]
+name = "synvoid-app-handlers"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+synvoid-core = { path = "../synvoid-core" }
+synvoid-config = { path = "../synvoid-config" }
+synvoid-serverless = { path = "../synvoid-serverless" }
+synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" }
+synvoid-http-client = { path = "../synvoid-http-client" }
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt", "fs", "process", "io-util", "time", "macros"] }
+tracing = "0.1"
+parking_lot = "0.12"
+infer = "0.16"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+fastcgi-client = "0.10"
+walkdir = "2"
+futures = "0.3"
