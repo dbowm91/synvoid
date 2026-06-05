@@ -8050,6 +8050,7 @@ dependencies = [
  "synvoid-theme",
  "synvoid-tls",
  "synvoid-tunnel",
+ "synvoid-upload",
  "synvoid-upstream",
  "synvoid-utils",
  "synvoid-waf",
@@ -8686,6 +8687,33 @@ dependencies = [
  "tracing",
  "uuid",
  "x25519-dalek",
+]
+
+[[package]]
+name = "synvoid-upload"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "parking_lot",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "synvoid-app-handlers",
+ "synvoid-config",
+ "synvoid-http-client",
+ "synvoid-mesh",
+ "synvoid-platform",
+ "synvoid-utils",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
+ "yara-x",
 ]
 
 [[package]]
