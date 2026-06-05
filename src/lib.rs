@@ -76,6 +76,7 @@ pub mod protocol;
 pub mod proxy;
 pub use synvoid_proxy_cache as proxy_cache;
 pub mod router;
+pub mod router_adapter;
 pub mod sandbox;
 pub mod serder;
 pub use synvoid_utils::serialization;

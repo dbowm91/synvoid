@@ -9,6 +9,7 @@ pub mod endpoints;
 pub mod flood;
 pub mod primitives;
 pub mod request_sanitization;
+pub mod threat;
 pub mod traffic_shaper;
 pub mod traits;
 

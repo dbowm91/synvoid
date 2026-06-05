@@ -67,15 +67,19 @@ use crate::proxy_cache::{
 use crate::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
 pub use crate::waf::WafDecision;
 use crate::waf::{UpstreamErrorTracker, WafCore};
+use synvoid_core::ids::{RequestId, SiteId};
+use synvoid_core::request::RequestContext;
+use synvoid_waf::traits::WafProcessor;
 
 pub type ProxyResponse = Response<BoxBody<Bytes, std::io::Error>>;
 
-pub struct ProxyServer {
+pub struct ProxyServer<W: WafProcessor = crate::waf::adapter::RootWafProcessor> {
     client: HttpClient,
     revalidation_client: HttpClient,
     erased_client: ErasedHttpClient,
     upstream_url: String,
-    waf: Arc<WafCore>,
+    waf: Arc<W>,
+    waf_core: Arc<WafCore>,
     max_response_size: usize,
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     site_id: String,
@@ -95,10 +99,11 @@ pub struct ProxyServer {
     proxy_headers_config: Option<Arc<crate::config::site::ProxyHeadersConfig>>,
 }
 
-impl ProxyServer {
+impl<W: WafProcessor> ProxyServer<W> {
     pub fn new(
         upstream_url: String,
-        waf: Arc<WafCore>,
+        waf: Arc<W>,
+        waf_core: Arc<WafCore>,
         max_response_size: usize,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
@@ -106,6 +111,7 @@ impl ProxyServer {
         Self::new_with_pool_config(
             upstream_url,
             waf,
+            waf_core,
             max_response_size,
             upstream_error_tracker,
             site_id,
@@ -117,7 +123,8 @@ impl ProxyServer {
 
     pub fn new_with_tls(
         upstream_url: String,
-        waf: Arc<WafCore>,
+        waf: Arc<W>,
+        waf_core: Arc<WafCore>,
         max_response_size: usize,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
@@ -126,6 +133,7 @@ impl ProxyServer {
         Self::new_with_pool_config(
             upstream_url,
             waf,
+            waf_core,
             max_response_size,
             upstream_error_tracker,
             site_id,
@@ -137,7 +145,8 @@ impl ProxyServer {
 
     pub fn new_with_pool_config(
         upstream_url: String,
-        waf: Arc<WafCore>,
+        waf: Arc<W>,
+        waf_core: Arc<WafCore>,
         max_response_size: usize,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
@@ -183,6 +192,7 @@ impl ProxyServer {
             revalidation_client,
             upstream_url,
             waf,
+            waf_core,
             max_response_size,
             upstream_error_tracker,
             site_id,
@@ -241,7 +251,8 @@ impl ProxyServer {
         retry_config: Option<RetryConfig>,
         buffering_config: Option<BufferingConfig>,
         cache_config: Option<ProxyCacheConfig>,
-        waf: Arc<WafCore>,
+        waf: Arc<W>,
+        waf_core: Arc<WafCore>,
         max_response_size: usize,
         upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
         site_id: String,
@@ -313,6 +324,7 @@ impl ProxyServer {
             revalidation_client,
             upstream_url: String::new(),
             waf,
+            waf_core,
             max_response_size,
             upstream_error_tracker,
             site_id,
@@ -347,7 +359,7 @@ impl ProxyServer {
     ) -> Result<ProxyResponse, String> {
         let start = Instant::now();
 
-        if let Some(ref conn_limiter) = self.waf.connection_limiter {
+        if let Some(ref conn_limiter) = self.waf_core.connection_limiter {
             match conn_limiter.try_acquire(&self.site_id, client_ip).await {
                 Ok(token) => {
                     drop(token);
@@ -392,7 +404,7 @@ impl ProxyServer {
             };
 
         if !skip_waf_check {
-            let drop = self.waf.config.drop_blocked_requests;
+            let drop = self.waf_core.config.drop_blocked_requests;
 
             let (path_for_waf, query_string) = if let Some(q_pos) = path.find('?') {
                 (
@@ -403,22 +415,22 @@ impl ProxyServer {
                 (path.clone(), None)
             };
 
+            let mut ctx = RequestContext::new(RequestId::new(uuid::Uuid::new_v4().to_string()));
+            ctx.site_id = Some(SiteId::new(self.site_id.clone()));
+            ctx.client_ip = Some(client_ip.to_string());
+            ctx.method = Some(method.to_string());
+            ctx.path = Some(path_for_waf.clone());
+            ctx.query = query_string.clone();
+            ctx.user_agent = user_agent.clone();
+
             let waf_decision = self
                 .waf
-                .check_request_full(
-                    Some(self.site_id.as_str()),
-                    client_ip,
-                    method.as_str(),
-                    &path_for_waf,
-                    query_string.as_deref(),
-                    headers,
-                    full_body_bytes.as_deref(),
-                    user_agent.as_deref(),
-                    None,
-                    None,
-                    None,
-                )
-                .await;
+                .check_request_full(&ctx, headers, full_body_bytes.as_deref())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("WAF check failed: {}", e);
+                    WafDecision::Pass
+                });
 
             match waf_decision {
                 WafDecision::Drop => {
@@ -489,7 +501,9 @@ impl ProxyServer {
                 WafDecision::Tarpit(tar_path) => {
                     counter!("synvoid.requests.tarpitted").increment(1);
                     histogram!("synvoid.request.duration").record(start.elapsed());
-                    let stream = self.waf.stream_tarpit(&tar_path, user_agent.as_deref());
+                    let stream = self
+                        .waf_core
+                        .stream_tarpit(&tar_path, user_agent.as_deref());
                     return Ok(Response::builder()
                         .status(200)
                         .header("Content-Type", "text/html")
@@ -530,7 +544,7 @@ impl ProxyServer {
                             let config = tracker.get_config();
                             if config.auto_ban_elevated_threat {
                                 let threat_level = self
-                                    .waf
+                                    .waf_core
                                     .threat_level
                                     .as_ref()
                                     .map(|tl| tl.get_level().as_u8())
@@ -543,7 +557,7 @@ impl ProxyServer {
                                         ban_duration_secs = ban_duration,
                                         "Auto-banning source of upstream error probing"
                                     );
-                                    if let Some(ref store) = self.waf.block_store {
+                                    if let Some(ref store) = self.waf_core.block_store {
                                         store.block_ip(
                                             client_ip,
                                             "upstream_error_probe",
@@ -552,7 +566,8 @@ impl ProxyServer {
                                         );
                                     }
                                     #[cfg(feature = "mesh")]
-                                    if let Some(ref threat_intel) = self.waf.get_threat_intel() {
+                                    if let Some(ref threat_intel) = self.waf_core.get_threat_intel()
+                                    {
                                         threat_intel.announce_local_block(
                                             client_ip,
                                             "upstream_error_probe".to_string(),

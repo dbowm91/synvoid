@@ -1,6 +1,12 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use http::HeaderMap;
+use synvoid_core::request::{BodyScanPhase, RequestContext};
+
+use crate::primitives::WafDecision;
+
 /// Abstraction for block list operations.
 ///
 /// Implementations provide IP blocking and checking functionality.
@@ -97,6 +103,49 @@ impl Clone for ErasedGeoIp {
             inner: Arc::clone(&self.inner),
         }
     }
+}
+
+/// Core WAF processing trait that decouples the engine from specific
+/// rule-matching or decision logic implementations.
+#[async_trait]
+pub trait WafProcessor: Send + Sync + 'static {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Evaluate a complete request (headers + metadata) and return a decision.
+    async fn check_request(&self, ctx: &RequestContext) -> Result<WafDecision, Self::Error>;
+
+    /// Evaluate a complete request with full headers and optional body.
+    /// This is the preferred method for WAF checks as it provides the full
+    /// request context including headers and body for thorough inspection.
+    async fn check_request_full(
+        &self,
+        ctx: &RequestContext,
+        _headers: &HeaderMap,
+        _body: Option<&[u8]>,
+    ) -> Result<WafDecision, Self::Error> {
+        self.check_request(ctx).await
+    }
+
+    /// Evaluate a streaming body chunk within the given scan phase.
+    async fn check_body_chunk(
+        &self,
+        ctx: &RequestContext,
+        chunk: &[u8],
+        phase: BodyScanPhase,
+    ) -> Result<Option<WafDecision>, Self::Error>;
+}
+
+/// Service that decides whether a JS challenge should be issued and
+/// builds the corresponding `WafDecision` when one is warranted.
+pub trait ChallengeService: Send + Sync + 'static {
+    fn should_issue_challenge(&self, ctx: &RequestContext) -> bool;
+    fn build_challenge(&self, ctx: &RequestContext) -> Option<WafDecision>;
+}
+
+/// Persistence backend for recording WAF violations (rate-limit hits,
+/// blocked IPs, detected attacks, etc.).
+pub trait WafPersistence: Send + Sync + 'static {
+    fn persist_violation(&self, key: &str, reason: &str);
 }
 
 #[cfg(test)]

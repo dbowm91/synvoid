@@ -11,6 +11,7 @@ pub mod governor;
 pub mod headers;
 pub mod location_matcher;
 pub mod retry;
+pub mod routing;
 pub mod streaming;
 
 pub use cache::{

@@ -13,15 +13,20 @@ use crate::udp::listener::{UdpListenerPool, UdpListenerPoolConfig};
 
 #[cfg(feature = "dns")]
 use crate::dns::DnsServer;
+use crate::metrics::adapter::WorkerMetricsSink;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc::WorkerId;
+use crate::router_adapter::RouterRouteResolver;
 use crate::tls::acme::AcmeManager;
 use crate::tls::cert_resolver::CertResolver;
 use crate::tls::config::InternalTlsConfig;
 use crate::tunnel::{TunnelManager, TunnelRouter};
 use crate::utils::parse_host_port;
+use crate::waf::adapter::RootWafProcessor;
 use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, WafCore};
+use crate::worker::drain_adapter::WorkerDrainStateAdapter;
 use crate::worker::drain_state::WorkerDrainState;
+use synvoid_http::runtime::HttpRuntimeContext;
 
 pub mod waf_handler;
 
@@ -41,6 +46,14 @@ struct ServerSharedState {
     worker_id: Option<WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
+    http_runtime_context: Option<
+        HttpRuntimeContext<
+            RootWafProcessor,
+            RouterRouteResolver,
+            WorkerMetricsSink,
+            WorkerDrainStateAdapter,
+        >,
+    >,
 }
 
 #[derive(Clone)]
@@ -859,6 +872,24 @@ impl UnifiedServer {
         };
         let router = Arc::new(router);
 
+        let http_runtime_context = {
+            let root_waf = RootWafProcessor::new(waf.clone());
+            let route_resolver = RouterRouteResolver::new(router.clone());
+            match (&self.metrics, &self.drain_state) {
+                (Some(metrics), Some(drain)) => {
+                    let metrics_sink = WorkerMetricsSink::new(metrics.clone());
+                    let drain_adapter = WorkerDrainStateAdapter::new(drain.clone());
+                    Some(HttpRuntimeContext::new(
+                        Arc::new(root_waf),
+                        Arc::new(route_resolver),
+                        Arc::new(metrics_sink),
+                        Arc::new(drain_adapter),
+                    ))
+                }
+                _ => None,
+            }
+        };
+
         let shared_state = Arc::new(ServerSharedState {
             config: config.clone(),
             router: router.clone(),
@@ -874,6 +905,7 @@ impl UnifiedServer {
             worker_id: self.worker_id,
             serverless_manager: self.serverless_manager.clone(),
             app_servers: self.app_servers.clone(),
+            http_runtime_context,
         });
 
         let http_jh = {

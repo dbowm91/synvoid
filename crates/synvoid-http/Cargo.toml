@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
 synvoid-config = { path = "../synvoid-config" }
+synvoid-waf = { path = "../synvoid-waf" }
+synvoid-proxy = { path = "../synvoid-proxy" }
 bytes = "1"
 http = "1"
 http-body = "1"

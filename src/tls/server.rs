@@ -45,6 +45,7 @@ use crate::proxy::{
 };
 use crate::proxy_cache::{ProxyCache, ProxyCacheSettings};
 use crate::router::Router;
+use crate::waf::adapter::RootWafProcessor;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::RunningFlag;
 
@@ -1697,8 +1698,10 @@ impl HttpsServer {
                                 .as_ref()
                                 .and_then(|u| u.http2)
                                 .unwrap_or(false);
+                            let waf_processor = Arc::new(RootWafProcessor::new(waf.clone()));
                             let ps = ProxyServer::new_with_tls(
                                 target.upstream.to_string(),
+                                waf_processor,
                                 waf.clone(),
                                 main_config.proxy_limits.max_response_size,
                                 waf.upstream_error_tracker.clone(),

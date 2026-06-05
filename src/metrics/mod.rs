@@ -1,9 +1,11 @@
+pub mod adapter;
 pub mod bandwidth;
 pub mod collection;
 pub mod health;
 pub mod payloads;
 pub mod types;
 
+pub use adapter::WorkerMetricsSink;
 pub use bandwidth::{
     get_global_bandwidth_tracker, BandwidthPayload, BandwidthProtocol, BandwidthTracker,
     EgressDirection,

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
 
+pub mod adapters;
 pub mod asn_tracker;
 pub mod attack_detection;
 pub mod endpoints;
@@ -18,6 +19,8 @@ pub mod threat_intel;
 pub mod threat_level;
 pub mod traffic_shaper;
 pub mod violation_tracker;
+
+pub mod adapter;
 
 // Re-exports from extracted synvoid-waf crate
 pub use synvoid_waf::bot;

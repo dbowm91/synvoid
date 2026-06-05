@@ -17,6 +17,7 @@ pub mod common;
 pub mod connect;
 pub mod context;
 pub mod cpu_task;
+pub mod drain_adapter;
 pub mod drain_state;
 pub mod extension;
 pub mod metrics;

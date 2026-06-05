@@ -8292,6 +8292,8 @@ dependencies = [
  "sha1",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-proxy",
+ "synvoid-waf",
  "tokio",
  "tower",
  "tracing",
@@ -8653,6 +8655,7 @@ name = "synvoid-waf"
 version = "0.1.0"
 dependencies = [
  "aho-corasick 1.1.4",
+ "async-trait",
  "base64",
  "bitflags",
  "dashmap 6.2.1",
