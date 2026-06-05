@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -211,6 +211,7 @@ synvoid-geoip = { path = "crates/synvoid-geoip" }
 synvoid-integrity = { path = "crates/synvoid-integrity" }
 synvoid-mesh = { path = "crates/synvoid-mesh", optional = true }
 synvoid-app-handlers = { path = "crates/synvoid-app-handlers" }
+synvoid-metrics = { path = "crates/synvoid-metrics" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }

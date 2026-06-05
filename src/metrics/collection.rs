@@ -1,11 +1,10 @@
-use crate::metrics::payloads::{DroppedEventCounts, ServerlessMetrics};
+use crate::metrics::{DroppedEventCounts, ServerlessMetrics};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
-pub(crate) const LATENCY_SAMPLE_SIZE: usize = 1000;
 pub(crate) const SERVERLESS_DURATION_SAMPLE_SIZE: usize = 100;
 
 pub(crate) static ATTACK_TYPE_COUNTER: LazyLock<DashMap<String, AtomicU64>> =
@@ -13,15 +12,6 @@ pub(crate) static ATTACK_TYPE_COUNTER: LazyLock<DashMap<String, AtomicU64>> =
 
 pub(crate) static PROXY_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static PROXY_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-
-pub(crate) static ACTIVE_STALLED_REQUESTS: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static STALL_REJECTED_CONCURRENCY_CAP: LazyLock<AtomicU64> =
-    LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static STALL_TIMEOUTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-
-pub(crate) static STATIC_CACHE_HITS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
-pub(crate) static STATIC_CACHE_MISSES: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 pub(crate) static DROPPED_TLS_RELOAD_EVENTS: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
@@ -31,6 +21,12 @@ pub(crate) static DROPPED_PROCESS_EVENTS: LazyLock<AtomicU64> = LazyLock::new(||
 pub(crate) static DROPPED_WORKER_EVENTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DROPPED_YARA_BROADCASTS: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
+
+pub(crate) static ACTIVE_STALLED_REQUESTS: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static STALL_REJECTED_CONCURRENCY_CAP: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static STALL_TIMEOUTS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 pub(crate) static TLS_PASSTHROUGH_REQUESTS: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
@@ -169,22 +165,6 @@ pub fn get_stall_rejected_count() -> u64 {
 
 pub fn get_stall_timeouts() -> u64 {
     STALL_TIMEOUTS.load(Ordering::Relaxed)
-}
-
-pub fn record_static_cache_hit() {
-    STATIC_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn record_static_cache_miss() {
-    STATIC_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn get_static_cache_hits() -> u64 {
-    STATIC_CACHE_HITS.load(Ordering::Relaxed)
-}
-
-pub fn get_static_cache_misses() -> u64 {
-    STATIC_CACHE_MISSES.load(Ordering::Relaxed)
 }
 
 pub fn record_dropped_tls_reload_event() {
@@ -437,7 +417,7 @@ pub fn get_dht_raft_write_failures() -> u64 {
 
 pub fn record_dht_query_latency(latency_ms: u64) {
     let mut latencies = DHT_QUERY_LATENCIES.lock();
-    if latencies.len() < LATENCY_SAMPLE_SIZE {
+    if latencies.len() < super::LATENCY_SAMPLE_SIZE {
         latencies.push_back(latency_ms);
     } else {
         latencies.pop_front();
@@ -456,7 +436,7 @@ pub fn get_dht_average_query_latency_ms() -> f64 {
 
 pub fn record_http_request_latency(latency_ms: u64) {
     let mut latencies = HTTP_REQUEST_LATENCIES.lock();
-    if latencies.len() < LATENCY_SAMPLE_SIZE {
+    if latencies.len() < super::LATENCY_SAMPLE_SIZE {
         latencies.push_back(latency_ms);
     } else {
         latencies.pop_front();
@@ -471,7 +451,7 @@ pub fn get_http_request_latencies() -> Vec<u64> {
 
 pub fn record_waf_check_timing(_check_type: &str, latency_ms: u64) {
     let mut timings = WAF_CHECK_TIMINGS.lock();
-    if timings.len() < LATENCY_SAMPLE_SIZE {
+    if timings.len() < super::LATENCY_SAMPLE_SIZE {
         timings.push_back(latency_ms);
     } else {
         timings.pop_front();
@@ -627,7 +607,7 @@ pub fn get_dht_peer_removed() -> u64 {
 
 pub fn record_dht_propagation_hop(hop_count: u64) {
     let mut hops = DHT_PROPAGATION_HOPS.lock();
-    if hops.len() < LATENCY_SAMPLE_SIZE {
+    if hops.len() < super::LATENCY_SAMPLE_SIZE {
         hops.push_back(hop_count);
     } else {
         hops.pop_front();

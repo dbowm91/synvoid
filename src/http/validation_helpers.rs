@@ -1,5 +1,1 @@
-use crate::http::headers::is_websocket_upgrade;
-
-pub fn validate_websocket_upgrade(headers: &http::HeaderMap) -> bool {
-    is_websocket_upgrade(headers)
-}
+pub use synvoid_http::validation_helpers::*;

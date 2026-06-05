@@ -1,18 +1,11 @@
 pub mod adapter;
-pub mod bandwidth;
 pub mod collection;
-pub mod health;
-pub mod payloads;
-pub mod types;
+
+// Re-export from extracted crate
+pub use collection::*;
+pub use synvoid_metrics::*;
 
 pub use adapter::WorkerMetricsSink;
-pub use bandwidth::{
-    get_global_bandwidth_tracker, BandwidthPayload, BandwidthProtocol, BandwidthTracker,
-    EgressDirection,
-};
-pub use collection::*;
-pub use payloads::*;
-pub use types::*;
 
 #[cfg(test)]
 mod tests {
