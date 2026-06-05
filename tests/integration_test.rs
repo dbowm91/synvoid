@@ -40,8 +40,7 @@ mod tests {
 
     #[test]
     #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
-    fn test_overseer_config_serialization() {
-    }
+    fn test_overseer_config_serialization() {}
 
     #[tokio::test]
     async fn test_drain_state_transitions() {
@@ -60,13 +59,11 @@ mod tests {
 
     #[test]
     #[ignore = "MasterHealth was removed during overseer->supervisor refactor"]
-    fn test_master_health_check() {
-    }
+    fn test_master_health_check() {}
 
     #[test]
     #[ignore = "MasterHealth was removed during overseer->supervisor refactor"]
-    fn test_master_health_partial_failure() {
-    }
+    fn test_master_health_partial_failure() {}
 
     #[test]
     fn test_ipc_socket_path_generation() {
@@ -249,8 +246,7 @@ mod tests {
 
     #[test]
     #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
-    fn test_overseer_config_defaults() {
-    }
+    fn test_overseer_config_defaults() {}
 
     #[test]
     fn test_drain_manager_basic() {
@@ -267,18 +263,15 @@ mod tests {
 
     #[test]
     #[ignore = "ConnectionTracker was removed during overseer->supervisor refactor"]
-    fn test_connection_tracker() {
-    }
+    fn test_connection_tracker() {}
 
     #[test]
     #[ignore = "EnhancedHealthConfig was removed during overseer->supervisor refactor"]
-    fn test_health_check_config() {
-    }
+    fn test_health_check_config() {}
 
     #[test]
     #[ignore = "SpawnConfig/ProcessMode were removed during overseer->supervisor refactor"]
-    fn test_spawn_config() {
-    }
+    fn test_spawn_config() {}
 
     #[test]
     fn test_verbose_request_logging_config() {
@@ -320,437 +313,434 @@ mod tests {
 
     #[test]
     #[ignore = "UpgradeMode/detect_upgrade_mode were removed during overseer->supervisor refactor"]
-    fn test_upgrade_mode_detection() {
-    }
+    fn test_upgrade_mode_detection() {}
 
     #[allow(dead_code)]
     mod waf_body_inspection_tests {
-            use synvoid::proxy::{
-                build_headers_to_filter, sanitize_request_path, MAX_XFF_CHAIN_LENGTH,
+        use synvoid::proxy::{
+            build_headers_to_filter, sanitize_request_path, MAX_XFF_CHAIN_LENGTH,
+        };
+
+        #[test]
+        fn test_sanitize_request_path_fast_path() {
+            assert_eq!(sanitize_request_path("/api/users"), "/api/users");
+            assert_eq!(
+                sanitize_request_path("/static/css/style.css"),
+                "/static/css/style.css"
+            );
+            assert_eq!(sanitize_request_path("/api/v1/items"), "/api/v1/items");
+        }
+
+        #[test]
+        fn test_sanitize_request_path_double_slash() {
+            assert_eq!(sanitize_request_path("//etc/passwd"), "/etc/passwd");
+            assert_eq!(sanitize_request_path("/api//users"), "/api/users");
+        }
+
+        #[test]
+        fn test_sanitize_request_path_empty() {
+            assert_eq!(sanitize_request_path(""), "");
+        }
+
+        #[test]
+        fn test_build_headers_to_filter_default() {
+            let global = vec![];
+            let site = vec![];
+            let result = build_headers_to_filter(&global, &site);
+            assert!(result.contains("x-forwarded-for"));
+            assert!(result.contains("x-real-ip"));
+        }
+
+        #[test]
+        fn test_build_headers_to_filter_custom() {
+            let global = vec!["X-Custom-Global".to_string()];
+            let site = vec!["X-Custom-Site".to_string()];
+            let result = build_headers_to_filter(&global, &site);
+            assert!(result.contains("x-custom-global"));
+            assert!(result.contains("x-custom-site"));
+        }
+
+        #[test]
+        fn test_max_xff_chain_length_constant() {
+            assert_eq!(MAX_XFF_CHAIN_LENGTH, 10);
+        }
+    }
+
+    #[allow(dead_code)]
+    mod dnssec_validation_tests {
+        use synvoid::dns::dnssec_validation::{
+            calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
+            compute_dnskey_canonical, compute_ds_digest, count_labels,
+        };
+
+        #[test]
+        fn test_calculate_key_tag_rfc4034_compliant() {
+            let flags: u16 = 257;
+            let protocol: u8 = 3;
+            let algorithm: u8 = 8;
+            let public_key = [
+                0x04, 0xB3, 0x9A, 0x17, 0xE5, 0x79, 0x80, 0x55, 0x7B, 0x16, 0x89, 0xD0, 0xC1, 0x5F,
+                0x6F, 0x94, 0x62, 0x52, 0x9A, 0xE6, 0xF5, 0x65, 0x7A, 0x33, 0x4E, 0x75, 0xB7, 0xDF,
+                0xD0, 0x86, 0x58, 0x32, 0x84, 0x36, 0xEB, 0x24, 0xC5, 0x3B, 0xDB, 0x50, 0x4D, 0x5D,
+                0x33, 0x63, 0xE0, 0xAE, 0x12, 0x71, 0x88, 0x7A, 0x41, 0xF0, 0x6C, 0xF5, 0x88, 0xE2,
+                0x1C, 0x8B, 0x4D, 0xAF, 0x4E, 0x89, 0x34, 0xB3, 0x6B, 0xAF, 0x4D, 0x5A, 0x3C, 0x50,
+                0x53, 0x1E, 0xE0, 0x6E, 0x0E, 0xB9, 0xE2, 0x2A, 0xEB, 0xCF, 0x6A, 0x34, 0x9F, 0xA9,
+                0x8B, 0xC9, 0xFE, 0x37, 0xC6, 0xB9, 0x46, 0x97, 0x9B, 0xDE, 0xE7, 0xB2, 0x14, 0xF6,
+                0x4E, 0x22, 0x04, 0xF7, 0x7D, 0xAD, 0x72, 0x0B, 0x53, 0x01, 0xAF, 0xC4, 0xA3, 0x78,
+                0xD9, 0x5F, 0x0E, 0xE7, 0xED, 0xAC, 0x15, 0xA3, 0xFC, 0x08, 0xA2, 0x50, 0x02, 0x43,
+                0x04, 0x5C, 0x47, 0xE9, 0xD0, 0x38, 0xE2, 0xE7, 0x93, 0x5F, 0x5B, 0x9A, 0xD2, 0xD4,
+                0x4D, 0x40, 0x0E, 0xA0, 0x6E, 0x57, 0xF6, 0x36, 0xC8, 0xB4, 0x27, 0xB5, 0x20, 0x62,
+                0x00, 0x6E, 0x4C, 0x6D, 0x7B, 0x82, 0xF0, 0xD2, 0x03, 0x0B, 0xB5, 0x54, 0x0E, 0x1F,
+                0x6B, 0xB0, 0x90, 0x5F, 0x08, 0x17, 0x7F, 0x0C, 0x8A, 0x6A, 0xC7, 0x9E, 0xD4, 0x47,
+                0x7D, 0x6A, 0x2C, 0x6D, 0xCA, 0xFE, 0x78, 0x1F, 0xDA, 0xC5,
+            ];
+
+            let key_tag = calculate_key_tag(flags, protocol, algorithm, &public_key);
+            assert_eq!(key_tag, 19072);
+        }
+
+        #[test]
+        fn test_calculate_key_tag_zsk() {
+            let flags: u16 = 256;
+            let protocol: u8 = 3;
+            let algorithm: u8 = 8;
+            let public_key = [0xAA; 32];
+
+            let key_tag = calculate_key_tag(flags, protocol, algorithm, &public_key);
+            assert!(key_tag > 0);
+        }
+
+        #[test]
+        fn test_canonical_name_simple() {
+            let result = canonical_name("example.com");
+            assert_eq!(
+                result,
+                vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]
+            );
+        }
+
+        #[test]
+        fn test_canonical_name_lowercase() {
+            let upper = canonical_name("EXAMPLE.COM");
+            let lower = canonical_name("example.com");
+            assert_eq!(upper, lower);
+        }
+
+        #[test]
+        fn test_canonical_name_trailing_dot() {
+            let with_dot = canonical_name("example.com.");
+            let without = canonical_name("example.com");
+            assert_eq!(with_dot, without);
+        }
+
+        #[test]
+        fn test_canonical_name_empty() {
+            let result = canonical_name("");
+            assert_eq!(result, vec![0]);
+        }
+
+        #[test]
+        fn test_count_labels() {
+            assert_eq!(count_labels("com"), 1);
+            assert_eq!(count_labels("example.com"), 2);
+            assert_eq!(count_labels("www.example.com"), 3);
+            assert_eq!(count_labels(""), 1);
+        }
+
+        #[test]
+        fn test_canonical_rdata_a_record() {
+            let result = canonical_rdata(1, "192.168.1.1", None, None, None, 300);
+            assert_eq!(result, vec![192, 168, 1, 1]);
+        }
+
+        #[test]
+        fn test_canonical_rdata_aaaa_record() {
+            let result = canonical_rdata(28, "::1", None, None, None, 300);
+            assert_eq!(result, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        }
+
+        #[test]
+        fn test_canonical_rdata_ns_record() {
+            let result = canonical_rdata(2, "ns1.example.com", None, None, None, 300);
+            let expected = canonical_name("ns1.example.com");
+            assert_eq!(result, expected);
+        }
+
+        #[test]
+        fn test_canonical_rdata_txt_record() {
+            let result = canonical_rdata(
+                16,
+                "v=spf1 include:_spf.example.com ~all",
+                None,
+                None,
+                None,
+                300,
+            );
+            assert!(!result.is_empty());
+        }
+
+        #[test]
+        fn test_compute_dnskey_canonical() {
+            let flags: u16 = 257;
+            let protocol: u8 = 3;
+            let algorithm: u8 = 8;
+            let public_key = [0xAA; 32];
+
+            let result = compute_dnskey_canonical(flags, protocol, algorithm, &public_key);
+            assert_eq!(result.len(), 4 + public_key.len());
+            assert_eq!(&result[0..2], &flags.to_be_bytes());
+            assert_eq!(result[2], protocol);
+            assert_eq!(result[3], algorithm);
+        }
+
+        #[test]
+        fn test_compute_ds_digest_sha1() {
+            let digest = compute_ds_digest(1, 257, 3, 8, &[0xAA; 32]);
+            assert!(digest.is_ok());
+            assert_eq!(digest.unwrap().len(), 20);
+        }
+
+        #[test]
+        fn test_compute_ds_digest_sha256() {
+            let digest = compute_ds_digest(2, 257, 3, 8, &[0xAA; 32]);
+            assert!(digest.is_ok());
+            assert_eq!(digest.unwrap().len(), 32);
+        }
+
+        #[test]
+        fn test_compute_ds_digest_sha384() {
+            let digest = compute_ds_digest(4, 257, 3, 8, &[0xAA; 32]);
+            assert!(digest.is_ok());
+            assert_eq!(digest.unwrap().len(), 48);
+        }
+
+        #[test]
+        fn test_compute_ds_digest_unsupported() {
+            let digest = compute_ds_digest(3, 257, 3, 8, &[0xAA; 32]);
+            assert!(digest.is_err());
+        }
+
+        #[test]
+        fn test_canonical_dns_message() {
+            let rdata = vec![192, 168, 1, 1];
+            let msg = canonical_dns_message("example.com", 1, 1, 300, &rdata);
+
+            let expected_name = canonical_name("example.com");
+            assert!(msg.starts_with(&expected_name));
+        }
+    }
+
+    #[allow(dead_code)]
+    mod upload_scanning_tests {
+        use synvoid::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
+
+        #[test]
+        fn test_no_excluded_categories_is_empty() {
+            assert!(NO_EXCLUDED_CATEGORIES.is_empty());
+        }
+
+        #[test]
+        fn test_default_malware_rules_contains_executable_rules() {
+            assert!(DEFAULT_MALWARE_RULES.contains("executable_pe"));
+            assert!(DEFAULT_MALWARE_RULES.contains("MZ"));
+        }
+
+        #[test]
+        fn test_default_malware_rules_contains_webshell_detection() {
+            assert!(DEFAULT_MALWARE_RULES.contains("php_webshell"));
+        }
+    }
+
+    #[allow(dead_code)]
+    mod mesh_threat_propagation_tests {
+        use synvoid::mesh::protocol::ThreatSeverity;
+        use synvoid::mesh::threat_intel::ThreatIntelligenceConfig;
+
+        #[test]
+        fn test_threat_severity_ordering() {
+            assert!(ThreatSeverity::Critical as u8 > ThreatSeverity::High as u8);
+            assert!(ThreatSeverity::High as u8 > ThreatSeverity::Medium as u8);
+            assert!(ThreatSeverity::Medium as u8 > ThreatSeverity::Low as u8);
+        }
+
+        #[test]
+        fn test_threat_type_variants() {
+            use synvoid::mesh::protocol::ThreatType;
+            let variants = vec![
+                ThreatType::IpBlock,
+                ThreatType::IpThrottle,
+                ThreatType::AsnBlock,
+                ThreatType::DomainBlock,
+                ThreatType::UrlBlock,
+                ThreatType::CertBlock,
+            ];
+            assert_eq!(variants.len(), 6);
+        }
+
+        #[test]
+        fn test_threat_intel_config_defaults() {
+            let config = ThreatIntelligenceConfig::default();
+            assert!(config.enabled);
+            assert!(config.push_enabled);
+            assert!(config.sync_enabled);
+            assert_eq!(config.sync_interval_secs, 300);
+            assert!(!config.hub_only_mode);
+        }
+
+        #[test]
+        fn test_threat_intel_config_hub_only() {
+            let config = ThreatIntelligenceConfig {
+                hub_only_mode: true,
+                behavioral_enabled: false,
+                min_samples_for_fingerprint: 10,
+                fingerprint_ttl_secs: 3600,
+                high_severity_threshold: 70,
+                ..Default::default()
             };
+            assert!(config.hub_only_mode);
+        }
+    }
 
-            #[test]
-            fn test_sanitize_request_path_fast_path() {
-                assert_eq!(sanitize_request_path("/api/users"), "/api/users");
-                assert_eq!(
-                    sanitize_request_path("/static/css/style.css"),
-                    "/static/css/style.css"
-                );
-                assert_eq!(sanitize_request_path("/api/v1/items"), "/api/v1/items");
-            }
+    #[allow(dead_code)]
+    mod honeypot_mesh_flow_tests {
+        use synvoid::mesh::config::MeshNodeRole;
 
-            #[test]
-            fn test_sanitize_request_path_double_slash() {
-                assert_eq!(sanitize_request_path("//etc/passwd"), "/etc/passwd");
-                assert_eq!(sanitize_request_path("/api//users"), "/api/users");
-            }
+        #[test]
+        fn test_mesh_node_role_is_global() {
+            assert!(MeshNodeRole::GLOBAL.is_global());
+            assert!(!MeshNodeRole::EDGE.is_global());
+            assert!(!MeshNodeRole::ORIGIN.is_global());
 
-            #[test]
-            fn test_sanitize_request_path_empty() {
-                assert_eq!(sanitize_request_path(""), "");
-            }
-
-            #[test]
-            fn test_build_headers_to_filter_default() {
-                let global = vec![];
-                let site = vec![];
-                let result = build_headers_to_filter(&global, &site);
-                assert!(result.contains("x-forwarded-for"));
-                assert!(result.contains("x-real-ip"));
-            }
-
-            #[test]
-            fn test_build_headers_to_filter_custom() {
-                let global = vec!["X-Custom-Global".to_string()];
-                let site = vec!["X-Custom-Site".to_string()];
-                let result = build_headers_to_filter(&global, &site);
-                assert!(result.contains("x-custom-global"));
-                assert!(result.contains("x-custom-site"));
-            }
-
-            #[test]
-            fn test_max_xff_chain_length_constant() {
-                assert_eq!(MAX_XFF_CHAIN_LENGTH, 10);
-            }
+            let global_edge = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
+            assert!(global_edge.is_global());
         }
 
-        #[allow(dead_code)]
-        mod dnssec_validation_tests {
-            use synvoid::dns::dnssec_validation::{
-                calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
-                compute_dnskey_canonical, compute_ds_digest, count_labels,
+        #[test]
+        fn test_mesh_node_role_combinations() {
+            let global_edge = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
+            assert!(global_edge.contains(MeshNodeRole::GLOBAL));
+            assert!(global_edge.contains(MeshNodeRole::EDGE));
+        }
+    }
+
+    #[allow(dead_code)]
+    mod yara_mesh_distribution_tests {
+        use synvoid::mesh::yara_rules::{
+            BroadcastAckStatus, BroadcastAckTracker, RuleChangeTracker,
+        };
+
+        #[test]
+        fn test_broadcast_ack_tracker_new() {
+            let tracker = BroadcastAckTracker::new(
+                "req-123".to_string(),
+                vec!["peer1".to_string(), "peer2".to_string()],
+            );
+            assert_eq!(tracker.request_id, "req-123");
+            assert_eq!(tracker.sent_peers.len(), 2);
+            assert_eq!(tracker.acked_peers.len(), 0);
+            assert_eq!(tracker.failed_peers.len(), 0);
+            assert!(tracker.completed_at.is_none());
+        }
+
+        #[test]
+        fn test_broadcast_ack_tracker_record_ack() {
+            let mut tracker = BroadcastAckTracker::new(
+                "req-123".to_string(),
+                vec!["peer1".to_string(), "peer2".to_string()],
+            );
+            tracker.record_ack("peer1");
+            assert_eq!(tracker.acked_peers.len(), 1);
+            assert!(!tracker.is_complete());
+        }
+
+        #[test]
+        fn test_broadcast_ack_tracker_record_failure() {
+            let mut tracker = BroadcastAckTracker::new(
+                "req-123".to_string(),
+                vec!["peer1".to_string(), "peer2".to_string()],
+            );
+            tracker.record_failure("peer2");
+            assert_eq!(tracker.failed_peers.len(), 1);
+            assert!(!tracker.is_complete());
+        }
+
+        #[test]
+        fn test_broadcast_ack_tracker_is_complete() {
+            let mut tracker =
+                BroadcastAckTracker::new("req-123".to_string(), vec!["peer1".to_string()]);
+            tracker.record_ack("peer1");
+            assert!(tracker.is_complete());
+            assert!(tracker.completed_at.is_some());
+        }
+
+        #[test]
+        fn test_broadcast_ack_tracker_pending_count() {
+            let mut tracker = BroadcastAckTracker::new(
+                "req-123".to_string(),
+                vec![
+                    "peer1".to_string(),
+                    "peer2".to_string(),
+                    "peer3".to_string(),
+                ],
+            );
+            tracker.record_ack("peer1");
+            assert_eq!(tracker.pending_count(), 2);
+        }
+
+        #[test]
+        fn test_broadcast_ack_tracker_ack_rate() {
+            let mut tracker = BroadcastAckTracker::new(
+                "req-123".to_string(),
+                vec![
+                    "peer1".to_string(),
+                    "peer2".to_string(),
+                    "peer3".to_string(),
+                    "peer4".to_string(),
+                ],
+            );
+            tracker.record_ack("peer1");
+            tracker.record_ack("peer2");
+            tracker.record_failure("peer3");
+            assert_eq!(tracker.ack_rate(), 0.5);
+        }
+
+        #[test]
+        fn test_broadcast_ack_tracker_ack_rate_empty() {
+            let tracker = BroadcastAckTracker::new("req-123".to_string(), vec![]);
+            assert_eq!(tracker.ack_rate(), 1.0);
+        }
+
+        #[test]
+        fn test_rule_change_tracker_default() {
+            let tracker = RuleChangeTracker::default();
+            assert!(tracker.last_version.is_none());
+            assert!(tracker.last_full_sync.is_some());
+            assert_eq!(tracker.changes_since_full, 0);
+            assert!(tracker.incremental_versions.is_empty());
+        }
+
+        #[test]
+        fn test_rule_change_tracker_record_change() {
+            let mut tracker = RuleChangeTracker::default();
+            tracker.record_change("v1.0");
+            assert_eq!(tracker.last_version, Some("v1.0".to_string()));
+            assert_eq!(tracker.changes_since_full, 1);
+        }
+
+        #[test]
+        fn test_broadcast_ack_status() {
+            let status = BroadcastAckStatus {
+                request_id: "req-123".to_string(),
+                total_peers: 5,
+                acked_count: 3,
+                pending_count: 1,
+                failed_count: 1,
+                ack_rate: 0.6,
+                duration_secs: 1.5,
+                is_complete: false,
             };
-
-            #[test]
-            fn test_calculate_key_tag_rfc4034_compliant() {
-                let flags: u16 = 257;
-                let protocol: u8 = 3;
-                let algorithm: u8 = 8;
-                let public_key = [
-                    0x04, 0xB3, 0x9A, 0x17, 0xE5, 0x79, 0x80, 0x55, 0x7B, 0x16, 0x89, 0xD0, 0xC1,
-                    0x5F, 0x6F, 0x94, 0x62, 0x52, 0x9A, 0xE6, 0xF5, 0x65, 0x7A, 0x33, 0x4E, 0x75,
-                    0xB7, 0xDF, 0xD0, 0x86, 0x58, 0x32, 0x84, 0x36, 0xEB, 0x24, 0xC5, 0x3B, 0xDB,
-                    0x50, 0x4D, 0x5D, 0x33, 0x63, 0xE0, 0xAE, 0x12, 0x71, 0x88, 0x7A, 0x41, 0xF0,
-                    0x6C, 0xF5, 0x88, 0xE2, 0x1C, 0x8B, 0x4D, 0xAF, 0x4E, 0x89, 0x34, 0xB3, 0x6B,
-                    0xAF, 0x4D, 0x5A, 0x3C, 0x50, 0x53, 0x1E, 0xE0, 0x6E, 0x0E, 0xB9, 0xE2, 0x2A,
-                    0xEB, 0xCF, 0x6A, 0x34, 0x9F, 0xA9, 0x8B, 0xC9, 0xFE, 0x37, 0xC6, 0xB9, 0x46,
-                    0x97, 0x9B, 0xDE, 0xE7, 0xB2, 0x14, 0xF6, 0x4E, 0x22, 0x04, 0xF7, 0x7D, 0xAD,
-                    0x72, 0x0B, 0x53, 0x01, 0xAF, 0xC4, 0xA3, 0x78, 0xD9, 0x5F, 0x0E, 0xE7, 0xED,
-                    0xAC, 0x15, 0xA3, 0xFC, 0x08, 0xA2, 0x50, 0x02, 0x43, 0x04, 0x5C, 0x47, 0xE9,
-                    0xD0, 0x38, 0xE2, 0xE7, 0x93, 0x5F, 0x5B, 0x9A, 0xD2, 0xD4, 0x4D, 0x40, 0x0E,
-                    0xA0, 0x6E, 0x57, 0xF6, 0x36, 0xC8, 0xB4, 0x27, 0xB5, 0x20, 0x62, 0x00, 0x6E,
-                    0x4C, 0x6D, 0x7B, 0x82, 0xF0, 0xD2, 0x03, 0x0B, 0xB5, 0x54, 0x0E, 0x1F, 0x6B,
-                    0xB0, 0x90, 0x5F, 0x08, 0x17, 0x7F, 0x0C, 0x8A, 0x6A, 0xC7, 0x9E, 0xD4, 0x47,
-                    0x7D, 0x6A, 0x2C, 0x6D, 0xCA, 0xFE, 0x78, 0x1F, 0xDA, 0xC5,
-                ];
-
-                let key_tag = calculate_key_tag(flags, protocol, algorithm, &public_key);
-                assert_eq!(key_tag, 19072);
-            }
-
-            #[test]
-            fn test_calculate_key_tag_zsk() {
-                let flags: u16 = 256;
-                let protocol: u8 = 3;
-                let algorithm: u8 = 8;
-                let public_key = [0xAA; 32];
-
-                let key_tag = calculate_key_tag(flags, protocol, algorithm, &public_key);
-                assert!(key_tag > 0);
-            }
-
-            #[test]
-            fn test_canonical_name_simple() {
-                let result = canonical_name("example.com");
-                assert_eq!(
-                    result,
-                    vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]
-                );
-            }
-
-            #[test]
-            fn test_canonical_name_lowercase() {
-                let upper = canonical_name("EXAMPLE.COM");
-                let lower = canonical_name("example.com");
-                assert_eq!(upper, lower);
-            }
-
-            #[test]
-            fn test_canonical_name_trailing_dot() {
-                let with_dot = canonical_name("example.com.");
-                let without = canonical_name("example.com");
-                assert_eq!(with_dot, without);
-            }
-
-            #[test]
-            fn test_canonical_name_empty() {
-                let result = canonical_name("");
-                assert_eq!(result, vec![0]);
-            }
-
-            #[test]
-            fn test_count_labels() {
-                assert_eq!(count_labels("com"), 1);
-                assert_eq!(count_labels("example.com"), 2);
-                assert_eq!(count_labels("www.example.com"), 3);
-                assert_eq!(count_labels(""), 1);
-            }
-
-            #[test]
-            fn test_canonical_rdata_a_record() {
-                let result = canonical_rdata(1, "192.168.1.1", None, None, None, 300);
-                assert_eq!(result, vec![192, 168, 1, 1]);
-            }
-
-            #[test]
-            fn test_canonical_rdata_aaaa_record() {
-                let result = canonical_rdata(28, "::1", None, None, None, 300);
-                assert_eq!(result, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
-            }
-
-            #[test]
-            fn test_canonical_rdata_ns_record() {
-                let result = canonical_rdata(2, "ns1.example.com", None, None, None, 300);
-                let expected = canonical_name("ns1.example.com");
-                assert_eq!(result, expected);
-            }
-
-            #[test]
-            fn test_canonical_rdata_txt_record() {
-                let result = canonical_rdata(
-                    16,
-                    "v=spf1 include:_spf.example.com ~all",
-                    None,
-                    None,
-                    None,
-                    300,
-                );
-                assert!(!result.is_empty());
-            }
-
-            #[test]
-            fn test_compute_dnskey_canonical() {
-                let flags: u16 = 257;
-                let protocol: u8 = 3;
-                let algorithm: u8 = 8;
-                let public_key = [0xAA; 32];
-
-                let result = compute_dnskey_canonical(flags, protocol, algorithm, &public_key);
-                assert_eq!(result.len(), 4 + public_key.len());
-                assert_eq!(&result[0..2], &flags.to_be_bytes());
-                assert_eq!(result[2], protocol);
-                assert_eq!(result[3], algorithm);
-            }
-
-            #[test]
-            fn test_compute_ds_digest_sha1() {
-                let digest = compute_ds_digest(1, 257, 3, 8, &[0xAA; 32]);
-                assert!(digest.is_ok());
-                assert_eq!(digest.unwrap().len(), 20);
-            }
-
-            #[test]
-            fn test_compute_ds_digest_sha256() {
-                let digest = compute_ds_digest(2, 257, 3, 8, &[0xAA; 32]);
-                assert!(digest.is_ok());
-                assert_eq!(digest.unwrap().len(), 32);
-            }
-
-            #[test]
-            fn test_compute_ds_digest_sha384() {
-                let digest = compute_ds_digest(4, 257, 3, 8, &[0xAA; 32]);
-                assert!(digest.is_ok());
-                assert_eq!(digest.unwrap().len(), 48);
-            }
-
-            #[test]
-            fn test_compute_ds_digest_unsupported() {
-                let digest = compute_ds_digest(3, 257, 3, 8, &[0xAA; 32]);
-                assert!(digest.is_err());
-            }
-
-            #[test]
-            fn test_canonical_dns_message() {
-                let rdata = vec![192, 168, 1, 1];
-                let msg = canonical_dns_message("example.com", 1, 1, 300, &rdata);
-
-                let expected_name = canonical_name("example.com");
-                assert!(msg.starts_with(&expected_name));
-            }
-        }
-
-        #[allow(dead_code)]
-        mod upload_scanning_tests {
-            use synvoid::upload::yara_scanner::{DEFAULT_MALWARE_RULES, NO_EXCLUDED_CATEGORIES};
-
-            #[test]
-            fn test_no_excluded_categories_is_empty() {
-                assert!(NO_EXCLUDED_CATEGORIES.is_empty());
-            }
-
-            #[test]
-            fn test_default_malware_rules_contains_executable_rules() {
-                assert!(DEFAULT_MALWARE_RULES.contains("executable_pe"));
-                assert!(DEFAULT_MALWARE_RULES.contains("MZ"));
-            }
-
-            #[test]
-            fn test_default_malware_rules_contains_webshell_detection() {
-                assert!(DEFAULT_MALWARE_RULES.contains("php_webshell"));
-            }
-        }
-
-        #[allow(dead_code)]
-        mod mesh_threat_propagation_tests {
-            use synvoid::mesh::protocol::ThreatSeverity;
-            use synvoid::mesh::threat_intel::ThreatIntelligenceConfig;
-
-            #[test]
-            fn test_threat_severity_ordering() {
-                assert!(ThreatSeverity::Critical as u8 > ThreatSeverity::High as u8);
-                assert!(ThreatSeverity::High as u8 > ThreatSeverity::Medium as u8);
-                assert!(ThreatSeverity::Medium as u8 > ThreatSeverity::Low as u8);
-            }
-
-            #[test]
-            fn test_threat_type_variants() {
-                use synvoid::mesh::protocol::ThreatType;
-                let variants = vec![
-                    ThreatType::IpBlock,
-                    ThreatType::IpThrottle,
-                    ThreatType::AsnBlock,
-                    ThreatType::DomainBlock,
-                    ThreatType::UrlBlock,
-                    ThreatType::CertBlock,
-                ];
-                assert_eq!(variants.len(), 6);
-            }
-
-            #[test]
-            fn test_threat_intel_config_defaults() {
-                let config = ThreatIntelligenceConfig::default();
-                assert!(config.enabled);
-                assert!(config.push_enabled);
-                assert!(config.sync_enabled);
-                assert_eq!(config.sync_interval_secs, 300);
-                assert!(!config.hub_only_mode);
-            }
-
-            #[test]
-            fn test_threat_intel_config_hub_only() {
-                let config = ThreatIntelligenceConfig {
-                    hub_only_mode: true,
-                    behavioral_enabled: false,
-                    min_samples_for_fingerprint: 10,
-                    fingerprint_ttl_secs: 3600,
-                    high_severity_threshold: 70,
-                    ..Default::default()
-                };
-                assert!(config.hub_only_mode);
-            }
-        }
-
-        #[allow(dead_code)]
-        mod honeypot_mesh_flow_tests {
-            use synvoid::mesh::config::MeshNodeRole;
-
-            #[test]
-            fn test_mesh_node_role_is_global() {
-                assert!(MeshNodeRole::GLOBAL.is_global());
-                assert!(!MeshNodeRole::EDGE.is_global());
-                assert!(!MeshNodeRole::ORIGIN.is_global());
-
-                let global_edge = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
-                assert!(global_edge.is_global());
-            }
-
-            #[test]
-            fn test_mesh_node_role_combinations() {
-                let global_edge = MeshNodeRole::GLOBAL | MeshNodeRole::EDGE;
-                assert!(global_edge.contains(MeshNodeRole::GLOBAL));
-                assert!(global_edge.contains(MeshNodeRole::EDGE));
-            }
-        }
-
-        #[allow(dead_code)]
-        mod yara_mesh_distribution_tests {
-            use synvoid::mesh::yara_rules::{
-                BroadcastAckStatus, BroadcastAckTracker, RuleChangeTracker,
-            };
-
-            #[test]
-            fn test_broadcast_ack_tracker_new() {
-                let tracker = BroadcastAckTracker::new(
-                    "req-123".to_string(),
-                    vec!["peer1".to_string(), "peer2".to_string()],
-                );
-                assert_eq!(tracker.request_id, "req-123");
-                assert_eq!(tracker.sent_peers.len(), 2);
-                assert_eq!(tracker.acked_peers.len(), 0);
-                assert_eq!(tracker.failed_peers.len(), 0);
-                assert!(tracker.completed_at.is_none());
-            }
-
-            #[test]
-            fn test_broadcast_ack_tracker_record_ack() {
-                let mut tracker = BroadcastAckTracker::new(
-                    "req-123".to_string(),
-                    vec!["peer1".to_string(), "peer2".to_string()],
-                );
-                tracker.record_ack("peer1");
-                assert_eq!(tracker.acked_peers.len(), 1);
-                assert!(!tracker.is_complete());
-            }
-
-            #[test]
-            fn test_broadcast_ack_tracker_record_failure() {
-                let mut tracker = BroadcastAckTracker::new(
-                    "req-123".to_string(),
-                    vec!["peer1".to_string(), "peer2".to_string()],
-                );
-                tracker.record_failure("peer2");
-                assert_eq!(tracker.failed_peers.len(), 1);
-                assert!(!tracker.is_complete());
-            }
-
-            #[test]
-            fn test_broadcast_ack_tracker_is_complete() {
-                let mut tracker =
-                    BroadcastAckTracker::new("req-123".to_string(), vec!["peer1".to_string()]);
-                tracker.record_ack("peer1");
-                assert!(tracker.is_complete());
-                assert!(tracker.completed_at.is_some());
-            }
-
-            #[test]
-            fn test_broadcast_ack_tracker_pending_count() {
-                let mut tracker = BroadcastAckTracker::new(
-                    "req-123".to_string(),
-                    vec![
-                        "peer1".to_string(),
-                        "peer2".to_string(),
-                        "peer3".to_string(),
-                    ],
-                );
-                tracker.record_ack("peer1");
-                assert_eq!(tracker.pending_count(), 2);
-            }
-
-            #[test]
-            fn test_broadcast_ack_tracker_ack_rate() {
-                let mut tracker = BroadcastAckTracker::new(
-                    "req-123".to_string(),
-                    vec![
-                        "peer1".to_string(),
-                        "peer2".to_string(),
-                        "peer3".to_string(),
-                        "peer4".to_string(),
-                    ],
-                );
-                tracker.record_ack("peer1");
-                tracker.record_ack("peer2");
-                tracker.record_failure("peer3");
-                assert_eq!(tracker.ack_rate(), 0.5);
-            }
-
-            #[test]
-            fn test_broadcast_ack_tracker_ack_rate_empty() {
-                let tracker = BroadcastAckTracker::new("req-123".to_string(), vec![]);
-                assert_eq!(tracker.ack_rate(), 1.0);
-            }
-
-            #[test]
-            fn test_rule_change_tracker_default() {
-                let tracker = RuleChangeTracker::default();
-                assert!(tracker.last_version.is_none());
-                assert!(tracker.last_full_sync.is_some());
-                assert_eq!(tracker.changes_since_full, 0);
-                assert!(tracker.incremental_versions.is_empty());
-            }
-
-            #[test]
-            fn test_rule_change_tracker_record_change() {
-                let mut tracker = RuleChangeTracker::default();
-                tracker.record_change("v1.0");
-                assert_eq!(tracker.last_version, Some("v1.0".to_string()));
-                assert_eq!(tracker.changes_since_full, 1);
-            }
-
-            #[test]
-            fn test_broadcast_ack_status() {
-                let status = BroadcastAckStatus {
-                    request_id: "req-123".to_string(),
-                    total_peers: 5,
-                    acked_count: 3,
-                    pending_count: 1,
-                    failed_count: 1,
-                    ack_rate: 0.6,
-                    duration_secs: 1.5,
-                    is_complete: false,
-                };
-                assert_eq!(status.request_id, "req-123");
-                assert_eq!(status.total_peers, 5);
-            }
+            assert_eq!(status.request_id, "req-123");
+            assert_eq!(status.total_peers, 5);
         }
     }
 

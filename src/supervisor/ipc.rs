@@ -398,9 +398,7 @@ async fn handle_worker_connection_internal(
                         (Some(id.as_usize() as u64), false, None)
                     }
                     Message::WorkerError { id, .. } => (Some(id.as_usize() as u64), false, None),
-                    Message::CpuWorkerReady { worker_id } => {
-                        (Some(*worker_id as u64), false, None)
-                    }
+                    Message::CpuWorkerReady { worker_id } => (Some(*worker_id as u64), false, None),
                     Message::CpuWorkerHeartbeat { worker_id, .. } => {
                         (Some(*worker_id as u64), false, None)
                     }

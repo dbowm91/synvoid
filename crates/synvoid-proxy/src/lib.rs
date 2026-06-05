@@ -30,7 +30,7 @@ pub use headers::{
     is_private_ip, sanitize_request_path, validate_and_truncate_xff, ForwardedProtocol,
     HEADERS_TO_STRIP, HOP_BY_HOP_HEADERS, MAX_XFF_CHAIN_LENGTH,
 };
-pub use location_matcher::{LocationMatch, LocationMatcher, LocationMatchType};
+pub use location_matcher::{LocationMatch, LocationMatchType, LocationMatcher};
 pub use retry::{
     calculate_backoff, is_connection_error, is_idempotent_method, is_retryable_status,
     is_timeout_error, should_retry_request,

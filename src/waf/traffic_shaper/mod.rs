@@ -1,4 +1,6 @@
-pub use synvoid_waf::traffic_shaper::{AsyncTokenBucket, ConnectionLimitError, ConnectionLimiter, ConnectionToken, TokenBucket};
+pub use synvoid_waf::traffic_shaper::{
+    AsyncTokenBucket, ConnectionLimitError, ConnectionLimiter, ConnectionToken, TokenBucket,
+};
 
 pub mod global;
 

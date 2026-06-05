@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use utoipa::ToSchema;
 
-use synvoid_config::site::FastCgiConfig;
 use crate::fastcgi::streaming::FastCgiResponseStream;
 use crate::fastcgi::{FastCgiClient, FastCgiError, FastCgiResponse};
+use synvoid_config::site::FastCgiConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FastCgiPoolStatus {

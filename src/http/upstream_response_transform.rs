@@ -37,39 +37,40 @@ where
     // work is already offloaded through the CPU worker path; this function only
     // handles already-buffered upstream responses.
     let upstream_body_len = body.len() as u64;
-    let (mut body, mut body_len) = if let Some(plugin_names) = &target.site_config.proxy.wasm_plugins {
-        if let Some(client) = router.async_minifier_client() {
-            let policy = crate::process::CpuTaskPolicy::FailOpenWithLog;
-            match client
-                .request_wasm_transform(
-                    site_id,
-                    plugin_names,
-                    status,
-                    body.to_vec(),
-                    std::collections::HashMap::new(),
-                    policy,
-                    30000,
-                )
-                .await
-            {
-                Ok((_resp_status, transformed_body)) => {
-                    let transformed_len = transformed_body.len() as u64;
-                    (Bytes::from(transformed_body), transformed_len)
+    let (mut body, mut body_len) =
+        if let Some(plugin_names) = &target.site_config.proxy.wasm_plugins {
+            if let Some(client) = router.async_minifier_client() {
+                let policy = crate::process::CpuTaskPolicy::FailOpenWithLog;
+                match client
+                    .request_wasm_transform(
+                        site_id,
+                        plugin_names,
+                        status,
+                        body.to_vec(),
+                        std::collections::HashMap::new(),
+                        policy,
+                        30000,
+                    )
+                    .await
+                {
+                    Ok((_resp_status, transformed_body)) => {
+                        let transformed_len = transformed_body.len() as u64;
+                        (Bytes::from(transformed_body), transformed_len)
+                    }
+                    Err(e) => {
+                        tracing::error!("WASM response transform offload error: {}", e);
+                        let original_len = body.len() as u64;
+                        (body, original_len)
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("WASM response transform offload error: {}", e);
-                    let original_len = body.len() as u64;
-                    (body, original_len)
-                }
+            } else {
+                let original_len = body.len() as u64;
+                (body, original_len)
             }
         } else {
             let original_len = body.len() as u64;
             (body, original_len)
-        }
-    } else {
-        let original_len = body.len() as u64;
-        (body, original_len)
-    };
+        };
     body_len = body_len.max(upstream_body_len);
 
     #[cfg(feature = "mesh")]

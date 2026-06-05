@@ -11,12 +11,12 @@ use hyper_util::rt::TokioIo;
 use parking_lot::RwLock;
 use tokio_rustls::TlsAcceptor;
 
-use synvoid_config::dns::DnsDohConfig;
 use crate::cache::CacheKey;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 use crate::server::{DnsServer, RecordType};
+use synvoid_config::dns::DnsDohConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
 pub const DOH_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;

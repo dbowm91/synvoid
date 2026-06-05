@@ -1,8 +1,8 @@
 // DNSSEC signing: RRSET signing, NSEC/NSEC3 record generation, RRSIG creation
 
-use synvoid_core::time::current_timestamp_secs;
 use ed25519_dalek::Signer;
 use sha2::{Digest, Sha256};
+use synvoid_core::time::current_timestamp_secs;
 
 use super::dnssec::{Algorithm, CryptoRngAdapter, Nsec3Config, ZoneSigningKey};
 

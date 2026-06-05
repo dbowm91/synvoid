@@ -14,9 +14,9 @@ use synvoid_http_client::{
 use synvoid_proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache};
 use synvoid_utils;
 
+use crate::cache::join_upstream_url;
 use crate::cache::{build_cached_response, filter_cacheable_headers, get_cache_max_age_static};
 use crate::headers::{build_forward_headers, ForwardedProtocol};
-use crate::cache::join_upstream_url;
 
 #[derive(Debug)]
 pub struct ResponseSizeError;
@@ -230,14 +230,12 @@ impl ProxyExecutor {
                 for (k, v) in hyper_resp.headers.iter() {
                     builder = builder.header(k, v);
                 }
-                Ok(builder
-                    .body(hyper_resp.body)
-                    .unwrap_or_else(|_| {
-                        http::Response::builder()
-                            .status(500)
-                            .body(Bytes::from("Internal Server Error"))
-                            .unwrap()
-                    }))
+                Ok(builder.body(hyper_resp.body).unwrap_or_else(|_| {
+                    http::Response::builder()
+                        .status(500)
+                        .body(Bytes::from("Internal Server Error"))
+                        .unwrap()
+                }))
             }
             Err(e) => Err(e.to_string()),
         }
@@ -333,7 +331,8 @@ impl ProxyExecutor {
             .await
             {
                 Ok(resp) => {
-                    let hyper_resp = synvoid_http_client::HttpResponse::from_hyper(resp, None).await;
+                    let hyper_resp =
+                        synvoid_http_client::HttpResponse::from_hyper(resp, None).await;
                     if cache_clone.is_status_cacheable(hyper_resp.status.as_u16()) {
                         let allowed_headers = cache_clone.settings().allowed_headers.clone();
                         let filtered_headers =

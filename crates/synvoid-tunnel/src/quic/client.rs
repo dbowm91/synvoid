@@ -9,17 +9,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, Mutex};
 
-use synvoid_utils::buffer::pool::BufferPool;
-use synvoid_config::{PortMappingConfig, TunnelQuicConfig, TunnelQuicPeerConfig};
 use crate::quic::framing::{read_message_default, write_message};
 use crate::quic::health::QuicHealthMonitor;
-use crate::quic::messages::{
-    DatagramCapabilities, DatagramMessage, PortMapping, TunnelMessage,
-};
+use crate::quic::messages::{DatagramCapabilities, DatagramMessage, PortMapping, TunnelMessage};
 use crate::quic::runtime::{QuicConnection, QuicRuntime};
 use crate::quic::tls::QuicTlsConfig;
 use crate::quic::validation::JitteredBackoff;
 use crate::quic::ConnectionQuality;
+use synvoid_config::{PortMappingConfig, TunnelQuicConfig, TunnelQuicPeerConfig};
+use synvoid_utils::buffer::pool::BufferPool;
 
 const MAX_STREAM_POOL_SIZE: usize = 8;
 

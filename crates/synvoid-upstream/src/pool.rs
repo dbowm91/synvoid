@@ -1293,8 +1293,8 @@ mod tests {
 
     #[test]
     fn test_backend_with_protocol() {
-        let backend =
-            Backend::new("http://127.0.0.1:8080".to_string()).with_protocol(BackendProtocol::GrpcTls);
+        let backend = Backend::new("http://127.0.0.1:8080".to_string())
+            .with_protocol(BackendProtocol::GrpcTls);
         assert_eq!(backend.protocol, BackendProtocol::GrpcTls);
     }
 

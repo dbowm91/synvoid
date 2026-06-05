@@ -1,7 +1,7 @@
 //! Retry logic for upstream requests.
 
-use synvoid_config::site::RetryConfig;
 use http::Method;
+use synvoid_config::site::RetryConfig;
 
 pub fn is_retryable_status(status: u16, config: &RetryConfig) -> bool {
     if !config.retry_on_status.is_empty() {

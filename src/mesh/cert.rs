@@ -1346,11 +1346,7 @@ pub fn verify_certificate_chain(
         .map_err(|e| MeshCertError::CertificateParsing(format!("ca cert: {}", e)))?;
 
     // Extract CA public key (Ed25519)
-    let ca_pubkey_bytes = ca_cert
-        .public_key()
-        .subject_public_key
-        .as_ref()
-        .to_vec();
+    let ca_pubkey_bytes = ca_cert.public_key().subject_public_key.as_ref().to_vec();
 
     // Verify CA public key is in trusted set
     let ca_trusted = trusted_global_keys.values().any(|k| *k == ca_pubkey_bytes);

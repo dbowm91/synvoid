@@ -13,8 +13,8 @@ pub use mesh_pow::{
 pub use pow::{PowChallenge, PowManager, PowResult};
 
 // Re-export types from the extracted crate for backwards compatibility
-pub use synvoid_challenge::types::*;
 pub use synvoid_challenge::pow::{has_leading_zeros, has_leading_zeros_ct, solve_pow_sync};
+pub use synvoid_challenge::types::*;
 
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;

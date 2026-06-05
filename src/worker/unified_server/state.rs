@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Mutex as TokioMutex, RwLock, broadcast};
+use tokio::sync::{broadcast, Mutex as TokioMutex, RwLock};
 use tokio::task::JoinHandle;
 
 use super::super::connect::connect_to_supervisor_async;
@@ -18,7 +18,7 @@ use crate::common::setup_panic_handler;
 use crate::config::ConfigManager;
 use crate::platform::fs::PlatformPaths;
 use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{WorkerId, check_ports_available};
+use crate::process::{check_ports_available, WorkerId};
 use crate::server::UnifiedServer;
 use crate::{DrainFlag, RunningFlag};
 
@@ -150,7 +150,7 @@ pub fn apply_cpu_affinity(cpu_affinity: Option<usize>, worker_id: WorkerId) {
     if let Some(core) = cpu_affinity {
         #[cfg(target_os = "linux")]
         {
-            use nix::sched::{CpuSet, sched_setaffinity};
+            use nix::sched::{sched_setaffinity, CpuSet};
             use nix::unistd::Pid;
 
             let mut cpuset = CpuSet::new();

@@ -1,5 +1,5 @@
-use synvoid_utils::now_ms;
 use std::sync::atomic::{AtomicU64, Ordering};
+use synvoid_utils::now_ms;
 
 pub struct AsyncTokenBucket {
     capacity: u64,

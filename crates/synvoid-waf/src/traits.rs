@@ -102,8 +102,8 @@ impl Clone for ErasedGeoIp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use parking_lot::RwLock;
+    use std::collections::HashMap;
 
     struct MockBlockStore {
         blocked: RwLock<HashMap<IpAddr, String>>,

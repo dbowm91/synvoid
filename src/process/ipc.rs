@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::metrics::TimingStatsPayload;
 
-use super::ipc_framing::{DEFAULT_BUFFER_SIZE, read_message_sync, write_message_sync};
+use super::ipc_framing::{read_message_sync, write_message_sync, DEFAULT_BUFFER_SIZE};
 use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1197,11 +1197,7 @@ impl Message {
                 path,
                 minified_path,
             } => {
-                check_str(
-                    "CpuWorkerCacheUpdate.site_id",
-                    site_id,
-                    MAX_STRING_LENGTH,
-                )?;
+                check_str("CpuWorkerCacheUpdate.site_id", site_id, MAX_STRING_LENGTH)?;
                 check_path_str("CpuWorkerCacheUpdate.path", path, MAX_PATH_LENGTH)?;
                 check_path_str(
                     "CpuWorkerCacheUpdate.minified_path",

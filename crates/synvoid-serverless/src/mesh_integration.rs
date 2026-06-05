@@ -38,8 +38,7 @@ static MESH_TRANSPORT: std::sync::OnceLock<Arc<dyn MeshTransportProvider>> =
     std::sync::OnceLock::new();
 static MESH_ORG: std::sync::OnceLock<Arc<dyn MeshOrganizationProvider>> =
     std::sync::OnceLock::new();
-static MESH_ROUTING: std::sync::OnceLock<Arc<dyn MeshRoutingProvider>> =
-    std::sync::OnceLock::new();
+static MESH_ROUTING: std::sync::OnceLock<Arc<dyn MeshRoutingProvider>> = std::sync::OnceLock::new();
 
 pub fn set_mesh_wasm_dist(p: Arc<dyn MeshWasmDistProvider>) {
     let _ = MESH_WASM_DIST.set(p);

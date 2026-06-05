@@ -62,9 +62,6 @@ pub use wire::{
     UPDATE_RCODE_YXRRSET,
 };
 
-pub use synvoid_config::dns::{
-    RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
-};
 pub use anycast::{AnycastHealthUpdate, AnycastPacketInfo, AnycastSocketManager};
 pub use cache::{
     CacheKey, CachePoisoningError, CacheStats, CachedResponse, DnsCache, SecureDnsCache,
@@ -117,6 +114,9 @@ pub use secure_server::{
 };
 pub use server::{DnsRateLimiter, DnsServer, DnsZoneRecord, DsRecordExport, RecordType, Zone};
 pub use store::ZoneStore;
+pub use synvoid_config::dns::{
+    RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
+};
 pub use transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
 pub use trust_anchor::{
     Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState, TrustAnchorStatus,

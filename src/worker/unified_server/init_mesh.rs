@@ -600,13 +600,16 @@ pub fn wire_serverless_to_mesh(
                 struct RecordStoreAdapter(Arc<crate::mesh::dht::RecordStoreManager>);
                 impl synvoid_serverless::mesh_integration::MeshDhtProvider for RecordStoreAdapter {
                     fn store_function(&self, name: &str, data: Vec<u8>, ttl: u64) {
-                        self.0.store_and_announce(format!("function:{}", name), data, ttl);
+                        self.0
+                            .store_and_announce(format!("function:{}", name), data, ttl);
                     }
                     fn get_record(&self, key: &str) -> Option<Vec<u8>> {
                         self.0.get_record(key).map(|r| r.value)
                     }
                 }
-                synvoid_serverless::mesh_integration::set_mesh_dht(Arc::new(RecordStoreAdapter(rs)));
+                synvoid_serverless::mesh_integration::set_mesh_dht(Arc::new(RecordStoreAdapter(
+                    rs,
+                )));
                 tracing::info!("Serverless manager wired to DHT record store");
             }
             if let Some(quic) = tm.get_quic_transport() {
@@ -619,7 +622,9 @@ pub fn wire_serverless_to_mesh(
                         self.0.get_node_id()
                     }
                 }
-                synvoid_serverless::mesh_integration::set_mesh_transport(Arc::new(TransportAdapter(quic.get_inner())));
+                synvoid_serverless::mesh_integration::set_mesh_transport(Arc::new(
+                    TransportAdapter(quic.get_inner()),
+                ));
                 tracing::info!("Serverless manager wired to mesh transport");
             }
             if let Some(quic) = tm.get_quic_transport() {

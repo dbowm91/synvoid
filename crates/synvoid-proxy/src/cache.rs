@@ -88,14 +88,12 @@ pub fn build_cached_response(entry: &ProxyCacheEntry) -> http::Response<bytes::B
         builder = builder.header("X-Cache", "STALE");
     }
 
-    builder
-        .body(entry.content.clone())
-        .unwrap_or_else(|_| {
-            http::Response::builder()
-                .status(500)
-                .body(fallback_error_bytes())
-                .unwrap()
-        })
+    builder.body(entry.content.clone()).unwrap_or_else(|_| {
+        http::Response::builder()
+            .status(500)
+            .body(fallback_error_bytes())
+            .unwrap()
+    })
 }
 
 pub fn filter_cacheable_headers(

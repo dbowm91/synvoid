@@ -15,10 +15,10 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
-use synvoid_config::dns::RecursiveDnsConfig;
 use crate::firewall::DnsFirewall;
 use crate::metrics::DnsMetrics;
 use parking_lot::RwLock;
+use synvoid_config::dns::RecursiveDnsConfig;
 
 use super::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 use super::resolver::{MxRecord, SrvRecord};
@@ -872,8 +872,8 @@ fn encode_domain_to_wire(domain: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synvoid_config::dns::RecursiveCacheConfig;
     use crate::recursive_cache::RecursiveRecordType;
+    use synvoid_config::dns::RecursiveCacheConfig;
 
     fn create_test_cache() -> RecursiveDnsCache {
         let config = RecursiveCacheConfig::default();

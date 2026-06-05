@@ -168,10 +168,7 @@ impl DnsServer {
         self
     }
 
-    pub fn with_notify_handler(
-        mut self,
-        notify_handler: crate::notify::NotifyHandler,
-    ) -> Self {
+    pub fn with_notify_handler(mut self, notify_handler: crate::notify::NotifyHandler) -> Self {
         self.notify_handler = Some(notify_handler);
         self
     }

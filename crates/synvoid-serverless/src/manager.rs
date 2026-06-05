@@ -10,12 +10,10 @@ use thiserror::Error;
 use synvoid_config::serverless::{FunctionDefinition, ServerlessConfig};
 use synvoid_plugin_runtime::{WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
-use crate::async_compilation::{
-    AsyncCompilationHandle, AsyncCompilationManager, CompilationState,
-};
+use crate::async_compilation::{AsyncCompilationHandle, AsyncCompilationManager, CompilationState};
 use crate::instance_pool::{InstancePool, InstancePoolConfig};
 use crate::registry::get_global_serverless_registry;
-use crate::routing::{MethodMatch, RouteMatch, ServerlessRoute, parse_routes};
+use crate::routing::{parse_routes, MethodMatch, RouteMatch, ServerlessRoute};
 
 #[derive(Debug, Clone)]
 pub struct CallerContext {
@@ -290,7 +288,9 @@ impl ServerlessManager {
 
     pub fn initialize(&self, config: ServerlessConfig) -> Result<(), ServerlessError> {
         #[cfg(feature = "mesh")]
-        use crate::mesh_integration::{get_mesh_dht, get_mesh_routing, get_mesh_transport, get_mesh_wasm_dist};
+        use crate::mesh_integration::{
+            get_mesh_dht, get_mesh_routing, get_mesh_transport, get_mesh_wasm_dist,
+        };
 
         if !config.enabled {
             return Err(ServerlessError::Disabled);
@@ -356,10 +356,7 @@ impl ServerlessManager {
                         let wasm_path = wasm_dir.join(&func_def.name).with_extension("wasm");
                         if !wasm_path.exists() {
                             return Err(synvoid_plugin_runtime::WasmPluginError::LoadFailed(
-                                format!(
-                                    "WASM file not found: {}",
-                                    wasm_path.display()
-                                ),
+                                format!("WASM file not found: {}", wasm_path.display()),
                             ));
                         }
                         let limits = WasmResourceLimits {
@@ -1109,12 +1106,7 @@ pub async fn handle_serverless_function(
     let compilation_in_progress = function
         .compilation_handle
         .as_ref()
-        .map(|h| {
-            matches!(
-                h.poll_state(),
-                CompilationState::Compiling { .. }
-            )
-        })
+        .map(|h| matches!(h.poll_state(), CompilationState::Compiling { .. }))
         .unwrap_or(false);
 
     let has_local_runtime = function.runtime.is_some()

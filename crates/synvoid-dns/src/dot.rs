@@ -6,12 +6,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
-use synvoid_config::dns::DnsDotConfig;
 use crate::cache::CacheKey;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
 use crate::server::{DnsServer, RecordType};
+use synvoid_config::dns::DnsDotConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
 pub const DOT_MAX_QUERY_SIZE: usize = MAX_QUERY_SIZE;

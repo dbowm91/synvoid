@@ -165,8 +165,7 @@ impl DnsServer {
         let cache_key = CacheKey::new(String::new(), RecordType::NULL, Some(client_ip));
 
         let response = if let Some(coalescer) = ctx.query_coalescer {
-            let query_key =
-                crate::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
+            let query_key = crate::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
 
             if let Some(key) = query_key {
                 match coalescer.get_or_wait(key.clone()).await {

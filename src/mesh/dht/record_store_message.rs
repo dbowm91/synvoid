@@ -244,12 +244,8 @@ impl RecordStoreManager {
                     return None;
                 }
 
-                let require_signed = self
-                    .config
-                    .require_signed_record_push;
-                let compat_until = self
-                    .config
-                    .unsigned_record_push_compat_until_unix;
+                let require_signed = self.config.require_signed_record_push;
+                let compat_until = self.config.unsigned_record_push_compat_until_unix;
                 let now_unix = crate::mesh::safe_unix_timestamp();
                 let has_auth = !signature.is_empty()
                     && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())

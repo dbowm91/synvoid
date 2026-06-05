@@ -5,8 +5,8 @@ use dashmap::DashMap;
 use metrics::gauge;
 use tokio::sync::{broadcast, mpsc};
 
-use synvoid_config::TunnelConfig;
 use crate::quic::{QuicRuntime, QuicTunnelClient, QuicTunnelServer, QUIC_TUNNEL_REGISTRY};
+use synvoid_config::TunnelConfig;
 
 pub struct TunnelRouter {
     config: TunnelConfig,
@@ -91,8 +91,7 @@ impl TunnelRouter {
         &mut self,
         runtime: Arc<QuicRuntime>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (proxy_tx, mut proxy_rx) =
-            mpsc::channel::<crate::quic::TunnelProxyRequest>(100);
+        let (proxy_tx, mut proxy_rx) = mpsc::channel::<crate::quic::TunnelProxyRequest>(100);
 
         let mut server = QuicTunnelServer::new(self.config.quic.clone(), runtime.clone(), proxy_tx);
         server.start().await?;

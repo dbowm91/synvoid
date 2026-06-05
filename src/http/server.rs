@@ -318,7 +318,8 @@ impl HttpServer {
             self.mesh_backend_pool,
             self.upstream_client_registry,
             self.erased_http_client,
-        ).await
+        )
+        .await
     }
 
     #[allow(unused_assignments)]

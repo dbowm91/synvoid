@@ -29,9 +29,9 @@ mod response_builder;
 
 pub use traits::{BaseWorkerState, WorkerLifecycle};
 
-pub use cpu_task::{CpuWorkerArgs, run_cpu_worker};
+pub use cpu_task::{run_cpu_worker, CpuWorkerArgs};
 pub use unified_server::{
-    UnifiedServerWorkerArgs, run_unified_server_worker, setup_unified_server_panic_handler,
+    run_unified_server_worker, setup_unified_server_panic_handler, UnifiedServerWorkerArgs,
 };
 
 pub fn setup_worker_panic_handler() {
@@ -51,8 +51,8 @@ pub fn setup_worker_panic_handler() {
 mod minifier_tests {
     use crate::config::site::SiteStaticConfig;
     use crate::static_files::minifier::{
-        CacheEntry, CacheKey, ContentType, Encoding, MinifierCache, MinifierConfig,
-        MinifierGenerator, content_type_from_path,
+        content_type_from_path, CacheEntry, CacheKey, ContentType, Encoding, MinifierCache,
+        MinifierConfig, MinifierGenerator,
     };
     use bytes::Bytes;
     use std::io::Write;

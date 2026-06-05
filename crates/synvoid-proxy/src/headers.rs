@@ -6,8 +6,8 @@ use std::net::IpAddr;
 use std::sync::LazyLock;
 use unicode_normalization::UnicodeNormalization;
 
-use synvoid_config::site::ProxyHeadersConfig;
 use ahash::AHashSet;
+use synvoid_config::site::ProxyHeadersConfig;
 
 pub const HOP_BY_HOP_HEADERS: &[&str] = &[
     "connection",

@@ -33,12 +33,12 @@ pub use command::{CommandClient, CommandError, CommandResponse};
 #[cfg(windows)]
 pub use ipc::WindowsIpcListener;
 pub use ipc::{
-    connect_to_supervisor, get_ipc_path, CommandMethod, CpuTaskErrorCode, CpuTaskKind,
-    CpuTaskPayload, CpuTaskPolicy, CpuTaskPriority, CpuTaskResult, ErrorCode, ErrorSeverity,
-    IpcStream, IpcValidationError, Message, RequestLogPayload, SiteMetricsPayload,
-    CpuOffloadStats, StatusStats, SupervisorCommand, SupervisorStatus, ThreatIndicatorData,
-    ThreatIndicatorType, ThreatSeverityLevel, ThreatSummary, WorkerId, WorkerMetricsPayload,
-    WorkerStatus, WorkerStatusInfo,
+    connect_to_supervisor, get_ipc_path, CommandMethod, CpuOffloadStats, CpuTaskErrorCode,
+    CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskPriority, CpuTaskResult, ErrorCode,
+    ErrorSeverity, IpcStream, IpcValidationError, Message, RequestLogPayload, SiteMetricsPayload,
+    StatusStats, SupervisorCommand, SupervisorStatus, ThreatIndicatorData, ThreatIndicatorType,
+    ThreatSeverityLevel, ThreatSummary, WorkerId, WorkerMetricsPayload, WorkerStatus,
+    WorkerStatusInfo,
 };
 pub use ipc_framing::{
     read_exact_message_sync, read_message_sync, write_message_sync, MAX_MESSAGE_SIZE,
@@ -46,8 +46,8 @@ pub use ipc_framing::{
 pub use ipc_transport::{
     connect_to_commands_async, connect_to_commands_signed, connect_to_cpu_worker_async,
     connect_to_cpu_worker_signed, connect_to_endpoint, connect_to_endpoint_signed,
-    connect_to_supervisor_async,
-    connect_to_supervisor_signed, IpcEndpoint, IpcListener, IpcStream as AsyncIpcStream,
+    connect_to_supervisor_async, connect_to_supervisor_signed, IpcEndpoint, IpcListener,
+    IpcStream as AsyncIpcStream,
 };
 pub use manager::{
     check_port_available, check_ports_available, start_health_monitor, ProcessEvent,
@@ -61,13 +61,13 @@ pub use socket_fd::{
 };
 pub use socket_path::{
     cleanup_old_supervisor_sockets, find_active_supervisor_socket, get_cpu_worker_socket_path,
-    get_current_supervisor_generation, get_secure_socket_path,
-    get_supervisor_socket_path, get_versioned_supervisor_socket_path, next_supervisor_generation,
+    get_current_supervisor_generation, get_secure_socket_path, get_supervisor_socket_path,
+    get_versioned_supervisor_socket_path, next_supervisor_generation,
     resolve_supervisor_socket_for_upgrade, set_socket_permissions, set_supervisor_generation,
 };
 pub use worker::{
-    BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess,
-    WorkerProcess, WorkerProcessBase,
+    BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
+    WorkerProcessBase,
 };
 
 pub use crate::platform::{is_socket_fd_passing_supported, platform, Platform};

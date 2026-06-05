@@ -39,9 +39,7 @@ use tokio::time::{interval, Duration};
 use hickory_proto::dnssec::PublicKey;
 use hickory_proto::rr::{RData, RecordType};
 
-use crate::trust_anchor::{
-    Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorStatus,
-};
+use crate::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorStatus};
 
 #[derive(Debug, Clone)]
 pub struct TxtRecord {
@@ -1239,9 +1237,7 @@ impl HickoryRecursor {
                 );
                 match &event {
                     crate::trust_anchor::Rfc5011Event::NewKeySeen { .. } => new_keys_seen += 1,
-                    crate::trust_anchor::Rfc5011Event::KeyPromoted { .. } => {
-                        keys_promoted += 1
-                    }
+                    crate::trust_anchor::Rfc5011Event::KeyPromoted { .. } => keys_promoted += 1,
                     _ => {}
                 }
                 events.push(event);

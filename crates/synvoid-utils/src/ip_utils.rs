@@ -27,7 +27,7 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
                     | (segments[1] as u64) << 32
                     | (segments[2] as u64) << 16
                     | segments[3] as u64)
-                .wrapping_mul(0x9e3779b9);
+                    .wrapping_mul(0x9e3779b9);
                 Some(((hash >> 16) as usize) & mask)
             }
         }
@@ -48,7 +48,7 @@ pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
                     | (segments[1] as u64) << 32
                     | (segments[2] as u64) << 16
                     | segments[3] as u64)
-                .wrapping_mul(0x9e3779b9);
+                    .wrapping_mul(0x9e3779b9);
                 Some((hash as usize) % num_slots)
             }
         }

@@ -15,8 +15,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_dstip::TcpListenerWithDst;
 
-use synvoid_config::dns::DnsAnycastConfig;
 use crate::platform::AnycastSocketPlatform;
+use synvoid_config::dns::DnsAnycastConfig;
 
 #[derive(Debug, Clone)]
 pub struct BoundSocket {

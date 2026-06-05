@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bytes::Bytes;
-use http::{Method, HeaderMap};
+use http::{HeaderMap, Method};
 use synvoid_http_client::HttpResponse;
 
 pub fn is_quictunnel_url(url: &str) -> bool {

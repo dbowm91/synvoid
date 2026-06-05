@@ -12,8 +12,8 @@ use tokio::task::JoinHandle;
 use tokio::time::interval;
 
 pub use super::worker::{
-    BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess,
-    WorkerProcess, WorkerProcessBase,
+    BaseWorkerProcess, CpuWorkerProcess, UnifiedServerWorkerProcess, WorkerProcess,
+    WorkerProcessBase,
 };
 
 use super::ipc::{

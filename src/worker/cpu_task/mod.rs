@@ -10,8 +10,8 @@ pub mod yara;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex as TokioMutex;
@@ -27,7 +27,7 @@ use crate::{DrainFlag, RunningFlag};
 
 use self::connection::handle_minify_client_connection;
 use self::dispatch::process_cpu_task_request_sync;
-use self::metrics::{STATIC_CPU_OFFLOAD_EVENT_LOOP_LAG_MS, snapshot_static_cpu_offload_stats};
+use self::metrics::{snapshot_static_cpu_offload_stats, STATIC_CPU_OFFLOAD_EVENT_LOOP_LAG_MS};
 use self::payload::deadline_timeout_error;
 use self::state::{CompressionTask, CpuTaskLimiter, CpuTaskLimits, CpuWorkerState};
 use self::yara::build_yara_scanner_from_main_config;
@@ -146,44 +146,41 @@ pub async fn run_cpu_worker(
         let active_connections = Arc::new(AtomicU32::new(0));
         const MAX_STATIC_CONNECTIONS: u32 = 100;
 
-        std::thread::spawn(move || {
-            loop {
-                if !socket_state.running.is_running() {
-                    break;
-                }
-
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
-                            tracing::debug!(
-                                "CPU worker at max connections ({}), dropping",
-                                MAX_STATIC_CONNECTIONS
-                            );
-                            drop(stream);
-                            continue;
-                        }
-                        active_connections.fetch_add(1, Ordering::Relaxed);
-                        let ipc = crate::process::IpcStream::new(stream);
-                        let state = socket_state.clone();
-                        let counter = active_connections.clone();
-                        tokio::spawn(async move {
-                            tokio::task::spawn_blocking(move || {
-                                handle_minify_client_connection(ipc, state);
-                            })
-                            .await
-                            .ok();
-                            let _ =
-                                counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                                    v.checked_sub(1)
-                                });
-                        });
-                    }
-                    Err(e) => {
-                        tracing::debug!("CPU worker socket accept error: {}", e);
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(10));
+        std::thread::spawn(move || loop {
+            if !socket_state.running.is_running() {
+                break;
             }
+
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
+                        tracing::debug!(
+                            "CPU worker at max connections ({}), dropping",
+                            MAX_STATIC_CONNECTIONS
+                        );
+                        drop(stream);
+                        continue;
+                    }
+                    active_connections.fetch_add(1, Ordering::Relaxed);
+                    let ipc = crate::process::IpcStream::new(stream);
+                    let state = socket_state.clone();
+                    let counter = active_connections.clone();
+                    tokio::spawn(async move {
+                        tokio::task::spawn_blocking(move || {
+                            handle_minify_client_connection(ipc, state);
+                        })
+                        .await
+                        .ok();
+                        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(1)
+                        });
+                    });
+                }
+                Err(e) => {
+                    tracing::debug!("CPU worker socket accept error: {}", e);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
         });
     }
 
@@ -194,47 +191,44 @@ pub async fn run_cpu_worker(
         let active_connections = Arc::new(AtomicU32::new(0));
         const MAX_STATIC_CONNECTIONS: u32 = 100;
 
-        std::thread::spawn(move || {
-            loop {
-                if !socket_state.running.is_running() {
-                    break;
-                }
+        std::thread::spawn(move || loop {
+            if !socket_state.running.is_running() {
+                break;
+            }
 
-                match listener.accept() {
-                    Ok(stream) => {
-                        if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
-                            tracing::debug!(
-                                "CPU worker at max connections ({}), dropping",
-                                MAX_STATIC_CONNECTIONS
-                            );
-                            drop(stream);
-                            continue;
-                        }
-                        active_connections.fetch_add(1, Ordering::Relaxed);
-                        let ipc = crate::process::IpcStream::new(stream);
-                        let state = socket_state.clone();
-                        let counter = active_connections.clone();
-                        tokio::spawn(async move {
-                            tokio::task::spawn_blocking(move || {
-                                handle_minify_client_connection(ipc, state);
-                            })
-                            .await
-                            .ok();
-                            let _ =
-                                counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                                    v.checked_sub(1)
-                                });
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!("CPU worker pipe accept error: {}", e);
-                        std::thread::sleep(Duration::from_millis(100));
+            match listener.accept() {
+                Ok(stream) => {
+                    if active_connections.load(Ordering::Relaxed) >= MAX_STATIC_CONNECTIONS {
+                        tracing::debug!(
+                            "CPU worker at max connections ({}), dropping",
+                            MAX_STATIC_CONNECTIONS
+                        );
+                        drop(stream);
                         continue;
                     }
+                    active_connections.fetch_add(1, Ordering::Relaxed);
+                    let ipc = crate::process::IpcStream::new(stream);
+                    let state = socket_state.clone();
+                    let counter = active_connections.clone();
+                    tokio::spawn(async move {
+                        tokio::task::spawn_blocking(move || {
+                            handle_minify_client_connection(ipc, state);
+                        })
+                        .await
+                        .ok();
+                        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                            v.checked_sub(1)
+                        });
+                    });
                 }
-
-                std::thread::sleep(Duration::from_millis(10));
+                Err(e) => {
+                    tracing::warn!("CPU worker pipe accept error: {}", e);
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
             }
+
+            std::thread::sleep(Duration::from_millis(10));
         });
     }
 

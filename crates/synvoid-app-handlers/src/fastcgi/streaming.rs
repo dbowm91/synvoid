@@ -4,8 +4,8 @@ use std::task::{Context, Poll};
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use synvoid_config::site::FastCgiConfig;
 use crate::fastcgi::FastCgiError;
+use synvoid_config::site::FastCgiConfig;
 
 const FCGI_VERSION: u8 = 1;
 const FCGI_HEADER_SIZE: usize = 8;

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 
 use synvoid_config::serverless::FunctionDefinition;
-use synvoid_plugin_runtime::{WasmPluginManager, WasmPluginError, WasmResourceLimits, WasmRuntime};
+use synvoid_plugin_runtime::{WasmPluginError, WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 #[derive(Debug, Clone)]
 pub struct InstancePoolConfig {

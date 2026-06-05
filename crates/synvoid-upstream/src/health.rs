@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 
-use synvoid_http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
 use crate::address::UpstreamAddress;
 use crate::pool::Backend;
+use synvoid_http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
 
 pub struct HealthChecker {
     pools: Arc<tokio::sync::RwLock<Vec<Arc<crate::pool::UpstreamPool>>>>,

@@ -142,6 +142,8 @@ mod tests {
         assert!(config.block_ai_crawlers);
         assert!(!config.drop_blocked_requests);
         assert_eq!(config.honeypot_ban_duration_secs, 3600);
-        assert!(config.css_exempt_paths.contains(&"/_waf_css_challenge".to_string()));
+        assert!(config
+            .css_exempt_paths
+            .contains(&"/_waf_css_challenge".to_string()));
     }
 }

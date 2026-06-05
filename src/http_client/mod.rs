@@ -1,12 +1,14 @@
 pub use synvoid_http_client::*;
 
-pub mod streaming_waf_body;
 pub mod quic_tunnel_dispatch;
+pub mod streaming_waf_body;
 
+pub use quic_tunnel_dispatch::{is_quictunnel_url, send_request_via_quic_tunnel};
 pub use streaming_waf_body::StreamingWafBody;
-pub use quic_tunnel_dispatch::{send_request_via_quic_tunnel, is_quictunnel_url};
 
-pub fn upstream_tls_from_site_config(config: &synvoid_config::site::UpstreamTlsConfig) -> Option<synvoid_http_client::UpstreamTlsConfig> {
+pub fn upstream_tls_from_site_config(
+    config: &synvoid_config::site::UpstreamTlsConfig,
+) -> Option<synvoid_http_client::UpstreamTlsConfig> {
     let enabled = config.enabled.unwrap_or(true);
     if !enabled {
         return None;

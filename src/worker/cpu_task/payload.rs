@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 
 use crate::process::{CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, Message};
 
-use super::metrics::{CPU_TASK_REJECTED_TOTAL, CPU_TASK_TIMEOUT_TOTAL, cpu_task_kind_label};
+use super::metrics::{cpu_task_kind_label, CPU_TASK_REJECTED_TOTAL, CPU_TASK_TIMEOUT_TOTAL};
 
 pub const INLINE_SMALL_TASK_MAX_BYTES: usize = 64 * 1024;
 
@@ -221,7 +221,10 @@ pub fn estimate_cpu_task_payload_size(payload: &CpuTaskPayload) -> usize {
             ..
         } => {
             site_id.len()
-                + plugin_names.iter().map(std::string::String::len).sum::<usize>()
+                + plugin_names
+                    .iter()
+                    .map(std::string::String::len)
+                    .sum::<usize>()
                 + body.len()
         }
     }

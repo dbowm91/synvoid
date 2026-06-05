@@ -20,8 +20,8 @@ pub mod lifecycle;
 pub mod state;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock;
@@ -35,7 +35,7 @@ use crate::server::UnifiedServer;
 use crate::{DrainFlag, RunningFlag};
 
 pub use state::{
-    UnifiedServerWorkerArgs, UnifiedServerWorkerState, setup_unified_server_panic_handler,
+    setup_unified_server_panic_handler, UnifiedServerWorkerArgs, UnifiedServerWorkerState,
 };
 
 pub async fn run_unified_server_worker(

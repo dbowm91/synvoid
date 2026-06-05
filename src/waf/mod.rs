@@ -45,8 +45,7 @@ use crate::waf::attack_detection::AttackDetector;
 use crate::waf::bot::{BotDetectionResult, BotDetector};
 #[allow(unused_imports)]
 use crate::waf::endpoints::{
-    EndpointBlockerManager, EndpointCheckResult, ErrorPageManager,
-    SensitiveEndpointManager,
+    EndpointBlockerManager, EndpointCheckResult, ErrorPageManager, SensitiveEndpointManager,
 };
 use crate::waf::ip_feed::IpFeedManager;
 pub use request_sanitization::RequestSanitizer;

@@ -81,7 +81,10 @@ pub struct SynFloodBackendWrapper {
 
 impl SynFloodBackendWrapper {
     pub fn new(config: &FloodConfig, _preferred: FloodBackend) -> Self {
-        tracing::info!("Using SYN flood protection backend: {}", FloodBackend::Userspace);
+        tracing::info!(
+            "Using SYN flood protection backend: {}",
+            FloodBackend::Userspace
+        );
 
         let userspace_backend = SynFloodProtector::new(
             config.syn_rate_per_ip,

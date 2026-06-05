@@ -1,4 +1,4 @@
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use std::io;
 
 pub fn serialize<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {

@@ -54,7 +54,9 @@ impl DnsServer {
         }
 
         if self.config.anycast.enabled {
-            return Err("Anycast requires mesh feature (not available in extracted dns crate)".to_string());
+            return Err(
+                "Anycast requires mesh feature (not available in extracted dns crate)".to_string(),
+            );
         } else {
             self.start_standard_mode().await?;
         }
@@ -501,9 +503,7 @@ impl DnsServer {
         }
     }
 
-    pub fn get_coalescer_metrics(
-        &self,
-    ) -> Option<crate::query_coalesce::QueryCoalescerMetrics> {
+    pub fn get_coalescer_metrics(&self) -> Option<crate::query_coalesce::QueryCoalescerMetrics> {
         self.query_coalescer.as_ref().map(|c| c.metrics())
     }
 }

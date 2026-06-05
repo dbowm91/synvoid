@@ -6,8 +6,8 @@ use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
 use tokio::sync::oneshot;
 
-use synvoid_config::dns::DnsDoqConfig;
 use crate::server::DnsServer;
+use synvoid_config::dns::DnsDoqConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
 const DOQ_MAX_QUERY_SIZE: usize = 65535;

@@ -88,9 +88,7 @@ impl DnsServer {
         records
     }
 
-    pub(super) fn build_cds_records(
-        ksk: &crate::dnssec::ZoneSigningKey,
-    ) -> Vec<DnsZoneRecord> {
+    pub(super) fn build_cds_records(ksk: &crate::dnssec::ZoneSigningKey) -> Vec<DnsZoneRecord> {
         let mut records = Vec::new();
 
         if let Ok(ds_data) =
@@ -237,13 +235,11 @@ impl DnsServer {
         }
 
         let closest_hash = crate::dnssec::hash_name_nsec3(&closest_encloser, nsec3param);
-        let closest_hash_b32 =
-            crate::dnssec::create_nsec3_owner_name(zone_origin, &closest_hash);
+        let closest_hash_b32 = crate::dnssec::create_nsec3_owner_name(zone_origin, &closest_hash);
 
         let wildcard_name = format!("*.{}", closest_encloser);
         let wildcard_hash = crate::dnssec::hash_name_nsec3(&wildcard_name, nsec3param);
-        let wildcard_hash_b32 =
-            crate::dnssec::create_nsec3_owner_name(zone_origin, &wildcard_hash);
+        let wildcard_hash_b32 = crate::dnssec::create_nsec3_owner_name(zone_origin, &wildcard_hash);
 
         let next_closer_name = qname_lower.trim_end_matches(&closest_encloser);
         let next_closer = if next_closer_name.is_empty() || next_closer_name == "." {
@@ -290,8 +286,7 @@ impl DnsServer {
         if let Some(soa_record) = zone.records.get(&("@".to_string(), RecordType::SOA)) {
             if !soa_record.is_empty() {
                 let soa_hash = crate::dnssec::hash_name_nsec3(zone_origin, nsec3param);
-                let soa_hash_b32 =
-                    crate::dnssec::create_nsec3_owner_name(zone_origin, &soa_hash);
+                let soa_hash_b32 = crate::dnssec::create_nsec3_owner_name(zone_origin, &soa_hash);
 
                 let soa_types = vec![1, 2, 5, 6, 16, 28, 33];
                 let soa_nsec3 = crate::dnssec::create_nsec3_record(
@@ -403,12 +398,8 @@ impl DnsServer {
 
         let next_domain = format!("*.{}", zone_origin);
 
-        let nsec3_rdata = crate::dnssec::create_nsec3_record(
-            &qname_hash_b32,
-            &next_domain,
-            nsec3param,
-            &types,
-        );
+        let nsec3_rdata =
+            crate::dnssec::create_nsec3_record(&qname_hash_b32, &next_domain, nsec3param, &types);
 
         records.push(DnsZoneRecord {
             name: qname_hash_b32,
@@ -421,8 +412,7 @@ impl DnsServer {
         if let Some(soa_record) = zone.records.get(&("@".to_string(), RecordType::SOA)) {
             if !soa_record.is_empty() {
                 let soa_hash = crate::dnssec::hash_name_nsec3(zone_origin, nsec3param);
-                let soa_hash_b32 =
-                    crate::dnssec::create_nsec3_owner_name(zone_origin, &soa_hash);
+                let soa_hash_b32 = crate::dnssec::create_nsec3_owner_name(zone_origin, &soa_hash);
 
                 let soa_types = vec![1, 2, 5, 6, 16, 28, 33];
                 let soa_nsec3 = crate::dnssec::create_nsec3_record(

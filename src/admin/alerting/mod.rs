@@ -448,7 +448,8 @@ impl synvoid_geoip::GeoIpNotificationHandler for AlertManager {
         &self,
         edition_id: &str,
         days: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'static>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'static>>
+    {
         let self_clone = self.clone();
         let edition_id = edition_id.to_string();
         Box::pin(async move {

@@ -14,4 +14,6 @@ pub mod traits;
 
 pub use flood::{FloodConfig, FloodDecision, FloodProtector, FloodStats};
 pub use primitives::{TestModeConfig, WafConfig, WafDecision};
-pub use traffic_shaper::{AsyncTokenBucket, ConnectionLimiter, ConnectionLimitError, ConnectionToken, TokenBucket};
+pub use traffic_shaper::{
+    AsyncTokenBucket, ConnectionLimitError, ConnectionLimiter, ConnectionToken, TokenBucket,
+};

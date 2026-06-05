@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use crate::metrics::TimingStatsPayload;
-use crate::process::{CpuTaskKind, CpuOffloadStats};
+use crate::process::{CpuOffloadStats, CpuTaskKind};
 
 pub static CPU_TASK_ACTIVE_MINIFY: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_GET_COMPRESSED: AtomicU64 = AtomicU64::new(0);

@@ -20,8 +20,8 @@ use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
 use synvoid_config::dns::{DnsConfig, DnsRateLimitMode, DnsZoneEntry};
-use synvoid_tls::cert_resolver::CertResolver;
 use synvoid_core::time::current_timestamp_secs;
+use synvoid_tls::cert_resolver::CertResolver;
 
 pub use hickory_proto::rr::RecordType;
 
@@ -503,7 +503,7 @@ impl Clone for DnsServer {
             notify_handler: self.notify_handler.clone(),
             hsm_manager: None, // Cannot clone HSM - requires re-initialization
             query_coalescer: self.query_coalescer.clone(),
-            anycast_manager: None, // Cannot clone - requires re-initialization
+            anycast_manager: None,  // Cannot clone - requires re-initialization
             recursive_server: None, // Cannot clone - requires re-initialization
             dns64_translator: self.dns64_translator.clone(),
             acme_dns_challenges: self.acme_dns_challenges.clone(),

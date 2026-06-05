@@ -141,11 +141,9 @@ impl MeshTransport {
         // MESH-14: Verify cert chain if present
         if let Some(cert_chain) = cert_chain {
             let trusted_keys = self.cert_manager.read().get_global_node_public_keys();
-            if let Err(e) = crate::mesh::cert::verify_certificate_chain(
-                cert_chain,
-                node_id,
-                &trusted_keys,
-            ) {
+            if let Err(e) =
+                crate::mesh::cert::verify_certificate_chain(cert_chain, node_id, &trusted_keys)
+            {
                 tracing::warn!(
                     "GlobalNodeAnnounce from {} has invalid cert chain: {}",
                     node_id,

@@ -1,9 +1,9 @@
 // SAFETY_REASON: Location-based routing
 
-use synvoid_utils::check_regex_complexity;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use synvoid_utils::check_regex_complexity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocationMatchType {

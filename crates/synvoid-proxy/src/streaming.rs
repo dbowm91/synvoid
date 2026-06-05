@@ -1,12 +1,12 @@
 use crate::governor::GlobalCacheGovernor;
-use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
-use synvoid_utils::GlobalHealthState;
-use synvoid_proxy_cache::{CacheKey, ProxyCache};
 use bytes::Bytes;
 use http_body::{Body, Frame};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use synvoid_proxy_cache::{CacheKey, ProxyCache};
+use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
+use synvoid_utils::GlobalHealthState;
 
 /// A body wrapper that tees the stream into a buffer for caching.
 pub struct TeeBody<B> {

@@ -1,6 +1,6 @@
 use super::cpu_task::state::CpuWorkerState;
 
-use stegoeggo::{ProtectionContext, ProtectionLevel, process_image_bytes};
+use stegoeggo::{process_image_bytes, ProtectionContext, ProtectionLevel};
 
 fn parse_protection_level(level: &str) -> ProtectionLevel {
     match level.to_lowercase().as_str() {

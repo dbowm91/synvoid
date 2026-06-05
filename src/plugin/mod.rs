@@ -11,13 +11,10 @@ pub mod axum_loader;
 
 // Re-export types from the new crate
 pub use synvoid_plugin_runtime::{
-    WasmFilterResult, WasmPluginError, WasmPluginManager, WasmPluginMetrics,
-    WasmResourceLimits, WasmRuntime, PluginInfo,
-    PooledInstance, WasmPool,
-    GlobalPluginManager, GlobalWasmMemoryBudget, MemoryBudgetError,
-    get_global_plugin_manager,
-    get_wasm_metrics, get_all_wasm_metrics,
-    WasmInstancePool,
+    get_all_wasm_metrics, get_global_plugin_manager, get_wasm_metrics, GlobalPluginManager,
+    GlobalWasmMemoryBudget, MemoryBudgetError, PluginInfo, PooledInstance, WasmFilterResult,
+    WasmInstancePool, WasmPluginError, WasmPluginManager, WasmPluginMetrics, WasmPool,
+    WasmResourceLimits, WasmRuntime,
 };
 
 // ─── PluginManager (public API) ──────────────────────────────────────────────

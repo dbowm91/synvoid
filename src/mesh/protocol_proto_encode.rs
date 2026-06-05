@@ -2835,7 +2835,6 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
-}
-
-}
+        }
+    }
 }

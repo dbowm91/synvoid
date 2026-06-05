@@ -5,11 +5,11 @@ use hyper::body::Incoming;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::{build_forward_headers, ForwardedProtocol};
 use synvoid_config::site::ProxyHeadersConfig;
 use synvoid_http_client::{
     send_request_erased_streaming, ErasedBodyImpl, ErasedHttpClient, HttpClient,
 };
-use crate::{build_forward_headers, ForwardedProtocol};
 
 pub struct DispatchParams {
     pub client: HttpClient,

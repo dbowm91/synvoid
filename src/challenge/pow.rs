@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 // SAFETY_REASON: Proof-of-work challenge system - reserved for anti-abuse mechanisms
 
+use super::{has_leading_zeros, has_leading_zeros_ct};
 use crate::theme::{ChallengePageTemplate, ThemeConfig};
 use crate::utils::current_timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 #[allow(unused_imports)]
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use super::{has_leading_zeros, has_leading_zeros_ct};
 
 const MAX_NONCE: u64 = 100_000_000;
 const MIN_TIMESTAMP_SECS: u64 = 60;

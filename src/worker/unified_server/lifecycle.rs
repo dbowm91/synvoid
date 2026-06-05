@@ -1,15 +1,15 @@
 // Submodule: Worker → Supervisor heartbeat task, bandwidth-persistence task,
 // the IPC message-handling loop, and the request-blocklist request helper.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
 
-use super::state::{UnifiedServerWorkerState, wait_for_drain};
-use crate::process::{Message, current_timestamp};
+use super::state::{wait_for_drain, UnifiedServerWorkerState};
+use crate::process::{current_timestamp, Message};
 use crate::static_files::client::get_global_async_cpu_offload_stats;
 use crate::worker::common::collect_current_process_usage;
 

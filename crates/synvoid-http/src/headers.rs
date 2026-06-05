@@ -1,6 +1,6 @@
-use synvoid_config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
 use chrono::Utc;
 use rand::Rng;
+use synvoid_config::site::{SiteCorsConfig, SiteSecurityHeadersConfig};
 
 pub fn inject_security_headers(
     builder: http::response::Builder,

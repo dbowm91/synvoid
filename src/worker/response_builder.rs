@@ -203,9 +203,7 @@ pub(in crate::worker) fn process_compressed_request(
         .content
         .to_vec();
 
-    Ok(CpuTaskResult::GetCompressed {
-        content,
-    })
+    Ok(CpuTaskResult::GetCompressed { content })
 }
 
 pub(in crate::worker) fn init_minifier_caches(

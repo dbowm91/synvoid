@@ -5,21 +5,23 @@ use std::time::Instant;
 
 use ::metrics::{counter, gauge, histogram};
 
-use crate::process::{CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskResult, Message};
+use crate::process::{
+    CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskResult, Message,
+};
 use crate::worker::image_poisoning;
 use crate::worker::response_builder;
 
 use super::metrics::{
-    CPU_TASK_FAILED_TOTAL, CPU_TASK_FALLBACK_INLINE_SMALL_TOTAL, CPU_TASK_PAYLOAD_BYTES_IN_TOTAL,
-    CPU_TASK_PAYLOAD_BYTES_OUT_TOTAL, CPU_TASK_REJECTED_TOTAL, CPU_TASK_SUBMITTED_TOTAL,
-    CPU_TASK_TIMEOUT_TOTAL, cpu_task_kind_label, decrement_task_kind_active,
-    decrement_task_kind_queued, increment_task_kind_active, increment_task_kind_completed,
-    increment_task_kind_queued, record_cpu_task_duration,
+    cpu_task_kind_label, decrement_task_kind_active, decrement_task_kind_queued,
+    increment_task_kind_active, increment_task_kind_completed, increment_task_kind_queued,
+    record_cpu_task_duration, CPU_TASK_FAILED_TOTAL, CPU_TASK_FALLBACK_INLINE_SMALL_TOTAL,
+    CPU_TASK_PAYLOAD_BYTES_IN_TOTAL, CPU_TASK_PAYLOAD_BYTES_OUT_TOTAL, CPU_TASK_REJECTED_TOTAL,
+    CPU_TASK_SUBMITTED_TOTAL, CPU_TASK_TIMEOUT_TOTAL,
 };
 use super::payload::{
-    INLINE_SMALL_TASK_MAX_BYTES, apply_file_backed_payload, cpu_task_backpressure_error,
-    cpu_task_site_id, deadline_timeout_error, estimate_cpu_task_output_size,
-    estimate_cpu_task_payload_size, is_deadline_exceeded,
+    apply_file_backed_payload, cpu_task_backpressure_error, cpu_task_site_id,
+    deadline_timeout_error, estimate_cpu_task_output_size, estimate_cpu_task_payload_size,
+    is_deadline_exceeded, INLINE_SMALL_TASK_MAX_BYTES,
 };
 use super::state::{CpuTaskPermit, CpuWorkerState};
 
@@ -444,11 +446,8 @@ pub fn process_cpu_task_request_sync(
                         .unwrap_or_else(|_| http::Response::new(bytes::Bytes::new()))
                 });
 
-            let transform_result = wasm_manager.transform_response_with_plugins(
-                wasm_resp,
-                &plugin_names,
-                env,
-            );
+            let transform_result =
+                wasm_manager.transform_response_with_plugins(wasm_resp, &plugin_names, env);
 
             match transform_result {
                 Ok(transformed) => {
