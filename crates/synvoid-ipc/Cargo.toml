@@ -1,0 +1,31 @@
+[package]
+name = "synvoid-ipc"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+
+[dependencies]
+synvoid-config = { path = "../synvoid-config" }
+synvoid-utils = { path = "../synvoid-utils" }
+synvoid-platform = { path = "../synvoid-platform" }
+synvoid-metrics = { path = "../synvoid-metrics" }
+synvoid-tls = { path = "../synvoid-tls" }
+parking_lot = "0.12"
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nix = { version = "0.29", features = ["signal", "process", "socket", "fs", "net", "uio"] }
+sysinfo = "0.30"
+dirs = "5"
+tracing = "0.1"
+hmac = "0.12"
+sha3 = "0.10"
+dashmap = "6"
+socket2 = "0.5"
+rand = "0.9"
+libc = "0.2"
+thiserror = "2"
+subtle = "2"
+serde_bytes = "0.11"
