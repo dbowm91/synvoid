@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 
-use crate::http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
-use crate::upstream::address::UpstreamAddress;
-use crate::upstream::pool::Backend;
+use synvoid_http_client::{create_http_client_with_config, send_request_with_timeout, HttpClient};
+use crate::address::UpstreamAddress;
+use crate::pool::Backend;
 
 pub struct HealthChecker {
-    pools: Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
+    pools: Arc<tokio::sync::RwLock<Vec<Arc<crate::pool::UpstreamPool>>>>,
     config: HealthCheckConfig,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
     client: HttpClient,
@@ -64,7 +64,7 @@ impl HealthChecker {
         }
     }
 
-    pub async fn register_pool(&self, pool: Arc<crate::upstream::UpstreamPool>) {
+    pub async fn register_pool(&self, pool: Arc<crate::pool::UpstreamPool>) {
         self.pools.write().await.push(pool);
     }
 
@@ -97,7 +97,7 @@ impl HealthChecker {
     }
 
     async fn check_all_pools(
-        pools: &Arc<tokio::sync::RwLock<Vec<Arc<crate::upstream::UpstreamPool>>>>,
+        pools: &Arc<tokio::sync::RwLock<Vec<Arc<crate::pool::UpstreamPool>>>>,
         config: &HealthCheckConfig,
         client: &HttpClient,
     ) {

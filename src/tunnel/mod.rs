@@ -1,4 +1,5 @@
 pub mod quic;
+pub mod quic_adapter;
 pub mod router;
 pub mod tun;
 pub mod udp_manager;

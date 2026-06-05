@@ -21,8 +21,8 @@ use pqc::{
     VerifyingKey as MldsaVerifyingKey,
 };
 
-use crate::integrity::protocol::{SESSION_ID_HEADER, SIG_HEADER_PREFIX};
-use crate::integrity::{IntegrityHeader, SessionKey, SignedHttpMessage};
+use crate::protocol::{SESSION_ID_HEADER, SIG_HEADER_PREFIX};
+use crate::{IntegrityHeader, SessionKey, SignedHttpMessage};
 
 /// Sign a message using Ed25519
 pub fn sign_ed25519(signing_key: &Ed25519SigningKey, message: &str) -> Vec<u8> {
@@ -563,21 +563,21 @@ pub fn parse_integrity_headers(headers: &http::HeaderMap) -> Option<(IntegrityHe
     let sig_header = format!("{}{}", SIG_HEADER_PREFIX, "http");
     let signature = headers.get(sig_header.as_str())?.to_str().ok()?.to_string();
 
-    let key_header = format!("{}{}", crate::integrity::KEY_HEADER_PREFIX, "session");
+    let key_header = format!("{}{}", crate::KEY_HEADER_PREFIX, "session");
     let key_id = headers
         .get(key_header.as_str())
         .and_then(|v| v.to_str().ok())
         .map(String::from)
         .unwrap_or_else(|| "default".to_string());
 
-    let timestamp_header = format!("{}{}", crate::integrity::KEY_HEADER_PREFIX, "timestamp");
+    let timestamp_header = format!("{}{}", crate::KEY_HEADER_PREFIX, "timestamp");
     let timestamp: i64 = headers
         .get(timestamp_header.as_str())
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| chrono::Utc::now().timestamp());
 
-    let nonce_header = format!("{}{}", crate::integrity::KEY_HEADER_PREFIX, "nonce");
+    let nonce_header = format!("{}{}", crate::KEY_HEADER_PREFIX, "nonce");
     let nonce = headers
         .get(nonce_header.as_str())
         .and_then(|v| v.to_str().ok())

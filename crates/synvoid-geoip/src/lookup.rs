@@ -3,7 +3,7 @@ use std::path::Path;
 
 use maxminddb::{PathElement, Reader};
 
-use super::types::CountryInfo;
+use crate::types::CountryInfo;
 
 pub struct GeoIpLookup {
     pub reader: Option<Reader<Vec<u8>>>,

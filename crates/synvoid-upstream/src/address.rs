@@ -8,6 +8,8 @@ use std::time::Instant;
 use thiserror::Error;
 use tokio::net::{TcpStream, UnixStream};
 
+use crate::tunnel::TunnelConnector;
+
 #[derive(Error, Debug)]
 pub enum UpstreamError {
     #[error("Invalid address: {0}")]
@@ -120,13 +122,16 @@ impl UpstreamAddress {
 
     pub async fn connect_quictunnel_stream(
         &self,
-        runtime: &crate::tunnel::quic::runtime::QuicRuntime,
+        tunnel_connector: &dyn TunnelConnector,
     ) -> Result<(quinn::SendStream, quinn::RecvStream), UpstreamError> {
         match self {
             UpstreamAddress::QuicTunnel { peer, port } => {
                 let identifier = format!("port-{}", port);
 
-                match runtime.open_tunnel_stream_to_peer(peer, &identifier).await {
+                match tunnel_connector
+                    .open_tunnel_stream_to_peer(peer, &identifier)
+                    .await
+                {
                     Ok(streams) => Ok(streams),
                     Err(e) => Err(UpstreamError::ConnectionError(e.to_string())),
                 }
@@ -139,13 +144,13 @@ impl UpstreamAddress {
 
     pub async fn connect_quictunnel_tcp(
         &self,
-        runtime: &crate::tunnel::quic::runtime::QuicRuntime,
+        tunnel_connector: &dyn TunnelConnector,
     ) -> Result<QuicTunnelStream, UpstreamError> {
         match self {
             UpstreamAddress::QuicTunnel { peer, port } => {
                 let identifier = format!("port-{}", port);
 
-                let (send, recv) = runtime
+                let (send, recv) = tunnel_connector
                     .open_tunnel_stream_to_peer(peer, &identifier)
                     .await
                     .map_err(|e| UpstreamError::ConnectionError(e.to_string()))?;

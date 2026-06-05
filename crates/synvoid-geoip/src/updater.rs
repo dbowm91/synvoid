@@ -6,8 +6,8 @@ use flate2::read::GzDecoder;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::config::geoip::GeoIpConfig;
-use crate::http_client::{get_with_auth, get_with_timeout, head_with_auth};
+use synvoid_config::geoip::GeoIpConfig;
+use synvoid_http_client::{get_with_auth, get_with_timeout, head_with_auth};
 
 const MAXMIND_DOWNLOAD_BASE: &str = "https://download.maxmind.com/geoip/databases";
 
@@ -184,7 +184,7 @@ impl GeoIpUpdater {
         edition: &DatabaseEdition,
     ) -> Result<Option<i64>, GeoIpUpdaterError> {
         let source = self.source.as_ref().ok_or(GeoIpUpdaterError::NoSource)?;
-        let client = crate::http_client::create_http_client();
+        let client = synvoid_http_client::create_http_client();
         let timeout = Duration::from_secs(self.download_timeout_secs);
 
         let response = match source {
@@ -256,7 +256,7 @@ impl GeoIpUpdater {
         edition: &DatabaseEdition,
     ) -> Result<DownloadResult, GeoIpUpdaterError> {
         let source = self.source.as_ref().ok_or(GeoIpUpdaterError::NoSource)?;
-        let client = crate::http_client::create_http_client();
+        let client = synvoid_http_client::create_http_client();
         let timeout = Duration::from_secs(self.download_timeout_secs);
 
         let response = match source {
@@ -463,7 +463,12 @@ impl GeoIpUpdater {
             let mut state = self.state.write().await;
             state.consecutive_failures = 0;
             state.last_error = None;
-            state.last_success = Some(crate::utils::safe_unix_timestamp() as i64);
+            state.last_success = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            );
         }
 
         Ok(updated_editions)

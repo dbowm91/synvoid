@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless"]
+members = [".", "pqc", "src/wasm_pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -115,6 +115,7 @@ bloomfilter = "2"
 serde_bytes = "0.11"
 synvoid-config = { path = "crates/synvoid-config" }
 synvoid-http-client = { path = "crates/synvoid-http-client" }
+synvoid-upstream = { path = "crates/synvoid-upstream" }
 
 # DNS support
 hickory-proto = { version = "0.26", features = ["dnssec-ring"], optional = true }
@@ -199,6 +200,8 @@ synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" }
 synvoid-tls = { path = "crates/synvoid-tls" }
 synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" }
 synvoid-serverless = { path = "crates/synvoid-serverless" }
+synvoid-geoip = { path = "crates/synvoid-geoip" }
+synvoid-integrity = { path = "crates/synvoid-integrity" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }

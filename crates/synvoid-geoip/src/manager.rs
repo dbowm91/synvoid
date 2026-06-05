@@ -1,20 +1,16 @@
-pub mod lookup;
-pub mod types;
-pub mod updater;
-
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use crate::admin::alerting::AlertManager;
-use crate::config::geoip::GeoIpConfig;
-use crate::config::site::SiteGeoipConfig;
+use crate::traits::GeoIpNotificationHandler;
 use parking_lot::RwLock;
+use synvoid_config::geoip::GeoIpConfig;
+use synvoid_config::site::SiteGeoipConfig;
 use tokio::time::{interval, Duration};
 
-use lookup::GeoIpLookup;
-use types::{AsnInfo, CountryInfo, GeoIpResult, GeoIpStatus};
-use updater::GeoIpUpdater;
+use crate::lookup::GeoIpLookup;
+use crate::types::{AsnInfo, CountryInfo, GeoIpResult, GeoIpStatus};
+use crate::updater::GeoIpUpdater;
 
 pub struct GeoIpManager {
     config: Arc<GeoIpConfig>,
@@ -23,7 +19,7 @@ pub struct GeoIpManager {
     blocked_countries: Arc<RwLock<HashSet<String>>>,
     allowed_countries: Arc<RwLock<HashSet<String>>>,
     last_update: Arc<RwLock<Option<u64>>>,
-    alert_manager: Option<Arc<AlertManager>>,
+    alert_manager: Option<Arc<dyn GeoIpNotificationHandler>>,
     is_enabled: bool,
 }
 
@@ -41,7 +37,7 @@ impl GeoIpManager {
     pub fn new(
         config: GeoIpConfig,
         site_configs: &[SiteGeoipConfig],
-        alert_manager: Option<Arc<AlertManager>>,
+        alert_manager: Option<Arc<dyn GeoIpNotificationHandler>>,
     ) -> Option<Self> {
         if !config.enabled {
             return None;
@@ -165,12 +161,18 @@ impl GeoIpManager {
                             }
                         }
 
-                        let now = crate::utils::safe_unix_timestamp();
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
                         *last_update.write() = Some(now);
                         tracing::info!("GeoIP databases updated: {:?}", updated);
                     }
                     Ok(_) => {
-                        let now = crate::utils::safe_unix_timestamp();
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
                         *last_update.write() = Some(now);
                     }
                     Err(e) => {
@@ -178,7 +180,10 @@ impl GeoIpManager {
 
                         let days_since_update = {
                             if let Some(last) = *last_update.read() {
-                                let now = crate::utils::safe_unix_timestamp();
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs();
                                 (now - last) / (24 * 60 * 60)
                             } else {
                                 u64::MAX
@@ -199,7 +204,7 @@ impl GeoIpManager {
                                     let days = days_since_update;
                                     tokio::spawn(async move {
                                         if let Err(e) = am_clone
-                                            .send_geoip_stale_notification(&edition_clone, days)
+                                            .send_stale_notification(&edition_clone, days)
                                             .await
                                         {
                                             tracing::debug!(
@@ -274,7 +279,10 @@ impl GeoIpManager {
     pub fn is_stale(&self) -> bool {
         let threshold = self.config.stale_threshold_days as u64 * 24 * 60 * 60;
         if let Some(last) = *self.last_update.read() {
-            let now = crate::utils::safe_unix_timestamp();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             return (now - last) > threshold;
         }
         true
@@ -282,7 +290,10 @@ impl GeoIpManager {
 
     pub fn days_since_update(&self) -> Option<u64> {
         self.last_update.read().map(|last| {
-            let now = crate::utils::safe_unix_timestamp();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             (now - last) / (24 * 60 * 60)
         })
     }

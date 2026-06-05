@@ -161,6 +161,7 @@ impl AlertConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct AlertManager {
     config: Arc<TokioRwLock<AlertConfig>>,
     last_fired: Arc<TokioRwLock<std::collections::HashMap<String, i64>>>,
@@ -439,5 +440,21 @@ impl AlertManager {
 impl Default for AlertManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl synvoid_geoip::GeoIpNotificationHandler for AlertManager {
+    fn send_stale_notification(
+        &self,
+        edition_id: &str,
+        days: u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'static>> {
+        let self_clone = self.clone();
+        let edition_id = edition_id.to_string();
+        Box::pin(async move {
+            self_clone
+                .send_geoip_stale_notification(&edition_id, days)
+                .await
+        })
     }
 }

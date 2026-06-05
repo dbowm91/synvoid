@@ -8041,13 +8041,16 @@ dependencies = [
  "synvoid-challenge",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-geoip",
  "synvoid-http-client",
+ "synvoid-integrity",
  "synvoid-plugin-runtime",
  "synvoid-proxy-cache",
  "synvoid-serverless",
  "synvoid-tarpit",
  "synvoid-testkit",
  "synvoid-tls",
+ "synvoid-upstream",
  "synvoid-utils",
  "synvoid-waf",
  "sysinfo",
@@ -8147,6 +8150,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-geoip"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "flate2",
+ "maxminddb",
+ "parking_lot",
+ "serde",
+ "synvoid-config",
+ "synvoid-http-client",
+ "tar",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-http-client"
 version = "0.1.0"
 dependencies = [
@@ -8170,6 +8191,26 @@ dependencies = [
  "tokio",
  "tracing",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "synvoid-integrity"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "http 1.4.1",
+ "parking_lot",
+ "pqc",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "tracing",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -8265,6 +8306,26 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "x509-parser 0.16.0",
+]
+
+[[package]]
+name = "synvoid-upstream"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dashmap 7.0.0-rc2",
+ "futures",
+ "http 1.4.1",
+ "memmap2",
+ "metrics 0.22.4",
+ "parking_lot",
+ "quinn",
+ "rand 0.9.4",
+ "synvoid-http-client",
+ "synvoid-utils",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

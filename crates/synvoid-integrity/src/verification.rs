@@ -5,8 +5,8 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::integrity::signing::{headers_to_map, parse_integrity_headers, HttpMessageVerifier};
-use crate::integrity::{IntegrityConfig, SessionKey};
+use crate::signing::{headers_to_map, parse_integrity_headers, HttpMessageVerifier};
+use crate::{IntegrityConfig, SessionKey};
 
 #[derive(Debug, Clone)]
 pub enum VerificationResult {

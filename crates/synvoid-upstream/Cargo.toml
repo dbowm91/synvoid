@@ -1,0 +1,20 @@
+[package]
+name = "synvoid-upstream"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+synvoid-utils = { path = "../synvoid-utils" }
+synvoid-http-client = { path = "../synvoid-http-client" }
+parking_lot = "0.12"
+dashmap = "7.0.0-rc2"
+rand = "0.9"
+futures = "0.3"
+metrics = "0.22"
+memmap2 = "0.9"
+thiserror = "2"
+tracing = "0.1"
+quinn = { version = "0.11", features = ["runtime-tokio"] }
+tokio = { version = "1", features = ["full"] }
+http = "1"
+async-trait = "0.1"

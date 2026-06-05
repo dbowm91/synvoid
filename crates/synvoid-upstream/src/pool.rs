@@ -3,8 +3,8 @@ use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
-use crate::upstream::health::{HealthCheckConfig, HealthChecker};
-use crate::RunningFlag;
+use crate::health::{HealthCheckConfig, HealthChecker};
+use synvoid_utils::RunningFlag;
 
 static GLOBAL_POOL_REGISTRY: LazyLock<DashMap<String, Arc<UpstreamPool>>> =
     LazyLock::new(DashMap::new);
@@ -82,7 +82,7 @@ fn protocol_name(protocol: BackendProtocol) -> &'static str {
     }
 }
 
-use crate::upstream::shared_state::SharedConnectionTable;
+use crate::shared_state::SharedConnectionTable;
 
 #[derive(Clone)]
 pub enum ConnectionCounter {
@@ -188,7 +188,7 @@ impl Backend {
             use std::hash::{Hash, Hasher};
             validated_url.hash(&mut hasher);
             let backend_index = (hasher.finish() as usize) % table.max_backends();
-            let worker_id = crate::process::get_current_worker_id();
+            let worker_id = synvoid_utils::get_current_worker_id();
             ConnectionCounter::Shared {
                 table,
                 backend_index,
@@ -1293,8 +1293,8 @@ mod tests {
 
     #[test]
     fn test_backend_with_protocol() {
-        let backend = Backend::new("http://127.0.0.1:8080".to_string())
-            .with_protocol(BackendProtocol::GrpcTls);
+        let backend =
+            Backend::new("http://127.0.0.1:8080".to_string()).with_protocol(BackendProtocol::GrpcTls);
         assert_eq!(backend.protocol, BackendProtocol::GrpcTls);
     }
 

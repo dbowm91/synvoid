@@ -1,5 +1,9 @@
 //! Configuration for the integrity module
 
+fn default_true() -> bool {
+    true
+}
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,8 +81,6 @@ pub struct IntegrityConfig {
     #[serde(default)]
     pub allowed_upstream_ips: Vec<String>,
 }
-
-use crate::config::defaults::default_true;
 
 fn default_session_ttl_secs() -> u64 {
     300
