@@ -1,0 +1,32 @@
+[package]
+name = "synvoid-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+synvoid-core = { path = "../synvoid-core" }
+synvoid-config = { path = "../synvoid-config" }
+synvoid-http-client = { path = "../synvoid-http-client" }
+synvoid-upstream = { path = "../synvoid-upstream" }
+synvoid-proxy-cache = { path = "../synvoid-proxy-cache" }
+synvoid-waf = { path = "../synvoid-waf" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+bytes = "1"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+tracing = "0.1"
+metrics = "0.22"
+subtle = "2"
+ahash = "0.8"
+unicode-normalization = "0.1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+dashmap = "7.0.0-rc2"
+matchit = "0.7"
+hyper = { version = "1", features = ["http1", "http2", "client"] }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

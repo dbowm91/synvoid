@@ -1,26 +1,7 @@
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 
-/// System health state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HealthState {
-    Normal = 0,
-    Warning = 1,
-    Critical = 2,
-}
-
-impl From<u8> for HealthState {
-    fn from(v: u8) -> Self {
-        match v {
-            1 => HealthState::Warning,
-            2 => HealthState::Critical,
-            _ => HealthState::Normal,
-        }
-    }
-}
-
-static CURRENT_HEALTH: AtomicU8 = AtomicU8::new(0);
+pub use synvoid_utils::{GlobalHealthState, HealthState};
 
 /// Monitor for system-wide health and resource pressure.
 pub struct SystemHealthMonitor;
@@ -45,7 +26,7 @@ impl SystemHealthMonitor {
                     HealthState::Normal
                 };
 
-                CURRENT_HEALTH.store(state as u8, Ordering::Relaxed);
+                GlobalHealthState::set(state);
 
                 if state != HealthState::Normal {
                     tracing::warn!(
@@ -60,6 +41,6 @@ impl SystemHealthMonitor {
 
     /// Get the current global health state.
     pub fn get_state() -> HealthState {
-        HealthState::from(CURRENT_HEALTH.load(Ordering::Relaxed))
+        GlobalHealthState::get()
     }
 }
