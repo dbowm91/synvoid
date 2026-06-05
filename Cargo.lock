@@ -8033,6 +8033,7 @@ dependencies = [
  "synvoid-core",
  "synvoid-dns",
  "synvoid-geoip",
+ "synvoid-honeypot",
  "synvoid-http",
  "synvoid-http-client",
  "synvoid-icmp-filter",
@@ -8271,6 +8272,31 @@ dependencies = [
  "synvoid-config",
  "synvoid-http-client",
  "tar",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "synvoid-honeypot"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick 1.1.4",
+ "async-trait",
+ "bytes",
+ "hex",
+ "http 1.4.1",
+ "http-body-util",
+ "parking_lot",
+ "rand 0.9.4",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "synvoid-config",
+ "synvoid-http-client",
+ "synvoid-mesh",
+ "synvoid-utils",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

@@ -1,0 +1,29 @@
+[package]
+name = "synvoid-honeypot"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+mesh = ["dep:synvoid-mesh"]
+
+[dependencies]
+synvoid-config = { path = "../synvoid-config" }
+synvoid-utils = { path = "../synvoid-utils" }
+synvoid-http-client = { path = "../synvoid-http-client" }
+synvoid-mesh = { path = "../synvoid-mesh", optional = true }
+parking_lot = "0.12"
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.9"
+hex = "0.4"
+regex = "1"
+aho-corasick = "1.1"
+async-trait = "0.1"
+tracing = "0.1"
+thiserror = "2"
+http = "1"
+http-body-util = "0.1"
+bytes = "1"

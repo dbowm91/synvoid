@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter"]
+members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -117,6 +117,7 @@ synvoid-cli = { path = "crates/synvoid-cli" }
 synvoid-config = { path = "crates/synvoid-config" }
 synvoid-dns = { path = "crates/synvoid-dns", optional = true }
 synvoid-icmp-filter = { path = "crates/synvoid-icmp-filter", optional = true }
+synvoid-honeypot = { path = "crates/synvoid-honeypot" }
 synvoid-http-client = { path = "crates/synvoid-http-client" }
 synvoid-platform = { path = "crates/synvoid-platform" }
 synvoid-upstream = { path = "crates/synvoid-upstream" }
