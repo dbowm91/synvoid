@@ -4,7 +4,7 @@ use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 use crate::waf::ThreatLevelManager;
 use std::sync::Arc;
 
-use super::async_bucket::AsyncTokenBucket;
+use super::AsyncTokenBucket;
 
 #[derive(Clone)]
 pub struct GlobalTrafficShaper {

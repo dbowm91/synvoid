@@ -34,7 +34,7 @@ pub use violation_tracker::ViolationTracker;
 
 use crate::auth::AuthManager;
 use crate::block_store::BlockStore;
-use crate::challenge::{ChallengeConfig, ChallengeManager, ChallengeType};
+use crate::challenge::{ChallengeConfig, ChallengeManager};
 use crate::config::defaults::{AsnScrapingConfig, BlockedDefaults, BotDefaults};
 use crate::config::limits::RateLimitMemoryConfig;
 use crate::config::traffic::{BandwidthConfig, TrafficShapingConfig};
@@ -45,7 +45,7 @@ use crate::waf::attack_detection::AttackDetector;
 use crate::waf::bot::{BotDetectionResult, BotDetector};
 #[allow(unused_imports)]
 use crate::waf::endpoints::{
-    EndpointBlocker, EndpointBlockerManager, EndpointCheckResult, ErrorPageManager,
+    EndpointBlockerManager, EndpointCheckResult, ErrorPageManager,
     SensitiveEndpointManager,
 };
 use crate::waf::ip_feed::IpFeedManager;
@@ -58,88 +58,7 @@ pub use ratelimit::{RateLimitResult, RateLimiterManager};
 // YaraRulesManager is actually in mesh module
 pub use crate::mesh::yara_rules::YaraRulesManager;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WafDecision {
-    Pass,
-    Block(u16, String),
-    Drop,
-    Tarpit(String),
-    Stall,
-    Challenge(ChallengeType, String),
-    ChallengeWithCookie {
-        challenge_type: ChallengeType,
-        html: String,
-        session_cookie_name: String,
-        session_cookie_value: String,
-        session_cookie_max_age: u64,
-    },
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct TestModeConfig {
-    pub enabled: bool,
-    pub ratelimit_off: bool,
-    pub attack_off: bool,
-    pub bot_off: bool,
-    pub challenge_off: bool,
-    pub flood_off: bool,
-    pub asn_off: bool,
-}
-
-impl TestModeConfig {
-    pub fn all_off() -> Self {
-        Self {
-            enabled: true,
-            ratelimit_off: true,
-            attack_off: true,
-            bot_off: true,
-            challenge_off: true,
-            flood_off: true,
-            asn_off: true,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct WafConfig {
-    pub enable_css_honeypot: bool,
-    pub enable_pow_challenge: bool,
-    pub enable_auth_challenge: bool,
-    pub auth_login_path: String,
-    pub block_ai_crawlers: bool,
-    pub drop_blocked_requests: bool,
-    pub test_mode: TestModeConfig,
-    pub honeypot_ban_duration_secs: u64,
-    pub css_exempt_paths: Vec<String>,
-}
-
-impl WafConfig {
-    pub fn new(
-        enable_css_honeypot: bool,
-        enable_pow_challenge: bool,
-        enable_auth_challenge: bool,
-        auth_login_path: String,
-        block_ai_crawlers: bool,
-        drop_blocked_requests: bool,
-        test_mode: TestModeConfig,
-        honeypot_ban_duration_secs: u64,
-    ) -> Self {
-        Self {
-            enable_css_honeypot,
-            enable_pow_challenge,
-            enable_auth_challenge,
-            auth_login_path,
-            block_ai_crawlers,
-            drop_blocked_requests,
-            test_mode,
-            honeypot_ban_duration_secs,
-            css_exempt_paths: vec![
-                "/_waf_css_challenge".to_string(),
-                "/_waf_assets".to_string(),
-            ],
-        }
-    }
-}
+pub use synvoid_waf::primitives::{TestModeConfig, WafConfig, WafDecision};
 
 pub struct RateLimitConfigStore {
     pub ip: crate::config::defaults::IpRateLimitConfig,

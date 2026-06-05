@@ -5,3 +5,5 @@
 
 pub mod pow;
 pub mod types;
+
+pub use types::{ChallengePriority, ChallengeResult, ChallengeType};
