@@ -1,0 +1,21 @@
+[package]
+name = "synvoid-icmp-filter"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+icmp-ebpf = []
+icmp-pf = []
+icmp-winfw = []
+icmp-wfp = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+metrics = "0.22"
+tracing = "0.1"
+libc = "0.2"
+
+[dev-dependencies]
+serde_json = "1"

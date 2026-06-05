@@ -8035,6 +8035,7 @@ dependencies = [
  "synvoid-geoip",
  "synvoid-http",
  "synvoid-http-client",
+ "synvoid-icmp-filter",
  "synvoid-integrity",
  "synvoid-mesh",
  "synvoid-metrics",
@@ -8045,6 +8046,7 @@ dependencies = [
  "synvoid-serverless",
  "synvoid-tarpit",
  "synvoid-testkit",
+ "synvoid-theme",
  "synvoid-tls",
  "synvoid-tunnel",
  "synvoid-upstream",
@@ -8351,6 +8353,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-icmp-filter"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "metrics 0.22.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-integrity"
 version = "0.1.0"
 dependencies = [
@@ -8577,6 +8591,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-theme"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand 0.9.4",
+ "synvoid-config",
+]
+
+[[package]]
 name = "synvoid-tls"
 version = "0.1.0"
 dependencies = [
@@ -8699,6 +8722,29 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-normalization",
+]
+
+[[package]]
+name = "synvoid-wasm-pow"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "console_error_panic_hook",
+ "getrandom 0.2.17",
+ "hex",
+ "js-sys",
+ "pqc_kyber_edit",
+ "rand 0.8.6",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "sha2",
+ "tracing",
+ "tracing-wasm",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -10014,29 +10060,6 @@ dependencies = [
  "indexmap",
  "wasm-encoder 0.244.0",
  "wasmparser 0.244.0",
-]
-
-[[package]]
-name = "wasm-pow"
-version = "0.1.0"
-dependencies = [
- "base64",
- "console_error_panic_hook",
- "getrandom 0.2.17",
- "hex",
- "js-sys",
- "pqc_kyber_edit",
- "rand 0.8.6",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "sha2",
- "tracing",
- "tracing-wasm",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "x25519-dalek",
 ]
 
 [[package]]
