@@ -1,3 +1,8 @@
+pub use synvoid_admin::handlers::stats;
+pub use synvoid_admin::handlers::logs;
+pub use synvoid_admin::handlers::probes;
+pub use synvoid_admin::handlers::system;
+
 pub mod alerting;
 pub mod api_discovery;
 pub mod auth;
@@ -7,20 +12,16 @@ pub mod common;
 pub mod config;
 pub mod honeypot;
 pub mod icmp;
-pub mod logs;
 #[cfg(feature = "mesh")]
 pub mod mesh_admin;
 #[cfg(feature = "mesh")]
 pub mod mesh_topology;
 pub mod php;
 pub mod plugins;
-pub mod probes;
 pub mod rule_feed;
 pub mod serverless;
 pub mod sites;
 pub mod spin;
-pub mod stats;
-pub mod system;
 pub mod tcp_udp;
 pub mod theme;
 pub mod threat_level;

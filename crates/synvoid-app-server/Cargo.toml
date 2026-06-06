@@ -1,0 +1,15 @@
+[package]
+name = "synvoid-app-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+bytes = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+http = "1"
+uuid = { version = "1", features = ["v4"] }
+synvoid-utils = { path = "../synvoid-utils" }
+synvoid-http-client = { path = "../synvoid-http-client" }

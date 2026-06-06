@@ -436,6 +436,8 @@ pub struct QueryContext<'a> {
     pub dns64_translator: Option<&'a super::dns64::Dns64Translator>,
     pub acme_dns_challenges: Option<&'a Arc<synvoid_tls::AcmeDnsChallenge>>,
     pub cookie_server: Option<&'a Arc<crate::cookie::DnsCookieServer>>,
+    #[cfg(feature = "mesh")]
+    pub mesh_registry: Option<&'a Arc<crate::mesh_sync::MeshDnsRegistry>>,
 }
 
 pub struct DnsServer {
@@ -472,6 +474,8 @@ pub struct DnsServer {
     dns64_translator: Option<super::dns64::Dns64Translator>,
     pub(crate) acme_dns_challenges: Option<Arc<synvoid_tls::AcmeDnsChallenge>>,
     cookie_server: Option<Arc<crate::cookie::DnsCookieServer>>,
+    #[cfg(feature = "mesh")]
+    mesh_registry: Option<Arc<crate::mesh_sync::MeshDnsRegistry>>,
 }
 
 impl Clone for DnsServer {
@@ -508,6 +512,8 @@ impl Clone for DnsServer {
             dns64_translator: self.dns64_translator.clone(),
             acme_dns_challenges: self.acme_dns_challenges.clone(),
             cookie_server: self.cookie_server.clone(),
+            #[cfg(feature = "mesh")]
+            mesh_registry: self.mesh_registry.clone(),
         }
     }
 }
@@ -819,6 +825,8 @@ impl DnsServer {
             dns64_translator,
             acme_dns_challenges: None,
             cookie_server: Some(Arc::new(crate::cookie::DnsCookieServer::new())),
+            #[cfg(feature = "mesh")]
+            mesh_registry: None,
         }
     }
 

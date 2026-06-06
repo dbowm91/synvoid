@@ -168,6 +168,8 @@ impl DnsServer {
                 dns64_translator: None,
                 acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
                 cookie_server: cookie_server_udp.as_ref(),
+                #[cfg(feature = "mesh")]
+                mesh_registry: None,
             };
             let mut buf = vec![0u8; udp_buffer_size];
 
@@ -408,6 +410,8 @@ impl DnsServer {
                                         dns64_translator: None,
                                         acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
                                         cookie_server: cookie_server_clone.as_ref(),
+                                        #[cfg(feature = "mesh")]
+                                        mesh_registry: None,
                                     };
                                     if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
                                         tracing::debug!("TCP DNS error: {}", e);

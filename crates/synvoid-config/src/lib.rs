@@ -95,7 +95,8 @@ pub use upload::{UploadAllowedTypesDefaults, UploadDefaults};
 pub use validation::{parse_size_string, ConfigValidationError};
 
 pub use mesh::{
-    MeshConfig, MeshLocalUpstream, MeshNodeRole, MeshPeerConfig, MeshRoutingConfig, MeshSeedNode,
+    MeshCompressionConfig, MeshConfig, MeshImageProtectionConfig, MeshLocalUpstream,
+    MeshMinificationConfig, MeshNodeRole, MeshPeerConfig, MeshRoutingConfig, MeshSeedNode,
     MeshServicePolicy, MeshTlsConfig, MeshUpstreamConfig, MeshUpstreamPeer,
 };
 pub use site::{

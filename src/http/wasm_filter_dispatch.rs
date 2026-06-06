@@ -22,7 +22,7 @@ pub fn maybe_handle_wasm_request_filter(
     main_config: &Arc<MainConfig>,
     on_request_log: impl Fn(u16),
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
-    let pm = router.plugin_manager()?;
+    let pm = router.plugin_manager()?.downcast_ref::<crate::plugin::PluginManager>()?;
     let body_bytes: Bytes = body_slice
         .as_ref()
         .map(|b: &Arc<Bytes>| b.to_vec().into())

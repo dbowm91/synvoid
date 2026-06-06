@@ -136,6 +136,8 @@ impl DotServer {
                 dns64_translator: None,
                 acme_dns_challenges: acme_dns_challenges.as_ref(),
                 cookie_server: None,
+                #[cfg(feature = "mesh")]
+                mesh_registry: None,
             };
 
             let response = if let Some(c) = &ctx.cache {

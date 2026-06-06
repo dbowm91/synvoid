@@ -1,23 +1,17 @@
-mod css;
-pub mod honeypot;
-mod mesh_pow;
-mod pow;
-
-pub use css::{
+pub use synvoid_challenge::css::{
     AssetRequestResult, CssAssetAction, CssChallengeData, CssManager, CssVerificationResult,
 };
-pub use honeypot::{HoneypotEntry, HoneypotTracker, HONEYPOT_PREFIX};
-pub use mesh_pow::{
-    MeshAuditResult, MeshPowConfig, MeshPowManager, MeshPowResult, MeshPowSolution,
-};
-pub use pow::{PowChallenge, PowManager, PowResult};
+pub use synvoid_challenge::honeypot::{HoneypotEntry, HoneypotTracker, HONEYPOT_PREFIX};
+pub use synvoid_challenge::manager_pow::{PowChallenge, PowManager, PowResult};
 
-// Re-export types from the extracted crate for backwards compatibility
 pub use synvoid_challenge::pow::{has_leading_zeros, has_leading_zeros_ct, solve_pow_sync};
 pub use synvoid_challenge::types::*;
 
-use crate::theme::{ChallengePageTemplate, ThemeConfig};
-use crate::utils::current_timestamp;
+mod mesh_pow;
+pub use mesh_pow::{MeshAuditResult, MeshPowConfig, MeshPowManager, MeshPowResult, MeshPowSolution};
+
+use synvoid_theme::{ChallengePageTemplate, ThemeConfig};
+use synvoid_utils::current_timestamp;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;

@@ -1,3 +1,1 @@
-pub mod bidirectional;
-
-pub use bidirectional::{copy_bidirectional, ProxyError, ProxyResult};
+pub use synvoid_proxy::bidirectional::*;

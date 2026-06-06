@@ -692,3 +692,29 @@ impl MeshConfig {
         self.global_node.load_keys()
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct MeshImageProtectionConfig {
+    pub enabled: Option<bool>,
+    pub min_size_bytes: Option<usize>,
+    pub whitelist_patterns: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct MeshCompressionConfig {
+    pub enabled: Option<bool>,
+    pub gzip_on_the_fly: Option<bool>,
+    pub gzip_level: Option<u32>,
+    pub gzip_min_size: Option<usize>,
+    pub gzip_types: Option<Vec<String>>,
+    pub enable_brotli: Option<bool>,
+    pub brotli_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct MeshMinificationConfig {
+    pub enabled: Option<bool>,
+    pub enable_html: Option<bool>,
+    pub enable_css: Option<bool>,
+    pub enable_js: Option<bool>,
+}

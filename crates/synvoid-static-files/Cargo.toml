@@ -1,0 +1,39 @@
+[package]
+name = "synvoid-static-files"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+mesh = ["synvoid-config/mesh"]
+
+[dependencies]
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+metrics = "0.22"
+tokio = { version = "1", features = ["fs", "io-util", "rt", "time", "macros"] }
+tracing = "0.1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+walkdir = "2"
+flate2 = "1"
+brotli = "6"
+tempfile = "3"
+lightningcss = "1.0.0-alpha.71"
+minify-html = "0.18"
+minify-js = "0.6"
+anyhow = "1"
+url = "2"
+
+# SynVoid crates
+synvoid-config = { path = "../synvoid-config" }
+synvoid-ipc = { path = "../synvoid-ipc" }
+synvoid-theme = { path = "../synvoid-theme" }
+synvoid-utils = { path = "../synvoid-utils" }
+synvoid-app-handlers = { path = "../synvoid-app-handlers" }

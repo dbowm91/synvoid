@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+parking_lot = "0.12"
+rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
 subtle = "2"
+synvoid-theme = { path = "../synvoid-theme" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+tracing = "0.1"

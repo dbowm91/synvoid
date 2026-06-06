@@ -1,11 +1,4 @@
-pub mod adapter;
-pub mod collection;
-
-// Re-export from extracted crate
-pub use collection::*;
 pub use synvoid_metrics::*;
-
-pub use adapter::WorkerMetricsSink;
 
 #[cfg(test)]
 mod tests {

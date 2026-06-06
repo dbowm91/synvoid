@@ -8027,6 +8027,8 @@ dependencies = [
  "synvoid",
  "synvoid-admin",
  "synvoid-app-handlers",
+ "synvoid-app-server",
+ "synvoid-block-store",
  "synvoid-challenge",
  "synvoid-cli",
  "synvoid-config",
@@ -8046,6 +8048,7 @@ dependencies = [
  "synvoid-proxy",
  "synvoid-proxy-cache",
  "synvoid-serverless",
+ "synvoid-static-files",
  "synvoid-tarpit",
  "synvoid-testkit",
  "synvoid-theme",
@@ -8054,6 +8057,7 @@ dependencies = [
  "synvoid-upload",
  "synvoid-upstream",
  "synvoid-utils",
+ "synvoid-vpn-client",
  "synvoid-waf",
  "sysinfo 0.38.4",
  "syslog",
@@ -8105,8 +8109,13 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "synvoid-app-server",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-ipc",
+ "synvoid-metrics",
+ "synvoid-static-files",
+ "synvoid-waf",
  "tokio",
  "tower",
  "tower-http",
@@ -8142,14 +8151,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-app-server"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http 1.4.1",
+ "parking_lot",
+ "serde",
+ "synvoid-http-client",
+ "synvoid-utils",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "synvoid-block-store"
+version = "0.1.0"
+dependencies = [
+ "ahash 0.8.12",
+ "arc-swap",
+ "parking_lot",
+ "proptest",
+ "serde",
+ "serde_json",
+ "synvoid-config",
+ "synvoid-mesh",
+ "synvoid-utils",
+ "synvoid-waf",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-challenge"
 version = "0.1.0"
 dependencies = [
  "base64",
  "hex",
+ "parking_lot",
+ "rand 0.9.4",
  "serde",
  "sha2",
  "subtle",
+ "synvoid-theme",
+ "synvoid-utils",
+ "tracing",
 ]
 
 [[package]]
@@ -8241,6 +8289,7 @@ dependencies = [
  "synvoid-config",
  "synvoid-core",
  "synvoid-geoip",
+ "synvoid-mesh",
  "synvoid-tls",
  "synvoid-utils",
  "thiserror 2.0.18",
@@ -8248,6 +8297,7 @@ dependencies = [
  "tokio-dstip",
  "tokio-rustls",
  "tracing",
+ "uuid",
  "zeroize",
 ]
 
@@ -8551,14 +8601,22 @@ dependencies = [
 name = "synvoid-plugin-runtime"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "bytes",
  "http 1.4.1",
  "http-body",
  "http-body-util",
+ "libloading",
+ "notify",
  "parking_lot",
+ "serde",
+ "serde_json",
+ "synvoid-utils",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.23",
  "tracing",
+ "uuid",
  "wasmtime 42.0.2",
 ]
 
@@ -8567,6 +8625,7 @@ name = "synvoid-proxy"
 version = "0.1.0"
 dependencies = [
  "ahash 0.8.12",
+ "async-trait",
  "bytes",
  "dashmap 7.0.0-rc2",
  "futures",
@@ -8577,18 +8636,25 @@ dependencies = [
  "matchit 0.7.3",
  "metrics 0.22.4",
  "regex",
+ "schemars 0.8.22",
  "serde",
  "subtle",
  "synvoid-config",
  "synvoid-core",
  "synvoid-http-client",
+ "synvoid-metrics",
+ "synvoid-platform",
+ "synvoid-plugin-runtime",
  "synvoid-proxy-cache",
+ "synvoid-static-files",
  "synvoid-upstream",
  "synvoid-utils",
  "synvoid-waf",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "unicode-normalization",
+ "uuid",
 ]
 
 [[package]]
@@ -8624,6 +8690,36 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "synvoid-static-files"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brotli",
+ "bytes",
+ "flate2",
+ "http 1.4.1",
+ "http-body-util",
+ "lightningcss",
+ "metrics 0.22.4",
+ "minify-html",
+ "minify-js",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "synvoid-app-handlers",
+ "synvoid-config",
+ "synvoid-ipc",
+ "synvoid-theme",
+ "synvoid-utils",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "walkdir",
 ]
 
 [[package]]
@@ -8777,14 +8873,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-vpn-client"
+version = "0.1.0"
+dependencies = [
+ "dashmap 7.0.0-rc2",
+ "metrics 0.22.4",
+ "quinn",
+ "serde",
+ "synvoid-config",
+ "synvoid-platform",
+ "synvoid-tunnel",
+ "synvoid-utils",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "synvoid-waf"
 version = "0.1.0"
 dependencies = [
  "aho-corasick 1.1.4",
+ "arc-swap",
  "async-trait",
  "base64",
  "bitflags",
+ "bytes",
  "dashmap 6.2.1",
+ "futures-core",
  "hex",
  "http 1.4.1",
  "isbot",

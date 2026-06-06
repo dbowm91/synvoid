@@ -1,0 +1,16 @@
+[package]
+name = "synvoid-vpn-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+synvoid-config = { path = "../synvoid-config" }
+synvoid-tunnel = { path = "../synvoid-tunnel" }
+synvoid-platform = { path = "../synvoid-platform" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+tokio = { version = "1", features = ["full"] }
+dashmap = "7.0.0-rc2"
+metrics = "0.22"
+quinn = { version = "0.11", features = ["runtime-tokio"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"

@@ -1,7 +1,10 @@
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use http::HeaderMap;
 use synvoid_core::request::{BodyScanPhase, RequestContext};
 
@@ -146,6 +149,20 @@ pub trait ChallengeService: Send + Sync + 'static {
 /// blocked IPs, detected attacks, etc.).
 pub trait WafPersistence: Send + Sync + 'static {
     fn persist_violation(&self, key: &str, reason: &str);
+}
+
+/// Provides the current threat level for a request context.
+pub trait ThreatLevelProvider: Send + Sync + 'static {
+    fn get_threat_level(&self) -> u8;
+}
+
+/// Provides tarpit response streaming for slow-response attacks.
+pub trait TarpitService: Send + Sync + 'static {
+    fn stream_tarpit(
+        &self,
+        path: &str,
+        user_agent: Option<&str>,
+    ) -> Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, std::io::Error>> + Send + Sync + 'static>>;
 }
 
 #[cfg(test)]

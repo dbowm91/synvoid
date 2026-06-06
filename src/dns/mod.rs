@@ -1,15 +1,15 @@
 //! DNS Server module for SynVoid
 //!
 //! Re-exports from the extracted synvoid-dns crate.
-//! Mesh-specific DNS modules (mesh_dnssec, mesh_sync, anycast_sync) remain here
-//! because they depend on root mesh types.
+//! Mesh-specific DNS modules (mesh_dnssec, mesh_sync, anycast_sync) are now
+//! in the synvoid-dns crate, feature-gated behind `mesh`.
 
 #[cfg(feature = "dns")]
 pub use synvoid_dns::*;
 
 #[cfg(feature = "mesh")]
-pub mod anycast_sync;
-#[cfg(feature = "dns")]
-pub mod mesh_dnssec;
+pub use synvoid_dns::mesh_dnssec;
 #[cfg(feature = "mesh")]
-pub mod mesh_sync;
+pub use synvoid_dns::mesh_sync;
+#[cfg(feature = "mesh")]
+pub use synvoid_dns::anycast_sync;

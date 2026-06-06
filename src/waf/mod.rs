@@ -11,7 +11,7 @@ pub mod attack_detection;
 pub mod endpoints;
 pub mod flood;
 pub mod ip_feed;
-pub mod mitigation;
+pub use synvoid_waf::mitigation;
 pub mod probe_tracker;
 pub mod ratelimit;
 pub mod rule_feed;
@@ -122,6 +122,8 @@ pub struct WafCore {
     pub flood_protector: Option<Arc<FloodProtector>>,
     pub trust_token_key: [u8; 32],
 }
+
+impl synvoid_proxy::protocol::trait_def::WafCoreBackend for WafCore {}
 
 pub use crate::worker::context::RequestServices;
 

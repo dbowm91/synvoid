@@ -13,7 +13,7 @@ use crate::buffer::BufferPool;
 use crate::metrics::bandwidth::{
     get_global_bandwidth_tracker_or_log, BandwidthProtocol, EgressDirection,
 };
-use crate::streaming::bidirectional::copy_bidirectional_native;
+use crate::streaming::copy_bidirectional_native;
 use crate::tcp::filter::{FilterAction, ProtocolFilter};
 use crate::tcp::protocol::ProtocolDetector;
 use crate::tunnel;

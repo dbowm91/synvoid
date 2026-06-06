@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(feature = "mesh")]
+use crate::mesh_sync::MeshDnsRegistry;
+
 impl DnsServer {
     pub(super) fn build_simple_nxdomain_response(query: &[u8]) -> Option<Arc<Vec<u8>>> {
         use crate::wire::{build_response_header, MessageFlags};

@@ -5,10 +5,11 @@ edition = "2021"
 
 [features]
 default = []
-mesh = []
+mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
+synvoid-mesh = { path = "../synvoid-mesh", optional = true }
 synvoid-config = { path = "../synvoid-config", features = ["dns"] }
 synvoid-tls = { path = "../synvoid-tls", features = ["dns"] }
 synvoid-utils = { path = "../synvoid-utils" }
@@ -54,4 +55,5 @@ rand_core_06 = { package = "rand_core", version = "0.6" }
 rsa = "0.9"
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 subtle = "2"
+uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }

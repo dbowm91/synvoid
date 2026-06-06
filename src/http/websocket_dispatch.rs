@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::{connect_async, WebSocketStream};
 
 use crate::config::site::SiteWebSocketConfig;
-use crate::protocol::trait_def::{ProtocolHandler, WafAction};
+use crate::protocol::trait_def::{ProtocolHandler, WafAction, WafCoreBackend};
 use crate::protocol::types::{ProtocolRequest, ProtocolType};
 use crate::protocol::websocket::WebSocketHandler;
 use crate::proxy::join_upstream_url;
@@ -113,7 +113,7 @@ pub async fn handle_websocket_tunnel(
                 metadata: HashMap::new(),
             };
 
-            let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+            let action = ws_handler.apply_waf(&mut proto_request, &(waf_clone.clone() as Arc<dyn WafCoreBackend>));
             match action {
                 WafAction::Block => {
                     tracing::warn!(
@@ -194,7 +194,7 @@ pub async fn handle_websocket_tunnel(
                 metadata: HashMap::new(),
             };
 
-            let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+            let action = ws_handler.apply_waf(&mut proto_request, &(waf_clone.clone() as Arc<dyn WafCoreBackend>));
             match action {
                 WafAction::Block => {
                     tracing::warn!(
@@ -333,7 +333,7 @@ pub async fn handle_websocket_to_appserver(
                 metadata: HashMap::new(),
             };
 
-            let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+            let action = ws_handler.apply_waf(&mut proto_request, &(waf_clone.clone() as Arc<dyn WafCoreBackend>));
             match action {
                 WafAction::Block => {
                     tracing::warn!(
@@ -414,7 +414,7 @@ pub async fn handle_websocket_to_appserver(
                 metadata: HashMap::new(),
             };
 
-            let action = ws_handler.apply_waf(&mut proto_request, &waf_clone);
+            let action = ws_handler.apply_waf(&mut proto_request, &(waf_clone.clone() as Arc<dyn WafCoreBackend>));
             match action {
                 WafAction::Block => {
                     tracing::warn!(

@@ -6,6 +6,11 @@ edition = "2021"
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
 synvoid-config = { path = "../synvoid-config" }
+synvoid-ipc = { path = "../synvoid-ipc" }
+synvoid-waf = { path = "../synvoid-waf" }
+synvoid-metrics = { path = "../synvoid-metrics" }
+synvoid-static-files = { path = "../synvoid-static-files" }
+synvoid-app-server = { path = "../synvoid-app-server" }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower-http = { version = "0.6", features = ["cors"] }
@@ -28,4 +33,13 @@ axum-core = "0.5"
 default = []
 mesh = []
 dns = []
+socket-handoff = []
+icmp-filter = []
+flood-ebpf = []
+post-quantum = []
+macos-sandbox = []
+wireguard = []
 swagger-ui = ["dep:utoipa-swagger-ui"]
+
+[build-dependencies]
+chrono = "0.4"

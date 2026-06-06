@@ -30,7 +30,7 @@ audit = []
 post-quantum = []  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
 verify-pq = []
 tun-rs = ["synvoid-tunnel/tun-rs"]
-mesh = ["synvoid-config/mesh", "synvoid-serverless/mesh", "dep:openraft", "dep:synvoid-mesh", "synvoid-mesh/mesh"]
+mesh = ["synvoid-config/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "dep:openraft", "dep:synvoid-mesh", "synvoid-mesh/mesh"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []
@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-ipc"]
+members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -217,6 +217,10 @@ synvoid-mesh = { path = "crates/synvoid-mesh", optional = true }
 synvoid-app-handlers = { path = "crates/synvoid-app-handlers" }
 synvoid-metrics = { path = "crates/synvoid-metrics" }
 synvoid-theme = { path = "crates/synvoid-theme" }
+synvoid-block-store = { path = "crates/synvoid-block-store" }
+synvoid-app-server = { path = "crates/synvoid-app-server" }
+synvoid-vpn-client = { path = "crates/synvoid-vpn-client" }
+synvoid-static-files = { path = "crates/synvoid-static-files" }
 
 # WASM support for plugins
 wasmtime = { version = "42.0.2", features = ["component-model"] }

@@ -233,7 +233,7 @@ pub struct DynamicUpdateHandler {
     tsig_verifier: Option<Arc<TsigVerifier>>,
     allowed_ips: Vec<String>,
     #[cfg(feature = "mesh")]
-    zone_sync: Option<Arc<super::anycast_sync::AnycastZoneSync>>,
+    zone_sync: Option<Arc<crate::anycast_sync::AnycastZoneSync>>,
 }
 
 impl DynamicUpdateHandler {
@@ -268,7 +268,7 @@ impl DynamicUpdateHandler {
     }
 
     #[cfg(feature = "mesh")]
-    pub fn with_zone_sync(mut self, zone_sync: super::anycast_sync::AnycastZoneSync) -> Self {
+    pub fn with_zone_sync(mut self, zone_sync: crate::anycast_sync::AnycastZoneSync) -> Self {
         self.zone_sync = Some(Arc::new(zone_sync));
         self
     }
@@ -444,7 +444,7 @@ impl DynamicUpdateHandler {
                 if let Err(e) = sync_clone
                     .trigger_sync(
                         &zone_origin_for_sync,
-                        super::anycast_sync::ZoneSyncReason::DynamicUpdate,
+                        crate::anycast_sync::ZoneSyncReason::DynamicUpdate,
                     )
                     .await
                 {

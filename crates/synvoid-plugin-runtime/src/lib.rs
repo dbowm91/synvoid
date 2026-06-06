@@ -1,9 +1,12 @@
 //! WASM plugin runtime and sandbox integration.
 
+pub mod axum_loader;
 pub mod global;
 pub mod instance_pool;
 pub mod mesh_callbacks;
+pub mod plugin_manager;
 pub mod pool;
+pub mod spin;
 pub mod streaming_body;
 pub mod wasm_metrics;
 pub mod wasm_runtime;

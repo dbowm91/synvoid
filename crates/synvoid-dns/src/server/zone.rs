@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(feature = "mesh")]
+use crate::mesh_sync::MeshDnsRegistry;
+
 impl DnsServer {
     pub fn load_zones(&self, zone_configs: Vec<DnsZoneEntry>) -> Result<(), String> {
         for zone_config in zone_configs {
@@ -288,6 +291,8 @@ impl DnsServer {
             dns64_translator: self.dns64_translator.as_ref(),
             acme_dns_challenges: self.acme_dns_challenges.as_ref(),
             cookie_server: self.cookie_server.as_ref(),
+            #[cfg(feature = "mesh")]
+            mesh_registry: self.mesh_registry.as_ref(),
         }
     }
 

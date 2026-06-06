@@ -3,6 +3,7 @@
 //! Handles header manipulation, retry logic, memory governance,
 //! location matching, proxy execution, and streaming cache tee.
 
+pub mod bidirectional;
 pub mod cache;
 pub mod client_registry;
 pub mod dispatch;
@@ -10,8 +11,12 @@ pub mod executor;
 pub mod governor;
 pub mod headers;
 pub mod location_matcher;
+pub mod protocol;
 pub mod retry;
+pub mod router;
+pub mod router_adapter;
 pub mod routing;
+pub mod server;
 pub mod streaming;
 
 pub use cache::{
@@ -36,4 +41,6 @@ pub use retry::{
     calculate_backoff, is_connection_error, is_idempotent_method, is_retryable_status,
     is_timeout_error, should_retry_request,
 };
+pub use router::{BackendType, RouteResult, RouteTarget, Router};
+pub use router_adapter::RouterRouteResolver;
 pub use streaming::TeeBody;

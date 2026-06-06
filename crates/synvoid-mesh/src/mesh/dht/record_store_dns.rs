@@ -121,7 +121,6 @@ impl RecordStoreManager {
         self.remove(&key)
     }
 
-    #[cfg(feature = "dns")]
     pub fn store_anycast_node(
         &self,
         node_id: String,
@@ -204,7 +203,6 @@ impl RecordStoreManager {
         stored
     }
 
-    #[cfg(feature = "dns")]
     pub fn get_anycast_node(&self, node_id: &str) -> Option<AnycastNode> {
         if !self.config.enabled {
             return None;
@@ -216,7 +214,6 @@ impl RecordStoreManager {
         synvoid_utils::serialization::deserialize::<AnycastNode>(&record.value).ok()
     }
 
-    #[cfg(feature = "dns")]
     pub fn get_anycast_nodes_for_zone(&self, zone: &str) -> Vec<AnycastNode> {
         if !self.config.enabled {
             return Vec::new();
@@ -240,7 +237,6 @@ impl RecordStoreManager {
         nodes
     }
 
-    #[cfg(feature = "dns")]
     pub fn get_all_anycast_nodes(&self) -> Vec<AnycastNode> {
         if !self.config.enabled {
             return Vec::new();
@@ -262,7 +258,6 @@ impl RecordStoreManager {
         nodes
     }
 
-    #[cfg(feature = "dns")]
     /// Returns anycast node records with their signatures intact for verification.
     pub fn get_all_anycast_records(&self) -> Vec<DhtRecord> {
         if !self.config.enabled {
@@ -281,7 +276,6 @@ impl RecordStoreManager {
         records
     }
 
-    #[cfg(feature = "dns")]
     pub fn remove_anycast_node(&self, node_id: &str) -> bool {
         if !self.config.enabled || !self.is_global_node() {
             return false;

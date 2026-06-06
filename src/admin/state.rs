@@ -862,6 +862,272 @@ impl AdminState {
     }
 }
 
+impl synvoid_admin::handlers::state::AdminStateProvider for AdminState {
+    fn get_metrics(&self) -> synvoid_admin::handlers::state::AggregatedMetrics {
+        let m = self.metrics.metrics.read().clone();
+        synvoid_admin::handlers::state::AggregatedMetrics {
+            total_requests: m.total_requests,
+            blocked: m.blocked,
+            challenged: m.challenged,
+            proxied: m.proxied,
+            errors: m.errors,
+            current_concurrent: m.current_concurrent,
+            peak_concurrent: m.peak_concurrent,
+            avg_latency_ms: m.avg_latency_ms,
+            p50_latency_ms: m.p50_latency_ms,
+            p95_latency_ms: m.p95_latency_ms,
+            p99_latency_ms: m.p99_latency_ms,
+            uptime_secs: m.uptime_secs,
+            memory_bytes: m.memory_bytes,
+            cpu_percent: m.cpu_percent,
+            requests_per_second: m.requests_per_second,
+            blocked_per_second: m.blocked_per_second,
+            healthy_backends: m.healthy_backends,
+            unhealthy_backends: m.unhealthy_backends,
+            healthy_workers: m.healthy_workers,
+            unhealthy_workers: m.unhealthy_workers,
+            blocked_by_type: m.blocked_by_type,
+            metrics_timestamp_ms: m.metrics_timestamp_ms,
+        }
+    }
+
+    fn get_site_metrics(
+        &self,
+    ) -> std::collections::HashMap<String, crate::metrics::SiteMetricsPayload> {
+        self.metrics.site_metrics.read().clone()
+    }
+
+    fn get_metrics_history(
+        &self,
+        seconds: u64,
+    ) -> Vec<synvoid_admin::handlers::state::AggregatedMetrics> {
+        let history = self.metrics.metrics_history.read();
+        let count = seconds.min(MAX_HISTORY_SIZE as u64) as usize;
+        let start = if history.len() > count {
+            history.len() - count
+        } else {
+            0
+        };
+        history
+            .iter()
+            .skip(start)
+            .map(|m| synvoid_admin::handlers::state::AggregatedMetrics {
+                total_requests: m.total_requests,
+                blocked: m.blocked,
+                challenged: m.challenged,
+                proxied: m.proxied,
+                errors: m.errors,
+                current_concurrent: m.current_concurrent,
+                peak_concurrent: m.peak_concurrent,
+                avg_latency_ms: m.avg_latency_ms,
+                p50_latency_ms: m.p50_latency_ms,
+                p95_latency_ms: m.p95_latency_ms,
+                p99_latency_ms: m.p99_latency_ms,
+                uptime_secs: m.uptime_secs,
+                memory_bytes: m.memory_bytes,
+                cpu_percent: m.cpu_percent,
+                requests_per_second: m.requests_per_second,
+                blocked_per_second: m.blocked_per_second,
+                healthy_backends: m.healthy_backends,
+                unhealthy_backends: m.unhealthy_backends,
+                healthy_workers: m.healthy_workers,
+                unhealthy_workers: m.unhealthy_workers,
+                blocked_by_type: m.blocked_by_type.clone(),
+                metrics_timestamp_ms: m.metrics_timestamp_ms,
+            })
+            .collect()
+    }
+
+    fn get_system_resources(&self) -> synvoid_admin::handlers::state::SystemResources {
+        let r = self.metrics.system_resources.read().clone();
+        synvoid_admin::handlers::state::SystemResources {
+            memory_used_mb: r.memory_used_mb,
+            memory_total_mb: r.memory_total_mb,
+            cpu_usage_percent: r.cpu_usage_percent,
+            time_validation_errors: r.time_validation_errors,
+        }
+    }
+
+    fn uptime(&self) -> u64 {
+        self.metrics.start_time.elapsed().as_secs()
+    }
+
+    fn get_request_logs(
+        &self,
+        site_id: Option<&str>,
+        method: Option<&str>,
+        status_prefix: Option<&str>,
+        search: Option<&str>,
+        from_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+        to_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+        limit: usize,
+        offset: usize,
+    ) -> (
+        Vec<synvoid_admin::handlers::state::RequestLogEntry>,
+        usize,
+        bool,
+    ) {
+        let logs = self.metrics.request_logs.read();
+
+        let filtered: Vec<synvoid_admin::handlers::state::RequestLogEntry> = logs
+            .iter()
+            .filter(|log| {
+                if let Some(site_id) = site_id {
+                    if log.site_id != site_id {
+                        return false;
+                    }
+                }
+                if let Some(method) = method {
+                    if !log.method.eq_ignore_ascii_case(method) {
+                        return false;
+                    }
+                }
+                if let Some(prefix) = status_prefix {
+                    let status_str = log.status.to_string();
+                    if !status_str.starts_with(prefix) {
+                        return false;
+                    }
+                }
+                if let Some(search) = search {
+                    let search_lower = search.to_lowercase();
+                    if !log.path.to_lowercase().contains(&search_lower)
+                        && !log.client_ip.contains(&search_lower)
+                    {
+                        return false;
+                    }
+                }
+                if let Some(from) = from_timestamp {
+                    if log.timestamp < from {
+                        return false;
+                    }
+                }
+                if let Some(to) = to_timestamp {
+                    if log.timestamp > to {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|log| synvoid_admin::handlers::state::RequestLogEntry {
+                id: log.id.clone(),
+                timestamp: log.timestamp,
+                client_ip: log.client_ip.clone(),
+                method: log.method.clone(),
+                path: log.path.clone(),
+                status: log.status,
+                response_time_ms: log.response_time_ms,
+                site_id: log.site_id.clone(),
+                user_agent: log.user_agent.clone(),
+                bytes_sent: log.bytes_sent,
+                bytes_received: log.bytes_received,
+            })
+            .collect();
+
+        let total = filtered.len();
+        let has_more = offset + limit < total;
+        let result = filtered.into_iter().skip(offset).take(limit).collect();
+
+        (result, total, has_more)
+    }
+
+    fn probe_tracker(&self) -> Option<&std::sync::Arc<crate::waf::ProbeTracker>> {
+        self.waf_tracking.probe_tracker.as_ref()
+    }
+
+    fn suspicious_word_tracker(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::waf::SuspiciousWordTracker>> {
+        self.waf_tracking.suspicious_word_tracker.as_ref()
+    }
+
+    fn upstream_error_tracker(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::waf::UpstreamErrorTracker>> {
+        self.waf_tracking.upstream_error_tracker.as_ref()
+    }
+
+    fn process_manager(&self) -> Option<&std::sync::Arc<crate::process::ProcessManager>> {
+        self.process.process_manager.as_ref()
+    }
+
+    fn config(&self) -> std::sync::Arc<TokioRwLock<ConfigManager>> {
+        self.process.config.clone()
+    }
+
+    fn get_audit_logs(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Vec<synvoid_admin::handlers::state::AuditLog> {
+        self.audit
+            .get_logs(limit, offset)
+            .into_iter()
+            .map(|log| synvoid_admin::handlers::state::AuditLog {
+                id: log.id,
+                timestamp: log.timestamp,
+                user_id: log.user_id,
+                username: log.username,
+                action: log.action,
+                target_resource: log.target_resource,
+                client_ip: log.client_ip,
+                user_agent: log.user_agent,
+                details: log.details,
+                success: log.success,
+            })
+            .collect()
+    }
+
+    fn get_audit_logs_for_user(
+        &self,
+        username: &str,
+        limit: usize,
+    ) -> Vec<synvoid_admin::handlers::state::AuditLog> {
+        self.audit
+            .get_logs_for_user(username, limit)
+            .into_iter()
+            .map(|log| synvoid_admin::handlers::state::AuditLog {
+                id: log.id,
+                timestamp: log.timestamp,
+                user_id: log.user_id,
+                username: log.username,
+                action: log.action,
+                target_resource: log.target_resource,
+                client_ip: log.client_ip,
+                user_agent: log.user_agent,
+                details: log.details,
+                success: log.success,
+            })
+            .collect()
+    }
+
+    fn get_audit_logs_for_resource(
+        &self,
+        resource: &str,
+        limit: usize,
+    ) -> Vec<synvoid_admin::handlers::state::AuditLog> {
+        self.audit
+            .get_logs_for_resource(resource, limit)
+            .into_iter()
+            .map(|log| synvoid_admin::handlers::state::AuditLog {
+                id: log.id,
+                timestamp: log.timestamp,
+                user_id: log.user_id,
+                username: log.username,
+                action: log.action,
+                target_resource: log.target_resource,
+                client_ip: log.client_ip,
+                user_agent: log.user_agent,
+                details: log.details,
+                success: log.success,
+            })
+            .collect()
+    }
+
+    fn audit_log_count(&self) -> usize {
+        self.audit.count()
+    }
+}
+
 pub struct CsrfTokenData {
     pub created: Instant,
     pub session_id_hash: String,

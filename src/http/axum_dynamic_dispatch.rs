@@ -23,7 +23,7 @@ pub async fn maybe_handle_axum_dynamic_backend(
         return None;
     }
 
-    if let Some(pm) = router.plugin_manager() {
+    if let Some(pm) = router.plugin_manager().and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>()) {
         let plugin_router = if let Some(ref plugin_name) = target.backend_plugin {
             pm.get_axum_router_by_name(plugin_name)
         } else {

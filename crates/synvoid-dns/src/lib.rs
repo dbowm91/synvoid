@@ -14,3 +14,10 @@
 mod dns;
 
 pub use dns::*;
+
+#[cfg(feature = "mesh")]
+pub mod mesh_dnssec;
+#[cfg(feature = "mesh")]
+pub mod mesh_sync;
+#[cfg(feature = "mesh")]
+pub mod anycast_sync;

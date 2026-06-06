@@ -960,6 +960,10 @@ pub async fn get_with_auth(
     Ok(HttpResponse::from_hyper(response, None).await)
 }
 
+pub fn is_quictunnel_url(url: &str) -> bool {
+    url.starts_with("quictunnel://") || url.starts_with("quictunnel:")
+}
+
 pub async fn head_with_auth(
     client: &HttpClient,
     url: &str,
