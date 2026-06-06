@@ -199,7 +199,11 @@ pub async fn maybe_handle_fastcgi_or_php_backend(
                 }
             }
 
-            builder = apply_security_headers(builder, target, main_config);
+            builder = apply_security_headers(
+                builder,
+                &target.site_config.security_headers,
+                main_config.security.global_security_headers,
+            );
             Some(builder.body(Full::new(body).boxed()).unwrap_or_else(|_| {
                 crate::http::response_builder::build_response_with_alt_svc(
                     500,

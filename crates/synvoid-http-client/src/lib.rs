@@ -23,17 +23,47 @@ use moka::sync::Cache;
 use serde::{de::DeserializeOwned, Serialize};
 
 mod erased_pool;
+mod streaming_waf_body;
 mod typed_pool;
 
 pub use erased_pool::{
     ErasedBody, ErasedBodyImpl, ErasedConnectionPool, ErasedHttpClient, PoolKey,
 };
+pub use streaming_waf_body::{StreamingWafBody, StreamingWafDecision, StreamingWafScanner};
 pub use typed_pool::{TypedConnectionPool, TypedHttpClient, TypedPoolKey};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 pub type StreamingHttpClient = Client<HttpsConnector<HttpConnector>, BoxErasedBody>;
 pub type UnixHttpClient = Client<UnixConnector, Full<Bytes>>;
 pub use erased_pool::BoxErasedBody;
+
+pub fn upstream_tls_from_site_config(
+    config: &synvoid_config::site::UpstreamTlsConfig,
+) -> Option<UpstreamTlsConfig> {
+    let enabled = config.enabled.unwrap_or(true);
+    if !enabled {
+        return None;
+    }
+    let skip_verify = config.skip_verify.unwrap_or(false);
+    if skip_verify {
+        let reason = config
+            .skip_verify_reason
+            .as_deref()
+            .unwrap_or("none provided");
+        tracing::warn!(
+            reason,
+            "Upstream TLS: skip_verify is ENABLED \u{2014} hostname verification is BYPASSED but chain validation still occurs. Configure skip_verify_reason to document why this is needed."
+        );
+    }
+    Some(UpstreamTlsConfig {
+        verify: !skip_verify,
+        ca_cert_path: config.ca_cert.clone(),
+        server_name: None,
+        skip_verify,
+        skip_verify_reason: config.skip_verify_reason.clone(),
+        allow_plaintext: false,
+    })
+}
 
 #[derive(Hash, PartialEq, Eq)]
 struct UpstreamClientKey {

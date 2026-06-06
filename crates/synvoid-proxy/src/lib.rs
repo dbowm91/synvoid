@@ -43,4 +43,5 @@ pub use retry::{
 };
 pub use router::{BackendType, RouteResult, RouteTarget, Router};
 pub use router_adapter::RouterRouteResolver;
+pub use server::{ProxyResponse, ProxyServer, QuicTunnelSender, WafDecision};
 pub use streaming::TeeBody;

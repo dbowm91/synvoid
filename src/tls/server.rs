@@ -983,7 +983,11 @@ impl HttpsServer {
                                 builder = builder.header(key.as_str(), v);
                             }
                         }
-                        builder = apply_security_headers(builder, &target, &main_config);
+                        builder = apply_security_headers(
+                            builder,
+                            &target.site_config.security_headers,
+                            main_config.security.global_security_headers,
+                        );
                         return Ok(builder
                             .body(
                                 upstream_body
@@ -1702,11 +1706,15 @@ impl HttpsServer {
                             let ps = ProxyServer::new_with_tls(
                                 target.upstream.to_string(),
                                 waf_processor,
-                                waf.clone(),
                                 main_config.proxy_limits.max_response_size,
                                 waf.upstream_error_tracker.clone(),
                                 site_id.clone(),
                                 tls_config.as_ref(),
+                                false,
+                                None,
+                                None,
+                                None,
+                                None,
                             )
                             .with_cache(cache)
                             .with_http2(http2_enabled);
@@ -2070,7 +2078,7 @@ impl HttpsServer {
     {
         crate::http::shared_handler::collect_body_with_chunk_waf(
             body,
-            waf,
+            waf.streaming(),
             client_ip,
             crate::http::shared_handler::BodyCollectionProtocol::Https,
             None,

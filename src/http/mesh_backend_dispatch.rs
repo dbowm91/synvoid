@@ -115,8 +115,8 @@ pub async fn maybe_handle_mesh_backend(
 
                     builder = crate::http::response_helpers::apply_security_headers(
                         builder,
-                        target,
-                        main_config,
+                        &target.site_config.security_headers,
+                        main_config.security.global_security_headers,
                     );
 
                     Ok(builder

@@ -1,22 +1,8 @@
 use super::*;
 
-pub(super) struct PreparedRequest {
-    pub on_upgrade: Option<hyper::upgrade::OnUpgrade>,
-    pub target: crate::router::RouteTarget,
-    pub parts: http::request::Parts,
-    pub method: http::Method,
-    pub path: String,
-    pub user_agent: Option<String>,
-    pub skip_waf: bool,
-    pub full_body_arc: Arc<Bytes>,
-    pub request_body_size: u64,
-    pub body_slice: Option<Arc<Bytes>>,
-}
-
-pub(super) enum RequestPreparationOutcome {
-    Continue(PreparedRequest),
-    Respond(Response<BoxBody<Bytes, Infallible>>),
-}
+pub(super) use synvoid_http::{
+    PreparedRequest, RequestPreflight, RequestPreflightOutcome, RequestPreparationOutcome,
+};
 
 pub(super) struct RequestPreparationContext<'a> {
     pub req: hyper::Request<hyper::body::Incoming>,
@@ -62,195 +48,58 @@ pub(super) async fn prepare_request_before_buffered_waf(
         conn_guard,
     } = ctx;
 
-    let mut req = req;
-    let is_ws_upgrade = validate_websocket_upgrade(req.headers());
-    let on_upgrade = if is_ws_upgrade {
-        Some(hyper::upgrade::on(&mut req))
-    } else {
-        None
-    };
-
-    let (parts, body) = req.into_parts();
-    let (method, path, host, user_agent, cookies) = extract_request_metadata(&parts);
-    let skip_waf = should_skip_waf_from_trust_cookie(waf, client_ip, cookies.as_deref());
-    if skip_waf {
-        tracing::debug!(
-            "Bypassing WAF check due to valid trust token for {}",
-            client_ip
-        );
-    }
-
-    let early_decision = early_waf_decision(waf, client_ip, &path, cookies.as_deref(), skip_waf);
-
-    match early_decision {
-        crate::proxy::WafDecision::Drop => {
-            counter!("synvoid.http.early_drop").increment(1);
-            http_conn.request_drop();
+    let waf_ref = waf.as_ref();
+    let preflight = match synvoid_http::prepare_request_preflight(
+        req,
+        client_ip,
+        local_addr,
+        router,
+        waf_ref,
+        alt_svc,
+        main_config,
+        |status, site_id, bypassed, method, path, user_agent| {
             send_request_log_if_enabled(
                 ipc.clone(),
                 worker_id,
                 main_config,
                 client_ip,
-                method.as_str(),
-                &path,
-                0,
-                start.elapsed().as_millis() as u64,
-                "unknown",
-                user_agent.as_deref(),
-                false,
-            );
-            let resp = Response::builder()
-                .status(http::StatusCode::NOT_FOUND)
-                .body(Full::new(Bytes::from_static(&[])).boxed())
-                .unwrap_or_else(|_| crate::http::fallback_error_boxed());
-            return Ok(RequestPreparationOutcome::Respond(resp));
-        }
-        crate::proxy::WafDecision::ChallengeWithCookie {
-            challenge_type: _,
-            html,
-            session_cookie_name,
-            session_cookie_value,
-            session_cookie_max_age,
-        } => {
-            let cookie = format_secure_http_only_cookie(
-                &session_cookie_name,
-                &session_cookie_value,
-                session_cookie_max_age as u64,
-            );
-            send_request_log_if_enabled(
-                ipc.clone(),
-                worker_id,
-                main_config,
-                client_ip,
-                method.as_str(),
-                &path,
-                200,
-                start.elapsed().as_millis() as u64,
-                "unknown",
-                user_agent.as_deref(),
-                false,
-            );
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_cookie(
-                    200,
-                    html,
-                    "text/html",
-                    &cookie,
-                    alt_svc,
-                    main_config,
-                ),
-            ));
-        }
-        crate::proxy::WafDecision::Challenge(_type, html) => {
-            send_request_log_if_enabled(
-                ipc.clone(),
-                worker_id,
-                main_config,
-                client_ip,
-                method.as_str(),
-                &path,
-                200,
-                start.elapsed().as_millis() as u64,
-                "unknown",
-                user_agent.as_deref(),
-                false,
-            );
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_alt_svc(
-                    200,
-                    html,
-                    "text/html",
-                    alt_svc,
-                    main_config,
-                ),
-            ));
-        }
-        crate::proxy::WafDecision::Block(status, message) => {
-            let body = waf
-                .error_page_manager
-                .render_page_with_theme(status, Some(&message), None);
-            send_request_log_if_enabled(
-                ipc.clone(),
-                worker_id,
-                main_config,
-                client_ip,
-                method.as_str(),
-                &path,
+                method,
+                path,
                 status,
                 start.elapsed().as_millis() as u64,
-                "unknown",
-                user_agent.as_deref(),
-                false,
+                site_id,
+                user_agent,
+                bypassed,
             );
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_alt_svc(
-                    status,
-                    body,
-                    "text/html",
-                    alt_svc,
-                    main_config,
-                ),
-            ));
-        }
-        crate::proxy::WafDecision::Pass
-        | crate::proxy::WafDecision::Stall
-        | crate::proxy::WafDecision::Tarpit(_) => {}
-    }
-
-    let route = router.route_with_local_addr(&host, &path, local_addr);
-    let target = match route {
-        crate::router::RouteResult::Found(target) => target,
-        crate::router::RouteResult::NotFound(msg) => {
-            tracing::debug!("Route not found: {} for host: {}", msg, host);
-            send_request_log_if_enabled(
-                ipc.clone(),
-                worker_id,
-                main_config,
-                client_ip,
-                method.as_str(),
-                &path,
-                404,
-                start.elapsed().as_millis() as u64,
-                &host,
-                user_agent.as_deref(),
-                false,
-            );
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_alt_svc(
-                    404,
-                    "Not Found".to_string(),
-                    "text/plain",
-                    alt_svc,
-                    main_config,
-                ),
-            ));
-        }
-        crate::router::RouteResult::Error(msg) => {
-            tracing::error!("Router error: {}", msg);
-            send_request_log_if_enabled(
-                ipc.clone(),
-                worker_id,
-                main_config,
-                client_ip,
-                method.as_str(),
-                &path,
-                500,
-                start.elapsed().as_millis() as u64,
-                &host,
-                user_agent.as_deref(),
-                false,
-            );
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_alt_svc(
-                    500,
-                    crate::http::reason_phrase(500).to_string(),
-                    "text/plain",
-                    alt_svc,
-                    main_config,
-                ),
-            ));
+        },
+        |status, message| {
+            waf_ref
+                .error_page_manager
+                .render_page_with_theme(status, Some(message), None)
+        },
+        || {
+            http_conn.request_drop();
+        },
+    )
+    .await?
+    {
+        RequestPreflightOutcome::Continue(preflight) => preflight,
+        RequestPreflightOutcome::Respond(response) => {
+            return Ok(RequestPreparationOutcome::Respond(response));
         }
     };
+
+    let RequestPreflight {
+        on_upgrade,
+        target,
+        parts,
+        body,
+        method,
+        path,
+        host,
+        user_agent,
+        skip_waf,
+    } = preflight;
 
     let site_id = target.site_id.to_string();
     let site_traffic_config = &target.site_config.traffic_shaping.connection;
@@ -302,7 +151,6 @@ pub(super) async fn prepare_request_before_buffered_waf(
     }
 
     let query_string = parts.uri.query();
-    let _is_internal_orig = client_ip.is_loopback();
     let body = match maybe_handle_streaming_request_fast_path(
         &target,
         router,
@@ -339,10 +187,24 @@ pub(super) async fn prepare_request_before_buffered_waf(
         |decision| async {
             maybe_handle_streaming_waf_decision(
                 decision,
-                waf,
                 || http_conn.request_drop(),
+                |status, message| {
+                    waf.error_page_manager.render_page_with_theme(
+                        status,
+                        Some(message),
+                        target
+                            .site_config
+                            .error_pages
+                            .theme
+                            .as_ref()
+                            .map(|theme_config| {
+                                theme_config.to_theme_config(waf.error_page_manager.theme())
+                            })
+                            .as_ref(),
+                    )
+                },
+                |path, user_agent| Box::pin(waf.stream_tarpit(path, user_agent)),
                 http_config,
-                &target,
                 user_agent.as_deref(),
                 alt_svc,
                 main_config,
@@ -358,89 +220,11 @@ pub(super) async fn prepare_request_before_buffered_waf(
         }
     };
 
-    let content_length: Option<usize> = parts
-        .headers
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok());
-    let (full_body, request_body_size) = match collect_and_scan_request_body(
-        body,
-        waf,
-        client_ip,
-        content_length,
-        http_config.max_streaming_body_size,
-    )
-    .await
-    {
-        Ok((full_body, request_body_size)) => (full_body, request_body_size),
-        Err(BodyPolicyError::BlockedByWaf) => {
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_alt_svc(
-                    403,
-                    "Request blocked by WAF".to_string(),
-                    "text/plain",
-                    alt_svc,
-                    main_config,
-                ),
-            ));
-        }
-        Err(BodyPolicyError::BodyTooLarge) => {
-            return Ok(RequestPreparationOutcome::Respond(
-                crate::http::response_builder::build_response_with_alt_svc(
-                    413,
-                    "Request body too large".to_string(),
-                    "text/plain",
-                    alt_svc,
-                    main_config,
-                ),
-            ));
-        }
-    };
-    let full_body_arc = Arc::new(full_body);
-    let body_slice = if full_body_arc.is_empty() {
-        None
-    } else {
-        Some(full_body_arc.clone())
-    };
+    let method_for_log = method.clone();
+    let path_for_log = path.clone();
+    let user_agent_for_log = user_agent.clone();
 
-    if let Some(ref m) = metrics {
-        if let Some(content_length) = parts.headers.get("content-length") {
-            if let Ok(len_str) = content_length.to_str() {
-                if let Ok(len) = len_str.parse::<u64>() {
-                    m.bandwidth.record_ingress(len, BandwidthProtocol::Http);
-                    m.bandwidth.record_site_ingress(&host, len);
-                }
-            }
-        }
-    }
-
-    if let Some(response) = maybe_handle_challenge_paths(
-        &path,
-        client_ip,
-        waf,
-        &parts,
-        main_config,
-        alt_svc,
-        |status, bypassed| {
-            send_request_log_if_enabled(
-                ipc.clone(),
-                worker_id,
-                main_config,
-                client_ip,
-                method.as_str(),
-                &path,
-                status,
-                start.elapsed().as_millis() as u64,
-                "internal",
-                user_agent.as_deref(),
-                bypassed,
-            );
-        },
-    ) {
-        return Ok(RequestPreparationOutcome::Respond(response));
-    }
-
-    Ok(RequestPreparationOutcome::Continue(PreparedRequest {
+    synvoid_http::finalize_request_preparation(
         on_upgrade,
         target,
         parts,
@@ -448,8 +232,30 @@ pub(super) async fn prepare_request_before_buffered_waf(
         path,
         user_agent,
         skip_waf,
-        full_body_arc,
-        request_body_size,
-        body_slice,
-    }))
+        body,
+        client_ip,
+        host,
+        waf.as_ref(),
+        waf.honeypot_ban_duration_secs,
+        main_config,
+        http_config,
+        metrics,
+        alt_svc,
+        |status, bypassed| {
+            send_request_log_if_enabled(
+                ipc.clone(),
+                worker_id,
+                main_config,
+                client_ip,
+                method_for_log.as_str(),
+                &path_for_log,
+                status,
+                start.elapsed().as_millis() as u64,
+                "internal",
+                user_agent_for_log.as_deref(),
+                bypassed,
+            );
+        },
+    )
+    .await
 }

@@ -1,100 +1,5 @@
 use super::*;
 
-pub(super) async fn handle_pass_upstream_proxy_phase(
-    upstream_ctx: PassUpstreamProxyContext<'_>,
-) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-    let dispatch_plan = prepare_upstream_proxy_dispatch_plan(
-        upstream_ctx.target,
-        upstream_ctx.path,
-        upstream_ctx.main_config,
-        upstream_ctx.full_body_arc.len() as u64,
-        upstream_ctx.client_ip,
-        upstream_ctx.parts,
-        upstream_ctx.upstream_client_registry,
-        upstream_ctx.client,
-    );
-
-    if let Some(streaming) = dispatch_plan.streaming {
-        let erased_body = crate::http_client::ErasedBodyImpl::from_full(Full::new(
-            upstream_ctx.full_body_arc.as_ref().clone(),
-        ));
-        let request_result = send_request_streaming_generic(
-            streaming.client.as_ref(),
-            upstream_ctx.method.clone(),
-            &dispatch_plan.upstream_target.url,
-            erased_body,
-            streaming.forward_headers,
-            Some(dispatch_plan.upstream_target.timeout),
-        )
-        .await;
-        return handle_streaming_upstream_response(
-            request_result,
-            upstream_ctx.target,
-            upstream_ctx.site_id,
-            upstream_ctx.request_body_size,
-            &dispatch_plan.headers_to_filter,
-            dispatch_plan.upstream_target.max_response_size,
-            upstream_ctx.alt_svc,
-            upstream_ctx.main_config,
-            upstream_ctx.metrics,
-            || {
-                if let Some(rm) = upstream_ctx.req_metrics {
-                    rm.record_upstream_success();
-                }
-            },
-            || {
-                if let Some(rm) = upstream_ctx.req_metrics {
-                    rm.record_upstream_failure();
-                }
-            },
-            |egress_len| {
-                if let Some(rm) = upstream_ctx.req_metrics {
-                    rm.record_egress(egress_len, EgressDirection::Error);
-                }
-            },
-        )
-        .await;
-    }
-
-    handle_buffered_upstream_request(
-        upstream_ctx.target,
-        upstream_ctx.router,
-        upstream_ctx.path,
-        upstream_ctx.site_id,
-        upstream_ctx.method,
-        upstream_ctx.parts,
-        upstream_ctx.full_body_arc,
-        &dispatch_plan.forwarding_client,
-        &dispatch_plan.upstream_target,
-        &dispatch_plan.headers_to_filter,
-        upstream_ctx.alt_svc,
-        upstream_ctx.main_config,
-        upstream_ctx.metrics,
-        upstream_ctx.request_body_size,
-        #[cfg(feature = "mesh")]
-        upstream_ctx.mesh_transport,
-        || {
-            if let Some(rm) = upstream_ctx.req_metrics {
-                rm.record_upstream_success();
-            }
-        },
-        || {
-            if let Some(rm) = upstream_ctx.req_metrics {
-                rm.record_upstream_failure();
-            }
-        },
-        |egress_len| {
-            if let Some(rm) = upstream_ctx.req_metrics {
-                rm.record_egress(egress_len, EgressDirection::Error);
-            }
-        },
-        |body, site_id, last_modified, poison_config| async move {
-            crate::http::apply_image_poisoning(body, site_id, last_modified, poison_config).await
-        },
-    )
-    .await
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_pass_backend_dispatch(
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
@@ -325,24 +230,64 @@ pub(super) async fn handle_pass_backend_dispatch(
         return Ok(response);
     }
 
-    let upstream_ctx = PassUpstreamProxyContext {
-        target: dispatch_ctx.target,
-        path: dispatch_ctx.path,
-        main_config: dispatch_ctx.main_config,
-        router: dispatch_ctx.router,
-        full_body_arc: dispatch_ctx.full_body_arc,
-        upstream_client_registry: dispatch_ctx.upstream_client_registry,
-        client: dispatch_ctx.client,
-        client_ip: dispatch_ctx.client_ip,
-        parts: dispatch_ctx.parts,
-        method: dispatch_ctx.method,
-        req_metrics: dispatch_ctx.req_metrics,
-        metrics: dispatch_ctx.metrics,
-        request_body_size: dispatch_ctx.request_body_size,
-        site_id: dispatch_ctx.site_id,
-        alt_svc: dispatch_ctx.alt_svc,
+    let dispatch_plan = prepare_upstream_proxy_dispatch_plan(
+        dispatch_ctx.target,
+        dispatch_ctx.path,
+        dispatch_ctx.main_config,
+        dispatch_ctx.full_body_arc.len() as u64,
+        dispatch_ctx.client_ip,
+        dispatch_ctx.parts,
+        dispatch_ctx.upstream_client_registry,
+        dispatch_ctx.client,
+    );
+
+    handle_pass_upstream_proxy_phase(
+        dispatch_ctx.target,
+        dispatch_ctx.router,
+        dispatch_ctx.path,
+        dispatch_ctx.site_id,
+        dispatch_ctx.method,
+        dispatch_ctx.parts,
+        dispatch_ctx.full_body_arc,
+        dispatch_plan,
+        dispatch_ctx.alt_svc,
+        dispatch_ctx.main_config,
+        dispatch_ctx.metrics,
+        dispatch_ctx.request_body_size,
         #[cfg(feature = "mesh")]
-        mesh_transport: dispatch_ctx.mesh_transport,
-    };
-    handle_pass_upstream_proxy_phase(upstream_ctx).await
+        dispatch_ctx.mesh_transport,
+        |method, url, headers, body, timeout| {
+            let url = url.to_string();
+            let headers = headers.cloned();
+            Box::pin(async move {
+                crate::http_client::send_request_via_quic_tunnel(
+                    method,
+                    &url,
+                    headers.as_ref(),
+                    body,
+                    timeout,
+                )
+                .await
+            })
+        },
+        || {
+            if let Some(rm) = dispatch_ctx.req_metrics {
+                rm.record_upstream_success();
+            }
+        },
+        || {
+            if let Some(rm) = dispatch_ctx.req_metrics {
+                rm.record_upstream_failure();
+            }
+        },
+        |egress_len| {
+            if let Some(rm) = dispatch_ctx.req_metrics {
+                rm.record_egress(egress_len, EgressDirection::Error);
+            }
+        },
+        |body, site_id, last_modified, poison_config| async move {
+            crate::http::apply_image_poisoning(body, site_id, last_modified, poison_config).await
+        },
+    )
+    .await
 }

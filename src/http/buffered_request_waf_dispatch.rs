@@ -6,11 +6,7 @@ use http::Response;
 use http_body_util::combinators::BoxBody;
 
 use crate::config::{HttpConfig, MainConfig};
-use crate::http::waf_decision::{
-    full_request_waf_decision, resolve_full_request_waf_decision, should_skip_full_waf,
-    FullWafDecisionOutcome,
-};
-use crate::router::{BackendType, RouteTarget};
+use crate::router::RouteTarget;
 use crate::waf::WafCore;
 
 #[allow(clippy::too_many_arguments)]
@@ -51,22 +47,10 @@ where
     ChallengedFn: FnMut(u64),
     ElapsedFn: FnMut() -> u64,
 {
-    if should_skip_full_waf(skip_waf, true, target)
-        && !skip_waf
-        && matches!(target.backend_type, BackendType::Serverless)
-    {
-        tracing::debug!(
-            "serverless route with waf_mode=off - skipping WAF check for {} {}",
-            method_str,
-            path
-        );
-    }
-
-    let waf_decision = full_request_waf_decision(
-        waf,
+    let site_bot_config = Some(&target.site_config.bot);
+    synvoid_http::maybe_handle_buffered_request_waf(
         target,
         skip_waf,
-        true,
         site_id,
         client_ip,
         method_str,
@@ -75,27 +59,46 @@ where
         headers,
         body_slice_ref,
         user_agent,
-    )
-    .await;
-
-    match resolve_full_request_waf_decision(
-        waf_decision,
-        waf,
-        client_ip,
         http_config,
-        target,
         alt_svc,
         main_config,
+        || {
+            waf.check_request_full(
+                Some(site_id),
+                client_ip,
+                method_str,
+                path,
+                query_string,
+                headers,
+                body_slice_ref,
+                user_agent,
+                None,
+                site_bot_config,
+                None,
+            )
+        },
         on_drop,
         on_log,
         on_blocked,
         on_blocked_egress,
         on_challenged,
         elapsed_ms,
+        |status, message| {
+            waf.error_page_manager.render_page_with_theme(
+                status,
+                Some(message),
+                target
+                    .site_config
+                    .error_pages
+                    .theme
+                    .as_ref()
+                    .map(|theme_config| {
+                        theme_config.to_theme_config(waf.error_page_manager.theme())
+                    })
+                    .as_ref(),
+            )
+        },
+        |tar_path| waf.generate_tarpit_response(tar_path),
     )
     .await
-    {
-        FullWafDecisionOutcome::Respond(response) => Some(response),
-        FullWafDecisionOutcome::Pass => None,
-    }
 }

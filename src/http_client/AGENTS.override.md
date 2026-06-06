@@ -6,7 +6,7 @@ The HTTP client module (`src/http_client/`) provides upstream proxy connections 
 
 ## Key Files
 
-- `src/http_client/mod.rs` - Main client implementation with `HttpClient`, `StreamingWafBody`, and helper functions
+- `src/http_client/mod.rs` - Root compatibility shim that reexports `synvoid_http_client`; canonical `StreamingWafBody` now lives in `crates/synvoid-http-client`
 - `src/http_client/erased_pool.rs` - Type-erased body traits and connection pooling
 - `src/http_client/typed_pool.rs` - TypedConnectionPool for per-host body-typed clients
 

@@ -1,17 +1,14 @@
-use bytes::Bytes;
 use futures::Future;
-use http::Response;
-use http_body_util::combinators::BoxBody;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::site::SiteWebSocketConfig;
-use crate::http::response_helpers::build_websocket_response;
 use crate::router::{BackendType, RouteTarget};
 use crate::waf::WafCore;
+
+use synvoid_http::maybe_handle_websocket_upgrade as maybe_handle_websocket_upgrade_impl;
 
 pub async fn maybe_handle_websocket_upgrade<AppServerFn, AppServerFut, TunnelFn, TunnelFut>(
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
@@ -24,7 +21,7 @@ pub async fn maybe_handle_websocket_upgrade<AppServerFn, AppServerFut, TunnelFn,
     headers: &http::HeaderMap,
     on_appserver: AppServerFn,
     on_tunnel: TunnelFn,
-) -> Option<Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>>
+) -> Option<Result<synvoid_http::BoxBodyResponse, hyper::Error>>
 where
     AppServerFn: FnOnce(
             hyper::upgrade::OnUpgrade,
@@ -50,52 +47,33 @@ where
         + 'static,
     TunnelFut: Future<Output = ()> + Send + 'static,
 {
-    let upgraded = on_upgrade?;
-    let ws_config = target.site_config.websocket.clone();
-    let target_clone = target.clone();
-    let path_clone = path.to_string();
-    let waf_clone = waf.clone();
-
-    tracing::info!(
-        client_ip = %client_ip,
-        path = %path_clone,
-        upstream = %target_clone.upstream,
-        "WebSocket upgrade request accepted"
-    );
-
-    if matches!(target.backend_type, BackendType::AppServer) {
+    let is_appserver = matches!(target.backend_type, BackendType::AppServer);
+    let appserver_socket_path = if is_appserver {
         if let Some(servers) = app_servers {
             let servers_read = servers.read().await;
-            if let Some(supervisor) = servers_read.get(site_id) {
-                let socket_path = supervisor.config().resolve_socket_path();
-                tokio::spawn(async move {
-                    on_appserver(
-                        upgraded,
-                        socket_path,
-                        target_clone,
-                        path_clone,
-                        waf_clone,
-                        client_ip,
-                        ws_config,
-                    )
-                    .await;
-                });
-                return Some(Ok(build_websocket_response(headers)));
-            }
+            servers_read
+                .get(site_id)
+                .map(|supervisor| supervisor.config().resolve_socket_path())
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
-    tokio::spawn(async move {
-        on_tunnel(
-            upgraded,
-            target_clone,
-            path_clone,
-            waf_clone,
-            client_ip,
-            ws_config,
-        )
-        .await;
-    });
-
-    Some(Ok(build_websocket_response(headers)))
+    maybe_handle_websocket_upgrade_impl(
+        on_upgrade,
+        is_appserver,
+        appserver_socket_path,
+        target.clone(),
+        &target.upstream,
+        path,
+        waf,
+        client_ip,
+        headers,
+        target.site_config.websocket.clone(),
+        on_appserver,
+        on_tunnel,
+    )
+    .await
 }

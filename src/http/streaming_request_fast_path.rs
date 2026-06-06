@@ -5,22 +5,19 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
-use http_body_util::Full;
-use metrics::counter;
 
 use crate::config::MainConfig;
 use crate::http::streaming_waf_upstream_dispatch::handle_streaming_waf_upstream_pass;
-use crate::http::waf_decision::full_request_waf_decision;
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::proxy::WafDecision;
-use crate::router::{BackendType, RouteTarget, Router};
+#[cfg(feature = "mesh")]
+use crate::router::BackendType;
+use crate::router::{RouteTarget, Router};
 use crate::waf::WafCore;
+#[cfg(feature = "mesh")]
+use http_body_util::{BodyExt, Full};
 
-pub enum StreamingRequestFastPathOutcome {
-    Continue(hyper::body::Incoming),
-    Respond(Response<BoxBody<Bytes, Infallible>>),
-}
+pub use synvoid_http::StreamingRequestFastPathOutcome;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_streaming_request_fast_path<DecisionFn, DecisionFut, LogFn>(
@@ -42,7 +39,7 @@ pub async fn maybe_handle_streaming_request_fast_path<DecisionFn, DecisionFut, L
     #[cfg(feature = "mesh")] serverless_manager: &Option<
         Arc<crate::serverless::manager::ServerlessManager>,
     >,
-    on_streaming_serverless_status: LogFn,
+    _on_streaming_serverless_status: LogFn,
     handle_non_pass_decision: DecisionFn,
 ) -> Result<StreamingRequestFastPathOutcome, hyper::Error>
 where
@@ -50,63 +47,36 @@ where
     DecisionFut: Future<Output = Option<Response<BoxBody<Bytes, Infallible>>>>,
     LogFn: FnOnce(u16),
 {
-    let content_length_u64: Option<u64> = parts
-        .headers
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok());
-    let can_stream_request = (matches!(target.backend_type, BackendType::Upstream)
-        || matches!(target.backend_type, BackendType::Serverless))
-        && target.site_config.proxy.should_stream(
-            content_length_u64,
-            target.site_config.proxy.streaming_threshold_bytes,
-        )
-        && !crate::http_client::is_quictunnel_url(&target.upstream);
-    let needs_body_transform = router.plugin_manager().is_some()
-        || target
-            .site_config
-            .r#static
-            .enable_minification
-            .unwrap_or(false)
-        || target.site_config.image_poison.enabled.unwrap_or(false)
-        || target
-            .site_config
-            .r#static
-            .enable_compression
-            .unwrap_or(false);
-
-    if !can_stream_request || needs_body_transform {
-        return Ok(StreamingRequestFastPathOutcome::Continue(body));
-    }
-
-    counter!("synvoid.http.request.streaming_path").increment(1);
     let method_str = method.to_string();
 
-    let waf_decision = full_request_waf_decision(
-        waf,
+    synvoid_http::maybe_handle_streaming_request_fast_path(
         target,
+        router,
         skip_waf,
-        false,
-        site_id,
-        client_ip,
-        &method_str,
-        path,
-        query_string,
-        &parts.headers,
-        None,
-        user_agent,
-    )
-    .await;
-
-    match waf_decision {
-        WafDecision::Pass => {
+        parts,
+        body,
+        || {
+            waf.check_request_full(
+                Some(site_id),
+                client_ip,
+                &method_str,
+                path,
+                query_string,
+                &parts.headers,
+                None,
+                user_agent,
+                None,
+                Some(&target.site_config.bot),
+                None,
+            )
+        },
+        |body| async move {
             #[cfg(feature = "mesh")]
             if matches!(target.backend_type, BackendType::Serverless) {
                 if let Some(sm) = serverless_manager.as_ref() {
                     let streaming_waf = waf.streaming();
                     let stream_body =
                         crate::http_client::StreamingWafBody::new(body, streaming_waf, client_ip);
-                    use http_body_util::BodyExt;
                     let body_bytes = match stream_body.collect().await {
                         Ok(collected) => collected.to_bytes(),
                         Err(_) => {
@@ -135,7 +105,7 @@ where
                         {
                             Ok(response) => {
                                 let status = response.status();
-                                on_streaming_serverless_status(status.as_u16());
+                                _on_streaming_serverless_status(status.as_u16());
                                 let response = Response::builder()
                                     .status(status)
                                     .body(Full::new(response.into_body()).boxed())
@@ -174,13 +144,8 @@ where
                 )
                 .await?,
             ))
-        }
-        decision => {
-            if let Some(response) = handle_non_pass_decision(decision).await {
-                Ok(StreamingRequestFastPathOutcome::Respond(response))
-            } else {
-                Ok(StreamingRequestFastPathOutcome::Continue(body))
-            }
-        }
-    }
+        },
+        handle_non_pass_decision,
+    )
+    .await
 }

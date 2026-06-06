@@ -30,6 +30,7 @@ pub mod streaming_waf_upstream_dispatch;
 pub mod upload_validation_dispatch;
 pub mod upstream_buffered_dispatch;
 pub mod upstream_proxy_dispatch_plan;
+pub mod upstream_proxy_dispatch;
 pub mod upstream_response_transform;
 pub mod upstream_streaming_dispatch;
 pub mod validation_helpers;

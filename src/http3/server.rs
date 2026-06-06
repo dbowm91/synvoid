@@ -773,8 +773,8 @@ impl Http3Server {
                             }
                             resp_builder = apply_security_headers(
                                 resp_builder,
-                                route_target,
-                                &self.main_config,
+                                &route_target.site_config.security_headers,
+                                self.main_config.security.global_security_headers,
                             );
                             let response = resp_builder
                                 .body(())
@@ -971,8 +971,8 @@ impl Http3Server {
 
                             resp_builder = apply_security_headers(
                                 resp_builder,
-                                &route_target,
-                                &self.main_config,
+                                &route_target.site_config.security_headers,
+                                self.main_config.security.global_security_headers,
                             );
 
                             let response = resp_builder

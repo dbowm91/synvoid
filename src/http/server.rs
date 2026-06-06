@@ -10,8 +10,6 @@
 use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
-use http_body_util::Full;
 use metrics::counter;
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -24,19 +22,14 @@ use tokio::sync::Semaphore;
 
 use crate::http::app_server_backend_dispatch::maybe_handle_app_server_backend;
 use crate::http::axum_dynamic_dispatch::maybe_handle_axum_dynamic_backend;
-use crate::http::body_policy::{collect_and_scan_request_body, BodyPolicyError};
 use crate::http::buffered_request_waf_dispatch::maybe_handle_buffered_request_waf;
 use crate::http::cgi_backend_dispatch::maybe_handle_cgi_backend;
-use crate::http::challenge_paths::maybe_handle_challenge_paths;
 use crate::http::fastcgi_php_backend_dispatch::maybe_handle_fastcgi_or_php_backend;
 use crate::http::internal_endpoint_dispatch::{
     dispatch_internal_endpoint, InternalEndpointDispatch,
 };
 #[cfg(feature = "mesh")]
 use crate::http::mesh_backend_dispatch::maybe_handle_mesh_backend;
-use crate::http::request_parse::{
-    early_waf_decision, extract_request_metadata, should_skip_waf_from_trust_cookie,
-};
 #[cfg(feature = "mesh")]
 use crate::http::serverless_backend_dispatch::maybe_handle_serverless_backend;
 #[allow(unused_imports)]
@@ -52,9 +45,8 @@ use crate::http::streaming_request_fast_path::{
 };
 use crate::http::streaming_waf_decision::maybe_handle_streaming_waf_decision;
 use crate::http::upload_validation_dispatch::maybe_handle_upload_validation;
-use crate::http::upstream_buffered_dispatch::handle_buffered_upstream_request;
+use crate::http::upstream_proxy_dispatch::handle_pass_upstream_proxy_phase;
 use crate::http::upstream_proxy_dispatch_plan::prepare_upstream_proxy_dispatch_plan;
-use crate::http::upstream_streaming_dispatch::handle_streaming_upstream_response;
 use crate::http::wasm_filter_dispatch::maybe_handle_wasm_request_filter;
 use crate::http::websocket_dispatch::{handle_websocket_to_appserver, handle_websocket_tunnel};
 use crate::http::websocket_upgrade_dispatch::maybe_handle_websocket_upgrade;
@@ -79,12 +71,9 @@ use crate::config::HttpConfig;
 use crate::config::MainConfig;
 #[allow(unused_imports)]
 use crate::http::headers;
-use crate::http::response_helpers::format_secure_http_only_cookie;
-use crate::http::validation_helpers::validate_websocket_upgrade;
 #[allow(unused_imports)]
 use crate::http_client::{
-    create_http_client_with_config, send_request_streaming, send_request_streaming_generic,
-    ErasedBodyImpl, HttpClient, StreamingWafBody,
+    create_http_client_with_config, HttpClient,
 };
 #[cfg(feature = "mesh")]
 use crate::mesh::config::MeshConfig;
@@ -131,26 +120,6 @@ struct PassBackendDispatchContext<'a> {
     mesh_transport: &'a Option<Arc<MeshTransportManager>>,
     #[cfg(feature = "mesh")]
     mesh_backend_pool: &'a Option<Arc<MeshBackendPool>>,
-}
-
-struct PassUpstreamProxyContext<'a> {
-    target: &'a crate::router::RouteTarget,
-    path: &'a str,
-    main_config: &'a Arc<MainConfig>,
-    router: &'a Arc<Router>,
-    full_body_arc: &'a Arc<Bytes>,
-    upstream_client_registry: &'a Arc<UpstreamClientRegistry>,
-    client: &'a HttpClient,
-    client_ip: IpAddr,
-    parts: &'a http::request::Parts,
-    method: &'a http::Method,
-    req_metrics: &'a Option<RequestMetrics>,
-    metrics: &'a Option<Arc<WorkerMetrics>>,
-    request_body_size: u64,
-    site_id: &'a str,
-    alt_svc: &'a Option<String>,
-    #[cfg(feature = "mesh")]
-    mesh_transport: &'a Option<Arc<MeshTransportManager>>,
 }
 
 pub struct HttpServer {

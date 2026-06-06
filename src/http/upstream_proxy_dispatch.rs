@@ -1,2 +1,2 @@
 // Root compatibility shim - canonical implementation is in synvoid-http.
-pub use synvoid_http::upstream_response_transform::*;
+pub use synvoid_http::upstream_proxy_dispatch::*;

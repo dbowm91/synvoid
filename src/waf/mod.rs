@@ -819,6 +819,82 @@ impl WafCore {
     }
 }
 
+impl synvoid_http::request_parse::EarlyWafHooks for WafCore {
+    fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool {
+        WafCore::verify_trust_token(self, client_ip, token)
+    }
+
+    fn check_early(
+        &self,
+        client_ip: IpAddr,
+        path: &str,
+        cookies: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> synvoid_waf::WafDecision {
+        WafCore::check_early(self, client_ip, path, cookies, user_agent)
+    }
+}
+
+impl synvoid_http::ChallengePathWaf for WafCore {
+    fn block_ip_for_honeypot(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        scope: &str,
+    ) {
+        WafCore::block_ip_for_honeypot(self, ip, reason, duration_secs, scope);
+    }
+
+    fn generate_challenge_page(
+        &self,
+        ip: &IpAddr,
+        app_path: Option<&str>,
+    ) -> (String, Option<String>) {
+        self.challenge_manager.generate_challenge_page(ip, app_path)
+    }
+
+    fn css_enabled(&self) -> bool {
+        self.challenge_manager.css_enabled()
+    }
+
+    fn css_session_cookie_name(&self) -> String {
+        self.challenge_manager.css_session_cookie_name()
+    }
+
+    fn record_css_asset_request(
+        &self,
+        session_id: &str,
+        asset_name: &str,
+    ) -> (
+        crate::challenge::AssetRequestResult,
+        crate::challenge::CssAssetAction,
+    ) {
+        self.challenge_manager
+            .record_css_asset_request(session_id, asset_name)
+    }
+
+    fn css_verified_cookie_name(&self) -> String {
+        self.challenge_manager.css_verified_cookie_name()
+    }
+
+    fn css_window_secs(&self) -> u64 {
+        self.challenge_manager.css_window_secs()
+    }
+}
+
+impl synvoid_http::RequestBodyWaf for WafCore {
+    type StreamingScanner = crate::waf::attack_detection::StreamingWafCore;
+
+    fn streaming(&self) -> Option<Self::StreamingScanner> {
+        WafCore::streaming(self)
+    }
+
+    fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>) {
+        WafCore::check_request_body(self, chunk)
+    }
+}
+
 pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<crate::upload::UploadValidator>> =
     std::sync::OnceLock::new();
 
