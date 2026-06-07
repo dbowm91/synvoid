@@ -4,11 +4,11 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::config::MainConfig;
-use crate::metrics::RequestLogPayload;
-use crate::process::current_timestamp;
-use crate::process::ipc::WorkerId;
-use crate::process::ipc_transport::IpcStream;
+use synvoid_config::MainConfig;
+use synvoid_ipc::AsyncIpcStream as IpcStream;
+use synvoid_ipc::WorkerId;
+use synvoid_metrics::RequestLogPayload;
+use synvoid_utils::current_timestamp;
 
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
 static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
@@ -48,7 +48,7 @@ pub(crate) fn send_request_log_if_enabled(
     }
 
     let max_per_second = verbose_config.max_logs_per_second;
-    let now = crate::utils::safe_unix_timestamp();
+    let now = synvoid_utils::safe_unix_timestamp();
 
     let last_reset = REQUEST_LOG_RATE_LIMITER_RESET.load(Ordering::Relaxed);
     if now != last_reset {
@@ -84,7 +84,7 @@ pub(crate) fn send_request_log_if_enabled(
         let worker_id = *worker_id;
         tokio::spawn(async move {
             let mut ipc_guard = ipc.lock().await;
-            let msg = crate::process::Message::WorkerRequestLog { id: worker_id, log };
+            let msg = synvoid_ipc::Message::WorkerRequestLog { id: worker_id, log };
             if let Err(e) = ipc_guard.send(&msg).await {
                 tracing::warn!("Failed to send request log: {}", e);
             }

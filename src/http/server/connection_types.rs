@@ -4,7 +4,7 @@ use hyper_util::rt::TokioIo;
 use parking_lot::Mutex;
 
 use crate::worker::drain_state::WorkerDrainState;
-use crate::RunningFlag;
+use synvoid_utils::RunningFlag;
 
 pub(super) const HTTP_VALID_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",

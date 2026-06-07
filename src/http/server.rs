@@ -20,8 +20,26 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 
-use crate::http_client::ErasedHttpClient;
+use crate::waf::WafCore;
+use crate::worker::drain_state::WorkerDrainState;
+use synvoid_config::http::HttpConfig;
+use synvoid_config::MainConfig;
 use synvoid_http::RequestPreparationOutcome;
+use synvoid_http_client::ErasedHttpClient;
+use synvoid_metrics::WorkerMetrics;
+use synvoid_proxy::Router;
+use synvoid_proxy::UpstreamClientRegistry;
+use synvoid_waf::{FloodDecision, FloodProtector};
+
+#[allow(unused_imports)]
+use synvoid_http_client::{create_http_client_with_config, HttpClient};
+#[cfg(feature = "mesh")]
+use synvoid_mesh::config::MeshConfig;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::transports::MeshTransportManager;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::MeshBackendPool;
+use tokio::sync::RwLock;
 
 mod accept_loop;
 mod connection_types;
@@ -30,24 +48,6 @@ mod observability;
 pub(crate) use observability::send_request_log_if_enabled;
 
 use connection_types::*;
-
-use crate::config::HttpConfig;
-use crate::config::MainConfig;
-
-#[allow(unused_imports)]
-use crate::http_client::{create_http_client_with_config, HttpClient};
-#[cfg(feature = "mesh")]
-use crate::mesh::config::MeshConfig;
-#[cfg(feature = "mesh")]
-use crate::mesh::transports::MeshTransportManager;
-#[cfg(feature = "mesh")]
-use crate::mesh::MeshBackendPool;
-use crate::metrics::WorkerMetrics;
-use crate::router::Router;
-use crate::waf::{FloodDecision, FloodProtector, WafCore};
-use crate::worker::drain_state::WorkerDrainState;
-use synvoid_proxy::UpstreamClientRegistry;
-use tokio::sync::RwLock;
 
 pub struct HttpServer {
     addr: SocketAddr,
@@ -355,10 +355,15 @@ impl HttpServer {
                 })
             },
             |body, site_id, last_modified, rights_config| async move {
-                crate::http::apply_image_rights_marking(body, site_id, last_modified, rights_config)
-                    .await
+                synvoid_static_files::image_rights::apply_image_rights_marking(
+                    body,
+                    site_id,
+                    last_modified,
+                    rights_config,
+                )
+                .await
             },
-            crate::metrics::record_http_request_latency,
+            synvoid_metrics::record_http_request_latency,
         )
         .await
     }
@@ -367,8 +372,8 @@ impl HttpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesh::proxy::get_cached_regex;
     use synvoid_http::response_transform::path_looks_like_image;
+    use synvoid_mesh::proxy::get_cached_regex;
 
     #[test]
     fn test_is_valid_http_request_start_valid_methods() {

@@ -5,15 +5,17 @@ use tokio::sync::broadcast;
 
 use metrics::{counter, gauge};
 
-use crate::config::{Http3Config, MainConfig};
-use crate::http_client::{create_http_client_with_config, HttpClient};
-use crate::metrics::bandwidth::get_global_bandwidth_tracker_or_log;
-use crate::metrics::WorkerMetrics;
-use crate::proxy::client_registry::UpstreamClientRegistry;
-use crate::router::Router;
-use crate::waf::{FloodDecision, FloodProtector, WafCore};
+use crate::waf::WafCore;
 use crate::worker::drain_state::WorkerDrainState;
+use synvoid_config::http::Http3Config;
+use synvoid_config::MainConfig;
+use synvoid_http_client::{create_http_client_with_config, HttpClient};
+use synvoid_metrics::bandwidth::get_global_bandwidth_tracker_or_log;
+use synvoid_metrics::WorkerMetrics;
+use synvoid_proxy::Router;
+use synvoid_proxy::UpstreamClientRegistry;
 use synvoid_waf::access::WafAccess;
+use synvoid_waf::{FloodDecision, FloodProtector};
 
 pub struct Http3Server {
     addr: SocketAddr,
